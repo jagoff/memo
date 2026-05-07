@@ -17,13 +17,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-
-[project.urls]
-Homepage = "https://github.com/jagoff/memo"
-Repository = "https://github.com/jagoff/memo"
-Issues = "https://github.com/jagoff/memo/issues"
-Changelog = "https://github.com/jagoff/memo/blob/main/CHANGELOG.md"
-
 dependencies = [
     "click>=8.1.7",
     "rich>=13.7",
@@ -35,6 +28,12 @@ dependencies = [
     "mlx>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jagoff/memo"
+Repository = "https://github.com/jagoff/memo"
+Issues = "https://github.com/jagoff/memo/issues"
+Changelog = "https://github.com/jagoff/memo/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
