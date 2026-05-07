@@ -312,6 +312,126 @@ def history(limit: int, op: str | None, record_id: str | None, as_json: bool) ->
 
 
 @cli.command()
+@click.option("--out", "out_path", default=None, type=click.Path(),
+              help="Output zip path. Default: ./memo-backup-<YYYYMMDD-HHMMSS>.zip")
+def backup(out_path: str | None) -> None:
+    """Snapshot memory dir + sqlite-vec DB + history DB into a zip.
+
+    Use before risky operations (mass migration, embedder swap, schema
+    change). The zip is portable: extract on another machine, set
+    `MEMO_VAULT_PATH` to the matching vault, run `memo restore <zip>`
+    to absorb everything back. Vault `.md` files are kept as the
+    storage of record so the backup is self-contained.
+    """
+    import datetime as _dt
+    import zipfile
+
+    cfg = Config.from_env()
+    cfg.ensure_dirs()
+    out = out_path or f"memo-backup-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    out_p = __import__("pathlib").Path(out).resolve()
+
+    n_md = 0
+    with zipfile.ZipFile(out_p, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1) Memory .md files (relative to vault).
+        if cfg.memory_dir.is_dir():
+            for md in sorted(cfg.memory_dir.rglob("*.md")):
+                rel = md.relative_to(cfg.vault_path)
+                zf.write(md, arcname=f"memory/{rel}")
+                n_md += 1
+        # 2) State DBs (vec + history). Stored at the root.
+        for db in (cfg.db_path, cfg.history_db):
+            if db.is_file():
+                zf.write(db, arcname=f"state/{db.name}")
+        # 3) Manifest with paths so restore can sanity-check.
+        manifest = {
+            "created": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "vault_path": str(cfg.vault_path),
+            "memory_subdir": cfg.memory_subdir,
+            "embedder_model": cfg.embedder_model,
+            "embedder_dims": cfg.embedder_dims,
+            "memo_version": __import__("memo").__version__,
+            "n_md": n_md,
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+    size_kb = out_p.stat().st_size // 1024
+    console.print(f"[green]✓[/green] backup: {out_p} ({n_md} memorias, {size_kb} KB)")
+
+
+@cli.command()
+@click.argument("zip_path", type=click.Path(exists=True))
+@click.option("--reindex", is_flag=True,
+              help="After restoring .md files, run `memo reindex` to "
+                   "rebuild the index from disk (use when restoring without "
+                   "the bundled state DBs, or across embedder model versions).")
+@click.option("--yes", is_flag=True, help="Skip confirmation.")
+def restore(zip_path: str, reindex: bool, yes: bool) -> None:
+    """Restore from a backup zip created by `memo backup`.
+
+    Extracts memory `.md` files into the vault and (optionally) the
+    state DBs. **Will overwrite** matching files in the vault and
+    state dir — confirmation required unless `--yes`.
+    """
+    import zipfile
+    from pathlib import Path as _Path
+
+    cfg = Config.from_env()
+    cfg.ensure_dirs()
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        try:
+            manifest = json.loads(zf.read("manifest.json"))
+        except KeyError:
+            manifest = None
+        if manifest:
+            console.print(
+                f"backup created: {manifest.get('created')}  "
+                f"memorias: {manifest.get('n_md')}  "
+                f"embedder: {manifest.get('embedder_model')}",
+            )
+        if not yes:
+            click.confirm(
+                f"Extract into {cfg.vault_path} + {cfg.state_dir}? "
+                "Existing files will be overwritten.", abort=True,
+            )
+        # Stream entries.
+        n_md = n_db = 0
+        for info in zf.infolist():
+            if info.filename == "manifest.json":
+                continue
+            data = zf.read(info)
+            if info.filename.startswith("memory/"):
+                rel = info.filename[len("memory/"):]
+                dest = cfg.vault_path / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+                n_md += 1
+            elif info.filename.startswith("state/"):
+                rel = info.filename[len("state/"):]
+                dest = cfg.state_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+                n_db += 1
+
+    console.print(
+        f"[green]✓[/green] restored {n_md} memorias + {n_db} state DB(s) "
+        f"into {cfg.vault_path}",
+    )
+
+    if reindex:
+        from memo.memory import Memory
+        mem = Memory(Config.from_env())
+        # Force re-embed in case the bundled DB is from a different
+        # embedder model — rebuilds vectors from .md authoritative state.
+        counts = mem.reindex(force=True)
+        console.print(
+            f"reindex: checked {counts['checked']}  reindexed {counts['reindexed']}  "
+            f"added {counts['added']}  skipped {counts['skipped']}",
+        )
+
+
+@cli.command()
 def stats() -> None:
     """Summary stats — total records, vault path, embedder model."""
     from memo.memory import Memory
