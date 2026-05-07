@@ -54,7 +54,7 @@ from typing import Any
 import frontmatter
 
 from memo.config import Config
-from memo.embedder import MLXEmbedder
+from memo.embedder import MLXEmbedder, assert_valid_embedding
 from memo.graph import VALID_ENTITY_TYPES, GraphStore
 from memo.llm import MLXChat
 from memo.store import VecStore
@@ -382,6 +382,9 @@ class Memory:
         # protects the title from head-truncation when the body is
         # long — see embedder.py for the truncation rationale.
         embedding = self.embedder.embed([_compose_for_embed(title, content)])[0]
+        assert_valid_embedding(
+            embedding, self.cfg.embedder_dims, context=f"save id={record_id[:8]}",
+        )
 
         self.store.upsert(
             id_=record_id,
