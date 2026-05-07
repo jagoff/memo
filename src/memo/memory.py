@@ -47,7 +47,7 @@ import hashlib
 import json
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -239,6 +239,10 @@ class Memory:
         # Knowledge-graph store. Cheap to open (just sqlite); creating
         # eagerly so graph queries never lazy-stall a CLI command.
         self.graph = GraphStore(cfg.graph_db)
+        # Reranker is lazy — first hybrid `search()` triggers the load
+        # if `cfg.reranker_enabled`. Cold load of Qwen3-Reranker-0.6B
+        # is ~1-2s; users who disable it (CI, vec-only mode) pay zero.
+        self._reranker = None  # type: ignore[var-annotated]
 
     # -- save ---------------------------------------------------------------
 
@@ -437,12 +441,16 @@ class Memory:
             rows = self.store.search(emb, limit=limit, type_=type_)
         else:
             # hybrid — fetch a wider candidate set from each side and
-            # fuse with reciprocal rank fusion (RRF).
-            k_each = max(limit * 3, 30)
+            # fuse with reciprocal rank fusion (RRF). When the reranker
+            # is enabled we widen the input pool to `rerank_input_k` so
+            # the cross-encoder has more candidates to discriminate
+            # between; the final `limit` is applied AFTER rerank.
+            input_k = self.cfg.rerank_input_k if self.cfg.reranker_enabled else limit
+            k_each = max(input_k * 2, 30)
             emb = self.embedder.embed_query(query)
             vec_hits = self.store.search(emb, limit=k_each, type_=type_)
             bm_hits = self.store.search_bm25(query, limit=k_each, type_=type_)
-            rows = _rrf_fuse(vec_hits, bm_hits, limit=limit)
+            rows = _rrf_fuse(vec_hits, bm_hits, limit=input_k)
         out: list[MemoryRecord] = []
         for r in rows:
             body = self._read_body(r["path"])
@@ -453,7 +461,57 @@ class Memory:
                     body=body, extra=r.get("extra") or {}, score=r.get("score"),
                 ),
             )
+        # Cross-encoder rerank on hybrid mode only. Skipped for vec/bm25
+        # since those callers explicitly opted out of fusion entirely;
+        # adding rerank to single-mode searches would surprise users
+        # benchmarking the raw bi-encoder or BM25 surfaces.
+        if mode == "hybrid" and self.cfg.reranker_enabled and out:
+            out = self._rerank(query, out, top_n=limit)
         return out
+
+    def _rerank(
+        self, query: str, hits: list[MemoryRecord], *, top_n: int,
+    ) -> list[MemoryRecord]:
+        """Apply the cross-encoder to `hits`, return top-N reordered.
+
+        Score fusion: the final ranking blends the reranker's `P(yes)`
+        with the original RRF position so a single noisy cross-encoder
+        score can't promote a candidate the bi-encoder + BM25 fusion
+        had ranked far down. Position bonus is `1 - i / N` where `i`
+        is the original 0-indexed RRF rank — top-of-RRF gets +1.0,
+        bottom gets ~0.
+
+        Lazy-loads the reranker on first call. Failures are absorbed:
+        if MLX runs into a Metal hiccup mid-rerank we fall back to the
+        original RRF order so search never goes dark on the user.
+        """
+        if self._reranker is None:
+            from memo.reranker import MLXReranker
+            self._reranker = MLXReranker(model_path=self.cfg.reranker_model)
+
+        # Snapshot original RRF positions BEFORE rerank rewrites the
+        # `score` field. Index by id rather than object identity so the
+        # reranker can return new replaced records without losing the
+        # mapping.
+        n = len(hits)
+        rrf_pos: dict[str, int] = {h.id: i for i, h in enumerate(hits)}
+
+        try:
+            reranked = self._reranker.rerank(query, hits, top_n=None)
+        except Exception:
+            # Safety net: degrade to RRF ranking on rerank failure.
+            return hits[:top_n]
+
+        alpha = self.cfg.rerank_fusion_alpha
+        fused: list[MemoryRecord] = []
+        for h in reranked:
+            rerank_score = h.score or 0.0
+            pos = rrf_pos.get(h.id, n - 1)
+            rrf_bonus = 1.0 - (pos / max(n - 1, 1))
+            final = alpha * rerank_score + (1.0 - alpha) * rrf_bonus
+            fused.append(replace(h, score=final))
+        fused.sort(key=lambda h: h.score or 0.0, reverse=True)
+        return fused[:top_n]
 
     # -- ask ----------------------------------------------------------------
 
