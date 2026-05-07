@@ -324,6 +324,7 @@ class Memory:
             body_hash=body_hash,
             embedding=embedding,
             extra=extra,
+            body_text=content,
         )
 
         self.history.log_save(
@@ -339,17 +340,43 @@ class Memory:
 
     def search(
         self, query: str, *, limit: int | None = None, type_: str | None = None,
+        mode: str = "hybrid",
     ) -> list[MemoryRecord]:
-        """Top-k semantic search. Returns records sorted by descending
-        cosine similarity. Each result has `.score` populated."""
+        """Top-k search. Three modes:
+
+        - `vec` (semantic only): query embedded via `embed_query`,
+          ranked by cosine.
+        - `bm25` (keyword only): FTS5 over title+tags+body.
+        - `hybrid` (default): reciprocal rank fusion of vec + bm25
+          candidates. Picks up both diffuse semantic matches AND
+          precise keyword matches (tag names, code snippets, file
+          paths) that the small embedder model misses on its own.
+
+        Each result has `.score` populated. For hybrid, `.score` is the
+        fused RRF score (not directly comparable to single-mode scores
+        but monotonic for ranking).
+        """
         if not query or not query.strip():
             return []
         limit = limit or self.cfg.search_default_limit
-        # Asymmetric retrieval: queries are embedded WITH the instruction
-        # prefix; documents are embedded RAW (in `save()` / `update()`).
-        # See `_QUERY_INSTRUCTION_PREFIX` in `embedder.py` for the why.
-        emb = self.embedder.embed_query(query)
-        rows = self.store.search(emb, limit=limit, type_=type_)
+
+        if mode == "bm25":
+            rows = self.store.search_bm25(query, limit=limit, type_=type_)
+        elif mode == "vec":
+            # Asymmetric retrieval: queries are embedded WITH the
+            # instruction prefix; documents are embedded RAW (in
+            # `save()` / `update()`). See `_QUERY_INSTRUCTION_PREFIX`
+            # in `embedder.py` for the why.
+            emb = self.embedder.embed_query(query)
+            rows = self.store.search(emb, limit=limit, type_=type_)
+        else:
+            # hybrid — fetch a wider candidate set from each side and
+            # fuse with reciprocal rank fusion (RRF).
+            k_each = max(limit * 3, 30)
+            emb = self.embedder.embed_query(query)
+            vec_hits = self.store.search(emb, limit=k_each, type_=type_)
+            bm_hits = self.store.search_bm25(query, limit=k_each, type_=type_)
+            rows = _rrf_fuse(vec_hits, bm_hits, limit=limit)
         out: list[MemoryRecord] = []
         for r in rows:
             body = self._read_body(r["path"])
@@ -485,6 +512,7 @@ class Memory:
                 id_=id_, path=r["path"], title=new_title, type_=new_type,
                 tags=new_tags, created=r["created"], updated=now_iso,
                 body_hash=new_body_hash, embedding=embedding, extra=new_extra,
+                body_text=new_body,
             )
         else:
             self.store.update_meta(
@@ -591,6 +619,7 @@ class Memory:
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
                     created=created, updated=updated, body_hash=new_hash,
                     embedding=emb, extra=extra if extra else None,
+                    body_text=body,
                 )
                 added += 1
                 continue
@@ -601,6 +630,7 @@ class Memory:
                     created=existing["created"], updated=_now_iso(),
                     body_hash=new_hash, embedding=emb,
                     extra=extra if extra else None,
+                    body_text=body,
                 )
                 reindexed += 1
         return {"checked": checked, "reindexed": reindexed, "added": added, "skipped": skipped}
@@ -744,6 +774,41 @@ def _derive_title(content: str) -> str:
         if line:
             return line[:80]
     return ""
+
+
+def _rrf_fuse(
+    vec_hits: list[dict[str, Any]],
+    bm_hits: list[dict[str, Any]],
+    *,
+    limit: int,
+    k: int = 60,
+) -> list[dict[str, Any]]:
+    """Reciprocal rank fusion. Each hit in each list contributes
+    `1 / (k + rank)` to its id's combined score, with `k=60` per the
+    Cormack et al. paper. Records that appear in both lists naturally
+    get a higher fused score.
+
+    Returns the top-`limit` hits by fused score, hydrated with the
+    metadata from whichever source carried the canonical fields
+    (vec wins ties — its hit dict is identical to bm25's).
+    """
+    fused: dict[str, float] = {}
+    canon: dict[str, dict[str, Any]] = {}
+    for rank, hit in enumerate(vec_hits):
+        rid = hit["id"]
+        fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
+        canon.setdefault(rid, hit)
+    for rank, hit in enumerate(bm_hits):
+        rid = hit["id"]
+        fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
+        canon.setdefault(rid, hit)
+    ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    out: list[dict[str, Any]] = []
+    for rid, score in ranked:
+        d = dict(canon[rid])
+        d["score"] = score
+        out.append(d)
+    return out
 
 
 def _compose_for_embed(title: str, body: str) -> str:

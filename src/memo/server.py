@@ -80,11 +80,12 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         limit: int = 10,
         type: str | None = None,
         body_chars: int = 280,
+        mode: str = "hybrid",
     ) -> list[dict[str, Any]]:
-        """Top-k semantic search over the memory index.
+        """Top-k search — hybrid (semantic + keyword) by default.
 
-        Returns records ordered by descending similarity. Each result
-        has a `score` field (0..1, higher = more similar).
+        Returns records ordered by descending fused score. Each result
+        has a `score` field.
 
         Args:
             query: Free-text query. Required, non-empty.
@@ -94,9 +95,13 @@ def build_server(memory: Memory | None = None) -> FastMCP:
                 default keeps results compact for the LLM context — call
                 `memory_get(id)` for the full body. Pass a very large
                 number to disable truncation.
+            mode: `hybrid` (default — RRF fusion of vec + bm25),
+                `vec` (semantic only), or `bm25` (keyword only). Use
+                `bm25` when looking up exact tag/path/code-snippet
+                matches; the small embedder is unreliable on those.
         """
         out: list[dict[str, Any]] = []
-        for r in memory.search(query, limit=limit, type_=type):
+        for r in memory.search(query, limit=limit, type_=type, mode=mode):
             d = r.to_dict()
             body = d.get("body") or ""
             if body_chars >= 0 and len(body) > body_chars:

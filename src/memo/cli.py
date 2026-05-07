@@ -98,13 +98,16 @@ def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
 @click.argument("query")
 @click.option("--limit", default=10, type=int, show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
+@click.option("--mode", default="hybrid",
+              type=click.Choice(["hybrid", "vec", "bm25"]), show_default=True,
+              help="hybrid = RRF fusion of vec + bm25 (default). vec = semantic only. bm25 = keyword only.")
 @click.option("--json", "as_json", is_flag=True)
-def search(query: str, limit: int, type_: str | None, as_json: bool) -> None:
-    """Top-k semantic search."""
+def search(query: str, limit: int, type_: str | None, mode: str, as_json: bool) -> None:
+    """Top-k search — hybrid (semantic + keyword) by default."""
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    hits = mem.search(query, limit=limit, type_=type_)
+    hits = mem.search(query, limit=limit, type_=type_, mode=mode)
     if as_json:
         click.echo(json.dumps([h.to_dict() for h in hits], ensure_ascii=False, indent=2))
         return

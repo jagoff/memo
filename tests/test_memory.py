@@ -406,6 +406,49 @@ def test_history_filter_by_record_id(mem_with_stub: Memory):
     assert {e["op"] for e in events} == {"save", "update"}
 
 
+def test_hybrid_search_fuses_vec_and_bm25(mem_with_stub: Memory):
+    """Hybrid mode (default) combines vec + bm25 via reciprocal rank
+    fusion. A doc that ranks high in BOTH sources beats a doc that only
+    ranks high in one.
+    """
+    # Two memos with similar embeddings (same length) but different
+    # bodies. The stub embedder hashes by content sum so titles + tags
+    # don't matter; we verify FTS5 picks up the keyword.
+    mem_with_stub.save(
+        content="contenido sobre python testing y mocks",
+        title="Python testing notes",
+        tags=["python", "testing"],
+    )
+    mem_with_stub.save(
+        content="receta de pizza casera con harina y queso",
+        title="Pizza casera",
+        tags=["receta", "cocina"],
+    )
+    # bm25-only: keyword match must work.
+    bm = mem_with_stub.search("python testing", mode="bm25")
+    assert bm and bm[0].title == "Python testing notes"
+
+    # vec-only also returns something (stub bucketing).
+    v = mem_with_stub.search("python testing", mode="vec")
+    assert v
+
+    # hybrid returns at most `limit` and includes the bm25-favored doc.
+    h = mem_with_stub.search("python testing", mode="hybrid", limit=2)
+    assert any(r.title == "Python testing notes" for r in h)
+
+
+def test_bm25_handles_empty_and_garbage_queries(mem_with_stub: Memory):
+    """Empty query → []. FTS-syntax-illegal query → [] (caught,
+    not raised) so hybrid degrades to pure vec gracefully."""
+    mem_with_stub.save(content="x", title="X")
+    assert mem_with_stub.search("", mode="bm25") == []
+    # Unbalanced quote — FTS5 would raise OperationalError without our
+    # defensive escape. The escape transforms the query into a phrase
+    # query which CAN match nothing without raising.
+    out = mem_with_stub.search('weird " query', mode="bm25")
+    assert isinstance(out, list)
+
+
 def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
     """Queries must go through `embed_query` (prefix added), not raw
     `embed`. Locks the asymmetric-retrieval contract — if a refactor

@@ -132,6 +132,19 @@ class VecStore:
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0("
                 f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
             )
+            # FTS5 over title + tags + body for the BM25 side of hybrid
+            # search. `unindexed=id` keeps the row id queryable but not
+            # tokenised. `tokenize='unicode61 remove_diacritics 2'`
+            # handles Spanish accents (so a search for "decision" matches
+            # "decisión") and lowercases. Body is stored externally — we
+            # write it on upsert via the `Memory` layer (the store sees
+            # the body string via `body_text` arg in `upsert_text`).
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5("
+                "id UNINDEXED, title, tags, body, "
+                "tokenize='unicode61 remove_diacritics 2'"
+                ")"
+            )
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -162,6 +175,7 @@ class VecStore:
         body_hash: str,
         embedding: list[float],
         extra: dict[str, Any] | None = None,
+        body_text: str = "",
     ) -> None:
         if len(embedding) != self.dims:
             raise ValueError(
@@ -192,6 +206,12 @@ class VecStore:
                 "INSERT INTO vec (id, embedding) VALUES (?, ?)",
                 (id_, json.dumps(embedding)),
             )
+            # Same dance for the FTS index — no upsert support.
+            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+            cx.execute(
+                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                (id_, title, " ".join(tags), body_text),
+            )
 
     def update_meta(
         self,
@@ -215,6 +235,18 @@ class VecStore:
                     title, type_, json.dumps(tags), updated,
                     json.dumps(extra, default=str) if extra is not None else None, id_,
                 ),
+            )
+            # Sync FTS title + tags (body unchanged on metadata-only updates).
+            # FTS5 doesn't support partial UPDATE cleanly; we delete + reinsert
+            # the row preserving the existing body text.
+            existing = cx.execute(
+                "SELECT body FROM fts WHERE id = ?", (id_,),
+            ).fetchone()
+            body_text = existing["body"] if existing else ""
+            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+            cx.execute(
+                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                (id_, title, " ".join(tags), body_text),
             )
             return cur.rowcount > 0
 
@@ -301,7 +333,54 @@ class VecStore:
             cur = cx.execute("DELETE FROM meta WHERE id = ?", (id_,))
             existed = cur.rowcount > 0
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
         return existed
+
+    def search_bm25(
+        self, query: str, limit: int = 10, type_: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """BM25 keyword search over title + tags + body via FTS5.
+
+        Returns rows shaped like `search()` (vec) but with `score` set
+        to `bm25_inverted` (a normalised `1 / (1 + bm25)` so higher =
+        better, mirroring the cosine score convention).
+        """
+        if not query or not query.strip():
+            return []
+        # FTS5 needs an explicit MATCH expression; treat the user's query
+        # as a phrase query escaped with double-quotes to avoid syntax
+        # collisions on hyphens/colons.
+        match_expr = '"' + query.replace('"', '""') + '"'
+        candidate_k = limit * 5 if type_ else limit
+        sql = (
+            "SELECT fts.id AS id, bm25(fts) AS bm25_score, "
+            "       meta.path, meta.title, meta.type, meta.tags, "
+            "       meta.created, meta.updated, meta.body_hash, meta.extra_json "
+            "FROM fts JOIN meta ON meta.id = fts.id "
+            "WHERE fts MATCH ? "
+        )
+        params: list[Any] = [match_expr]
+        if type_:
+            sql += "AND meta.type = ? "
+            params.append(type_)
+        sql += "ORDER BY bm25_score ASC LIMIT ?"
+        params.append(candidate_k)
+        try:
+            rows = self._conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError:
+            # Malformed FTS expression (e.g. unbalanced quotes after
+            # escape). Fall back to no results — Memory.search_hybrid
+            # treats this as "no BM25 signal" and uses pure vec.
+            return []
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = _row_to_dict(r)
+            # bm25() returns a NEGATIVE score for sqlite-fts5 (lower =
+            # better). Invert into [0, 1] roughly: 1/(1 + abs(score)).
+            bm = float(r["bm25_score"])
+            d["score"] = 1.0 / (1.0 + abs(bm)) if bm < 0 else 0.0
+            out.append(d)
+        return out[:limit]
 
     def count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()[0]

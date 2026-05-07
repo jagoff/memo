@@ -89,7 +89,7 @@ Tools surface as `mcp__memo__memory_*` inside the agent.
 Tools exposed:
 
 - `memory_save(content, title?, type?, tags?)` → returns full record
-- `memory_search(query, limit?, type?, body_chars=280)` → top-k by cosine similarity. `body` is truncated to `body_chars` (set to a large number to disable). `body_truncated: true` is added when truncation kicked in.
+- `memory_search(query, limit?, type?, body_chars=280, mode="hybrid")` → top-k search. `mode="hybrid"` (default) fuses vec + bm25 via reciprocal rank fusion. `mode="vec"` is semantic only, `mode="bm25"` is keyword only (FTS5 over title + tags + body, unicode61 + diacritic-stripping for Spanish). `body` truncated to `body_chars`; pass a large number to disable.
 - `memory_list(limit?, type?)` → recent by `updated` desc
 - `memory_get(id)` → one full record. `id` accepts a unique prefix ≥4 chars; on ambiguity returns `{"error": "ambiguous", "matches": [...]}`.
 - `memory_update(id, title?, type?, tags?, content?)` → patches fields, re-embeds only if body changed. Same prefix-ID + ambiguous-shape semantics as `memory_get`.
