@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import sys
+import re
 from typing import Any
 
 import click
@@ -1055,9 +1056,19 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
                 # noise embeddings near the centroid. They match
                 # generic queries with high false-positive rate.
                 # Tunable via MEMO_INGEST_MIN_CHARS env (default 200).
+                #
+                # EXCEPTION — high-signal short notes. Some short notes
+                # exist precisely BECAUSE they pin an atomic fact: a
+                # payment URL, a CBU, a one-off shell command, an API
+                # endpoint. Discarding them by char count loses notes
+                # the user explicitly created as quick-lookup pins. We
+                # detect them via _is_high_signal and bypass the
+                # threshold. The same loud-fail guards still apply
+                # downstream (dim + norm asserts), so adding these
+                # doesn't open the door to malformed embeddings.
                 import os as _os_min  # local import — avoids tedious refactor
                 min_chars = int(_os_min.environ.get("MEMO_INGEST_MIN_CHARS", "200"))
-                if len(body) < min_chars:
+                if len(body) < min_chars and not _is_high_signal(body, fm.metadata.get("tags")):
                     skipped_empty += 1  # bucket together with empty
                     progress.advance(task_id)
                     continue
@@ -1165,6 +1176,62 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
         f"skipped_id={skipped_id} skipped_empty={skipped_empty} "
         f"errors={errors}"
     )
+
+
+_HIGH_SIGNAL_TAGS = frozenset({
+    # Notes pinned to lookup-style facts. Lowercase compare; surface
+    # forms like "Link" / "LINKS" / "Pago" all match. Spanish + English
+    # variants because the vault mixes both.
+    "link", "links", "url", "urls",
+    "dato", "datos", "data",
+    "ref", "refs", "referencia", "referencias", "reference",
+    "comando", "comandos", "command", "commands", "cmd", "snippet",
+    "pago", "pagos", "payment",
+    "credencial", "credenciales", "credential", "credentials",
+    "endpoint", "endpoints", "api",
+    "telefono", "teléfono", "phone", "tel",
+    "cbu", "alias", "iban",
+})
+
+# Match http(s):// URLs — anchored end on whitespace, ), >, ], or "
+# (common markdown wrappers). Permissive enough to catch trailing
+# punctuation cases without dragging adjacent text in.
+_URL_RE = re.compile(r"https?://[^\s)>\]\"]+")
+
+
+def _is_high_signal(body: str, fm_tags: Any) -> bool:
+    """Short notes worth indexing despite being below MIN_CHARS.
+
+    A note is high-signal if any of:
+    - frontmatter tags include `link` / `dato` / `ref` / `comando` /
+      `pago` / `endpoint` / `cbu` / etc.
+    - body contains an http(s) URL
+    - body contains a fenced code block (```)
+
+    The user uses these notes as atomic-fact pins (a payment URL, a
+    CBU, a one-off shell command). Filtering them by char count
+    dropped them from the index even when their title perfectly
+    matched a future query. Real example: `Pagar escuela Grecia.md`
+    with a 67-char body containing the payment URL.
+    """
+    if not body:
+        return False
+
+    raw_tags: list[str] = []
+    if isinstance(fm_tags, list):
+        raw_tags = [str(t).strip().lower() for t in fm_tags if t]
+    elif isinstance(fm_tags, str):
+        raw_tags = [t.strip().lower() for t in fm_tags.split(",") if t.strip()]
+    if any(t in _HIGH_SIGNAL_TAGS for t in raw_tags):
+        return True
+
+    if _URL_RE.search(body):
+        return True
+
+    if "```" in body:
+        return True
+
+    return False
 
 
 def _extract_first_h1(body: str) -> str | None:

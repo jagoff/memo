@@ -662,6 +662,35 @@ def test_save_rejects_wrong_dim_embedding(tmp_cfg: Config, monkeypatch):
         mem.save(content="x", title="t")
 
 
+def test_high_signal_detector_rescues_pin_notes():
+    """Real case from the user's vault: short notes that pin atomic
+    facts (URLs, CBUs, commands) must bypass MIN_CHARS so memo can
+    surface them on title-match queries. Without this, a 67-char
+    "Link de pago escuela Grecia" note never reaches the index."""
+    from memo.cli import _is_high_signal
+
+    real_case = (
+        "# Link de pago escuela Grecia\n\n"
+        "https://sit.educacionadventista.org.ar/"
+    )
+    assert _is_high_signal(real_case, ["grecia", "escuela", "pagos", "links"])
+
+    # URL alone is enough.
+    assert _is_high_signal("https://example.com", None)
+    # Code block alone is enough.
+    assert _is_high_signal("```bash\nls\n```", None)
+    # High-signal tag alone is enough.
+    assert _is_high_signal("CBU 0001234567890", ["dato"])
+
+    # Genuine stub stays filtered.
+    assert not _is_high_signal(
+        "#hipotesis #pendiente\n¿qué iba a hacer mañana?",
+        ["hipotesis", "pendiente"],
+    )
+    # Low-signal short note stays filtered.
+    assert not _is_high_signal("algo corto sin nada especial", ["random"])
+
+
 def test_save_rejects_zero_norm_embedding(tmp_cfg: Config, monkeypatch):
     """Norm ≈ 0 is the signature of a corrupted embedder pass — the
     real Qwen3-Embedding always L2-normalises. A zero or near-zero
