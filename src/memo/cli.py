@@ -1058,7 +1058,11 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
                 composed = f"{title}\n\n{body}"
                 if len(composed) > cfg.max_content_chars:
                     composed = composed[: cfg.max_content_chars]
-                embedding = embedder.embed(composed)
+                # `embedder.embed()` is batched — takes Sequence[str] and
+                # returns list[list[float]]. Passing a bare string iterates
+                # per-char (str IS a Sequence of chars), producing wrong-
+                # dim outputs. Wrap in a list and take [0].
+                embedding = embedder.embed([composed])[0]
 
                 now = datetime.now(timezone.utc).isoformat()
                 # Preserve created if known (existing row), else now.
@@ -1130,8 +1134,9 @@ def prewarm() -> None:
         _sys.exit(0)
     try:
         from memo.embedder import MLXEmbedder
-        emb = MLXEmbedder(Config.from_env())
-        emb.embed("warmup")  # forces MLX load + first forward pass
+        cfg = Config.from_env()
+        emb = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
+        emb.embed(["warmup"])  # batch=1; forces MLX load + first forward pass
     except Exception as exc:  # noqa: BLE001
         if os.environ.get("MEMO_RECALL_DEBUG") == "1":
             print(f"# memo prewarm failed: {exc}", file=_sys.stderr)
