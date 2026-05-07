@@ -54,7 +54,30 @@ import frontmatter
 
 from memo.config import Config
 from memo.embedder import MLXEmbedder
+from memo.llm import MLXChat
 from memo.store import VecStore
+
+
+# JSON-schema prompt for the helper LLM. Kept terse to fit in Qwen3-3B's
+# attention without hurting accuracy. Empirically the model follows the
+# format strictly under temperature=0; the regex fallback in
+# `_derive_metadata` handles the occasional markdown fence wrap.
+_DERIVE_SYSTEM_PROMPT = """You classify a memory note into a structured JSON object.
+
+Output ONLY a JSON object with these keys:
+- "title": short descriptive title, max 80 chars, no date prefix
+- "type": one of "decision", "fact", "bug", "feedback", "preference", "note", "manual"
+- "tags": array of 3-6 lowercase tags (mix of project, domain, technique)
+
+Type rules:
+- "decision": choice with explicit tradeoff or rationale
+- "bug": problem + root cause + fix
+- "fact": discovery, gotcha, learned constraint
+- "preference": user preference or convention to follow
+- "feedback": user feedback on an approach
+- "note": catch-all, use when no other type fits
+
+Output ONLY the JSON, no markdown fences, no commentary, no preamble."""
 
 _VALID_TYPES = frozenset(
     {"decision", "fact", "bug", "feedback", "preference", "note", "manual"}
@@ -145,8 +168,61 @@ class Memory:
         # exceptions internally.
         from memo.history import HistoryStore as _HS
         self.history = _HS(cfg.history_db)
+        # Helper LLM is lazy — only constructed when `auto_derive=True`
+        # is requested. Cold load of Qwen2.5-3B is ~2-3s; users who
+        # don't opt in pay nothing.
+        self._chat: MLXChat | None = None
 
     # -- save ---------------------------------------------------------------
+
+    def _derive_metadata(self, content: str) -> dict[str, Any]:
+        """Use the helper LLM (Qwen2.5-3B-Instruct-4bit) to derive
+        {title, type, tags} from raw content. Returns a dict with
+        whatever keys the model produced (any can be None on parse
+        failure). Caller decides whether to fill missing fields.
+
+        Failure modes are absorbed: a bad LLM response yields an empty
+        dict and the caller falls back to heuristics. We never propagate
+        an LLM error up to a save() call — the save must succeed even
+        if the helper is broken.
+        """
+        if self._chat is None:
+            self._chat = MLXChat()
+        try:
+            out = self._chat.chat(
+                model=self.cfg.helper_model,
+                messages=[
+                    {"role": "system", "content": _DERIVE_SYSTEM_PROMPT},
+                    # Cap input to keep the prompt cheap. The helper only
+                    # needs the gist, not the full body.
+                    {"role": "user", "content": content[:2000]},
+                ],
+                options={"temperature": 0.0, "max_tokens": 256},
+            )
+            text = (out.get("message") or {}).get("content") or ""
+        except Exception:
+            return {}
+        # Tolerate markdown code fences even though the prompt forbids them.
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
+        try:
+            data = json.loads(text)
+        except Exception:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        derived: dict[str, Any] = {}
+        t_title = (data.get("title") or "")
+        if isinstance(t_title, str) and t_title.strip():
+            derived["title"] = t_title.strip()[:80]
+        t_type = data.get("type")
+        if isinstance(t_type, str) and t_type in _VALID_TYPES:
+            derived["type"] = t_type
+        t_tags = data.get("tags") or []
+        if isinstance(t_tags, list):
+            derived["tags"] = _normalise_tags([t for t in t_tags if isinstance(t, str)])
+        return derived
 
     def save(
         self,
@@ -156,6 +232,7 @@ class Memory:
         type_: str = "note",
         tags: list[str] | None = None,
         extra: dict[str, Any] | None = None,
+        auto_derive: bool = False,
     ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
@@ -166,6 +243,12 @@ class Memory:
           neutral value.
         - `tags`: optional list. Lower-cased + de-duplicated.
         - `extra`: arbitrary JSON-serialisable metadata bag.
+        - `auto_derive`: when True, calls the helper LLM
+          (`Qwen2.5-3B-Instruct-4bit`) to fill any missing field
+          (title is None, type_ is "note" with no tags). Adds ~1-2s
+          latency on first call (cold model load) plus ~0.5-1s per save.
+          Use for callers (eg. another agent) that don't carry context
+          to derive metadata themselves.
         """
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
@@ -173,6 +256,22 @@ class Memory:
             raise ValueError(
                 f"`type_={type_!r}` not in valid set {sorted(_VALID_TYPES)}",
             )
+
+        if auto_derive:
+            # Only fire the LLM if at least one field looks "default-y".
+            # User-provided values always win.
+            wants_title = title is None
+            wants_type = type_ == "note"
+            wants_tags = not tags
+            if wants_title or wants_type or wants_tags:
+                derived = self._derive_metadata(content)
+                if wants_title and derived.get("title"):
+                    title = derived["title"]
+                if wants_type and derived.get("type"):
+                    type_ = derived["type"]
+                if wants_tags and derived.get("tags"):
+                    tags = derived["tags"]
+
         title = (title or _derive_title(content)).strip()
         if not title:
             title = "untitled"

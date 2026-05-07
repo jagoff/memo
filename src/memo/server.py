@@ -49,6 +49,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         title: str | None = None,
         type: str = "note",
         tags: list[str] | None = None,
+        auto_derive: bool = False,
     ) -> dict[str, Any]:
         """Persist a memory to the vault + index it.
 
@@ -60,10 +61,17 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             type: One of `decision`, `fact`, `bug`, `feedback`,
                 `preference`, `note`, `manual`. Default `note`.
             tags: Optional list. Lower-cased + de-duplicated.
+            auto_derive: When True and title/type/tags are missing,
+                Qwen2.5-3B helper LLM derives them from the content.
+                Adds ~1-2s latency on cold call. Use when the calling
+                agent doesn't have enough context to derive metadata.
 
         Returns the persisted record (id, path, title, ...).
         """
-        rec = memory.save(content=content, title=title, type_=type, tags=tags)
+        rec = memory.save(
+            content=content, title=title, type_=type, tags=tags,
+            auto_derive=auto_derive,
+        )
         return rec.to_dict()
 
     @server.tool()

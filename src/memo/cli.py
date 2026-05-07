@@ -68,15 +68,20 @@ def cli() -> None:
     default="note", show_default=True,
 )
 @click.option("--tag", "-t", "tags", multiple=True, help="Repeatable. Lower-cased + de-duplicated.")
+@click.option("--auto-derive", is_flag=True,
+              help="When title/type/tags missing, ask Qwen2.5-3B helper to derive them. "
+                   "Adds ~1-2s latency on first call.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a panel.")
-def save(content: str, title: str | None, type_: str, tags: tuple[str, ...], as_json: bool) -> None:
+def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
+         auto_derive: bool, as_json: bool) -> None:
     """Persist CONTENT to the vault + index. Pass `-` to read CONTENT from stdin."""
     from memo.memory import Memory
 
     if content == "-":
         content = sys.stdin.read()
     mem = Memory(Config.from_env())
-    rec = mem.save(content=content, title=title, type_=type_, tags=list(tags))
+    rec = mem.save(content=content, title=title, type_=type_,
+                   tags=list(tags), auto_derive=auto_derive)
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return

@@ -333,6 +333,57 @@ def test_embed_batch_preserves_order_and_handles_empty(tmp_cfg: Config, monkeypa
     assert seen == [1]  # single-input save
 
 
+def test_auto_derive_fills_missing_fields(mem_with_stub: Memory, monkeypatch):
+    """auto_derive=True asks the helper LLM to fill title/type/tags
+    when caller didn't provide them. Caller-provided values must win."""
+    seen_messages: list[list[dict]] = []
+
+    def _stub_chat(self, model, messages, options=None):
+        seen_messages.append(messages)
+        return {"message": {"content":
+            '{"title": "Derived Title", "type": "decision", '
+            '"tags": ["alpha", "beta", "gamma"]}'}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    rec = mem_with_stub.save(content="long body about something", auto_derive=True)
+    assert rec.title == "Derived Title"
+    assert rec.type == "decision"
+    assert rec.tags == ["alpha", "beta", "gamma"]
+    # The helper saw a system + user message.
+    assert len(seen_messages) == 1
+    assert seen_messages[0][0]["role"] == "system"
+    assert "long body about something" in seen_messages[0][1]["content"]
+
+
+def test_auto_derive_does_not_override_caller(mem_with_stub: Memory, monkeypatch):
+    """When the caller provides title/type/tags, auto_derive must NOT
+    overwrite them — even if the LLM disagrees."""
+    def _stub_chat(self, model, messages, options=None):
+        return {"message": {"content":
+            '{"title": "LLM Title", "type": "bug", "tags": ["llm"]}'}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    rec = mem_with_stub.save(
+        content="x", title="Mine", type_="fact", tags=["mine"], auto_derive=True,
+    )
+    assert rec.title == "Mine"
+    assert rec.type == "fact"
+    assert rec.tags == ["mine"]
+
+
+def test_auto_derive_tolerates_bad_llm_output(mem_with_stub: Memory, monkeypatch):
+    """Garbage from the helper LLM falls back to heuristic title and
+    default type/tags. Save must not raise."""
+    def _stub_chat(self, model, messages, options=None):
+        return {"message": {"content": "this is not json at all sorry"}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    rec = mem_with_stub.save(content="primer línea\n\nmás contenido", auto_derive=True)
+    assert rec.title == "primer línea"  # heuristic fallback
+    assert rec.type == "note"
+    assert rec.tags == []
+
+
 def test_history_logs_save_update_delete(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="x", title="A", type_="note")
     mem_with_stub.update(rec.id, title="B")
