@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-05-07
+
+Patch release — bug fixes for the v0.3.0 ingest pipeline.
+
+### Added
+
+- `memo ingest <vault-path>` CLI command — bulk-ingest .md files from any
+  Obsidian vault into the memo index. Synthesizes ids from path hash so
+  user .md files are not modified. Idempotent. See README "Ambient memory"
+  section for usage.
+- `MEMO_INGEST_MIN_CHARS` env var (default 200) — skip notes shorter than
+  this threshold. Tag-only stubs (`#tagA #tagB` + 1-line question)
+  produce noisy embeddings near the corpus centroid that match generic
+  queries with high false-positive rate. Filtering them improves recall
+  precision on queries with proper nouns.
+
+### Fixed
+
+- **Embedder API misuse** in `recall-hook`, `prewarm`, and `ingest`:
+  `MLXEmbedder.embed()` is batched (signature `Sequence[str] →
+  list[list[float]]`); passing a bare string iterated per-char,
+  producing variable-dim outputs (135, 512, 2465...) instead of 1024.
+  Cascade Metal GPU error after several mismatches. Fix: wrap input
+  in `[composed]` and take `[0]`.
+- **Plugin install path** — bumping from 0.3.0 to 0.3.1 so users on the
+  Claude Code plugin marketplace pick up these fixes via `/plugin update`.
+
 ## [0.3.0] - 2026-05-07
 
 **Game-changer release**: memo turns into an *ambient* context layer.
