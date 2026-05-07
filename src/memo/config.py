@@ -84,6 +84,52 @@ class Config(BaseModel):
         ),
     )
 
+    # ── Reranker ─────────────────────────────────────────────────────────
+    # Cross-encoder applied AFTER hybrid retrieval when enabled. Lifts
+    # MRR materially on diffuse queries at the cost of one forward pass
+    # per candidate. Same Qwen3 family as the embedder so no extra
+    # tokenizer/architecture surface is added.
+    reranker_enabled: bool = Field(
+        default=True,
+        description=(
+            "When True, hybrid-mode searches fetch a wider candidate "
+            "set and rerank via the cross-encoder. Disable to skip the "
+            "extra forward pass — useful on Linux/CI or for benchmarks."
+        ),
+    )
+    reranker_model: str = Field(
+        default="mku64/Qwen3-Reranker-0.6B-mlx-8Bit",
+        description=(
+            "HF id of the MLX-quantised reranker. Apache 2.0 by default "
+            "(Qwen3-Reranker family). For higher recall at higher cost: "
+            "`vserifsaglam/Qwen3-Reranker-4B-4bit-MLX`."
+        ),
+    )
+    rerank_input_k: int = Field(
+        default=30,
+        ge=1,
+        le=200,
+        description=(
+            "How many hybrid-fusion candidates to feed the reranker. "
+            "Larger = better recall but linearly more inference time. "
+            "30 fits the 5s recall-hook budget on M3 with the 0.6B "
+            "reranker (~600ms warm)."
+        ),
+    )
+    rerank_fusion_alpha: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Weight given to the reranker score in the final ranking. "
+            "Final score = alpha * rerank + (1-alpha) * rrf_position_bonus. "
+            "1.0 = pure rerank (vulnerable to cross-encoder false "
+            "positives that the bi-encoder rejected). 0.0 = pure RRF "
+            "(skips rerank signal entirely). 0.7 lets the reranker "
+            "lead while keeping RRF as a structural sanity check."
+        ),
+    )
+
     # ── Limits ───────────────────────────────────────────────────────────
     max_content_chars: int = Field(
         default=64_000,
@@ -145,6 +191,10 @@ class Config(BaseModel):
             "MEMO_EMBEDDER_DIMS": "embedder_dims",
             "MEMO_MAX_CONTENT_CHARS": "max_content_chars",
             "MEMO_SEARCH_DEFAULT_LIMIT": "search_default_limit",
+            "MEMO_RERANKER_ENABLED": "reranker_enabled",
+            "MEMO_RERANKER_MODEL": "reranker_model",
+            "MEMO_RERANK_INPUT_K": "rerank_input_k",
+            "MEMO_RERANK_FUSION_ALPHA": "rerank_fusion_alpha",
         }
         kwargs: dict = {}
         for env_key, field in env_to_field.items():
