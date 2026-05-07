@@ -943,7 +943,14 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
     cfg.ensure_dirs()
 
     vault = Path(vault_path).resolve()
-    label = name or vault.name
+    # When ingesting the configured vault, paths are stored relative to
+    # `cfg.vault_path` directly so `_read_body` can resolve them via
+    # `cfg.vault_path / rel_path`. Prefixing with `vault.name` here would
+    # double the basename ("Notes/Notes/foo.md") because `cfg.vault_path`
+    # already ends in that name. For external vaults we keep the label
+    # prefix as a multi-vault discriminator (read path support: TBD).
+    is_principal_vault = vault == cfg.vault_path
+    label = "" if is_principal_vault else (name or vault.name)
 
     # Default exclusions — Obsidian dotdirs + memo's own memory subdir
     # to avoid double-indexing the curated memorias managed by reindex.
@@ -996,7 +1003,7 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
         for path in md_files:
             try:
                 rel = path.relative_to(vault)
-                store_path = f"{label}/{rel}"
+                store_path = f"{label}/{rel}" if label else str(rel)
 
                 raw = path.read_text(encoding="utf-8", errors="replace")
 
@@ -1149,6 +1156,13 @@ def prewarm() -> None:
         cfg = Config.from_env()
         emb = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
         emb.embed(["warmup"])  # batch=1; forces MLX load + first forward pass
+        # Reranker prewarm — same rationale as the embedder. Skipped
+        # when disabled to keep the SessionStart hook below its
+        # 30s budget on machines that opted out of rerank entirely.
+        if cfg.reranker_enabled:
+            from memo.reranker import MLXReranker
+            r = MLXReranker(model_path=cfg.reranker_model)
+            r.warmup()
     except Exception as exc:  # noqa: BLE001
         if os.environ.get("MEMO_RECALL_DEBUG") == "1":
             print(f"# memo prewarm failed: {exc}", file=_sys.stderr)
