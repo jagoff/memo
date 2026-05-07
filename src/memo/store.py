@@ -122,9 +122,16 @@ class VecStore:
             self._conn.executescript(_SCHEMA_DDL)
             # `vec0` is a virtual table; we can't include it in the
             # static DDL string because the dimensionality is dynamic.
+            # `distance_metric=cosine` makes `vec.distance` a true cosine
+            # distance (1 - dot, range [0, 2]). Without it, vec0 defaults
+            # to L2 distance — the ranking is monotonic for unit vectors
+            # but the absolute values are wrong: an L2 distance of 0.80
+            # corresponds to a cosine of 0.68, so `score = 1 - distance`
+            # ends up reporting 0.20 instead of 0.68. Verified empirically
+            # 2026-05-07.
             self._conn.execute(
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0("
-                f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}])"
+                f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
             )
 
     @contextmanager

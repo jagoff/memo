@@ -38,6 +38,24 @@ from typing import Any, Sequence
 # would raise; we defer the import until `_ensure_loaded()`.
 
 
+# Qwen3-Embedding is instruction-tuned for **asymmetric retrieval**:
+# queries get a `Instruct: ...\nQuery: ...` prefix; documents go raw.
+# Without the prefix, queries embed in a different region of the space
+# and cosine collapses toward 0 (or even negative). Verified empirically
+# 2026-05-07: 223-doc corpus where queries with literal title overlap
+# (e.g. "informe terapia ocupacional astor" against the Astor doc)
+# returned scores in [-0.15, 0.0]; with the prefix, the same query
+# rises above 0.5.
+#
+# The task string is generic enough to work across the personal-memory
+# domain (notes, decisions, bug logs, preferences). Tuning per-task
+# would require classifying the query first — out of scope for v0.
+_QUERY_INSTRUCTION_PREFIX = (
+    "Instruct: Given a search query, retrieve relevant memory entries "
+    "from the user's notes.\nQuery: "
+)
+
+
 class MLXEmbedder:
     """In-process MLX embedder. Drop-in for any code that needs a
     `embed(list[str]) -> list[list[float]]` callable.
@@ -121,10 +139,22 @@ class MLXEmbedder:
                 out.append([0.0] * self.expected_dims)
                 continue
             ids = self._tokenizer.encode(text, add_special_tokens=False)
-            if len(ids) > self.max_seq_len:
-                # Tail-truncation — last tokens carry the EOS-like
-                # signal that Qwen3-Embedding was fine-tuned to read.
-                ids = ids[-self.max_seq_len :]
+            # Head-truncate for two reasons:
+            # 1. Memory entries put their high-signal content (title-like
+            #    H1, frontmatter-derived header) at the TOP. Tail-truncation
+            #    drops it for any body >512 tokens — verified 2026-05-07
+            #    where the Astor TO report (1409 tokens) lost its title
+            #    and recall against a literal-title query collapsed.
+            # 2. Qwen3-Embedding was fine-tuned to pool on the EOS hidden
+            #    state. `tokenizer.encode(...)` does NOT auto-append EOS
+            #    (Qwen tokenizers leave that to the chat template), so we
+            #    add it manually as the LAST token after truncation.
+            eos = self._tokenizer.eos_token_id
+            cap = self.max_seq_len - (1 if eos is not None else 0)
+            if len(ids) > cap:
+                ids = ids[:cap]
+            if eos is not None:
+                ids = ids + [eos]
             arr = mx.array([ids])
             # `model.model` is the transformer body without the LM head
             # — that's what produces the hidden states we pool. Calling
@@ -145,6 +175,19 @@ class MLXEmbedder:
             emb = pooled / norm
             out.append([float(x) for x in emb[0].tolist()])
         return out
+
+    def embed_query(self, query: str) -> list[float]:
+        """Embed a search query. Prepends the instruction template that
+        Qwen3-Embedding's asymmetric-retrieval training expects, then
+        delegates to `embed()`. Use this for the QUERY side of search;
+        use `embed()` raw for the DOCUMENT side.
+
+        Mixing them up (e.g. embedding queries raw against doc-prefixed
+        vectors, or vice versa) collapses cosine similarity toward zero
+        — the model places prefixed and raw inputs in different regions
+        of the space.
+        """
+        return self.embed([_QUERY_INSTRUCTION_PREFIX + (query or "")])[0]
 
     def unload(self) -> None:
         """Drop the model + tokenizer; clear the MLX cache. Idempotent."""

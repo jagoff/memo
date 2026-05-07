@@ -202,10 +202,13 @@ class Memory:
         )
         abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
-        # Embed the body (not the title; titles are short and bias the
-        # vector toward filename-style matches). Caller can pass a
-        # `title:`-prefixed content if they want title-included embed.
-        embedding = self.embedder.embed([content])[0]
+        # Embed `title + body`: the title carries the highest-density
+        # signal for retrieval ("Astor — Informe TO" is a much better
+        # match for a query like "informe terapia ocupacional astor"
+        # than the body's clinical paragraphs alone). Prepending also
+        # protects the title from head-truncation when the body is
+        # long — see embedder.py for the truncation rationale.
+        embedding = self.embedder.embed([_compose_for_embed(title, content)])[0]
 
         self.store.upsert(
             id_=record_id,
@@ -235,7 +238,10 @@ class Memory:
         if not query or not query.strip():
             return []
         limit = limit or self.cfg.search_default_limit
-        emb = self.embedder.embed([query])[0]
+        # Asymmetric retrieval: queries are embedded WITH the instruction
+        # prefix; documents are embedded RAW (in `save()` / `update()`).
+        # See `_QUERY_INSTRUCTION_PREFIX` in `embedder.py` for the why.
+        emb = self.embedder.embed_query(query)
         rows = self.store.search(emb, limit=limit, type_=type_)
         out: list[MemoryRecord] = []
         for r in rows:
@@ -347,6 +353,7 @@ class Memory:
         new_body = new_body[: self.cfg.max_content_size]
         new_body_hash = _sha256_short(new_body)
         body_changed = new_body_hash != r["body_hash"]
+        title_changed = new_title != r["title"]
 
         abs_path = self.cfg.vault_path / r["path"]
         abs_path.parent.mkdir(parents=True, exist_ok=True)
@@ -362,11 +369,11 @@ class Memory:
         )
         abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
-        # Re-embed only when the body actually changed; otherwise reuse
-        # the existing vector and just update meta. Saves a forward pass
-        # for the common "rename / retag" case.
-        if body_changed:
-            embedding = self.embedder.embed([new_body])[0]
+        # Re-embed when the body OR title changed — both are part of the
+        # embed input now (see `_compose_for_embed`). Pure retag/type
+        # changes still skip the embedder.
+        if body_changed or title_changed:
+            embedding = self.embedder.embed([_compose_for_embed(new_title, new_body)])[0]
             self.store.upsert(
                 id_=id_, path=r["path"], title=new_title, type_=new_type,
                 tags=new_tags, created=r["created"], updated=now_iso,
@@ -447,7 +454,7 @@ class Memory:
             extra = post.get("extra") or {}
 
             if existing is None:
-                emb = self.embedder.embed([body])[0]
+                emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
                 self.store.upsert(
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
                     created=created, updated=updated, body_hash=new_hash,
@@ -456,7 +463,7 @@ class Memory:
                 added += 1
                 continue
             if existing["body_hash"] != new_hash:
-                emb = self.embedder.embed([body])[0]
+                emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
                 self.store.upsert(
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
                     created=existing["created"], updated=_now_iso(),
@@ -556,6 +563,25 @@ def _derive_title(content: str) -> str:
         if line:
             return line[:80]
     return ""
+
+
+def _compose_for_embed(title: str, body: str) -> str:
+    """Combine title + body into the string passed to the embedder.
+
+    Title-first because: (a) titles carry the highest-density retrieval
+    signal in this corpus (memos with terse titles + long bodies dominate),
+    (b) head-truncation guarantees the title survives even when body is
+    long, (c) avoiding double-prefix when title already appears as an H1
+    in the body — we do NOT dedup, the redundancy doesn't hurt the
+    embedder and the simpler code is worth the few wasted tokens.
+    """
+    title = (title or "").strip()
+    body = (body or "").strip()
+    if not title:
+        return body
+    if not body:
+        return title
+    return f"{title}\n\n{body}"
 
 
 def _normalise_tags(tags: list[str]) -> list[str]:

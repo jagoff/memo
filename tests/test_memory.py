@@ -114,9 +114,10 @@ def test_title_derived_from_first_line(mem_with_stub: Memory):
     assert rec.title == "Encabezado"
 
 
-def test_update_patches_metadata_without_reembed(mem_with_stub: Memory, monkeypatch):
+def test_update_skips_reembed_for_pure_retag(mem_with_stub: Memory, monkeypatch):
     rec = mem_with_stub.save(content="cuerpo", title="orig", type_="note", tags=["x"])
-    # Track embed calls — patching metadata only should not re-embed.
+    # Track embed calls — pure retag/type changes should NOT re-embed.
+    # Title and body changes DO re-embed (both feed into the vector).
     calls: list[int] = []
     orig = mem_with_stub.embedder.embed
 
@@ -125,13 +126,30 @@ def test_update_patches_metadata_without_reembed(mem_with_stub: Memory, monkeypa
         return orig(inputs)
 
     monkeypatch.setattr(mem_with_stub.embedder, "embed", _spy)
-    updated = mem_with_stub.update(rec.id, title="new", type_="decision", tags=["y", "Z"])
+    updated = mem_with_stub.update(rec.id, type_="decision", tags=["y", "Z"])
     assert updated is not None
-    assert updated.title == "new"
     assert updated.type == "decision"
     assert updated.tags == ["y", "z"]
+    assert updated.title == "orig"  # unchanged
     assert updated.body == "cuerpo"  # unchanged
     assert calls == []  # no re-embed
+
+
+def test_update_reembeds_when_title_changes(mem_with_stub: Memory, monkeypatch):
+    """Title is part of the embed input, so changing it must re-embed."""
+    rec = mem_with_stub.save(content="cuerpo", title="orig", type_="note")
+    calls: list[int] = []
+    orig = mem_with_stub.embedder.embed
+
+    def _spy(inputs):
+        calls.append(len(inputs))
+        return orig(inputs)
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _spy)
+    updated = mem_with_stub.update(rec.id, title="renamed")
+    assert updated is not None
+    assert updated.title == "renamed"
+    assert calls == [1]  # re-embed because title is part of vector input
 
 
 def test_update_reembeds_when_content_changes(mem_with_stub: Memory, monkeypatch):
@@ -254,6 +272,33 @@ def test_update_and_delete_accept_prefix(mem_with_stub: Memory):
     assert updated is not None
     assert updated.title == "X2"
     assert mem_with_stub.delete(short) is True
+
+
+def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
+    """Queries must go through `embed_query` (prefix added), not raw
+    `embed`. Locks the asymmetric-retrieval contract — if a refactor
+    bypasses `embed_query`, recall on the real model collapses."""
+    seen_inputs: list[str] = []
+
+    def _spy(self, inputs):
+        seen_inputs.extend(inputs)
+        return [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _spy)
+    cfg = Config(
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+    )
+    mem = Memory(cfg)
+    mem.save(content="cuerpo del doc", title="X")
+    seen_inputs.clear()
+    mem.search("buscame algo", limit=3)
+    assert seen_inputs, "search did not call embed"
+    assert seen_inputs[0].startswith("Instruct:"), (
+        f"query was not prefixed: {seen_inputs[0]!r}"
+    )
+    assert "buscame algo" in seen_inputs[0]
 
 
 def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
