@@ -129,6 +129,36 @@ def search(query: str, limit: int, type_: str | None, mode: str, as_json: bool) 
     console.print(tbl)
 
 
+@cli.command()
+@click.argument("question")
+@click.option("--k", default=5, type=int, show_default=True,
+              help="Top-K memorias to feed the LLM as context.")
+@click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
+@click.option("--json", "as_json", is_flag=True)
+def ask(question: str, k: int, type_: str | None, as_json: bool) -> None:
+    """RAG over the memory archive — synthesises a prose answer with
+    inline `[id]` citations using MLXChat 7B over the top-K hybrid hits.
+    """
+    from memo.memory import Memory
+
+    mem = Memory(Config.from_env())
+    out = mem.ask(question, k=k, type_=type_)
+    if as_json:
+        click.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    console.print(Panel.fit(
+        out["answer"] or "[dim](sin respuesta)[/dim]",
+        title=f"❓ {question[:60]}", border_style="cyan",
+    ))
+    if out["sources"]:
+        console.print("[dim]fuentes:[/dim]")
+        for s in out["sources"]:
+            console.print(
+                f"  [dim][{s['id_short']}][/dim] {s['title'][:60]}  "
+                f"[dim](score {s['score']:.3f})[/dim]"
+            )
+
+
 @cli.command(name="list")
 @click.option("--limit", default=20, type=int, show_default=True)
 @click.option("--type", "type_", default=None)

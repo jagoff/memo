@@ -406,6 +406,40 @@ def test_history_filter_by_record_id(mem_with_stub: Memory):
     assert {e["op"] for e in events} == {"save", "update"}
 
 
+def test_ask_synthesises_with_citations(mem_with_stub: Memory, monkeypatch):
+    """ask() builds a prompt with snippet+id labels, calls MLXChat,
+    returns the answer + the sources it fed to the model."""
+    rec_a = mem_with_stub.save(content="alpha body", title="Alpha")
+    rec_b = mem_with_stub.save(content="beta body", title="Beta")
+
+    captured: dict = {}
+
+    def _stub_chat(self, model, messages, options=None):
+        captured["model"] = model
+        captured["messages"] = messages
+        # Reference one of the ids so the test asserts the LLM sees them.
+        return {"message": {"content":
+            f"Respuesta corta sobre alpha [{rec_a.id[:8]}]."}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    out = mem_with_stub.ask("¿qué hay sobre alpha?", k=2)
+
+    assert "alpha" in out["answer"].lower() or rec_a.id[:8] in out["answer"]
+    assert len(out["sources"]) >= 1
+    # Prompt sent to the model must include the [id] labels of retrieved hits.
+    user_msg = captured["messages"][-1]["content"]
+    assert f"[{rec_a.id[:8]}]" in user_msg or f"[{rec_b.id[:8]}]" in user_msg
+    # 7B chat tier (not the helper 3B used for auto_derive).
+    assert "7B" in captured["model"] or "Qwen2.5" in captured["model"]
+
+
+def test_ask_returns_no_answer_when_no_hits(mem_with_stub: Memory):
+    """Empty corpus → graceful 'not found' answer (no hallucination)."""
+    out = mem_with_stub.ask("pregunta sin contexto")
+    assert "no encuentro" in out["answer"].lower()
+    assert out["sources"] == []
+
+
 def test_hybrid_search_fuses_vec_and_bm25(mem_with_stub: Memory):
     """Hybrid mode (default) combines vec + bm25 via reciprocal rank
     fusion. A doc that ranks high in BOTH sources beats a doc that only

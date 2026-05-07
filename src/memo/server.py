@@ -111,6 +111,30 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         return out
 
     @server.tool()
+    def memory_ask(
+        question: str,
+        k: int = 5,
+        type: str | None = None,
+        snippet_chars: int = 800,
+    ) -> dict[str, Any]:
+        """RAG over the memory archive.
+
+        Pipeline: hybrid search top-`k` → MLXChat 7B with citation prompt
+        → returns `{question, answer, sources}`. The answer cites the
+        memorias it used inline as `[id-prefix]`. If no relevant memorias
+        exist, the answer literally says so (no hallucination).
+
+        Args:
+            question: Natural-language question.
+            k: How many memorias to feed the LLM as context. Default 5.
+            type: Optional filter to one record type before retrieval.
+            snippet_chars: Cap each memoria's body in the prompt
+                (default 800). Lower = cheaper + smaller context window
+                used; higher = more grounding for long bodies.
+        """
+        return memory.ask(question, k=k, type_=type, snippet_chars=snippet_chars)
+
+    @server.tool()
     def memory_list(
         limit: int = 20, type: str | None = None,
     ) -> list[dict[str, Any]]:

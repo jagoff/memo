@@ -63,6 +63,25 @@ from memo.store import VecStore
 # attention without hurting accuracy. Empirically the model follows the
 # format strictly under temperature=0; the regex fallback in
 # `_derive_metadata` handles the occasional markdown fence wrap.
+_ASK_SYSTEM_PROMPT = """You answer questions over the user's personal memory archive.
+
+You receive a list of relevant memory snippets (each with an `[id]` label
+and metadata) and a question. Synthesise a concise answer in the same
+language as the question (Spanish rioplatense if the question is in
+Spanish). Rules:
+
+- Cite sources INLINE with `[id-prefix]` after each claim, e.g.
+  "Decidí migrar a MLX [d61fe730] para reducir dependencias [4e0b2e6]".
+- Use only information from the provided snippets. If the answer is not
+  present, say "no encuentro la respuesta en las memorias guardadas"
+  and stop.
+- Stay terse. 2-5 sentences unless the question explicitly asks for a
+  long form. Do not pad with disclaimers, restatements, or apologies.
+- No bulleting unless the question asks for a list; prose preferred.
+- Do not invent IDs. Only cite `[id-prefix]` values that appear in the
+  snippets you were given."""
+
+
 _DERIVE_SYSTEM_PROMPT = """You classify a memory note into a structured JSON object.
 
 Output ONLY a JSON object with these keys:
@@ -388,6 +407,94 @@ class Memory:
                 ),
             )
         return out
+
+    # -- ask ----------------------------------------------------------------
+
+    def ask(
+        self, question: str, *, k: int = 5, type_: str | None = None,
+        snippet_chars: int = 800,
+    ) -> dict[str, Any]:
+        """Synthesised Q&A over the memory archive (RAG).
+
+        Pipeline: hybrid search top-`k` → format snippets with `[id]`
+        citations → MLXChat 7B (`MEMO_LLM_MODEL`) generates a prose
+        answer with inline citations. Returns:
+
+            {
+                "question": str,
+                "answer": str,            # may say "no encuentro ..."
+                "sources": [               # the snippets the LLM saw
+                    {id, title, type, score, snippet}, ...
+                ],
+            }
+
+        Latency: ~3-8s on a cold 7B load + ~1-2s decode for short
+        answers. Streaming is not exposed yet — caller blocks. Use
+        `search` if you only need IDs to scan manually.
+        """
+        if not question or not question.strip():
+            return {"question": question, "answer": "", "sources": []}
+        hits = self.search(question, limit=k, type_=type_, mode="hybrid")
+        if not hits:
+            return {
+                "question": question,
+                "answer": "no encuentro la respuesta en las memorias guardadas",
+                "sources": [],
+            }
+
+        # Build the user prompt: snippets with `[id-prefix]` labels.
+        # Truncate each body to `snippet_chars` to keep the prompt cheap;
+        # the full body is in the file if the LLM ever needs to drill in.
+        snippet_lines = []
+        sources: list[dict[str, Any]] = []
+        for h in hits:
+            id_short = h.id[:8]
+            snippet = (h.body or "")[:snippet_chars]
+            if len(h.body or "") > snippet_chars:
+                snippet = snippet.rstrip() + "…"
+            tags = ", ".join(h.tags) or "—"
+            snippet_lines.append(
+                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}\n"
+                f"{snippet}\n"
+            )
+            sources.append({
+                "id": h.id,
+                "id_short": id_short,
+                "title": h.title,
+                "type": h.type,
+                "score": h.score,
+                "snippet": snippet,
+            })
+
+        user_msg = (
+            f"Pregunta del user:\n{question}\n\n"
+            f"Memorias relevantes (top {len(hits)} por hybrid search):\n\n"
+            + "\n---\n".join(snippet_lines)
+        )
+
+        # Lazy-construct the chat client (same instance used by auto_derive).
+        if self._chat is None:
+            self._chat = MLXChat()
+        try:
+            out = self._chat.chat(
+                model=self.cfg.llm_model,
+                messages=[
+                    {"role": "system", "content": _ASK_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+                # Higher max_tokens than auto_derive — answers can run a
+                # paragraph or two.
+                options={"temperature": 0.0, "max_tokens": 768},
+            )
+            answer = ((out.get("message") or {}).get("content") or "").strip()
+        except Exception as exc:
+            answer = f"(error consultando el modelo: {type(exc).__name__})"
+
+        return {
+            "question": question,
+            "answer": answer,
+            "sources": sources,
+        }
 
     # -- list ---------------------------------------------------------------
 
