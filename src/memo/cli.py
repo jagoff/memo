@@ -906,6 +906,211 @@ def recall_hook() -> None:
     _sys.exit(0)
 
 
+@cli.command(name="ingest")
+@click.argument("vault_path", type=click.Path(exists=True, file_okay=False, resolve_path=True))
+@click.option("--name", default=None, help="Vault label (default: dirname). Used as path prefix in store.")
+@click.option("--force", is_flag=True, help="Re-embed even if body unchanged.")
+@click.option("--dry-run", is_flag=True, help="Walk + report counts, don't embed/write.")
+@click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/04-Archive/99-obsidian-system/")
+def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclude: tuple[str, ...]) -> None:
+    """Bulk-ingest all .md from a vault into the memo index.
+
+    Walks `<vault_path>/**/*.md`, embeds each, stores under path
+    `<name>/<rel-path>`. Files with `id:` in frontmatter are skipped
+    (those are curated memorias managed by `memo reindex`).
+
+    The user's .md files are NOT modified — we synthesize ids from
+    path hash and write only to `~/.local/share/memo/memvec.db`.
+
+    Idempotent: re-running skips files whose body_hash matches the
+    indexed value. Use --force to re-embed everything (e.g. after
+    embedder model swap).
+
+    Default exclusions skip Obsidian system dirs (.obsidian/, .trash/,
+    etc.) and memo's own memory subdir (`04-Archive/99-obsidian-system/`)
+    so we don't double-index curated memorias.
+    """
+    import hashlib
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    import frontmatter
+
+    from memo.embedder import MLXEmbedder
+    from memo.store import VecStore
+
+    cfg = Config.from_env()
+    cfg.ensure_dirs()
+
+    vault = Path(vault_path).resolve()
+    label = name or vault.name
+
+    # Default exclusions — Obsidian dotdirs + memo's own memory subdir
+    # to avoid double-indexing the curated memorias managed by reindex.
+    default_excludes = (
+        ".obsidian", ".git", ".trash", ".makemd", ".smart-env", ".space",
+        ".claude", ".devin", "04-Archive/99-obsidian-system",
+    )
+    exclude_patterns = list(exclude) + list(default_excludes)
+
+    def _excluded(rel: Path) -> bool:
+        s = str(rel)
+        return any(s.startswith(pat) or f"/{pat}/" in f"/{s}/" for pat in exclude_patterns)
+
+    md_files = []
+    for p in vault.rglob("*.md"):
+        rel = p.relative_to(vault)
+        if _excluded(rel):
+            continue
+        md_files.append(p)
+    md_files.sort()
+
+    console.print(f"[cyan]found[/cyan] {len(md_files)} .md in {label} (after exclusions)")
+
+    if dry_run:
+        console.print("[dim](dry-run — exiting before embed/write)[/dim]")
+        # Show first few + a few from deep dirs
+        for p in md_files[:5]:
+            console.print(f"  · {p.relative_to(vault)}")
+        if len(md_files) > 5:
+            console.print(f"  · …and {len(md_files) - 5} more")
+        return
+
+    # Lazy-load heavy stuff after the dry-run gate
+    embedder = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
+    store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
+
+    skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0
+
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeRemainingColumn(),
+    ) as progress:
+        task_id = progress.add_task(f"embed {label}", total=len(md_files))
+
+        for path in md_files:
+            try:
+                rel = path.relative_to(vault)
+                store_path = f"{label}/{rel}"
+
+                raw = path.read_text(encoding="utf-8", errors="replace")
+
+                # Parse frontmatter (tolerant — files without frontmatter
+                # treated as plain markdown).
+                try:
+                    fm = frontmatter.loads(raw)
+                except Exception:
+                    fm = frontmatter.Post(raw)
+
+                # Skip curated memorias (have explicit id) — those are
+                # managed by `memo reindex` from memory_dir.
+                if fm.metadata.get("id"):
+                    skipped_id += 1
+                    progress.advance(task_id)
+                    continue
+
+                body = fm.content.strip()
+                if not body:
+                    skipped_empty += 1
+                    progress.advance(task_id)
+                    continue
+
+                # Synthesize stable id from path. sha256[:32] = 128-bit,
+                # collision risk negligible for any realistic vault size.
+                id_ = hashlib.sha256(store_path.encode("utf-8")).hexdigest()[:32]
+
+                # Title: explicit frontmatter > first H1 > filename stem.
+                title = (
+                    fm.metadata.get("title")
+                    or _extract_first_h1(body)
+                    or path.stem.replace("-", " ").replace("_", " ")
+                )
+                title = str(title).strip() or path.stem
+
+                # Tags: frontmatter tags + directory parts (skipping
+                # numeric prefixes used in PARA folders like "01-Projects").
+                tags: list[str] = []
+                fm_tags = fm.metadata.get("tags") or []
+                if isinstance(fm_tags, str):
+                    fm_tags = [t.strip() for t in fm_tags.split(",")]
+                for t in fm_tags:
+                    if t and str(t) not in tags:
+                        tags.append(str(t))
+                for part in rel.parent.parts:
+                    if part and part not in tags:
+                        tags.append(part)
+
+                body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+                # Idempotence check
+                existing = store.get(id_)
+                if existing and existing["body_hash"] == body_hash and not force:
+                    skipped_unchanged += 1
+                    progress.advance(task_id)
+                    continue
+
+                # Embed: title + body, capped at max_content_chars.
+                composed = f"{title}\n\n{body}"
+                if len(composed) > cfg.max_content_chars:
+                    composed = composed[: cfg.max_content_chars]
+                embedding = embedder.embed(composed)
+
+                now = datetime.now(timezone.utc).isoformat()
+                # Preserve created if known (existing row), else now.
+                created = existing["created"] if existing else now
+
+                store.upsert(
+                    id_=id_,
+                    path=store_path,
+                    title=title[:200],  # title is meta.title field, keep snug
+                    type_="note",
+                    tags=tags,
+                    created=created,
+                    updated=now,
+                    body_hash=body_hash,
+                    embedding=embedding,
+                    extra={"source": "vault-ingest", "vault": label, "abs_path": str(path)},
+                    body_text=body,
+                )
+
+                if existing:
+                    updated += 1
+                else:
+                    added += 1
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                import os as _os
+                if _os.environ.get("MEMO_INGEST_DEBUG") == "1":
+                    console.print(f"[red]err[/] {path}: {exc}")
+            finally:
+                progress.advance(task_id)
+
+    console.print(
+        f"\n[green]done[/] "
+        f"added={added} updated={updated} "
+        f"skipped_unchanged={skipped_unchanged} "
+        f"skipped_id={skipped_id} skipped_empty={skipped_empty} "
+        f"errors={errors}"
+    )
+
+
+def _extract_first_h1(body: str) -> str | None:
+    """Return text of the first `# H1` line, or None."""
+    for line in body.splitlines():
+        s = line.strip()
+        if s.startswith("# ") and not s.startswith("##"):
+            return s[2:].strip()
+        if s and not s.startswith("#"):
+            # First non-heading line of content — no H1.
+            return None
+    return None
+
+
 @cli.command(name="prewarm")
 def prewarm() -> None:
     """SessionStart hook — pre-load the MLX embedder so first recall is fast.
