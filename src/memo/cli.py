@@ -782,17 +782,26 @@ def recall_hook() -> None:
     """UserPromptSubmit hook — inject relevant memorias as additionalContext.
 
     Reads a JSON object from stdin (Claude Code hook format), embeds the
-    `prompt` field via the MLX embedder, runs hybrid search, and outputs
+    `prompt` field via the MLX embedder, runs search, and outputs
     the top-k results as `additionalContext` in `hookSpecificOutput`.
 
-    Configure via env vars (all optional, sensible defaults for v0.3.0):
+    Configure via env vars (all optional, sensible defaults for v0.3.x):
 
-      MEMO_RECALL_DISABLE         — set to "1" to make this a no-op.
-      MEMO_RECALL_TOP_K           — default 3
-      MEMO_RECALL_MIN_SIM         — default 0.6 (cosine similarity floor)
+      MEMO_RECALL_DISABLE          — set to "1" to make this a no-op.
+      MEMO_RECALL_TOP_K            — default 3
+      MEMO_RECALL_MIN_SIM          — default 0.6. Note: the floor is
+        absolute over `score`. For mode=vec, `score` is cosine ∈ [0, 1].
+        For mode=hybrid+rerank, `score` is fused (typically [0.2, 0.95])
+        — drop the floor to ~0.4 there or hits get over-filtered.
       MEMO_RECALL_MIN_PROMPT_CHARS — default 12 (skip very short prompts)
-      MEMO_RECALL_BODY_CHARS      — default 240 (snippet length per result)
-      MEMO_RECALL_SKIP_SLASH      — default "1" (skip if prompt starts with /)
+      MEMO_RECALL_BODY_CHARS       — default 240 (snippet length per result)
+      MEMO_RECALL_SKIP_SLASH       — default "1" (skip if prompt starts with /)
+      MEMO_RECALL_MODE             — default "vec". "hybrid" enables
+        cross-encoder rerank on top of RRF fusion. Higher precision,
+        higher latency (≤5s warm with the auto-capped pool).
+      MEMO_RECALL_RERANK_INPUT_K   — default 10 (only used when MODE=hybrid).
+        How many fused candidates to feed the reranker; lower for tighter
+        latency, higher for better recall on diffuse queries.
 
     Output (stdout, JSON):
       `{}` — no injection (no results / disabled / error / silent fail)
@@ -850,15 +859,29 @@ def recall_hook() -> None:
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
     # Defer the heavy import — only paid if we get past the early-exits.
-    # Use vec mode (NOT hybrid): for ambient injection we want a
-    # *confidence threshold*, and only vec mode produces true cosine
-    # similarity in [0, 1] that's interpretable as a confidence score.
-    # Hybrid uses RRF fusion which produces tiny scores (~0.01-0.05) that
-    # can't be filtered with an absolute threshold.
+    #
+    # Mode selection:
+    # - `vec` (default): pure cosine similarity. `score` is in [0, 1]
+    #   and the `MEMO_RECALL_MIN_SIM` floor (0.6) cuts noise reliably.
+    # - `hybrid`: reciprocal rank fusion + cross-encoder rerank when
+    #   the reranker is enabled in config. Higher precision but spends
+    #   the full hook budget on inference. Auto-shrinks the rerank
+    #   input pool (`MEMO_RECALL_RERANK_INPUT_K`, default 10) so the
+    #   warm latency stays under the 5s hook timeout.
+    # - `bm25`: keyword-only, useful for queries with literal tag
+    #   names or filenames where the embedder under-recalls.
+    mode = os.environ.get("MEMO_RECALL_MODE", "vec")
+    if mode == "hybrid":
+        # Hook latency budget is tight: cap the rerank pool unless the
+        # user explicitly set MEMO_RERANK_INPUT_K elsewhere. Setdefault
+        # respects an upstream override (CI bench, custom shell rc).
+        os.environ.setdefault(
+            "MEMO_RERANK_INPUT_K",
+            os.environ.get("MEMO_RECALL_RERANK_INPUT_K", "10"),
+        )
     try:
         from memo.memory import Memory
         mem = Memory(Config.from_env())
-        mode = os.environ.get("MEMO_RECALL_MODE", "vec")
         hits = mem.search(prompt, limit=top_k, mode=mode)
     except Exception as exc:  # noqa: BLE001
         _bail(f"search failed: {exc}")
