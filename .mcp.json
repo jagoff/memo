@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "memo": {
+      "type": "stdio",
+      "command": "memo-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
