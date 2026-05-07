@@ -2,7 +2,7 @@
 # Distribution name on PyPI is `memo-mcp` because `memo` (v0.2.4) is taken
 # by an unrelated package. The Python module / CLI / repo all stay `memo`.
 name = "memo-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local MCP memory backed by Obsidian vault — MLX-native LLM + embedder, sqlite-vec store. No Ollama, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"

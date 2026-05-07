@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-07
+
+**Game-changer release**: memo turns into an *ambient* context layer.
+Memorias auto-inject as `additionalContext` on every Claude Code prompt,
+without the user invoking `/memo` at all.
+
+### Added
+
+- `memo recall-hook` CLI command — Claude Code `UserPromptSubmit` hook that
+  embeds the user prompt via the MLX embedder, runs vec-only search against
+  the memo index, and emits relevant memorias as `additionalContext` markdown
+  on stdout. Sub-1.7s warm latency on a 223-doc corpus, well within the
+  default 5s hook timeout.
+- `memo prewarm` CLI command — `SessionStart` hook that pre-loads the MLX
+  embedder so the first `recall-hook` invocation of the session is fast
+  (warm load: ~500ms vs ~2s cold).
+- `hooks/hooks.json` bundled in the plugin — auto-wires the two hooks above
+  when users install via `/plugin install memo@memo`.
+- 6 env vars to tune ambient memory behaviour:
+  - `MEMO_RECALL_DISABLE` — kill switch (default: enabled).
+  - `MEMO_RECALL_TOP_K` — default 3.
+  - `MEMO_RECALL_MIN_SIM` — cosine similarity floor, default 0.6.
+  - `MEMO_RECALL_MIN_PROMPT_CHARS` — default 12.
+  - `MEMO_RECALL_BODY_CHARS` — snippet length, default 240.
+  - `MEMO_RECALL_SKIP_SLASH` — skip recall on `/` prompts, default 1.
+  - `MEMO_RECALL_DEBUG` — print failure reasons to stderr, default 0.
+
+### Why this is the game changer
+
+Before: user types `/memo save 'X'` to save and `/memo search 'Y'` to recall.
+Friction = adoption blocker; memory only helps when remembered to invoke.
+
+After: memo silently consults the user's past on every prompt and injects
+the most relevant 3 memorias if any score above 0.6 cosine similarity.
+Zero `/memo` invocations needed for the recall side. The agent "knows
+your past" automatically.
+
+### Empirical tuning
+
+Threshold 0.6 was picked after testing the 223-doc corpus:
+- "qué decidí sobre MLX vs Ollama" → 3 hits at 0.71-0.74 (all relevant).
+- "how to bake apple pie" (corpus has zero food memorias) → 0 hits at 0.6
+  (3 noise hits at 0.5-0.6 cut by the floor).
+- "qué hice con whatsapp" → 3 hits at 0.6-0.75 (whatsapp work).
+
+### Privacy / local-first
+
+Hot path is 100% MLX in-process. Embedder = `Qwen3-Embedding-0.6B-4bit-DWQ`,
+search = `sqlite-vec`. Zero network calls, zero cloud APIs, zero telemetry.
+The hook input (your prompt) never leaves the machine.
+
+### Save side (Phase B)
+
+Passive memory extraction (auto-`memo save` from chat transcripts) is NOT
+in 0.3.0 — recall side first to validate the architecture, save side in
+0.4.0 once we have signal on whether the recall hook is helpful in real use.
+
 ## [0.2.0] - 2026-05-07
 
 First public release. Distribution name on PyPI is `memo-mcp`

@@ -195,6 +195,55 @@ Tools exposed:
 - `memory_delete(id)` → removes from vec + disk. Same prefix-ID semantics.
 - `memory_stats()` → counts + paths + active models
 
+## Ambient memory (v0.3.0+) — recall without `/memo`
+
+Once installed via the [Claude Code plugin](#slash-command--memo-claude-code-only),
+memo silently consults your past on every prompt and injects the most
+relevant memorias as `additionalContext` — **the agent sees them before
+answering**, no `/memo` invocation needed from you.
+
+### How it works
+
+- `SessionStart` hook → `memo prewarm` (async) — pre-loads the MLX embedder
+  so the first recall is fast.
+- `UserPromptSubmit` hook → `memo recall-hook` (5s timeout) — embeds your
+  prompt, runs vec-only search, returns top-3 memorias above a cosine
+  similarity floor of 0.6.
+
+Both run 100% local on Apple Silicon. Your prompt never leaves the machine.
+
+### Tuning
+
+All optional, sensible defaults:
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MEMO_RECALL_DISABLE` | unset | Set to `1` to skip recall entirely |
+| `MEMO_RECALL_TOP_K` | `3` | Max memorias to inject |
+| `MEMO_RECALL_MIN_SIM` | `0.6` | Cosine similarity floor |
+| `MEMO_RECALL_MIN_PROMPT_CHARS` | `12` | Skip very short prompts |
+| `MEMO_RECALL_BODY_CHARS` | `240` | Snippet length per memoria |
+| `MEMO_RECALL_SKIP_SLASH` | `1` | Skip recall on `/` prompts |
+| `MEMO_RECALL_DEBUG` | unset | Print failure reasons to stderr |
+
+### Empirical tuning of `MIN_SIM=0.6`
+
+On a 223-doc corpus:
+- `qué decidí sobre MLX vs Ollama` → 3 hits at 0.71-0.74 (relevant ✓)
+- `how to bake apple pie` (no food memorias) → 0 hits at 0.6 ✓
+  (3 noise hits at 0.51-0.56 cut by the floor)
+
+Tune lower (e.g. 0.5) if your corpus is sparse, higher (e.g. 0.7) if it's
+dense and you want only high-confidence matches.
+
+### What's NOT in 0.3.0 (Phase B, future)
+
+The save side — passive auto-extraction of memorias from your conversations
+without manual `/memo save` — is the natural next step. Not in 0.3.0
+because (a) recall side is the higher-value half (instant value to existing
+corpus) and (b) we want signal on whether ambient recall is helpful in real
+use before committing to the LLM-as-judge prompt tuning that save requires.
+
 ## Slash command — `/memo` (Claude Code only)
 
 A Claude Code [skill](https://docs.claude.com/en/docs/claude-code/skills) ships
