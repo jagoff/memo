@@ -347,10 +347,24 @@ class VecStore:
         """
         if not query or not query.strip():
             return []
-        # FTS5 needs an explicit MATCH expression; treat the user's query
-        # as a phrase query escaped with double-quotes to avoid syntax
-        # collisions on hyphens/colons.
-        match_expr = '"' + query.replace('"', '""') + '"'
+        # FTS5 needs an explicit MATCH expression. Pre-2026-05-07 we wrapped
+        # the whole query in `"..."` (phrase match) to dodge FTS5 syntax
+        # collisions on hyphens/colons. Side-effect: multi-word queries
+        # required the EXACT consecutive sequence, killing recall on
+        # natural Spanish queries — "Astor terapia ocupacional" would NOT
+        # match a doc titled "Informe Terapia Ocupacional — Astor Ferrari"
+        # because the words don't appear consecutively in that order.
+        #
+        # Fix: tokenize via \w+ regex (drops punctuation, keeps Unicode
+        # letters via Python's \w), wrap each token in its own phrase
+        # quotes, join with whitespace (FTS5's implicit AND). Result:
+        # `"Astor" "terapia" "ocupacional"` — matches any doc containing
+        # all 3 words anywhere, in any order.
+        import re as _re
+        _tokens = [t for t in _re.findall(r"\w+", query, flags=_re.UNICODE) if t]
+        if not _tokens:
+            return []
+        match_expr = " ".join(f'"{t}"' for t in _tokens)
         candidate_k = limit * 5 if type_ else limit
         sql = (
             "SELECT fts.id AS id, bm25(fts) AS bm25_score, "
