@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from mem_lmx.config import Config
-from mem_lmx.memory import Memory
+from memo.config import Config
+from memo.memory import AmbiguousIdError, Memory
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch) -> Memory:
             out.append(v)
         return out
 
-    monkeypatch.setattr("mem_lmx.embedder.MLXEmbedder.embed", _stub_embed)
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
     return Memory(cfg)
 
 
@@ -114,6 +114,148 @@ def test_title_derived_from_first_line(mem_with_stub: Memory):
     assert rec.title == "Encabezado"
 
 
+def test_update_patches_metadata_without_reembed(mem_with_stub: Memory, monkeypatch):
+    rec = mem_with_stub.save(content="cuerpo", title="orig", type_="note", tags=["x"])
+    # Track embed calls — patching metadata only should not re-embed.
+    calls: list[int] = []
+    orig = mem_with_stub.embedder.embed
+
+    def _spy(inputs):
+        calls.append(len(inputs))
+        return orig(inputs)
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _spy)
+    updated = mem_with_stub.update(rec.id, title="new", type_="decision", tags=["y", "Z"])
+    assert updated is not None
+    assert updated.title == "new"
+    assert updated.type == "decision"
+    assert updated.tags == ["y", "z"]
+    assert updated.body == "cuerpo"  # unchanged
+    assert calls == []  # no re-embed
+
+
+def test_update_reembeds_when_content_changes(mem_with_stub: Memory, monkeypatch):
+    rec = mem_with_stub.save(content="cuerpo viejo", title="X")
+    calls: list[int] = []
+    orig = mem_with_stub.embedder.embed
+
+    def _spy(inputs):
+        calls.append(len(inputs))
+        return orig(inputs)
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _spy)
+    updated = mem_with_stub.update(rec.id, content="cuerpo nuevo y diferente")
+    assert updated is not None
+    assert updated.body == "cuerpo nuevo y diferente"
+    assert calls == [1]
+    # Disk reflects new body.
+    on_disk = (mem_with_stub.cfg.vault_path / updated.path).read_text()
+    assert "cuerpo nuevo y diferente" in on_disk
+
+
+def test_update_missing_returns_none(mem_with_stub: Memory):
+    assert mem_with_stub.update("nope", title="x") is None
+
+
+def test_update_rejects_invalid_type(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="x", title="X")
+    with pytest.raises(ValueError, match="not in valid set"):
+        mem_with_stub.update(rec.id, type_="bogus")
+
+
+def test_reindex_picks_up_external_edit(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="primero", title="X")
+    abs_path = mem_with_stub.cfg.vault_path / rec.path
+    # Simulate a user edit in Obsidian: rewrite body via frontmatter.
+    import frontmatter as fm
+
+    post = fm.loads(abs_path.read_text())
+    post.content = "cuerpo editado a mano"
+    abs_path.write_text(fm.dumps(post), encoding="utf-8")
+
+    counts = mem_with_stub.reindex()
+    assert counts["reindexed"] == 1
+    assert counts["added"] == 0
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert "editado a mano" in fetched.body
+
+
+def test_reindex_adds_orphan_disk_file(mem_with_stub: Memory):
+    # Hand-craft a memory `.md` the store doesn't know about.
+    import frontmatter as fm
+
+    md = mem_with_stub.cfg.memory_dir / "2026-05-06-restored.md"
+    post = fm.Post(
+        "memo restaurado de un backup",
+        id="ffeeddccbbaa00112233445566778899",
+        title="Restored",
+        type="note",
+        tags=["backup"],
+        created="2026-05-06T19:00:00-03:00",
+        updated="2026-05-06T19:00:00-03:00",
+    )
+    md.write_text(fm.dumps(post), encoding="utf-8")
+    counts = mem_with_stub.reindex()
+    assert counts["added"] == 1
+    fetched = mem_with_stub.get("ffeeddccbbaa00112233445566778899")
+    assert fetched is not None
+    assert fetched.title == "Restored"
+
+
+def test_gc_reports_and_fixes_orphans(mem_with_stub: Memory):
+    a = mem_with_stub.save(content="vivo", title="A")
+    b = mem_with_stub.save(content="vivo", title="B")
+    # Delete `b`'s `.md` from disk to make it an orphan store row.
+    (mem_with_stub.cfg.vault_path / b.path).unlink()
+    report = mem_with_stub.gc(fix=False)
+    assert b.id in report["orphan_store"]
+    assert a.id not in report["orphan_store"]
+    # Without --fix, store still has the orphan.
+    assert mem_with_stub.store.get(b.id) is not None
+    # With --fix, orphan store row is dropped.
+    mem_with_stub.gc(fix=True)
+    assert mem_with_stub.store.get(b.id) is None
+
+
+def test_get_by_unique_prefix(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="x", title="X")
+    short = rec.id[:7]  # git-style prefix
+    fetched = mem_with_stub.get(short)
+    assert fetched is not None
+    assert fetched.id == rec.id
+
+
+def test_get_unknown_prefix_returns_none(mem_with_stub: Memory):
+    mem_with_stub.save(content="x", title="X")
+    assert mem_with_stub.get("ffffffff") is None
+
+
+def test_get_ambiguous_prefix_raises(mem_with_stub: Memory, monkeypatch):
+    # Force two ids that share a prefix by stubbing uuid4 sequentially.
+    import uuid
+
+    fixed = iter([
+        uuid.UUID("aaaaaaaa1111000000000000000000ff"),
+        uuid.UUID("aaaaaaaa2222000000000000000000ff"),
+    ])
+    monkeypatch.setattr("memo.memory.uuid.uuid4", lambda: next(fixed))
+    mem_with_stub.save(content="a", title="A")
+    mem_with_stub.save(content="b", title="B")
+    with pytest.raises(AmbiguousIdError) as exc_info:
+        mem_with_stub.get("aaaaaaaa")
+    assert len(exc_info.value.matches) == 2
+
+
+def test_update_and_delete_accept_prefix(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="x", title="X")
+    short = rec.id[:6]
+    updated = mem_with_stub.update(short, title="X2")
+    assert updated is not None
+    assert updated.title == "X2"
+    assert mem_with_stub.delete(short) is True
+
+
 def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
     cfg = Config(
         vault_path=tmp_cfg.vault_path,
@@ -122,7 +264,7 @@ def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
         max_content_size=100,
     )
     monkeypatch.setattr(
-        "mem_lmx.embedder.MLXEmbedder.embed",
+        "memo.embedder.MLXEmbedder.embed",
         lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
     )
     mem = Memory(cfg)

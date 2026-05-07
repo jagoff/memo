@@ -182,6 +182,31 @@ class VecStore:
                 (id_, json.dumps(embedding)),
             )
 
+    def update_meta(
+        self,
+        *,
+        id_: str,
+        title: str,
+        type_: str,
+        tags: list[str],
+        updated: str,
+        extra: dict[str, Any] | None = None,
+    ) -> bool:
+        """Patch metadata fields without touching the embedding. Used by
+        `Memory.update()` when only title/type/tags/extra changed and
+        `body_hash` is unchanged — saves an embedder forward pass.
+        Returns True if a row was updated."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "UPDATE meta SET title = ?, type = ?, tags = ?, updated = ?, extra_json = ? "
+                "WHERE id = ?",
+                (
+                    title, type_, json.dumps(tags), updated,
+                    json.dumps(extra) if extra is not None else None, id_,
+                ),
+            )
+            return cur.rowcount > 0
+
     def get(self, id_: str) -> dict[str, Any] | None:
         row = self._conn.execute(
             "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
@@ -189,6 +214,18 @@ class VecStore:
             (id_,),
         ).fetchone()
         return _row_to_dict(row) if row else None
+
+    def find_by_prefix(self, prefix: str, limit: int = 10) -> list[str]:
+        """Return ids whose hex starts with `prefix`. Used by the CLI/MCP
+        to let callers reference memories by the first ~7 chars (git-style)
+        instead of pasting a 32-char UUID4."""
+        if not prefix:
+            return []
+        rows = self._conn.execute(
+            "SELECT id FROM meta WHERE id LIKE ? || '%' ORDER BY id LIMIT ?",
+            (prefix, limit),
+        ).fetchall()
+        return [r["id"] for r in rows]
 
     def get_by_path(self, path: str) -> dict[str, Any] | None:
         row = self._conn.execute(

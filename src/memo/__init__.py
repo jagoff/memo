@@ -1,4 +1,4 @@
-"""mem-lmx — local MCP memory backed by Obsidian vault, MLX-native.
+"""memo — local MCP memory backed by Obsidian vault, MLX-native.
 
 100% local stack — zero Ollama, zero cloud APIs:
 
@@ -14,7 +14,7 @@
 
 Public API:
 
-    from mem_lmx import Memory, Config
+    from memo import Memory, Config
 
     cfg = Config.from_env()
     mem = Memory(cfg)
@@ -22,8 +22,8 @@ Public API:
     hits = mem.search("query", limit=10)
 """
 
-from mem_lmx.config import Config
-from mem_lmx.memory import Memory, MemoryRecord
+from memo.config import Config
+from memo.memory import Memory, MemoryRecord
 
 __version__ = "0.1.0"
 

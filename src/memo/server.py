@@ -1,4 +1,4 @@
-"""MCP server — `mem-lmx-mcp` entry point.
+"""MCP server — `memo-mcp` entry point.
 
 Exposes the `Memory` API as MCP tools so any MCP-aware client (Claude
 Code, Devin, Claude Desktop, etc) can save / search / list / get /
@@ -12,11 +12,11 @@ tool result message which helps the LLM decide what to do next.
 
 Run via the installed entry point:
 
-    mem-lmx-mcp
+    memo-mcp
 
 Or programmatically:
 
-    from mem_lmx.server import build_server
+    from memo.server import build_server
     server = build_server()
     server.run()
 """
@@ -27,21 +27,21 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from mem_lmx.config import Config
-from mem_lmx.memory import Memory
+from memo.config import Config
+from memo.memory import AmbiguousIdError, Memory
 
 
 def build_server(memory: Memory | None = None) -> FastMCP:
     """Build the MCP server. Accepts an explicit `Memory` for tests.
 
     The default constructs from `Config.from_env()` — production runs
-    pick up `MEM_LMX_*` env vars set by the calling shell or by Claude
+    pick up `MEMO_*` env vars set by the calling shell or by Claude
     Code's `claude mcp add` invocation.
     """
     if memory is None:
         memory = Memory(Config.from_env())
 
-    server = FastMCP("mem-lmx")
+    server = FastMCP("memo")
 
     @server.tool()
     def memory_save(
@@ -68,7 +68,10 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
     @server.tool()
     def memory_search(
-        query: str, limit: int = 10, type: str | None = None,
+        query: str,
+        limit: int = 10,
+        type: str | None = None,
+        body_chars: int = 280,
     ) -> list[dict[str, Any]]:
         """Top-k semantic search over the memory index.
 
@@ -79,8 +82,20 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             query: Free-text query. Required, non-empty.
             limit: Max results. Defaults to 10.
             type: Optional filter by record type (e.g. only `decision`).
+            body_chars: Truncate the `body` field to this many chars. The
+                default keeps results compact for the LLM context — call
+                `memory_get(id)` for the full body. Pass a very large
+                number to disable truncation.
         """
-        return [r.to_dict() for r in memory.search(query, limit=limit, type_=type)]
+        out: list[dict[str, Any]] = []
+        for r in memory.search(query, limit=limit, type_=type):
+            d = r.to_dict()
+            body = d.get("body") or ""
+            if body_chars >= 0 and len(body) > body_chars:
+                d["body"] = body[:body_chars].rstrip() + "…"
+                d["body_truncated"] = True
+            out.append(d)
+        return out
 
     @server.tool()
     def memory_list(
@@ -93,15 +108,62 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
     @server.tool()
     def memory_get(id: str) -> dict[str, Any] | None:
-        """Fetch one memory record by id. Returns None when not found."""
-        rec = memory.get(id)
+        """Fetch one memory record by id (full UUID hex or unique prefix
+        ≥4 chars). Returns None when not found. On ambiguous prefix
+        returns `{"error": "ambiguous", "matches": [...]}` instead of
+        raising — keeps the MCP transport happy and lets the LLM read
+        the candidates."""
+        try:
+            rec = memory.get(id)
+        except AmbiguousIdError as exc:
+            return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
         return rec.to_dict() if rec else None
 
     @server.tool()
-    def memory_delete(id: str) -> dict[str, bool]:
-        """Delete one memory by id. Removes both the vec entry and the
-        backing `.md` file. Returns `{"deleted": true|false}`."""
-        return {"deleted": memory.delete(id)}
+    def memory_update(
+        id: str,
+        title: str | None = None,
+        type: str | None = None,
+        tags: list[str] | None = None,
+        content: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Patch fields on an existing memory. Re-embeds only when the
+        body actually changed (saves a forward pass for retag/rename).
+
+        Returns the updated record, or None if `id` is unknown. Tags
+        replace the existing list (use `memory_get` first if you want to
+        merge). On ambiguous prefix returns `{"error": "ambiguous",
+        "matches": [...]}` so the LLM can surface candidates.
+        """
+        try:
+            rec = memory.update(
+                id, title=title, type_=type, tags=tags, content=content,
+            )
+        except AmbiguousIdError as exc:
+            return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        return rec.to_dict() if rec else None
+
+    @server.tool()
+    def memory_reindex() -> dict[str, int]:
+        """Re-scan the memory dir, re-embed entries whose on-disk body
+        diverged from the indexed `body_hash`. Picks up edits the user
+        made to memory `.md` files in Obsidian.
+
+        Returns `{"checked", "reindexed", "added", "skipped"}`.
+        """
+        return memory.reindex()
+
+    @server.tool()
+    def memory_delete(id: str) -> dict[str, Any]:
+        """Delete one memory by id (full or unique prefix). Removes both
+        the vec entry and the backing `.md` file. Returns
+        `{"deleted": true|false}` on success, or
+        `{"error": "ambiguous", "matches": [...]}` if the prefix matches
+        multiple records."""
+        try:
+            return {"deleted": memory.delete(id)}
+        except AmbiguousIdError as exc:
+            return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
 
     @server.tool()
     def memory_stats() -> dict[str, Any]:
@@ -118,7 +180,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
 
 def main() -> None:
-    """Entry point for `mem-lmx-mcp` console script."""
+    """Entry point for `memo-mcp` console script."""
     server = build_server()
     server.run()
 

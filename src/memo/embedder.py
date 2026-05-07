@@ -11,7 +11,7 @@ L2-normalises the result. Output: list of 1024-dim float lists.
   2026-05-06. The mlx-community ports of Qwen3-Embedding ship as
   generic `mlx_lm`-loadable models — the embedder API is implicit.
 - `sentence-transformers` would route through PyTorch+MPS (not pure
-  MLX). The whole point of mem-lmx is MLX-native.
+  MLX). The whole point of memo is MLX-native.
 
 ## Cosine sim vs Ollama (verified 2026-05-06)
 
@@ -19,7 +19,7 @@ L2-normalises the result. Output: list of 1024-dim float lists.
 **0.9747 cosine similarity** vs the same model run via Ollama Q4_K_M
 (measured on a real Spanish-Castellano query). ~3% drift attributable
 to quantisation noise — does not invalidate corpus continuity if
-mem-lmx replaces an existing Ollama-indexed mem-vault.
+memo replaces an existing Ollama-indexed mem-vault.
 
 ## Threading
 

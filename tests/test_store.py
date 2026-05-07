@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from mem_lmx.store import VecStore
+from memo.store import VecStore
 
 
 @pytest.fixture

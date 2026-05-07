@@ -53,14 +53,27 @@ from typing import Any
 
 import frontmatter
 
-from mem_lmx.config import Config
-from mem_lmx.embedder import MLXEmbedder
-from mem_lmx.store import VecStore
+from memo.config import Config
+from memo.embedder import MLXEmbedder
+from memo.store import VecStore
 
 
 _VALID_TYPES = frozenset(
     {"decision", "fact", "bug", "feedback", "preference", "note", "manual"}
 )
+
+
+class AmbiguousIdError(ValueError):
+    """Raised when an id prefix matches more than one record. Carries
+    the candidate matches so the caller can surface them in an error."""
+
+    def __init__(self, prefix: str, matches: list[str]) -> None:
+        super().__init__(
+            f"Ambiguous id prefix {prefix!r}: {len(matches)} matches "
+            f"({', '.join(m[:8] for m in matches[:5])}...)",
+        )
+        self.prefix = prefix
+        self.matches = matches
 
 
 @dataclass(frozen=True)
@@ -254,8 +267,35 @@ class Memory:
 
     # -- get ----------------------------------------------------------------
 
+    def resolve_id(self, id_or_prefix: str) -> str | None:
+        """Resolve a full id or a unique prefix.
+
+        Returns the canonical 32-char id if `id_or_prefix` matches exactly
+        one record (full or prefix), or None if nothing matches. Raises
+        `AmbiguousIdError` when 2+ records share the prefix — the caller
+        is expected to surface the candidates so the user can disambiguate.
+
+        Why prefix lookup: pasting a 32-char UUID4 from chat is friction.
+        Git-style 7-char prefixes are unique with overwhelming probability
+        for the corpus sizes memo targets (~thousands).
+        """
+        if not id_or_prefix:
+            return None
+        # Fast path: full hex hit.
+        if len(id_or_prefix) == 32 and self.store.get(id_or_prefix) is not None:
+            return id_or_prefix
+        matches = self.store.find_by_prefix(id_or_prefix.lower())
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise AmbiguousIdError(id_or_prefix, matches)
+        return None
+
     def get(self, id_: str) -> MemoryRecord | None:
-        r = self.store.get(id_)
+        resolved = self.resolve_id(id_)
+        if resolved is None:
+            return None
+        r = self.store.get(resolved)
         if not r:
             return None
         return MemoryRecord(
@@ -264,10 +304,94 @@ class Memory:
             body=self._read_body(r["path"]), extra=r.get("extra") or {},
         )
 
+    # -- update -------------------------------------------------------------
+
+    def update(
+        self,
+        id_: str,
+        *,
+        title: str | None = None,
+        type_: str | None = None,
+        tags: list[str] | None = None,
+        content: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> MemoryRecord | None:
+        """Patch one or more fields on an existing record.
+
+        Only the kwargs you pass are touched; everything else stays as-is.
+        Re-embed only if `content` changed (body_hash check). The file
+        path stays stable — renaming the slug after the fact would break
+        wikilinks the user may have created in their vault.
+        """
+        resolved = self.resolve_id(id_)
+        if resolved is None:
+            return None
+        id_ = resolved
+        r = self.store.get(id_)
+        if r is None:
+            return None
+        if type_ is not None and type_ not in _VALID_TYPES:
+            raise ValueError(
+                f"`type_={type_!r}` not in valid set {sorted(_VALID_TYPES)}",
+            )
+
+        new_title = (title.strip() if title else r["title"]) or r["title"]
+        new_type = type_ or r["type"]
+        new_tags = _normalise_tags(tags) if tags is not None else r["tags"]
+        new_extra = extra if extra is not None else r.get("extra") or {}
+        now_iso = _now_iso()
+
+        # Body resolution: provided > on-disk > empty.
+        old_body = self._read_body(r["path"])
+        new_body = (content if content is not None else old_body)
+        new_body = new_body[: self.cfg.max_content_size]
+        new_body_hash = _sha256_short(new_body)
+        body_changed = new_body_hash != r["body_hash"]
+
+        abs_path = self.cfg.vault_path / r["path"]
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        post = frontmatter.Post(
+            new_body,
+            id=id_,
+            title=new_title,
+            type=new_type,
+            tags=new_tags,
+            created=r["created"],
+            updated=now_iso,
+            **({"extra": new_extra} if new_extra else {}),
+        )
+        abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+        # Re-embed only when the body actually changed; otherwise reuse
+        # the existing vector and just update meta. Saves a forward pass
+        # for the common "rename / retag" case.
+        if body_changed:
+            embedding = self.embedder.embed([new_body])[0]
+            self.store.upsert(
+                id_=id_, path=r["path"], title=new_title, type_=new_type,
+                tags=new_tags, created=r["created"], updated=now_iso,
+                body_hash=new_body_hash, embedding=embedding, extra=new_extra,
+            )
+        else:
+            self.store.update_meta(
+                id_=id_, title=new_title, type_=new_type, tags=new_tags,
+                updated=now_iso, extra=new_extra,
+            )
+
+        return MemoryRecord(
+            id=id_, path=r["path"], title=new_title, type=new_type,
+            tags=new_tags, created=r["created"], updated=now_iso,
+            body=new_body, extra=new_extra,
+        )
+
     # -- delete -------------------------------------------------------------
 
     def delete(self, id_: str) -> bool:
         """Remove from store + disk. Returns True if anything was deleted."""
+        resolved = self.resolve_id(id_)
+        if resolved is None:
+            return False
+        id_ = resolved
         r = self.store.get(id_)
         if not r:
             return False
@@ -277,9 +401,108 @@ class Memory:
         except OSError:
             # File deletion is best-effort — store is the authoritative
             # delete signal. Stale `.md` files get cleaned up by a
-            # future `mem-lmx doctor --gc` pass.
+            # `memo doctor --gc` pass.
             pass
         return existed
+
+    # -- reindex / gc -------------------------------------------------------
+
+    def reindex(self) -> dict[str, int]:
+        """Scan the memory dir, re-embed entries whose on-disk body
+        diverged from `body_hash`. Picks up edits the user made in
+        Obsidian directly. Also indexes any `.md` with a valid `id` in
+        frontmatter that the store doesn't know about (e.g. restored
+        from a backup or copied from another machine).
+
+        Returns counts: `{"checked", "reindexed", "added", "skipped"}`.
+        """
+        memory_root = self.cfg.memory_dir
+        checked = reindexed = added = skipped = 0
+        if not memory_root.is_dir():
+            return {"checked": 0, "reindexed": 0, "added": 0, "skipped": 0}
+
+        for md_path in sorted(memory_root.rglob("*.md")):
+            checked += 1
+            try:
+                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+            except Exception:
+                skipped += 1
+                continue
+            md_id = post.get("id")
+            if not md_id or not isinstance(md_id, str):
+                skipped += 1
+                continue
+            body = post.content or ""
+            new_hash = _sha256_short(body)
+            existing = self.store.get(md_id)
+            rel = str(md_path.relative_to(self.cfg.vault_path))
+
+            title = (post.get("title") or _derive_title(body) or "untitled").strip()
+            type_ = post.get("type") or "note"
+            if type_ not in _VALID_TYPES:
+                type_ = "note"
+            tags = _normalise_tags(list(post.get("tags") or []))
+            created = post.get("created") or _now_iso()
+            updated = post.get("updated") or created
+            extra = post.get("extra") or {}
+
+            if existing is None:
+                emb = self.embedder.embed([body])[0]
+                self.store.upsert(
+                    id_=md_id, path=rel, title=title, type_=type_, tags=tags,
+                    created=created, updated=updated, body_hash=new_hash,
+                    embedding=emb, extra=extra if extra else None,
+                )
+                added += 1
+                continue
+            if existing["body_hash"] != new_hash:
+                emb = self.embedder.embed([body])[0]
+                self.store.upsert(
+                    id_=md_id, path=rel, title=title, type_=type_, tags=tags,
+                    created=existing["created"], updated=_now_iso(),
+                    body_hash=new_hash, embedding=emb,
+                    extra=extra if extra else None,
+                )
+                reindexed += 1
+        return {"checked": checked, "reindexed": reindexed, "added": added, "skipped": skipped}
+
+    def gc(self, *, fix: bool = False) -> dict[str, list[str]]:
+        """Find orphans between the store and the memory dir.
+
+        - `orphan_store`: store rows whose `.md` is missing on disk.
+        - `orphan_disk`: `.md` files with an `id` frontmatter that the
+          store doesn't know about. (Untagged `.md` files — no `id` —
+          are ignored: they're user-authored content, not memories.)
+
+        With `fix=True`, deletes orphan store rows. `.md` files are
+        never deleted automatically — that's destructive and the user
+        should review them first. Use `memo reindex` to absorb
+        orphan disk files into the store.
+        """
+        orphan_store: list[str] = []
+        orphan_disk: list[str] = []
+
+        # Store-side: walk meta, check file existence.
+        for r in self.store.list_recent(limit=100_000):
+            if not (self.cfg.vault_path / r["path"]).is_file():
+                orphan_store.append(r["id"])
+                if fix:
+                    self.store.delete(r["id"])
+
+        # Disk-side: walk memory dir, check ids in store.
+        if self.cfg.memory_dir.is_dir():
+            for md_path in self.cfg.memory_dir.rglob("*.md"):
+                try:
+                    post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                md_id = post.get("id")
+                if not md_id or not isinstance(md_id, str):
+                    continue
+                if self.store.get(md_id) is None:
+                    orphan_disk.append(str(md_path.relative_to(self.cfg.vault_path)))
+
+        return {"orphan_store": orphan_store, "orphan_disk": orphan_disk}
 
     # -- internals ----------------------------------------------------------
 
@@ -347,4 +570,4 @@ def _normalise_tags(tags: list[str]) -> list[str]:
     return out
 
 
-__all__ = ["Memory", "MemoryRecord"]
+__all__ = ["AmbiguousIdError", "Memory", "MemoryRecord"]

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from mem_lmx.config import Config
+from memo.config import Config
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mem_lmx.config import Config
+from memo.config import Config
 
 
 def test_defaults_resolve_paths():
@@ -18,10 +18,10 @@ def test_defaults_resolve_paths():
 
 
 def test_from_env_picks_up_overrides(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("MEM_LMX_VAULT_PATH", str(tmp_path / "v"))
-    monkeypatch.setenv("MEM_LMX_STATE_DIR", str(tmp_path / "s"))
-    monkeypatch.setenv("MEM_LMX_LLM_MODEL", "mlx-community/My-Model-X")
-    monkeypatch.setenv("MEM_LMX_SEARCH_DEFAULT_LIMIT", "5")
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_path / "v"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
+    monkeypatch.setenv("MEMO_LLM_MODEL", "mlx-community/My-Model-X")
+    monkeypatch.setenv("MEMO_SEARCH_DEFAULT_LIMIT", "5")
     cfg = Config.from_env()
     assert cfg.vault_path == (tmp_path / "v").resolve()
     assert cfg.state_dir == (tmp_path / "s").resolve()

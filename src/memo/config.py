@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 # Default vault path matches the obsidian-rag convention. Override via
-# `MEM_LMX_VAULT_PATH`.
+# `MEMO_VAULT_PATH`.
 _DEFAULT_VAULT = (
     Path.home()
     / "Library"
@@ -32,7 +32,7 @@ DEFAULT_MEMORY_SUBDIR = "04-Archive/99-obsidian-system/99-AI/memory"
 
 # Default state dir mirrors obsidian-rag — keep both projects co-located
 # under a single `obsidian-*` namespace in `~/.local/share/`.
-_DEFAULT_STATE_DIR = Path.home() / ".local" / "share" / "mem-lmx"
+_DEFAULT_STATE_DIR = Path.home() / ".local" / "share" / "memo"
 
 
 class Config(BaseModel):
@@ -127,17 +127,17 @@ class Config(BaseModel):
 
     @classmethod
     def from_env(cls, **overrides) -> Config:
-        """Build a `Config` from `MEM_LMX_*` env vars, with optional explicit overrides."""
+        """Build a `Config` from `MEMO_*` env vars, with optional explicit overrides."""
         env_to_field = {
-            "MEM_LMX_VAULT_PATH": "vault_path",
-            "MEM_LMX_MEMORY_SUBDIR": "memory_subdir",
-            "MEM_LMX_STATE_DIR": "state_dir",
-            "MEM_LMX_LLM_MODEL": "llm_model",
-            "MEM_LMX_HELPER_MODEL": "helper_model",
-            "MEM_LMX_EMBEDDER_MODEL": "embedder_model",
-            "MEM_LMX_EMBEDDER_DIMS": "embedder_dims",
-            "MEM_LMX_MAX_CONTENT_SIZE": "max_content_size",
-            "MEM_LMX_SEARCH_DEFAULT_LIMIT": "search_default_limit",
+            "MEMO_VAULT_PATH": "vault_path",
+            "MEMO_MEMORY_SUBDIR": "memory_subdir",
+            "MEMO_STATE_DIR": "state_dir",
+            "MEMO_LLM_MODEL": "llm_model",
+            "MEMO_HELPER_MODEL": "helper_model",
+            "MEMO_EMBEDDER_MODEL": "embedder_model",
+            "MEMO_EMBEDDER_DIMS": "embedder_dims",
+            "MEMO_MAX_CONTENT_SIZE": "max_content_size",
+            "MEMO_SEARCH_DEFAULT_LIMIT": "search_default_limit",
         }
         kwargs: dict = {}
         for env_key, field in env_to_field.items():
@@ -153,7 +153,7 @@ class Config(BaseModel):
         if not self.vault_path.is_dir():
             raise RuntimeError(
                 f"Vault path does not exist: {self.vault_path}. "
-                f"Set MEM_LMX_VAULT_PATH or pass `vault_path=...`."
+                f"Set MEMO_VAULT_PATH or pass `vault_path=...`."
             )
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.memory_dir.mkdir(parents=True, exist_ok=True)

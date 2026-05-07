@@ -1,15 +1,15 @@
-"""CLI — `mem-lmx` entry point.
+"""CLI — `memo` entry point.
 
 A handful of operational commands so the user can interact with the
 memory store from the shell without spinning up the MCP server:
 
-- `mem-lmx save 'content here' --title 'X' --tag x --tag y`
-- `mem-lmx search 'query' --limit 5`
-- `mem-lmx list --limit 20 --type decision`
-- `mem-lmx get <id>`
-- `mem-lmx delete <id>`
-- `mem-lmx stats`
-- `mem-lmx doctor` — verify vault path, embedder loadable, sqlite-vec
+- `memo save 'content here' --title 'X' --tag x --tag y`
+- `memo search 'query' --limit 5`
+- `memo list --limit 20 --type decision`
+- `memo get <id>`
+- `memo delete <id>`
+- `memo stats`
+- `memo doctor` — verify vault path, embedder loadable, sqlite-vec
   available, MLX present.
 
 Output style:
@@ -28,15 +28,33 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from mem_lmx.config import Config
+from memo.config import Config
 
 console = Console()
+
+
+def _resolved(thunk):
+    """Run `thunk()` translating `AmbiguousIdError` into a friendly print
+    + exit code 2. Used by every CLI verb that takes an id-or-prefix
+    argument (`get`, `update`, `delete`).
+    """
+    from memo.memory import AmbiguousIdError
+
+    try:
+        return thunk()
+    except AmbiguousIdError as exc:
+        console.print(f"[red]ambiguous id prefix[/red] {exc.prefix!r} matches:")
+        for m in exc.matches[:8]:
+            console.print(f"  · {m}")
+        if len(exc.matches) > 8:
+            console.print(f"  · …and {len(exc.matches) - 8} more")
+        sys.exit(2)
 
 
 @click.group()
 @click.version_option()
 def cli() -> None:
-    """mem-lmx — local MCP memory backed by Obsidian vault, MLX-native."""
+    """memo — local MCP memory backed by Obsidian vault, MLX-native."""
 
 
 @cli.command()
@@ -53,7 +71,7 @@ def cli() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a panel.")
 def save(content: str, title: str | None, type_: str, tags: tuple[str, ...], as_json: bool) -> None:
     """Persist CONTENT to the vault + index."""
-    from mem_lmx.memory import Memory
+    from memo.memory import Memory
 
     mem = Memory(Config.from_env())
     rec = mem.save(content=content, title=title, type_=type_, tags=list(tags))
@@ -76,7 +94,7 @@ def save(content: str, title: str | None, type_: str, tags: tuple[str, ...], as_
 @click.option("--json", "as_json", is_flag=True)
 def search(query: str, limit: int, type_: str | None, as_json: bool) -> None:
     """Top-k semantic search."""
-    from mem_lmx.memory import Memory
+    from memo.memory import Memory
 
     mem = Memory(Config.from_env())
     hits = mem.search(query, limit=limit, type_=type_)
@@ -107,7 +125,7 @@ def search(query: str, limit: int, type_: str | None, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True)
 def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
     """Recent memories by `updated` desc."""
-    from mem_lmx.memory import Memory
+    from memo.memory import Memory
 
     mem = Memory(Config.from_env())
     items = mem.list(limit=limit, type_=type_)
@@ -132,10 +150,10 @@ def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True)
 def get(id_: str, as_json: bool) -> None:
     """Fetch one memory by id."""
-    from mem_lmx.memory import Memory
+    from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    rec = mem.get(id_)
+    rec = _resolved(lambda: mem.get(id_))
     if rec is None:
         console.print(f"[red]not found:[/red] {id_}")
         sys.exit(1)
@@ -155,22 +173,98 @@ def get(id_: str, as_json: bool) -> None:
 
 @cli.command()
 @click.argument("id_")
+@click.option("--title", default=None)
+@click.option(
+    "--type", "type_",
+    type=click.Choice(
+        ["decision", "fact", "bug", "feedback", "preference", "note", "manual"],
+    ),
+    default=None,
+)
+@click.option("--tag", "-t", "tags", multiple=True, help="Replaces existing tags.")
+@click.option(
+    "--content", default=None,
+    help="Replace body. Use '-' to read from stdin.",
+)
+@click.option("--json", "as_json", is_flag=True)
+def update(
+    id_: str,
+    title: str | None,
+    type_: str | None,
+    tags: tuple[str, ...],
+    content: str | None,
+    as_json: bool,
+) -> None:
+    """Patch fields on an existing memory. Re-embeds only if body changed."""
+    from memo.memory import Memory
+
+    if content == "-":
+        content = sys.stdin.read()
+
+    mem = Memory(Config.from_env())
+    rec = _resolved(lambda: mem.update(
+        id_,
+        title=title,
+        type_=type_,
+        tags=list(tags) if tags else None,
+        content=content,
+    ))
+    if rec is None:
+        console.print(f"[red]not found:[/red] {id_}")
+        sys.exit(1)
+    if as_json:
+        click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
+        return
+    console.print(Panel.fit(
+        f"[bold]{rec.title}[/bold]\n"
+        f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
+        f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
+        f"[dim]updated:[/dim] {rec.updated}",
+        title="✓ updated", border_style="yellow",
+    ))
+
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True)
+def reindex(as_json: bool) -> None:
+    """Re-scan memory dir, re-embed entries with body_hash mismatch.
+
+    Run after editing memory `.md` files directly in Obsidian, or after
+    restoring memories from a backup.
+    """
+    from memo.memory import Memory
+
+    mem = Memory(Config.from_env())
+    counts = mem.reindex()
+    if as_json:
+        click.echo(json.dumps(counts, indent=2))
+        return
+    console.print(
+        f"checked: [cyan]{counts['checked']}[/cyan]  "
+        f"reindexed: [yellow]{counts['reindexed']}[/yellow]  "
+        f"added: [green]{counts['added']}[/green]  "
+        f"skipped: [dim]{counts['skipped']}[/dim]",
+    )
+
+
+@cli.command()
+@click.argument("id_")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def delete(id_: str, yes: bool) -> None:
     """Delete one memory by id."""
-    from mem_lmx.memory import Memory
+    from memo.memory import Memory
 
     mem = Memory(Config.from_env())
     if not yes:
         click.confirm(f"Delete memory {id_!r}? This removes the .md and the index entry.", abort=True)
-    ok = mem.delete(id_)
+    ok = _resolved(lambda: mem.delete(id_))
     console.print(f"[{'green' if ok else 'red'}]{'✓ deleted' if ok else 'not found'}[/]: {id_}")
 
 
 @cli.command()
 def stats() -> None:
     """Summary stats — total records, vault path, embedder model."""
-    from mem_lmx.memory import Memory
+    from memo.memory import Memory
 
     mem = Memory(Config.from_env())
     info: dict[str, Any] = {
@@ -186,8 +280,15 @@ def stats() -> None:
 
 
 @cli.command()
-def doctor() -> None:
-    """Self-check: vault present, sqlite-vec loadable, MLX importable, models in cache."""
+@click.option("--gc", "do_gc", is_flag=True, help="Detect orphans between store and disk.")
+@click.option("--fix", is_flag=True, help="With --gc: drop orphan store rows. .md files are never deleted automatically.")
+def doctor(do_gc: bool, fix: bool) -> None:
+    """Self-check: vault present, sqlite-vec loadable, MLX importable, models in cache.
+
+    `--gc` reports orphans (store rows whose `.md` is gone, `.md` files
+    whose `id` isn't in the store). `--gc --fix` removes orphan store
+    rows; orphan `.md` files are listed but never deleted automatically.
+    """
     cfg = Config.from_env()
     ok = True
 
@@ -235,6 +336,36 @@ def doctor() -> None:
                 f"[yellow]![/yellow] not cached: {model}  "
                 f"[dim](run `hf download {model}`)[/dim]",
             )
+
+    if do_gc:
+        from memo.memory import Memory
+
+        mem = Memory(cfg)
+        report = mem.gc(fix=fix)
+        n_store = len(report["orphan_store"])
+        n_disk = len(report["orphan_disk"])
+        if n_store == 0 and n_disk == 0:
+            console.print("[green]✓[/green] no orphans")
+        else:
+            if n_store:
+                verb = "dropped" if fix else "found"
+                console.print(
+                    f"[yellow]{verb} {n_store} orphan store row(s)[/yellow] "
+                    f"(in store, .md missing)",
+                )
+                for oid in report["orphan_store"][:20]:
+                    console.print(f"  · {oid}")
+                if n_store > 20:
+                    console.print(f"  · …and {n_store - 20} more")
+            if n_disk:
+                console.print(
+                    f"[yellow]found {n_disk} orphan .md file(s)[/yellow] "
+                    f"(on disk, not in store — try `memo reindex`)",
+                )
+                for p in report["orphan_disk"][:20]:
+                    console.print(f"  · {p}")
+                if n_disk > 20:
+                    console.print(f"  · …and {n_disk - 20} more")
 
     sys.exit(0 if ok else 1)
 

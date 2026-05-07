@@ -1,0 +1,91 @@
+"""MCP server — tool surface + body snippet behavior.
+
+These tests build a `Memory` with the stub embedder (no MLX), instantiate
+the FastMCP server with `build_server(memory=...)`, and inspect the tool
+return values directly via the `Memory` instance — bypassing the JSON-RPC
+transport. This is enough to lock in:
+
+- `memory_search` truncates `body` to the configured `body_chars`.
+- `memory_get` / `memory_update` / `memory_delete` return the structured
+  `ambiguous` shape instead of raising when a prefix collides.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+
+from memo.config import Config
+from memo.memory import Memory
+from memo.server import build_server
+
+
+@pytest.fixture
+def mem(tmp_cfg: Config, monkeypatch) -> Memory:
+    cfg = Config(
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    return Memory(cfg)
+
+
+def _tool(server, name):
+    """Resolve a registered FastMCP tool to its plain Python callable.
+
+    `FastMCP.get_tool` is async and yields a `FunctionTool` whose
+    underlying fn lives on `.fn`. We `asyncio.run` that one-shot and
+    return the bare callable.
+    """
+    import asyncio
+
+    tool = asyncio.run(server.get_tool(name))
+    if tool is None:
+        raise RuntimeError(f"tool {name!r} not registered")
+    return tool.fn
+
+
+def test_search_truncates_body(mem: Memory):
+    huge = "x" * 5_000
+    mem.save(content=huge, title="Huge")
+    server = build_server(memory=mem)
+    search = _tool(server, "memory_search")
+    out = search(query="huge", body_chars=200)
+    assert out, "search returned nothing"
+    body = out[0]["body"]
+    # Truncated body has the ellipsis suffix; allow a little slack for the rstrip.
+    assert len(body) <= 201
+    assert body.endswith("…")
+    assert out[0]["body_truncated"] is True
+
+
+def test_search_full_body_when_chars_huge(mem: Memory):
+    mem.save(content="corto", title="Short")
+    server = build_server(memory=mem)
+    search = _tool(server, "memory_search")
+    out = search(query="corto", body_chars=10_000)
+    assert out
+    assert out[0]["body"] == "corto"
+    assert "body_truncated" not in out[0]
+
+
+def test_get_returns_ambiguous_shape(mem: Memory, monkeypatch):
+    fixed = iter([
+        uuid.UUID("aaaaaaaa1111000000000000000000ff"),
+        uuid.UUID("aaaaaaaa2222000000000000000000ff"),
+    ])
+    monkeypatch.setattr("memo.memory.uuid.uuid4", lambda: next(fixed))
+    mem.save(content="a", title="A")
+    mem.save(content="b", title="B")
+
+    server = build_server(memory=mem)
+    get = _tool(server, "memory_get")
+    out = get(id="aaaaaaaa")
+    assert isinstance(out, dict)
+    assert out.get("error") == "ambiguous"
+    assert len(out["matches"]) == 2
