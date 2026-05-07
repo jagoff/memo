@@ -55,6 +55,7 @@ import frontmatter
 
 from memo.config import Config
 from memo.embedder import MLXEmbedder
+from memo.graph import VALID_ENTITY_TYPES, GraphStore
 from memo.llm import MLXChat
 from memo.store import VecStore
 
@@ -63,6 +64,27 @@ from memo.store import VecStore
 # attention without hurting accuracy. Empirically the model follows the
 # format strictly under temperature=0; the regex fallback in
 # `_derive_metadata` handles the occasional markdown fence wrap.
+_EXTRACT_ENTITIES_SYSTEM_PROMPT = """You extract entities from a personal memory note.
+
+Output ONLY a JSON object: {"entities": [{"name": "...", "type": "..."}, ...]}
+
+Entity types (use lowercase, exactly one of):
+- "person": named human (Astor, Fer, Florencia)
+- "project": named project / repo / system (obsidian-rag, memo, mem-vault, ELEVA)
+- "technology": library / language / model (MLX, sqlite-vec, Qwen3-Embedding, FastAPI)
+- "file": specific file path or filename (~/.config/devin/config.json, Caddyfile)
+- "org": company / team / institution (Anthropic, NotebookLM, ELEVA)
+- "concept": named convention / pattern / methodology (PARA, RAG, hybrid retrieval)
+
+Rules:
+- Extract ONLY proper nouns and named entities. Do NOT extract generic
+  nouns ("decisión", "fix", "bug").
+- Normalise to canonical form: lowercase, no surrounding punctuation,
+  no plural suffix.
+- 0-15 entities per note. Empty list if no proper nouns.
+- Output ONLY the JSON, no markdown fences, no commentary."""
+
+
 _CONSOLIDATE_SYSTEM_PROMPT = """You analyze a cluster of related memory notes from a personal archive.
 
 You receive a list of 2+ memorias that the user's vector index marked
@@ -214,6 +236,9 @@ class Memory:
         # is requested. Cold load of Qwen2.5-3B is ~2-3s; users who
         # don't opt in pay nothing.
         self._chat: MLXChat | None = None
+        # Knowledge-graph store. Cheap to open (just sqlite); creating
+        # eagerly so graph queries never lazy-stall a CLI command.
+        self.graph = GraphStore(cfg.graph_db)
 
     # -- save ---------------------------------------------------------------
 
@@ -694,6 +719,9 @@ class Memory:
             self.history.log_delete(
                 ts=_now_iso(), record_id=id_, title=r["title"], type_=r["type"],
             )
+            # Drop graph edges for this memoria so entity counts stay
+            # honest. Cheap (one DELETE + counter decrement per edge).
+            self.graph.drop_for_memoria(id_)
         return existed
 
     # -- reindex / gc -------------------------------------------------------
@@ -812,6 +840,107 @@ class Memory:
             if t == "untitled" or not t:
                 out["untitled"].append({**entry, "reason": "title missing or 'untitled'"})
         return out
+
+    # -- knowledge graph ----------------------------------------------------
+
+    def extract_entities(
+        self, *, ids: list[str] | None = None, all_: bool = False,
+        skip_already_indexed: bool = True,
+    ) -> dict[str, int]:
+        """Extract named entities from memorias and write to the graph.
+
+        Modes:
+        - `ids=[...]`: process exactly the listed memoria ids.
+        - `all_=True`: process every memoria in the store.
+
+        With `skip_already_indexed=True` (default), memorias that
+        already have entries in `entity_memoria` are skipped — useful
+        for incremental runs after adding new memorias. Pass False to
+        force re-extraction (e.g. after improving the prompt).
+
+        Returns counts: `{processed, entities_extracted, links_written, skipped, errors}`.
+        Cost: ~0.5-1s per memoria with Qwen2.5-3B. 223 memorias ≈ 2-4 min.
+        """
+        if not all_ and not ids:
+            raise ValueError("pass either ids=[...] or all_=True")
+
+        if all_:
+            target = [r["id"] for r in self.store.list_recent(limit=100_000)]
+        else:
+            target = list(ids or [])
+
+        # Pre-filter already-indexed unless --force.
+        if skip_already_indexed:
+            target = [
+                tid for tid in target
+                if not self.graph.memoria_entities(tid)
+            ]
+
+        counts = {"processed": 0, "entities_extracted": 0,
+                  "links_written": 0, "skipped": 0, "errors": 0}
+
+        if not target:
+            return counts
+
+        if self._chat is None:
+            self._chat = MLXChat()
+
+        for tid in target:
+            r = self.store.get(tid)
+            if r is None:
+                counts["skipped"] += 1
+                continue
+            body = self._read_body(r["path"])
+            if not body.strip():
+                counts["skipped"] += 1
+                continue
+            # Build prompt: title + body excerpt. Cap to ~3000 chars to
+            # keep the helper LLM cheap; entities tend to live in the
+            # opening paragraphs.
+            user_msg = (
+                f"Title: {r['title']}\n"
+                f"Tags: {', '.join(r['tags']) if r['tags'] else '—'}\n\n"
+                f"{body[:3000]}"
+            )
+            try:
+                out = self._chat.chat(
+                    model=self.cfg.helper_model,
+                    messages=[
+                        {"role": "system", "content": _EXTRACT_ENTITIES_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    options={"temperature": 0.0, "max_tokens": 384},
+                )
+                text = ((out.get("message") or {}).get("content") or "").strip()
+            except Exception:
+                counts["errors"] += 1
+                continue
+            if text.startswith("```"):
+                text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
+            try:
+                data = json.loads(text) if text else {}
+            except Exception:
+                counts["errors"] += 1
+                continue
+            ents = data.get("entities") if isinstance(data, dict) else None
+            if not isinstance(ents, list):
+                ents = []
+            # Filter to dicts with both name + type fields.
+            ents = [
+                {"name": e.get("name"), "type": e.get("type")}
+                for e in ents
+                if isinstance(e, dict) and e.get("name") and e.get("type")
+            ]
+            n = self.graph.record_extraction(
+                memoria_id=tid,
+                memoria_date=r["created"][:10] if r.get("created") else _now_iso()[:10],
+                entities=ents,
+                extracted_at=_now_iso(),
+            )
+            counts["processed"] += 1
+            counts["entities_extracted"] += len(ents)
+            counts["links_written"] += n
+        return counts
 
     def consolidate(
         self, *, threshold: float = 0.85, max_clusters: int = 50,

@@ -125,6 +125,11 @@ class Config(BaseModel):
         """History/audit DB (separate file so vec writes don't share WAL)."""
         return self.state_dir / "history.db"
 
+    @property
+    def graph_db(self) -> Path:
+        """Knowledge-graph DB (entities + entity_memoria edges)."""
+        return self.state_dir / "graph.db"
+
     # ── Construction ─────────────────────────────────────────────────────
 
     @classmethod

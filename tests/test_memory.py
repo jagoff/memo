@@ -406,6 +406,72 @@ def test_history_filter_by_record_id(mem_with_stub: Memory):
     assert {e["op"] for e in events} == {"save", "update"}
 
 
+def test_extract_entities_writes_graph(mem_with_stub: Memory, monkeypatch):
+    """LLM returns a JSON list of entities; graph gets edges + bumped
+    mention counts."""
+    rec = mem_with_stub.save(
+        content="Decidí migrar obsidian-rag a MLX con Qwen3-Embedding.",
+        title="MLX migration",
+    )
+
+    def _stub_chat(self, model, messages, options=None):
+        return {"message": {"content":
+            '{"entities": [{"name": "obsidian-rag", "type": "project"}, '
+            '{"name": "mlx", "type": "technology"}, '
+            '{"name": "qwen3-embedding", "type": "technology"}]}'}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    counts = mem_with_stub.extract_entities(ids=[rec.id])
+    assert counts["processed"] == 1
+    assert counts["entities_extracted"] == 3
+    assert counts["links_written"] == 3
+
+    # Top entities — we passed 3, all should appear with count 1.
+    top = mem_with_stub.graph.top_entities(limit=10)
+    names = {e["name"] for e in top}
+    assert {"obsidian-rag", "mlx", "qwen3-embedding"}.issubset(names)
+
+    # Reverse query: name → memoria ids.
+    ids = mem_with_stub.graph.entity_memorias("mlx")
+    assert ids == [rec.id]
+
+
+def test_extract_entities_skip_already_indexed(mem_with_stub: Memory, monkeypatch):
+    """Re-running without --force is a no-op."""
+    rec = mem_with_stub.save(content="x", title="X")
+    calls = [0]
+
+    def _stub_chat(self, model, messages, options=None):
+        calls[0] += 1
+        return {"message": {"content": '{"entities": [{"name": "x", "type": "concept"}]}'}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    mem_with_stub.extract_entities(ids=[rec.id])
+    assert calls[0] == 1
+    # Second run: should skip the already-indexed memoria.
+    counts = mem_with_stub.extract_entities(ids=[rec.id])
+    assert counts["processed"] == 0
+    assert calls[0] == 1  # no extra LLM call
+
+
+def test_delete_drops_graph_edges(mem_with_stub: Memory, monkeypatch):
+    """Deleting a memoria removes its entity_memoria links and decrements
+    each entity's mention_count."""
+    rec = mem_with_stub.save(content="x", title="X")
+
+    def _stub_chat(self, model, messages, options=None):
+        return {"message": {"content": '{"entities": [{"name": "foo", "type": "concept"}]}'}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    mem_with_stub.extract_entities(ids=[rec.id])
+    assert mem_with_stub.graph.entity_memorias("foo") == [rec.id]
+
+    mem_with_stub.delete(rec.id)
+    assert mem_with_stub.graph.entity_memorias("foo") == []
+    # The entity row may still exist with mention_count=0 — that's fine,
+    # cheap to keep around for redux of the same name later.
+
+
 def test_consolidate_clusters_near_duplicates(mem_with_stub: Memory, monkeypatch):
     """Two memorias with cosine ≈1.0 land in the same cluster.
     MLXChat is mocked to return a structured JSON."""

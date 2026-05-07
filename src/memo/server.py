@@ -207,6 +207,47 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
 
     @server.tool()
+    def memory_extract_entities(
+        ids: list[str] | None = None, all_: bool = False, force: bool = False,
+    ) -> dict[str, int]:
+        """Extract named entities (person/project/technology/file/org/concept)
+        from memoria bodies via Qwen2.5-3B and write them to the graph DB.
+
+        Args:
+            ids: Specific memoria ids to process (full UUID hex). Mutually
+                exclusive with `all_`.
+            all_: Process every memoria in the store.
+            force: Re-extract even if entity links already exist
+                (default skips already-indexed memorias).
+
+        Returns counts: `{processed, entities_extracted, links_written, skipped, errors}`.
+        Cost: ~0.5-1s per memoria. Use `all_=True` once after a fresh
+        install, then incrementally on new memorias.
+        """
+        return memory.extract_entities(
+            ids=ids, all_=all_, skip_already_indexed=not force,
+        )
+
+    @server.tool()
+    def memory_entities(
+        limit: int = 30, type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Top entities in the knowledge graph, ranked by mention count.
+
+        Args:
+            limit: Max entities. Default 30.
+            type: Optional filter (`person`/`project`/`technology`/
+                `file`/`org`/`concept`).
+        """
+        return memory.graph.top_entities(limit=limit, type_=type)
+
+    @server.tool()
+    def memory_entity(name: str, type: str | None = None) -> list[str]:
+        """Memoria IDs that mention `name` (and optionally a specific
+        entity type). Returns a list of full UUIDs."""
+        return memory.graph.entity_memorias(name, type_=type)
+
+    @server.tool()
     def memory_consolidate(
         threshold: float = 0.85, max_clusters: int = 20, type: str | None = None,
     ) -> list[dict[str, Any]]:
