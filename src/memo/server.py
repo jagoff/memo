@@ -170,6 +170,13 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
 
     @server.tool()
+    def memory_lint() -> dict[str, list[dict[str, Any]]]:
+        """Surface memorias with quality issues — `legacy_extra`,
+        `few_tags`, `body_skinny`, `untitled`. Read-only; for the LLM
+        to suggest a cleanup pass to the user."""
+        return memory.lint()
+
+    @server.tool()
     def memory_history(
         limit: int = 20, op: str | None = None, id: str | None = None,
     ) -> list[dict[str, Any]]:

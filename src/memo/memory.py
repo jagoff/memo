@@ -505,6 +505,55 @@ class Memory:
                 reindexed += 1
         return {"checked": checked, "reindexed": reindexed, "added": added, "skipped": skipped}
 
+    def lint(self) -> dict[str, list[dict[str, Any]]]:
+        """Surface memorias with quality issues.
+
+        Categories:
+        - `legacy_extra`: has `extra` keys from mem-vault migration
+          (`agent_id`, `last_used`, `usage_count`, `user_id`, `description`).
+          These don't affect retrieval but bloat the frontmatter — worth
+          a manual cleanup pass.
+        - `few_tags`: <3 tags. The CLAUDE.md convention is ≥3 (project +
+          domain + technique). Few tags hurt discovery via `memo top <tag>`.
+        - `body_skinny`: body shorter than 100 chars. May still be useful
+          for one-liner facts but worth checking if the user meant to
+          write more.
+        - `untitled`: title is literally "untitled" or matches the slug.
+
+        Returns a dict of category → list of {id, title, reason} dicts.
+        Pure read; never modifies the store.
+        """
+        legacy_keys = frozenset({
+            "agent_id", "last_used", "usage_count", "user_id", "description",
+        })
+        out: dict[str, list[dict[str, Any]]] = {
+            "legacy_extra": [],
+            "few_tags": [],
+            "body_skinny": [],
+            "untitled": [],
+        }
+        for r in self.store.list_recent(limit=100_000):
+            entry = {"id": r["id"], "title": r["title"]}
+            extra = r.get("extra") or {}
+            if any(k in extra for k in legacy_keys):
+                out["legacy_extra"].append(
+                    {**entry, "reason": "mem-vault legacy fields in extra: "
+                                        + ", ".join(sorted(set(extra) & legacy_keys))},
+                )
+            if len(r.get("tags") or []) < 3:
+                out["few_tags"].append(
+                    {**entry, "reason": f"only {len(r.get('tags') or [])} tag(s)"},
+                )
+            body = self._read_body(r["path"]) or ""
+            if len(body.strip()) < 100:
+                out["body_skinny"].append(
+                    {**entry, "reason": f"body {len(body.strip())} chars"},
+                )
+            t = (r["title"] or "").strip().lower()
+            if t == "untitled" or not t:
+                out["untitled"].append({**entry, "reason": "title missing or 'untitled'"})
+        return out
+
     def gc(self, *, fix: bool = False) -> dict[str, list[str]]:
         """Find orphans between the store and the memory dir.
 

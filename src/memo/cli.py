@@ -312,6 +312,40 @@ def history(limit: int, op: str | None, record_id: str | None, as_json: bool) ->
 
 
 @cli.command()
+@click.option("--category", default=None,
+              type=click.Choice(["legacy_extra", "few_tags", "body_skinny", "untitled"]),
+              help="Show only one category. Default: summary of all.")
+@click.option("--limit", default=20, type=int, show_default=True,
+              help="Max entries per category in the report.")
+@click.option("--json", "as_json", is_flag=True)
+def lint(category: str | None, limit: int, as_json: bool) -> None:
+    """Surface memorias with quality issues. Read-only — does not edit
+    anything. Use to plan a manual cleanup pass.
+    """
+    from memo.memory import Memory
+
+    mem = Memory(Config.from_env())
+    report = mem.lint()
+    if category:
+        report = {category: report.get(category, [])}
+    if as_json:
+        click.echo(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        return
+    for cat, rows in report.items():
+        n = len(rows)
+        if n == 0:
+            console.print(f"[green]✓[/green] {cat}: 0")
+            continue
+        console.print(f"[yellow]{cat}[/yellow]: {n}")
+        for entry in rows[:limit]:
+            console.print(
+                f"  · {entry['id'][:8]} · {entry['title'][:60]} · [dim]{entry['reason']}[/dim]"
+            )
+        if n > limit:
+            console.print(f"  · …and {n - limit} more")
+
+
+@cli.command()
 @click.option("--out", "out_path", default=None, type=click.Path(),
               help="Output zip path. Default: ./memo-backup-<YYYYMMDD-HHMMSS>.zip")
 def backup(out_path: str | None) -> None:
