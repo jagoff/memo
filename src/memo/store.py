@@ -171,7 +171,12 @@ class VecStore:
                 "extra_json=excluded.extra_json",
                 (
                     id_, path, title, type_, json.dumps(tags), created, updated, body_hash,
-                    json.dumps(extra) if extra is not None else None,
+                    # `default=str` coerces date/datetime/Path objects that
+                    # frontmatter parsers leave as native Python types — common
+                    # in mem-vault-style files where YAML auto-coerced dates.
+                    # Without this, json.dumps raises TypeError on the first
+                    # such object inside `extra`.
+                    json.dumps(extra, default=str) if extra is not None else None,
                 ),
             )
             # `vec0` doesn't support `ON CONFLICT` syntax — we delete
@@ -202,7 +207,7 @@ class VecStore:
                 "WHERE id = ?",
                 (
                     title, type_, json.dumps(tags), updated,
-                    json.dumps(extra) if extra is not None else None, id_,
+                    json.dumps(extra, default=str) if extra is not None else None, id_,
                 ),
             )
             return cur.rowcount > 0
