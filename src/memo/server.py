@@ -166,6 +166,29 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
 
     @server.tool()
+    def memory_history(
+        limit: int = 20, op: str | None = None, id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recent save/update/delete events from the audit log.
+
+        Args:
+            limit: Max events. Defaults to 20.
+            op: Optional filter: `save`, `update`, or `delete`.
+            id: Optional filter to events for one record (full id or
+                unique prefix ≥4 chars).
+        """
+        record_id = id
+        if record_id and len(record_id) < 32:
+            try:
+                resolved = memory.resolve_id(record_id)
+            except AmbiguousIdError as exc:
+                return [{"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}]
+            if resolved is None:
+                return []
+            record_id = resolved
+        return memory.history.list_recent(limit=limit, op=op, record_id=record_id)
+
+    @server.tool()
     def memory_stats() -> dict[str, Any]:
         """Summary stats — total records, recent counts. No body load."""
         return {

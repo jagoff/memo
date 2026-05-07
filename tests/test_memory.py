@@ -274,6 +274,28 @@ def test_update_and_delete_accept_prefix(mem_with_stub: Memory):
     assert mem_with_stub.delete(short) is True
 
 
+def test_history_logs_save_update_delete(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="x", title="A", type_="note")
+    mem_with_stub.update(rec.id, title="B")
+    mem_with_stub.delete(rec.id)
+    events = mem_with_stub.history.list_recent(limit=10)
+    ops = [e["op"] for e in events]
+    # Most recent first.
+    assert ops == ["delete", "update", "save"]
+    # Update event carries a delta with title change.
+    upd = next(e for e in events if e["op"] == "update")
+    assert upd["delta"] == {"title": ["A", "B"]}
+
+
+def test_history_filter_by_record_id(mem_with_stub: Memory):
+    a = mem_with_stub.save(content="x", title="A")
+    mem_with_stub.save(content="y", title="B")
+    mem_with_stub.update(a.id, title="A2")
+    events = mem_with_stub.history.list_recent(limit=10, record_id=a.id)
+    assert all(e["record_id"] == a.id for e in events)
+    assert {e["op"] for e in events} == {"save", "update"}
+
+
 def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
     """Queries must go through `embed_query` (prefix added), not raw
     `embed`. Locks the asymmetric-retrieval contract — if a refactor

@@ -264,6 +264,50 @@ def delete(id_: str, yes: bool) -> None:
 
 
 @cli.command()
+@click.option("--limit", default=20, type=int, show_default=True)
+@click.option("--op", default=None,
+              type=click.Choice(["save", "update", "delete"]),
+              help="Filter to one op type.")
+@click.option("--id", "record_id", default=None,
+              help="Filter to events for one record (full id or unique prefix).")
+@click.option("--json", "as_json", is_flag=True)
+def history(limit: int, op: str | None, record_id: str | None, as_json: bool) -> None:
+    """Recent save/update/delete events. Append-only audit log."""
+    from memo.memory import Memory
+
+    mem = Memory(Config.from_env())
+    if record_id and len(record_id) < 32:
+        # Resolve prefix → full id (audit log stores full ids).
+        resolved = mem.resolve_id(record_id)
+        if resolved is None:
+            console.print(f"[red]not found:[/red] {record_id}")
+            sys.exit(1)
+        record_id = resolved
+    rows = mem.history.list_recent(limit=limit, op=op, record_id=record_id)
+    if as_json:
+        click.echo(json.dumps(rows, ensure_ascii=False, indent=2, default=str))
+        return
+    if not rows:
+        console.print("[dim]no events[/dim]")
+        return
+    tbl = Table(show_lines=False, expand=True)
+    tbl.add_column("ts", width=20)
+    tbl.add_column("op", width=7)
+    tbl.add_column("id", width=10)
+    tbl.add_column("title", overflow="fold")
+    tbl.add_column("delta", overflow="fold")
+    for r in rows:
+        delta = ""
+        if r.get("delta"):
+            delta = ", ".join(f"{k}" for k in r["delta"].keys())
+        tbl.add_row(
+            (r["ts"] or "")[:19], r["op"], (r["record_id"] or "")[:8],
+            r["title"] or "—", delta or "—",
+        )
+    console.print(tbl)
+
+
+@cli.command()
 def stats() -> None:
     """Summary stats — total records, vault path, embedder model."""
     from memo.memory import Memory

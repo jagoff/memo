@@ -140,6 +140,11 @@ class Memory:
             expected_dims=cfg.embedder_dims,
         )
         self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
+        # Lazy: opened on first log call. Audit failures must never
+        # propagate to the caller, so HistoryStore swallows its own
+        # exceptions internally.
+        from memo.history import HistoryStore as _HS
+        self.history = _HS(cfg.history_db)
 
     # -- save ---------------------------------------------------------------
 
@@ -219,6 +224,10 @@ class Memory:
             body_hash=body_hash,
             embedding=embedding,
             extra=extra,
+        )
+
+        self.history.log_save(
+            ts=now_iso, record_id=record_id, title=title, type_=type_,
         )
 
         return MemoryRecord(
@@ -383,6 +392,22 @@ class Memory:
                 updated=now_iso, extra=new_extra,
             )
 
+        # Audit log: build a delta of just the fields that changed.
+        delta: dict[str, tuple[Any, Any]] = {}
+        if title_changed:
+            delta["title"] = (r["title"], new_title)
+        if new_type != r["type"]:
+            delta["type"] = (r["type"], new_type)
+        if new_tags != r["tags"]:
+            delta["tags"] = (r["tags"], new_tags)
+        if body_changed:
+            delta["body_hash"] = (r["body_hash"], new_body_hash)
+        if delta:
+            self.history.log_update(
+                ts=now_iso, record_id=id_, title=new_title, type_=new_type,
+                delta=delta,
+            )
+
         return MemoryRecord(
             id=id_, path=r["path"], title=new_title, type=new_type,
             tags=new_tags, created=r["created"], updated=now_iso,
@@ -408,6 +433,10 @@ class Memory:
             # delete signal. Stale `.md` files get cleaned up by a
             # `memo doctor --gc` pass.
             pass
+        if existed:
+            self.history.log_delete(
+                ts=_now_iso(), record_id=id_, title=r["title"], type_=r["type"],
+            )
         return existed
 
     # -- reindex / gc -------------------------------------------------------
