@@ -762,6 +762,177 @@ def doctor(do_gc: bool, fix: bool) -> None:
     sys.exit(0 if ok else 1)
 
 
+# ── Ambient memory hooks (v0.3.0) ──────────────────────────────────────────
+#
+# `recall-hook` and `prewarm` are designed to be wired into Claude Code's
+# `UserPromptSubmit` and `SessionStart` hooks respectively (see
+# `hooks/hooks.json` in this plugin / repo). They turn memo from a manual
+# memory store into an **ambient** context layer: the agent automatically
+# sees relevant memories before answering, with zero `/memo` invocations
+# from the user.
+#
+# Both commands fail SILENTLY by design — a hook crash must never block
+# Claude Code's prompt submission. On any error (DB locked, model load
+# failure, malformed stdin) we exit 0 with empty stdout, and Claude Code
+# proceeds without injection.
+
+
+@cli.command(name="recall-hook")
+def recall_hook() -> None:
+    """UserPromptSubmit hook — inject relevant memorias as additionalContext.
+
+    Reads a JSON object from stdin (Claude Code hook format), embeds the
+    `prompt` field via the MLX embedder, runs hybrid search, and outputs
+    the top-k results as `additionalContext` in `hookSpecificOutput`.
+
+    Configure via env vars (all optional, sensible defaults for v0.3.0):
+
+      MEMO_RECALL_DISABLE         — set to "1" to make this a no-op.
+      MEMO_RECALL_TOP_K           — default 3
+      MEMO_RECALL_MIN_SIM         — default 0.6 (cosine similarity floor)
+      MEMO_RECALL_MIN_PROMPT_CHARS — default 12 (skip very short prompts)
+      MEMO_RECALL_BODY_CHARS      — default 240 (snippet length per result)
+      MEMO_RECALL_SKIP_SLASH      — default "1" (skip if prompt starts with /)
+
+    Output (stdout, JSON):
+      `{}` — no injection (no results / disabled / error / silent fail)
+      `{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                               "additionalContext": "<markdown>"}}`
+    """
+    import json as _json
+    import os
+    import sys as _sys
+
+    # Always exit 0 — hooks must not block Claude Code on memo failures.
+    def _bail(reason: str = "") -> None:
+        if reason and os.environ.get("MEMO_RECALL_DEBUG") == "1":
+            print(f"# memo recall-hook: {reason}", file=_sys.stderr)
+        print("{}")
+        _sys.exit(0)
+
+    if os.environ.get("MEMO_RECALL_DISABLE") == "1":
+        _bail("disabled via MEMO_RECALL_DISABLE")
+        return
+
+    # Read stdin (Claude Code passes hook input as JSON).
+    try:
+        raw = _sys.stdin.read()
+        if not raw.strip():
+            _bail("empty stdin")
+            return
+        payload = _json.loads(raw)
+    except _json.JSONDecodeError as exc:
+        _bail(f"stdin parse fail: {exc}")
+        return
+
+    prompt = (payload.get("prompt") or "").strip()
+    min_chars = int(os.environ.get("MEMO_RECALL_MIN_PROMPT_CHARS", "12"))
+    if len(prompt) < min_chars:
+        _bail(f"prompt too short ({len(prompt)} < {min_chars})")
+        return
+
+    # Skip slash commands by default — the user is invoking another skill,
+    # injecting recall context would be noise. Override with
+    # MEMO_RECALL_SKIP_SLASH=0 if you want recall on /memo:memo etc.
+    if os.environ.get("MEMO_RECALL_SKIP_SLASH", "1") == "1" and prompt.startswith("/"):
+        _bail("slash command, skip recall")
+        return
+
+    top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
+    min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.6"))
+    body_chars = int(os.environ.get("MEMO_RECALL_BODY_CHARS", "240"))
+
+    # Suppress HF download progress bars on stderr — they'd contaminate
+    # the hook's debug output and confuse users tailing logs. The model
+    # is already downloaded for any working memo install; this only
+    # silences first-run cache-check noise.
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+
+    # Defer the heavy import — only paid if we get past the early-exits.
+    # Use vec mode (NOT hybrid): for ambient injection we want a
+    # *confidence threshold*, and only vec mode produces true cosine
+    # similarity in [0, 1] that's interpretable as a confidence score.
+    # Hybrid uses RRF fusion which produces tiny scores (~0.01-0.05) that
+    # can't be filtered with an absolute threshold.
+    try:
+        from memo.memory import Memory
+        mem = Memory(Config.from_env())
+        mode = os.environ.get("MEMO_RECALL_MODE", "vec")
+        hits = mem.search(prompt, limit=top_k, mode=mode)
+    except Exception as exc:  # noqa: BLE001
+        _bail(f"search failed: {exc}")
+        return
+
+    # Filter by similarity floor. With mode="vec", `score` is cosine
+    # similarity ∈ [-1, 1] (typically [0, 1] for L2-normalised embeddings).
+    # 0.6 is the empirical confidence floor on the 223-doc corpus:
+    #   - "qué decidí sobre MLX vs Ollama" → 3 hits @ 0.71-0.74 (all relevant)
+    #   - "how to bake apple pie" → 3 hits @ 0.51-0.56 (literal-word noise,
+    #     "apple-mcp" memoria matched). Threshold 0.6 cuts these out.
+    # Tune via MEMO_RECALL_MIN_SIM if your corpus has different density.
+    relevant = [h for h in hits if h.score is None or h.score >= min_sim]
+    if not relevant:
+        _bail(f"no hits above min_sim={min_sim}")
+        return
+
+    # Format as markdown additionalContext. Be terse — context budget is
+    # capped at 10k chars by Claude Code; we want each prompt to inject
+    # ~500-1500 chars at most so the user's actual prompt isn't drowned.
+    lines = [
+        "## Relevant memories from your past (memo)",
+        "",
+    ]
+    for h in relevant:
+        score_tag = f" (score {h.score:.2f})" if h.score is not None else ""
+        body = (h.body or "").strip().replace("\n", " ")
+        if len(body) > body_chars:
+            body = body[:body_chars].rstrip() + "…"
+        lines.append(f"**[{h.id[:8]}] {h.title}**{score_tag}")
+        if h.tags:
+            lines.append(f"_tags_: {', '.join(h.tags)}")
+        if body:
+            lines.append(f"> {body}")
+        lines.append("")
+    lines.append("_Use `/memo:memo get <id>` to see full content._")
+
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "\n".join(lines),
+        }
+    }
+    print(_json.dumps(output, ensure_ascii=False))
+    _sys.exit(0)
+
+
+@cli.command(name="prewarm")
+def prewarm() -> None:
+    """SessionStart hook — pre-load the MLX embedder so first recall is fast.
+
+    Loads the embedder model into memory + warms the lazy `mlx_lm.load()`
+    path. Subsequent `recall-hook` calls in the session benefit from the
+    OS file cache (the model weights stay in RAM-backed disk cache for
+    minutes after a load), shaving cold-load latency from ~2s to ~500ms.
+
+    Designed to be invoked async at SessionStart so the user doesn't see
+    the delay. Failures are silent (the recall-hook will just be slower).
+    """
+    import os
+    import sys as _sys
+
+    if os.environ.get("MEMO_RECALL_DISABLE") == "1":
+        _sys.exit(0)
+    try:
+        from memo.embedder import MLXEmbedder
+        emb = MLXEmbedder(Config.from_env())
+        emb.embed("warmup")  # forces MLX load + first forward pass
+    except Exception as exc:  # noqa: BLE001
+        if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+            print(f"# memo prewarm failed: {exc}", file=_sys.stderr)
+    _sys.exit(0)
+
+
 def main() -> None:
     cli()
 
