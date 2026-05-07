@@ -638,3 +638,43 @@ def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
     # Body on disk should be truncated to `max_content_chars`.
     on_disk = (cfg.vault_path / rec.path).read_text()
     assert on_disk.count("x") <= 100
+
+
+# ── assert_valid_embedding guard ──────────────────────────────────────────
+
+
+def test_save_rejects_wrong_dim_embedding(tmp_cfg: Config, monkeypatch):
+    """Past silent-failure mode: string-as-Sequence-of-chars cascade
+    returned variable-dim outputs (135, 512, 2465...) instead of the
+    configured dim. The guard in `Memory.save` must raise loudly so
+    the bad vector never reaches the index."""
+    cfg = Config(
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0] * 7 for _ in inputs],  # wrong dim (7, not 4)
+    )
+    mem = Memory(cfg)
+    with pytest.raises(ValueError, match="dim mismatch"):
+        mem.save(content="x", title="t")
+
+
+def test_save_rejects_zero_norm_embedding(tmp_cfg: Config, monkeypatch):
+    """Norm ≈ 0 is the signature of a corrupted embedder pass — the
+    real Qwen3-Embedding always L2-normalises. A zero or near-zero
+    vector would cosine-collapse all retrieval into a single bucket."""
+    cfg = Config(
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[0.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    mem = Memory(cfg)
+    with pytest.raises(ValueError, match="norm out of"):
+        mem.save(content="x", title="t")

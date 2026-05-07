@@ -229,4 +229,33 @@ class MLXEmbedder:
         return self._last_use
 
 
-__all__ = ["MLXEmbedder"]
+def assert_valid_embedding(
+    embedding: list[float], expected_dims: int, *, context: str = "",
+) -> None:
+    """Validate one vector's shape + norm. Raises with a context-aware
+    message on violation. Use at every embed boundary that writes to
+    the index — silent malformed vectors corrupt retrieval until the
+    next reindex sweeps them out.
+
+    Past silent-failure mode (v0.3.0): string-as-Sequence-of-chars
+    cascade returned variable-dim outputs (135, 512, 2465...). The
+    Metal kernel didn't error; the embedder yielded whatever shape
+    the partial recovery produced. Catching this at the boundary
+    means the next regression of the same shape surfaces immediately
+    instead of poisoning N records before anyone notices.
+    """
+    if len(embedding) != expected_dims:
+        raise ValueError(
+            f"embedding dim mismatch: got {len(embedding)}, "
+            f"want {expected_dims}{(' [' + context + ']') if context else ''}"
+        )
+    norm = sum(x * x for x in embedding) ** 0.5
+    if not (0.5 < norm < 1.5):
+        raise ValueError(
+            f"embedding norm out of L2-normalised range: {norm:.4f} "
+            f"(expected ≈ 1.0)"
+            f"{(' [' + context + ']') if context else ''}"
+        )
+
+
+__all__ = ["MLXEmbedder", "assert_valid_embedding"]

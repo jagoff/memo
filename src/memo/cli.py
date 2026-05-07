@@ -1083,6 +1083,28 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
                 # dim outputs. Wrap in a list and take [0].
                 embedding = embedder.embed([composed])[0]
 
+                # Loud-fail guard. Past silent-failure mode (string
+                # iterated as chars, partial Metal recovery, etc.)
+                # produced records with wrong-dim or zero-norm vectors
+                # that polluted the index without surfacing in the
+                # ingest summary. Centralised in `assert_valid_embedding`
+                # so save/update/ingest share one definition of "valid".
+                # Strict mode (env var MEMO_INGEST_STRICT=1) re-raises
+                # — for CI runs / golden-corpus rebuilds where any
+                # rejection should be surfaced loudly.
+                from memo.embedder import assert_valid_embedding as _assert_emb
+                try:
+                    _assert_emb(embedding, cfg.embedder_dims, context=str(path))
+                except ValueError as _ve:
+                    errors += 1
+                    import os as _os_strict
+                    if _os_strict.environ.get("MEMO_INGEST_STRICT") == "1":
+                        raise
+                    if _os_strict.environ.get("MEMO_INGEST_DEBUG") == "1":
+                        console.print(f"[red]reject:[/] {_ve}")
+                    progress.advance(task_id)
+                    continue
+
                 now = datetime.now(timezone.utc).isoformat()
                 # Preserve created if known (existing row), else now.
                 created = existing["created"] if existing else now
