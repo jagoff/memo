@@ -181,6 +181,32 @@ def test_update_rejects_invalid_type(mem_with_stub: Memory):
         mem_with_stub.update(rec.id, type_="bogus")
 
 
+def test_reindex_force_reembeds_unchanged(mem_with_stub: Memory, monkeypatch):
+    """`reindex(force=True)` re-embeds even when body_hash matches —
+    used after embedder swap or composition change."""
+    rec = mem_with_stub.save(content="cuerpo", title="X")
+    calls: list[int] = []
+    orig = mem_with_stub.embedder.embed
+
+    def _spy(inputs):
+        calls.append(len(inputs))
+        return orig(inputs)
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _spy)
+
+    counts = mem_with_stub.reindex()  # no force → no re-embed
+    assert counts["reindexed"] == 0
+    assert calls == []
+
+    counts = mem_with_stub.reindex(force=True)
+    assert counts["reindexed"] == 1
+    assert calls == [1]
+    # Disk + index still consistent.
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert fetched.title == "X"
+
+
 def test_reindex_picks_up_external_edit(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="primero", title="X")
     abs_path = mem_with_stub.cfg.vault_path / rec.path

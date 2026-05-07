@@ -227,17 +227,21 @@ def update(
 
 
 @cli.command()
+@click.option("--force", is_flag=True,
+              help="Re-embed ALL indexed entries regardless of body_hash. "
+                   "Use after embedder swap or composition change.")
 @click.option("--json", "as_json", is_flag=True)
-def reindex(as_json: bool) -> None:
+def reindex(force: bool, as_json: bool) -> None:
     """Re-scan memory dir, re-embed entries with body_hash mismatch.
 
     Run after editing memory `.md` files directly in Obsidian, or after
-    restoring memories from a backup.
+    restoring memories from a backup. Use `--force` to re-embed every
+    entry (slower; needed after model/composition changes).
     """
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    counts = mem.reindex()
+    counts = mem.reindex(force=force)
     if as_json:
         click.echo(json.dumps(counts, indent=2))
         return

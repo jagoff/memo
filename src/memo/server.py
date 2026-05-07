@@ -144,14 +144,18 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         return rec.to_dict() if rec else None
 
     @server.tool()
-    def memory_reindex() -> dict[str, int]:
+    def memory_reindex(force: bool = False) -> dict[str, int]:
         """Re-scan the memory dir, re-embed entries whose on-disk body
         diverged from the indexed `body_hash`. Picks up edits the user
         made to memory `.md` files in Obsidian.
 
+        With `force=True`, re-embeds every indexed entry regardless of
+        body_hash. Use after an embedder model swap or a change to the
+        embed-input composition.
+
         Returns `{"checked", "reindexed", "added", "skipped"}`.
         """
-        return memory.reindex()
+        return memory.reindex(force=force)
 
     @server.tool()
     def memory_delete(id: str) -> dict[str, Any]:

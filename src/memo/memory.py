@@ -441,12 +441,17 @@ class Memory:
 
     # -- reindex / gc -------------------------------------------------------
 
-    def reindex(self) -> dict[str, int]:
+    def reindex(self, *, force: bool = False) -> dict[str, int]:
         """Scan the memory dir, re-embed entries whose on-disk body
         diverged from `body_hash`. Picks up edits the user made in
         Obsidian directly. Also indexes any `.md` with a valid `id` in
         frontmatter that the store doesn't know about (e.g. restored
         from a backup or copied from another machine).
+
+        With `force=True`, re-embeds EVERY indexed entry regardless of
+        body_hash match. Use after an embedder model swap, after a
+        change to `_compose_for_embed`, or to refresh the index after
+        a corruption/incident.
 
         Returns counts: `{"checked", "reindexed", "added", "skipped"}`.
         """
@@ -489,7 +494,7 @@ class Memory:
                 )
                 added += 1
                 continue
-            if existing["body_hash"] != new_hash:
+            if force or existing["body_hash"] != new_hash:
                 emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
                 self.store.upsert(
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
