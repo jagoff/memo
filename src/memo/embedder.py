@@ -32,7 +32,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 # `mlx_lm` is Apple-Silicon-only. Importing at module level on Linux/x86
 # would raise; we defer the import until `_ensure_loaded()`.
@@ -83,7 +84,6 @@ class MLXEmbedder:
         self.max_seq_len = max_seq_len
         self._model: Any = None
         self._tokenizer: Any = None
-        self._pad_id: int | None = None
         self._load_lock = threading.Lock()
         self._last_use: float = 0.0
 
@@ -98,18 +98,6 @@ class MLXEmbedder:
             from mlx_lm import load as _mlx_load
 
             self._model, self._tokenizer = _mlx_load(self.model_path)
-            # Pad token: Qwen tokenizers don't define a dedicated pad
-            # token but the EOS slot works fine for masked pooling — we
-            # just need a token id whose hidden state we'll discard via
-            # the attention mask anyway.
-            pad = getattr(self._tokenizer, "pad_token_id", None)
-            if pad is None:
-                pad = getattr(self._tokenizer, "eos_token_id", None)
-            if pad is None:
-                # Last-resort: encode a string and use whatever id comes
-                # out — used only for padding, masked away by attention.
-                pad = self._tokenizer.encode("</s>", add_special_tokens=False)[-1]
-            self._pad_id = int(pad)
 
     # -- public -------------------------------------------------------------
 
@@ -194,7 +182,6 @@ class MLXEmbedder:
         with self._load_lock:
             self._model = None
             self._tokenizer = None
-            self._pad_id = None
             try:
                 import mlx.core as mx
 

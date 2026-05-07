@@ -45,11 +45,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
-
+from typing import Any
 
 _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -321,7 +320,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
             d["tags"] = json.loads(d["tags"])
         except Exception:
             d["tags"] = []
-    if "extra_json" in d and d["extra_json"]:
+    if d.get("extra_json"):
         try:
             d["extra"] = json.loads(d["extra_json"])
         except Exception:

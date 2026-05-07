@@ -70,9 +70,11 @@ def cli() -> None:
 @click.option("--tag", "-t", "tags", multiple=True, help="Repeatable. Lower-cased + de-duplicated.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a panel.")
 def save(content: str, title: str | None, type_: str, tags: tuple[str, ...], as_json: bool) -> None:
-    """Persist CONTENT to the vault + index."""
+    """Persist CONTENT to the vault + index. Pass `-` to read CONTENT from stdin."""
     from memo.memory import Memory
 
+    if content == "-":
+        content = sys.stdin.read()
     mem = Memory(Config.from_env())
     rec = mem.save(content=content, title=title, type_=type_, tags=list(tags))
     if as_json:
@@ -302,6 +304,7 @@ def doctor(do_gc: bool, fix: bool) -> None:
     # 2. sqlite-vec
     try:
         import sqlite3
+
         import sqlite_vec  # type: ignore[import-not-found]
 
         conn = sqlite3.connect(":memory:")

@@ -47,8 +47,7 @@ import hashlib
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
 import frontmatter
@@ -56,7 +55,6 @@ import frontmatter
 from memo.config import Config
 from memo.embedder import MLXEmbedder
 from memo.store import VecStore
-
 
 _VALID_TYPES = frozenset(
     {"decision", "fact", "bug", "feedback", "preference", "note", "manual"}
@@ -535,7 +533,7 @@ class Memory:
 
 
 def _now_iso() -> str:
-    return datetime.now(tz=timezone.utc).astimezone().isoformat(timespec="seconds")
+    return datetime.now(tz=UTC).astimezone().isoformat(timespec="seconds")
 
 
 def _sha256_short(text: str) -> str:

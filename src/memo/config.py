@@ -13,7 +13,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # Default vault path matches the obsidian-rag convention. Override via
 # `MEMO_VAULT_PATH`.
 _DEFAULT_VAULT = (

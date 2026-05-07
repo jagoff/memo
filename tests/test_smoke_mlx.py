@@ -23,7 +23,6 @@ where we catch a broken model load or a wrong embedding dim):
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import pytest
 
