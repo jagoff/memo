@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "memo",
+  "description": "Local MCP memory for AI agents on Apple Silicon. MLX-native, sqlite-vec, markdown-on-disk.",
+  "owner": {
+    "name": "Fernando Ferrari",
+    "url": "https://github.com/jagoff"
+  },
+  "plugins": [
+    {
+      "name": "memo",
+      "description": "Persistent semantic memory. Slash command `/memo` + MCP tools `mcp__memo__memory_*`.",
+      "source": "./",
+      "category": "memory"
+    }
+  ]
+}

@@ -1,18 +1,28 @@
 [project]
-name = "memo"
-version = "0.1.0"
+# Distribution name on PyPI is `memo-mcp` because `memo` (v0.2.4) is taken
+# by an unrelated package. The Python module / CLI / repo all stay `memo`.
+name = "memo-mcp"
+version = "0.2.0"
 description = "Local MCP memory backed by Obsidian vault — MLX-native LLM + embedder, sqlite-vec store. No Ollama, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "MIT" }
-authors = [{ name = "Fer" }]
-keywords = ["mcp", "memory", "obsidian", "mlx", "rag", "agents", "claude", "local-first"]
+authors = [{ name = "Fernando Ferrari" }]
+keywords = ["mcp", "memory", "obsidian", "mlx", "rag", "agents", "claude", "local-first", "apple-silicon"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3.13",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jagoff/memo"
+Repository = "https://github.com/jagoff/memo"
+Issues = "https://github.com/jagoff/memo/issues"
+Changelog = "https://github.com/jagoff/memo/blob/main/CHANGELOG.md"
 
 dependencies = [
     "click>=8.1.7",

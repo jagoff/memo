@@ -2,9 +2,40 @@
 
 > Local MCP memory backed by an Obsidian vault. **MLX-native** stack — zero Ollama, zero cloud APIs.
 
-`memo` is a from-scratch replacement for [`mem-vault`](https://github.com/jagoff/mem-vault)
-that drops Ollama entirely and runs the LLM + embedder in-process via [Apple
-MLX](https://github.com/ml-explore/mlx) on Apple Silicon.
+[![PyPI](https://img.shields.io/pypi/v/memo-mcp.svg)](https://pypi.org/project/memo-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/memo-mcp.svg)](https://pypi.org/project/memo-mcp/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+`memo` is persistent semantic memory for AI agents, designed for Apple Silicon
+Macs. It exposes a [Model Context Protocol](https://modelcontextprotocol.io)
+server so any MCP-aware client (Claude Code, Claude Desktop, Cursor, Cline,
+Continue, …) can `save` / `search` / `list` / `update` / `delete` memories,
+and a CLI for the same operations from a shell.
+
+It runs the LLM + embedder **in-process** via [Apple MLX](https://github.com/ml-explore/mlx),
+indexes embeddings in [`sqlite-vec`](https://github.com/asg017/sqlite-vec) (single
+file, no daemon), and stores each memory as a markdown file with frontmatter
+inside an Obsidian vault — so the storage of record is human-editable and
+syncs through whatever you already use to sync notes (iCloud / git / Syncthing).
+
+**No Ollama. No Qdrant. No cloud API. No keys.**
+
+## Why memo (vs the alternatives)
+
+| | **memo** | [`mem-vault`](https://github.com/jagoff/mem-vault) | [`mem0`](https://github.com/mem0ai/mem0) | [engram](https://github.com/perrygeo/engram) |
+|---|---|---|---|---|
+| Runtime | MLX (in-process) | Ollama daemon | Cloud or Ollama | SQLite |
+| Vector store | sqlite-vec (file) | Qdrant (server) | Qdrant / pgvector | SQLite |
+| External daemons | none | Ollama + Qdrant | Ollama + Qdrant | none |
+| Network calls | **0** (offline) | localhost:11434 + :6333 | localhost or HTTPS | 0 |
+| Storage | markdown files | markdown files | DB only | DB only |
+| Apple Silicon | ✅ first-class | works | works | works |
+| MCP server | ✅ stdio | ✅ stdio (unregistered) | ❌ | ✅ stdio |
+| Repo | this | [jagoff/mem-vault](https://github.com/jagoff/mem-vault) | [mem0ai/mem0](https://github.com/mem0ai/mem0) | [perrygeo/engram](https://github.com/perrygeo/engram) |
+
+Trade-off: `memo` is intentionally smaller-surface than `mem0`. It does not
+ship hybrid retrieval / reflection / consolidation **out of the box** — those
+are post-v0 (see [Status](#status)).
 
 ## Stack
 
@@ -29,20 +60,64 @@ The trade-off: we lose mem0's built-in consolidation / hybrid retrieval / reflec
 features. v0 of `memo` is intentionally smaller-surface; we add features back as their
 need is proven.
 
+## Requirements
+
+- macOS on Apple Silicon (M1 / M2 / M3 / M4). MLX is the load-bearing piece.
+- Python ≥ 3.13.
+- ~4 GB free disk for the default model set (downloaded on first use).
+- Optional: an Obsidian vault. If you don't have one, memo defaults to
+  `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes` and creates
+  the memory subdirectory if it doesn't exist.
+
 ## Install
 
 ```bash
-cd ~/repositories/memo
-uv pip install -e '.[dev]'
+pip install memo-mcp
 ```
 
-Pre-download the MLX models (first run downloads them automatically too, but doing it
-once up-front avoids a multi-GB stall on the first save/search):
+Or, if you prefer [`uv`](https://github.com/astral-sh/uv):
+
+```bash
+uv tool install memo-mcp
+```
+
+Both expose two commands on your PATH: `memo` (CLI) and `memo-mcp` (MCP server stdio).
+
+Pre-download the MLX models so the first save/search doesn't stall on a
+multi-GB download:
 
 ```bash
 hf download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 hf download mlx-community/Qwen2.5-3B-Instruct-4bit
 hf download mlx-community/Qwen2.5-7B-Instruct-4bit
+```
+
+### Dev install (contributors)
+
+```bash
+git clone https://github.com/jagoff/memo
+cd memo
+uv pip install -e '.[dev]'
+```
+
+## Quick start
+
+```bash
+# Self-check (validates models, vault path, sqlite-vec)
+memo doctor
+
+# Save a memory
+memo save 'Bench MLX vs Ollama: ~30% faster prefill on M3 Max' \
+  --title 'MLX bench result' -t bench -t mlx
+
+# Search by meaning (not just keywords)
+memo search 'cuál fue el resultado del bench MLX'
+
+# Recent
+memo list --limit 5
+
+# RAG — ask a question, memo cites memorias by id
+memo ask 'qué cambios hice en el embedder este mes?'
 ```
 
 ## CLI
@@ -62,20 +137,24 @@ memo delete <id> --yes
 memo stats
 ```
 
-## MCP
+## MCP setup
 
-Wire it up to Claude Code (user scope, absolute path to the venv entry
-point — `claude mcp add` is interactive-only inside an active Claude
-Code session, so just edit `~/.claude.json` and add a top-level
-`mcpServers` entry):
+After `pip install memo-mcp`, register the MCP with your client.
+
+### Claude Code
+
+```bash
+claude mcp add memo -s user $(which memo-mcp)
+```
+
+Or hand-edit `~/.claude.json`:
 
 ```jsonc
-// ~/.claude.json
 {
   "mcpServers": {
     "memo": {
       "type": "stdio",
-      "command": "/Users/<you>/repositories/memo/.venv/bin/memo-mcp",
+      "command": "/path/to/memo-mcp",
       "args": [],
       "env": {}
     }
@@ -83,8 +162,27 @@ Code session, so just edit `~/.claude.json` and add a top-level
 }
 ```
 
-Restart Claude Code. Verify with `claude mcp list` from a fresh shell.
-Tools surface as `mcp__memo__memory_*` inside the agent.
+Replace `/path/to/memo-mcp` with the output of `which memo-mcp`. Restart
+Claude Code. Tools surface as `mcp__memo__memory_*` inside the agent.
+
+### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```jsonc
+{
+  "mcpServers": {
+    "memo": {
+      "command": "/path/to/memo-mcp"
+    }
+  }
+}
+```
+
+### Cursor / Cline / Continue
+
+Each client has its own MCP config UI but the contract is the same:
+register a stdio server pointing at the `memo-mcp` binary.
 
 Tools exposed:
 
@@ -97,11 +195,25 @@ Tools exposed:
 - `memory_delete(id)` → removes from vec + disk. Same prefix-ID semantics.
 - `memory_stats()` → counts + paths + active models
 
-## Slash command — `/memo`
+## Slash command — `/memo` (Claude Code only)
 
-Once the MCP is registered, the `/memo` skill at
-`~/.config/devin/skills/memo/SKILL.md` (symlinked into
-`~/.claude/skills/memo/`) routes user input to the right MCP tool:
+A Claude Code [skill](https://docs.claude.com/en/docs/claude-code/skills) ships
+in this repo at `skills/memo/SKILL.md`. Copy or symlink it into
+`~/.claude/skills/memo/SKILL.md` and you get slash-command sugar over the MCP
+tools:
+
+```bash
+ln -s "$(pwd)/skills/memo/SKILL.md" ~/.claude/skills/memo/SKILL.md
+```
+
+Or install everything (skill + MCP config) in one step via the bundled
+[Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins):
+
+```bash
+/plugin install memo@jagoff/memo
+```
+
+The skill routes user input to the right MCP tool:
 
 | Input | Action |
 |---|---|
