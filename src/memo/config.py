@@ -85,13 +85,16 @@ class Config(BaseModel):
     )
 
     # ── Limits ───────────────────────────────────────────────────────────
-    max_content_size: int = Field(
+    max_content_chars: int = Field(
         default=64_000,
         ge=1,
         description=(
-            "Truncate raw content above this byte size before embed (prevents "
-            "OOM on huge dumps). Tests use small caps (e.g. 100) to verify the "
-            "truncation path; production default 64KB."
+            "Truncate raw content above this CHARACTER count before embed + "
+            "disk write (prevents OOM on huge dumps). Note: chars, not bytes — "
+            "in UTF-8 with multi-byte glyphs (Spanish accents, emoji), the "
+            "actual byte size will be larger. 64K chars ≈ 96KB in real "
+            "Spanish text. Tests use small caps (e.g. 100) to verify the "
+            "truncation path."
         ),
     )
     search_default_limit: int = Field(default=10, ge=1, le=100)
@@ -135,7 +138,7 @@ class Config(BaseModel):
             "MEMO_HELPER_MODEL": "helper_model",
             "MEMO_EMBEDDER_MODEL": "embedder_model",
             "MEMO_EMBEDDER_DIMS": "embedder_dims",
-            "MEMO_MAX_CONTENT_SIZE": "max_content_size",
+            "MEMO_MAX_CONTENT_CHARS": "max_content_chars",
             "MEMO_SEARCH_DEFAULT_LIMIT": "search_default_limit",
         }
         kwargs: dict = {}

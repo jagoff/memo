@@ -176,7 +176,7 @@ class Memory:
         now_iso = _now_iso()
         # Truncate content for embedding (vec store doesn't truncate;
         # disk file keeps full content). 64KB is the default cap.
-        content = content[: self.cfg.max_content_size]
+        content = content[: self.cfg.max_content_chars]
 
         record_id = uuid.uuid4().hex
         rel_path = self._build_rel_path(title, now_iso)
@@ -348,7 +348,7 @@ class Memory:
         # Body resolution: provided > on-disk > empty.
         old_body = self._read_body(r["path"])
         new_body = (content if content is not None else old_body)
-        new_body = new_body[: self.cfg.max_content_size]
+        new_body = new_body[: self.cfg.max_content_chars]
         new_body_hash = _sha256_short(new_body)
         body_changed = new_body_hash != r["body_hash"]
         title_changed = new_title != r["title"]

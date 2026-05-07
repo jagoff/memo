@@ -306,7 +306,7 @@ def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
-        max_content_size=100,
+        max_content_chars=100,
     )
     monkeypatch.setattr(
         "memo.embedder.MLXEmbedder.embed",
@@ -315,6 +315,6 @@ def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
     mem = Memory(cfg)
     huge = "x" * 10_000
     rec = mem.save(content=huge, title="huge")
-    # Body on disk should be truncated to `max_content_size`.
+    # Body on disk should be truncated to `max_content_chars`.
     on_disk = (cfg.vault_path / rec.path).read_text()
     assert on_disk.count("x") <= 100

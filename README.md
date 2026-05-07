@@ -130,7 +130,7 @@ default iCloud location.
 | `MEMO_HELPER_MODEL` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | Helper tier |
 | `MEMO_EMBEDDER_MODEL` | `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Embedder |
 | `MEMO_EMBEDDER_DIMS` | `1024` | Embedding dim — must match the embedder |
-| `MEMO_MAX_CONTENT_SIZE` | `64000` | Truncate body before embed |
+| `MEMO_MAX_CONTENT_CHARS` | `64000` | Truncate body before embed |
 | `MEMO_SEARCH_DEFAULT_LIMIT` | `10` | Default `--limit` for search |
 
 ## Design notes
