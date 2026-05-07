@@ -207,6 +207,27 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
 
     @server.tool()
+    def memory_consolidate(
+        threshold: float = 0.85, max_clusters: int = 20, type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find clusters of near-duplicate memorias and propose actions.
+
+        Read-only. Returns a list of clusters, each with `members`,
+        `summary`, `relationship` (`duplicate`|`evolution`|`facets`|
+        `unrelated`), and `rationale`. The user/agent reviews and
+        decides whether to merge/delete via `memory_update` /
+        `memory_delete`.
+
+        Args:
+            threshold: Cosine similarity floor (default 0.85).
+            max_clusters: Cap LLM calls (default 20 largest clusters).
+            type: Optional filter to one record type.
+        """
+        return memory.consolidate(
+            threshold=threshold, max_clusters=max_clusters, type_=type,
+        )
+
+    @server.tool()
     def memory_lint() -> dict[str, list[dict[str, Any]]]:
         """Surface memorias with quality issues — `legacy_extra`,
         `few_tags`, `body_skinny`, `untitled`. Read-only; for the LLM

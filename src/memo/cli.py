@@ -350,6 +350,52 @@ def history(limit: int, op: str | None, record_id: str | None, as_json: bool) ->
 
 
 @cli.command()
+@click.option("--threshold", default=0.85, type=float, show_default=True,
+              help="Cosine similarity floor for clustering. 0.85 conservative, 0.92+ near-identical only.")
+@click.option("--max-clusters", default=20, type=int, show_default=True,
+              help="Cap LLM calls — only the largest N clusters get summarised.")
+@click.option("--type", "type_", default=None, help="Restrict clustering to one record type.")
+@click.option("--json", "as_json", is_flag=True)
+def consolidate(threshold: float, max_clusters: int, type_: str | None, as_json: bool) -> None:
+    """Find clusters of near-duplicate memorias and propose actions.
+
+    Read-only: surfaces a list of {summary, relationship, members} per
+    cluster. The user reviews, then uses `memo update` / `memo delete`
+    to apply. NEVER auto-modifies the store.
+
+    Latency on 7B: ~3-5s per cluster summarised.
+    """
+    from memo.memory import Memory
+
+    mem = Memory(Config.from_env())
+    clusters = mem.consolidate(
+        threshold=threshold, max_clusters=max_clusters, type_=type_,
+    )
+    if as_json:
+        click.echo(json.dumps(clusters, ensure_ascii=False, indent=2))
+        return
+    if not clusters:
+        console.print(f"[green]✓[/green] no clusters at threshold ≥{threshold}")
+        return
+    for c in clusters:
+        relation_color = {
+            "duplicate": "red", "evolution": "yellow",
+            "facets": "cyan", "unrelated": "dim",
+        }.get(c["relationship"], "white")
+        console.print(
+            f"\n[bold]cluster {c['cluster_id']}[/bold] · "
+            f"[{relation_color}]{c['relationship']}[/{relation_color}] · "
+            f"{c['size']} memorias",
+        )
+        if c["summary"]:
+            console.print(f"  [dim]summary:[/dim] {c['summary']}")
+        if c["rationale"]:
+            console.print(f"  [dim]por qué:[/dim] {c['rationale']}")
+        for m in c["members"]:
+            console.print(f"    · [{m['id_short']}] {m['title'][:60]} [dim]({m['updated'][:10]})[/dim]")
+
+
+@cli.command()
 @click.option("--category", default=None,
               type=click.Choice(["legacy_extra", "few_tags", "body_skinny", "untitled"]),
               help="Show only one category. Default: summary of all.")

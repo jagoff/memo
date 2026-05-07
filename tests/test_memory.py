@@ -406,6 +406,51 @@ def test_history_filter_by_record_id(mem_with_stub: Memory):
     assert {e["op"] for e in events} == {"save", "update"}
 
 
+def test_consolidate_clusters_near_duplicates(mem_with_stub: Memory, monkeypatch):
+    """Two memorias with cosine ≈1.0 land in the same cluster.
+    MLXChat is mocked to return a structured JSON."""
+    # Force a constant embedding for every input — two saves get
+    # identical vectors → cosine 1.0 → cluster guaranteed.
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    rec_a = mem_with_stub.save(content="alpha body uno", title="A1")
+    rec_b = mem_with_stub.save(content="alpha body dos", title="A2")
+
+    captured: list[list[dict]] = []
+
+    def _stub_chat(self, model, messages, options=None):
+        captured.append(messages)
+        return {"message": {"content":
+            '{"summary": "Both notes describe the same alpha concept.", '
+            '"relationship": "duplicate", '
+            '"rationale": "Body strings differ by one character only."}'}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    clusters = mem_with_stub.consolidate(threshold=0.99)
+    assert len(clusters) >= 1
+    # The duplicate pair must be in some cluster of size ≥2.
+    found = False
+    for c in clusters:
+        ids = {m["id"] for m in c["members"]}
+        if {rec_a.id, rec_b.id}.issubset(ids):
+            found = True
+            assert c["relationship"] == "duplicate"
+            assert "alpha" in c["summary"].lower()
+    assert found
+    # The 7B chat tier was invoked once (one cluster).
+    assert len(captured) == 1
+
+
+def test_consolidate_drops_singletons(mem_with_stub: Memory):
+    """A unique memoria has no cluster — it shouldn't appear in the
+    output. No LLM calls when there are no clusters."""
+    mem_with_stub.save(content="solo memoria", title="Lonely")
+    clusters = mem_with_stub.consolidate(threshold=0.5)
+    assert clusters == []  # no cluster of size ≥2
+
+
 def test_ask_synthesises_with_citations(mem_with_stub: Memory, monkeypatch):
     """ask() builds a prompt with snippet+id labels, calls MLXChat,
     returns the answer + the sources it fed to the model."""

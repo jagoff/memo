@@ -63,6 +63,28 @@ from memo.store import VecStore
 # attention without hurting accuracy. Empirically the model follows the
 # format strictly under temperature=0; the regex fallback in
 # `_derive_metadata` handles the occasional markdown fence wrap.
+_CONSOLIDATE_SYSTEM_PROMPT = """You analyze a cluster of related memory notes from a personal archive.
+
+You receive a list of 2+ memorias that the user's vector index marked
+as semantically near-duplicates. Output a single JSON object:
+
+{
+  "summary": "1-2 sentence synthesis of what the cluster collectively says",
+  "relationship": "duplicate" | "evolution" | "facets" | "unrelated",
+  "rationale": "1 sentence explaining why you picked that relationship"
+}
+
+Definitions:
+- "duplicate": same fact restated. Recommend keeping ONE, deleting rest.
+- "evolution": same topic but the latest one supersedes/contradicts older.
+  Recommend keeping the latest, archiving older.
+- "facets": different angles of the same topic, complementary. Recommend
+  keeping all but possibly merging into a single richer entry.
+- "unrelated": vector similarity false positive — keep all, no action.
+
+Output ONLY the JSON, no markdown fences, no commentary."""
+
+
 _ASK_SYSTEM_PROMPT = """You answer questions over the user's personal memory archive.
 
 You receive a list of relevant memory snippets (each with an `[id]` label
@@ -789,6 +811,146 @@ class Memory:
             t = (r["title"] or "").strip().lower()
             if t == "untitled" or not t:
                 out["untitled"].append({**entry, "reason": "title missing or 'untitled'"})
+        return out
+
+    def consolidate(
+        self, *, threshold: float = 0.85, max_clusters: int = 50,
+        type_: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find clusters of near-duplicate memorias and propose actions.
+
+        Algorithm:
+        1. Pull all stored embeddings (we have them already; no re-embed).
+        2. Greedy single-link clustering by cosine ≥ `threshold`.
+           Each memoria joins the first existing cluster it's
+           ≥-similar to, or starts a new one.
+        3. Drop singletons. The remaining clusters are candidates.
+        4. For each cluster, MLXChat 7B reads the bodies and emits a
+           JSON `{summary, relationship, rationale}` per
+           `_CONSOLIDATE_SYSTEM_PROMPT`.
+        5. Return ranked clusters (largest first), capped at
+           `max_clusters` to keep the LLM cost finite on big corpora.
+
+        DOES NOT modify anything. The user reviews the output and
+        decides via `memo update` / `memo delete`.
+
+        Threshold tuning: 0.85 catches obvious dupes, 0.92+ only catches
+        near-identical text. The default 0.85 is conservative for the
+        Qwen3-Embedding-0.6B vector space.
+        """
+        # 1) Pull all (id, embedding, title, type, tags) tuples.
+        #    Direct SQL is cheaper than going through the public store
+        #    API per-row; we only need 1024 floats × N to fit in RAM,
+        #    fine for thousands of entries.
+        import struct
+
+        store_conn = self.store._conn
+        rows = store_conn.execute(
+            "SELECT vec.id AS id, vec.embedding AS emb, "
+            "       meta.title, meta.type, meta.tags, meta.path, meta.updated "
+            "FROM vec JOIN meta ON meta.id = vec.id "
+            + ("WHERE meta.type = ? " if type_ else "")
+            + "ORDER BY meta.updated DESC",
+            (type_,) if type_ else (),
+        ).fetchall()
+
+        items: list[dict[str, Any]] = []
+        for r in rows:
+            blob = r["emb"]
+            v = list(struct.unpack(f"{len(blob)//4}f", blob))
+            items.append({
+                "id": r["id"],
+                "title": r["title"],
+                "type": r["type"],
+                "tags": json.loads(r["tags"]) if r["tags"] else [],
+                "path": r["path"],
+                "updated": r["updated"],
+                "emb": v,
+            })
+
+        # 2) Greedy single-link clustering. O(N²) cosine, fine for
+        #    corpora up to ~5K. For larger, swap to a HNSW pass.
+        def _cos(a, b):
+            return sum(x * y for x, y in zip(a, b, strict=True))
+
+        clusters: list[list[int]] = []  # list of items[] indices
+        for i in range(len(items)):
+            joined = False
+            for cluster in clusters:
+                # Check similarity vs the cluster representative (first
+                # member). Single-link → if any member is similar enough,
+                # add. We use the first member as representative for
+                # speed; full single-link would scan all members.
+                rep = items[cluster[0]]
+                if _cos(items[i]["emb"], rep["emb"]) >= threshold:
+                    cluster.append(i)
+                    joined = True
+                    break
+            if not joined:
+                clusters.append([i])
+
+        # 3) Drop singletons; rank by size (then by most-recent updated).
+        candidate_clusters = [c for c in clusters if len(c) >= 2]
+        candidate_clusters.sort(
+            key=lambda c: (-len(c), items[c[0]]["updated"]),
+        )
+        candidate_clusters = candidate_clusters[:max_clusters]
+
+        if not candidate_clusters:
+            return []
+
+        # 4) For each cluster, ask MLXChat to summarise + classify.
+        if self._chat is None:
+            self._chat = MLXChat()
+
+        out: list[dict[str, Any]] = []
+        for ci, cluster in enumerate(candidate_clusters):
+            members = []
+            for idx in cluster:
+                it = items[idx]
+                body = self._read_body(it["path"])
+                members.append({
+                    "id": it["id"],
+                    "id_short": it["id"][:8],
+                    "title": it["title"],
+                    "type": it["type"],
+                    "tags": it["tags"],
+                    "updated": it["updated"],
+                    "body_preview": (body[:600] + ("…" if len(body) > 600 else "")),
+                })
+            # Build LLM prompt with all members.
+            prompt = "Cluster:\n\n" + "\n---\n".join(
+                f"[{m['id_short']}] title: {m['title']}  |  updated: {m['updated']}\n"
+                f"{m['body_preview']}"
+                for m in members
+            )
+            try:
+                chat_out = self._chat.chat(
+                    model=self.cfg.llm_model,
+                    messages=[
+                        {"role": "system", "content": _CONSOLIDATE_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    options={"temperature": 0.0, "max_tokens": 384},
+                )
+                text = ((chat_out.get("message") or {}).get("content") or "").strip()
+            except Exception:
+                text = ""
+            if text.startswith("```"):
+                text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
+            try:
+                data = json.loads(text) if text else {}
+            except Exception:
+                data = {}
+            out.append({
+                "cluster_id": ci,
+                "size": len(members),
+                "members": members,
+                "summary": (data.get("summary") or "").strip(),
+                "relationship": data.get("relationship") if data.get("relationship") in
+                    ("duplicate", "evolution", "facets", "unrelated") else "unrelated",
+                "rationale": (data.get("rationale") or "").strip(),
+            })
         return out
 
     def gc(self, *, fix: bool = False) -> dict[str, list[str]]:
