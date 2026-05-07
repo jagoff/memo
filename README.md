@@ -133,17 +133,66 @@ default iCloud location.
 | `MEMO_MAX_CONTENT_CHARS` | `64000` | Truncate body before embed |
 | `MEMO_SEARCH_DEFAULT_LIMIT` | `10` | Default `--limit` for search |
 
+## Upgrading the embedder (recall vs cost)
+
+The default [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) is fast (~50ms per embed) and small
+(~600MB on disk) but the 0.6B parameter count means recall on diffuse
+queries (where the doc title doesn't lexically overlap with the query)
+can be noisy. For the 200-2000 memorias range, swap to the 4B variant
+when the noise becomes a problem.
+
+| Model | Dims | Disk | Recall | Per-embed |
+|---|---|---|---|---|
+| [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) (default) | 1024 | ~600 MB | OK | ~50 ms |
+| [`Qwen3-Embedding-4B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-4B-4bit-DWQ) | 2560 | ~3 GB | better | ~200 ms |
+| [`Qwen3-Embedding-8B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-8B-4bit-DWQ) | 4096 | ~5 GB | best | ~400 ms |
+
+**To upgrade** (example: 0.6B → 4B):
+
+```bash
+# 1) Pre-download the new weights so the first embed doesn't stall.
+hf download mlx-community/Qwen3-Embedding-4B-4bit-DWQ
+
+# 2) Set the env vars (add to your shell rc for persistence).
+export MEMO_EMBEDDER_MODEL=mlx-community/Qwen3-Embedding-4B-4bit-DWQ
+export MEMO_EMBEDDER_DIMS=2560
+
+# 3) Backup before the rebuild — re-embed is destructive of the old vectors.
+memo backup --out memo-pre-4b.zip
+
+# 4) Drop the index and re-embed the entire corpus.
+rm ~/.local/share/memo/memvec.db
+memo reindex     # re-runs the embedder over every .md
+```
+
+The dim mismatch is a hard error — `MEMO_EMBEDDER_DIMS` must match the
+new model's hidden size (1024 for 0.6B, 2560 for 4B, 4096 for 8B).
+`memo doctor` validates the dim at load time.
+
+The `body_hash` from the old store is irrelevant after `rm memvec.db`,
+so a plain `memo reindex` re-embeds everything. Without the rm, use
+`memo reindex --force` instead — same result.
+
 ## Design notes
 
 - **One sqlite file, no qdrant**. `sqlite-vec` outperforms a small qdrant snapshot for
   the size of corpus memo targets (a few thousand entries, single-writer). Single-file
   also makes reset trivial: `rm ~/.local/share/memo/memvec.db`.
-- **Embed body, not title**. Titles are short, biased toward filename-style noise.
-  Body-only embed gives the user freedom to title things terselessly.
+- **Embed `title + body` together**. Titles carry the highest-density retrieval signal
+  for memos with terse titles + long bodies. Prepending also protects the title from
+  head-truncation when the body is long. Pure retag/type changes still skip the embedder.
 - **`.md` is the storage of record**. The user can edit memories from Obsidian and the
-  next index pass picks them up via `body_hash` mismatch (planned: `memo reindex`).
-- **Tail-truncate long inputs**. The embedder caps at 512 tokens; tail-truncation
-  preserves the trailing summary that Qwen3-Embedding's instruction template was tuned for.
+  next index pass picks them up via `body_hash` mismatch — `memo reindex` (or `--force`
+  to re-embed even when hash matches, e.g. after composition or model change).
+- **Head-truncate long inputs + append EOS**. The embedder caps at 512 tokens; we
+  head-truncate (preserves the title-like header) and explicitly append `<|im_end|>` so
+  Qwen3-Embedding's last-token pool lands on the EOS hidden state it was fine-tuned for.
+- **Asymmetric retrieval**. Queries get a `Instruct: ...\nQuery: ...` prefix; documents
+  go raw. Without the prefix, cosine collapses toward 0. See the comment in `embedder.py`
+  for the empirical verification.
+- **Cosine distance metric**. The vec0 schema declares `distance_metric=cosine` so
+  `vec.distance` is true cosine distance (1 - dot for unit vectors); `score = 1 - distance`
+  is interpretable in [0, 1].
 - **No Ollama dep, anywhere**. `pyproject.toml` does not declare `ollama`; the `doctor`
   command does not probe `:11434`. Anyone running memo with Ollama installed is just
   ignoring it.
