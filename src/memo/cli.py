@@ -1179,6 +1179,65 @@ def _extract_first_h1(body: str) -> str | None:
     return None
 
 
+@cli.command(name="capture-stop")
+def capture_stop() -> None:
+    """Stop hook — passive auto-extract of insights from the last turn.
+
+    Reads the Stop hook payload from stdin (Claude Code format), pulls
+    the last (user, assistant) exchange from the transcript, asks the
+    helper LLM (Qwen2.5-3B) to extract any actionable insights, dedups
+    against the existing corpus, and saves survivors via Memory.save().
+
+    Hook input (stdin, JSON):
+      {"transcript_path": "/path/to/...jsonl", ...}
+
+    Hook output (stdout):
+      `{}`  — always. Capture is silent; the user discovers new
+      memorias via `memo list` or the next ambient recall.
+
+    Env vars:
+      MEMO_CAPTURE_DISABLE  — set to "1" to make this a no-op.
+      MEMO_CAPTURE_DEBUG    — set to "1" to print extraction progress
+                              to stderr (helpful while tuning the
+                              extraction prompt or trigger keywords).
+
+    Failure modes are absorbed. The hook never blocks the user — at
+    worst you get no auto-save for that turn.
+    """
+    import json as _json
+    import os
+    import sys as _sys
+    from pathlib import Path
+
+    if os.environ.get("MEMO_CAPTURE_DISABLE") == "1":
+        print("{}")
+        _sys.exit(0)
+
+    debug = os.environ.get("MEMO_CAPTURE_DEBUG") == "1"
+
+    try:
+        raw = _sys.stdin.read()
+        payload = _json.loads(raw) if raw.strip() else {}
+    except _json.JSONDecodeError:
+        print("{}")
+        _sys.exit(0)
+
+    transcript_path = payload.get("transcript_path")
+    if not transcript_path:
+        print("{}")
+        _sys.exit(0)
+
+    try:
+        from memo.capture import run_capture
+        run_capture(Path(transcript_path), debug=debug)
+    except Exception as exc:  # noqa: BLE001
+        if debug:
+            print(f"# memo capture-stop failed: {exc}", file=_sys.stderr)
+
+    print("{}")
+    _sys.exit(0)
+
+
 @cli.command(name="prewarm")
 def prewarm() -> None:
     """SessionStart hook — pre-load the MLX embedder so first recall is fast.

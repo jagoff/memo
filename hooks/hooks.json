@@ -1,5 +1,5 @@
 {
-  "description": "memo ambient memory hooks — proactive recall on every UserPromptSubmit, prewarm on SessionStart for fast cold-load.",
+  "description": "memo ambient memory hooks — proactive recall on every UserPromptSubmit, passive auto-capture on Stop, prewarm on SessionStart for fast cold-load.",
   "hooks": {
     "SessionStart": [
       {
@@ -10,7 +10,7 @@
             "command": "memo prewarm",
             "timeout": 30,
             "async": true,
-            "statusMessage": "memo: warming MLX embedder…"
+            "statusMessage": "memo: warming MLX models…"
           }
         ]
       }
@@ -22,6 +22,18 @@
             "type": "command",
             "command": "memo recall-hook",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memo capture-stop",
+            "timeout": 30,
+            "async": true
           }
         ]
       }
