@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-05-07
+
+Patch release — BM25 recall fix.
+
+### Fixed
+
+- **BM25 search wrapped query in phrase quotes** (`"foo bar"`) which
+  required the words to appear consecutively. This killed recall on
+  natural multi-word Spanish queries:
+  - `"Astor terapia ocupacional"` did NOT match the document titled
+    `"Informe Terapia Ocupacional — Astor Ferrari"` because the words
+    don't appear in that exact consecutive order.
+
+  Fix: tokenize via `\w+` (Unicode-aware), wrap each token in its own
+  phrase quotes, join with whitespace (FTS5's implicit AND). Now the
+  query is `"Astor" "terapia" "ocupacional"` — matches any doc
+  containing all 3 words anywhere, any order.
+
+### Verified
+
+Same query post-fix:
+- BM25: `Astor — Informe Terapia Ocupacional feb 2026` returns first hit ✓
+- Hybrid (vec+BM25 RRF): same doc in top-3 ✓
+
+Other corpus queries that benefit:
+- `MLX migration` → `obsidian-rag: migración Ollama → MLX` (was missing pre-fix)
+- `obsidian-rag bug fix` → `Bug pattern — sqlite3 'database is locked'` (was missing pre-fix)
+
 ## [0.3.1] - 2026-05-07
 
 Patch release — bug fixes for the v0.3.0 ingest pipeline.
