@@ -1020,6 +1020,18 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
                     progress.advance(task_id)
                     continue
 
+                # Skip very short notes — they're typically tag-only stubs
+                # (`#tagA #tagB` + a 1-line question) that produce
+                # noise embeddings near the centroid. They match
+                # generic queries with high false-positive rate.
+                # Tunable via MEMO_INGEST_MIN_CHARS env (default 200).
+                import os as _os_min  # local import — avoids tedious refactor
+                min_chars = int(_os_min.environ.get("MEMO_INGEST_MIN_CHARS", "200"))
+                if len(body) < min_chars:
+                    skipped_empty += 1  # bucket together with empty
+                    progress.advance(task_id)
+                    continue
+
                 # Synthesize stable id from path. sha256[:32] = 128-bit,
                 # collision risk negligible for any realistic vault size.
                 id_ = hashlib.sha256(store_path.encode("utf-8")).hexdigest()[:32]
