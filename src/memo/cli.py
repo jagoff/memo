@@ -53,7 +53,7 @@ def _resolved(thunk):
 
 
 @click.group()
-@click.version_option()
+@click.version_option(package_name="memo-mcp")
 def cli() -> None:
     """memo — local MCP memory backed by Obsidian vault, MLX-native."""
 

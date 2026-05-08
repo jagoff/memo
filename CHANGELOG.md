@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-05-08
+
+Patch release — install-from-git fixes surfaced while validating the
+distributed-install flow on a clean machine.
+
+### Fixed
+
+- **`memo --version` crashed** with `RuntimeError: 'memo' is not
+  installed. Try passing 'package_name' instead.` because click's
+  `version_option` defaulted to `package_name="memo"` while the actual
+  PyPI/wheel dist is `memo-mcp`. Pinned the lookup explicitly.
+- **`DEFAULT_MEMORY_SUBDIR` pointed at the deprecated archive path**
+  (`04-Archive/99-obsidian-system/99-AI/memory`). Updated to the
+  current `99-obsidian/99-AI/memory` location, matching the user-facing
+  vault reorganization done on 2026-05-08. Existing installs that
+  override via `MEMO_MEMORY_SUBDIR` are unaffected.
+
 ## [0.3.2] - 2026-05-07
 
 Patch release — BM25 recall fix.
