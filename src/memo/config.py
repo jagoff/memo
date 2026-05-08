@@ -27,7 +27,7 @@ _DEFAULT_VAULT = (
 # Memory artefacts live under the system-wide `99-AI/memory/` umbrella so
 # Obsidian doesn't surface them in normal search and the user's PARA
 # folders stay clean. Same convention as obsidian-rag's mem-vault.
-DEFAULT_MEMORY_SUBDIR = "04-Archive/99-obsidian-system/99-AI/memory"
+DEFAULT_MEMORY_SUBDIR = "99-obsidian/99-AI/memory"
 
 # Default state dir mirrors obsidian-rag — keep both projects co-located
 # under a single `obsidian-*` namespace in `~/.local/share/`.
