@@ -73,6 +73,7 @@ from memo.encryption import EncryptionManager, Encryptor, KeyManager
 from memo.sharing import ShareManager, ShareStore
 from memo.analytics import AnalyticsEngine, Dashboard
 from memo.import_export import ImportExportManager
+from memo.agent import AutonomousAgent
 
 
 # JSON-schema prompt for the helper LLM. Kept terse to fit in Qwen3-3B's
@@ -364,6 +365,11 @@ class Memory:
     def import_export(self) -> ImportExportManager:
         """Lazy accessor for ImportExportManager."""
         return ImportExportManager(self)
+
+    @property
+    def agent(self) -> AutonomousAgent:
+        """Lazy accessor for AutonomousAgent (THE GAMECHANGER)."""
+        return AutonomousAgent(self, self._chat)
 
     def _maybe_warn_legacy_paths(self) -> None:
         """Stderr warning when stored `meta.path` rows don't resolve.

@@ -4274,6 +4274,145 @@ def export_markdown_bundle(output_path: str) -> None:
     console.print(f"Output: {result.output_path}")
 
 
+# -- autonomous agent commands (THE GAMECHANGER) --------------------------------
+
+
+@cli.group(name="agent")
+def agent_group() -> None:
+    """Autonomous Memory Agent — razonamiento causal y síntesis de conocimiento."""
+    pass
+
+
+@agent_group.command(name="synthesize")
+@click.argument("topic")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def agent_synthesize(topic: str, as_json: bool) -> None:
+    """Sintetiza nuevo conocimiento a partir de memorias existentes.
+
+    THE GAMECHANGER: genera insights que NO existían antes combinando
+    y razonando sobre memorias existentes.
+
+    Example: memo agent synthesize "MLX edge computing implications"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    synthesis = mem.agent.synthesize_knowledge(topic)
+
+    if as_json:
+        click.echo(json.dumps(synthesis.model_dump(), indent=2))
+        return
+
+    console.print("[bold]Synthesis Result[/bold]")
+    console.print()
+    console.print(f"[cyan]New Insight:[/cyan]")
+    console.print(synthesis.new_insight)
+    console.print()
+    console.print(f"[green]Confidence:[/green] {synthesis.confidence:.2f}")
+    console.print(f"[green]Novelty Score:[/green] {synthesis.novelty_score:.2f}")
+    console.print()
+    console.print(f"[yellow]Supporting Memorias:[/yellow]")
+    for mid in synthesis.supporting_memorias:
+        console.print(f"  {mid[:8]}")
+
+
+@agent_group.command(name="investigate")
+@click.argument("goal")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def agent_investigate(goal: str, as_json: bool) -> None:
+    """Planifica y ejecuta una investigación compleja.
+
+    Example: memo agent investigate "implications of using MLX for edge devices"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    plan = mem.agent.plan_investigation(goal)
+
+    if as_json:
+        click.echo(json.dumps(plan.model_dump(), indent=2))
+        return
+
+    console.print("[bold]Investigation Plan[/bold]")
+    console.print()
+    console.print(f"Goal: {plan.goal}")
+    console.print(f"Complexity: {plan.estimated_complexity}/10")
+    console.print(f"Insight Value: {plan.estimated_insight_value}/10")
+    console.print()
+    console.print("[bold]Steps:[/bold]")
+    for i, step in enumerate(plan.steps, 1):
+        console.print(f"  {i}. {step}")
+
+
+@agent_group.command(name="discover")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def agent_discover(as_json: bool) -> None:
+    """Descubrimiento proactivo: explora el corpus sin que el usuario lo pida.
+
+    El agente identifica áreas del corpus que podrían contener insights
+    no descubiertos y los explora proactivamente.
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    discoveries = mem.agent.proactive_discovery()
+
+    if as_json:
+        click.echo(json.dumps([d.model_dump() for d in discoveries], indent=2))
+        return
+
+    console.print(f"[bold]Proactive Discoveries[/bold] ({len(discoveries)} found)")
+    console.print()
+
+    for i, discovery in enumerate(discoveries, 1):
+        console.print(f"[cyan]{i}. Insight:[/cyan]")
+        console.print(f"  {discovery.new_insight[:150]}...")
+        console.print(f"  [green]Novelty: {discovery.novelty_score:.2f}[/green]")
+
+
+@agent_group.command(name="thoughts")
+@click.option("--type", "thought_type", help="Filter by thought type")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def agent_thoughts(thought_type: str | None, as_json: bool) -> None:
+    """Ver los pensamientos del agente (meta-cognición).
+
+    Example: memo agent thoughts --type insight
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    thoughts = mem.agent.get_thoughts(thought_type)
+
+    if as_json:
+        click.echo(json.dumps([t.model_dump() for t in thoughts], indent=2))
+        return
+
+    console.print(f"[bold]Agent Thoughts[/bold] ({len(thoughts)} total)")
+    console.print()
+
+    for t in thoughts[-10:]:  # Show last 10
+        console.print(f"[cyan]{t.thought_type}:[/cyan] {t.content[:100]}...")
+        console.print(f"  [dim]{t.timestamp}[/dim]")
+
+
+@agent_group.command(name="think")
+@click.argument("thought")
+@click.option("--type", "thought_type", default="hypothesis", help="Thought type")
+def agent_think(thought: str, thought_type: str) -> None:
+    """Registra un pensamiento del agente.
+
+    Example: memo agent think "Maybe MLX is ideal for edge because..." --type hypothesis
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    agent_thought = mem.agent.think(thought, thought_type)
+
+    console.print(f"[green]Thought registered[/green]")
+    console.print(f"Type: {agent_thought.thought_type}")
+    console.print(f"Content: {agent_thought.content}")
+
+
 def main() -> None:
     cli()
 
