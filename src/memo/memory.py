@@ -58,6 +58,21 @@ from memo.embedder import MLXEmbedder, assert_valid_embedding
 from memo.graph import VALID_ENTITY_TYPES, GraphStore
 from memo.llm import MLXChat
 from memo.store import VecStore
+from memo.temporal import TemporalAnalyzer
+from memo.consolidation import AdvancedConsolidator
+from memo.navigation import GraphNavigator
+from memo.contextual import ContextStore, ContextualRecall
+from memo.crossref import CrossReferenceIndex, LinkSuggester
+from memo.lifecycle import LifecycleManager
+from memo.proactive import ProactiveSuggester
+from memo.versioning import VersionManager
+from memo.queries import QueryComposer, QueryStore
+from memo.federation import FederationConfig, FederationSearcher
+from memo.sync import BackupManager, SyncManager
+from memo.encryption import EncryptionManager, Encryptor, KeyManager
+from memo.sharing import ShareManager, ShareStore
+from memo.analytics import AnalyticsEngine, Dashboard
+from memo.import_export import ImportExportManager
 
 
 # JSON-schema prompt for the helper LLM. Kept terse to fit in Qwen3-3B's
@@ -243,6 +258,142 @@ class Memory:
         # if `cfg.reranker_enabled`. Cold load of Qwen3-Reranker-0.6B
         # is ~1-2s; users who disable it (CI, vec-only mode) pay zero.
         self._reranker = None  # type: ignore[var-annotated]
+        # Self-heal probe: warn (don't crash) if the store has paths
+        # that don't resolve in the current `memory_dir` layout. Common
+        # after upgrading from a legacy install without running
+        # `memo migrate-vault` or `memo reindex`.
+        self._maybe_warn_legacy_paths()
+        # Temporal analyzer for contradiction detection and timeline analysis
+        self._temporal: TemporalAnalyzer | None = None
+
+    @property
+    def temporal(self) -> TemporalAnalyzer:
+        """Lazy accessor for TemporalAnalyzer."""
+        if self._temporal is None:
+            self._temporal = TemporalAnalyzer(self, self._chat)
+        return self._temporal
+
+    @property
+    def consolidator(self) -> AdvancedConsolidator:
+        """Lazy accessor for AdvancedConsolidator."""
+        return AdvancedConsolidator(self, self._chat)
+
+    @property
+    def navigator(self) -> GraphNavigator:
+        """Lazy accessor for GraphNavigator."""
+        return GraphNavigator(self.graph)
+
+    @property
+    def contextual(self) -> ContextualRecall:
+        """Lazy accessor for ContextualRecall."""
+        context_store = ContextStore(self.cfg.state_dir)
+        return ContextualRecall(self, context_store)
+
+    @property
+    def crossref(self) -> CrossReferenceIndex:
+        """Lazy accessor for CrossReferenceIndex."""
+        return CrossReferenceIndex(self.cfg.crossref_db)
+
+    @property
+    def link_suggester(self) -> LinkSuggester:
+        """Lazy accessor for LinkSuggester."""
+        return LinkSuggester(self, self.crossref)
+
+    @property
+    def lifecycle(self) -> LifecycleManager:
+        """Lazy accessor for LifecycleManager."""
+        return LifecycleManager(self)
+
+    @property
+    def proactive(self) -> ProactiveSuggester:
+        """Lazy accessor for ProactiveSuggester."""
+        return ProactiveSuggester(self, self._chat)
+
+    @property
+    def versioning(self) -> VersionManager:
+        """Lazy accessor for VersionManager."""
+        return VersionManager(self)
+
+    @property
+    def query_composer(self) -> QueryComposer:
+        """Lazy accessor for QueryComposer."""
+        return QueryComposer(self, QueryStore(self.cfg.state_dir))
+
+    @property
+    def federation(self) -> FederationSearcher:
+        """Lazy accessor for FederationSearcher."""
+        return FederationSearcher(FederationConfig(self.cfg.state_dir / "federation.json"))
+
+    @property
+    def backup(self) -> BackupManager:
+        """Lazy accessor for BackupManager."""
+        return BackupManager(
+            memory_dir=self.cfg.memory_dir,
+            db_dir=self.cfg.state_dir,
+            backup_dir=self.cfg.state_dir / "backups",
+        )
+
+    @property
+    def sync(self) -> SyncManager:
+        """Lazy accessor for SyncManager."""
+        return SyncManager(self)
+
+    @property
+    def encryption(self) -> EncryptionManager:
+        """Lazy accessor for EncryptionManager."""
+        key_manager = KeyManager(self.cfg.state_dir)
+        encryptor = Encryptor(key_manager)
+        return EncryptionManager(key_manager, encryptor)
+
+    @property
+    def sharing(self) -> ShareManager:
+        """Lazy accessor for ShareManager."""
+        return ShareManager(ShareStore(self.cfg.state_dir))
+
+    @property
+    def analytics(self) -> AnalyticsEngine:
+        """Lazy accessor for AnalyticsEngine."""
+        return AnalyticsEngine(self)
+
+    @property
+    def dashboard(self) -> Dashboard:
+        """Lazy accessor for Dashboard."""
+        return Dashboard(self.analytics)
+
+    @property
+    def import_export(self) -> ImportExportManager:
+        """Lazy accessor for ImportExportManager."""
+        return ImportExportManager(self)
+
+    def _maybe_warn_legacy_paths(self) -> None:
+        """Stderr warning when stored `meta.path` rows don't resolve.
+
+        Skipped after `user_version >= 1` (set by `reindex`) so a clean
+        install doesn't pay the probe cost on every startup. Probe is
+        bounded to 5 sample rows.
+        """
+        try:
+            if self.store.get_user_version() >= 1:
+                return
+            sample = self.store.list_recent(limit=5)
+            if not sample:
+                return
+            missing = sum(
+                1 for r in sample
+                if not self._resolve_existing(r["path"]).is_file()
+            )
+            if missing == len(sample):
+                import sys
+                print(
+                    f"[memo] warning: {missing} stored path(s) don't resolve "
+                    f"under data_dir={self.cfg.data_dir}. Run `memo reindex` "
+                    f"to refresh the index, or `memo migrate-vault <new-dir>` "
+                    f"to migrate from a legacy vault layout.",
+                    file=sys.stderr,
+                )
+        except Exception:
+            # Probe failures must never block startup — they're advisory.
+            pass
 
     # -- save ---------------------------------------------------------------
 
@@ -361,7 +512,7 @@ class Memory:
         # can recover by re-indexing. Conversely if we write the index
         # first and the disk write fails, the index points to a
         # non-existent file.
-        abs_path = self.cfg.vault_path / rel_path
+        abs_path = self.cfg.memory_dir / rel_path
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         post = frontmatter.Post(
             content,
@@ -704,7 +855,7 @@ class Memory:
         body_changed = new_body_hash != r["body_hash"]
         title_changed = new_title != r["title"]
 
-        abs_path = self.cfg.vault_path / r["path"]
+        abs_path = self._resolve_existing(r["path"])
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         post = frontmatter.Post(
             new_body,
@@ -770,7 +921,7 @@ class Memory:
             return False
         existed = self.store.delete(id_)
         try:
-            (self.cfg.vault_path / r["path"]).unlink(missing_ok=True)
+            self._resolve_existing(r["path"]).unlink(missing_ok=True)
         except OSError:
             # File deletion is best-effort — store is the authoritative
             # delete signal. Stale `.md` files get cleaned up by a
@@ -820,7 +971,9 @@ class Memory:
             body = post.content or ""
             new_hash = _sha256_short(body)
             existing = self.store.get(md_id)
-            rel = str(md_path.relative_to(self.cfg.vault_path))
+            # Path relative to memory_dir — paths in the store no longer
+            # carry the legacy `<vault>/<memory_subdir>/...` prefix.
+            rel = str(md_path.relative_to(self.cfg.memory_dir))
 
             title = (post.get("title") or _derive_title(body) or "untitled").strip()
             type_ = post.get("type") or "note"
@@ -851,6 +1004,10 @@ class Memory:
                     body_text=body,
                 )
                 reindexed += 1
+        # Successful reindex: every meta.path now uses the current
+        # memory_dir-relative layout, so future startups can skip the
+        # legacy-path probe in `_maybe_warn_legacy_paths`.
+        self.store.set_user_version(1)
         return {"checked": checked, "reindexed": reindexed, "added": added, "skipped": skipped}
 
     def lint(self) -> dict[str, list[dict[str, Any]]]:
@@ -1159,9 +1316,9 @@ class Memory:
         orphan_store: list[str] = []
         orphan_disk: list[str] = []
 
-        # Store-side: walk meta, check file existence.
+        # Store-side: walk meta, check file existence (with legacy fallback).
         for r in self.store.list_recent(limit=100_000):
-            if not (self.cfg.vault_path / r["path"]).is_file():
+            if not self._resolve_existing(r["path"]).is_file():
                 orphan_store.append(r["id"])
                 if fix:
                     self.store.delete(r["id"])
@@ -1177,7 +1334,7 @@ class Memory:
                 if not md_id or not isinstance(md_id, str):
                     continue
                 if self.store.get(md_id) is None:
-                    orphan_disk.append(str(md_path.relative_to(self.cfg.vault_path)))
+                    orphan_disk.append(str(md_path.relative_to(self.cfg.memory_dir)))
 
         return {"orphan_store": orphan_store, "orphan_disk": orphan_disk}
 
@@ -1186,11 +1343,32 @@ class Memory:
     def _build_rel_path(self, title: str, now_iso: str) -> str:
         date = now_iso.split("T", 1)[0]
         slug = _slugify(title)[:80] or "untitled"
-        # Use POSIX path joins; vault is always macOS / iCloud.
-        return f"{self.cfg.memory_subdir}/{date}-{slug}.md"
+        # POSIX path joins. Path is relative to `cfg.memory_dir`.
+        return f"{date}-{slug}.md"
+
+    def _resolve_existing(self, rel_path: str) -> Path:
+        """Resolve a DB-stored path to an absolute `Path`.
+
+        Tries `memory_dir / rel_path` first (current layout). Falls back
+        to `vault_path / rel_path` if `vault_path` is set AND the file
+        actually exists there (legacy layout: paths in older DB rows
+        carry a `<memory_subdir>/...` prefix relative to `vault_path`).
+
+        Returns the new-layout path even when the file doesn't exist on
+        either branch — callers that need to CREATE a file always write
+        to the new layout.
+        """
+        new_path = self.cfg.memory_dir / rel_path
+        if new_path.is_file():
+            return new_path
+        if self.cfg.vault_path is not None:
+            legacy = self.cfg.vault_path / rel_path
+            if legacy.is_file():
+                return legacy
+        return new_path
 
     def _read_body(self, rel_path: str) -> str:
-        abs_path = self.cfg.vault_path / rel_path
+        abs_path = self._resolve_existing(rel_path)
         if not abs_path.is_file():
             return ""
         try:

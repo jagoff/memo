@@ -20,8 +20,9 @@ Output style:
 from __future__ import annotations
 
 import json
-import sys
 import re
+import sys
+from datetime import UTC
 from typing import Any
 
 import click
@@ -30,6 +31,10 @@ from rich.panel import Panel
 from rich.table import Table
 
 from memo.config import Config
+
+# Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
+# `run_picker` itself defers the heavy `questionary` import until called.
+from memo.setup import run_picker, write_config_file
 
 console = Console()
 
@@ -54,8 +59,211 @@ def _resolved(thunk):
 
 @click.group()
 @click.version_option(package_name="memo-mcp")
-def cli() -> None:
-    """memo — local MCP memory backed by Obsidian vault, MLX-native."""
+@click.pass_context
+def cli(ctx: click.Context) -> None:
+    """memo — local MCP memory backed by markdown vault, MLX-native."""
+    _first_run_gate(ctx)
+
+
+# Subcommands that must NEVER trigger the first-run picker — either
+# because they're part of setup/diagnostics, they don't need storage,
+# or they run from non-interactive hooks (the TTY check + the
+# `MEMO_NONINTERACTIVE=1` env var in `hooks.json` handle the latter,
+# but listing the names here is a belt-and-suspenders defence in case
+# something invokes them from an interactive shell while debugging).
+_FIRST_RUN_GATE_SKIP_COMMANDS = {
+    "init", "doctor", "migrate-vault",
+    "prewarm", "recall-hook", "capture-stop", "session", "ingest",
+}
+
+
+def _first_run_gate(ctx: click.Context) -> None:
+    """If the user hasn't configured `memo` yet, run the picker first.
+
+    Resolution: skip when invoked from hooks (MEMO_NONINTERACTIVE=1 or
+    non-TTY), when an env var already configures `data_dir`, when a
+    config file already exists, or when the legacy `MEMO_VAULT_PATH`
+    pair is set (back-compat path). Also skip for setup/diagnostic
+    subcommands so the user can always recover via `memo doctor`.
+    """
+    import os
+    import sys as _sys
+
+    if ctx.invoked_subcommand in (None, *_FIRST_RUN_GATE_SKIP_COMMANDS):
+        return
+    if os.environ.get("MEMO_NONINTERACTIVE") == "1":
+        return
+    # Both stdin and stdout must be a TTY for the picker to make sense.
+    if not (_sys.stdin.isatty() and _sys.stdout.isatty()):
+        return
+    if "MEMO_DATA_DIR" in os.environ:
+        return
+    if "MEMO_VAULT_PATH" in os.environ and "MEMO_MEMORY_SUBDIR" in os.environ:
+        return
+    # Re-resolve the config file at gate-firing time (env may have
+    # changed between import and invocation, e.g. in tests).
+    from memo.setup.config_io import _resolve_config_path
+    if _resolve_config_path().is_file():
+        return
+    _run_picker_and_save()
+
+
+def _run_picker_and_save() -> None:
+    """Drive the interactive picker → persist to TOML → return.
+
+    Caller is expected to be the first-run gate (or `memo init`). Picker
+    aborts (Ctrl-C / ESC) raise `click.exceptions.Exit(130)` so the
+    surrounding CLI invocation halts cleanly.
+    """
+    console.print(
+        "[bold]memo first-run setup[/bold] — pick where memorias should live.\n",
+    )
+    try:
+        result = run_picker()
+    except KeyboardInterrupt:
+        console.print(
+            "[yellow]aborted.[/yellow] Re-run any memo command to retry, "
+            "or run `memo init` to configure.",
+        )
+        raise click.exceptions.Exit(130) from None
+    cfg_path = write_config_file(
+        data_dir=result.data_dir,
+        vault_path=result.vault_path,
+    )
+    result.data_dir.mkdir(parents=True, exist_ok=True)
+    console.print(
+        f"[green]✓[/green] data_dir = {result.data_dir}",
+    )
+    if result.vault_path is not None:
+        console.print(
+            f"[green]✓[/green] vault_path = {result.vault_path}  "
+            "[dim](used by `memo ingest`)[/dim]",
+        )
+    console.print(f"[dim]config saved: {cfg_path}[/dim]")
+
+
+@cli.command(name="init")
+@click.option("--force", is_flag=True, help="Overwrite existing config without confirmation.")
+def init_cmd(force: bool) -> None:
+    """(Re)configure where memo stores memorias.
+
+    Runs the interactive picker. On first run, the picker also fires
+    automatically — `memo init` is for explicitly re-configuring later
+    (e.g. moving to a new path, switching to/from an Obsidian vault).
+    """
+    from memo.setup.config_io import _resolve_config_path
+
+    cfg_path = _resolve_config_path()
+    if cfg_path.is_file() and not force:
+        if not click.confirm(
+            f"Config file exists at {cfg_path}. Overwrite?",
+            default=False,
+        ):
+            console.print("[yellow]aborted[/yellow]")
+            return
+    _run_picker_and_save()
+
+
+@cli.command(name="migrate-vault")
+@click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
+@click.option("--from", "from_dir", default=None,
+              type=click.Path(exists=True, file_okay=False, resolve_path=True),
+              help="Source memory_dir. Defaults to current cfg.memory_dir.")
+@click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
+@click.option("--yes", is_flag=True, help="Skip confirmation.")
+def migrate_vault(
+    new_data_dir: str | None, from_dir: str | None, force: bool, yes: bool,
+) -> None:
+    """Move memorias to a new data_dir; rewrites config + reindexes.
+
+    Copies all `.md` files (preserving mtime via `shutil.copy2`),
+    updates `~/.config/memo/config.toml` with the new `data_dir`,
+    deletes `memvec.db`, and runs `memo reindex` from the new location.
+
+    The original `.md` files are NOT deleted — once you've verified the
+    migration with `memo search`, you can `rm -rf <old-dir>` manually.
+    History DB is preserved (it's append-only audit; old paths in it
+    just become historical references).
+    """
+    import shutil
+    from pathlib import Path as _Path
+
+    from memo.memory import Memory
+
+    cfg = Config.from_env()
+
+    # 1. Resolve source.
+    src = _Path(from_dir).resolve() if from_dir else cfg.memory_dir
+    if not src.is_dir():
+        console.print(f"[red]✗[/red] source dir does not exist: {src}")
+        sys.exit(1)
+
+    # 2. Resolve destination + (optional) new vault_path.
+    if new_data_dir:
+        dst = _Path(new_data_dir).resolve()
+        chosen_vault = cfg.vault_path
+    else:
+        # No arg → run the picker so user can pick (incl. an Obsidian vault).
+        try:
+            result = run_picker()
+        except KeyboardInterrupt:
+            console.print("[yellow]aborted[/yellow]")
+            sys.exit(130)
+        dst = result.data_dir
+        chosen_vault = result.vault_path
+
+    if dst == src:
+        console.print(f"[red]✗[/red] source and destination are the same: {src}")
+        sys.exit(1)
+
+    md_files = sorted(src.rglob("*.md"))
+    if dst.exists() and any(dst.iterdir()) and not force:
+        console.print(
+            f"[red]✗[/red] destination is non-empty: {dst}\n"
+            "  Use --force to overwrite.",
+        )
+        sys.exit(1)
+
+    if not yes:
+        click.confirm(
+            f"Copy {len(md_files)} memorias from\n  {src}\n→ {dst}\n"
+            "and rebuild memvec.db. Source files will be left in place. "
+            "Proceed?",
+            abort=True,
+        )
+
+    # 3. Copy files (preserving mtime).
+    dst.mkdir(parents=True, exist_ok=True)
+    n_copied = 0
+    for md in md_files:
+        rel = md.relative_to(src)
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(md, target)
+        n_copied += 1
+    console.print(f"[green]✓[/green] copied {n_copied} files → {dst}")
+
+    # 4. Update config + drop stale DB.
+    cfg_path = write_config_file(data_dir=dst, vault_path=chosen_vault)
+    console.print(f"[green]✓[/green] config: {cfg_path}")
+    if cfg.db_path.is_file():
+        cfg.db_path.unlink()
+        console.print("[green]✓[/green] removed stale memvec.db")
+
+    # 5. Reindex from new location. Re-build Config so from_env picks up
+    # the freshly-written file (env vars / explicit kwargs cleared).
+    new_cfg = Config.from_env()
+    mem = Memory(new_cfg)
+    counts = mem.reindex()
+    console.print(
+        f"[green]✓[/green] reindex: checked {counts['checked']}  "
+        f"added {counts['added']}  reindexed {counts['reindexed']}  "
+        f"skipped {counts['skipped']}",
+    )
+    console.print(
+        f"\n[dim]Source files at {src} were left untouched. "
+        "After verifying the migration with `memo search`, you can rm them.[/dim]",
+    )
 
 
 @cli.command()
@@ -555,10 +763,10 @@ def backup(out_path: str | None) -> None:
 
     n_md = 0
     with zipfile.ZipFile(out_p, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 1) Memory .md files (relative to vault).
+        # 1) Memory .md files (relative to memory_dir).
         if cfg.memory_dir.is_dir():
             for md in sorted(cfg.memory_dir.rglob("*.md")):
-                rel = md.relative_to(cfg.vault_path)
+                rel = md.relative_to(cfg.memory_dir)
                 zf.write(md, arcname=f"memory/{rel}")
                 n_md += 1
         # 2) State DBs (vec + history). Stored at the root.
@@ -568,8 +776,8 @@ def backup(out_path: str | None) -> None:
         # 3) Manifest with paths so restore can sanity-check.
         manifest = {
             "created": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-            "vault_path": str(cfg.vault_path),
-            "memory_subdir": cfg.memory_subdir,
+            "data_dir": str(cfg.data_dir),
+            "vault_path": str(cfg.vault_path) if cfg.vault_path else None,
             "embedder_model": cfg.embedder_model,
             "embedder_dims": cfg.embedder_dims,
             "memo_version": __import__("memo").__version__,
@@ -596,7 +804,6 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
     state dir — confirmation required unless `--yes`.
     """
     import zipfile
-    from pathlib import Path as _Path
 
     cfg = Config.from_env()
     cfg.ensure_dirs()
@@ -614,7 +821,7 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
             )
         if not yes:
             click.confirm(
-                f"Extract into {cfg.vault_path} + {cfg.state_dir}? "
+                f"Extract into {cfg.data_dir} + {cfg.state_dir}? "
                 "Existing files will be overwritten.", abort=True,
             )
         # Stream entries.
@@ -625,7 +832,7 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
             data = zf.read(info)
             if info.filename.startswith("memory/"):
                 rel = info.filename[len("memory/"):]
-                dest = cfg.vault_path / rel
+                dest = cfg.data_dir / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
                 n_md += 1
@@ -638,7 +845,7 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
 
     console.print(
         f"[green]✓[/green] restored {n_md} memorias + {n_db} state DB(s) "
-        f"into {cfg.vault_path}",
+        f"into {cfg.data_dir}",
     )
 
     if reindex:
@@ -661,8 +868,8 @@ def stats() -> None:
     mem = Memory(Config.from_env())
     info: dict[str, Any] = {
         "total": mem.store.count(),
-        "vault_path": str(mem.cfg.vault_path),
-        "memory_dir": str(mem.cfg.memory_dir),
+        "data_dir": str(mem.cfg.data_dir),
+        "vault_path": str(mem.cfg.vault_path) if mem.cfg.vault_path else "(unset)",
         "db_path": str(mem.cfg.db_path),
         "embedder_model": mem.cfg.embedder_model,
         "llm_model": mem.cfg.llm_model,
@@ -684,12 +891,20 @@ def doctor(do_gc: bool, fix: bool) -> None:
     cfg = Config.from_env()
     ok = True
 
-    # 1. Vault dir
-    if cfg.vault_path.is_dir():
-        console.print(f"[green]✓[/green] vault: {cfg.vault_path}")
+    # 1. Data dir (memorias)
+    if cfg.data_dir.is_dir():
+        console.print(f"[green]✓[/green] data_dir: {cfg.data_dir}")
     else:
-        console.print(f"[red]✗[/red] vault missing: {cfg.vault_path}")
+        # Data dir is auto-created by `ensure_dirs()`; missing here means
+        # something went wrong with permissions.
+        console.print(f"[red]✗[/red] data_dir missing: {cfg.data_dir}")
         ok = False
+    # Optional vault_path (only relevant for `memo ingest`).
+    if cfg.vault_path is not None:
+        if cfg.vault_path.is_dir():
+            console.print(f"[green]✓[/green] vault_path: {cfg.vault_path}")
+        else:
+            console.print(f"[yellow]![/yellow] vault_path set but missing: {cfg.vault_path}")
 
     # 2. sqlite-vec
     try:
@@ -884,7 +1099,7 @@ def recall_hook() -> None:
         from memo.memory import Memory
         mem = Memory(Config.from_env())
         hits = mem.search(prompt, limit=top_k, mode=mode)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _bail(f"search failed: {exc}")
         return
 
@@ -935,7 +1150,7 @@ def recall_hook() -> None:
 @click.option("--name", default=None, help="Vault label (default: dirname). Used as path prefix in store.")
 @click.option("--force", is_flag=True, help="Re-embed even if body unchanged.")
 @click.option("--dry-run", is_flag=True, help="Walk + report counts, don't embed/write.")
-@click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/04-Archive/99-obsidian-system/")
+@click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/99-obsidian/")
 def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclude: tuple[str, ...]) -> None:
     """Bulk-ingest all .md from a vault into the memo index.
 
@@ -951,11 +1166,11 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
     embedder model swap).
 
     Default exclusions skip Obsidian system dirs (.obsidian/, .trash/,
-    etc.) and memo's own memory subdir (`04-Archive/99-obsidian-system/`)
+    etc.) and memo's own memory subdir (`99-obsidian/`)
     so we don't double-index curated memorias.
     """
     import hashlib
-    from datetime import datetime, timezone
+    from datetime import datetime
     from pathlib import Path
 
     import frontmatter
@@ -967,20 +1182,21 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
     cfg.ensure_dirs()
 
     vault = Path(vault_path).resolve()
-    # When ingesting the configured vault, paths are stored relative to
-    # `cfg.vault_path` directly so `_read_body` can resolve them via
-    # `cfg.vault_path / rel_path`. Prefixing with `vault.name` here would
-    # double the basename ("Notes/Notes/foo.md") because `cfg.vault_path`
-    # already ends in that name. For external vaults we keep the label
-    # prefix as a multi-vault discriminator (read path support: TBD).
-    is_principal_vault = vault == cfg.vault_path
+    # `cfg.vault_path` is the user's "primary" Obsidian vault (set via
+    # `memo init`'s Obsidian branch, or `MEMO_VAULT_PATH`). When we're
+    # ingesting that exact vault, paths are stored without a label
+    # prefix (e.g. `01-Projects/foo.md`); external vaults get a
+    # `<label>/` prefix so multiple vaults coexist in one store.
+    # For users who haven't set `cfg.vault_path` (non-Obsidian
+    # workflows), every ingest is treated as external.
+    is_principal_vault = cfg.vault_path is not None and vault == cfg.vault_path
     label = "" if is_principal_vault else (name or vault.name)
 
     # Default exclusions — Obsidian dotdirs + memo's own memory subdir
     # to avoid double-indexing the curated memorias managed by reindex.
     default_excludes = (
         ".obsidian", ".git", ".trash", ".makemd", ".smart-env", ".space",
-        ".claude", ".devin", "04-Archive/99-obsidian-system",
+        ".claude", ".devin", "99-obsidian",
     )
     exclude_patterns = list(exclude) + list(default_excludes)
 
@@ -1013,7 +1229,7 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
 
     skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0
 
-    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
     with Progress(
         SpinnerColumn(),
@@ -1139,7 +1355,7 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
                     progress.advance(task_id)
                     continue
 
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 # Preserve created if known (existing row), else now.
                 created = existing["created"] if existing else now
 
@@ -1161,7 +1377,7 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
                     updated += 1
                 else:
                     added += 1
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors += 1
                 import os as _os
                 if _os.environ.get("MEMO_INGEST_DEBUG") == "1":
@@ -1297,7 +1513,7 @@ def capture_stop() -> None:
     try:
         from memo.capture import run_capture
         run_capture(Path(transcript_path), debug=debug)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if debug:
             print(f"# memo capture-stop failed: {exc}", file=_sys.stderr)
 
@@ -1334,10 +1550,2728 @@ def prewarm() -> None:
             from memo.reranker import MLXReranker
             r = MLXReranker(model_path=cfg.reranker_model)
             r.warmup()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if os.environ.get("MEMO_RECALL_DEBUG") == "1":
             print(f"# memo prewarm failed: {exc}", file=_sys.stderr)
     _sys.exit(0)
+
+
+# ── Session checkpoints (v0.4.0) ───────────────────────────────────────────
+#
+# `memo session ...` — short-lived "what was I working on" snapshots, written
+# on every Claude Code Stop hook. Survive a closed/crashed session so the
+# next SessionStart can show a picker of recent work. Storage is sidecar
+# JSON in `state_dir/sessions/`, NOT memorias (different lifecycle, different
+# query pattern — looked up by recency, never by semantic similarity).
+
+
+@cli.group(name="session")
+def session_group() -> None:
+    """Internal session-snapshot ops — hook targets, not user-facing.
+
+    User-facing entry is `memo resume` (list / inspect). This group
+    holds the wiring the hooks call: `checkpoint` (Stop hook), `recent`
+    (SessionStart additionalContext), and `prune` (LRU cleanup). Stays
+    namespaced so `memo --help` doesn't surface plumbing as if it were
+    everyday CLI.
+    """
+
+
+@session_group.command(name="checkpoint")
+@click.option("--session-id", default=None, help="Override session_id (default: read from stdin payload).")
+@click.option("--cwd", default=None, help="Override cwd (default: read from stdin payload, fallback os.getcwd).")
+@click.option("--transcript-path", default=None, help="Override transcript path.")
+@click.option("--lru-cap", default=50, type=int, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Print the persisted snapshot as JSON.")
+def session_checkpoint(
+    session_id: str | None, cwd: str | None,
+    transcript_path: str | None, lru_cap: int, as_json: bool,
+) -> None:
+    """Stop hook entrypoint — upsert a session snapshot from stdin JSON.
+
+    Reads the Stop hook payload from stdin (Claude Code passes
+    `{"session_id", "transcript_path", "cwd", ...}`). Falls back to
+    flags/cwd if stdin is empty (lets you run it manually for testing).
+
+    Always exits 0 — like the other hooks, a checkpoint failure must
+    not block Claude Code. On any exception we swallow + print `{}`.
+    """
+    import json as _json
+    import os as _os
+    import sys as _sys
+
+    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+        if as_json:
+            click.echo("{}")
+        sys.exit(0)
+
+    payload: dict[str, Any] = {}
+    # Stdin is a TTY when run interactively → don't block on read.
+    if not _sys.stdin.isatty():
+        try:
+            raw = _sys.stdin.read()
+            if raw.strip():
+                payload = _json.loads(raw)
+        except _json.JSONDecodeError:
+            payload = {}
+
+    sid = session_id or payload.get("session_id")
+    cwd_resolved = cwd or payload.get("cwd") or _os.getcwd()
+    transcript = transcript_path or payload.get("transcript_path")
+
+    if not sid:
+        # Without a session_id we can't key the snapshot. Fail silently
+        # so the hook still exits 0.
+        if as_json:
+            click.echo("{}")
+        sys.exit(0)
+
+    try:
+        from memo.session import checkpoint as _checkpoint
+
+        cfg = Config.from_env()
+        cfg.ensure_dirs()
+        snap = _checkpoint(
+            cfg.state_dir,
+            session_id=sid,
+            cwd=cwd_resolved,
+            transcript_path=transcript,
+            lru_cap=lru_cap,
+        )
+    except Exception as exc:
+        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+            print(f"# memo session checkpoint failed: {exc}", file=_sys.stderr)
+        if as_json:
+            click.echo("{}")
+        sys.exit(0)
+
+    if as_json:
+        click.echo(_json.dumps(snap, ensure_ascii=False, indent=2))
+
+
+@cli.command(name="resume")
+@click.argument("session_id", required=False)
+@click.option("--limit", default=10, type=int, show_default=True,
+              help="Max sessions to show (only used when SESSION_ID is omitted).")
+@click.option("--project", default=None, help="Filter to one project basename.")
+@click.option("--cwd", "cwd_filter", default=None,
+              help="Filter to sessions for this exact cwd (resolved). "
+                   "Used by the shell wrapper to ask 'what was open here?' "
+                   "without manual path comparison.")
+@click.option("--json", "as_json", is_flag=True)
+def resume(
+    session_id: str | None, limit: int,
+    project: str | None, cwd_filter: str | None, as_json: bool,
+) -> None:
+    """Recent sessions to retomar — picker for the SessionStart flow.
+
+    With no argument, prints a table of the most recent sessions
+    (cwd / branch / summary / id). Pass SESSION_ID (full or unique
+    prefix ≥4 chars) to inspect one session in detail.
+
+    Storage is sidecar JSON under `~/.local/share/memo/sessions/`,
+    auto-written by the Stop hook (`memo session checkpoint`) and
+    LRU-capped at 50.
+    """
+    from memo.session import format_relative, get_session, list_sessions
+
+    cfg = Config.from_env()
+
+    # Detail view — one session.
+    if session_id:
+        snap = get_session(cfg.state_dir, session_id)
+        if snap is None:
+            console.print(f"[red]not found:[/red] {session_id}")
+            sys.exit(1)
+        if as_json:
+            click.echo(json.dumps(snap, ensure_ascii=False, indent=2))
+            return
+        mods = snap.get("modified_files") or []
+        mods_line = ", ".join(mods[:5])
+        if len(mods) > 5:
+            mods_line += f", …(+{len(mods) - 5})"
+        sid = snap.get("session_id") or ""
+        console.print(Panel.fit(
+            f"[bold]{snap.get('summary') or snap.get('last_user_msg') or 'session'}[/bold]\n"
+            f"[dim]session_id:[/dim] {sid}\n"
+            f"[dim]project:[/dim]    {snap.get('project') or '—'}\n"
+            f"[dim]cwd:[/dim]        {snap.get('cwd') or '—'}\n"
+            f"[dim]branch:[/dim]     {snap.get('branch') or '—'}\n"
+            f"[dim]head:[/dim]       {snap.get('head_commit') or '—'}\n"
+            f"[dim]modified:[/dim]   {mods_line or '—'}\n"
+            f"[dim]transcript:[/dim] {snap.get('transcript_path') or '—'}\n"
+            f"[dim]created:[/dim]    {snap.get('created')}  ({format_relative(snap.get('created'))})\n"
+            f"[dim]updated:[/dim]    {snap.get('updated')}  ({format_relative(snap.get('updated'))})\n"
+            f"[dim]turns:[/dim]      {snap.get('turn_count')}\n\n"
+            f"{snap.get('last_user_msg') or ''}",
+            title="session", border_style="cyan",
+        ))
+        if sid:
+            console.print(
+                f"\n[bold green]Para retomar:[/bold green]  "
+                f"[cyan]claude --resume {sid}[/cyan]\n"
+                f"[dim](copy-paste; corré el comando desde "
+                f"`{snap.get('cwd') or '?'}`)[/dim]",
+            )
+        return
+
+    # List view — picker.
+    rows = list_sessions(
+        cfg.state_dir, limit=limit, project=project, cwd=cwd_filter,
+    )
+    if as_json:
+        click.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        console.print("[dim]no sessions yet — run a checkpoint first[/dim]")
+        return
+
+    # When the caller passed an explicit --cwd, the list is already
+    # filtered to that cwd — printing a "Última en este proyecto"
+    # banner on top of a homogeneous list would be redundant.
+    if cwd_filter:
+        same_cwd = []
+    else:
+        # Bias: if there's a session for the current cwd, surface it on top
+        # with the exact resume command. The whole point of the picker is
+        # crash recovery — if you crashed and reopened terminal in the same
+        # project, the very first thing you want to see is "click here to
+        # resume", not a generic chronological list.
+        import os as _os
+        from pathlib import Path as _Path
+        cur_cwd = str(_Path(_os.getcwd()).resolve())
+        same_cwd = [r for r in rows if (r.get("cwd") or "") == cur_cwd]
+    if same_cwd:
+        top = same_cwd[0]
+        sid = top.get("session_id") or ""
+        console.print(
+            f"[bold green]Última en este proyecto[/bold green]  "
+            f"[dim]({format_relative(top.get('updated'))})[/dim]: "
+            f"{(top.get('summary') or top.get('last_user_msg') or '—')[:80]}",
+        )
+        console.print(
+            f"[bold green]Para retomar:[/bold green]  "
+            f"[cyan]claude --resume {sid}[/cyan]\n",
+        )
+
+    tbl = Table(show_lines=False, expand=True)
+    tbl.add_column("when", width=10)
+    tbl.add_column("project", width=14, overflow="fold")
+    tbl.add_column("branch", width=14, overflow="fold")
+    tbl.add_column("turns", justify="right", width=5)
+    tbl.add_column("summary", overflow="fold")
+    tbl.add_column("session_id", overflow="fold")
+    for r in rows:
+        tbl.add_row(
+            format_relative(r.get("updated")),
+            r.get("project") or "—",
+            r.get("branch") or "—",
+            str(r.get("turn_count") or 0),
+            (r.get("summary") or r.get("last_user_msg") or "—")[:80],
+            r.get("session_id") or "—",
+        )
+    console.print(tbl)
+    console.print(
+        "[dim]Detalle: `memo resume <id|prefix>`  ·  "
+        "Retomar: `claude --resume <session_id>` (copy desde la tabla).[/dim]",
+    )
+
+
+@session_group.command(name="recent")
+@click.option("--limit", default=5, type=int, show_default=True)
+def session_recent(limit: int) -> None:
+    """SessionStart hook entrypoint — emit `additionalContext` markdown
+    listing recent sessions. Same exit-0-silent contract as recall-hook."""
+    import json as _json
+    import os as _os
+    import sys as _sys
+
+    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+        print("{}")
+        _sys.exit(0)
+
+    try:
+        from memo.session import format_relative, list_sessions
+        cfg = Config.from_env()
+        rows = list_sessions(cfg.state_dir, limit=limit)
+    except Exception as exc:
+        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+            print(f"# memo session recent failed: {exc}", file=_sys.stderr)
+        print("{}")
+        _sys.exit(0)
+
+    if not rows:
+        print("{}")
+        _sys.exit(0)
+
+    # Highlight the most recent session for the current cwd. The whole
+    # point of the picker is crash recovery: if Claude Code died and
+    # the user reopened the terminal in the same project, the first
+    # signal they want is "you crashed in <X>, retomar con <comando>".
+    from pathlib import Path as _Path
+    cur_cwd = str(_Path(_os.getcwd()).resolve())
+    same_cwd = [r for r in rows if (r.get("cwd") or "") == cur_cwd]
+    top = same_cwd[0] if same_cwd else None
+
+    lines: list[str] = ["## Sesiones recientes (memo)", ""]
+
+    if top:
+        sid = top.get("session_id") or ""
+        when = format_relative(top.get("updated"))
+        summary = (
+            top.get("summary") or top.get("last_user_msg") or "—"
+        ).replace("\n", " ")[:120]
+        lines.append(f"**Última en este proyecto** ({when}): {summary}")
+        lines.append("")
+        lines.append("```")
+        lines.append(f"claude --resume {sid}")
+        lines.append("```")
+        lines.append("")
+
+    lines.extend([
+        "| # | cuándo | proyecto | branch | resumen | session_id |",
+        "|---|--------|----------|--------|---------|------------|",
+    ])
+    for i, r in enumerate(rows, start=1):
+        summary = (r.get("summary") or r.get("last_user_msg") or "—").replace("|", "·").replace("\n", " ")
+        lines.append(
+            f"| {i} | {format_relative(r.get('updated'))} | "
+            f"{(r.get('project') or '—')[:20]} | "
+            f"{(r.get('branch') or '—')[:16]} | "
+            f"{summary[:60]} | "
+            f"`{r.get('session_id') or ''}` |"
+        )
+    lines.append("")
+    lines.append(
+        "_Para detalle: `memo resume <id|prefix>`. "
+        "Para retomar otra: `claude --resume <session_id>`._"
+    )
+
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "\n".join(lines),
+        }
+    }
+    print(_json.dumps(output, ensure_ascii=False))
+
+
+@session_group.command(name="prune")
+@click.option("--cap", default=50, type=int, show_default=True)
+def session_prune(cap: int) -> None:
+    """Delete oldest sessions beyond `cap`. Idempotent."""
+    from memo.session import prune_lru
+
+    cfg = Config.from_env()
+    n = prune_lru(cfg.state_dir, cap=cap)
+    console.print(f"[green]✓[/green] pruned {n} session(s); cap={cap}")
+
+
+# ── Shell wrapper for crash recovery (v0.4.x) ──────────────────────────────
+#
+# Companion to `memo resume`: when the user types `claude` (no args) in a
+# project that has recent session checkpoints, the wrapper offers to retomar
+# one before opening a fresh session. Designed for the post-reboot case
+# where iTerm2 / Terminal restored the cwd but Claude itself is closed.
+# `command claude` is used everywhere to bypass the shell function and
+# avoid recursion.
+
+_WRAPPER_SNIPPET_ZSH = r"""# >>> memo session-resume wrapper >>>
+# Auto-suggest resuming recent Claude Code sessions for the current cwd.
+# Generated by `memo install-shell-wrapper`. Do not edit by hand — re-run
+# the install command instead. To remove: delete this file and the
+# matching `source` line in your shell rc.
+#
+# If you previously had `alias claude='claude --flag1 --flag2'`, migrate
+# to:   MEMO_CLAUDE_EXTRA_ARGS=(--flag1 --flag2)
+# Those flags are forwarded to every `command claude` invocation.
+
+function claude() {
+    local extra_args=("${MEMO_CLAUDE_EXTRA_ARGS[@]}")
+
+    # 1. Args present → pass-through, no prompt (covers `claude --resume X`,
+    #    `claude -p "..."`, `claude --help`, etc.).
+    if (( $# > 0 )); then
+        command claude "${extra_args[@]}" "$@"
+        return
+    fi
+    # 2. Stdin not a TTY → can't prompt safely.
+    if [[ ! -t 0 ]]; then
+        command claude "${extra_args[@]}"
+        return
+    fi
+    # 3. Required tools missing → degrade silently.
+    if ! command -v memo >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+        command claude "${extra_args[@]}"
+        return
+    fi
+    # 4. Ask memo what's recent for this cwd.
+    local raw count
+    raw=$(memo resume --json --limit 5 --cwd "$PWD" 2>/dev/null) || raw=""
+    if [[ -z "$raw" ]]; then
+        command claude "${extra_args[@]}"
+        return
+    fi
+    count=$(echo "$raw" | jq 'length' 2>/dev/null)
+    if [[ -z "$count" || "$count" == "0" ]]; then
+        command claude "${extra_args[@]}"
+        return
+    fi
+
+    # 5. Selector.
+    echo ""
+    if [[ "$count" == "1" ]]; then
+        local sid summary
+        sid=$(echo "$raw" | jq -r '.[0].session_id')
+        summary=$(echo "$raw" | jq -r '.[0].summary // .[0].last_user_msg // "—"')
+        echo "Sesión reciente en este cwd:"
+        printf "  %s\n" "${summary:0:120}"
+        local ans
+        printf "Retomar? [Y/n] "
+        read ans
+        if [[ -z "$ans" || "$ans" == [yY]* ]]; then
+            command claude --resume "$sid" "${extra_args[@]}"
+        else
+            command claude "${extra_args[@]}"
+        fi
+    else
+        echo "Sesiones recientes en este cwd ($count):"
+        echo "$raw" | jq -r 'to_entries | .[] | "  [\(.key + 1)] \((.value.summary // .value.last_user_msg // "—") | .[0:120])"'
+        echo "  [n] nueva sesión"
+        local choice
+        printf "Elegí: "
+        read choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
+            local sid
+            sid=$(echo "$raw" | jq -r ".[$((choice - 1))].session_id")
+            command claude --resume "$sid" "${extra_args[@]}"
+        else
+            command claude "${extra_args[@]}"
+        fi
+    fi
+}
+# <<< memo session-resume wrapper <<<
+"""
+
+
+@cli.command(name="install-shell-wrapper")
+@click.option("--print", "do_print", is_flag=True,
+              help="Print the wrapper snippet to stdout. Default mode "
+                   "when neither --print nor --write is set.")
+@click.option("--write", "do_write", is_flag=True,
+              help="Write ~/.zsh/memo-wrapper.zsh and append the matching "
+                   "`source` line to ~/.zshrc (idempotent).")
+@click.option("--shell", "shell_kind",
+              type=click.Choice(["zsh", "bash"]), default="zsh",
+              show_default=True,
+              help="Target shell. zsh is the macOS default.")
+@click.option("--force", is_flag=True,
+              help="Overwrite ~/.zsh/memo-wrapper.zsh even if its content "
+                   "differs from what we would write.")
+def install_shell_wrapper(
+    do_print: bool, do_write: bool, shell_kind: str, force: bool,
+) -> None:
+    """Install or print the `claude` shell wrapper for crash recovery.
+
+    With no flags (or --print): emit the snippet to stdout for review.
+    With --write: install to `~/.zsh/memo-wrapper.zsh` and append a
+    `source` line to `~/.zshrc` if not already present.
+
+    The wrapper makes `claude` (no args) prompt to retomar a recent
+    memo session checkpoint when the current cwd has any. With args
+    it falls through to the real claude. Detects a pre-existing
+    `alias claude=...` and warns the user to migrate to
+    `MEMO_CLAUDE_EXTRA_ARGS` so flags compose with the wrapper.
+    """
+    # Bash compat note: zsh's `[[ ... =~ ... ]]` and `${var:0:N}` work
+    # in bash >=3, so we currently emit one snippet for both. The
+    # `--shell` flag is still consumed below to pick the rc file
+    # (.zshrc vs .bashrc) and is kept as an explicit dispatch point
+    # for the day we need bash-specific snippet tweaks
+    # (e.g. `read -k 1` → `read -n 1`).
+    snippet = _WRAPPER_SNIPPET_ZSH
+
+    # Default to --print when neither flag is set; spelled out so the
+    # output flows through one path.
+    if not do_write:
+        click.echo(snippet)
+        if not do_print:
+            click.echo(
+                "\n(pasale `--write` para instalar en "
+                "~/.zsh/memo-wrapper.zsh + ~/.zshrc.)",
+                err=True,
+            )
+        return
+
+    from pathlib import Path as _Path
+
+    home = _Path.home()
+    wrapper_dir = home / ".zsh"
+    wrapper_path = wrapper_dir / "memo-wrapper.zsh"
+    rc_path = home / (".zshrc" if shell_kind == "zsh" else ".bashrc")
+    source_line = f"[[ -f {wrapper_path} ]] && source {wrapper_path}"
+
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 1 — write the wrapper file (idempotent + force-aware).
+    if wrapper_path.is_file():
+        existing = wrapper_path.read_text(encoding="utf-8")
+        if existing == snippet:
+            console.print(
+                f"[dim]✓ {wrapper_path} ya está al día[/dim]",
+            )
+        elif not force:
+            console.print(
+                f"[red]✗[/red] {wrapper_path} existe con contenido distinto. "
+                f"Pasale [bold]--force[/bold] para sobrescribir.",
+            )
+            sys.exit(2)
+        else:
+            wrapper_path.write_text(snippet, encoding="utf-8")
+            console.print(f"[yellow]↻[/yellow] {wrapper_path} sobrescrito (--force)")
+    else:
+        wrapper_path.write_text(snippet, encoding="utf-8")
+        console.print(f"[green]✓[/green] {wrapper_path} creado")
+
+    # Step 2 — append `source` line to rc if missing.
+    rc_existing = rc_path.read_text(encoding="utf-8") if rc_path.is_file() else ""
+    if source_line in rc_existing:
+        console.print(f"[dim]✓ {rc_path} ya tiene la línea source[/dim]")
+    else:
+        with rc_path.open("a", encoding="utf-8") as fh:
+            if rc_existing and not rc_existing.endswith("\n"):
+                fh.write("\n")
+            fh.write("\n# memo session-resume wrapper\n")
+            fh.write(f"{source_line}\n")
+        console.print(f"[green]✓[/green] {rc_path} ← appended source line")
+
+    # Step 3 — detect pre-existing `alias claude=...` and warn.
+    import re as _re
+
+
+# -- temporal reasoning commands ----------------------------------------------
+
+
+@cli.group(name="temporal")
+def temporal_group() -> None:
+    """Analyze temporal patterns and contradictions in memories."""
+    pass
+
+
+@temporal_group.command(name="contradictions")
+@click.argument("entity")
+@click.option("--type", "entity_type", help="Filter by entity type from graph")
+@click.option("--confidence", "min_confidence", type=float, default=0.7,
+              help="Minimum confidence threshold (default: 0.7)")
+@click.option("--max-pairs", type=int, default=20,
+              help="Maximum number of pairs to analyze (default: 20)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def temporal_contradictions(
+    entity: str, entity_type: str | None, min_confidence: float,
+    max_pairs: int, as_json: bool,
+) -> None:
+    """Detect contradictions among memorias mentioning a specific entity.
+
+    Example: memo temporal contradictions mlx
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    contradictions = mem.temporal.detect_entity_contradictions(
+        entity_name=entity,
+        entity_type=entity_type,
+        confidence_threshold=min_confidence,
+        max_pairs=max_pairs,
+    )
+
+    if as_json:
+        click.echo(json.dumps([c.__dict__ for c in contradictions], indent=2))
+        return
+
+    if not contradictions:
+        console.print(f"[green]No contradictions found for entity '{entity}'[/green]")
+        return
+
+    table = Table(title=f"Contradictions for '{entity}'")
+    table.add_column("ID A", style="cyan")
+    table.add_column("ID B", style="cyan")
+    table.add_column("Title A", style="yellow")
+    table.add_column("Title B", style="yellow")
+    table.add_column("Relationship", style="magenta")
+    table.add_column("Confidence", style="green")
+    table.add_column("Rationale")
+
+    for c in contradictions:
+        table.add_row(
+            c.memoria_id_a[:8],
+            c.memoria_id_b[:8],
+            c.title_a[:40],
+            c.title_b[:40],
+            c.relationship,
+            f"{c.confidence:.2f}",
+            c.rationale,
+        )
+
+    console.print(table)
+
+
+@temporal_group.command(name="timeline")
+@click.argument("entity")
+@click.option("--type", "entity_type", help="Filter by entity type from graph")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> None:
+    """Build a chronological timeline of all memorias mentioning an entity.
+
+    Example: memo temporal timeline mlx
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    timeline = mem.temporal.build_entity_timeline(
+        entity_name=entity,
+        entity_type=entity_type,
+    )
+
+    if timeline is None:
+        console.print(f"[yellow]No memorias found for entity '{entity}'[/yellow]")
+        return
+
+    if as_json:
+        click.echo(json.dumps({
+            "entity_name": timeline.entity_name,
+            "entity_type": timeline.entity_type,
+            "first_seen": timeline.first_seen,
+            "last_seen": timeline.last_seen,
+            "events": [e.__dict__ for e in timeline.events],
+        }, indent=2))
+        return
+
+    console.print(f"[bold]Timeline for '{entity}' ({timeline.entity_type})[/bold]")
+    console.print(f"First seen: {timeline.first_seen}")
+    console.print(f"Last seen: {timeline.last_seen}")
+    console.print()
+
+    for event in timeline.events:
+        console.print(f"[cyan]{event.date}[/cyan] [dim][{event.memoria_id[:8]}][/dim]")
+        console.print(f"  [yellow]{event.title}[/yellow] ({event.type})")
+        console.print(f"  {event.snippet}")
+        console.print()
+
+
+@temporal_group.command(name="stale")
+@click.option("--days", type=int, default=180,
+              help="Days since last update to consider stale (default: 180)")
+@click.option("--min-access", "min_access_count", type=int, default=0,
+              help="Minimum access count to exclude (default: 0)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def temporal_stale(days: int, min_access_count: int, as_json: bool) -> None:
+    """Find memorias that may be stale based on age and lack of access.
+
+    Example: memo temporal stale --days 90
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    stale = mem.temporal.detect_stale_memorias(
+        days_threshold=days,
+        min_access_count=min_access_count,
+    )
+
+    if as_json:
+        click.echo(json.dumps(stale, indent=2))
+        return
+
+    if not stale:
+        console.print(f"[green]No stale memorias found (threshold: {days} days)[/green]")
+        return
+
+    table = Table(title=f"Potentially Stale Memorias (>{days} days)")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title", style="yellow")
+    table.add_column("Type", style="magenta")
+    table.add_column("Updated", style="dim")
+    table.add_column("Days Old", style="red")
+    table.add_column("Access Count", style="green")
+
+    for item in stale[:50]:  # Cap display
+        table.add_row(
+            item["id"][:8],
+            item["title"][:40],
+            item["type"],
+            item["updated"][:10],
+            str(item["days_since_update"]),
+            str(item["access_count"]),
+        )
+
+    console.print(table)
+    if len(stale) > 50:
+        console.print(f"[dim]...and {len(stale) - 50} more[/dim]")
+
+
+@temporal_group.command(name="patterns")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def temporal_patterns(as_json: bool) -> None:
+    """Analyze high-level temporal patterns across the entire corpus.
+
+    Example: memo temporal patterns
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    patterns = mem.temporal.detect_temporal_patterns()
+
+    if as_json:
+        click.echo(json.dumps(patterns, indent=2))
+        return
+
+    console.print("[bold]Temporal Patterns[/bold]")
+    console.print()
+
+    # Memorias per month
+    console.print("[yellow]Memorias per month:[/yellow]")
+    for month, count in list(patterns["memorias_per_month"].items())[-12:]:
+        console.print(f"  {month}: {count}")
+    console.print()
+
+    # Most active entities
+    console.print("[yellow]Most active entities:[/yellow]")
+    for entity, count in list(patterns["most_active_entities"].items())[:10]:
+        console.print(f"  {entity}: {count} mentions")
+
+
+def _get_memory(cfg: Config) -> Any:
+    """Helper to get Memory instance, used by temporal commands."""
+    from memo.memory import Memory
+    return Memory(cfg)
+
+
+# -- advanced consolidation commands -------------------------------------------
+
+
+@cli.group(name="consolidate")
+def consolidate_group() -> None:
+    """Advanced consolidation with intelligent merge and archival."""
+    pass
+
+
+@consolidate_group.command(name="propose")
+@click.option("--threshold", type=float, default=0.85,
+              help="Cosine similarity threshold (default: 0.85)")
+@click.option("--max-clusters", type=int, default=20,
+              help="Maximum clusters to process (default: 20)")
+@click.option("--type", "type_", help="Filter by memoria type")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def consolidate_propose(
+    threshold: float, max_clusters: int, type_: str | None, as_json: bool,
+) -> None:
+    """Detect clusters and propose merge strategies (read-only).
+
+    Example: memo consolidate propose --threshold 0.9
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    result = mem.consolidator.consolidate_all(
+        threshold=threshold,
+        max_clusters=max_clusters,
+        type_=type_,
+        auto_apply=False,
+        dry_run=True,
+    )
+
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    clusters = result.get("clusters", [])
+    proposals = result.get("proposals", [])
+
+    console.print(f"[bold]Detected {len(clusters)} clusters[/bold]")
+    console.print(f"[yellow]Generated {len(proposals)} merge proposals[/yellow]")
+    console.print()
+
+    if not proposals:
+        console.print("[green]No mergeable clusters found[/green]")
+        return
+
+    for i, p in enumerate(proposals[:10], 1):
+        console.print(f"[cyan]{i}. Cluster {p['cluster_id']}[/cyan]")
+        console.print(f"   Strategy: {p['merge_strategy']}")
+        console.print(f"   Rationale: {p['rationale']}")
+        console.print(f"   Memorias to merge: {len(p['memoria_ids'])}")
+        console.print()
+
+    if len(proposals) > 10:
+        console.print(f"[dim]...and {len(proposals) - 10} more proposals[/dim]")
+
+
+@consolidate_group.command(name="apply")
+@click.option("--threshold", type=float, default=0.85,
+              help="Cosine similarity threshold (default: 0.85)")
+@click.option("--max-clusters", type=int, default=20,
+              help="Maximum clusters to process (default: 20)")
+@click.option("--type", "type_", help="Filter by memoria type")
+@click.option("--dry-run", is_flag=True,
+              help="Show what would happen without applying changes")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+@click.confirmation_option(prompt="This will merge memorias and archive old ones. Continue?")
+def consolidate_apply(
+    threshold: float, max_clusters: int, type_: str | None,
+    dry_run: bool, as_json: bool,
+) -> None:
+    """Apply merge proposals to consolidate the corpus.
+
+    Example: memo consolidate apply --dry-run
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    result = mem.consolidator.consolidate_all(
+        threshold=threshold,
+        max_clusters=max_clusters,
+        type_=type_,
+        auto_apply=True,
+        dry_run=dry_run,
+    )
+
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    proposals = result.get("proposals", [])
+    results = result.get("results", [])
+
+    if dry_run:
+        console.print("[yellow]Dry run mode - no changes applied[/yellow]")
+        console.print()
+
+    console.print(f"[bold]Processed {len(results)} consolidations[/bold]")
+    console.print()
+
+    merged_count = sum(1 for r in results if r.get("merged_id"))
+    archived_count = sum(len(r.get("archived_ids", [])) for r in results)
+    skipped_count = sum(len(r.get("skipped_ids", [])) for r in results)
+
+    console.print(f"[green]✓ Merged {merged_count} memorias[/green]")
+    console.print(f"[yellow]↻ Archived {archived_count} old versions[/yellow]")
+    console.print(f"[dim]⊘ Skipped {skipped_count} (conflicts)[/dim]")
+
+    for r in results[:5]:
+        console.print(f"  {r.get('summary', '')}")
+
+    if len(results) > 5:
+        console.print(f"[dim]...and {len(results) - 5} more[/dim]")
+
+
+@consolidate_group.command(name="list-archived")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def consolidate_list_archived(as_json: bool) -> None:
+    """List all archived memorias.
+
+    Example: memo consolidate list-archived
+    """
+    cfg = Config.from_env()
+    archival_dir = cfg.memory_dir / "archived"
+
+    if not archival_dir.is_dir():
+        console.print("[dim]No archived memorias found[/dim]")
+        return
+
+    archived_files = list(archival_dir.glob("*.md"))
+
+    if as_json:
+        archived_data = []
+        for f in archived_files:
+            import frontmatter
+            post = frontmatter.loads(f.read_text(encoding="utf-8"))
+            archived_data.append({
+                "id": f.stem,
+                "title": post.get("title", ""),
+                "archived_for": post.get("archived_for", ""),
+                "archived_at": post.get("archived_at", ""),
+            })
+        click.echo(json.dumps(archived_data, indent=2))
+        return
+
+    table = Table(title="Archived Memorias")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title", style="yellow")
+    table.add_column("Archived For", style="green")
+    table.add_column("Archived At", style="dim")
+
+    for f in archived_files[:50]:
+        import frontmatter
+        post = frontmatter.loads(f.read_text(encoding="utf-8"))
+        table.add_row(
+            f.stem[:8],
+            post.get("title", "")[:40],
+            post.get("archived_for", "")[:8],
+            post.get("archived_at", "")[:10],
+        )
+
+    console.print(table)
+    if len(archived_files) > 50:
+        console.print(f"[dim]...and {len(archived_files) - 50} more[/dim]")
+
+
+# -- graph navigation commands ------------------------------------------------
+
+
+@cli.group(name="graph")
+def graph_group() -> None:
+    """Navigate the entity graph with path finding and community detection."""
+    pass
+
+
+@graph_group.command(name="path")
+@click.argument("source")
+@click.argument("target")
+@click.option("--max-length", type=int, default=5,
+              help="Maximum path length to search (default: 5)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def graph_path(source: str, target: str, max_length: int, as_json: bool) -> None:
+    """Find shortest path between two entities.
+
+    Example: memo graph path memo obsidian-rag
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    path = mem.navigator.find_shortest_path(source, target, max_length=max_length)
+
+    if as_json:
+        click.echo(json.dumps(path.__dict__ if path else None, indent=2))
+        return
+
+    if path is None:
+        console.print(f"[yellow]No path found between '{source}' and '{target}'[/yellow]")
+        return
+
+    console.print(f"[bold]Path from '{source}' to '{target}'[/bold]")
+    console.print(f"Length: {path.length}")
+    console.print()
+    console.print(" → ".join(path.path))
+    console.print()
+    console.print(f"[dim]Via {len(path.intermediate_memorias)} memoria(s)[/dim]")
+
+
+@graph_group.command(name="neighbors")
+@click.argument("entity")
+@click.option("--max", "max_neighbors", type=int, default=50,
+              help="Maximum neighbors to show (default: 50)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def graph_neighbors(entity: str, max_neighbors: int, as_json: bool) -> None:
+    """Show direct neighbors of an entity.
+
+    Example: memo graph neighbors mlx
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    neighbors = mem.navigator.get_neighbors(entity, max_neighbors=max_neighbors)
+
+    if as_json:
+        click.echo(json.dumps(neighbors.__dict__, indent=2))
+        return
+
+    console.print(f"[bold]Neighbors of '{entity}'[/bold]")
+    console.print(f"Degree: {neighbors.degree}")
+    console.print()
+
+    if not neighbors.direct_neighbors:
+        console.print("[dim]No neighbors found[/dim]")
+        return
+
+    table = Table()
+    table.add_column("Neighbor", style="cyan")
+    table.add_column("Shared Memorias", style="green")
+
+    for neighbor in neighbors.direct_neighbors[:20]:
+        mem_count = len(neighbors.neighbor_memorias.get(neighbor, []))
+        table.add_row(neighbor, str(mem_count))
+
+    console.print(table)
+    if len(neighbors.direct_neighbors) > 20:
+        console.print(f"[dim]...and {len(neighbors.direct_neighbors) - 20} more[/dim]")
+
+
+@graph_group.command(name="communities")
+@click.option("--min-size", type=int, default=2,
+              help="Minimum community size (default: 2)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def graph_communities(min_size: int, as_json: bool) -> None:
+    """Detect communities (connected components) in the entity graph.
+
+    Example: memo graph communities --min-size 3
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    communities = mem.navigator.detect_communities(min_size=min_size)
+
+    if as_json:
+        click.echo(json.dumps([c.__dict__ for c in communities], indent=2))
+        return
+
+    console.print(f"[bold]Found {len(communities)} communities[/bold]")
+    console.print()
+
+    for i, comm in enumerate(communities[:10], 1):
+        console.print(f"[cyan]{i}. Community {comm.id}[/cyan] (size: {comm.size})")
+        console.print(f"   Representative: {comm.representative_entity}")
+        console.print(f"   Entities: {', '.join(comm.entities[:10])}")
+        if len(comm.entities) > 10:
+            console.print(f"   ...and {len(comm.entities) - 10} more")
+        console.print()
+
+    if len(communities) > 10:
+        console.print(f"[dim]...and {len(communities) - 10} more communities[/dim]")
+
+
+@graph_group.command(name="centrality")
+@click.option("--top", type=int, default=20,
+              help="Top N entities by centrality (default: 20)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def graph_centrality(top: int, as_json: bool) -> None:
+    """Compute centrality metrics for all entities.
+
+    Example: memo graph centrality --top 30
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    scores = mem.navigator.compute_centrality()
+
+    if as_json:
+        click.echo(json.dumps({
+            "degree": scores.degree,
+            "betweenness": scores.betweenness,
+        }, indent=2))
+        return
+
+    console.print("[bold]Top entities by degree centrality[/bold]")
+    console.print()
+
+    table = Table()
+    table.add_column("Entity", style="cyan")
+    table.add_column("Degree", style="green")
+    table.add_column("Betweenness", style="yellow")
+
+    sorted_by_degree = sorted(scores.degree.items(), key=lambda x: x[1], reverse=True)[:top]
+    for entity, degree in sorted_by_degree:
+        betweenness = scores.betweenness.get(entity, 0.0)
+        table.add_row(entity, str(degree), f"{betweenness:.3f}")
+
+    console.print(table)
+
+
+@graph_group.command(name="export")
+@click.option("--format", "format_type", type=click.Choice(["dot", "json"]), default="dot",
+              help="Output format (default: dot)")
+@click.option("--output", "-o", "output_path",
+              help="Output file path (default: stdout)")
+def graph_export(format_type: str, output_path: str | None) -> None:
+    """Export the entity graph for visualization.
+
+    Example: memo graph export --format json -o graph.json
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    if format_type == "dot":
+        content = mem.navigator.export_graphviz(output_path=output_path)
+        if not output_path:
+            click.echo(content)
+    else:  # json
+        data = mem.navigator.export_json(include_memorias=True)
+        json_str = json.dumps(data, indent=2)
+        if output_path:
+            from pathlib import Path
+            Path(output_path).write_text(json_str, encoding="utf-8")
+        else:
+            click.echo(json_str)
+
+    if output_path:
+        console.print(f"[green]Exported to {output_path}[/green]")
+
+
+# -- contextual recall commands -----------------------------------------------
+
+
+@cli.group(name="contextual")
+def contextual_group() -> None:
+    """Contextual recall with conversation history and preference learning."""
+    pass
+
+
+@contextual_group.command(name="search")
+@click.argument("query")
+@click.option("--limit", type=int, default=10,
+              help="Max results (default: 10)")
+@click.option("--mode", type=click.Choice(["vec", "bm25", "hybrid"]), default="hybrid",
+              help="Search mode (default: hybrid)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def contextual_search(query: str, limit: int, mode: str, as_json: bool) -> None:
+    """Search with contextual re-ranking based on conversation history.
+
+    Example: memo contextual search "MLX performance"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    results = mem.contextual.search_with_context(
+        query=query,
+        limit=limit,
+        mode=mode,
+    )
+
+    if as_json:
+        click.echo(json.dumps([r.__dict__ for r in results], indent=2))
+        return
+
+    if not results:
+        console.print("[yellow]No results found[/yellow]")
+        return
+
+    table = Table(title=f"Contextual Search Results for '{query}'")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title", style="yellow")
+    table.add_column("Original Score", style="dim")
+    table.add_column("Contextual Score", style="green")
+    table.add_column("Boost Factors", style="magenta")
+
+    for r in results[:20]:
+        boosts = ", ".join(f"{k}={v:.2f}" for k, v in r.boost_factors.items())
+        table.add_row(
+            r.memoria_id[:8],
+            r.title[:40],
+            f"{r.original_score:.3f}",
+            f"{r.contextual_score:.3f}",
+            boosts or "—",
+        )
+
+    console.print(table)
+    if len(results) > 20:
+        console.print(f"[dim]...and {len(results) - 20} more[/dim]")
+
+
+@contextual_group.command(name="record-search")
+@click.argument("query")
+@click.argument("memoria_ids", nargs=-1, required=True)
+def contextual_record_search(query: str, memoria_ids: tuple[str, ...]) -> None:
+    """Record a search in the conversation history for learning.
+
+    Example: memo contextual record-search "MLX" abc123 def456
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    mem.contextual.record_search(query, list(memoria_ids))
+    console.print(f"[green]Recorded search with {len(memoria_ids)} recalled memorias[/green]")
+
+
+@contextual_group.command(name="record-click")
+@click.argument("memoria_id")
+def contextual_record_click(memoria_id: str) -> None:
+    """Record that the user clicked/viewed a memoria (for preference learning).
+
+    Example: memo contextual record-click abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    mem.contextual.record_click(memoria_id)
+    console.print(f"[green]Recorded click for memoria {memoria_id[:8]}[/green]")
+
+
+@contextual_group.command(name="preferences")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def contextual_preferences(as_json: bool) -> None:
+    """Show learned user preferences for memory recall.
+
+    Example: memo contextual preferences
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    prefs = mem.contextual.context.get_preferences()
+
+    if as_json:
+        click.echo(json.dumps(prefs.__dict__, indent=2))
+        return
+
+    console.print("[bold]User Preferences[/bold]")
+    console.print()
+
+    console.print(f"[yellow]Recency Weight:[/yellow] {prefs.recency_weight:.2f}")
+    console.print(f"[yellow]Diversity Weight:[/yellow] {prefs.diversity_weight:.2f}")
+    console.print(f"[yellow]Last Updated:[/yellow] {prefs.last_updated or 'Never'}")
+    console.print()
+
+    console.print("[yellow]Preferred Memory Types:[/yellow]")
+    if prefs.preferred_types:
+        for type_, score in sorted(prefs.preferred_types.items(), key=lambda x: x[1], reverse=True):
+            console.print(f"  {type_}: {score:.2f}")
+    else:
+        console.print("  [dim]No preferences learned yet[/dim]")
+    console.print()
+
+    console.print("[yellow]Preferred Entities:[/yellow]")
+    if prefs.preferred_entities:
+        for entity, score in sorted(prefs.preferred_entities.items(), key=lambda x: x[1], reverse=True)[:10]:
+            console.print(f"  {entity}: {score:.2f}")
+        if len(prefs.preferred_entities) > 10:
+            console.print(f"  [dim]...and {len(prefs.preferred_entities) - 10} more[/dim]")
+    else:
+        console.print("  [dim]No preferences learned yet[/dim]")
+
+
+@contextual_group.command(name="history")
+@click.option("--limit", type=int, default=10,
+              help="Number of recent prompts to show (default: 10)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def contextual_history(limit: int, as_json: bool) -> None:
+    """Show recent conversation history used for contextual recall.
+
+    Example: memo contextual history --limit 5
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    history = mem.contextual.context.get_recent_context(n=limit)
+
+    if as_json:
+        click.echo(json.dumps([c.__dict__ for c in history], indent=2))
+        return
+
+    if not history:
+        console.print("[dim]No conversation history yet[/dim]")
+        return
+
+    console.print(f"[bold]Recent {len(history)} Prompts[/bold]")
+    console.print()
+
+    for i, ctx in enumerate(history, 1):
+        console.print(f"[cyan]{i}. {ctx.timestamp}[/cyan]")
+        console.print(f"   Prompt: {ctx.prompt[:80]}")
+        console.print(f"   Recalled: {len(ctx.recalled_memorias)} memoria(s)")
+        console.print()
+
+
+@contextual_group.command(name="reset-preferences")
+@click.confirmation_option(prompt="This will reset all learned preferences. Continue?")
+def contextual_reset_preferences() -> None:
+    """Reset all learned user preferences.
+
+    Example: memo contextual reset-preferences
+    """
+    cfg = Config.from_env()
+    from memo.contextual import UserPreferences
+
+    # Reset preferences file
+    prefs_file = cfg.state_dir / "user_preferences.json"
+    if prefs_file.is_file():
+        prefs_file.unlink()
+
+    # Reload will create fresh defaults
+    console.print("[green]Preferences reset successfully[/green]")
+
+
+# -- cross-reference commands -------------------------------------------------
+
+
+@cli.group(name="links")
+def links_group() -> None:
+    """Cross-reference and backlink system for memories."""
+    pass
+
+
+@links_group.command(name="backlinks")
+@click.argument("memoria_id")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def links_backlinks(memoria_id: str, as_json: bool) -> None:
+    """Show all memorias that reference this one.
+
+    Example: memo links backlinks abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    backlinks = mem.crossref.get_backlinks(memoria_id)
+
+    if as_json:
+        click.echo(json.dumps([b.__dict__ for b in backlinks], indent=2))
+        return
+
+    if not backlinks:
+        console.print(f"[dim]No backlinks found for memoria {memoria_id[:8]}[/dim]")
+        return
+
+    table = Table(title=f"Backlinks to {memoria_id[:8]}")
+    table.add_column("Source ID", style="cyan")
+    table.add_column("Link Type", style="yellow")
+    table.add_column("Context", style="dim")
+
+    for bl in backlinks[:20]:
+        table.add_row(
+            bl.source_id[:8],
+            bl.link_type,
+            bl.context[:60] if bl.context else "—",
+        )
+
+    console.print(table)
+    if len(backlinks) > 20:
+        console.print(f"[dim]...and {len(backlinks) - 20} more[/dim]")
+
+
+@links_group.command(name="outlinks")
+@click.argument("memoria_id")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def links_outlinks(memoria_id: str, as_json: bool) -> None:
+    """Show all memorias that this one references.
+
+    Example: memo links outlinks abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    outlinks = mem.crossref.get_outlinks(memoria_id)
+
+    if as_json:
+        click.echo(json.dumps([o.__dict__ for o in outlinks], indent=2))
+        return
+
+    if not outlinks:
+        console.print(f"[dim]No outlinks found for memoria {memoria_id[:8]}[/dim]")
+        return
+
+    console.print(f"[bold]Outlinks from {memoria_id[:8]}[/bold]")
+    console.print()
+
+    for ol in outlinks:
+        console.print(f"  [cyan]{ol.target}[/cyan]")
+
+
+@links_group.command(name="suggest")
+@click.argument("content")
+@click.option("--title", help="Title of the memoria being saved")
+@click.option("--tags", multiple=True, help="Tags of the memoria being saved")
+@click.option("--limit", type=int, default=5,
+              help="Max suggestions (default: 5)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def links_suggest(content: str, title: str | None, tags: tuple[str, ...], limit: int, as_json: bool) -> None:
+    """Suggest links to existing memorias based on content.
+
+    Example: memo links suggest "MLX performance optimization" --title "MLX"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    suggestions = mem.link_suggester.suggest_links(
+        content=content,
+        title=title or "",
+        tags=list(tags),
+        limit=limit,
+    )
+
+    if as_json:
+        click.echo(json.dumps([s.__dict__ for s in suggestions], indent=2))
+        return
+
+    if not suggestions:
+        console.print("[dim]No link suggestions found[/dim]")
+        return
+
+    table = Table(title="Link Suggestions")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title", style="yellow")
+    table.add_column("Similarity", style="green")
+    table.add_column("Reason", style="dim")
+
+    for s in suggestions:
+        table.add_row(
+            s.memoria_id[:8],
+            s.title[:40],
+            f"{s.similarity:.3f}",
+            s.reason,
+        )
+
+    console.print(table)
+
+
+@links_group.command(name="format")
+@click.argument("memoria_id")
+@click.option("--title", help="Display title for the link")
+def links_format(memoria_id: str, title: str | None) -> None:
+    """Format a memoria ID as a wikilink.
+
+    Example: memo links format abc123 --title "My Memory"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    wikilink = mem.link_suggester.format_wikilink(memoria_id, title)
+    click.echo(wikilink)
+
+
+@links_group.command(name="reindex")
+@click.confirmation_option(prompt="This will rebuild the entire cross-reference index. Continue?")
+def links_reindex() -> None:
+    """Rebuild the cross-reference index from all memorias.
+
+    Example: memo links reindex
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    # Delete existing index
+    cfg.crossref_db.unlink(missing_ok=True)
+
+    # Re-index all memorias
+    all_records = mem.list(limit=10000)
+    indexed = 0
+
+    for rec in all_records:
+        body = rec.body or ""
+        if body:
+            mem.crossref.index_wikilinks(rec.id, body)
+            indexed += 1
+
+    console.print(f"[green]Reindexed {indexed} memorias[/green]")
+
+
+# -- lifecycle management commands ---------------------------------------------
+
+
+@cli.group(name="lifecycle")
+def lifecycle_group() -> None:
+    """Memory lifecycle management — archival, promotion, expiration."""
+    pass
+
+
+@lifecycle_group.command(name="report")
+@click.option("--limit", type=int, default=100,
+              help="Max memorias to analyze (default: 100)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def lifecycle_report(limit: int, as_json: bool) -> None:
+    """Generate a lifecycle report on the corpus.
+
+    Shows statistics on archival candidates, promotion/demotion candidates,
+    expiration candidates, and access patterns.
+
+    Example: memo lifecycle report --limit 50
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    report = mem.lifecycle.get_lifecycle_report(limit=limit)
+
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        return
+
+    console.print("[bold]Lifecycle Report[/bold]")
+    console.print()
+    console.print(f"Total memorias: {report['total']}")
+    console.print(f"Average access count: {report['avg_access_count']:.2f}")
+    console.print()
+    console.print(f"[yellow]Archive candidates:[/yellow] {report['archive_candidates']}")
+    console.print(f"[yellow]Promotion candidates:[/yellow] {report['promotion_candidates']}")
+    console.print(f"[yellow]Demotion candidates:[/yellow] {report['demotion_candidates']}")
+    console.print(f"[yellow]Expiration candidates:[/yellow] {report['expiration_candidates']}")
+    console.print(f"[yellow]Never accessed:[/yellow] {report['never_accessed']}")
+
+
+@lifecycle_group.command(name="apply")
+@click.option("--dry-run", is_flag=True,
+              help="Show what would happen without applying changes")
+@click.option("--limit", type=int, default=100,
+              help="Max memorias to process (default: 100)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+@click.confirmation_option(prompt="This will archive/delete memorias based on lifecycle rules. Continue?")
+def lifecycle_apply(dry_run: bool, limit: int, as_json: bool) -> None:
+    """Apply lifecycle rules to the corpus.
+
+    Archives inactive memorias, expires temporary memories, and reports
+    promotion/demotion candidates. Use --dry-run first to preview.
+
+    Example: memo lifecycle apply --dry-run
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    if dry_run:
+        console.print("[yellow]Dry run mode - no changes will be applied[/yellow]")
+        console.print()
+
+    actions = mem.lifecycle.apply_lifecycle_rules(dry_run=dry_run, limit=limit)
+
+    if as_json:
+        click.echo(json.dumps(actions, indent=2))
+        return
+
+    console.print("[bold]Lifecycle Actions[/bold]")
+    console.print()
+    console.print(f"[green]Archived:[/green] {actions['archived']}")
+    console.print(f"[green]Promoted:[/green] {actions['promoted']}")
+    console.print(f"[yellow]Demoted:[/yellow] {actions['demoted']}")
+    console.print(f"[red]Expired:[/red] {actions['expired']}")
+    console.print(f"[red]Deleted:[/red] {actions['deleted']}")
+    console.print(f"[dim]Skipped:[/dim] {actions['skipped']}")
+
+
+@lifecycle_group.command(name="access-count")
+@click.argument("memoria_id")
+def lifecycle_access_count(memoria_id: str) -> None:
+    """Show access count for a specific memoria.
+
+    Example: memo lifecycle access-count abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    count = mem.lifecycle.get_access_count(memoria_id)
+    console.print(f"Access count: {count}")
+
+
+@lifecycle_group.command(name="list-inactive")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def lifecycle_list_inactive(as_json: bool) -> None:
+    """List all archived/inactive memorias.
+
+    Example: memo lifecycle list-inactive
+    """
+    cfg = Config.from_env()
+    inactive_dir = cfg.memory_dir / "inactive"
+
+    if not inactive_dir.is_dir():
+        console.print("[dim]No inactive memorias found[/dim]")
+        return
+
+    files = list(inactive_dir.glob("*.md"))
+
+    if as_json:
+        inactive_data = []
+        for f in files:
+            inactive_data.append({
+                "id": f.stem,
+                "path": str(f),
+            })
+        click.echo(json.dumps(inactive_data, indent=2))
+        return
+
+    table = Table(title="Inactive Memorias")
+    table.add_column("ID", style="cyan")
+    table.add_column("Path", style="dim")
+
+    for f in files[:50]:
+        table.add_row(f.stem[:8], str(f.name))
+
+    console.print(table)
+    if len(files) > 50:
+        console.print(f"[dim]...and {len(files) - 50} more[/dim]")
+
+
+# -- proactive suggestions commands ---------------------------------------------
+
+
+@cli.group(name="suggest")
+def suggest_group() -> None:
+    """Proactive memory suggestions from conversation analysis."""
+    pass
+
+
+@suggest_group.command(name="analyze")
+@click.argument("transcript_path", type=click.Path(exists=True))
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def suggest_analyze(transcript_path: str, as_json: bool) -> None:
+    """Analyze a transcript and suggest memories to save.
+
+    Example: memo suggest analyze /path/to/transcript.jsonl
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    from memo.capture import _read_last_exchange
+
+    # For now, just use the last exchange as a sample
+    # In a full implementation, would analyze the full transcript
+    pair = _read_last_exchange(Path(transcript_path))
+    if pair is None:
+        console.print("[yellow]Could not read transcript[/yellow]")
+        return
+
+    user_text, assistant_text = pair
+    turns = [{"user": user_text, "assistant": assistant_text}]
+
+    suggestions = mem.proactive.analyze_conversation(turns, limit=3)
+
+    if as_json:
+        click.echo(json.dumps([s.__dict__ for s in suggestions], indent=2))
+        return
+
+    if not suggestions:
+        console.print("[dim]No suggestions found[/dim]")
+        return
+
+    console.print(f"[bold]Found {len(suggestions)} suggestions[/bold]")
+    console.print()
+
+    for i, s in enumerate(suggestions, 1):
+        console.print(f"[cyan]{i}. {s.title}[/cyan]")
+        console.print(f"   Type: {s.type}")
+        console.print(f"   Confidence: {s.confidence:.2f}")
+        console.print(f"   Tags: {', '.join(s.tags)}")
+        console.print(f"   Rationale: {s.rationale}")
+        console.print(f"   Snippet: {s.body_snippet[:100]}")
+        console.print()
+
+
+@suggest_group.command(name="feedback-stats")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def suggest_feedback_stats(as_json: bool) -> None:
+    """Show statistics on suggestion feedback (acceptance rate).
+
+    Example: memo suggest feedback-stats
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    stats = mem.proactive.get_feedback_stats()
+
+    if as_json:
+        click.echo(json.dumps(stats, indent=2))
+        return
+
+    console.print("[bold]Suggestion Feedback Stats[/bold]")
+    console.print()
+    console.print(f"Total suggestions: {stats['total']}")
+    console.print(f"Accepted: {stats['accepted']}")
+    console.print(f"Rejected: {stats['rejected']}")
+    console.print(f"Acceptance rate: {stats['acceptance_rate']:.2%}")
+
+
+@suggest_group.command(name="patterns")
+@click.argument("transcript_path", type=click.Path(exists=True))
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def suggest_patterns(transcript_path: str, as_json: bool) -> None:
+    """Detect patterns in a transcript (recurring themes, decisions, etc.).
+
+    Example: memo suggest patterns /path/to/transcript.jsonl
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+
+    patterns = mem.proactive.detect_patterns(Path(transcript_path))
+
+    if as_json:
+        click.echo(json.dumps(patterns, indent=2))
+        return
+
+    console.print("[bold]Conversation Patterns[/bold]")
+    console.print()
+    console.print(f"Total turns: {patterns['total_turns']}")
+    console.print(f"Decision points: {patterns['decision_points']}")
+    console.print(f"Technical discoveries: {patterns['technical_discoveries']}")
+    console.print(f"Recurring themes: {', '.join(patterns['recurring_themes'])}")
+
+
+# -- versioning commands ------------------------------------------------------
+
+
+@cli.group(name="version")
+def version_group() -> None:
+    """Memory versioning — track changes, visualize diffs, rollback."""
+    pass
+
+
+@version_group.command(name="history")
+@click.argument("memoria_id")
+@click.option("--limit", type=int, default=10,
+              help="Max versions to show (default: 10)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
+    """Show version history for a memoria.
+
+    Example: memo version history abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    versions = mem.versioning.get_version_history(memoria_id, limit=limit)
+
+    if as_json:
+        click.echo(json.dumps([v.__dict__ for v in versions], indent=2))
+        return
+
+    if not versions:
+        console.print(f"[dim]No version history for memoria {memoria_id[:8]}[/dim]")
+        return
+
+    console.print(f"[bold]Version History for {memoria_id[:8]}[/bold]")
+    console.print()
+
+    table = Table()
+    table.add_column("Version ID", style="cyan")
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Title", style="yellow")
+    table.add_column("Type", style="green")
+    table.add_column("Reason", style="magenta")
+
+    for v in versions[:20]:
+        table.add_row(
+            str(v.version_id),
+            v.timestamp[:19],
+            v.title[:40],
+            v.type,
+            v.reason or "—",
+        )
+
+    console.print(table)
+    if len(versions) > 20:
+        console.print(f"[dim]...and {len(versions) - 20} more[/dim]")
+
+
+@version_group.command(name="diff")
+@click.argument("memoria_id")
+@click.option("--version-a", type=int, help="First version ID (default: latest)")
+@click.option("--version-b", type=int, help="Second version ID (default: latest-1)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def version_diff(memoria_id: str, version_a: int | None, version_b: int | None, as_json: bool) -> None:
+    """Show diff between two versions of a memoria.
+
+    Example: memo version diff abc123 --version-a 1 --version-b 2
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    diff = mem.versioning.diff_versions(memoria_id, version_a, version_b)
+
+    if as_json:
+        click.echo(json.dumps(diff.__dict__ if diff else None, indent=2))
+        return
+
+    if diff is None:
+        console.print("[yellow]Could not generate diff[/yellow]")
+        return
+
+    console.print(f"[bold]Diff for {memoria_id[:8]}[/bold]")
+    console.print(f"[dim]v{diff.version_a} → v{diff.version_b}[/dim]")
+    console.print()
+    console.print(diff.unified_diff)
+
+
+@version_group.command(name="rollback")
+@click.argument("memoria_id")
+@click.argument("version_id", type=int)
+@click.option("--reason", help="Reason for the rollback")
+@click.confirmation_option(prompt="This will restore the memoria to the specified version. Continue?")
+def version_rollback(memoria_id: str, version_id: int, reason: str | None) -> None:
+    """Rollback a memoria to a previous version.
+
+    Example: memo version rollback abc123 1 --reason "Mistake in update"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    success = mem.versioning.rollback_to_version(memoria_id, version_id, reason)
+
+    if success:
+        console.print(f"[green]Rolled back {memoria_id[:8]} to version {version_id}[/green]")
+    else:
+        console.print(f"[red]Failed to rollback[/red]")
+
+
+# -- query composition commands ------------------------------------------------
+
+
+@cli.group(name="query")
+def query_group() -> None:
+    """Query composition and saved queries."""
+    pass
+
+
+@query_group.command(name="save")
+@click.argument("name")
+@click.argument("query_text")
+@click.option("--type", "type_filter", help="Filter by memoria type")
+@click.option("--tags", "tags_filter", multiple=True, help="Filter by tags")
+@click.option("--date-from", help="Start date (ISO format)")
+@click.option("--date-to", help="End date (ISO format)")
+@click.option("--mode", "search_mode", type=click.Choice(["vec", "bm25", "hybrid"]), default="hybrid",
+              help="Search mode (default: hybrid)")
+@click.option("--limit", type=int, default=10, help="Result limit")
+@click.option("--description", help="Query description")
+@click.option("--execute", is_flag=True, help="Execute the query after saving")
+def query_save(
+    name: str,
+    query_text: str,
+    type_filter: str | None,
+    tags_filter: tuple[str, ...],
+    date_from: str | None,
+    date_to: str | None,
+    search_mode: str,
+    limit: int,
+    description: str | None,
+    execute: bool,
+) -> None:
+    """Save a query for reuse.
+
+    Example: memo query save "MLX decisions" "MLX" --type decision --execute
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    if execute:
+        result = mem.query_composer.compose_and_save(
+            name=name,
+            query_text=query_text,
+            type_filter=type_filter,
+            tags_filter=list(tags_filter),
+            date_from=date_from,
+            date_to=date_to,
+            search_mode=search_mode,
+            limit=limit,
+            description=description,
+        )
+        console.print(f"[green]Saved and executed query '{name}'[/green]")
+        console.print(f"Results: {result.count}")
+    else:
+        mem.query_composer.query_store.save_query(
+            name=name,
+            query_text=query_text,
+            type_filter=type_filter,
+            tags_filter=list(tags_filter),
+            date_from=date_from,
+            date_to=date_to,
+            search_mode=search_mode,
+            limit=limit,
+            description=description,
+        )
+        console.print(f"[green]Saved query '{name}'[/green]")
+
+
+@query_group.command(name="list")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def query_list(as_json: bool) -> None:
+    """List all saved queries.
+
+    Example: memo query list
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    queries = mem.query_composer.query_store.list_queries()
+
+    if as_json:
+        click.echo(json.dumps([q.__dict__ for q in queries], indent=2))
+        return
+
+    if not queries:
+        console.print("[dim]No saved queries[/dim]")
+        return
+
+    table = Table(title="Saved Queries")
+    table.add_column("Name", style="cyan")
+    table.add_column("Query Text", style="yellow")
+    table.add_column("Type Filter", style="green")
+    table.add_column("Mode", style="magenta")
+    table.add_column("Description", style="dim")
+
+    for q in queries[:20]:
+        table.add_row(
+            q.name,
+            q.query_text[:40],
+            q.type_filter or "—",
+            q.search_mode,
+            q.description or "—",
+        )
+
+    console.print(table)
+    if len(queries) > 20:
+        console.print(f"[dim]...and {len(queries) - 20} more[/dim]")
+
+
+@query_group.command(name="run")
+@click.argument("name")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def query_run(name: str, as_json: bool) -> None:
+    """Execute a saved query.
+
+    Example: memo query run "MLX decisions"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    query = mem.query_composer.query_store.get_query(name)
+    if not query:
+        console.print(f"[yellow]Query '{name}' not found[/yellow]")
+        return
+
+    result = mem.query_composer.execute_query(query)
+
+    if as_json:
+        # Convert results to dict format
+        results_dict = [r.__dict__ for r in result.results]
+        click.echo(json.dumps({
+            "query_name": result.query_name,
+            "count": result.count,
+            "executed_at": result.executed_at,
+            "results": results_dict,
+        }, indent=2))
+        return
+
+    console.print(f"[bold]Query: {name}[/bold]")
+    console.print(f"Results: {result.count}")
+    console.print()
+
+    for r in result.results[:10]:
+        console.print(f"  [cyan]{r.id[:8]}[/cyan] {r.title}")
+        console.print(f"    {r.body[:100]}")
+
+    if len(result.results) > 10:
+        console.print(f"  [dim]...and {len(result.results) - 10} more[/dim]")
+
+
+@query_group.command(name="delete")
+@click.argument("name")
+@click.confirmation_option(prompt="Delete this saved query?")
+def query_delete(name: str) -> None:
+    """Delete a saved query.
+
+    Example: memo query delete "MLX decisions"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    success = mem.query_composer.query_store.delete_query(name)
+
+    if success:
+        console.print(f"[green]Deleted query '{name}'[/green]")
+    else:
+        console.print(f"[yellow]Query '{name}' not found[/yellow]")
+
+
+# -- federation commands -------------------------------------------------------
+
+
+@cli.group(name="federation")
+def federation_group() -> None:
+    """Multi-vault federation — search across multiple vaults."""
+    pass
+
+
+@federation_group.command(name="add-vault")
+@click.argument("name")
+@click.argument("path")
+@click.option("--weight", type=float, default=1.0, help="Vault weight for ranking")
+def federation_add_vault(name: str, path: str, weight: float) -> None:
+    """Add a vault to the federation.
+
+    Example: memo federation add-vault work-vault /path/to/work/memo --weight 1.5
+    """
+    cfg = Config.from_env()
+    from memo.federation import FederationConfig
+
+    config = FederationConfig(cfg.state_dir / "federation.json")
+    config.add_vault(name, path, weight)
+
+    console.print(f"[green]Added vault '{name}'[/green]")
+
+
+@federation_group.command(name="list-vaults")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def federation_list_vaults(as_json: bool) -> None:
+    """List all configured vaults.
+
+    Example: memo federation list-vaults
+    """
+    cfg = Config.from_env()
+    from memo.federation import FederationConfig
+
+    config = FederationConfig(cfg.state_dir / "federation.json")
+    vaults = config.list_vaults()
+
+    if as_json:
+        click.echo(json.dumps([v.__dict__ for v in vaults], indent=2))
+        return
+
+    if not vaults:
+        console.print("[dim]No vaults configured[/dim]")
+        return
+
+    table = Table(title="Federated Vaults")
+    table.add_column("Name", style="cyan")
+    table.add_column("Path", style="yellow")
+    table.add_column("Weight", style="green")
+    table.add_column("Enabled", style="magenta")
+
+    for v in vaults:
+        table.add_row(
+            v.name,
+            v.path,
+            str(v.weight),
+            "Yes" if v.enabled else "No",
+        )
+
+    console.print(table)
+
+
+@federation_group.command(name="remove-vault")
+@click.argument("name")
+@click.confirmation_option(prompt="Remove this vault from federation?")
+def federation_remove_vault(name: str) -> None:
+    """Remove a vault from the federation.
+
+    Example: memo federation remove-vault work-vault
+    """
+    cfg = Config.from_env()
+    from memo.federation import FederationConfig
+
+    config = FederationConfig(cfg.state_dir / "federation.json")
+    success = config.remove_vault(name)
+
+    if success:
+        console.print(f"[green]Removed vault '{name}'[/green]")
+    else:
+        console.print(f"[yellow]Vault '{name}' not found[/yellow]")
+
+
+@federation_group.command(name="search")
+@click.argument("query")
+@click.option("--limit", type=int, default=10, help="Result limit")
+@click.option("--mode", type=click.Choice(["vec", "bm25", "hybrid"]), default="hybrid",
+              help="Search mode (default: hybrid)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def federation_search(query: str, limit: int, mode: str, as_json: bool) -> None:
+    """Search across all federated vaults.
+
+    Example: memo federation search "MLX" --limit 20
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    results = mem.federation.search(query, limit=limit, mode=mode)
+
+    if as_json:
+        click.echo(json.dumps([r.__dict__ for r in results], indent=2))
+        return
+
+    if not results:
+        console.print("[dim]No results found[/dim]")
+        return
+
+    table = Table(title=f"Federated Search Results for '{query}'")
+    table.add_column("ID", style="cyan")
+    table.add_column("Vault", style="yellow")
+    table.add_column("Title", style="green")
+    table.add_column("Score", style="magenta")
+
+    for r in results[:20]:
+        table.add_row(
+            r.memoria_id[:8],
+            r.vault_name,
+            r.title[:40],
+            f"{r.score:.3f}",
+        )
+
+    console.print(table)
+    if len(results) > 20:
+        console.print(f"[dim]...and {len(results) - 20} more[/dim]")
+
+
+# -- sync & backup commands ------------------------------------------------------
+
+
+@cli.group(name="backup")
+def backup_group() -> None:
+    """Backup management — create, list, restore backups."""
+    pass
+
+
+@backup_group.command(name="create")
+@click.option("--compress/--no-compress", default=True, help="Compress backup")
+@click.option("--name", help="Backup name")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def backup_create(compress: bool, name: str | None, as_json: bool) -> None:
+    """Create a backup of the entire vault.
+
+    Example: memo backup create --name "pre-migration"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    metadata = mem.backup.create_backup(compress=compress, name=name)
+
+    if as_json:
+        click.echo(json.dumps(metadata.__dict__, indent=2))
+        return
+
+    console.print("[bold]Backup Created[/bold]")
+    console.print()
+    console.print(f"Timestamp: {metadata.timestamp}")
+    console.print(f"Memorias: {metadata.memoria_count}")
+    console.print(f"Checksum: {metadata.checksum[:16]}...")
+    console.print(f"Size: {metadata.compressed_size:,} bytes (compressed)")
+    console.print(f"Original: {metadata.original_size:,} bytes")
+
+
+@backup_group.command(name="list")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def backup_list(as_json: bool) -> None:
+    """List all available backups.
+
+    Example: memo backup list
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    backups = mem.backup.list_backups()
+
+    if as_json:
+        click.echo(json.dumps([b.__dict__ for b in backups], indent=2))
+        return
+
+    if not backups:
+        console.print("[dim]No backups found[/dim]")
+        return
+
+    table = Table(title="Available Backups")
+    table.add_column("Name", style="cyan")
+    table.add_column("Timestamp", style="yellow")
+    table.add_column("Size", style="green")
+
+    for b in backups[:20]:
+        table.add_row(
+            b.timestamp[:19],
+            b.timestamp[:19],
+            f"{b.compressed_size:,} bytes",
+        )
+
+    console.print(table)
+    if len(backups) > 20:
+        console.print(f"[dim]...and {len(backups) - 20} more[/dim]")
+
+
+@backup_group.command(name="restore")
+@click.argument("backup_name")
+@click.option("--no-memorias", "skip_memorias", is_flag=True, help="Skip memoria files")
+@click.option("--no-dbs", "skip_dbs", is_flag=True, help="Skip databases")
+@click.confirmation_option(prompt="This will restore from backup. Current data may be overwritten. Continue?")
+def backup_restore(backup_name: str, skip_memorias: bool, skip_dbs: bool) -> None:
+    """Restore from a backup.
+
+    Example: memo backup restore backup_2026-01-01-12-00-00
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    success = mem.backup.restore_backup(
+        backup_name,
+        restore_memorias=not skip_memorias,
+        restore_dbs=not skip_dbs,
+    )
+
+    if success:
+        console.print(f"[green]Restored from '{backup_name}'[/green]")
+    else:
+        console.print(f"[red]Failed to restore[/red]")
+
+
+@cli.group(name="sync")
+def sync_group() -> None:
+    """Multi-vault sync — sync between vaults."""
+    pass
+
+
+@sync_group.command(name="diff")
+@click.option("--remote", help="Path to remote vault")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_diff(remote: str | None, as_json: bool) -> None:
+    """Compute diff between local and remote vaults.
+
+    Example: memo sync diff --remote /path/to/remote/memo
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    remote_path = Path(remote) if remote else None
+
+    sync_mgr = SyncManager(mem, remote_path=remote_path)
+    diff = sync_mgr.compute_diff()
+
+    if as_json:
+        click.echo(json.dumps(diff.__dict__, indent=2))
+        return
+
+    console.print("[bold]Sync Diff[/bold]")
+    console.print()
+    console.print(f"New: {len(diff.new)}")
+    console.print(f"Modified: {len(diff.modified)}")
+    console.print(f"Deleted: {len(diff.deleted)}")
+    console.print(f"Conflicts: {len(diff.conflicts)}")
+
+
+@sync_group.command(name="push")
+@click.option("--remote", help="Path to remote vault")
+def sync_push(remote: str | None) -> None:
+    """Push local changes to remote vault.
+
+    Example: memo sync push --remote /path/to/remote/memo
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    remote_path = Path(remote) if remote else None
+
+    sync_mgr = SyncManager(mem, remote_path=remote_path)
+    diff = sync_mgr.sync(direction="push")
+
+    console.print("[bold]Push Sync[/bold]")
+    console.print(f"Modified: {len(diff.modified)}")
+    console.print(f"Deleted: {len(diff.deleted)}")
+
+
+@sync_group.command(name="pull")
+@click.option("--remote", help="Path to remote vault")
+def sync_pull(remote: str | None) -> None:
+    """Pull remote changes to local vault.
+
+    Example: memo sync pull --remote /path/to/remote/memo
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    remote_path = Path(remote) if remote else None
+
+    sync_mgr = SyncManager(mem, remote_path=remote_path)
+    diff = sync_mgr.sync(direction="pull")
+
+    console.print("[bold]Pull Sync[/bold]")
+    console.print(f"New: {len(diff.new)}")
+    console.print(f"Modified: {len(diff.modified)}")
+
+
+@sync_group.command(name="both")
+@click.option("--remote", help="Path to remote vault")
+def sync_both(remote: str | None) -> None:
+    """Sync both directions (bidirectional).
+
+    Example: memo sync both --remote /path/to/remote/memo
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    remote_path = Path(remote) if remote else None
+
+    sync_mgr = SyncManager(mem, remote_path=remote_path)
+    diff = sync_mgr.sync(direction="both")
+
+    console.print("[bold]Bidirectional Sync[/bold]")
+    console.print(f"New: {len(diff.new)}")
+    console.print(f"Modified: {len(diff.modified)}")
+    console.print(f"Deleted: {len(diff.deleted)}")
+    console.print(f"Conflicts: {len(diff.conflicts)}")
+
+
+# -- encryption commands ----------------------------------------------------------
+
+
+@cli.group(name="encrypt")
+def encrypt_group() -> None:
+    """Memory encryption — encrypt sensitive memorias."""
+    pass
+
+
+@encrypt_group.command(name="unlock")
+@click.argument("password")
+def encrypt_unlock(password: str) -> None:
+    """Unlock the vault with password.
+
+    Derives master key from password and stores in memory.
+
+    Example: memo encrypt unlock mypassword
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    success = mem.encryption.unlock(password)
+
+    if success:
+        console.print("[green]Vault unlocked[/green]")
+    else:
+        console.print("[red]Failed to unlock vault[/red]")
+
+
+@encrypt_group.command(name="lock")
+def encrypt_lock() -> None:
+    """Lock the vault (clear master key from memory).
+
+    Example: memo encrypt lock
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    mem.encryption.lock()
+    console.print("[green]Vault locked[/green]")
+
+
+@encrypt_group.command(name="status")
+def encrypt_status() -> None:
+    """Check if vault is unlocked.
+
+    Example: memo encrypt status
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    if mem.encryption.is_unlocked():
+        console.print("[green]Vault is unlocked[/green]")
+    else:
+        console.print("[yellow]Vault is locked[/yellow]")
+
+
+# -- sharing commands -----------------------------------------------------------
+
+
+@cli.group(name="share")
+def share_group() -> None:
+    """Memory sharing — share memorias with others."""
+    pass
+
+
+@share_group.command(name="with-user")
+@click.argument("memoria_id")
+@click.argument("shared_with")
+@click.option("--permission", type=click.Choice(["read", "comment", "edit", "admin"]), default="read",
+              help="Permission level")
+@click.option("--expires-days", type=int, help="Days until expiration")
+def share_with_user(memoria_id: str, shared_with: str, permission: str, expires_days: int | None) -> None:
+    """Share a memoria with a user.
+
+    Example: memo share with-user abc123 user@example.com --permission comment
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    share = mem.sharing.share_with_user(
+        memoria_id=memoria_id,
+        shared_with=shared_with,
+        permission=permission,
+        expires_days=expires_days,
+    )
+
+    console.print(f"[green]Shared {memoria_id[:8]} with {shared_with}[/green]")
+    console.print(f"Permission: {permission}")
+    if share.expires_at:
+        console.print(f"Expires: {share.expires_at}")
+
+
+@share_group.command(name="unshare")
+@click.argument("memoria_id")
+@click.argument("shared_with")
+def share_unshare(memoria_id: str, shared_with: str) -> None:
+    """Unshare a memoria from a user.
+
+    Example: memo share unshare abc123 user@example.com
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    success = mem.sharing.unshare_with_user(memoria_id, shared_with)
+
+    if success:
+        console.print(f"[green]Unshared {memoria_id[:8]} from {shared_with}[/green]")
+    else:
+        console.print(f"[yellow]Share not found[/yellow]")
+
+
+@share_group.command(name="create-link")
+@click.argument("memoria_id")
+@click.option("--permission", type=click.Choice(["read", "comment", "edit"]), default="read",
+              help="Permission level")
+@click.option("--expires-hours", type=int, default=24, help="Hours until expiration")
+@click.option("--password", help="Optional password protection")
+def share_create_link(memoria_id: str, permission: str, expires_hours: int, password: str | None) -> None:
+    """Create a temporary sharing link.
+
+    Example: memo share create-link abc123 --permission read --expires-hours 48
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    link = mem.sharing.create_link(
+        memoria_id=memoria_id,
+        permission=permission,
+        expires_hours=expires_hours,
+        password=password,
+    )
+
+    console.print(f"[green]Share link created[/green]")
+    console.print(f"Link: {link}")
+    console.print(f"Expires in {expires_hours} hours")
+
+
+@share_group.command(name="list")
+@click.argument("memoria_id")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def share_list(memoria_id: str, as_json: bool) -> None:
+    """List all shares for a memoria.
+
+    Example: memo share list abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    shares = mem.sharing.share_store.get_shares(memoria_id)
+
+    if as_json:
+        click.echo(json.dumps([s.__dict__ for s in shares], indent=2))
+        return
+
+    if not shares:
+        console.print("[dim]No shares found[/dim]")
+        return
+
+    table = Table(title=f"Shares for {memoria_id[:8]}")
+    table.add_column("Shared With", style="cyan")
+    table.add_column("Permission", style="yellow")
+    table.add_column("Shared At", style="green")
+    table.add_column("Expires", style="magenta")
+
+    for s in shares[:20]:
+        table.add_row(
+            s.shared_with,
+            s.permission,
+            s.shared_at[:19],
+            s.expires_at[:19] if s.expires_at else "Never",
+        )
+
+    console.print(table)
+    if len(shares) > 20:
+        console.print(f"[dim]...and {len(shares) - 20} more[/dim]")
+
+
+@share_group.command(name="comment")
+@click.argument("memoria_id")
+@click.argument("content")
+@click.option("--author", default="user", help="Comment author")
+@click.option("--parent", help="Parent comment ID for replies")
+def share_comment(memoria_id: str, content: str, author: str, parent: str | None) -> None:
+    """Add a comment to a memoria.
+
+    Example: memo share comment abc123 "This is a comment" --author "John Doe"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    comment = mem.sharing.add_comment(
+        memoria_id=memoria_id,
+        author=author,
+        content=content,
+        parent_id=parent,
+    )
+
+    console.print(f"[green]Comment added[/green]")
+    console.print(f"Author: {comment.author}")
+    console.print(f"Content: {comment.content}")
+
+
+@share_group.command(name="comments")
+@click.argument("memoria_id")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def share_comments(memoria_id: str, as_json: bool) -> None:
+    """List all comments for a memoria.
+
+    Example: memo share comments abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    comments = mem.sharing.get_comments(memoria_id)
+
+    if as_json:
+        click.echo(json.dumps([c.__dict__ for c in comments], indent=2))
+        return
+
+    if not comments:
+        console.print("[dim]No comments found[/dim]")
+        return
+
+    table = Table(title=f"Comments for {memoria_id[:8]}")
+    table.add_column("Author", style="cyan")
+    table.add_column("Content", style="yellow")
+    table.add_column("Created", style="green")
+
+    for c in comments[:20]:
+        table.add_row(
+            c.author,
+            c.content[:50],
+            c.created_at[:19],
+        )
+
+    console.print(table)
+    if len(comments) > 20:
+        console.print(f"[dim]...and {len(comments) - 20} more[/dim]")
+
+
+# -- analytics commands ----------------------------------------------------------
+
+
+@cli.group(name="analytics")
+def analytics_group() -> None:
+    """Memory analytics dashboard — metrics and visualizations."""
+    pass
+
+
+@analytics_group.command(name="summary")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def analytics_summary(as_json: bool) -> None:
+    """Show analytics summary.
+
+    Example: memo analytics summary
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    metrics = mem.analytics.compute_corpus_metrics()
+
+    if as_json:
+        click.echo(json.dumps(metrics.__dict__, indent=2))
+        return
+
+    console.print("[bold]Memory Analytics Summary[/bold]")
+    console.print()
+    console.print(f"Total Memorias: {metrics.total_memorias}")
+    console.print(f"Total Entities: {metrics.total_entities}")
+    console.print(f"Growth Rate: {metrics.growth_rate:.2f} memorias/day")
+    console.print(f"Average Access Count: {metrics.average_access_count:.2f}")
+    console.print()
+    console.print("[bold]Type Distribution[/bold]")
+    for t, c in metrics.type_distribution.items():
+        console.print(f"  {t}: {c}")
+    console.print()
+    console.print("[bold]Top 10 Tags[/bold]")
+    for i, (t, c) in enumerate(list(metrics.tag_frequency.items())[:10], 1):
+        console.print(f"  {i}. {t}: {c}")
+
+
+@analytics_group.command(name="growth")
+@click.option("--days", type=int, default=30, help="Days to analyze")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def analytics_growth(days: int, as_json: bool) -> None:
+    """Show growth data over time.
+
+    Example: memo analytics growth --days 30
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    growth = mem.analytics.compute_growth_data(days=days)
+
+    if as_json:
+        click.echo(json.dumps(growth.__dict__, indent=2))
+        return
+
+    console.print(f"[bold]Growth (Last {days} Days)[/bold]")
+    console.print()
+
+    table = Table()
+    table.add_column("Date", style="cyan")
+    table.add_column("Count", style="green")
+
+    for d, c in zip(growth.dates, growth.counts):
+        table.add_row(d, str(c))
+
+    console.print(table)
+
+
+@analytics_group.command(name="export-json")
+@click.argument("output_path", type=click.Path())
+def analytics_export_json(output_path: str) -> None:
+    """Export analytics to JSON.
+
+    Example: memo analytics export-json /path/to/analytics.json
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    mem.analytics.export_metrics_json(Path(output_path))
+
+    console.print(f"[green]Exported analytics to {output_path}[/green]")
+
+
+@analytics_group.command(name="export-csv")
+@click.argument("output_path", type=click.Path())
+def analytics_export_csv(output_path: str) -> None:
+    """Export analytics to CSV.
+
+    Example: memo analytics export-csv /path/to/analytics.csv
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    mem.analytics.export_metrics_csv(Path(output_path))
+
+    console.print(f"[green]Exported analytics to {output_path}[/green]")
+
+
+@analytics_group.command(name="dashboard-html")
+@click.argument("output_path", type=click.Path())
+def analytics_dashboard_html(output_path: str) -> None:
+    """Generate HTML dashboard.
+
+    Example: memo analytics dashboard-html /path/to/dashboard.html
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    mem.dashboard.generate_html_dashboard(Path(output_path))
+
+    console.print(f"[green]Generated HTML dashboard at {output_path}[/green]")
+
+
+# -- import/export commands ------------------------------------------------------
+
+
+@cli.group(name="import")
+def import_group() -> None:
+    """Import memorias from other formats."""
+    pass
+
+
+@import_group.command(name="json")
+@click.argument("input_path", type=click.Path())
+@click.option("--format", help="Format (json, csv, markdown_bundle)")
+def import_json(input_path: str, format: str | None) -> None:
+    """Import from JSON file.
+
+    Example: memo import json /path/to/export.json
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    result = mem.import_export.import_from(Path(input_path), format or "json")
+
+    console.print(f"[green]Import complete[/green]")
+    console.print(f"Imported: {result.imported_count}")
+    console.print(f"Skipped: {result.skipped_count}")
+
+    if result.errors:
+        console.print(f"[yellow]Errors: {len(result.errors)}[/yellow]")
+
+
+@import_group.command(name="csv")
+@click.argument("input_path", type=click.Path())
+def import_csv(input_path: str) -> None:
+    """Import from CSV file.
+
+    Example: memo import csv /path/to/export.csv
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    result = mem.import_export.import_from(Path(input_path), "csv")
+
+    console.print(f"[green]Import complete[/green]")
+    console.print(f"Imported: {result.imported_count}")
+    console.print(f"Skipped: {result.skipped_count}")
+
+    if result.errors:
+        console.print(f"[yellow]Errors: {len(result.errors)}[/yellow]")
+
+
+@import_group.command(name="markdown-bundle")
+@click.argument("input_path", type=click.Path())
+def import_markdown_bundle(input_path: str) -> None:
+    """Import from Markdown bundle (zip).
+
+    Example: memo import markdown-bundle /path/to/export.zip
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    result = mem.import_export.import_from(Path(input_path), "markdown_bundle")
+
+    console.print(f"[green]Import complete[/green]")
+    console.print(f"Imported: {result.imported_count}")
+    console.print(f"Skipped: {result.skipped_count}")
+
+    if result.errors:
+        console.print(f"[yellow]Errors: {len(result.errors)}[/yellow]")
+
+
+@cli.group(name="export")
+def export_group() -> None:
+    """Export memorias to other formats."""
+    pass
+
+
+@export_group.command(name="json")
+@click.argument("output_path", type=click.Path())
+def export_json(output_path: str) -> None:
+    """Export to JSON file.
+
+    Example: memo export json /path/to/export.json
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    result = mem.import_export.export_to(Path(output_path), "json")
+
+    console.print(f"[green]Export complete[/green]")
+    console.print(f"Exported: {result.exported_count}")
+    console.print(f"Output: {result.output_path}")
+
+
+@export_group.command(name="csv")
+@click.argument("output_path", type=click.Path())
+def export_csv(output_path: str) -> None:
+    """Export to CSV file.
+
+    Example: memo export csv /path/to/export.csv
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    result = mem.import_export.export_to(Path(output_path), "csv")
+
+    console.print(f"[green]Export complete[/green]")
+    console.print(f"Exported: {result.exported_count}")
+    console.print(f"Output: {result.output_path}")
+
+
+@export_group.command(name="markdown-bundle")
+@click.argument("output_path", type=click.Path())
+def export_markdown_bundle(output_path: str) -> None:
+    """Export to Markdown bundle (zip).
+
+    Example: memo export markdown-bundle /path/to/export.zip
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    result = mem.import_export.export_to(Path(output_path), "markdown_bundle")
+
+    console.print(f"[green]Export complete[/green]")
+    console.print(f"Exported: {result.exported_count}")
+    console.print(f"Output: {result.output_path}")
 
 
 def main() -> None:
