@@ -1528,6 +1528,261 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         agent_thought = memory.agent.think(thought, thought_type)
         return agent_thought.model_dump()
 
+    # -- multi-modal tools (gamechanger #17) ----------------------------------------
+
+    @server.tool()
+    def memory_multimodal_add_image(
+        image_path: str,
+        memoria_id: str | None = None,
+    ) -> dict[str, str]:
+        """Add image to multi-modal corpus.
+
+        Args:
+            image_path: Path to the image file.
+            memoria_id: Optional associated memoria ID.
+        """
+        from pathlib import Path
+        content = memory.multimodal.add_image(Path(image_path), memoria_id)
+        return {"content_id": content.id, "modality": content.modality}
+
+    @server.tool()
+    def memory_multimodal_add_audio(
+        audio_path: str,
+        memoria_id: str | None = None,
+    ) -> dict[str, str]:
+        """Add audio to multi-modal corpus.
+
+        Args:
+            audio_path: Path to the audio file.
+            memoria_id: Optional associated memoria ID.
+        """
+        from pathlib import Path
+        content = memory.multimodal.add_audio(Path(audio_path), memoria_id)
+        return {"content_id": content.id, "modality": content.modality}
+
+    @server.tool()
+    def memory_multimodal_search_images(
+        query: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search with text, find images.
+
+        Args:
+            query: Text query.
+            limit: Max results.
+
+        Returns:
+            List of CrossModalResult objects.
+        """
+        results = memory.multimodal.search.search_text_find_images(query, limit=limit)
+        return [r.__dict__ for r in results]
+
+    @server.tool()
+    def memory_multimodal_search_audio(
+        query: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search with text, find audio.
+
+        Args:
+            query: Text query.
+            limit: Max results.
+
+        Returns:
+            List of CrossModalResult objects.
+        """
+        results = memory.multimodal.search.search_text_find_audio(query, limit=limit)
+        return [r.__dict__ for r in results]
+
+    @server.tool()
+    def memory_multimodal_search_all(
+        query: str,
+        limit: int = 10,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Search across all modalities.
+
+        Args:
+            query: Text query.
+            limit: Max results per modality.
+
+        Returns:
+            Dict with results per modality.
+        """
+        results = memory.multimodal.search.search_all_modalities(query, limit=limit)
+        return {k: [r.__dict__ for r in v] for k, v in results.items()}
+
+    # -- collaborative tools (gamechanger #18) -------------------------------------
+
+    @server.tool()
+    def memory_collaborative_share_connection(
+        user_id: str,
+        entity_a: str,
+        entity_b: str,
+        relationship: str,
+        confidence: float = 0.7,
+    ) -> dict[str, str]:
+        """Share a discovered connection with the community.
+
+        Args:
+            user_id: User ID who discovered the connection.
+            entity_a: First entity.
+            entity_b: Second entity.
+            relationship: Type of relationship.
+            confidence: Confidence score.
+
+        Returns:
+            Shared connection data.
+        """
+        conn = memory.collaborative.share_connection(
+            user_id=user_id,
+            entity_a=entity_a,
+            entity_b=entity_b,
+            relationship=relationship,
+            confidence=confidence,
+        )
+        return conn.__dict__
+
+    @server.tool()
+    def memory_collaborative_connections(
+        entity: str,
+    ) -> list[dict[str, Any]]:
+        """Get shared connections for an entity.
+
+        Args:
+            entity: Entity of interest.
+
+        Returns:
+            List of SharedConnection objects.
+        """
+        connections = memory.collaborative.get_shared_connections(entity)
+        return [c.__dict__ for c in connections]
+
+    @server.tool()
+    def memory_collaborative_recommend(
+        entity: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Get recommended connections based on collective patterns.
+
+        Args:
+            entity: Entity of interest.
+            limit: Max results.
+
+        Returns:
+            List of recommended SharedConnection objects.
+        """
+        recommendations = memory.collaborative.get_recommended_connections(entity, limit=limit)
+        return [r.__dict__ for r in recommendations]
+
+    @server.tool()
+    def memory_collaborative_share_insight(
+        user_id: str,
+        content: str,
+    ) -> dict[str, str]:
+        """Share an insight with the community.
+
+        Args:
+            user_id: User ID.
+            content: Insight content.
+
+        Returns:
+            Shared insight data.
+        """
+        insight = memory.collaborative.share_insight(user_id, content)
+        return insight.__dict__
+
+    @server.tool()
+    def memory_collaborative_insights(
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Get top voted insights from the community.
+
+        Args:
+            limit: Max results.
+
+        Returns:
+            List of CollectiveInsight objects.
+        """
+        insights = memory.collaborative.get_top_insights(limit=limit)
+        return [i.__dict__ for i in insights]
+
+    # -- cognitive tools (gamechanger #19) -----------------------------------------
+
+    @server.tool()
+    def memory_cognitive_set_state(
+        mental_state: str,
+        context_type: str,
+        current_goal: str | None = None,
+        focus_area: str | None = None,
+        energy_level: int = 50,
+        stress_level: int = 30,
+    ) -> dict[str, Any]:
+        """Update the user's mental state.
+
+        Args:
+            mental_state: Current mental state.
+            context_type: Type of context.
+            current_goal: Current goal.
+            focus_area: Focus area.
+            energy_level: Energy level (0-100).
+            stress_level: Stress level (0-100).
+
+        Returns:
+            Updated CognitiveState.
+        """
+        state = memory.cognitive.update_mental_state(
+            mental_state=mental_state,
+            context_type=context_type,
+            current_goal=current_goal,
+            focus_area=focus_area,
+            energy_level=energy_level,
+            stress_level=stress_level,
+        )
+        return state.__dict__
+
+    @server.tool()
+    def memory_cognitive_get_state() -> dict[str, Any] | None:
+        """Get the current mental state.
+
+        Returns:
+            CognitiveState or None.
+        """
+        state = memory.cognitive.get_mental_state()
+        return state.__dict__ if state else None
+
+    @server.tool()
+    def memory_cognitive_history(
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Get mental state history.
+
+        Args:
+            limit: Max results.
+
+        Returns:
+            List of CognitiveState objects.
+        """
+        history = memory.cognitive.tracker.get_history(limit=limit)
+        return [h.__dict__ for h in history]
+
+    @server.tool()
+    def memory_cognitive_suggestions(
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Get proactive suggestions based on mental state.
+
+        Args:
+            limit: Max suggestions.
+
+        Returns:
+            List of ContextualSuggestion objects.
+        """
+        def search_func(query: str, limit: int) -> list:
+            return memory.search(query, limit=limit)
+
+        suggestions = memory.cognitive.get_proactive_suggestions(search_func, limit=limit)
+        return [s.__dict__ for s in suggestions]
+
     return server
 
 
