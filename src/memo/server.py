@@ -1452,6 +1452,82 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         result = memory.import_export.export_to(Path(output_path), "markdown_bundle")
         return result.__dict__
 
+    # -- autonomous agent tools (THE GAMECHANGER) ------------------------------------
+
+    @server.tool()
+    def memory_agent_synthesize(
+        topic: str,
+    ) -> dict[str, Any]:
+        """Synthesize new knowledge from existing memorias.
+
+        THE GAMECHANGER: generates insights that did NOT exist before
+        by combining and reasoning over existing memorias.
+
+        Args:
+            topic: The topic to synthesize knowledge about.
+        """
+        synthesis = memory.agent.synthesize_knowledge(topic)
+        return synthesis.model_dump()
+
+    @server.tool()
+    def memory_agent_investigate(
+        goal: str,
+    ) -> dict[str, Any]:
+        """Plan and execute a complex investigation.
+
+        The agent analyzes the goal and generates a plan of steps
+        to investigate it through the memory corpus.
+
+        Args:
+            goal: The investigation goal.
+        """
+        plan = memory.agent.plan_investigation(goal)
+        return plan.model_dump()
+
+    @server.tool()
+    def memory_agent_discover() -> list[dict[str, Any]]:
+        """Proactive discovery: explore the corpus without user request.
+
+        The agent identifies areas of the corpus that might contain
+        undiscovered insights and explores them proactively.
+
+        Returns:
+            List of discovered SynthesisResult objects.
+        """
+        discoveries = memory.agent.proactive_discovery()
+        return [d.model_dump() for d in discoveries]
+
+    @server.tool()
+    def memory_agent_thoughts(
+        thought_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get the agent's thought history (meta-cognition).
+
+        Returns the agent's thoughts, optionally filtered by type.
+
+        Args:
+            thought_type: Filter by thought type (optional).
+        """
+        thoughts = memory.agent.get_thoughts(thought_type)
+        return [t.model_dump() for t in thoughts]
+
+    @server.tool()
+    def memory_agent_think(
+        thought: str,
+        thought_type: str = "hypothesis",
+    ) -> dict[str, str]:
+        """Register an agent thought (meta-cognition).
+
+        Args:
+            thought: The thought content.
+            thought_type: Type of thought.
+
+        Returns:
+            Registered thought data.
+        """
+        agent_thought = memory.agent.think(thought, thought_type)
+        return agent_thought.model_dump()
+
     return server
 
 
