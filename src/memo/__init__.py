@@ -8,7 +8,7 @@
   last-token pooling + L2 normalize (1024-dim).
 - Vector store: `sqlite-vec` (single file, no daemon, no Qdrant).
 - Storage of record: markdown files under
-  `<vault>/04-Archive/99-obsidian-system/99-AI/memory/`.
+  `<vault>/99-obsidian/99-AI/memory/`.
 - MCP server: `fastmcp` with tools `memory_save`, `memory_search`,
   `memory_list`, `memory_get`, `memory_update`, `memory_delete`.
 
