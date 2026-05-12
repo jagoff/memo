@@ -4413,6 +4413,324 @@ def agent_think(thought: str, thought_type: str) -> None:
     console.print(f"Content: {agent_thought.content}")
 
 
+# -- multi-modal commands (gamechanger #17) ---------------------------------------
+
+
+@cli.group(name="multimodal")
+def multimodal_group() -> None:
+    """Memoria Multi-Modal con Embeddings Universales."""
+    pass
+
+
+@multimodal_group.command(name="add-image")
+@click.argument("image_path", type=click.Path(exists=True))
+@click.option("--memoria-id", help="ID de memoria asociada")
+def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
+    """Agrega imagen al corpus multi-modal.
+
+    Example: memo multimodal add-image /path/to/image.png --memoria-id abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    content = mem.multimodal.add_image(Path(image_path), memoria_id)
+
+    console.print(f"[green]Image added[/green]")
+    console.print(f"Content ID: {content.id}")
+    console.print(f"Modality: {content.modality}")
+
+
+@multimodal_group.command(name="add-audio")
+@click.argument("audio_path", type=click.Path(exists=True))
+@click.option("--memoria-id", help="ID de memoria asociada")
+def multimodal_add_audio(audio_path: str, memoria_id: str | None) -> None:
+    """Agrega audio al corpus multi-modal.
+
+    Example: memo multimodal add-audio /path/to/audio.mp3 --memoria-id abc123
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+    content = mem.multimodal.add_audio(Path(audio_path), memoria_id)
+
+    console.print(f"[green]Audio added[/green]")
+    console.print(f"Content ID: {content.id}")
+    console.print(f"Modality: {content.modality}")
+
+
+@multimodal_group.command(name="search-images")
+@click.argument("query")
+@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+def multimodal_search_images(query: str, limit: int) -> None:
+    """Busca con texto, encuentra imágenes.
+
+    Example: memo multimodal search-images "architecture diagram"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    results = mem.multimodal.search.search_text_find_images(query, limit=limit)
+
+    console.print(f"[bold]Results: {len(results)} images[/bold]")
+    for r in results:
+        console.print(f"  {r.content_id[:8]} - similarity: {r.similarity:.2f}")
+
+
+@multimodal_group.command(name="search-audio")
+@click.argument("query")
+@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+def multimodal_search_audio(query: str, limit: int) -> None:
+    """Busca con texto, encuentra audio.
+
+    Example: memo multimodal search-audio "meeting notes"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    results = mem.multimodal.search.search_text_find_audio(query, limit=limit)
+
+    console.print(f"[bold]Results: {len(results)} audio[/bold]")
+    for r in results:
+        console.print(f"  {r.content_id[:8]} - similarity: {r.similarity:.2f}")
+
+
+@multimodal_group.command(name="search-all")
+@click.argument("query")
+@click.option("--limit", type=int, default=10, help="Máximo de resultados por modalidad")
+def multimodal_search_all(query: str, limit: int) -> None:
+    """Busca en todas las modalidades.
+
+    Example: memo multimodal search-all "project documentation"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    results = mem.multimodal.search.search_all_modalities(query, limit=limit)
+
+    console.print(f"[bold]Results across modalities[/bold]")
+    for modality, mod_results in results.items():
+        console.print(f"\n[cyan]{modality}:[/cyan] {len(mod_results)} results")
+    for r in mod_results[:5]:
+        console.print(f"  {r.content_id[:8]} - similarity: {r.similarity:.2f}")
+
+
+# -- collaborative commands (gamechanger #18) -----------------------------------
+
+
+@cli.group(name="collaborative")
+def collaborative_group() -> None:
+    """Memoria Social Colaborativa con Grafo de Conocimiento Compartido."""
+    pass
+
+
+@collaborative_group.command(name="share-connection")
+@click.argument("user-id")
+@click.argument("entity-a")
+@click.argument("entity-b")
+@click.argument("relationship")
+@click.option("--confidence", type=float, default=0.7, help="Confidence score")
+def collaborative_share_connection(user_id: str, entity_a: str, entity_b: str, relationship: str, confidence: float) -> None:
+    """Comparte una conexión descubierta con la comunidad.
+
+    Example: memo collaborative share-connection user123 MLX Apple "optimized for"
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    conn = mem.collaborative.share_connection(
+        user_id=user_id,
+        entity_a=entity_a,
+        entity_b=entity_b,
+        relationship=relationship,
+        confidence=confidence,
+    )
+
+    console.print(f"[green]Connection shared[/green]")
+    console.print(f"Connection ID: {conn.connection_id}")
+    console.print(f"From: {conn.from_user}")
+    console.print(f"{entity_a} --{relationship}--> {entity_b}")
+
+
+@collaborative_group.command(name="connections")
+@click.argument("entity")
+def collaborative_connections(entity: str) -> None:
+    """Ver conexiones compartidas para una entidad.
+
+    Example: memo collaborative connections MLX
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    connections = mem.collaborative.get_shared_connections(entity)
+
+    console.print(f"[bold]Shared connections for {entity}[/bold]")
+    for c in connections:
+        console.print(f"  {c.entity_a} --{c.relationship}--> {c.entity_b}")
+        console.print(f"    From: {c.from_user}, votes: {c.votes}, confidence: {c.confidence:.2f}")
+
+
+@collaborative_group.command(name="recommend")
+@click.argument("entity")
+@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+def collaborative_recommend(entity: str, limit: int) -> None:
+    """Obtiene conexiones recomendadas basadas en patrones colectivos.
+
+    Example: memo collaborative recommend MLX
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    recommendations = mem.collaborative.get_recommended_connections(entity, limit=limit)
+
+    console.print(f"[bold]Recommended connections for {entity}[/bold]")
+    for r in recommendations:
+        console.print(f"  {r.entity_a} --{r.relationship}--> {r.entity_b}")
+        console.print(f"    From: {r.from_user}, votes: {r.votes}, confidence: {r.confidence:.2f}")
+
+
+@collaborative_group.command(name="share-insight")
+@click.argument("user-id")
+@click.argument("content")
+def collaborative_share_insight(user_id: str, content: str) -> None:
+    """Comparte un insight con la comunidad.
+
+    Example: memo collaborative share-insight user123 "MLX is ideal for edge because..."
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    insight = mem.collaborative.share_insight(user_id, content)
+
+    console.print(f"[green]Insight shared[/green]")
+    console.print(f"Insight ID: {insight.insight_id}")
+    console.print(f"Content: {content[:100]}...")
+
+
+@collaborative_group.command(name="insights")
+@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+def collaborative_insights(limit: int) -> None:
+    """Ver los insights más votados de la comunidad.
+
+    Example: memo collaborative insights
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    insights = mem.collaborative.get_top_insights(limit=limit)
+
+    console.print(f"[bold]Top insights[/bold]")
+    for i, insight in enumerate(insights, 1):
+        console.print(f"[cyan]{i}.[/cyan] {insight.content[:100]}...")
+        console.print(f"    Upvotes: {insight.upvotes}, Downvotes: {insight.downvotes}")
+
+
+# -- cognitive commands (gamechanger #19) ---------------------------------------
+
+
+@cli.group(name="cognitive")
+def cognitive_group() -> None:
+    """Memoria con Estado Mental del Usuario."""
+    pass
+
+
+@cognitive_group.command(name="set-state")
+@click.argument("mental-state")
+@click.argument("context-type")
+@click.option("--goal", help="Current goal")
+@click.option("--focus", help="Focus area")
+@click.option("--energy", type=int, default=50, help="Energy level (0-100)")
+@click.option("--stress", type=int, default=30, help="Stress level (0-100)")
+def cognitive_set_state(mental_state: str, context_type: str, goal: str | None, focus: str | None, energy: int, stress: int) -> None:
+    """Actualiza el estado mental del usuario.
+
+    Example: memo cognitive set-state focused work --goal "Finish MLX integration" --focus MLX
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    state = mem.cognitive.update_mental_state(
+        mental_state=mental_state,
+        context_type=context_type,
+        current_goal=goal,
+        focus_area=focus,
+        energy_level=energy,
+        stress_level=stress,
+    )
+
+    console.print(f"[green]Mental state updated[/green]")
+    console.print(f"State: {state.mental_state}")
+    console.print(f"Context: {state.context_type}")
+    console.print(f"Goal: {state.current_goal or 'None'}")
+    console.print(f"Focus: {state.focus_area or 'None'}")
+
+
+@cognitive_group.command(name="get-state")
+def cognitive_get_state() -> None:
+    """Obtiene el estado mental actual.
+
+    Example: memo cognitive get-state
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    state = mem.cognitive.get_mental_state()
+
+    if not state:
+        console.print("[yellow]No mental state set[/yellow]")
+        return
+
+    console.print("[bold]Current Mental State[/bold]")
+    console.print(f"State: {state.mental_state}")
+    console.print(f"Context: {state.context_type}")
+    console.print(f"Goal: {state.current_goal or 'None'}")
+    console.print(f"Focus: {state.focus_area or 'None'}")
+    console.print(f"Energy: {state.energy_level}/100")
+    console.print(f"Stress: {state.stress_level}/100")
+
+
+@cognitive_group.command(name="history")
+@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+def cognitive_history(limit: int) -> None:
+    """Ver el historial de estados mentales.
+
+    Example: memo cognitive history --limit 5
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    history = mem.cognitive.tracker.get_history(limit=limit)
+
+    console.print(f"[bold]Mental State History[/bold] ({len(history)} entries)")
+    for h in history:
+        console.print(f"[cyan]{h.timestamp}[/cyan]")
+        console.print(f"  {h.mental_state} | {h.context_type}")
+        console.print(f"  Goal: {h.current_goal or 'None'}, Focus: {h.focus_area or 'None'}")
+
+
+@cognitive_group.command(name="suggestions")
+@click.option("--limit", type=int, default=5, help="Máximo de sugerencias")
+def cognitive_suggestions(limit: int) -> None:
+    """Obtiene sugerencias proactivas basadas en estado mental.
+
+    Example: memo cognitive suggestions
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    # Use the memory's search function
+    def search_func(query: str, limit: int) -> list:
+        return mem.search(query, limit=limit)
+
+    suggestions = mem.cognitive.get_proactive_suggestions(search_func, limit=limit)
+
+    console.print(f"[bold]Proactive Suggestions[/bold] ({len(suggestions)} found)")
+    for s in suggestions:
+        console.print(f"[cyan]{s.memoria_id[:8]}[/cyan] - {s.relevance_reason}")
+        console.print(f"  Confidence: {s.confidence:.2f}")
+
+
 def main() -> None:
     cli()
 

@@ -74,6 +74,9 @@ from memo.sharing import ShareManager, ShareStore
 from memo.analytics import AnalyticsEngine, Dashboard
 from memo.import_export import ImportExportManager
 from memo.agent import AutonomousAgent
+from memo.multimodal import MultiModalManager, MultiModalStore, UniversalEmbedder, CrossModalSearch
+from memo.collaborative import CollaborativeManager, CollaborativeGraph, CollaborativeFilter
+from memo.cognitive import CognitiveManager, CognitiveStateTracker, ContextAwareRetrieval, ProactiveGuidance
 
 
 # JSON-schema prompt for the helper LLM. Kept terse to fit in Qwen3-3B's
@@ -370,6 +373,29 @@ class Memory:
     def agent(self) -> AutonomousAgent:
         """Lazy accessor for AutonomousAgent (THE GAMECHANGER)."""
         return AutonomousAgent(self, self._chat)
+
+    @property
+    def multimodal(self) -> MultiModalManager:
+        """Lazy accessor for MultiModalManager."""
+        store = MultiModalStore(self.cfg.state_dir)
+        embedder = UniversalEmbedder()
+        search = CrossModalSearch(store, embedder)
+        return MultiModalManager(store, embedder, search)
+
+    @property
+    def collaborative(self) -> CollaborativeManager:
+        """Lazy accessor for CollaborativeManager."""
+        graph = CollaborativeGraph(self.cfg.state_dir)
+        filter = CollaborativeFilter(graph)
+        return CollaborativeManager(graph, filter)
+
+    @property
+    def cognitive(self) -> CognitiveManager:
+        """Lazy accessor for CognitiveManager."""
+        tracker = CognitiveStateTracker(self.cfg.state_dir)
+        retrieval = ContextAwareRetrieval(tracker)
+        guidance = ProactiveGuidance(tracker)
+        return CognitiveManager(tracker, retrieval, guidance)
 
     def _maybe_warn_legacy_paths(self) -> None:
         """Stderr warning when stored `meta.path` rows don't resolve.
