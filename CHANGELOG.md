@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-13
+
+### Added — **Contradiction radar + dedupe**
+
+memo now actively flags when two memorias disagree (especially when one
+is stale and the other supersedes it) and helps you resolve duplicates.
+Recall stops surfacing outdated facts as authoritative.
+
+- **`memo contradict scan`** — corpus-wide walk. For each memoria,
+  fetches vec-neighbors above a cosine floor, asks the helper LLM to
+  classify the pair as contradiction / evolution / consistent /
+  unrelated, and persists `contradiction` and `evolution` verdicts to
+  a new sidecar DB (`contradictions.db`). Pairs already resolved by
+  the user are never re-classified, so a re-scan is cheap.
+- **`memo contradict list`** — show open (or any-status) pairs with
+  confidence + rationale.
+- **`memo contradict triage`** — interactive walker. For each open
+  pair: shows both excerpts (older on top, newer below, `(stale)`
+  marker if past the threshold) and applies the user's verdict:
+  `f` fuse via `AdvancedConsolidator`, `n` newer wins, `o` older wins,
+  `e` mark as evolved, `d` dismiss as false positive, `s` skip.
+- **`memo contradict stats` / `reopen`** — corpus-level counts and a
+  way to send a resolved pair back to the open queue.
+- **`memo dedupe`** — higher-threshold wrapper over `consolidate`
+  aimed at obvious paste-restate / double-save duplicates. With
+  `--apply`, walks each cluster and offers an LLM-synthesized merge.
+- **New module `memo.contradict`** with `ContradictionStore`
+  (sqlite sidecar, status lifecycle `open|fused|kept_newer|kept_older|
+  evolved|dismissed`), `ContradictionScanner` (corpus walker), and
+  `PairRecord` / `ScanResult` dataclasses.
+- **MCP tools**: `memory_contradict_scan`, `memory_contradict_list`,
+  `memory_contradict_resolve`, `memory_contradict_stats`. Same
+  contract over stdio.
+- **Sidecar isolated**: contradictions live in their own sqlite file
+  (`~/.local/share/memo/contradictions.db`) following the same
+  convention as `history.db` / `graph.db`. Hot vec reads keep their
+  WAL.
+- **Self-cleanup**: deleting a memoria automatically drops dangling
+  pairs touching it.
+
+### Changed
+
+- `Memory.__init__` opens the contradiction sidecar lazily; callers
+  that never invoke the radar pay no extra sqlite handle.
+
 ## [0.6.0] - 2026-05-12
 
 ### Added — **Time-machine (THE differentiator)**

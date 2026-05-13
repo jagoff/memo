@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "0.6.0"
+version = "0.7.0"
 description = "Local MCP memory backed by Obsidian vault — MLX-native LLM + embedder, sqlite-vec store. No Ollama, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"

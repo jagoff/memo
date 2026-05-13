@@ -61,6 +61,7 @@ from memo.llm import MLXChat
 from memo.store import VecStore
 from memo.temporal import TemporalAnalyzer
 from memo.consolidation import AdvancedConsolidator
+from memo.contradict import ContradictionScanner, ContradictionStore
 from memo.navigation import GraphNavigator
 from memo.contextual import ContextStore, ContextualRecall
 from memo.crossref import CrossReferenceIndex, LinkSuggester
@@ -270,6 +271,9 @@ class Memory:
         self._maybe_warn_legacy_paths()
         # Temporal analyzer for contradiction detection and timeline analysis
         self._temporal: TemporalAnalyzer | None = None
+        # Persistent contradiction sidecar — opened lazily so callers
+        # that never scan don't pay for the extra sqlite handle.
+        self._contradict_store: ContradictionStore | None = None
 
     @property
     def temporal(self) -> TemporalAnalyzer:
@@ -282,6 +286,18 @@ class Memory:
     def consolidator(self) -> AdvancedConsolidator:
         """Lazy accessor for AdvancedConsolidator."""
         return AdvancedConsolidator(self, self._chat)
+
+    @property
+    def contradict_store(self) -> ContradictionStore:
+        """Lazy accessor for the persistent contradictions sidecar."""
+        if self._contradict_store is None:
+            self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
+        return self._contradict_store
+
+    @property
+    def contradict_scanner(self) -> ContradictionScanner:
+        """Lazy accessor for the corpus-wide contradiction scanner."""
+        return ContradictionScanner(self, self.contradict_store, self.temporal)
 
     @property
     def navigator(self) -> GraphNavigator:
@@ -987,6 +1003,14 @@ class Memory:
             # Drop graph edges for this memoria so entity counts stay
             # honest. Cheap (one DELETE + counter decrement per edge).
             self.graph.drop_for_memoria(id_)
+            # Drop dangling contradiction pairs touching this memoria.
+            # Only walks if the sidecar was already opened, so callers
+            # that never used the radar pay nothing.
+            if self._contradict_store is not None:
+                try:
+                    self._contradict_store.drop_for_memoria(id_)
+                except Exception:
+                    pass
         return existed
 
     # -- reindex / gc -------------------------------------------------------
