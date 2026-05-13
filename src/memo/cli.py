@@ -1229,6 +1229,218 @@ def recall_hook() -> None:
     _sys.exit(0)
 
 
+@cli.group(name="as-of")
+def as_of_group() -> None:
+    """Time-machine — query the corpus as it existed at any past date.
+
+    Subcommands: `search`, `ask`, `list`. All take `--date YYYY-MM-DD`
+    (or a full ISO timestamp). The snapshot is reconstructed by
+    replaying `history.db` events in reverse from "now".
+    """
+    pass
+
+
+def _parse_as_of_date(s: str) -> str:
+    """Accept date-only (`2026-03-01`) or full ISO. Return ISO with
+    a stable noon-UTC anchor for date-only inputs."""
+    from datetime import UTC, datetime as _dt
+    s = s.strip()
+    if len(s) == 10:  # YYYY-MM-DD
+        return f"{s}T23:59:59+00:00"  # end-of-day to be inclusive
+    try:
+        dt = _dt.fromisoformat(s.rstrip("Z"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.isoformat()
+    except ValueError as exc:
+        raise click.ClickException(
+            f"Could not parse --date {s!r}. Use YYYY-MM-DD or ISO 8601.",
+        ) from exc
+
+
+@as_of_group.command(name="search")
+@click.argument("query")
+@click.option("--date", "as_of", required=True, help="YYYY-MM-DD or full ISO 8601.")
+@click.option("--limit", default=10, type=int, show_default=True)
+@click.option("--type", "type_", default=None, help="Filter by record type.")
+@click.option("--mode", default="hybrid",
+              type=click.Choice(["hybrid", "vec", "bm25"]), show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def as_of_search(
+    query: str, as_of: str, limit: int, type_: str | None, mode: str, as_json: bool,
+) -> None:
+    """Search the corpus as it existed on a past date."""
+    from memo.memory import Memory
+    from memo.time_machine import reconstruct
+
+    mem = Memory(Config.from_env())
+    snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
+    hits = snap.search(query, limit=limit, mode=mode)
+    if type_:
+        hits = [h for h in hits if h.type == type_]
+
+    if as_json:
+        click.echo(json.dumps(
+            {
+                "as_of": snap.as_of.isoformat(),
+                "snapshot_size": len(snap),
+                "results": [h.to_dict() for h in hits],
+            },
+            ensure_ascii=False, indent=2,
+        ))
+        return
+
+    if not hits:
+        console.print(f"[dim]no results in snapshot @ {snap.as_of.date().isoformat()}[/dim]")
+        return
+    tbl = Table(show_lines=False, expand=True,
+                title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias existían")
+    tbl.add_column("score", justify="right", width=6)
+    tbl.add_column("type", width=10)
+    tbl.add_column("title", overflow="fold")
+    tbl.add_column("tags", overflow="fold")
+    for h in hits:
+        tbl.add_row(
+            f"{h.score:.3f}" if h.score is not None else "—",
+            h.type,
+            h.title,
+            ", ".join(h.tags) or "—",
+        )
+    console.print(tbl)
+
+
+@as_of_group.command(name="ask")
+@click.argument("question")
+@click.option("--date", "as_of", required=True, help="YYYY-MM-DD or full ISO 8601.")
+@click.option("--k", default=5, type=int, show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def as_of_ask(question: str, as_of: str, k: int, as_json: bool) -> None:
+    """RAG question against a past snapshot of the corpus."""
+    from memo.memory import Memory
+    from memo.time_machine import reconstruct
+
+    mem = Memory(Config.from_env())
+    snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
+    out = snap.ask(question, k=k)
+
+    if as_json:
+        click.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+
+    console.print(Panel.fit(
+        out["answer"] or "[dim](sin respuesta)[/dim]",
+        title=f"✓ as-of {snap.as_of.date().isoformat()} ({len(snap)} memorias in scope)",
+        border_style="magenta",
+    ))
+    if out.get("sources"):
+        console.print("\n[dim]sources:[/dim]")
+        for s in out["sources"]:
+            console.print(f"  [bold]{s['id_short']}[/bold]  {s['title']}  [dim]({s['type']})[/dim]")
+
+
+@as_of_group.command(name="list")
+@click.option("--date", "as_of", required=True, help="YYYY-MM-DD or full ISO 8601.")
+@click.option("--type", "type_", default=None)
+@click.option("--limit", default=20, type=int, show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def as_of_list(as_of: str, type_: str | None, limit: int, as_json: bool) -> None:
+    """List memorias that existed in a past snapshot (most-recent first)."""
+    from memo.memory import Memory
+    from memo.time_machine import reconstruct
+
+    mem = Memory(Config.from_env())
+    snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
+    rows = snap.list(type_=type_)[:limit]
+
+    if as_json:
+        click.echo(json.dumps(
+            {
+                "as_of": snap.as_of.isoformat(),
+                "snapshot_size": len(snap),
+                "records": [
+                    {"id": r.id, "title": r.title, "type": r.type, "tags": r.tags,
+                     "updated": r.updated}
+                    for r in rows
+                ],
+            },
+            ensure_ascii=False, indent=2,
+        ))
+        return
+
+    if not rows:
+        console.print(f"[dim]empty snapshot @ {snap.as_of.date().isoformat()}[/dim]")
+        return
+    tbl = Table(show_lines=False, expand=True,
+                title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias")
+    tbl.add_column("id", width=10)
+    tbl.add_column("type", width=10)
+    tbl.add_column("title", overflow="fold")
+    tbl.add_column("updated", width=12)
+    for r in rows:
+        tbl.add_row(r.id[:8], r.type, r.title, (r.updated or "—")[:10])
+    console.print(tbl)
+
+
+@cli.command(name="diff")
+@click.option("--from", "from_date", required=True,
+              help="Start date — YYYY-MM-DD or full ISO 8601.")
+@click.option("--to", "to_date", required=False, default=None,
+              help="End date (default: now).")
+@click.option("--json", "as_json", is_flag=True)
+def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
+    """Diff the corpus between two snapshots.
+
+    Shows added / removed / updated memorias plus a summary line. Useful
+    for "what changed since last Monday" or "what evolved between two
+    releases".
+    """
+    from datetime import UTC, datetime as _dt
+
+    from memo.memory import Memory
+    from memo.time_machine import diff as _diff
+
+    if to_date is None:
+        to_iso = _dt.now(UTC).isoformat()
+    else:
+        to_iso = _parse_as_of_date(to_date)
+    from_iso = _parse_as_of_date(from_date)
+
+    mem = Memory(Config.from_env())
+    d = _diff(mem, from_ts=from_iso, to_ts=to_iso)
+
+    if as_json:
+        click.echo(json.dumps({
+            "from_ts": d.from_ts.isoformat(),
+            "to_ts": d.to_ts.isoformat(),
+            "added": [{"id": r.id, "title": r.title, "type": r.type} for r in d.added],
+            "removed": [{"id": r.id, "title": r.title, "type": r.type} for r in d.removed],
+            "updated": d.updated,
+        }, ensure_ascii=False, indent=2))
+        return
+
+    console.print(Panel.fit(
+        f"{d.from_ts.date().isoformat()}  →  {d.to_ts.date().isoformat()}\n"
+        f"[bold]{d.summary()}[/bold]",
+        title="corpus diff",
+        border_style="cyan",
+    ))
+    if d.added:
+        console.print(f"\n[green]+ added ({len(d.added)})[/green]")
+        for r in d.added[:20]:
+            console.print(f"  [green]+[/green] [{r.id[:8]}] {r.title}  [dim]({r.type})[/dim]")
+    if d.removed:
+        console.print(f"\n[red]- removed ({len(d.removed)})[/red]")
+        for r in d.removed[:20]:
+            console.print(f"  [red]−[/red] [{r.id[:8]}] {r.title}  [dim]({r.type})[/dim]")
+    if d.updated:
+        console.print(f"\n[yellow]~ updated ({len(d.updated)})[/yellow]")
+        for u in d.updated[:20]:
+            console.print(
+                f"  [yellow]~[/yellow] [{u['id'][:8]}] {u['title']}  "
+                f"[dim](fields: {', '.join(u['changed_fields'])})[/dim]",
+            )
+
+
 @cli.command(name="tui")
 @click.option("--refresh", type=float, default=1.0, show_default=True,
               help="Refresh interval in seconds.")

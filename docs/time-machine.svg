@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arr-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+    <marker id="arr-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#059669"/>
+    </marker>
+  </defs>
+
+  <style>
+    .title  { font-size: 22px; font-weight: 700; fill: #0f172a; }
+    .sub    { font-size: 13px; fill: #64748b; }
+    .label  { font-size: 13px; font-weight: 600; fill: #0f172a; text-anchor: middle; }
+    .meta   { font-size: 11px; fill: #64748b; text-anchor: middle; }
+    .meta-l { font-size: 11px; fill: #64748b; text-anchor: start; }
+    .axis   { stroke: #94a3b8; stroke-width: 1.5; fill: none; }
+    .tick   { stroke: #94a3b8; stroke-width: 1; fill: none; }
+    .tick-text { font-size: 11px; fill: #64748b; text-anchor: middle; }
+    .event-save   { fill: #dcfce7; stroke: #16a34a; }
+    .event-update { fill: #fef3c7; stroke: #d97706; }
+    .event-delete { fill: #fee2e2; stroke: #dc2626; }
+    .snap-line { stroke: #2563eb; stroke-width: 2.5; stroke-dasharray: 4 3; }
+    .now-line  { stroke: #475569; stroke-width: 2; }
+    .arrow    { stroke: #475569; stroke-width: 1.6; fill: none; marker-end: url(#arr); }
+    .replay-arrow { stroke: #dc2626; stroke-width: 2; fill: none; marker-end: url(#arr-red); stroke-dasharray: 4 3; }
+    .out-arrow { stroke: #059669; stroke-width: 2; fill: none; marker-end: url(#arr-green); }
+    .step-box { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.5; rx: 8; ry: 8; }
+    .snap-box { fill: #eff6ff; stroke: #2563eb; stroke-width: 1.5; rx: 8; ry: 8; }
+    .out-box  { fill: #f0fdf4; stroke: #16a34a; stroke-width: 1.5; rx: 8; ry: 8; }
+  </style>
+
+  <text x="40" y="40" class="title">memo time-machine — reverse-replay reconstruction</text>
+  <text x="40" y="60" class="sub">The only agent-memory product that lets you rewind the corpus. Every save/update/delete is auditable; snapshots are derived.</text>
+
+  <!-- timeline axis -->
+  <line class="axis" x1="80" y1="180" x2="920" y2="180"/>
+  <line class="axis" x1="80" y1="175" x2="80" y2="185"/>
+  <line class="axis" x1="920" y1="175" x2="920" y2="185"/>
+  <text x="80" y="200" class="tick-text">t = 0</text>
+  <text x="920" y="200" class="tick-text">now</text>
+  <text x="500" y="220" class="meta">history.db · events table (append-only audit log)</text>
+
+  <!-- events along axis -->
+  <!-- save at t=0.2 -->
+  <rect x="150" y="155" width="80" height="50" class="event-save" rx="6" ry="6"/>
+  <text x="190" y="175" class="label" font-size="12">save</text>
+  <text x="190" y="190" class="meta">[abc1234] X</text>
+  <line class="tick" x1="190" y1="205" x2="190" y2="180"/>
+
+  <!-- update at t=0.4 -->
+  <rect x="310" y="155" width="100" height="50" class="event-update" rx="6" ry="6"/>
+  <text x="360" y="175" class="label" font-size="12">update</text>
+  <text x="360" y="190" class="meta">title: X → X′</text>
+  <line class="tick" x1="360" y1="205" x2="360" y2="180"/>
+
+  <!-- save at t=0.6 -->
+  <rect x="480" y="155" width="80" height="50" class="event-save" rx="6" ry="6"/>
+  <text x="520" y="175" class="label" font-size="12">save</text>
+  <text x="520" y="190" class="meta">[def5678] Y</text>
+  <line class="tick" x1="520" y1="205" x2="520" y2="180"/>
+
+  <!-- delete at t=0.85 -->
+  <rect x="660" y="155" width="80" height="50" class="event-delete" rx="6" ry="6"/>
+  <text x="700" y="175" class="label" font-size="12">delete</text>
+  <text x="700" y="190" class="meta">[abc1234]</text>
+  <line class="tick" x1="700" y1="205" x2="700" y2="180"/>
+
+  <!-- snapshot target T -->
+  <line class="snap-line" x1="430" y1="100" x2="430" y2="260"/>
+  <text x="430" y="92" class="label" font-size="13" fill="#2563eb">as_of = T</text>
+  <text x="430" y="252" class="meta" fill="#2563eb">target</text>
+
+  <!-- now line -->
+  <line class="now-line" x1="900" y1="100" x2="900" y2="260"/>
+  <text x="900" y="92" class="label" font-size="13" fill="#475569">now</text>
+
+  <!-- reverse-replay arrows -->
+  <path class="replay-arrow" d="M 880 140 Q 700 110 520 140"/>
+  <path class="replay-arrow" d="M 700 140 Q 600 115 470 140"/>
+  <text x="690" y="125" class="meta-l" fill="#dc2626">walk events backwards, undoing each op</text>
+
+  <!-- algorithm steps box -->
+  <text x="40" y="290" class="label" font-size="14" text-anchor="start">algorithm</text>
+
+  <rect x="40" y="305" width="280" height="80" class="step-box"/>
+  <text x="60" y="325" class="label-l" font-size="13" text-anchor="start">1. start from current state</text>
+  <text x="60" y="345" class="meta-l">all rows in `meta` (current)</text>
+  <text x="60" y="362" class="meta-l">→ this is the "now" snapshot</text>
+  <text x="60" y="377" class="meta-l">→ both records visible: [def5678], …</text>
+
+  <rect x="340" y="305" width="280" height="80" class="step-box"/>
+  <text x="360" y="325" class="label-l" font-size="13" text-anchor="start">2. fetch events with ts &gt; T</text>
+  <text x="360" y="345" class="meta-l">sorted newest-first</text>
+  <text x="360" y="362" class="meta-l">→ delete [abc1234] @ 0.85</text>
+  <text x="360" y="377" class="meta-l">→ save [def5678] @ 0.6</text>
+
+  <rect x="640" y="305" width="280" height="80" class="step-box"/>
+  <text x="660" y="325" class="label-l" font-size="13" text-anchor="start">3. apply inverse ops</text>
+  <text x="660" y="345" class="meta-l">save→drop · update→revert</text>
+  <text x="660" y="362" class="meta-l">delete→re-insert stub</text>
+  <text x="660" y="377" class="meta-l">→ result: state @ T</text>
+
+  <!-- snapshot output box -->
+  <rect x="180" y="420" width="240" height="90" class="snap-box"/>
+  <text x="300" y="440" class="label" fill="#2563eb">snapshot @ T</text>
+  <text x="300" y="460" class="meta">{ [abc1234] X′ — exists, body live }</text>
+  <text x="300" y="478" class="meta">[def5678] Y does NOT exist yet</text>
+  <text x="300" y="498" class="meta">memorias deleted later: stub w/ body=∅</text>
+
+  <!-- diff output -->
+  <rect x="540" y="420" width="240" height="90" class="out-box"/>
+  <text x="660" y="440" class="label" fill="#16a34a">memo as-of search / ask</text>
+  <text x="660" y="460" class="meta">runs live embedder over snapshot</text>
+  <text x="660" y="478" class="meta">RAG: model told view is historical</text>
+  <text x="660" y="498" class="meta">memo diff --from T1 --to T2</text>
+
+  <line class="out-arrow" x1="180" y1="465" x2="120" y2="380"/>
+  <line class="out-arrow" x1="540" y1="465" x2="600" y2="380"/>
+</svg>
