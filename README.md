@@ -474,6 +474,8 @@ A handful of projects sit in the same neighbourhood. They diverge on the things 
 
 ### The differentiators in plain terms
 
+0. **🕰️ Time-machine — the ONLY agent-memory product with this.** Every other store in the table above (mem0, letta, cognee, supermemory, mem-vault, milasd/memo-mcp, doggybee, engram, MCP-memory reference) serves *current* state only. memo lets you `as-of` any past date, `diff` between two snapshots, and `ask` questions against the corpus as it stood months ago. The implementation is built on the audit log that already records every save/update/delete with field-level diffs — see [the algorithm diagram](docs/time-machine.svg). Use cases: debugging agent regressions, reproducible AI behavior, personal audit, compliance ("what did the model know when it took action X?"). **No competitor offers this and none can retrofit it without an audit-log they don't have.**
+
 1. **100 % local hot path, no Ollama.** memo runs the LLM, embedder, and reranker **in-process via MLX**. No `localhost:11434` round-trip per call, no Docker for Qdrant, no provider key. mem0 / cognee / letta all rely on either a cloud API or a local Ollama daemon; supermemory is hosted; mem-vault needs both Ollama and Qdrant running. memo just imports MLX into the same Python process and goes.
 
 2. **Markdown is the storage of record, not a DB blob.** Your memorias are plain `.md` files with frontmatter that you can open in Obsidian, edit in vim, sync via iCloud/git/Syncthing, and `grep` from a shell. The sqlite-vec index is rebuildable — `rm memvec.db && memo reindex`. Almost every alternative locks your knowledge inside an opaque database.
