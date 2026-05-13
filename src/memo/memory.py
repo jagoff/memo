@@ -416,12 +416,18 @@ class Memory:
                 if not self._resolve_existing(r["path"]).is_file()
             )
             if missing == len(sample):
+                import os as _os
                 import sys
+                # Suppressible — TUI sets MEMO_SUPPRESS_LEGACY_WARN=1 because
+                # the message is moot while in alt-screen mode.
+                if _os.environ.get("MEMO_SUPPRESS_LEGACY_WARN") == "1":
+                    return
                 print(
-                    f"[memo] warning: {missing} stored path(s) don't resolve "
-                    f"under data_dir={self.cfg.data_dir}. Run `memo reindex` "
-                    f"to refresh the index, or `memo migrate-vault <new-dir>` "
-                    f"to migrate from a legacy vault layout.",
+                    f"[memo] heads-up: tu índice apunta a paths antiguos "
+                    f"(data_dir={self.cfg.data_dir}). Corré `memo reindex` "
+                    f"para re-embeder, o `memo migrate-vault <nuevo-dir>` si "
+                    f"moviste el vault. Esto NO es un error — sólo un aviso "
+                    f"de inconsistencia entre disco e índice.",
                     file=sys.stderr,
                 )
         except Exception:
