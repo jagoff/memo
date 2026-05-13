@@ -58,7 +58,7 @@ embedder.py  store.py        history.py      graph.py     llm.py
                                                             + 3B helper)
        │
        ▼
-markdown files in <vault>/04-Archive/99-obsidian-system/99-AI/memory/  ← source of truth
+markdown files in <vault>/99-obsidian/99-AI/memory/  ← source of truth
 ```
 
 ### Storage of record vs index
@@ -101,7 +101,8 @@ The 5s timeout is tight. Cold MLX load is ~2s. If you add work to the hook, meas
 
 `tests/conftest.py` enforces two rules — preserve them:
 
-- **Never touch the real vault.** The `tmp_cfg` fixture builds a `Config` with `vault_path` and `state_dir` under pytest's `tmp_path`. Any new test must depend on `tmp_cfg` (or build its own isolated `Config`) — never call `Config.from_env()` in a test.
+- **Never touch the real vault.** The `tmp_cfg` fixture builds a `Config` with `data_dir`, `vault_path`, and `state_dir` under pytest's `tmp_path`, and pins `MEMO_CONFIG_FILE` so `Config.from_env()` doesn't read the dev's real `~/.config/memo/config.toml`. Any new test must depend on `tmp_cfg` (or build its own isolated `Config`) — never call `Config.from_env()` in a test without controlling these env vars.
+- **CliRunner-based tests must set `MEMO_NONINTERACTIVE=1`** in the `env=` arg, otherwise the CLI's first-run gate may try to fire the picker mid-test. Also override `MEMO_DATA_DIR`/`MEMO_STATE_DIR` to keep state under `tmp_path`. If your test exercises the embedder via the stub (`monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", ...)`), also pin `MEMO_EMBEDDER_DIMS` to match the stub's output dim — the dev's shell may have `MEMO_EMBEDDER_DIMS=2560` (4B model) exported and CliRunner inherits it.
 - **`requires_mlx` is auto-applied.** A test marked `@pytest.mark.requires_mlx` skips automatically when `mlx_lm` can't be imported. Use it for anything that does a real forward pass; everything else should monkeypatch `MLXEmbedder.embed` / `MLXChat.chat`.
 
 `tests/test_smoke_mlx.py` is the canonical example of `requires_mlx` smoke tests.
@@ -117,7 +118,7 @@ Version lives in three places — bump together:
 
 ## Conventions specific to this repo
 
-- **All files under `04-Archive/99-obsidian-system/99-AI/memory/` in the user's vault are managed by memo.** Don't write outside that subdir from code paths the user runs. The default `_DEFAULT_VAULT` in `config.py` points at the user's iCloud-synced Obsidian vault; tests must override it.
+- **The memoria storage location is user-configurable.** The default is `~/Documents/memo/` (a standard macOS path so the tool works for users who don't use Obsidian). On first interactive run, `memo` prompts an arrow-key picker (`memo init` re-runs it). The chosen path is persisted in `~/.config/memo/config.toml` `[storage] data_dir`. Tests must override via `tmp_cfg` (which sets `data_dir`, `vault_path`, `state_dir` and pins `MEMO_CONFIG_FILE` to a test-only path so the developer's real config doesn't leak in). Resolution order in `Config.from_env()`: explicit kwargs → `MEMO_*` env vars → config file → legacy `MEMO_VAULT_PATH` + `MEMO_MEMORY_SUBDIR` → default. `vault_path` is now optional and only used by `memo ingest`.
 - **Frontmatter schema is fixed.** `id`, `title`, `type`, `tags`, `created`, `updated`. `type` is one of `decision | fact | bug | feedback | preference | note | manual`. Adding a new type means updating the Click `Choice` in `cli.py:save`/`update` AND the docstring in `server.py:memory_save`.
 - **Filename slug is `<YYYY-MM-DD>-<slug>.md`.** Mirrors obsidian-rag's conversation writer. The slugifier lives in `memory.py`.
 - **No Ollama anywhere.** `pyproject.toml` does not declare it; `doctor` does not probe `:11434`. The README leans on this as a selling point — don't reintroduce it as a dependency.

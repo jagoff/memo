@@ -11,7 +11,7 @@ argument-hint: "(vacío = smart capture) | <query> | list [n] | save <text> | ge
 - LLM: [`mlx-lm`](https://github.com/ml-explore/mlx-lm) loadeando Qwen2.5-Instruct quantizado, in-process en Apple Silicon Metal.
 - Embedder: [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ), 1024-dim, last-token pooling, L2-normalised.
 - Vector store: [`sqlite-vec`](https://github.com/asg017/sqlite-vec), single file en `~/.local/share/memo/memvec.db`.
-- Storage of record: `.md` planos en `<vault>/04-Archive/99-obsidian-system/99-AI/memory/`.
+- Storage of record: `.md` planos en `<vault>/99-obsidian/99-AI/memory/`.
 
 El user te invocó con `/memo $ARGUMENTS`. Tu trabajo es parsear `$ARGUMENTS` y rutear al MCP tool correspondiente.
 
@@ -228,7 +228,7 @@ Llamá `mcp__memo__memory_stats()` y mostrá el dict literal:
 ```
 total          142
 vault_path     /Users/USER/.../Notes
-memory_dir     /Users/USER/.../Notes/04-Archive/99-obsidian-system/99-AI/memory
+memory_dir     /Users/USER/.../Notes/99-obsidian/99-AI/memory
 db_path        /Users/USER/.local/share/memo/memvec.db
 embedder_model mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 ```

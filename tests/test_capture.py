@@ -164,6 +164,7 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch) -> Memory:
     # produce distinct vectors; the 4-bucket stub gives a 25% collision
     # probability, which fails ~1-in-4 runs.
     cfg = Config(
+        data_dir=tmp_cfg.data_dir,
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=64,
@@ -230,7 +231,7 @@ def test_run_capture_skips_duplicate_turn(tmp_path: Path, monkeypatch):
     Claude Code re-invoke must not produce duplicate memorias."""
     state_dir = tmp_path / "state"
     vault = tmp_path / "vault"
-    (vault / "04-Archive" / "99-obsidian-system" / "99-AI" / "memory").mkdir(parents=True)
+    (vault / "99-obsidian" / "99-AI" / "memory").mkdir(parents=True)
     state_dir.mkdir()
     monkeypatch.setenv("MEMO_VAULT_PATH", str(vault))
     monkeypatch.setenv("MEMO_STATE_DIR", str(state_dir))

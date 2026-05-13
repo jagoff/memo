@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 720" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+
+  <style>
+    .title    { font-size: 22px; font-weight: 700; fill: #0f172a; }
+    .sub      { font-size: 13px; fill: #64748b; }
+    .section  { font-size: 12px; font-weight: 700; fill: #475569; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box      { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 10; ry: 10; }
+    .label    { font-size: 14px; font-weight: 600; fill: #0f172a; text-anchor: middle; }
+    .label-l  { font-size: 14px; font-weight: 600; fill: #0f172a; text-anchor: start; }
+    .meta     { font-size: 11px; fill: #64748b; text-anchor: middle; }
+    .meta-l   { font-size: 11px; fill: #64748b; text-anchor: start; }
+    .box-client { fill: #f8fafc; stroke: #94a3b8; }
+    .box-entry  { fill: #eff6ff; stroke: #3b82f6; }
+    .box-core   { fill: #fff7ed; stroke: #f97316; }
+    .box-mlx    { fill: #f0fdf4; stroke: #22c55e; }
+    .box-store  { fill: #fef3c7; stroke: #f59e0b; }
+    .box-hook   { fill: #fdf4ff; stroke: #a855f7; }
+    .arrow      { stroke: #475569; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .arrow-blue { stroke: #2563eb; stroke-width: 1.6; fill: none; marker-end: url(#arrow-blue); stroke-dasharray: 5 3; }
+    .group-rect { fill: none; stroke: #e2e8f0; stroke-width: 1; stroke-dasharray: 4 4; rx: 12; ry: 12; }
+  </style>
+
+  <!-- Title -->
+  <text x="40" y="40" class="title">memo — how it fits in your stack</text>
+  <text x="40" y="60" class="sub">Local MCP memory · MLX-native · Apple Silicon · zero network in the hot path</text>
+
+  <!-- ============== CLIENTS ROW (top) ============== -->
+  <text x="40" y="100" class="section">clients</text>
+  <rect x="40" y="115" width="880" height="80" class="group-rect"/>
+
+  <rect x="60" y="130" width="150" height="55" class="box box-client"/>
+  <text x="135" y="153" class="label">Claude Code</text>
+  <text x="135" y="170" class="meta">MCP + slash + hooks</text>
+
+  <rect x="225" y="130" width="150" height="55" class="box box-client"/>
+  <text x="300" y="153" class="label">Claude Desktop</text>
+  <text x="300" y="170" class="meta">MCP stdio</text>
+
+  <rect x="390" y="130" width="150" height="55" class="box box-client"/>
+  <text x="465" y="153" class="label">Cursor / Cline</text>
+  <text x="465" y="170" class="meta">MCP stdio</text>
+
+  <rect x="555" y="130" width="150" height="55" class="box box-client"/>
+  <text x="630" y="153" class="label">Paperclip agents</text>
+  <text x="630" y="170" class="meta">plugin · 5 tools</text>
+
+  <rect x="720" y="130" width="180" height="55" class="box box-client"/>
+  <text x="810" y="153" class="label">your shell</text>
+  <text x="810" y="170" class="meta">`memo` CLI · 25 commands</text>
+
+  <!-- arrows down to entry points -->
+  <line class="arrow" x1="135" y1="185" x2="135" y2="225"/>
+  <line class="arrow" x1="300" y1="185" x2="300" y2="225"/>
+  <line class="arrow" x1="465" y1="185" x2="465" y2="225"/>
+  <line class="arrow" x1="630" y1="185" x2="630" y2="225"/>
+  <line class="arrow" x1="810" y1="185" x2="810" y2="225"/>
+
+  <!-- ============== ENTRY POINTS ============== -->
+  <text x="40" y="220" class="section">entry points</text>
+  <rect x="40" y="225" width="880" height="65" class="group-rect"/>
+
+  <rect x="80" y="235" width="600" height="45" class="box box-entry"/>
+  <text x="380" y="258" class="label">memo-mcp (FastMCP stdio server) — 13 tools: memory_save · search · list · get · update · delete · reindex · ask · stats · …</text>
+  <text x="380" y="273" class="meta">used by every MCP client above</text>
+
+  <rect x="710" y="235" width="190" height="45" class="box box-entry"/>
+  <text x="805" y="263" class="label">memo (Click CLI)</text>
+  <text x="805" y="278" class="meta">same API · 25 commands</text>
+
+  <!-- arrows down to core -->
+  <line class="arrow" x1="380" y1="280" x2="380" y2="320"/>
+  <line class="arrow" x1="805" y1="280" x2="805" y2="320"/>
+
+  <!-- ============== AMBIENT HOOKS (left side, parallel) ============== -->
+  <rect x="40" y="320" width="200" height="180" class="box box-hook"/>
+  <text x="140" y="345" class="label">Claude Code hooks</text>
+  <text x="140" y="362" class="meta">(opt-in via plugin)</text>
+
+  <rect x="55" y="375" width="170" height="50" class="box"/>
+  <text x="140" y="395" class="label" font-size="12">SessionStart</text>
+  <text x="140" y="412" class="meta">memo prewarm · async</text>
+
+  <rect x="55" y="435" width="170" height="55" class="box"/>
+  <text x="140" y="455" class="label" font-size="12">UserPromptSubmit</text>
+  <text x="140" y="472" class="meta">memo recall-hook · 5s</text>
+  <text x="140" y="485" class="meta">injects additionalContext</text>
+
+  <line class="arrow-blue" x1="225" y1="460" x2="280" y2="400"/>
+
+  <!-- ============== CORE: Memory API ============== -->
+  <text x="280" y="320" class="section">core</text>
+  <rect x="280" y="325" width="640" height="100" class="box box-core"/>
+  <text x="600" y="350" class="label">Memory API — memory.py</text>
+  <text x="600" y="370" class="meta">save · search(vec | bm25 | hybrid) · list · get · update · delete · reindex · consolidate · ask</text>
+
+  <rect x="305" y="382" width="190" height="35" class="box"/>
+  <text x="400" y="404" class="label" font-size="12">hybrid pipeline</text>
+
+  <rect x="510" y="382" width="190" height="35" class="box"/>
+  <text x="605" y="404" class="label" font-size="12">RRF + cross-encoder</text>
+
+  <rect x="715" y="382" width="190" height="35" class="box"/>
+  <text x="810" y="404" class="label" font-size="12">prefix-ID lookup ≥4 chars</text>
+
+  <!-- arrows from core to MLX and storage -->
+  <line class="arrow" x1="450" y1="425" x2="450" y2="475"/>
+  <line class="arrow" x1="750" y1="425" x2="750" y2="475"/>
+
+  <!-- ============== MLX (in-process) row ============== -->
+  <text x="280" y="465" class="section">mlx · in-process · apple silicon</text>
+  <rect x="280" y="475" width="640" height="100" class="group-rect"/>
+
+  <rect x="300" y="490" width="190" height="75" class="box box-mlx"/>
+  <text x="395" y="513" class="label">embedder</text>
+  <text x="395" y="530" class="meta">Qwen3-Embedding</text>
+  <text x="395" y="544" class="meta">last-token pool · L2-norm</text>
+  <text x="395" y="558" class="meta">asymmetric query prefix</text>
+
+  <rect x="510" y="490" width="190" height="75" class="box box-mlx"/>
+  <text x="605" y="513" class="label">reranker</text>
+  <text x="605" y="530" class="meta">Qwen3-Reranker 0.6B</text>
+  <text x="605" y="544" class="meta">P(yes) scoring</text>
+  <text x="605" y="558" class="meta">α=0.7 score fusion</text>
+
+  <rect x="720" y="490" width="190" height="75" class="box box-mlx"/>
+  <text x="815" y="513" class="label">chat (for ask())</text>
+  <text x="815" y="530" class="meta">Qwen2.5-7B + 3B helper</text>
+  <text x="815" y="544" class="meta">two-tier · lazy-loaded</text>
+  <text x="815" y="558" class="meta">cites memorias by id</text>
+
+  <!-- ============== STORAGE ============== -->
+  <text x="40" y="540" class="section">storage</text>
+  <rect x="40" y="550" width="200" height="135" class="group-rect"/>
+
+  <rect x="55" y="560" width="170" height="55" class="box box-store"/>
+  <text x="140" y="582" class="label" font-size="13">.md files (vault)</text>
+  <text x="140" y="600" class="meta">source of truth</text>
+  <text x="140" y="613" class="meta">human-editable · sync-friendly</text>
+
+  <rect x="55" y="625" width="170" height="55" class="box"/>
+  <text x="140" y="647" class="label" font-size="13">sqlite-vec</text>
+  <text x="140" y="665" class="meta">memvec.db · single file</text>
+  <text x="140" y="678" class="meta">rebuildable index</text>
+
+  <!-- arrows from core down to storage -->
+  <line class="arrow" x1="300" y1="425" x2="240" y2="588"/>
+  <line class="arrow" x1="300" y1="425" x2="240" y2="650"/>
+
+  <!-- ============== Footer ============== -->
+  <text x="480" y="710" class="meta">No Ollama · No Qdrant · No cloud API · No keys — your prompt + memorias never leave the Mac</text>
+</svg>

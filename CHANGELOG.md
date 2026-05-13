@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-12
+
+Minor release — five "gamechanger" features land alongside a major
+repo-hygiene pass to make the project public-ready.
+
+### Added
+
+- **Project-scoped recall.** `memo save` now auto-attaches a
+  `project:<repo>` tag derived from the git toplevel of the caller's
+  cwd (or the `MEMO_PROJECT_TAG` env var). The recall hook reads `cwd`
+  from the Claude Code hook payload and additively boosts the score of
+  memorias that share the current project tag by
+  `MEMO_RECALL_PROJECT_BOOST` (default `0.15`). Opt out per-call with
+  `memo save --no-project-tag` or globally with
+  `MEMO_AUTO_PROJECT_TAG=0`. New module: `memo.project`.
+- **Token-budget-aware recall.** `MEMO_RECALL_TOKEN_BUDGET` (default
+  `0` = off) packs memorias greedily by score until the budget is
+  reached; the final memoria gets body-truncated to fit instead of
+  being dropped wholesale. Token estimate is `len(text)//4` — no
+  tiktoken dep.
+- **`memo mine-history`** — bulk-mine past Claude Code transcripts
+  under `~/.claude/projects/<hash>/*.jsonl` for insights, running the
+  same prefilter → helper-LLM extract → embedding-dedup pipeline as
+  the live capture hook. Resumable per-file via
+  `~/.local/share/memo/mine-history.json`. Flags:
+  `--path / --since / --limit / --dry-run / --debug / --json`.
+  New module: `memo.transcript_miner`.
+- **MCP resources** — `memo://recent` (top-20 by `updated` desc, with
+  per-memoria `memo://memory/<id>` links) and `memo://memory/{id}`
+  (full record, accepts prefix ≥4 chars). Clients can pin / drag
+  memorias into context without paying tool-call overhead per access.
+- **`memo watch`** — file-watcher daemon. Watches `cfg.memory_dir`
+  recursively via `watchdog`/FSEvents and triggers a debounced
+  `Memory.reindex()` (`--delay` configurable, default 2 s) when `.md`
+  files are modified. Bundled installer:
+  - `memo install-watcher` writes
+    `~/Library/LaunchAgents/com.memo.watch.plist`, loads it via
+    `launchctl bootstrap`, and verifies. Logs to
+    `~/Library/Logs/memo/`. `KeepAlive=true`.
+  - `memo uninstall-watcher` boots out the job and removes the plist.
+  New module: `memo.watcher`. New dep: `watchdog>=4.0`.
+
+### Changed
+
+- **README rewritten for a public audience.** Cleaner hero, expanded
+  alternatives matrix (mem0 / letta / cognee / supermemory / mem-vault
+  / MCP-memory reference / engram) with the seven differentiators
+  spelled out in plain terms, and an updated `docs/architecture.svg`
+  that covers clients → MCP/CLI → core → MLX → storage rather than
+  just the recall pipeline.
+- **`.gitignore` expanded** to cover `dist.v*/`, `.claude/`,
+  `.windsurf/`, `integrations/**/node_modules/`,
+  `integrations/**/dist/`, `integrations/**/.paperclip-sdk/`, and
+  common IDE dirs.
+- **Test fixture default** now sets `MEMO_AUTO_PROJECT_TAG=0` so tests
+  asserting exact tag sets aren't polluted by the cwd-derived
+  project tag. Tests exercising the auto-tag flow opt back in
+  explicitly via `monkeypatch.setenv`.
+
+### Removed
+
+- Stale `dist.v0.2.0/`, `dist.v0.3.0/`, `dist.v0.3.1/` build snapshots
+  and accumulated `.DS_Store` files from the repo. `dist/` was already
+  gitignored; the dated variants weren't.
+
 ## [0.3.3] - 2026-05-08
 
 Patch release — install-from-git fixes surfaced while validating the

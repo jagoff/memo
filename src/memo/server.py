@@ -1783,6 +1783,56 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         suggestions = memory.cognitive.get_proactive_suggestions(search_func, limit=limit)
         return [s.__dict__ for s in suggestions]
 
+    # -- resources --------------------------------------------------------------
+    #
+    # Resources let MCP clients (Claude Desktop, Cursor, …) pin/list
+    # memorias without paying a tool-call round-trip per access. Each
+    # memoria is addressable as `memo://memory/<id>` and the recent
+    # feed is at `memo://recent`. Clients show resources in their UI;
+    # users can drag them into context.
+
+    @server.resource("memo://recent")
+    def _resource_recent() -> str:
+        """Most-recent memorias (top 20 by `updated` desc), formatted as
+        a markdown index with `memo://memory/<id>` links. Refreshes on
+        every read."""
+        recs = memory.list(limit=20)
+        if not recs:
+            return "# memo · recent\n\n_(no memorias yet)_\n"
+        out = ["# memo · recent", ""]
+        for r in recs:
+            tags = ", ".join(r.tags) if r.tags else ""
+            out.append(
+                f"- **[{r.id[:8]}]** [{r.title}](memo://memory/{r.id}) "
+                f"_{r.type}_{(' · ' + tags) if tags else ''}",
+            )
+        return "\n".join(out) + "\n"
+
+    @server.resource("memo://memory/{id}")
+    def _resource_memory(id: str) -> str:
+        """Single memoria by id (full prefix or any unique ≥4 char
+        prefix). Returned as markdown with the frontmatter inlined as a
+        header so the client renders cleanly."""
+        try:
+            rec = memory.get(id)
+        except AmbiguousIdError as exc:
+            return (
+                f"# Ambiguous id `{id}`\n\nMatches:\n\n"
+                + "\n".join(f"- `{m}`" for m in exc.matches)
+            )
+        if rec is None:
+            return f"# Not found\n\nNo memoria for id `{id}`.\n"
+        tags = ", ".join(rec.tags) if rec.tags else "—"
+        return (
+            f"# {rec.title}\n\n"
+            f"- **id:** `{rec.id}`\n"
+            f"- **type:** {rec.type}\n"
+            f"- **tags:** {tags}\n"
+            f"- **created:** {rec.created}\n"
+            f"- **updated:** {rec.updated}\n\n"
+            f"---\n\n{rec.body or ''}"
+        )
+
     return server
 
 

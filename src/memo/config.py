@@ -1,9 +1,23 @@
-"""Configuration — env-var-driven, immutable, validated.
+"""Configuration — env-var-driven, file-driven, immutable.
 
-All paths are absolute after construction (resolves `~`, normalises
-trailing slashes). Pydantic v2 used for type coercion + boundary
-validation; runtime code passes `Config` around as an opaque value
-object.
+Resolution precedence (highest first) for storage paths:
+
+1. Explicit kwargs to `Config(...)` / `Config.from_env(...)`.
+2. `MEMO_*` env vars (e.g. `MEMO_DATA_DIR`, `MEMO_VAULT_PATH`).
+3. `~/.config/memo/config.toml` `[storage]` section (written by `memo init`).
+4. Legacy back-compat: if `MEMO_VAULT_PATH` + `MEMO_MEMORY_SUBDIR` are set
+   but `MEMO_DATA_DIR` is not, derive `data_dir = vault_path / memory_subdir`
+   so existing installs keep working before they migrate.
+5. Hardcoded default: `~/Documents/memo/` for `data_dir`; `vault_path` unset.
+
+`data_dir` and `vault_path` serve **different** roles:
+
+- `data_dir` (always set): the directory where memo's curated memorias
+  (the `.md` files this tool creates) live. Source of record.
+- `vault_path` (optional): an Obsidian vault for the cross-vault
+  `memo ingest` command. Non-Obsidian users leave it unset.
+
+Pydantic v2 used for type coercion + boundary validation.
 """
 
 from __future__ import annotations
@@ -13,24 +27,15 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
-# Default vault path matches the obsidian-rag convention. Override via
-# `MEMO_VAULT_PATH`.
-_DEFAULT_VAULT = (
-    Path.home()
-    / "Library"
-    / "Mobile Documents"
-    / "iCloud~md~obsidian"
-    / "Documents"
-    / "Notes"
-)
+# Default `data_dir` — visible in Finder, iCloud-syncable. The picker
+# in `memo init` lets users pick a different location (Obsidian vault,
+# custom path) on first run.
+_DEFAULT_DATA_DIR = Path.home() / "Documents" / "memo"
 
-# Memory artefacts live under the system-wide `99-AI/memory/` umbrella so
-# Obsidian doesn't surface them in normal search and the user's PARA
-# folders stay clean. Same convention as obsidian-rag's mem-vault.
-DEFAULT_MEMORY_SUBDIR = "99-obsidian/99-AI/memory"
-
-# Default state dir mirrors obsidian-rag — keep both projects co-located
-# under a single `obsidian-*` namespace in `~/.local/share/`.
+# Default state dir — sqlite indexes + transient state. Separate from
+# `data_dir` because: (a) state is rebuildable from `.md` files via
+# `memo reindex`; (b) XDG-style location signals "managed cache" so
+# users don't accidentally back it up alongside their notes.
 _DEFAULT_STATE_DIR = Path.home() / ".local" / "share" / "memo"
 
 
@@ -44,13 +49,30 @@ class Config(BaseModel):
     model_config = {"frozen": True, "arbitrary_types_allowed": True}
 
     # ── Storage ──────────────────────────────────────────────────────────
-    vault_path: Path = Field(
-        default=_DEFAULT_VAULT,
-        description="Root of the Obsidian vault. All `MemoryRecord.path` are vault-relative.",
+    data_dir: Path = Field(
+        default=_DEFAULT_DATA_DIR,
+        description=(
+            "Directory where memo's curated memoria `.md` files live. "
+            "Source of record. Defaults to `~/Documents/memo/`. "
+            "Override via `MEMO_DATA_DIR` or `~/.config/memo/config.toml`."
+        ),
+    )
+    vault_path: Path | None = Field(
+        default=None,
+        description=(
+            "Optional Obsidian vault root, used ONLY by `memo ingest` for "
+            "cross-vault corpus indexing. Non-Obsidian users leave this unset. "
+            "Set via `MEMO_VAULT_PATH` or by picking an Obsidian vault in "
+            "`memo init`."
+        ),
     )
     memory_subdir: str = Field(
-        default=DEFAULT_MEMORY_SUBDIR,
-        description="Path within the vault (POSIX-style) where memory `.md` files live.",
+        default="",
+        description=(
+            "DEPRECATED. Kept for legacy back-compat: if both `MEMO_VAULT_PATH` "
+            "and `MEMO_MEMORY_SUBDIR` are set, `data_dir` is derived from "
+            "`vault_path / memory_subdir`. New installs use `data_dir` directly."
+        ),
     )
     state_dir: Path = Field(
         default=_DEFAULT_STATE_DIR,
@@ -147,7 +169,7 @@ class Config(BaseModel):
 
     # ── Pydantic validators ──────────────────────────────────────────────
 
-    @field_validator("vault_path", "state_dir", mode="before")
+    @field_validator("data_dir", "state_dir", "vault_path", mode="before")
     @classmethod
     def _expand(cls, v):
         if v is None:
@@ -158,8 +180,12 @@ class Config(BaseModel):
 
     @property
     def memory_dir(self) -> Path:
-        """Absolute path of the memory folder inside the vault."""
-        return self.vault_path / self.memory_subdir
+        """Absolute path of the directory holding memoria `.md` files.
+
+        Always equal to `data_dir`. The property exists so callers don't
+        need to track which field is authoritative as the schema evolves.
+        """
+        return self.data_dir
 
     @property
     def db_path(self) -> Path:
@@ -176,12 +202,39 @@ class Config(BaseModel):
         """Knowledge-graph DB (entities + entity_memoria edges)."""
         return self.state_dir / "graph.db"
 
+    @property
+    def crossref_db(self) -> Path:
+        """Cross-reference DB (wikilinks + backlinks)."""
+        return self.state_dir / "crossref.db"
+
     # ── Construction ─────────────────────────────────────────────────────
 
     @classmethod
     def from_env(cls, **overrides) -> Config:
-        """Build a `Config` from `MEMO_*` env vars, with optional explicit overrides."""
+        """Build a `Config` from env vars + config file, with optional kwargs.
+
+        Resolution order (highest first):
+          1. Explicit kwargs.
+          2. `MEMO_*` env vars.
+          3. `~/.config/memo/config.toml` `[storage]` section.
+          4. Legacy back-compat for `data_dir` (see module docstring).
+          5. Hardcoded defaults.
+        """
+        # Step 1: gather TOML config file values (lowest priority of the
+        # three explicit sources).
+        from memo.setup.config_io import load_config_file
+        file_data = load_config_file() or {}
+        storage = file_data.get("storage") or {} if isinstance(file_data, dict) else {}
+
+        kwargs: dict = {}
+        # File-level fields. Only keys we recognise; ignore unknown for forward-compat.
+        for fkey in ("data_dir", "vault_path", "memory_subdir", "state_dir"):
+            if storage.get(fkey):
+                kwargs[fkey] = storage[fkey]
+
+        # Step 2: env-var overrides.
         env_to_field = {
+            "MEMO_DATA_DIR": "data_dir",
             "MEMO_VAULT_PATH": "vault_path",
             "MEMO_MEMORY_SUBDIR": "memory_subdir",
             "MEMO_STATE_DIR": "state_dir",
@@ -196,21 +249,31 @@ class Config(BaseModel):
             "MEMO_RERANK_INPUT_K": "rerank_input_k",
             "MEMO_RERANK_FUSION_ALPHA": "rerank_fusion_alpha",
         }
-        kwargs: dict = {}
         for env_key, field in env_to_field.items():
             val = os.environ.get(env_key)
             if val is None or val == "":
                 continue
             kwargs[field] = val
+
+        # Step 3: legacy back-compat — if data_dir is still unset BUT the
+        # legacy pair (vault_path + memory_subdir) is set, derive it.
+        # This keeps pre-`memo init` installs working unchanged.
+        if "data_dir" not in kwargs:
+            vp = kwargs.get("vault_path")
+            sd = kwargs.get("memory_subdir")
+            if vp and sd:
+                kwargs["data_dir"] = str(Path(vp).expanduser() / sd)
+
+        # Step 4: explicit overrides win over everything.
         kwargs.update(overrides)
         return cls(**kwargs)
 
     def ensure_dirs(self) -> None:
-        """Create state + memory dirs if missing. Vault root must already exist."""
-        if not self.vault_path.is_dir():
-            raise RuntimeError(
-                f"Vault path does not exist: {self.vault_path}. "
-                f"Set MEMO_VAULT_PATH or pass `vault_path=...`."
-            )
+        """Create state + data dirs if missing.
+
+        Does NOT validate `vault_path` — that's only used by `memo ingest`
+        and the ingest command does its own check. Non-Obsidian users
+        never need a `vault_path`.
+        """
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,238 @@
+"""Historical transcript miner — backfill memorias from past Claude Code
+conversations.
+
+`capture.py` only fires on the current Stop hook so it sees the active
+turn. Months of historical transcripts live in `~/.claude/projects/<hash>/*.jsonl`
+and never become memorias. This module walks them, runs the same
+prefilter → extract → dedup pipeline as `capture.run_capture`, and saves
+survivors.
+
+State file `~/.local/share/memo/mine-history.json` records how many
+lines of each transcript have already been processed so re-running is
+incremental.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+from memo.capture import (
+    _extract_text,
+    _hash_assistant,
+    _passes_prefilter,
+    extract_insights,
+    is_near_duplicate,
+)
+
+
+def _state_file(state_dir: Path) -> Path:
+    return state_dir / "mine-history.json"
+
+
+def _load_state(state_dir: Path) -> dict[str, Any]:
+    f = _state_file(state_dir)
+    if not f.is_file():
+        return {}
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_state(state_dir: Path, state: dict[str, Any]) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    _state_file(state_dir).write_text(json.dumps(state), encoding="utf-8")
+
+
+def find_transcripts(
+    root: Path, *, since_days: int | None = None,
+) -> list[Path]:
+    """Return all `.jsonl` files under `root`, newest first.
+
+    `since_days` filters to files modified in the last N days.
+    """
+    if not root.exists():
+        return []
+    files = list(root.rglob("*.jsonl"))
+    if since_days is not None and since_days > 0:
+        cutoff = time.time() - (since_days * 86400)
+        files = [f for f in files if f.stat().st_mtime >= cutoff]
+    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    return files
+
+
+def iter_exchanges(transcript_path: Path) -> Iterator[tuple[str, str]]:
+    """Yield (user_text, assistant_text) pairs from a transcript.
+
+    Walks forward. When a user msg is followed by one or more assistant
+    msgs (possibly interleaved with tool_use/tool_result blocks), all
+    assistant text is concatenated into a single "response" for that
+    user turn.
+    """
+    if not transcript_path.is_file():
+        return
+    try:
+        lines = transcript_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return
+
+    pending_user: str | None = None
+    pending_assist: list[str] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        role = obj.get("type") or obj.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        msg = obj.get("message", obj)
+        content = msg.get("content") if isinstance(msg, dict) else None
+        text = _extract_text(content)
+        if not text:
+            continue
+        if role == "user":
+            # New user turn — flush any pending assistant response tied
+            # to the previous user msg.
+            if pending_user is not None and pending_assist:
+                yield (pending_user, "\n\n".join(pending_assist))
+            pending_user = text
+            pending_assist = []
+        else:  # assistant
+            if pending_user is None:
+                # Assistant message with no prior user msg in this file —
+                # rare (system-initiated session?). Skip.
+                continue
+            pending_assist.append(text)
+    # Tail flush
+    if pending_user is not None and pending_assist:
+        yield (pending_user, "\n\n".join(pending_assist))
+
+
+def mine_transcripts(
+    root: Path | None = None,
+    *,
+    since_days: int | None = None,
+    file_limit: int | None = None,
+    dry_run: bool = False,
+    debug: bool = False,
+    progress_cb: Any = None,
+) -> dict[str, Any]:
+    """Walk transcripts, extract insights, dedup, save.
+
+    `root` defaults to `~/.claude/projects/`. `progress_cb` is an
+    optional callable invoked as `(file_idx, total, path)` per file —
+    used by the CLI to drive a Rich progress bar.
+
+    Returns a result summary: counts of candidates, saves, dedups,
+    skipped files (already at last-processed line).
+    """
+    from memo.config import Config
+    from memo.memory import Memory
+
+    cfg = Config.from_env()
+    state = _load_state(cfg.state_dir)
+    root = root or Path.home() / ".claude" / "projects"
+
+    files = find_transcripts(root, since_days=since_days)
+    if file_limit is not None and file_limit > 0:
+        files = files[:file_limit]
+
+    if not files:
+        return {"status": "no_files", "root": str(root), "files": 0}
+
+    mem = Memory(cfg)
+    if mem._chat is None:  # type: ignore[attr-defined]
+        from memo.llm import MLXChat
+        mem._chat = MLXChat()  # type: ignore[attr-defined]
+
+    total_candidates = 0
+    total_saved: list[str] = []
+    total_dup = 0
+    files_processed = 0
+    files_skipped = 0
+    turn_hashes: set[str] = set()  # in-run dedup of identical assistant turns
+
+    import contextlib
+
+    for idx, f in enumerate(files):
+        if progress_cb is not None:
+            with contextlib.suppress(Exception):
+                progress_cb(idx, len(files), f)
+
+        key = str(f)
+        prev_count = state.get(key, {}).get("lines_processed", 0)
+        try:
+            line_count = sum(1 for _ in f.open(encoding="utf-8"))
+        except Exception:
+            line_count = 0
+        if line_count <= prev_count:
+            files_skipped += 1
+            continue
+
+        for user_text, assist_text in iter_exchanges(f):
+            if not _passes_prefilter(assist_text):
+                continue
+            h = _hash_assistant(assist_text)
+            if h in turn_hashes:
+                continue
+            turn_hashes.add(h)
+
+            insights = extract_insights(
+                mem._chat,  # type: ignore[attr-defined]
+                cfg.helper_model,
+                user_text,
+                assist_text,
+            )
+            total_candidates += len(insights)
+            if debug and insights:
+                print(
+                    f"# mine-history: {f.name} → {len(insights)} candidate(s)",
+                    file=sys.stderr,
+                )
+
+            for cand in insights:
+                if is_near_duplicate(mem, cand):
+                    total_dup += 1
+                    continue
+                if dry_run:
+                    total_saved.append("<dry-run>")
+                    continue
+                try:
+                    rec = mem.save(
+                        content=cand["body"], title=cand["title"],
+                        type_=cand["type"], tags=cand["tags"],
+                        auto_project=False,  # historical: project context unreliable
+                    )
+                    total_saved.append(rec.id)
+                except Exception as exc:
+                    if debug:
+                        print(f"# mine-history: save failed: {exc}", file=sys.stderr)
+
+        if not dry_run:
+            state[key] = {
+                "lines_processed": line_count,
+                "mtime": f.stat().st_mtime,
+            }
+            _save_state(cfg.state_dir, state)
+        files_processed += 1
+
+    return {
+        "status": "ok",
+        "root": str(root),
+        "files_total": len(files),
+        "files_processed": files_processed,
+        "files_skipped": files_skipped,
+        "candidates": total_candidates,
+        "saved": total_saved,
+        "skipped_dup": total_dup,
+        "dry_run": dry_run,
+    }

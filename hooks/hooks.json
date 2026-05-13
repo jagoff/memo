@@ -1,5 +1,5 @@
 {
-  "description": "memo ambient memory hooks — proactive recall on every UserPromptSubmit, passive auto-capture on Stop, prewarm on SessionStart for fast cold-load.",
+  "description": "memo ambient memory hooks — proactive recall on every UserPromptSubmit, passive auto-capture on Stop, prewarm on SessionStart for fast cold-load, session snapshots so closed/crashed sessions can be resumed. Every command is prefixed with MEMO_NONINTERACTIVE=1 so the first-run picker never fires inside a hook (the picker would block waiting for stdin and exhaust the hook's timeout).",
   "hooks": {
     "SessionStart": [
       {
@@ -7,10 +7,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "memo prewarm",
+            "command": "MEMO_NONINTERACTIVE=1 memo prewarm",
             "timeout": 30,
             "async": true,
             "statusMessage": "memo: warming MLX models…"
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session recent --limit 5",
+            "timeout": 3
           }
         ]
       }
@@ -20,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "memo recall-hook",
+            "command": "MEMO_NONINTERACTIVE=1 memo recall-hook",
             "timeout": 5
           }
         ]
@@ -31,8 +41,14 @@
         "hooks": [
           {
             "type": "command",
-            "command": "memo capture-stop",
+            "command": "MEMO_NONINTERACTIVE=1 memo capture-stop",
             "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session checkpoint",
+            "timeout": 5,
             "async": true
           }
         ]

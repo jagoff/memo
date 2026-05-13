@@ -2,7 +2,7 @@
 # Distribution name on PyPI is `memo-mcp` because `memo` (v0.2.4) is taken
 # by an unrelated package. The Python module / CLI / repo all stay `memo`.
 name = "memo-mcp"
-version = "0.3.3"
+version = "0.4.0"
 description = "Local MCP memory backed by Obsidian vault — MLX-native LLM + embedder, sqlite-vec store. No Ollama, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -24,6 +24,11 @@ dependencies = [
     "sqlite-vec>=0.1.6",
     "fastmcp>=0.5",
     "python-frontmatter>=1.1",
+    # First-run interactive picker (pure Python; cross-platform).
+    "questionary>=2.0",
+    "tomli-w>=1.0",
+    # File-watcher (FSEvents on macOS). Used by `memo watch`.
+    "watchdog>=4.0",
     # MLX runtime — Apple Silicon only.
     "mlx>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
