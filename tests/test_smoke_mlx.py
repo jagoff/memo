@@ -86,7 +86,7 @@ def test_reindex_after_external_edit_picks_up_via_real_embedder(tmp_cfg: Config)
 
     mem = Memory(tmp_cfg)
     rec = mem.save(content="contenido inicial sobre fútbol argentino", title="X")
-    md_path = tmp_cfg.vault_path / rec.path
+    md_path = tmp_cfg.memory_dir / rec.path
 
     post = fm.loads(md_path.read_text())
     post.content = "contenido reemplazado: ahora habla de café de especialidad"

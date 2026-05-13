@@ -1,90 +1,85 @@
+<div align="center">
+
 # memo
 
-> Local MCP memory backed by an Obsidian vault. **MLX-native** stack — zero Ollama, zero cloud APIs.
+**Persistent semantic memory for AI agents — 100% local, MLX-native, Apple Silicon.**
 
 [![PyPI](https://img.shields.io/pypi/v/memo-mcp.svg)](https://pypi.org/project/memo-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/memo-mcp.svg)](https://pypi.org/project/memo-mcp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
 
-`memo` is persistent semantic memory for AI agents, designed for Apple Silicon
-Macs. It exposes a [Model Context Protocol](https://modelcontextprotocol.io)
-server so any MCP-aware client (Claude Code, Claude Desktop, Cursor, Cline,
-Continue, …) can `save` / `search` / `list` / `update` / `delete` memories,
-and a CLI for the same operations from a shell.
+</div>
 
-It runs the LLM + embedder **in-process** via [Apple MLX](https://github.com/ml-explore/mlx),
-indexes embeddings in [`sqlite-vec`](https://github.com/asg017/sqlite-vec) (single
-file, no daemon), and stores each memory as a markdown file with frontmatter
-inside an Obsidian vault — so the storage of record is human-editable and
-syncs through whatever you already use to sync notes (iCloud / git / Syncthing).
+`memo` gives any MCP-aware agent (Claude Code, Claude Desktop, Cursor, Cline, Continue, Paperclip, …) a long-term memory that **runs entirely on your Mac**. It stores each memory as a plain Markdown file inside an Obsidian-friendly folder, indexes embeddings in a single sqlite file, and runs the LLM + embedder + reranker **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys.
 
-**No Ollama. No Qdrant. No cloud API. No keys.**
+> Your prompts and memorias never leave the machine.
 
-## Why memo (vs the alternatives)
+---
 
-| | **memo** | [`mem-vault`](https://github.com/jagoff/mem-vault) | [`mem0`](https://github.com/mem0ai/mem0) | [engram](https://github.com/perrygeo/engram) |
-|---|---|---|---|---|
-| Runtime | MLX (in-process) | Ollama daemon | Cloud or Ollama | SQLite |
-| Vector store | sqlite-vec (file) | Qdrant (server) | Qdrant / pgvector | SQLite |
-| External daemons | none | Ollama + Qdrant | Ollama + Qdrant | none |
-| Network calls | **0** (offline) | localhost:11434 + :6333 | localhost or HTTPS | 0 |
-| Storage | markdown files | markdown files | DB only | DB only |
-| Apple Silicon | ✅ first-class | works | works | works |
-| MCP server | ✅ stdio | ✅ stdio (unregistered) | ❌ | ✅ stdio |
-| Repo | this | [jagoff/mem-vault](https://github.com/jagoff/mem-vault) | [mem0ai/mem0](https://github.com/mem0ai/mem0) | [perrygeo/engram](https://github.com/perrygeo/engram) |
+## What it does
 
-Trade-off: `memo` is intentionally smaller-surface than `mem0`. It does not
-ship hybrid retrieval / reflection / consolidation **out of the box** — those
-are post-v0 (see [Status](#status)).
+- **Saves what your agent decides, learns, prefers** as durable Markdown files (`type`, `tags`, `title`, body).
+- **Recalls** the most relevant memorias when you ask — semantic (vec), keyword (BM25), or hybrid w/ cross-encoder rerank.
+- **Injects context automatically**: with the optional Claude Code plugin, every prompt silently consults memory; the agent sees the top-3 memorias *before* answering.
+- **Speaks MCP** over stdio so any compliant client picks it up with one line of config.
+- **Speaks shell** too: the same API ships as a `memo` CLI with ~25 commands.
+
+## Why memo
+
+| Pain | What memo gives you |
+|---|---|
+| Cloud memory products see your private notes | **Zero network in the hot path.** Models run in-process. |
+| Ollama / Qdrant / docker daemons just to remember things | **One Python install.** sqlite-vec is one file; MLX is in-process. |
+| DB-only stores lock your knowledge inside an opaque blob | **Markdown is the source of truth.** Edit in Obsidian, vim, anything. |
+| Cold-start latencies of 2-10s per recall | **MLX prewarm hook** → sub-second recalls after session start. |
+| Hand-crafted `/remember` invocations every turn | **Ambient recall**: top-3 hits auto-injected into every prompt. |
+| Vendor lock | **MIT package, open stack** (sqlite-vec Apache 2.0, MLX MIT, Qwen Apache 2.0). |
+
+## How it fits in your stack
+
+![memo architecture](docs/architecture.svg)
+
+Three layers, one direction of data flow:
+
+1. **Clients** (Claude Code, Cursor, …) talk to memo over **MCP stdio** — or you talk to it directly via the **`memo` CLI**.
+2. The **Memory API** runs save / search / rerank / ask against the **MLX models in-process**: embedder for semantic, optional reranker for precision, chat (Qwen2.5-7B) for `ask()`.
+3. The **`.md` vault** is the storage of record; **`sqlite-vec`** is a rebuildable index. Delete the index any time — `memo reindex` rebuilds from the `.md` files.
+
+With the Claude Code plugin installed, two extra hooks plug in:
+
+- `SessionStart` → `memo prewarm` (warms MLX so the first recall is fast)
+- `UserPromptSubmit` → `memo recall-hook` (5s budget, injects top-3 memorias as `additionalContext`)
 
 ## Stack
 
-| Component | What |
-|---|---|
-| LLM | [`mlx-lm`](https://github.com/ml-explore/mlx-lm) loading [`Qwen2.5-7B-Instruct-4bit`](https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit) (chat) + [`Qwen2.5-3B-Instruct-4bit`](https://huggingface.co/mlx-community/Qwen2.5-3B-Instruct-4bit) (helper) |
-| Embedder | [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) — 1024-dim L2-normalised, last-token pooling |
-| Vector store | [`sqlite-vec`](https://github.com/asg017/sqlite-vec) — single file, no daemon, embedded |
-| Storage of record | Markdown files under `<vault>/04-Archive/99-obsidian-system/99-AI/memory/` |
-| MCP transport | [`fastmcp`](https://github.com/jlowin/fastmcp) |
-
-## Why a from-scratch replacement (not a fork of mem-vault)
-
-`mem-vault` is built on [`mem0`](https://github.com/mem0ai/mem0), which assumes Ollama or a cloud
-LLM provider as its backend. Custom-providering MLX into mem0 requires deep familiarity with
-`mem0.LlmBase` plus shipping a fork of mem0 alongside. Cleaner to own the memory layer
-ourselves with the contract we actually use (save / search / list / get / update / delete) and
-the storage format we already standardised on (markdown + frontmatter under
-`99-AI/memory/`).
-
-The trade-off: we lose mem0's built-in consolidation / hybrid retrieval / reflection
-features. v0 of `memo` is intentionally smaller-surface; we add features back as their
-need is proven.
+| Component | Choice | Why |
+|---|---|---|
+| LLM (chat) | [`Qwen2.5-7B-Instruct-4bit`](https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit) + [`3B helper`](https://huggingface.co/mlx-community/Qwen2.5-3B-Instruct-4bit) via [`mlx-lm`](https://github.com/ml-explore/mlx-lm) | Two-tier; 7B for `ask()` synthesis, 3B for cheap helpers. Both 4-bit fit comfortably. |
+| Embedder | [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) | 1024-dim, ~50ms/embed, ~600 MB on disk. Upgrade path to 4B/8B is one env var. |
+| Reranker | [`Qwen3-Reranker-0.6B`](https://huggingface.co/mlx-community/Qwen3-Reranker-0.6B) (optional) | Cross-encoder over top-30 from vec+BM25, then α-fusion. Bumps precision on diffuse queries. |
+| Vector store | [`sqlite-vec`](https://github.com/asg017/sqlite-vec) | One file, no daemon, embedded. Reset = `rm memvec.db`. |
+| Source of truth | Markdown files under `<vault>/...` with YAML frontmatter | Human-editable, syncs through iCloud/git/Syncthing/whatever. |
+| MCP transport | [`fastmcp`](https://github.com/jlowin/fastmcp) | Stdio out of the box. |
 
 ## Requirements
 
-- macOS on Apple Silicon (M1 / M2 / M3 / M4). MLX is the load-bearing piece.
-- Python ≥ 3.13.
-- ~4 GB free disk for the default model set (downloaded on first use).
-- Optional: an Obsidian vault. If you don't have one, memo defaults to
-  `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes` and creates
-  the memory subdirectory if it doesn't exist.
+- **macOS on Apple Silicon** (M1 / M2 / M3 / M4). MLX is the load-bearing piece.
+- **Python ≥ 3.13**.
+- **~4 GB** free disk for the default model set (downloaded on first use).
+- *Optional:* an Obsidian vault. If you don't have one, memo defaults to `~/Documents/memo/` and creates the folder for you.
 
 ## Install
 
 ```bash
 pip install memo-mcp
-```
-
-Or, if you prefer [`uv`](https://github.com/astral-sh/uv):
-
-```bash
+# or
 uv tool install memo-mcp
 ```
 
-Both expose two commands on your PATH: `memo` (CLI) and `memo-mcp` (MCP server stdio).
+Both expose two binaries: `memo` (CLI) and `memo-mcp` (MCP server).
 
-Pre-download the MLX models so the first save/search doesn't stall on a
-multi-GB download:
+Pre-download the MLX models so the first save/search doesn't stall on a multi-GB download:
 
 ```bash
 hf download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
@@ -120,23 +115,6 @@ memo list --limit 5
 memo ask 'qué cambios hice en el embedder este mes?'
 ```
 
-## CLI
-
-```bash
-memo doctor                       # self-check
-memo doctor --gc                  # report orphans (store ↔ disk)
-memo doctor --gc --fix            # drop orphan store rows (.md never auto-deleted)
-memo save 'body markdown' --title 'X' -t mlx -t local
-memo search 'query' --limit 5
-memo list --limit 20 --type decision
-memo get <id>
-memo update <id> --title 'X2' -t mlx -t local --type decision
-memo update <id> --content -      # read replacement body from stdin
-memo reindex                      # absorb edits made directly in Obsidian
-memo delete <id> --yes
-memo stats
-```
-
 ## MCP setup
 
 After `pip install memo-mcp`, register the MCP with your client.
@@ -162,8 +140,7 @@ Or hand-edit `~/.claude.json`:
 }
 ```
 
-Replace `/path/to/memo-mcp` with the output of `which memo-mcp`. Restart
-Claude Code. Tools surface as `mcp__memo__memory_*` inside the agent.
+Restart Claude Code. Tools surface as `mcp__memo__memory_*` inside the agent.
 
 ### Claude Desktop
 
@@ -172,49 +149,46 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```jsonc
 {
   "mcpServers": {
-    "memo": {
-      "command": "/path/to/memo-mcp"
-    }
+    "memo": { "command": "/path/to/memo-mcp" }
   }
 }
 ```
 
 ### Cursor / Cline / Continue
 
-Each client has its own MCP config UI but the contract is the same:
-register a stdio server pointing at the `memo-mcp` binary.
+Each client has its own MCP config UI but the contract is the same: register a stdio server pointing at the `memo-mcp` binary.
 
-Tools exposed:
+### Paperclip
 
-- `memory_save(content, title?, type?, tags?)` → returns full record
-- `memory_search(query, limit?, type?, body_chars=280, mode="hybrid")` → top-k search. `mode="hybrid"` (default) fuses vec + bm25 via reciprocal rank fusion. `mode="vec"` is semantic only, `mode="bm25"` is keyword only (FTS5 over title + tags + body, unicode61 + diacritic-stripping for Spanish). `body` truncated to `body_chars`; pass a large number to disable.
-- `memory_list(limit?, type?)` → recent by `updated` desc
-- `memory_get(id)` → one full record. `id` accepts a unique prefix ≥4 chars; on ambiguity returns `{"error": "ambiguous", "matches": [...]}`.
-- `memory_update(id, title?, type?, tags?, content?)` → patches fields, re-embeds only if body changed. Same prefix-ID + ambiguous-shape semantics as `memory_get`.
-- `memory_reindex()` → re-scan vault, re-embed entries whose on-disk body diverged from the indexed `body_hash`
-- `memory_delete(id)` → removes from vec + disk. Same prefix-ID semantics.
-- `memory_stats()` → counts + paths + active models
+A first-party plugin under [`integrations/paperclip-plugin-memo/`](./integrations/paperclip-plugin-memo) exposes five tools (`memo_search`, `memo_save`, `memo_list`, `memo_get`, `memo_ask`) to any agent running in a Paperclip company.
+
+## Tools exposed over MCP
+
+| Tool | What it does |
+|---|---|
+| `memory_save(content, title?, type?, tags?)` | Persist a new memory; returns the full record. |
+| `memory_search(query, limit?, type?, body_chars=280, mode="hybrid")` | Top-k. `hybrid` (default) fuses vec + bm25 via RRF, then optionally re-ranks. `vec` is semantic only; `bm25` is keyword (FTS5 unicode61, diacritic-stripping for Spanish). |
+| `memory_list(limit?, type?)` | Recent by `updated` desc. |
+| `memory_get(id)` | Full record. Accepts a unique prefix ≥4 chars (git-style); returns `{"error": "ambiguous", "matches": [...]}` on collision. |
+| `memory_update(id, title?, type?, tags?, content?)` | Patches fields; re-embeds only if body changed. |
+| `memory_reindex()` | Re-scan vault, re-embed entries whose `body_hash` diverged. |
+| `memory_delete(id)` | Removes from vec + disk. |
+| `memory_ask(question)` | RAG synthesis; cites memorias by id. |
+| `memory_stats()` | Counts, paths, active models. |
+| `memory_consolidate()`, `memory_extract_entities()`, `memory_entities()`, `memory_history()` | Post-v0 endpoints — see CHANGELOG. |
 
 ## Ambient memory (v0.3.0+) — recall without `/memo`
 
-Once installed via the [Claude Code plugin](#slash-command--memo-claude-code-only),
-memo silently consults your past on every prompt and injects the most
-relevant memorias as `additionalContext` — **the agent sees them before
-answering**, no `/memo` invocation needed from you.
+Install the bundled [Claude Code plugin](#slash-command--memo-claude-code-only) and memo silently consults your past on every prompt and injects the most relevant memorias as `additionalContext` — **the agent sees them before answering**, no manual invocation.
 
 ### How it works
 
-- `SessionStart` hook → `memo prewarm` (async) — pre-loads the MLX embedder
-  so the first recall is fast.
-- `UserPromptSubmit` hook → `memo recall-hook` (5s timeout) — embeds your
-  prompt, runs vec-only search, returns top-3 memorias above a cosine
-  similarity floor of 0.6.
+- `SessionStart` hook → `memo prewarm` (async) — pre-loads the MLX embedder so the first recall is fast.
+- `UserPromptSubmit` hook → `memo recall-hook` (5s timeout) — embeds your prompt, runs vec-only search, returns top-3 memorias above cosine 0.6.
 
-Both run 100% local on Apple Silicon. Your prompt never leaves the machine.
+Both run 100% local. Your prompt never leaves the machine.
 
 ### Tuning
-
-All optional, sensible defaults:
 
 | Env var | Default | Purpose |
 |---|---|---|
@@ -224,39 +198,27 @@ All optional, sensible defaults:
 | `MEMO_RECALL_MIN_PROMPT_CHARS` | `12` | Skip very short prompts |
 | `MEMO_RECALL_BODY_CHARS` | `240` | Snippet length per memoria |
 | `MEMO_RECALL_SKIP_SLASH` | `1` | Skip recall on `/` prompts |
+| `MEMO_RECALL_TOKEN_BUDGET` | `0` | When > 0, pack memorias greedily until ~N tokens; truncate tail to fit |
+| `MEMO_RECALL_PROJECT_BOOST` | `0.15` | Additive score boost for memorias whose tags match the current project tag |
 | `MEMO_RECALL_DEBUG` | unset | Print failure reasons to stderr |
 
 ### Empirical tuning of `MIN_SIM=0.6`
 
 On a 223-doc corpus:
-- `qué decidí sobre MLX vs Ollama` → 3 hits at 0.71-0.74 (relevant ✓)
-- `how to bake apple pie` (no food memorias) → 0 hits at 0.6 ✓
-  (3 noise hits at 0.51-0.56 cut by the floor)
+- `qué decidí sobre MLX vs Ollama` → 3 hits at 0.71–0.74 (relevant ✓)
+- `how to bake apple pie` (no food memorias) → 0 hits at 0.6 ✓ (3 noise hits at 0.51–0.56 cut by the floor)
 
-Tune lower (e.g. 0.5) if your corpus is sparse, higher (e.g. 0.7) if it's
-dense and you want only high-confidence matches.
-
-### What's NOT in 0.3.0 (Phase B, future)
-
-The save side — passive auto-extraction of memorias from your conversations
-without manual `/memo save` — is the natural next step. Not in 0.3.0
-because (a) recall side is the higher-value half (instant value to existing
-corpus) and (b) we want signal on whether ambient recall is helpful in real
-use before committing to the LLM-as-judge prompt tuning that save requires.
+Tune lower (0.5) on sparse corpora, higher (0.7) for high-precision only.
 
 ## Slash command — `/memo` (Claude Code only)
 
-A Claude Code [skill](https://docs.claude.com/en/docs/claude-code/skills) ships
-in this repo at `skills/memo/SKILL.md`. Copy or symlink it into
-`~/.claude/skills/memo/SKILL.md` and you get slash-command sugar over the MCP
-tools:
+A Claude Code [skill](https://docs.claude.com/en/docs/claude-code/skills) ships at `skills/memo/SKILL.md`. Symlink it:
 
 ```bash
 ln -s "$(pwd)/skills/memo/SKILL.md" ~/.claude/skills/memo/SKILL.md
 ```
 
-Or install everything (skill + MCP config) in one step via the bundled
-[Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins):
+Or install everything (skill + MCP config + hooks) in one shot via the bundled plugin:
 
 ```bash
 /plugin install memo@jagoff/memo
@@ -275,110 +237,231 @@ The skill routes user input to the right MCP tool:
 | `/memo delete <id\|prefix>` | delete (asks confirmation) |
 | `/memo stats` | totals + paths + models |
 | `/memo reindex` | absorb edits made directly in Obsidian |
-| `/memo doctor [--gc] [--fix]` | self-check + orphan detect (shell) |
+| `/memo doctor [--gc] [--fix]` | self-check + orphan detect |
+
+## CLI reference
+
+```bash
+memo doctor                       # self-check
+memo doctor --gc                  # report orphans (store ↔ disk)
+memo doctor --gc --fix            # drop orphan store rows (.md never auto-deleted)
+memo save 'body markdown' --title 'X' -t mlx -t local
+memo search 'query' --limit 5
+memo list --limit 20 --type decision
+memo get <id>
+memo update <id> --title 'X2' -t mlx -t local --type decision
+memo update <id> --content -      # read replacement body from stdin
+memo reindex                      # absorb edits made directly in Obsidian
+memo delete <id> --yes
+memo stats
+memo init                         # re-run first-run picker
+memo migrate-vault <new-path>     # move memorias to a different folder
+memo backup --out memo.zip        # backup .md files + index
+memo mine-history --since 30      # backfill memorias from past Claude Code chats
+memo watch                        # foreground file-watcher: auto-reindex on .md edit
+memo install-watcher              # background watcher via launchd plist
+memo uninstall-watcher            # remove the launchd watcher job
+```
+
+### Backfill from past Claude Code conversations
+
+`memo mine-history` walks `~/.claude/projects/<hash>/*.jsonl`, runs the
+same prefilter + helper-LLM extract + embedding-dedup pipeline as the
+live capture hook, and saves what's new. Resumable per file.
+
+```bash
+memo mine-history --since 30 --limit 20     # last 30 days, 20 newest sessions
+memo mine-history --dry-run --debug         # cost estimation, no writes
+```
+
+### Auto-reindex on edit
+
+Editing a memoria directly in Obsidian normally requires a manual
+`memo reindex` to refresh embeddings. `memo watch` (foreground) or
+`memo install-watcher` (background launchd job) debounces FS events
+and runs `Memory.reindex()` automatically. Logs land in
+`~/Library/Logs/memo/`.
+
+### Project-scoped recall
+
+`memo save` auto-attaches a `project:<repo>` tag derived from the git
+toplevel of your cwd (or `MEMO_PROJECT_TAG`). The recall hook reads
+`cwd` from the Claude Code hook payload and boosts memorias whose tags
+match the current project by `MEMO_RECALL_PROJECT_BOOST` (default
+`0.15`). Opt out per-call: `memo save --no-project-tag`. Disable
+globally: `MEMO_AUTO_PROJECT_TAG=0`.
+
+## First-run setup
+
+The first time you run any `memo` command in an interactive shell, an arrow-key picker asks where memorias should live:
+
+```
+? Where should memo store your memorias?
+❯ Standard macOS path: /Users/you/Documents/memo  (recommended)
+  Obsidian vault: Notes  (/Users/you/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes)
+  Obsidian vault: work-notes  (...)
+  Custom path…
+```
+
+The choice is persisted to `~/.config/memo/config.toml`:
+
+```toml
+[storage]
+data_dir = "/Users/you/Documents/memo"
+# Optional — set when you pick an Obsidian vault. Used by `memo ingest`
+# to bulk-index that vault's notes alongside your memorias.
+vault_path = "/Users/you/Library/.../Notes"
+```
+
+Re-run the picker any time with `memo init`. To move memorias to a different location later:
+
+```bash
+memo migrate-vault ~/Documents/memo  # copies .md files, updates config, reindexes
+```
+
+Hooks (recall, prewarm, capture, session) get `MEMO_NONINTERACTIVE=1` prefixed in [`hooks/hooks.json`](./hooks/hooks.json) so they never trigger the picker.
 
 ## Configuration
 
-All env vars are optional. Defaults aim at a fresh Apple Silicon Mac with Obsidian in the
-default iCloud location.
+All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 
 | Env var | Default | What |
 |---|---|---|
-| `MEMO_VAULT_PATH` | `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes` | Vault root |
-| `MEMO_MEMORY_SUBDIR` | `04-Archive/99-obsidian-system/99-AI/memory` | Where `.md` files land |
+| `MEMO_DATA_DIR` | `~/Documents/memo` | Where memoria `.md` files live |
+| `MEMO_VAULT_PATH` | `(unset)` | Optional Obsidian vault for `memo ingest` |
 | `MEMO_STATE_DIR` | `~/.local/share/memo` | sqlite-vec DB + state |
+| `MEMO_CONFIG_FILE` | `~/.config/memo/config.toml` | Override config-file path |
+| `MEMO_NONINTERACTIVE` | unset | Set to `1` in hooks to skip the first-run picker |
 | `MEMO_LLM_MODEL` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Chat tier |
 | `MEMO_HELPER_MODEL` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | Helper tier |
 | `MEMO_EMBEDDER_MODEL` | `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Embedder |
 | `MEMO_EMBEDDER_DIMS` | `1024` | Embedding dim — must match the embedder |
 | `MEMO_MAX_CONTENT_CHARS` | `64000` | Truncate body before embed |
 | `MEMO_SEARCH_DEFAULT_LIMIT` | `10` | Default `--limit` for search |
+| `MEMO_AUTO_PROJECT_TAG` | `1` | Auto-add `project:<repo>` tag from git toplevel on save. Set `0` to disable. |
+| `MEMO_PROJECT_TAG` | unset | Explicit project tag (overrides git-toplevel detection) |
 
-## Upgrading the embedder (recall vs cost)
+Resolution precedence (highest first): explicit kwargs → `MEMO_*` env vars → `~/.config/memo/config.toml` → legacy `MEMO_VAULT_PATH` + `MEMO_MEMORY_SUBDIR` (back-compat) → hardcoded defaults.
 
-The default [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) is fast (~50ms per embed) and small
-(~600MB on disk) but the 0.6B parameter count means recall on diffuse
-queries (where the doc title doesn't lexically overlap with the query)
-can be noisy. For the 200-2000 memorias range, swap to the 4B variant
-when the noise becomes a problem.
+## Upgrading the embedder
+
+The default 0.6B is fast (~50 ms/embed) and small (~600 MB) but recall on diffuse queries (where the doc title doesn't lexically overlap with the query) can be noisy. For the 200–2000 memorias range, swap to the 4B variant when the noise starts to bite.
 
 | Model | Dims | Disk | Recall | Per-embed |
 |---|---|---|---|---|
-| [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) (default) | 1024 | ~600 MB | OK | ~50 ms |
+| [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) *(default)* | 1024 | ~600 MB | OK | ~50 ms |
 | [`Qwen3-Embedding-4B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-4B-4bit-DWQ) | 2560 | ~3 GB | better | ~200 ms |
 | [`Qwen3-Embedding-8B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-8B-4bit-DWQ) | 4096 | ~5 GB | best | ~400 ms |
 
-**To upgrade** (example: 0.6B → 4B):
+To upgrade (example: 0.6B → 4B):
 
 ```bash
-# 1) Pre-download the new weights so the first embed doesn't stall.
+# 1) Pre-download.
 hf download mlx-community/Qwen3-Embedding-4B-4bit-DWQ
 
-# 2) Set the env vars (add to your shell rc for persistence).
+# 2) Point memo at it.
 export MEMO_EMBEDDER_MODEL=mlx-community/Qwen3-Embedding-4B-4bit-DWQ
 export MEMO_EMBEDDER_DIMS=2560
 
-# 3) Backup before the rebuild — re-embed is destructive of the old vectors.
+# 3) Backup before destructive re-embed.
 memo backup --out memo-pre-4b.zip
 
-# 4) Drop the index and re-embed the entire corpus.
+# 4) Wipe the index and rebuild.
 rm ~/.local/share/memo/memvec.db
-memo reindex     # re-runs the embedder over every .md
+memo reindex
 ```
 
-The dim mismatch is a hard error — `MEMO_EMBEDDER_DIMS` must match the
-new model's hidden size (1024 for 0.6B, 2560 for 4B, 4096 for 8B).
-`memo doctor` validates the dim at load time.
-
-The `body_hash` from the old store is irrelevant after `rm memvec.db`,
-so a plain `memo reindex` re-embeds everything. Without the rm, use
-`memo reindex --force` instead — same result.
+The dim mismatch is a hard error: `MEMO_EMBEDDER_DIMS` must match the new model's hidden size. `memo doctor` validates the dim at load.
 
 ## Design notes
 
-- **One sqlite file, no qdrant**. `sqlite-vec` outperforms a small qdrant snapshot for
-  the size of corpus memo targets (a few thousand entries, single-writer). Single-file
-  also makes reset trivial: `rm ~/.local/share/memo/memvec.db`.
-- **Embed `title + body` together**. Titles carry the highest-density retrieval signal
-  for memos with terse titles + long bodies. Prepending also protects the title from
-  head-truncation when the body is long. Pure retag/type changes still skip the embedder.
-- **`.md` is the storage of record**. The user can edit memories from Obsidian and the
-  next index pass picks them up via `body_hash` mismatch — `memo reindex` (or `--force`
-  to re-embed even when hash matches, e.g. after composition or model change).
-- **Head-truncate long inputs + append EOS**. The embedder caps at 512 tokens; we
-  head-truncate (preserves the title-like header) and explicitly append `<|im_end|>` so
-  Qwen3-Embedding's last-token pool lands on the EOS hidden state it was fine-tuned for.
-- **Asymmetric retrieval**. Queries get a `Instruct: ...\nQuery: ...` prefix; documents
-  go raw. Without the prefix, cosine collapses toward 0. See the comment in `embedder.py`
-  for the empirical verification.
-- **Cosine distance metric**. The vec0 schema declares `distance_metric=cosine` so
-  `vec.distance` is true cosine distance (1 - dot for unit vectors); `score = 1 - distance`
-  is interpretable in [0, 1].
-- **No Ollama dep, anywhere**. `pyproject.toml` does not declare `ollama`; the `doctor`
-  command does not probe `:11434`. Anyone running memo with Ollama installed is just
-  ignoring it.
+- **One sqlite file, no Qdrant.** `sqlite-vec` outperforms a small Qdrant snapshot for the size of corpus memo targets (a few thousand entries, single-writer). Single file makes reset trivial: `rm memvec.db`.
+- **Embed `title + body` together.** Titles carry the highest-density retrieval signal for memos with terse titles + long bodies. Prepending also protects the title from head-truncation when the body is long. Pure retag/type changes still skip the embedder.
+- **`.md` is the storage of record.** Edit memories in Obsidian; the next `memo reindex` picks them up via `body_hash` mismatch.
+- **Head-truncate long inputs + append EOS.** The embedder caps at 512 tokens; we head-truncate (preserves the title-like header) and explicitly append `<|im_end|>` so Qwen3-Embedding's last-token pool lands on the EOS hidden state it was fine-tuned for.
+- **Asymmetric retrieval.** Queries get a `Instruct: …\nQuery: …` prefix; documents go raw. Without the prefix, cosine collapses toward 0.
+- **Cosine distance metric.** The vec0 schema declares `distance_metric=cosine` so `vec.distance` is true cosine distance (1 − dot for unit vectors); `score = 1 − distance` is interpretable in [0, 1].
+- **No Ollama dep, anywhere.** `pyproject.toml` does not declare it; `doctor` does not probe `:11434`. Anyone running memo with Ollama installed is just ignoring it.
 
-## Status
+## How memo differs from other agent-memory projects
 
-v0 — ship-ready.
+A handful of projects sit in the same neighbourhood. They diverge on the things that actually matter day-to-day: where the model runs, where the data lives, how recall is wired, and whether you can read your own memory in plain text.
 
-- [x] Skeleton: config, MLX embedder, MLX chat, sqlite-vec store
-- [x] Memory API: save / search / list / get / **update** / **reindex** / delete / **gc**
-- [x] CLI: 9 commands (`save`, `search`, `list`, `get`, `update`, `reindex`, `delete`, `stats`, `doctor [--gc [--fix]]`)
-- [x] MCP server with 8 tools
-- [x] Stubbed unit tests (39, including MCP server snippet + ambiguous-prefix coverage) + real-MLX smoke (`tests/test_smoke_mlx.py`, 3 cases, gated by `requires_mlx`)
-- [x] Prefix-ID lookup (git-style, ≥4 chars) on `get` / `update` / `delete` for both CLI and MCP
-- [x] `/memo` skill — Claude Code slash command routing all verbs to the MCP
+### Side-by-side comparison
 
-Post-v0 (not blocking the v0 ship):
+| | **memo** | [`mem0`](https://github.com/mem0ai/mem0) | [`letta`](https://github.com/letta-ai/letta) (ex-MemGPT) | [`cognee`](https://github.com/topoteretes/cognee) | [`supermemory`](https://github.com/supermemoryai/supermemory) | [`mem-vault`](https://github.com/jagoff/mem-vault) | MCP [`memory` reference](https://github.com/modelcontextprotocol/servers/tree/main/src/memory) | [`engram`](https://github.com/perrygeo/engram) |
+|---|---|---|---|---|---|---|---|---|
+| **Runtime** | MLX, in-process | Cloud API or Ollama | Postgres + LLM API | Cloud or Ollama | Cloud SaaS | Ollama daemon | Node, in-process | Python, in-process |
+| **LLM/embed location** | local Mac (MLX) | OpenAI/Anthropic/Ollama | Anthropic/OpenAI/Ollama | OpenAI/Ollama/other | hosted | Ollama (`:11434`) | provider-supplied | provider-supplied |
+| **Network in hot path** | **0** | yes (cloud) or `:11434` | yes (LLM API) | yes (LLM API) | always | `:11434` + `:6333` | yes (LLM API) | 0 |
+| **Vector store** | sqlite-vec (one file) | Qdrant / pgvector | Postgres + pgvector | LanceDB / Qdrant / pgvector | hosted | Qdrant (server) | in-memory JSON | SQLite |
+| **External daemons** | **none** | Ollama + Qdrant | Postgres | Postgres / vector DB | none (SaaS) | Ollama + Qdrant | none | none |
+| **Storage of record** | **markdown files** | DB blob | DB rows | DB rows + graph | hosted DB | markdown files | JSON entity graph | DB rows |
+| **Human-readable / editable** | ✅ open in Obsidian/vim | ❌ | ❌ | ❌ | ❌ | ✅ | partial (JSON dump) | ❌ |
+| **MCP server (stdio)** | ✅ 13 tools | ❌ | ❌ | ❌ | ❌ | ✅ (unregistered) | ✅ (official ref) | ✅ |
+| **Hybrid retrieval** | vec + BM25 + RRF | vec | vec | vec + graph | vec | vec | n/a (entity-based) | vec |
+| **Cross-encoder reranker** | ✅ MLX Qwen3-Reranker | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Ambient recall (zero invoke)** | ✅ Claude Code hooks | ❌ | n/a | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Apple Silicon optimisation** | ✅ first-class (MLX) | runs, no opt | runs, no opt | runs, no opt | n/a | works | n/a | works |
+| **License** | MIT | Apache-2.0 | Apache-2.0 | Apache-2.0 | proprietary (SaaS) | MIT | MIT | MIT |
+| **Privacy posture** | data never leaves Mac | depends on provider | depends on provider | depends on provider | hosted | local + cloud-ollama opt | depends on LLM | local |
 
-- [ ] `consolidate` clustering — LLM-driven dedup/merge using `MLXChat`
-- [ ] Markdown frontmatter watcher daemon (auto-`reindex` on edit, plist-installed)
-- [ ] Hybrid search (vec + BM25) for short-query recall
+> Notes on the table — projects move fast. The cells above reflect the public state of each repo at the time of writing. PR a correction if any is stale.
+
+### The differentiators in plain terms
+
+1. **100 % local hot path, no Ollama.** memo runs the LLM, embedder, and reranker **in-process via MLX**. No `localhost:11434` round-trip per call, no Docker for Qdrant, no provider key. mem0 / cognee / letta all rely on either a cloud API or a local Ollama daemon; supermemory is hosted; mem-vault needs both Ollama and Qdrant running. memo just imports MLX into the same Python process and goes.
+
+2. **Markdown is the storage of record, not a DB blob.** Your memorias are plain `.md` files with frontmatter that you can open in Obsidian, edit in vim, sync via iCloud/git/Syncthing, and `grep` from a shell. The sqlite-vec index is rebuildable — `rm memvec.db && memo reindex`. Almost every alternative locks your knowledge inside an opaque database.
+
+3. **Hybrid retrieval + cross-encoder reranker out of the box.** memo fuses semantic (vec) and keyword (BM25 over FTS5 with unicode61 + diacritic stripping for Spanish/Portuguese) via RRF, then optionally reranks the top-30 with a Qwen3-Reranker cross-encoder and fuses scores α-weighted. mem0 / letta / supermemory ship vec-only. cognee adds a graph but no cross-encoder. This is the single biggest precision lift for noisy or short queries.
+
+4. **Ambient recall as a first-class feature.** With the bundled Claude Code plugin, `SessionStart` prewarms MLX and `UserPromptSubmit` consults memory on every prompt (5 s budget, top-3 above cosine 0.6, injected as `additionalContext`). The agent sees the right memorias *before* it answers — no `/memo` call from you. No alternative ships this as a turnkey hook bundle.
+
+5. **MCP is a primary interface, not an afterthought.** memo exposes 13 tools over stdio so Claude Code, Cursor, Cline, Continue, Paperclip, and any future MCP client get the same contract on day one. mem0 and letta have no MCP server; mem-vault has one but isn't published in the registry; the official MCP `memory` reference is entity-graph-only and stores in JSON.
+
+6. **Apple Silicon is a target, not a footnote.** Embedder, reranker, and chat are 4-bit MLX builds tuned for unified memory: ~50 ms/embed on 0.6B, sub-second first recall after prewarm, ~4 GB RAM ceiling for the default 7B chat tier. Other projects "work" on M-series Macs because Python runs there — they aren't tuned for it.
+
+7. **No vendor lock and no telemetry.** MIT package on top of MIT/Apache-2.0 dependencies (MLX MIT, sqlite-vec Apache-2.0, Qwen weights Apache-2.0). Nothing phones home; `doctor` literally does not probe `:11434`.
+
+### When you should *not* pick memo
+
+Pick something else when:
+
+- You're not on Apple Silicon. MLX is the load-bearing piece — memo will not run on Linux / Windows / Intel Macs.
+- You need a hosted, multi-tenant memory service across many users — `supermemory` or `mem0` cloud is what you want.
+- You want a long-horizon agent runtime with explicit "core memory" vs "archival memory" tiers and an event loop around it — that's `letta`'s sweet spot.
+- You want a knowledge-graph + ontology layer rather than a doc store — `cognee` is the right pick.
+
+memo's bet is the opposite: a single user, one machine, plain markdown, MLX, and a contract small enough to remember.
+
+## Roadmap
+
+Ship-ready today:
+
+- [x] Memory API: save / search / list / get / update / delete / reindex / consolidate / ask / stats
+- [x] CLI: ~28 commands including `doctor`, `migrate-vault`, `backup`, `ingest`, `mine-history`, `watch`
+- [x] MCP server (13 tools + `memo://recent` / `memo://memory/{id}` resources)
+- [x] Hybrid search (vec + BM25 + RRF + cross-encoder rerank)
+- [x] Prefix-ID lookup (git-style, ≥4 chars)
+- [x] Ambient recall (Claude Code plugin)
+- [x] **Project-scoped recall** (auto-tag + cwd-based boost)
+- [x] **Token-budget-aware recall** packing
+- [x] **Transcript miner** (`memo mine-history` over `~/.claude/projects/`)
+- [x] **File-watcher daemon** (`memo watch` / `install-watcher` launchd plist)
+- [x] First-run picker + migration tooling
+- [x] Paperclip plugin (5 tools)
+
+Post-v0:
+
+- [ ] Entity graph queries over `graph.db`
+- [ ] LLM-driven consolidation / dedup using the 3B helper tier
+- [ ] Multi-hop `ask()` over `[[wikilinks]]`
 
 ## Provenance
 
-Forked from `mem-vault` philosophically (storage layout + frontmatter schema), not
-literally — the codebase is new. The MLX backend pieces (embedder pooling, chat
-template handling) are direct ports from the work in [`obsidian-rag`](https://github.com/jagoff/rag-obsidian)
-Phase 1+2 of the MLX migration (commits `aff4b8f`, `b1f163d`, `7f9a34a`).
+Forked from [`mem-vault`](https://github.com/jagoff/mem-vault) philosophically (storage layout + frontmatter schema), not literally — the codebase is new. The MLX backend pieces (embedder pooling, chat template handling) are direct ports from [`obsidian-rag`](https://github.com/jagoff/rag-obsidian) Phase 1+2 of the MLX migration.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

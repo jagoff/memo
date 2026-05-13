@@ -20,6 +20,7 @@ Output style:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from datetime import UTC
@@ -280,9 +281,11 @@ def migrate_vault(
 @click.option("--auto-derive", is_flag=True,
               help="When title/type/tags missing, ask Qwen2.5-3B helper to derive them. "
                    "Adds ~1-2s latency on first call.")
+@click.option("--no-project-tag", "no_project_tag", is_flag=True,
+              help="Skip the auto `project:<repo>` tag derived from the current git toplevel.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a panel.")
 def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
-         auto_derive: bool, as_json: bool) -> None:
+         auto_derive: bool, no_project_tag: bool, as_json: bool) -> None:
     """Persist CONTENT to the vault + index. Pass `-` to read CONTENT from stdin."""
     from memo.memory import Memory
 
@@ -290,7 +293,8 @@ def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
         content = sys.stdin.read()
     mem = Memory(Config.from_env())
     rec = mem.save(content=content, title=title, type_=type_,
-                   tags=list(tags), auto_derive=auto_derive)
+                   tags=list(tags), auto_derive=auto_derive,
+                   auto_project=not no_project_tag)
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return
@@ -1066,6 +1070,12 @@ def recall_hook() -> None:
     top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
     min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.6"))
     body_chars = int(os.environ.get("MEMO_RECALL_BODY_CHARS", "240"))
+    token_budget = int(os.environ.get("MEMO_RECALL_TOKEN_BUDGET", "0") or 0)
+    project_boost = float(os.environ.get("MEMO_RECALL_PROJECT_BOOST", "0.15"))
+
+    # Read cwd from the hook payload (Claude Code passes it) so we can
+    # derive the project tag the user is currently working under.
+    payload_cwd = payload.get("cwd")
 
     # Suppress HF download progress bars on stderr — they'd contaminate
     # the hook's debug output and confuse users tailing logs. The model
@@ -1095,13 +1105,33 @@ def recall_hook() -> None:
             "MEMO_RERANK_INPUT_K",
             os.environ.get("MEMO_RECALL_RERANK_INPUT_K", "10"),
         )
+    # Widen the pool when a project boost is active — we need enough
+    # candidates so that off-project hits can be re-ranked below
+    # on-project ones without starving the final top_k.
+    project_tag = None
+    if project_boost > 0:
+        try:
+            from memo.project import current_project_tag
+            project_tag = current_project_tag(payload_cwd)
+        except Exception:
+            project_tag = None
+    search_k = top_k * 3 if project_tag else top_k
     try:
         from memo.memory import Memory
         mem = Memory(Config.from_env())
-        hits = mem.search(prompt, limit=top_k, mode=mode)
+        hits = mem.search(prompt, limit=search_k, mode=mode)
     except Exception as exc:
         _bail(f"search failed: {exc}")
         return
+
+    # Apply project boost — additive on the raw score, then re-sort.
+    if project_tag:
+        for h in hits:
+            if h.score is not None and project_tag in (h.tags or []):
+                h.score = h.score + project_boost
+        hits.sort(key=lambda h: (h.score or 0.0), reverse=True)
+    # Trim back to top_k after boost-aware re-sort.
+    hits = hits[:top_k]
 
     # Filter by similarity floor. With mode="vec", `score` is cosine
     # similarity ∈ [-1, 1] (typically [0, 1] for L2-normalised embeddings).
@@ -1118,22 +1148,62 @@ def recall_hook() -> None:
     # Format as markdown additionalContext. Be terse — context budget is
     # capped at 10k chars by Claude Code; we want each prompt to inject
     # ~500-1500 chars at most so the user's actual prompt isn't drowned.
-    lines = [
-        "## Relevant memories from your past (memo)",
-        "",
-    ]
+    #
+    # If MEMO_RECALL_TOKEN_BUDGET is set, pack memorias greedily by
+    # score until the budget is met. Token estimate is 1 token ≈ 4 chars
+    # (English/Spanish prose); good-enough rule-of-thumb that avoids a
+    # tiktoken dep. Last memoria gets head-truncated to fit instead of
+    # being dropped wholesale.
+    header = "## Relevant memories from your past (memo)"
+    footer = "_Use `/memo:memo get <id>` to see full content._"
+    lines = [header, ""]
+    used_chars = 0  # chars of formatted block body, excluding header/footer
+
+    def _est_tokens(s: str) -> int:
+        return max(1, len(s) // 4)
+
+    budget_chars = token_budget * 4 if token_budget > 0 else None
+
     for h in relevant:
         score_tag = f" (score {h.score:.2f})" if h.score is not None else ""
         body = (h.body or "").strip().replace("\n", " ")
         if len(body) > body_chars:
             body = body[:body_chars].rstrip() + "…"
-        lines.append(f"**[{h.id[:8]}] {h.title}**{score_tag}")
+        block_lines = [f"**[{h.id[:8]}] {h.title}**{score_tag}"]
         if h.tags:
-            lines.append(f"_tags_: {', '.join(h.tags)}")
+            block_lines.append(f"_tags_: {', '.join(h.tags)}")
         if body:
-            lines.append(f"> {body}")
-        lines.append("")
-    lines.append("_Use `/memo:memo get <id>` to see full content._")
+            block_lines.append(f"> {body}")
+        block_lines.append("")
+        block = "\n".join(block_lines)
+
+        if budget_chars is None:
+            lines.extend(block_lines)
+            continue
+
+        remaining = budget_chars - used_chars
+        if remaining <= 0:
+            break
+        if len(block) <= remaining:
+            lines.extend(block_lines)
+            used_chars += len(block)
+        else:
+            # Truncate the body in this final block to fit the budget.
+            if body:
+                # Reserve space for header line + tags + closing "…"
+                head_len = len(block_lines[0]) + 1
+                tags_len = (len(block_lines[1]) + 1) if h.tags else 0
+                avail = max(0, remaining - head_len - tags_len - 3)
+                if avail > 20:
+                    trunc_body = body[:avail].rstrip() + "…"
+                    block_lines[-2 if h.tags else -1] = f"> {trunc_body}"
+                    lines.extend(block_lines)
+            break
+
+    lines.append(footer)
+    if token_budget > 0 and os.environ.get("MEMO_RECALL_DEBUG") == "1":
+        approx = _est_tokens("\n".join(lines))
+        print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=_sys.stderr)
 
     output = {
         "hookSpecificOutput": {
@@ -1143,6 +1213,210 @@ def recall_hook() -> None:
     }
     print(_json.dumps(output, ensure_ascii=False))
     _sys.exit(0)
+
+
+@cli.command(name="watch")
+@click.option("--delay", default=2.0, type=float, show_default=True,
+              help="Debounce window in seconds — coalesces bursts of edits into one reindex.")
+@click.option("--debug", is_flag=True, help="Print every reindex result to stderr.")
+def watch(delay: float, debug: bool) -> None:
+    """Auto-reindex on `.md` change. Foreground; Ctrl+C to stop.
+
+    Watches `cfg.memory_dir` recursively. Files saved in Obsidian (or
+    any editor) trigger a debounced `Memory.reindex()` call so the
+    sqlite-vec index stays in sync without manual `memo reindex` runs.
+
+    Run as a daemon via `memo install-watcher` (launchd plist).
+    """
+    from memo.watcher import run_watcher
+
+    run_watcher(delay=delay, debug=debug)
+
+
+@cli.command(name="install-watcher")
+@click.option("--bin", "memo_bin", default=None,
+              help="Absolute path to the `memo` binary (default: auto-detect via shutil.which).")
+@click.option("--no-load", is_flag=True,
+              help="Write the plist but don't `launchctl bootstrap` it.")
+def install_watcher(memo_bin: str | None, no_load: bool) -> None:
+    """Install + load the file-watcher as a launchd daemon.
+
+    Generates `~/Library/LaunchAgents/com.fer.memo.watch.plist`, loads
+    it via `launchctl bootstrap`, and verifies it's running. Restart on
+    crash is enabled (`KeepAlive=true`). Logs land in
+    `~/Library/Logs/memo/`.
+    """
+    import shutil as _shutil
+    import subprocess
+
+    from memo.watcher import _PLIST_LABEL, install_plist
+
+    if memo_bin is None:
+        memo_bin = _shutil.which("memo") or ""
+        if not memo_bin:
+            raise click.ClickException(
+                "Could not locate `memo` on PATH. Pass --bin /abs/path/to/memo.",
+            )
+
+    plist_path = install_plist(memo_bin)
+    console.print(f"[dim]wrote:[/dim] {plist_path}")
+
+    if no_load:
+        console.print(
+            "[yellow]Skipped load (--no-load). To activate manually:[/yellow]\n"
+            f"  launchctl bootstrap gui/$(id -u) {plist_path}",
+        )
+        return
+
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+    target = f"{domain}/{_PLIST_LABEL}"
+
+    # Unload first if already present, to pick up plist changes.
+    subprocess.run(
+        ["launchctl", "bootout", target],
+        check=False, capture_output=True,
+    )
+    res = subprocess.run(
+        ["launchctl", "bootstrap", domain, str(plist_path)],
+        capture_output=True, text=True,
+    )
+    if res.returncode != 0:
+        raise click.ClickException(
+            f"launchctl bootstrap failed: {res.stderr.strip() or res.stdout.strip()}",
+        )
+
+    # Verify.
+    verify = subprocess.run(
+        ["launchctl", "print", target],
+        capture_output=True, text=True,
+    )
+    if verify.returncode != 0:
+        raise click.ClickException(
+            "Plist loaded but `launchctl print` could not find it. "
+            "Inspect `~/Library/Logs/memo/watch.err.log`.",
+        )
+
+    console.print(Panel.fit(
+        f"[bold]watcher loaded[/bold]\n"
+        f"[dim]label:[/dim] {_PLIST_LABEL}\n"
+        f"[dim]plist:[/dim] {plist_path}\n"
+        f"[dim]logs:[/dim] ~/Library/Logs/memo/watch.{{out,err}}.log",
+        title="✓ install-watcher",
+        border_style="green",
+    ))
+
+
+@cli.command(name="uninstall-watcher")
+def uninstall_watcher_cmd() -> None:
+    """Unload + remove the file-watcher launchd job."""
+    import subprocess
+
+    from memo.watcher import _PLIST_LABEL, uninstall_plist
+
+    uid = os.getuid()
+    target = f"gui/{uid}/{_PLIST_LABEL}"
+    subprocess.run(
+        ["launchctl", "bootout", target],
+        check=False, capture_output=True,
+    )
+    existed = uninstall_plist()
+    if existed:
+        console.print("[green]✓ watcher uninstalled.[/green]")
+    else:
+        console.print("[yellow]No plist found to remove.[/yellow]")
+
+
+@cli.command(name="mine-history")
+@click.option("--path", "root_path", default=None,
+              help="Transcripts root (default: ~/.claude/projects).")
+@click.option("--since", "since_days", type=int, default=None,
+              help="Only process transcripts modified in the last N days.")
+@click.option("--limit", "file_limit", type=int, default=None,
+              help="Cap on number of transcripts to process (newest first).")
+@click.option("--dry-run", is_flag=True,
+              help="Walk + extract, don't save. Useful for cost estimation.")
+@click.option("--debug", is_flag=True, help="Print per-file/per-candidate info to stderr.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON summary instead of a panel.")
+def mine_history(
+    root_path: str | None, since_days: int | None, file_limit: int | None,
+    dry_run: bool, debug: bool, as_json: bool,
+) -> None:
+    """Mine past Claude Code conversations for actionable insights.
+
+    Walks `~/.claude/projects/<hash>/*.jsonl`, runs the same prefilter +
+    helper-LLM extraction + embedding-based dedup as the live capture
+    hook, and saves what's new. Resumable: per-file processed-line
+    counts are tracked under `~/.local/share/memo/mine-history.json`.
+
+    Tips:
+        - First run on a long history is slow (helper LLM is the bottleneck).
+          Use `--limit 10 --since 30` to start with the freshest sessions.
+        - `--dry-run` reports candidate counts without writing.
+    """
+    from pathlib import Path as _Path
+
+    from memo.transcript_miner import mine_transcripts
+
+    root = _Path(root_path).expanduser() if root_path else None
+
+    console_progress = None
+    if not as_json:
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        )
+        progress.start()
+        task = progress.add_task("mining transcripts", total=None)
+
+        def cb(idx: int, total: int, p: _Path) -> None:
+            progress.update(
+                task, total=total, completed=idx, description=f"[{idx + 1}/{total}] {p.name}",
+            )
+
+        console_progress = (progress, task, cb)
+
+    try:
+        summary = mine_transcripts(
+            root=root, since_days=since_days, file_limit=file_limit,
+            dry_run=dry_run, debug=debug,
+            progress_cb=console_progress[2] if console_progress else None,
+        )
+    finally:
+        if console_progress:
+            console_progress[0].stop()
+
+    if as_json:
+        click.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+
+    status = summary.get("status")
+    if status == "no_files":
+        console.print(f"[yellow]No transcripts found under {summary['root']}.[/yellow]")
+        return
+
+    saved = summary.get("saved", [])
+    body = (
+        f"[dim]root:[/dim] {summary['root']}\n"
+        f"[dim]files:[/dim] {summary['files_processed']}/{summary['files_total']} processed"
+        f" ([dim]{summary['files_skipped']} skipped — already mined[/dim])\n"
+        f"[dim]candidates:[/dim] {summary['candidates']}\n"
+        f"[bold green]saved:[/bold green] {len(saved)}"
+        f"{' [yellow](dry-run)[/yellow]' if summary['dry_run'] else ''}\n"
+        f"[dim]skipped duplicates:[/dim] {summary['skipped_dup']}"
+    )
+    console.print(Panel.fit(body, title="✓ mine-history", border_style="green"))
 
 
 @cli.command(name="ingest")

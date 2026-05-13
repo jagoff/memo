@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from dataclasses import dataclass, field, replace
@@ -487,6 +488,8 @@ class Memory:
         tags: list[str] | None = None,
         extra: dict[str, Any] | None = None,
         auto_derive: bool = False,
+        auto_project: bool = True,
+        cwd: str | None = None,
     ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
@@ -531,6 +534,18 @@ class Memory:
             title = "untitled"
 
         norm_tags = _normalise_tags(tags or [])
+
+        # Auto-tag with the caller's project (git toplevel basename or
+        # MEMO_PROJECT_TAG) so per-repo recall can boost the right
+        # memorias. Skipped when the caller already passed any
+        # `project:` tag — explicit always wins.
+        if auto_project and os.environ.get("MEMO_AUTO_PROJECT_TAG", "1") == "1":
+            from memo.project import current_project_tag, has_project_tag
+            if not has_project_tag(norm_tags):
+                pt = current_project_tag(cwd)
+                if pt:
+                    norm_tags = _normalise_tags([*norm_tags, pt])
+
         now_iso = _now_iso()
         # Truncate content for embedding (vec store doesn't truncate;
         # disk file keeps full content). 64KB is the default cap.

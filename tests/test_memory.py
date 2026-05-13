@@ -20,6 +20,7 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch) -> Memory:
     same vector quadrant, different texts collide deterministically.
     Good enough to exercise the index roundtrip without real MLX."""
     cfg = Config(
+        data_dir=tmp_cfg.data_dir,
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
@@ -40,7 +41,7 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch) -> Memory:
 
 def test_save_writes_md_and_indexes(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="primer memo del test", title="Test 1", type_="note")
-    abs_path = mem_with_stub.cfg.vault_path / rec.path
+    abs_path = mem_with_stub.cfg.memory_dir /rec.path
     assert abs_path.is_file()
     text = abs_path.read_text(encoding="utf-8")
     assert "title: Test 1" in text
@@ -94,10 +95,10 @@ def test_list_orders_recent_first(mem_with_stub: Memory):
 
 def test_delete_removes_disk_and_index(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="borrar este", title="X")
-    assert (mem_with_stub.cfg.vault_path / rec.path).is_file()
+    assert (mem_with_stub.cfg.memory_dir /rec.path).is_file()
     assert mem_with_stub.delete(rec.id) is True
     assert mem_with_stub.store.count() == 0
-    assert not (mem_with_stub.cfg.vault_path / rec.path).is_file()
+    assert not (mem_with_stub.cfg.memory_dir /rec.path).is_file()
 
 
 def test_delete_missing_returns_false(mem_with_stub: Memory):
@@ -167,7 +168,7 @@ def test_update_reembeds_when_content_changes(mem_with_stub: Memory, monkeypatch
     assert updated.body == "cuerpo nuevo y diferente"
     assert calls == [1]
     # Disk reflects new body.
-    on_disk = (mem_with_stub.cfg.vault_path / updated.path).read_text()
+    on_disk = (mem_with_stub.cfg.memory_dir /updated.path).read_text()
     assert "cuerpo nuevo y diferente" in on_disk
 
 
@@ -209,7 +210,7 @@ def test_reindex_force_reembeds_unchanged(mem_with_stub: Memory, monkeypatch):
 
 def test_reindex_picks_up_external_edit(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="primero", title="X")
-    abs_path = mem_with_stub.cfg.vault_path / rec.path
+    abs_path = mem_with_stub.cfg.memory_dir /rec.path
     # Simulate a user edit in Obsidian: rewrite body via frontmatter.
     import frontmatter as fm
 
@@ -251,7 +252,7 @@ def test_gc_reports_and_fixes_orphans(mem_with_stub: Memory):
     a = mem_with_stub.save(content="vivo", title="A")
     b = mem_with_stub.save(content="vivo", title="B")
     # Delete `b`'s `.md` from disk to make it an orphan store row.
-    (mem_with_stub.cfg.vault_path / b.path).unlink()
+    (mem_with_stub.cfg.memory_dir /b.path).unlink()
     report = mem_with_stub.gc(fix=False)
     assert b.id in report["orphan_store"]
     assert a.id not in report["orphan_store"]
@@ -320,6 +321,7 @@ def test_embed_batch_preserves_order_and_handles_empty(tmp_cfg: Config, monkeypa
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _spy)
     cfg = Config(
+        data_dir=tmp_cfg.data_dir,
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
@@ -606,6 +608,7 @@ def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _spy)
     cfg = Config(
+        data_dir=tmp_cfg.data_dir,
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
@@ -623,6 +626,7 @@ def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
 
 def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
     cfg = Config(
+        data_dir=tmp_cfg.data_dir,
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
@@ -636,7 +640,7 @@ def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
     huge = "x" * 10_000
     rec = mem.save(content=huge, title="huge")
     # Body on disk should be truncated to `max_content_chars`.
-    on_disk = (cfg.vault_path / rec.path).read_text()
+    on_disk = (cfg.memory_dir / rec.path).read_text()
     assert on_disk.count("x") <= 100
 
 
@@ -649,6 +653,7 @@ def test_save_rejects_wrong_dim_embedding(tmp_cfg: Config, monkeypatch):
     configured dim. The guard in `Memory.save` must raise loudly so
     the bad vector never reaches the index."""
     cfg = Config(
+        data_dir=tmp_cfg.data_dir,
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
@@ -696,6 +701,7 @@ def test_save_rejects_zero_norm_embedding(tmp_cfg: Config, monkeypatch):
     real Qwen3-Embedding always L2-normalises. A zero or near-zero
     vector would cosine-collapse all retrieval into a single bucket."""
     cfg = Config(
+        data_dir=tmp_cfg.data_dir,
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
