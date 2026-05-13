@@ -1,0 +1,101 @@
+# Homebrew tap for `mlx-memo`
+
+This directory carries the reference Homebrew formula. To make it
+installable for end users, you need a *separate* GitHub repo named
+`homebrew-memo` under your account — Homebrew requires tap repos to
+start with the `homebrew-` prefix.
+
+## One-time setup
+
+1. **Create the tap repo on GitHub.** Empty, public, named
+   `homebrew-memo`. Visit
+   <https://github.com/new> and set:
+   - Owner: `jagoff`
+   - Name: `homebrew-memo`
+   - Description: `Homebrew tap for mlx-memo and friends`
+   - Public, no README (we'll generate one)
+
+2. **Clone + populate.**
+
+   ```bash
+   gh repo clone jagoff/homebrew-memo
+   cd homebrew-memo
+   mkdir -p Formula
+   cp /path/to/memo/docs/homebrew/mlx-memo.rb Formula/mlx-memo.rb
+   cat > README.md <<'EOF'
+   # homebrew-memo
+
+   Homebrew tap for [`mlx-memo`](https://github.com/jagoff/memo) — local
+   MCP memory for AI agents, MLX-native, Apple Silicon.
+
+   ## Install
+
+   ```bash
+   brew tap jagoff/memo
+   brew install mlx-memo
+   ```
+
+   Apple Silicon (M1/M2/M3/M4) only. The formula refuses to install on
+   Intel Macs because MLX doesn't build there.
+
+   ## Upgrading
+
+   ```bash
+   brew update && brew upgrade mlx-memo
+   ```
+
+   ## Source
+
+   - Main repo: <https://github.com/jagoff/memo>
+   - PyPI: <https://pypi.org/project/mlx-memo/>
+   - License: MIT
+   EOF
+   git add Formula/ README.md
+   git commit -m "Initial tap: mlx-memo 0.5.0"
+   git push -u origin master
+   ```
+
+3. **Test the install end-to-end.**
+
+   ```bash
+   brew tap jagoff/memo
+   brew install mlx-memo
+   memo --version    # should print 0.5.0
+   brew uninstall mlx-memo
+   brew untap jagoff/memo
+   ```
+
+## Updating the formula on each release
+
+After every `pyproject.toml` version bump and PyPI publish:
+
+```bash
+# In the memo repo
+NEW_VERSION=0.5.1
+URL="https://files.pythonhosted.org/packages/source/m/mlx-memo/mlx_memo-${NEW_VERSION}.tar.gz"
+SHA=$(curl -sL "$URL" | shasum -a 256 | awk '{print $1}')
+
+# Update the formula in this repo (docs/homebrew/mlx-memo.rb):
+#   url "..."  ← new URL
+#   sha256 "..."  ← new sha
+# Then mirror to the homebrew-memo tap:
+cd /path/to/homebrew-memo
+cp /path/to/memo/docs/homebrew/mlx-memo.rb Formula/mlx-memo.rb
+git commit -am "mlx-memo $NEW_VERSION"
+git push
+```
+
+A future improvement: add a GitHub Action in this repo that auto-PRs
+the formula update on each tag (see
+[bump-formula-pr](https://github.com/Homebrew/actions/tree/master/bump-formula-pr)
+or `homebrew/bump-pypi-formula`).
+
+## Why a personal tap, not homebrew-core?
+
+`homebrew-core` requires every Python dependency to be vendored as an
+explicit `resource` block — Mlx-memo pulls ~30 transitive deps via
+mlx-lm, fastmcp, sqlite-vec, watchdog, frontmatter, etc. Maintaining
+those blocks by hand is grinding work. For a single-author, single-
+platform project a personal tap is the right scope; if we ever want
+into `homebrew-core`, generate the resource list with
+[`homebrew-pypi-poet`](https://pypi.org/project/homebrew-pypi-poet/).
