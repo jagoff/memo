@@ -412,20 +412,69 @@ def render(memory: Any, state_dir: Path) -> Layout:
     now = datetime.now().strftime("%H:%M:%S")
     footer = Text.from_markup(
         f"[dim]memo · live  ·  {memory.cfg.memory_dir}  ·  [/dim][cyan]{now}[/cyan]"
-        f"  [dim]·  Ctrl+C to quit[/dim]",
+        f"  [dim]·  [/dim][bold]q[/bold][dim] / [/dim][bold]ESC[/bold][dim] / Ctrl+C to quit[/dim]",
     )
     layout["footer"].update(Align.center(footer))
     return layout
 
 
+def _spawn_key_reader(stop_event: "threading.Event") -> None:
+    """Background thread that reads single keystrokes from stdin and
+    sets `stop_event` when the user presses `q`, `Q`, or ESC. Falls
+    back gracefully when stdin isn't a TTY (CI, pipes) — the thread
+    just exits and the user can still Ctrl+C.
+    """
+    import select
+    import sys
+    import termios
+    import tty
+
+    try:
+        fd = sys.stdin.fileno()
+        if not sys.stdin.isatty():
+            return
+        old = termios.tcgetattr(fd)
+    except (OSError, termios.error):
+        return
+
+    try:
+        tty.setcbreak(fd)
+        while not stop_event.is_set():
+            r, _, _ = select.select([fd], [], [], 0.25)
+            if not r:
+                continue
+            ch = sys.stdin.read(1)
+            if ch in ("q", "Q", "\x1b"):
+                stop_event.set()
+                return
+    except Exception:
+        # Stdin reads can fail during shutdown — never propagate.
+        pass
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except Exception:
+            pass
+
+
 def run_tui(*, refresh: float = 1.0, no_clear: bool = False) -> None:
-    """Block on a Live dashboard until Ctrl+C."""
+    """Block on a Live dashboard until the user presses q / ESC / Ctrl+C."""
+    import threading
+
+    # The legacy-path warning from Memory() startup pollutes the alt
+    # screen (and the user can't act on it from inside the TUI anyway).
+    os.environ.setdefault("MEMO_SUPPRESS_LEGACY_WARN", "1")
+
     from memo.config import Config
     from memo.memory import Memory
 
     cfg = Config.from_env()
     mem = Memory(cfg)
     console = Console()
+
+    stop = threading.Event()
+    reader = threading.Thread(target=_spawn_key_reader, args=(stop,), daemon=True)
+    reader.start()
 
     with Live(
         render(mem, cfg.state_dir),
@@ -435,11 +484,13 @@ def run_tui(*, refresh: float = 1.0, no_clear: bool = False) -> None:
         transient=False,
     ) as live:
         try:
-            while True:
+            while not stop.is_set():
                 time.sleep(refresh)
                 live.update(render(mem, cfg.state_dir))
         except KeyboardInterrupt:
-            pass
+            stop.set()
+    # Reader thread will see stop and clean up termios on its own.
+    reader.join(timeout=1.0)
 
 
 # Keep `Group` importable for tests / external users of the layout
