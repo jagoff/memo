@@ -4,8 +4,8 @@
 
 **Persistent semantic memory for AI agents — 100% local, MLX-native, Apple Silicon.**
 
-[![PyPI](https://img.shields.io/pypi/v/memo-mcp.svg)](https://pypi.org/project/memo-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/memo-mcp.svg)](https://pypi.org/project/memo-mcp/)
+[![PyPI](https://img.shields.io/pypi/v/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
+[![Python](https://img.shields.io/pypi/pyversions/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
 
@@ -72,12 +72,16 @@ With the Claude Code plugin installed, two extra hooks plug in:
 ## Install
 
 ```bash
-pip install memo-mcp
+pip install mlx-memo
 # or
-uv tool install memo-mcp
+uv tool install mlx-memo
 ```
 
 Both expose two binaries: `memo` (CLI) and `memo-mcp` (MCP server).
+
+> The PyPI distribution is **`mlx-memo`** as of 0.5.0. Earlier
+> versions shipped as `memo-mcp` and the binary names haven't
+> changed — existing MCP configs keep working.
 
 Pre-download the MLX models so the first save/search doesn't stall on a multi-GB download:
 
@@ -117,7 +121,7 @@ memo ask 'qué cambios hice en el embedder este mes?'
 
 ## MCP setup
 
-After `pip install memo-mcp`, register the MCP with your client.
+After `pip install mlx-memo`, register the MCP with your client.
 
 ### Claude Code
 
@@ -453,7 +457,7 @@ A handful of unrelated repos share the name. Quick disambiguation in case you're
 | Project | What it is | Overlap with us |
 |---|---|---|
 | [`upstash/memo`](https://github.com/upstash/memo) | MCP server for **handing off conversation state** between agents (goals / pending tasks / decisions). State lives in Upstash Redis (managed cloud or self-hosted on Vercel). No embeddings, no RAG. | Different problem entirely — agent handoff, not a memory archive. We're local-first markdown + vector search; they're cloud-state with structured handoff objects. |
-| [`milasd/memo-mcp`](https://github.com/milasd/memo-mcp) | Local Python MCP for **RAG over personal journal entries**. Pluggable vector backend (ChromaDB default / FAISS / in-memory), Apple-Silicon GPU embedder, no bundled LLM. **PyPI name collision** with our `memo-mcp`. | Closest competitor. Both local RAG. We diverge on: MLX-only runtime, markdown source-of-record (Obsidian-readable), sqlite-vec + FTS5 hybrid w/ RRF, cross-encoder reranker, history.db / graph.db split, ambient recall hook bundle. |
+| [`milasd/memo-mcp`](https://github.com/milasd/memo-mcp) | Local Python MCP for **RAG over personal journal entries**. Pluggable vector backend (ChromaDB default / FAISS / in-memory), Apple-Silicon GPU embedder, no bundled LLM. | Closest competitor. Both local RAG. We diverge on: MLX-only runtime, markdown source-of-record (Obsidian-readable), sqlite-vec + FTS5 hybrid w/ RRF, cross-encoder reranker, history.db / graph.db split, ambient recall hook bundle. _PyPI name collision avoided — we ship as `mlx-memo` from 0.5.0._ |
 | [`doggybee/mcp-server-memo`](https://github.com/doggybee/mcp-server-memo) | Node.js MCP for **append-only versioned session summaries**. Plain filesystem JSON, no DB, no vector store, no embedder. | Different category — flat-file versioned summaries, no semantic search. |
 
 ### When you should *not* pick memo

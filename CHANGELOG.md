@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-12
+
+PyPI dist rename + TUI follow-ups (q/ESC quit, smaller layout).
+
+### Changed
+
+- **PyPI distribution renamed `memo-mcp` → `mlx-memo`.** The previous
+  name collided with [`milasd/memo-mcp`](https://github.com/milasd/memo-mcp)
+  (a ChromaDB-backed journal MCP) and risked install ambiguity for new
+  users. The Python module (`memo`), CLI binary (`memo`), MCP server
+  binary (`memo-mcp`), and the GitHub repo all keep their names — only
+  the PyPI dist moved. Existing `pip install memo-mcp ≤ 0.4.3` users
+  keep working; new installs use `pip install mlx-memo`. README +
+  CLAUDE.md updated, badges repointed.
+
+### Added (0.4.2 + 0.4.3 follow-ups, merged into 0.5.0)
+
+- **`q` / `ESC` exit** in `memo tui`. Background stdin reader in
+  cbreak mode sets a stop event; main loop polls. Falls back to
+  Ctrl+C-only when stdin isn't a TTY. Footer advertises the keys.
+- **TUI layout shrunk to ~18 rows**. Removed the panel-framed hero
+  (now an inline footer status line); corpus and runtime collapsed
+  to single-line summaries.
+
+### Fixed
+
+- **Legacy-path warning** (`stored path(s) don't resolve…`) now
+  silenced inside `memo tui` via `MEMO_SUPPRESS_LEGACY_WARN=1`. The
+  user can't act on it from inside the alt screen anyway. Outside the
+  TUI the message was rephrased ("heads-up: tu índice apunta a paths
+  antiguos") and explicitly labeled as not-an-error.
+
 ## [0.4.1] - 2026-05-12
 
 Adds a live terminal dashboard and the recall-log plumbing that feeds it.

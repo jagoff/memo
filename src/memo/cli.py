@@ -59,7 +59,7 @@ def _resolved(thunk):
 
 
 @click.group()
-@click.version_option(package_name="memo-mcp")
+@click.version_option(package_name="mlx-memo")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     """memo — local MCP memory backed by markdown vault, MLX-native."""

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`memo` (PyPI dist name: `memo-mcp`) is a local MCP memory server for Apple Silicon. Two entry points share the same `Memory` API:
+`memo` (PyPI dist name: `mlx-memo` as of 0.5.0; previously `memo-mcp`) is a local MCP memory server for Apple Silicon. Two entry points share the same `Memory` API:
 
 - `memo` — Click-based CLI in `src/memo/cli.py` (~25 commands).
 - `memo-mcp` — FastMCP stdio server in `src/memo/server.py` (~13 tools, all prefixed `memory_`).
