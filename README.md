@@ -446,6 +446,16 @@ A handful of projects sit in the same neighbourhood. They diverge on the things 
 
 7. **No vendor lock and no telemetry.** MIT package on top of MIT/Apache-2.0 dependencies (MLX MIT, sqlite-vec Apache-2.0, Qwen weights Apache-2.0). Nothing phones home; `doctor` literally does not probe `:11434`.
 
+### Other projects called "memo" or "memo-mcp"
+
+A handful of unrelated repos share the name. Quick disambiguation in case you're searching:
+
+| Project | What it is | Overlap with us |
+|---|---|---|
+| [`upstash/memo`](https://github.com/upstash/memo) | MCP server for **handing off conversation state** between agents (goals / pending tasks / decisions). State lives in Upstash Redis (managed cloud or self-hosted on Vercel). No embeddings, no RAG. | Different problem entirely — agent handoff, not a memory archive. We're local-first markdown + vector search; they're cloud-state with structured handoff objects. |
+| [`milasd/memo-mcp`](https://github.com/milasd/memo-mcp) | Local Python MCP for **RAG over personal journal entries**. Pluggable vector backend (ChromaDB default / FAISS / in-memory), Apple-Silicon GPU embedder, no bundled LLM. **PyPI name collision** with our `memo-mcp`. | Closest competitor. Both local RAG. We diverge on: MLX-only runtime, markdown source-of-record (Obsidian-readable), sqlite-vec + FTS5 hybrid w/ RRF, cross-encoder reranker, history.db / graph.db split, ambient recall hook bundle. |
+| [`doggybee/mcp-server-memo`](https://github.com/doggybee/mcp-server-memo) | Node.js MCP for **append-only versioned session summaries**. Plain filesystem JSON, no DB, no vector store, no embedder. | Different category — flat-file versioned summaries, no semantic search. |
+
 ### When you should *not* pick memo
 
 Pick something else when:
