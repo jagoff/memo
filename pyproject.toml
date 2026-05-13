@@ -1,8 +1,12 @@
 [project]
-# Distribution name on PyPI is `memo-mcp` because `memo` (v0.2.4) is taken
-# by an unrelated package. The Python module / CLI / repo all stay `memo`.
-name = "memo-mcp"
-version = "0.4.3"
+# Distribution name on PyPI is `mlx-memo`. Why: (1) `memo` (v0.2.4) is taken
+# by an unrelated package; (2) `memo-mcp` collides with milasd/memo-mcp
+# (a ChromaDB-based local journal MCP). The Python module / CLI binary
+# (`memo`) / MCP server binary (`memo-mcp`) / repo all keep their names —
+# only the PyPI distribution moved. Back-compat: existing users on
+# `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
+name = "mlx-memo"
+version = "0.5.0"
 description = "Local MCP memory backed by Obsidian vault — MLX-native LLM + embedder, sqlite-vec store. No Ollama, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
