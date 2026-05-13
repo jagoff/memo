@@ -219,10 +219,10 @@ def _panel_corpus(memory: Any) -> Panel:
 
     total = sum(types_counter.values())
     top3 = types_counter.most_common(3)
-    types_line = "  ".join(f"[bold]{n}[/bold] [dim]{t}[/dim]" for t, n in top3) or "[dim]—[/dim]"
+    types_line = "  ".join(f"[bold]{n}[/bold] {t}" for t, n in top3) or "—"
     body = Text.from_markup(
-        f"[bold cyan]{total}[/bold cyan] memorias  ·  [bold cyan]{len(projects)}[/bold cyan] projects\n"
-        f"{types_line}",
+        f"[bold cyan]{total}[/bold cyan] memorias  ·  "
+        f"[bold cyan]{len(projects)}[/bold cyan] proj  ·  {types_line}",
     )
     return Panel(body, title="[bold magenta]corpus[/bold magenta]",
                  border_style="magenta", padding=(0, 1))
@@ -260,9 +260,8 @@ def _panel_runtime(memory: Any) -> Panel:
         else f"[yellow]{watcher_state}[/yellow]"
     )
     body = Text.from_markup(
-        f"[dim]mlx[/dim]     {mlx_line}\n"
-        f"[dim]vault[/dim]   [cyan]{_human_bytes(vault_size)}[/cyan]  ·  "
-        f"[dim]watcher[/dim] {watcher_line}",
+        f"{mlx_line}  ·  [cyan]{_human_bytes(vault_size)}[/cyan]  ·  "
+        f"{watcher_line}",
     )
     return Panel(body, title="[bold blue]runtime[/bold blue]",
                  border_style="blue", padding=(0, 1))
@@ -395,9 +394,8 @@ def _td(days: int):
 def render(memory: Any, state_dir: Path) -> Layout:
     layout = Layout()
     layout.split_column(
-        Layout(name="header", size=1),
-        Layout(name="top", size=4),
-        Layout(name="mid", size=9),
+        Layout(name="top", size=3),
+        Layout(name="mid", size=8),
         Layout(name="bot", size=6),
         Layout(name="footer", size=1),
     )
@@ -405,22 +403,17 @@ def render(memory: Any, state_dir: Path) -> Layout:
     layout["mid"].split_row(Layout(name="saves"), Layout(name="recalls"))
     layout["bot"].split_row(Layout(name="tags"), Layout(name="activity"))
 
-    now = datetime.now().strftime("%H:%M:%S")
-    header = Text.assemble(
-        ("memo · live", "bold magenta"),
-        ("  ", ""),
-        (f"{memory.cfg.memory_dir}", "dim"),
-        ("  ·  ", "dim"),
-        (now, "cyan"),
-    )
-    layout["header"].update(Align.center(header))
     layout["corpus"].update(_panel_corpus(memory))
     layout["runtime"].update(_panel_runtime(memory))
-    layout["saves"].update(_panel_recent_saves(memory, limit=6))
-    layout["recalls"].update(_panel_recent_recalls(state_dir, limit=5))
+    layout["saves"].update(_panel_recent_saves(memory, limit=5))
+    layout["recalls"].update(_panel_recent_recalls(state_dir, limit=4))
     layout["tags"].update(_panel_top_tags(memory, limit=4))
     layout["activity"].update(_panel_activity(memory, state_dir))
-    footer = Text.assemble(("Ctrl+C", "bold"), (" to quit", "dim"))
+    now = datetime.now().strftime("%H:%M:%S")
+    footer = Text.from_markup(
+        f"[dim]memo · live  ·  {memory.cfg.memory_dir}  ·  [/dim][cyan]{now}[/cyan]"
+        f"  [dim]·  Ctrl+C to quit[/dim]",
+    )
     layout["footer"].update(Align.center(footer))
     return layout
 
