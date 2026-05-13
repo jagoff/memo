@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-12
+
+### Added — **Time-machine (THE differentiator)**
+
+memo is now the only agent-memory product that lets you rewind the
+corpus to any past date. Replays `history.db` events in reverse from
+"now" to reconstruct a snapshot at any past timestamp.
+
+- **`memo as-of search <query> --date YYYY-MM-DD`** — semantic search
+  over the snapshot. Live embedder + post-filter to the historical
+  record set.
+- **`memo as-of ask <question> --date YYYY-MM-DD`** — RAG against the
+  snapshot. The system prompt tells the model the corpus view is
+  historical so it doesn't smuggle in later facts.
+- **`memo as-of list --date YYYY-MM-DD`** — list memorias that
+  existed at that date (recent-first by `updated`).
+- **`memo diff --from <date> [--to <date>]`** — added / removed /
+  updated between two snapshots.
+- **MCP tools**: `memory_search_as_of`, `memory_ask_as_of`,
+  `memory_diff` exposed over stdio so any MCP client gets the same
+  contract.
+- New module `memo.time_machine` with `reconstruct(memory, as_of)`
+  and `diff(memory, from_ts, to_ts)`. Public API surfaces
+  `CorpusSnapshot` (`.list()`, `.search()`, `.ask()`) and `CorpusDiff`
+  (`added`, `removed`, `updated`, `summary()`).
+
+### Changed
+
+- `_now_iso()` upgraded from second to millisecond precision. Same
+  ISO 8601 wire format, just sharper. Required so the reverse-replay
+  can distinguish save/update/delete pairs that happen within a
+  single second.
+
+### Docs
+
+- New SVG diagram `docs/time-machine.svg` illustrating the
+  reverse-replay algorithm visually.
+- README hero section now leads with time-machine as **THE**
+  differentiator vs the 8 competitor projects.
+
+### Tests
+
+- 12 new tests in `tests/test_time_machine.py` covering snapshot
+  reconstruction (empty corpus, before-save, after-delete,
+  between-save-and-delete, title-revert), diff (added / removed /
+  updated / summary), ISO-string parsing, and snapshot-bound search.
+
 ## [0.5.0] - 2026-05-12
 
 PyPI dist rename + TUI follow-ups (q/ESC quit, smaller layout).

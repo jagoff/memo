@@ -1436,7 +1436,11 @@ class Memory:
 
 
 def _now_iso() -> str:
-    return datetime.now(tz=UTC).astimezone().isoformat(timespec="seconds")
+    # Millisecond precision so within-second event ordering survives
+    # — required for time-machine reconstruction to distinguish
+    # save/update/delete pairs that happen rapidly. Tooling that
+    # parsed second-truncated strings still parses these.
+    return datetime.now(tz=UTC).astimezone().isoformat(timespec="milliseconds")
 
 
 def _sha256_short(text: str) -> str:

@@ -11,6 +11,8 @@
 
 </div>
 
+<!-- mcp-name: io.github.jagoff/memo -->
+
 `memo` gives any MCP-aware agent (Claude Code, Claude Desktop, Cursor, Cline, Continue, Paperclip, …) a long-term memory that **runs entirely on your Mac**. It stores each memory as a plain Markdown file inside an Obsidian-friendly folder, indexes embeddings in a single sqlite file, and runs the LLM + embedder + reranker **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys.
 
 > Your prompts and memorias never leave the machine.
@@ -25,6 +27,32 @@
 - **Speaks MCP** over stdio so any compliant client picks it up with one line of config.
 - **Speaks shell** too: the same API ships as a `memo` CLI with ~25 commands.
 
+## 🕰️ The unique feature: **time-machine**
+
+memo is **the only agent-memory product that lets you rewind the corpus to any past date.** Every other store on the market (mem0, letta, cognee, supermemory, mem-vault, milasd/memo-mcp, doggybee, engram) serves *current* state only.
+
+```bash
+# What did I think about MLX vs Ollama three months ago?
+memo as-of ask "MLX vs Ollama" --date 2026-02-01
+
+# What changed in my decisions between releases?
+memo diff --from 2026-03-01 --to 2026-04-30
+
+# Search the corpus as it stood on a specific Monday
+memo as-of search "auth middleware" --date 2026-03-15
+```
+
+Under the hood: `history.db` is an append-only audit log of every save/update/delete. A snapshot at any `T` is built by replaying events in reverse from "now". See [docs/time-machine.svg](docs/time-machine.svg) for the algorithm at a glance.
+
+![time-machine algorithm](docs/time-machine.svg)
+
+**Why this matters:**
+
+- **Debug agent regressions.** "Claude gives a different answer now — which memoria I added last week broke it?" → `memo as-of ask "..." --date <before>` vs `--date <after>`.
+- **Reproducible AI behavior.** Mount a snapshot as an alternate MCP and serve it to the agent so you can reproduce a past decision deterministically.
+- **Personal audit.** "Did I already have this preference on 2026-03-01?" answered definitively from the audit log.
+- **Compliance.** "What did the model know when it took action X?" — reconstruct the exact memory state at time T.
+
 ## Why memo
 
 | Pain | What memo gives you |
@@ -34,6 +62,7 @@
 | DB-only stores lock your knowledge inside an opaque blob | **Markdown is the source of truth.** Edit in Obsidian, vim, anything. |
 | Cold-start latencies of 2-10s per recall | **MLX prewarm hook** → sub-second recalls after session start. |
 | Hand-crafted `/remember` invocations every turn | **Ambient recall**: top-3 hits auto-injected into every prompt. |
+| **No way to query past corpus state** | **Time-machine**: snapshot the corpus at any past date (see above). |
 | Vendor lock | **MIT package, open stack** (sqlite-vec Apache 2.0, MLX MIT, Qwen Apache 2.0). |
 
 ## How it fits in your stack
@@ -270,6 +299,10 @@ memo watch                        # foreground file-watcher: auto-reindex on .md
 memo install-watcher              # background watcher via launchd plist
 memo uninstall-watcher            # remove the launchd watcher job
 memo tui                          # live terminal dashboard (Ctrl+C exits)
+memo as-of search 'query' --date 2026-03-01    # search a past snapshot
+memo as-of ask 'question' --date 2026-03-01    # RAG on a past snapshot
+memo as-of list --date 2026-03-01              # memorias that existed then
+memo diff --from 2026-03-01 --to 2026-04-30    # diff between two snapshots
 ```
 
 ### Live dashboard — `memo tui`
@@ -432,6 +465,7 @@ A handful of projects sit in the same neighbourhood. They diverge on the things 
 | **Hybrid retrieval** | vec + BM25 + RRF | vec | vec | vec + graph | vec | vec | n/a (entity-based) | vec |
 | **Cross-encoder reranker** | ✅ MLX Qwen3-Reranker | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Ambient recall (zero invoke)** | ✅ Claude Code hooks | ❌ | n/a | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Time-machine (past snapshots)** | ✅ `memo as-of ask --date …` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Apple Silicon optimisation** | ✅ first-class (MLX) | runs, no opt | runs, no opt | runs, no opt | n/a | works | n/a | works |
 | **License** | MIT | Apache-2.0 | Apache-2.0 | Apache-2.0 | proprietary (SaaS) | MIT | MIT | MIT |
 | **Privacy posture** | data never leaves Mac | depends on provider | depends on provider | depends on provider | hosted | local + cloud-ollama opt | depends on LLM | local |
