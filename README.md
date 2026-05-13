@@ -75,9 +75,13 @@ With the Claude Code plugin installed, two extra hooks plug in:
 pip install mlx-memo
 # or
 uv tool install mlx-memo
+# or via the Homebrew tap
+brew tap jagoff/memo && brew install mlx-memo
+# or
+pipx install mlx-memo
 ```
 
-Both expose two binaries: `memo` (CLI) and `memo-mcp` (MCP server).
+Any of those expose two binaries: `memo` (CLI) and `memo-mcp` (MCP server).
 
 > The PyPI distribution is **`mlx-memo`** as of 0.5.0. Earlier
 > versions shipped as `memo-mcp` and the binary names haven't

@@ -2351,8 +2351,25 @@ def install_shell_wrapper(
             fh.write(f"{source_line}\n")
         console.print(f"[green]✓[/green] {rc_path} ← appended source line")
 
-    # Step 3 — detect pre-existing `alias claude=...` and warn.
+    # Step 3 — detect pre-existing `alias claude=...` and warn the
+    # user. A shell wrapper function shadows an alias of the same
+    # name, so the alias would silently lose any flags it bundled.
+    # Migration target: `MEMO_CLAUDE_EXTRA_ARGS=(--flag1 --flag2)`.
     import re as _re
+
+    try:
+        rc_text = rc_path.read_text(encoding="utf-8")
+    except OSError:
+        rc_text = ""
+    alias_match = _re.search(r"^\s*alias\s+claude\s*=.*$", rc_text, _re.MULTILINE)
+    if alias_match:
+        console.print(
+            f"[yellow]heads-up:[/yellow] found a pre-existing `{alias_match.group(0).strip()}` "
+            f"in {rc_path}.\n"
+            f"  The wrapper function will shadow it. To preserve those flags,\n"
+            f"  remove the alias and use [bold]MEMO_CLAUDE_EXTRA_ARGS[/bold]:\n"
+            f"    [dim]export MEMO_CLAUDE_EXTRA_ARGS=(--your-flag --other-flag)[/dim]",
+        )
 
 
 # -- temporal reasoning commands ----------------------------------------------

@@ -25,6 +25,16 @@ Public API:
 from memo.config import Config
 from memo.memory import Memory, MemoryRecord
 
-__version__ = "0.1.0"
+# Single source of truth lives in pyproject.toml `[project] version`.
+# Resolve at import time from the installed distribution metadata so
+# `memo.__version__` always matches `pip show mlx-memo`. Falls back to
+# a sentinel when running from an uninstalled checkout.
+try:
+    from importlib.metadata import PackageNotFoundError, version as _version
+    __version__ = _version("mlx-memo")
+except PackageNotFoundError:  # pragma: no cover — editable install w/o metadata
+    __version__ = "0.0.0+unknown"
+except Exception:  # pragma: no cover — defensive
+    __version__ = "0.0.0+unknown"
 
 __all__ = ["Config", "Memory", "MemoryRecord", "__version__"]
