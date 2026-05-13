@@ -35,6 +35,10 @@ El user te invocó con `/memo $ARGUMENTS`. Tu trabajo es parsear `$ARGUMENTS` y 
 | `lint` | memorias con problemas (legacy_extra / few_tags / body_skinny / untitled) | `mcp__memo__memory_lint` |
 | `history` [op] [id] | audit log de save/update/delete | `mcp__memo__memory_history` |
 | `doctor` [`--gc`] [`--fix`] | self-check + orphan detect | shell: `memo doctor` |
+| `tui` [`--refresh N`] | live terminal dashboard (corpus, saves, recalls, MLX state, sparklines) | shell: `memo tui` |
+| `watch` | foreground file-watcher (auto-reindex on `.md` edit) | shell: `memo watch` |
+| `install-watcher` / `uninstall-watcher` | launchd plist daemon for the watcher | shell: `memo install-watcher` / `memo uninstall-watcher` |
+| `mine-history` [`--since N`] | backfill memorias from past Claude Code transcripts | shell: `memo mine-history` |
 | cualquier otra cosa | **search semántico** | `mcp__memo__memory_search({query: $ARGUMENTS, limit: 5, body_chars: 280})` |
 
 ### Tool naming

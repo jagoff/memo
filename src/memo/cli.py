@@ -1141,6 +1141,20 @@ def recall_hook() -> None:
     #     "apple-mcp" memoria matched). Threshold 0.6 cuts these out.
     # Tune via MEMO_RECALL_MIN_SIM if your corpus has different density.
     relevant = [h for h in hits if h.score is None or h.score >= min_sim]
+
+    # Telemetry: append every recall (with or without hits) to the
+    # JSONL ring buffer consumed by `memo tui`. Best-effort; failures
+    # are swallowed inside the helper.
+    try:
+        from memo.dashboard import append_recall_log
+        append_recall_log(
+            Config.from_env().state_dir,
+            prompt=prompt,
+            hits=[{"id": h.id, "score": h.score, "title": h.title} for h in relevant],
+        )
+    except Exception:
+        pass
+
     if not relevant:
         _bail(f"no hits above min_sim={min_sim}")
         return
@@ -1213,6 +1227,24 @@ def recall_hook() -> None:
     }
     print(_json.dumps(output, ensure_ascii=False))
     _sys.exit(0)
+
+
+@cli.command(name="tui")
+@click.option("--refresh", type=float, default=1.0, show_default=True,
+              help="Refresh interval in seconds.")
+@click.option("--no-clear", is_flag=True,
+              help="Don't take over the terminal screen — render inline (handy for tmux/screen).")
+def tui(refresh: float, no_clear: bool) -> None:
+    """Live terminal dashboard — corpus stats, recent saves/recalls, MLX warm-state,
+    watcher status, top tags, 14-day sparklines. Ctrl+C to exit.
+
+    Reads from the existing `history.db` (saves) and a JSONL recall log
+    written by `memo recall-hook`. Read-only — does not modify the
+    corpus.
+    """
+    from memo.dashboard import run_tui
+
+    run_tui(refresh=refresh, no_clear=no_clear)
 
 
 @cli.command(name="watch")

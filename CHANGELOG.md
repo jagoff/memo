@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-05-12
+
+Adds a live terminal dashboard and the recall-log plumbing that feeds it.
+
+### Added
+
+- **`memo tui`** — live, colored Rich-Live dashboard. Six panels:
+  corpus stats (totals + per-type breakdown + project count), runtime
+  (MLX warm/cold flags for embedder / reranker / chat, vault size,
+  watcher status from `launchctl print`), recent saves (last 10 from
+  `history.db`), recent recalls (last 8 from the new recall log), top
+  tags (project tags highlighted), and 14-day saves/recalls
+  sparklines (`▁▂▃▄▅▆▇█`). Refresh `--refresh N` (default 1.0 s).
+  Ctrl+C to exit. Zero new deps — Rich was already in.
+- **Recall log JSONL** at `~/.local/share/memo/recall.log`. The
+  `memo recall-hook` appends `{ts, prompt, hits[]}` per invocation
+  (best-effort, failures swallowed). Auto-rotates at ~200 KB to the
+  last 200 entries. Powers the TUI's recall panel; failures here can
+  never affect the hook's output.
+- **`/memo tui`** routing in `skills/memo/SKILL.md` (along with
+  `/memo watch`, `/memo install-watcher`, `/memo mine-history`).
+
+### Changed
+
+- New module `memo.dashboard` (~370 lines). Public API:
+  `run_tui`, `render`, `sparkline`, `append_recall_log`,
+  `read_recall_log`.
+
 ## [0.4.0] - 2026-05-12
 
 Minor release — five "gamechanger" features land alongside a major

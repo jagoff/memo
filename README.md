@@ -261,7 +261,33 @@ memo mine-history --since 30      # backfill memorias from past Claude Code chat
 memo watch                        # foreground file-watcher: auto-reindex on .md edit
 memo install-watcher              # background watcher via launchd plist
 memo uninstall-watcher            # remove the launchd watcher job
+memo tui                          # live terminal dashboard (Ctrl+C exits)
 ```
+
+### Live dashboard — `memo tui`
+
+```
+┌─ memo · live ────────────────────────────────────────────┐
+│ corpus       │ runtime                                   │
+│   total 1247 │   embedder ● warm   chat ○ cold           │
+│   decision   │   watcher  ✓ running                       │
+├─ recent saves ─────────────────────────────────────────  │
+│ 42m  [a2eb9a7] release v0.4.0                  decision  │
+│ 1h   [780c149] MCP resources                   note      │
+├─ recent recalls ───────────────────────────────────────  │
+│ 2m   "interfaz visual por terminal"  → 3 hits @ .74/...  │
+├─ top tags ────────┬─ activity ─────────────────────────  │
+│ project:memo  142 │ saves/day   ▂▃▅▇█▆▄▃▅▇█   Σ 47       │
+│ mlx            89 │ recalls/day ▁▁▃▅▇█▆▄▂▁▁▁   Σ 128     │
+└──────────────────────────────────────────────────────────┘
+```
+
+Six panels, all-colored, refresh every second by default. Reads
+read-only from the existing `history.db` (saves), a JSONL recall log
+written by `memo recall-hook` (`~/.local/share/memo/recall.log`,
+auto-rotated at ~200 KB), and the live MLX object flags
+(`embedder._model is not None`). Watcher state comes from
+`launchctl print`. No new dependencies — Rich was already pulled in.
 
 ### Backfill from past Claude Code conversations
 
