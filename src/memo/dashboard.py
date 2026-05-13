@@ -221,8 +221,8 @@ def _panel_corpus(memory: Any) -> Panel:
     body = Table.grid(padding=(0, 1))
     body.add_column(style="dim")
     body.add_column(justify="right", style="bold cyan")
-    body.add_row("total memorias", str(total))
-    for t, n in types_counter.most_common(7):
+    body.add_row("total", str(total))
+    for t, n in types_counter.most_common(4):
         body.add_row(f"  {t}", str(n))
     body.add_row("projects", str(len(projects)))
     return Panel(body, title="[bold magenta]corpus[/bold magenta]",
@@ -256,7 +256,7 @@ def _panel_runtime(memory: Any) -> Panel:
     body.add_row("embedder", _flag(embedder_warm))
     body.add_row("reranker", _flag(rerank_warm))
     body.add_row("chat (7B)", _flag(chat_warm))
-    body.add_row("vault", Text(f"{cfg.memory_dir}\n  {_human_bytes(vault_size)}", style="cyan"))
+    body.add_row("vault", Text(_human_bytes(vault_size), style="cyan"))
     body.add_row(
         "watcher",
         Text(
@@ -395,34 +395,32 @@ def _td(days: int):
 def render(memory: Any, state_dir: Path) -> Layout:
     layout = Layout()
     layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="top", size=14),
-        Layout(name="mid", size=12),
-        Layout(name="bot", size=8),
+        Layout(name="header", size=1),
+        Layout(name="top", size=10),
+        Layout(name="mid", size=9),
+        Layout(name="bot", size=6),
         Layout(name="footer", size=1),
     )
     layout["top"].split_row(Layout(name="corpus"), Layout(name="runtime"))
     layout["mid"].split_row(Layout(name="saves"), Layout(name="recalls"))
     layout["bot"].split_row(Layout(name="tags"), Layout(name="activity"))
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now().strftime("%H:%M:%S")
     header = Text.assemble(
-        ("memo · live", "bold magenta on black"),
-        ("   ", ""),
+        ("memo · live", "bold magenta"),
+        ("  ", ""),
         (f"{memory.cfg.memory_dir}", "dim"),
-        ("   ·   ", "dim"),
+        ("  ·  ", "dim"),
         (now, "cyan"),
     )
-    layout["header"].update(Align.center(Panel(header, border_style="bright_magenta")))
+    layout["header"].update(Align.center(header))
     layout["corpus"].update(_panel_corpus(memory))
     layout["runtime"].update(_panel_runtime(memory))
-    layout["saves"].update(_panel_recent_saves(memory))
-    layout["recalls"].update(_panel_recent_recalls(state_dir))
-    layout["tags"].update(_panel_top_tags(memory))
+    layout["saves"].update(_panel_recent_saves(memory, limit=6))
+    layout["recalls"].update(_panel_recent_recalls(state_dir, limit=5))
+    layout["tags"].update(_panel_top_tags(memory, limit=4))
     layout["activity"].update(_panel_activity(memory, state_dir))
-    footer = Text.assemble(
-        ("Ctrl+C", "bold"), (" to quit · refresh ", "dim"),
-    )
+    footer = Text.assemble(("Ctrl+C", "bold"), (" to quit", "dim"))
     layout["footer"].update(Align.center(footer))
     return layout
 
