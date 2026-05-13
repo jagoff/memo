@@ -218,15 +218,14 @@ def _panel_corpus(memory: Any) -> Panel:
                 projects.add(t)
 
     total = sum(types_counter.values())
-    body = Table.grid(padding=(0, 1))
-    body.add_column(style="dim")
-    body.add_column(justify="right", style="bold cyan")
-    body.add_row("total", str(total))
-    for t, n in types_counter.most_common(4):
-        body.add_row(f"  {t}", str(n))
-    body.add_row("projects", str(len(projects)))
+    top3 = types_counter.most_common(3)
+    types_line = "  ".join(f"[bold]{n}[/bold] [dim]{t}[/dim]" for t, n in top3) or "[dim]—[/dim]"
+    body = Text.from_markup(
+        f"[bold cyan]{total}[/bold cyan] memorias  ·  [bold cyan]{len(projects)}[/bold cyan] projects\n"
+        f"{types_line}",
+    )
     return Panel(body, title="[bold magenta]corpus[/bold magenta]",
-                 border_style="magenta")
+                 border_style="magenta", padding=(0, 1))
 
 
 def _panel_runtime(memory: Any) -> Panel:
@@ -244,28 +243,29 @@ def _panel_runtime(memory: Any) -> Panel:
     vault_size = _dir_size(cfg.memory_dir)
     watcher_loaded, watcher_state = _watcher_status()
 
-    def _flag(ok: bool, warm_label: str = "warm") -> Text:
+    def _dot(ok: bool, label: str) -> str:
         return (
-            Text(f"● {warm_label}", style="bold green")
-            if ok else Text("○ cold", style="dim")
+            f"[bold green]●[/bold green] {label}"
+            if ok else f"[dim]○ {label}[/dim]"
         )
 
-    body = Table.grid(padding=(0, 1))
-    body.add_column(style="dim")
-    body.add_column(no_wrap=False)
-    body.add_row("embedder", _flag(embedder_warm))
-    body.add_row("reranker", _flag(rerank_warm))
-    body.add_row("chat (7B)", _flag(chat_warm))
-    body.add_row("vault", Text(_human_bytes(vault_size), style="cyan"))
-    body.add_row(
-        "watcher",
-        Text(
-            ("✓ " + watcher_state) if watcher_loaded else watcher_state,
-            style="green" if watcher_loaded else "yellow",
-        ),
+    mlx_line = "  ".join([
+        _dot(embedder_warm, "emb"),
+        _dot(rerank_warm, "rrk"),
+        _dot(chat_warm, "chat"),
+    ])
+    watcher_line = (
+        f"[green]✓ {watcher_state}[/green]"
+        if watcher_loaded
+        else f"[yellow]{watcher_state}[/yellow]"
+    )
+    body = Text.from_markup(
+        f"[dim]mlx[/dim]     {mlx_line}\n"
+        f"[dim]vault[/dim]   [cyan]{_human_bytes(vault_size)}[/cyan]  ·  "
+        f"[dim]watcher[/dim] {watcher_line}",
     )
     return Panel(body, title="[bold blue]runtime[/bold blue]",
-                 border_style="blue")
+                 border_style="blue", padding=(0, 1))
 
 
 def _panel_recent_saves(memory: Any, limit: int = 10) -> Panel:
@@ -396,7 +396,7 @@ def render(memory: Any, state_dir: Path) -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=1),
-        Layout(name="top", size=10),
+        Layout(name="top", size=4),
         Layout(name="mid", size=9),
         Layout(name="bot", size=6),
         Layout(name="footer", size=1),
