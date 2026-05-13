@@ -207,6 +207,11 @@ class Config(BaseModel):
         """Cross-reference DB (wikilinks + backlinks)."""
         return self.state_dir / "crossref.db"
 
+    @property
+    def contradictions_db(self) -> Path:
+        """Sidecar DB for persisted contradiction pairs + triage status."""
+        return self.state_dir / "contradictions.db"
+
     # ── Construction ─────────────────────────────────────────────────────
 
     @classmethod
