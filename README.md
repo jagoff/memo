@@ -266,28 +266,24 @@ memo tui                          # live terminal dashboard (Ctrl+C exits)
 
 ### Live dashboard — `memo tui`
 
-```
-┌─ memo · live ────────────────────────────────────────────┐
-│ corpus       │ runtime                                   │
-│   total 1247 │   embedder ● warm   chat ○ cold           │
-│   decision   │   watcher  ✓ running                       │
-├─ recent saves ─────────────────────────────────────────  │
-│ 42m  [a2eb9a7] release v0.4.0                  decision  │
-│ 1h   [780c149] MCP resources                   note      │
-├─ recent recalls ───────────────────────────────────────  │
-│ 2m   "interfaz visual por terminal"  → 3 hits @ .74/...  │
-├─ top tags ────────┬─ activity ─────────────────────────  │
-│ project:memo  142 │ saves/day   ▂▃▅▇█▆▄▃▅▇█   Σ 47       │
-│ mlx            89 │ recalls/day ▁▁▃▅▇█▆▄▂▁▁▁   Σ 128     │
-└──────────────────────────────────────────────────────────┘
-```
+![memo tui dashboard](docs/tui-dashboard.png)
 
-Six panels, all-colored, refresh every second by default. Reads
-read-only from the existing `history.db` (saves), a JSONL recall log
-written by `memo recall-hook` (`~/.local/share/memo/recall.log`,
-auto-rotated at ~200 KB), and the live MLX object flags
-(`embedder._model is not None`). Watcher state comes from
-`launchctl print`. No new dependencies — Rich was already pulled in.
+Six panels, all-colored, refresh every second by default:
+
+- **corpus** — total memorias, distinct project tags, top 3 types
+- **runtime** — MLX warm/cold flags (`emb` / `rrk` / `chat`), vault size, watcher state
+- **recent saves** — last 5 entries from `history.db`
+- **recent recalls** — last 4 entries from the recall log (`~/.local/share/memo/recall.log`)
+- **top tags** — most-frequent corpus tags (`project:*` highlighted)
+- **activity** — 14-day saves/recalls sparklines (`▁▂▃▄▅▆▇█`)
+
+Reads read-only from the existing `history.db` (saves), a JSONL recall
+log written by `memo recall-hook` (auto-rotated at ~200 KB), and the
+live MLX object flags (`embedder._model is not None`). Watcher state
+comes from `launchctl print`. No new dependencies — Rich was already
+pulled in.
+
+Quit with `q`, `ESC`, or `Ctrl+C`.
 
 ### Backfill from past Claude Code conversations
 
