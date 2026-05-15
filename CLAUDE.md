@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `memo` — Click-based CLI in `src/memo/cli.py` (~25 commands).
 - `memo-mcp` — FastMCP stdio server in `src/memo/server.py` (~13 tools, all prefixed `memory_`).
 
-The Python module, CLI binary, and GitHub repo are all named `memo`. Only the PyPI distribution is `memo-mcp` (because `memo` 0.2.4 was already taken). Don't conflate the two when grepping or renaming.
+The Python module, CLI binary, and GitHub repo are all named `memo`. The PyPI distribution is `mlx-memo` because `memo` was already taken and `memo-mcp` collided with another project. Don't conflate the distribution name with the import/module/binary names when grepping or renaming.
 
 ## Common commands
 
@@ -30,8 +30,15 @@ uv pip install -e '.[dev]'
 .venv/bin/ruff check src/ tests/
 
 # CLI smoke against the real vault
-memo doctor
+memo doctor --strict-runtime
 memo stats
+
+# Real isolated system install from this checkout
+pipx install --force '.[mlx]'
+memo doctor --strict-runtime
+
+# Installer script syntax check
+bash -n install.sh
 ```
 
 CI (`.github/workflows/test.yml`) runs ruff + `pytest -m "not slow"` on Ubuntu — this works because `mlx`/`mlx-lm` deps are gated to `darwin`/`arm64` in `pyproject.toml`, and `tests/conftest.py` auto-skips `requires_mlx` tests when `mlx_lm` isn't importable.
@@ -58,12 +65,12 @@ embedder.py  store.py        history.py      graph.py     llm.py
                                                             + 3B helper)
        │
        ▼
-markdown files in <vault>/99-obsidian/99-AI/memory/  ← source of truth
+markdown files in cfg.data_dir (default ~/Documents/memo/)  ← source of truth
 ```
 
 ### Storage of record vs index
 
-The `.md` files are authoritative. `memvec.db` (sqlite-vec) is a rebuildable index. The user can edit memorias directly in Obsidian; on next `memo reindex` (or any tool boot), `body_hash` mismatches drive re-embedding. `rm ~/.local/share/memo/memvec.db && memo reindex` is a safe full rebuild — it never touches the `.md` files.
+The `.md` files are authoritative. `memvec.db` (sqlite-vec) is a rebuildable index. The user can edit memorias directly in Obsidian or any editor; on next `memo reindex` (or watcher run), `body_hash` mismatches drive re-embedding. `rm ~/.local/share/memo/memvec.db && memo reindex` is a safe full rebuild — it never touches the `.md` files.
 
 Three separate sqlite files in `~/.local/share/memo/`:
 - `memvec.db` — `meta` table + `vec0` virtual table (sqlite-vec). Hot-path read.
@@ -112,9 +119,12 @@ The 5s timeout is tight. Cold MLX load is ~2s. If you add work to the hook, meas
 Version lives in three places — bump together:
 - `pyproject.toml` `[project] version`
 - `.claude-plugin/plugin.json` `version`
+- `server.json` `version` and package `version`
 - `CHANGELOG.md` (Keep-a-Changelog format)
 
-`src/memo/__init__.py:__version__` is currently pinned at `"0.1.0"` and is not the source of truth — `pyproject.toml` is.
+`src/memo/__init__.py:__version__` is read from installed package metadata via `importlib.metadata.version("mlx-memo")`; `pyproject.toml` is the source of truth for package builds.
+
+Release/runtime invariant: production use should install memo as an isolated tool (`curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash`, `pipx install mlx-memo`, `uv tool install mlx-memo`, Homebrew, or `pipx install --force '.[mlx]'` from this checkout). Avoid installing it into another project's `.venv`; `memo doctor --strict-runtime` is expected to fail if `memo` and `memo-mcp` resolve from mixed runtimes.
 
 ## Conventions specific to this repo
 

@@ -51,7 +51,7 @@ start with the `homebrew-` prefix.
    - License: MIT
    EOF
    git add Formula/ README.md
-   git commit -m "Initial tap: mlx-memo 0.5.0"
+   git commit -m "Initial tap: mlx-memo <current-version>"
    git push -u origin master
    ```
 
@@ -60,7 +60,7 @@ start with the `homebrew-` prefix.
    ```bash
    brew tap jagoff/memo
    brew install mlx-memo
-   memo --version    # should print 0.5.0
+   memo --version    # should print the formula version
    brew uninstall mlx-memo
    brew untap jagoff/memo
    ```
@@ -71,7 +71,7 @@ After every `pyproject.toml` version bump and PyPI publish:
 
 ```bash
 # In the memo repo
-NEW_VERSION=0.5.1
+NEW_VERSION=<next-version>
 URL="https://files.pythonhosted.org/packages/source/m/mlx-memo/mlx_memo-${NEW_VERSION}.tar.gz"
 SHA=$(curl -sL "$URL" | shasum -a 256 | awk '{print $1}')
 

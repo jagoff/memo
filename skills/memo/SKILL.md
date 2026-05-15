@@ -6,7 +6,7 @@ argument-hint: "(vacío = smart capture) | <query> | list [n] | save <text> | ge
 
 # /memo — router para memo MCP
 
-`memo` (path local: [`/Users/fer/repositories/memo/`](file:///Users/fer/repositories/memo/)) es un MCP local que da memoria persistente backed by Obsidian. Stack 100% local-first, **zero Ollama, zero cloud**:
+`memo` (path local: `/Users/fer/repos/memo/`) es un MCP local que da memoria persistente backed by Markdown/Obsidian. Stack 100% local-first, **zero Ollama, zero cloud**:
 
 - LLM: [`mlx-lm`](https://github.com/ml-explore/mlx-lm) loadeando Qwen2.5-Instruct quantizado, in-process en Apple Silicon Metal.
 - Embedder: [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ), 1024-dim, last-token pooling, L2-normalised.
@@ -61,7 +61,9 @@ mcp__memo__memory_stats
 Si NO ves estas herramientas en tu sesión actual, el server no está registrado. Avisale al user que corra:
 
 ```bash
-claude mcp add memo -s user memo-mcp
+memo mcp-command
+# ejecutar el comando que imprime, por ejemplo:
+claude mcp add memo -s user /Users/fer/.local/pipx/venvs/mlx-memo/bin/memo-mcp
 ```
 
 …y reinicie Claude Code.
@@ -233,21 +235,21 @@ Llamá `mcp__memo__memory_stats()` y mostrá el dict literal:
 
 ```
 total          142
-vault_path     /Users/fer/.../Notes
-memory_dir     /Users/fer/.../Notes/99-obsidian/99-AI/memory
+data_dir       /Users/fer/Documents/memo
+vault_path     (unset)
 db_path        /Users/fer/.local/share/memo/memvec.db
 embedder_model mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 ```
 
 ## Diferencia con `/mv`
 
-`/mv` (alias `/mem_vault`, `/memory`) usa el MCP `mem-vault` (mem0 + Qdrant + Ollama). `/memo` usa el MCP `memo` (sqlite-vec + MLX). Comparten storage layout (mismo `99-AI/memory/` subfolder) y schema de frontmatter, **pero NO comparten el index** — cada uno tiene su propio sqlite/qdrant. Si el user quiere migrar memorias de uno al otro, hay que correr `memo reindex` apuntando al mismo vault path para que memo absorba los `.md` que mem-vault dejó ahí.
+`/mv` (alias `/mem_vault`, `/memory`) usa el MCP `mem-vault` (mem0 + Qdrant + Ollama). `/memo` usa el MCP `memo` (sqlite-vec + MLX). Pueden leer archivos Markdown compatibles si apuntan al mismo directorio, **pero NO comparten el index** — cada uno tiene su propio sqlite/qdrant. Si el user quiere migrar memorias de uno al otro, hay que apuntar `MEMO_DATA_DIR` al directorio correcto y correr `memo reindex` para que memo absorba los `.md`.
 
 No mezcles `/mv` y `/memo` en la misma operación — son dos sistemas paralelos. El user elige cuál usar; vos no decidís por él.
 
 ## Errores comunes
 
-- **`memo-mcp: command not found`** → el package no está instalado. Correr `cd ~/repositories/memo && uv pip install -e .`.
+- **`memo-mcp: command not found`** → el package no está instalado o no está en PATH. Instalar aislado con `pipx install mlx-memo` o, desde el checkout local, `pipx install --force '/Users/fer/repos/memo[mlx]'`.
 - **`Vault path does not exist`** → la vault de Obsidian no está donde el config la espera. Setear `MEMO_VAULT_PATH=...` (default = iCloud Mobile Documents).
-- **MCP tools no aparecen en la sesión** → el server no fue registrado o Claude Code no se reinició. Correr `claude mcp add memo -s user memo-mcp` y reabrir Claude Code.
+- **MCP tools no aparecen en la sesión** → el server no fue registrado o Claude Code no se reinició. Correr `memo mcp-command`, ejecutar el comando absoluto que imprime, y reabrir Claude Code.
 - **`Embedder produced dim=X but config expects 1024`** → swap de modelo embedder sin actualizar `MEMO_EMBEDDER_DIMS`. Sólo aplica si el user cambió el modelo manualmente.
