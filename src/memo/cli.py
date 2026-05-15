@@ -22,8 +22,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
+import shutil
 import sys
 from datetime import UTC
+from pathlib import Path
 from typing import Any
 
 import click
@@ -74,7 +77,7 @@ def cli(ctx: click.Context) -> None:
 # something invokes them from an interactive shell while debugging).
 _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "init", "doctor", "migrate-vault",
-    "prewarm", "recall-hook", "capture-stop", "session", "ingest",
+    "mcp-command", "prewarm", "recall-hook", "capture-stop", "session", "ingest",
 }
 
 
@@ -141,6 +144,144 @@ def _run_picker_and_save() -> None:
             "[dim](used by `memo ingest`)[/dim]",
         )
     console.print(f"[dim]config saved: {cfg_path}[/dim]")
+
+
+def _safe_resolve(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _resolve_command(name: str) -> tuple[Path | None, Path | None]:
+    raw = shutil.which(name)
+    if not raw:
+        return None, None
+    raw_path = Path(raw)
+    return raw_path, _safe_resolve(raw_path)
+
+
+def _env_root_for_bin(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    if path.parent.name == "bin":
+        return path.parent.parent
+    return None
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _install_mode(root: Path | None) -> str:
+    if root is None:
+        return "unknown"
+    parts = set(root.parts)
+    root_s = str(root)
+    if "pipx" in parts and "venvs" in parts:
+        return "pipx"
+    if "uv" in parts and "tools" in parts:
+        return "uv tool"
+    if "Cellar" in parts or root_s.startswith("/opt/homebrew/"):
+        return "homebrew"
+    if root.name in {".venv", "venv"} or (root / "pyvenv.cfg").is_file():
+        return "venv"
+    return "unknown"
+
+
+def _runtime_install_report(cwd: Path | None = None) -> dict[str, Any]:
+    """Describe how the active `memo`/`memo-mcp` installation is wired.
+
+    The operationally safe shape is an isolated tool install (pipx, uv tool,
+    Homebrew). A project-local `.venv` works for development, but using it as
+    the MCP runtime couples memory state and MLX deps to whichever repo had
+    the venv active when the client was configured.
+    """
+    cwd = _safe_resolve(cwd or Path.cwd())
+    memo_cmd, memo_resolved = _resolve_command("memo")
+    mcp_cmd, mcp_resolved = _resolve_command("memo-mcp")
+    py_resolved = _safe_resolve(Path(sys.executable))
+
+    memo_root = _env_root_for_bin(memo_resolved)
+    mcp_root = _env_root_for_bin(mcp_resolved)
+    py_root = _env_root_for_bin(py_resolved)
+    primary_root = memo_root or mcp_root or py_root
+    mode = _install_mode(primary_root)
+
+    warnings: list[str] = []
+    if memo_resolved is None:
+        warnings.append("`memo` is not on PATH")
+    if mcp_resolved is None:
+        warnings.append("`memo-mcp` is not on PATH; MCP clients cannot start it")
+    if memo_root is not None and mcp_root is not None and memo_root != mcp_root:
+        warnings.append(
+            "`memo` and `memo-mcp` resolve to different environments; "
+            "reinstall with `pipx install --force mlx-memo` or `uv tool install --force mlx-memo`"
+        )
+    if mode == "venv" and primary_root is not None:
+        if _path_is_relative_to(primary_root, cwd):
+            warnings.append(
+                f"running from project venv {primary_root}; prefer an isolated "
+                "tool install so MCP is not tied to this repo"
+            )
+        else:
+            warnings.append(
+                f"running from venv {primary_root}; verify this is memo's own "
+                "dedicated environment, not another project's venv"
+            )
+    elif mode == "unknown":
+        warnings.append(
+            "install mode is unknown; recommended: `pipx install mlx-memo` "
+            "or `uv tool install mlx-memo`"
+        )
+
+    return {
+        "mode": mode,
+        "root": str(primary_root) if primary_root else None,
+        "memo_cmd": str(memo_cmd) if memo_cmd else None,
+        "memo_resolved": str(memo_resolved) if memo_resolved else None,
+        "mcp_cmd": str(mcp_cmd) if mcp_cmd else None,
+        "mcp_resolved": str(mcp_resolved) if mcp_resolved else None,
+        "python": str(py_resolved),
+        "warnings": warnings,
+    }
+
+
+def _print_runtime_install_report(report: dict[str, Any]) -> None:
+    mode = report["mode"]
+    root = report.get("root") or "(unknown)"
+    if report["warnings"]:
+        console.print(f"[yellow]![/yellow] install mode: {mode}  [dim]{root}[/dim]")
+    else:
+        console.print(f"[green]✓[/green] install mode: {mode}  [dim]{root}[/dim]")
+
+    for key, label in (
+        ("memo_cmd", "memo"),
+        ("mcp_cmd", "memo-mcp"),
+    ):
+        raw = report.get(key)
+        resolved = report.get(key.replace("_cmd", "_resolved"))
+        if raw and resolved and raw != resolved:
+            console.print(f"[dim]{label:14s}[/dim] {raw} -> {resolved}")
+        elif raw:
+            console.print(f"[dim]{label:14s}[/dim] {raw}")
+        else:
+            console.print(f"[dim]{label:14s}[/dim] (not found)")
+    console.print(f"[dim]{'python':14s}[/dim] {report['python']}")
+    for warning in report["warnings"]:
+        console.print(f"[yellow]![/yellow] {warning}")
+
+
+def _resolved_memo_mcp() -> Path | None:
+    _, resolved = _resolve_command("memo-mcp")
+    if resolved is not None:
+        return resolved
+    fallback = _safe_resolve(Path(sys.executable)).with_name("memo-mcp")
+    return fallback if fallback.exists() else None
 
 
 @cli.command(name="init")
@@ -283,9 +424,11 @@ def migrate_vault(
                    "Adds ~1-2s latency on first call.")
 @click.option("--no-project-tag", "no_project_tag", is_flag=True,
               help="Skip the auto `project:<repo>` tag derived from the current git toplevel.")
+@click.option("--defer-embed", is_flag=True,
+              help="Save markdown + BM25 index only; run `memo reindex` later for semantic search.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a panel.")
 def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
-         auto_derive: bool, no_project_tag: bool, as_json: bool) -> None:
+         auto_derive: bool, no_project_tag: bool, defer_embed: bool, as_json: bool) -> None:
     """Persist CONTENT to the vault + index. Pass `-` to read CONTENT from stdin."""
     from memo.memory import Memory
 
@@ -294,7 +437,8 @@ def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
     mem = Memory(Config.from_env())
     rec = mem.save(content=content, title=title, type_=type_,
                    tags=list(tags), auto_derive=auto_derive,
-                   auto_project=not no_project_tag)
+                   auto_project=not no_project_tag,
+                   defer_embed=defer_embed)
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return
@@ -875,6 +1019,7 @@ def stats() -> None:
         "data_dir": str(mem.cfg.data_dir),
         "vault_path": str(mem.cfg.vault_path) if mem.cfg.vault_path else "(unset)",
         "db_path": str(mem.cfg.db_path),
+        "model_profile": mem.cfg.model_profile,
         "embedder_model": mem.cfg.embedder_model,
         "llm_model": mem.cfg.llm_model,
     }
@@ -885,7 +1030,12 @@ def stats() -> None:
 @cli.command()
 @click.option("--gc", "do_gc", is_flag=True, help="Detect orphans between store and disk.")
 @click.option("--fix", is_flag=True, help="With --gc: drop orphan store rows. .md files are never deleted automatically.")
-def doctor(do_gc: bool, fix: bool) -> None:
+@click.option(
+    "--strict-runtime",
+    is_flag=True,
+    help="Exit non-zero if memo/memo-mcp are not running from an isolated tool install.",
+)
+def doctor(do_gc: bool, fix: bool, strict_runtime: bool) -> None:
     """Self-check: vault present, sqlite-vec loadable, MLX importable, models in cache.
 
     `--gc` reports orphans (store rows whose `.md` is gone, `.md` files
@@ -894,6 +1044,11 @@ def doctor(do_gc: bool, fix: bool) -> None:
     """
     cfg = Config.from_env()
     ok = True
+
+    runtime_report = _runtime_install_report()
+    _print_runtime_install_report(runtime_report)
+    if strict_runtime and runtime_report["warnings"]:
+        ok = False
 
     # 1. Data dir (memorias)
     if cfg.data_dir.is_dir():
@@ -980,6 +1135,43 @@ def doctor(do_gc: bool, fix: bool) -> None:
                     console.print(f"  · …and {n_disk - 20} more")
 
     sys.exit(0 if ok else 1)
+
+
+@cli.command(name="mcp-command")
+@click.option(
+    "--client",
+    type=click.Choice(["claude-code", "json"]),
+    default="claude-code",
+    show_default=True,
+    help="Emit a Claude Code command or raw MCP JSON config.",
+)
+def mcp_command(client: str) -> None:
+    """Print MCP config pinned to the resolved `memo-mcp` executable.
+
+    This avoids accidentally registering a `memo-mcp` from another active
+    project venv. Pair with `memo doctor --strict-runtime` when debugging a
+    client that starts the wrong server.
+    """
+    memo_mcp = _resolved_memo_mcp()
+    if memo_mcp is None:
+        console.print(
+            "[red]memo-mcp not found.[/red] Install memo as an isolated tool: "
+            "`pipx install mlx-memo` or `uv tool install mlx-memo`.",
+        )
+        sys.exit(1)
+    if client == "json":
+        click.echo(json.dumps({
+            "mcpServers": {
+                "memo": {
+                    "type": "stdio",
+                    "command": str(memo_mcp),
+                    "args": [],
+                    "env": {},
+                },
+            },
+        }, ensure_ascii=False, indent=2))
+        return
+    click.echo(f"claude mcp add memo -s user {shlex.quote(str(memo_mcp))}")
 
 
 # ── Ambient memory hooks (v0.3.0) ──────────────────────────────────────────

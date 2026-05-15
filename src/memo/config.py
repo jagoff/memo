@@ -38,6 +38,38 @@ _DEFAULT_DATA_DIR = Path.home() / "Documents" / "memo"
 # users don't accidentally back it up alongside their notes.
 _DEFAULT_STATE_DIR = Path.home() / ".local" / "share" / "memo"
 
+MODEL_PROFILES: dict[str, dict[str, object]] = {
+    # Lowest operational footprint: semantic search still works, but hybrid
+    # search skips the cross-encoder so recall-hook latency stays predictable.
+    "light": {
+        "llm_model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+        "helper_model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+        "embedder_model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
+        "embedder_dims": 1024,
+        "reranker_enabled": False,
+    },
+    # Default: small embedder + reranker. Good quality/latency balance for a
+    # local MCP memory store whose hooks may run on every prompt.
+    "balanced": {
+        "llm_model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+        "helper_model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+        "embedder_model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
+        "embedder_dims": 1024,
+        "reranker_enabled": True,
+        "reranker_model": "mku64/Qwen3-Reranker-0.6B-mlx-8Bit",
+    },
+    # Higher retrieval quality. Requires a full reindex because the 4B
+    # embedder emits 2560-dim vectors instead of 1024.
+    "quality": {
+        "llm_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510",
+        "helper_model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+        "embedder_model": "mlx-community/Qwen3-Embedding-4B-4bit-DWQ",
+        "embedder_dims": 2560,
+        "reranker_enabled": True,
+        "reranker_model": "mku64/Qwen3-Reranker-0.6B-mlx-8Bit",
+    },
+}
+
 
 class Config(BaseModel):
     """Process-wide configuration.
@@ -80,6 +112,13 @@ class Config(BaseModel):
     )
 
     # ── MLX models ───────────────────────────────────────────────────────
+    model_profile: str = Field(
+        default="balanced",
+        description=(
+            "Named model bundle. `light` lowers latency, `balanced` is the "
+            "default, `quality` uses a larger embedder and requires reindex."
+        ),
+    )
     llm_model: str = Field(
         default="mlx-community/Qwen2.5-7B-Instruct-4bit",
         description="HF id of the chat model used for synthesis / consolidation.",
@@ -176,6 +215,16 @@ class Config(BaseModel):
             return v
         return Path(os.path.expandvars(str(v))).expanduser().resolve()
 
+    @field_validator("model_profile")
+    @classmethod
+    def _valid_profile(cls, v: str) -> str:
+        profile = (v or "balanced").strip().lower()
+        if profile not in MODEL_PROFILES:
+            raise ValueError(
+                f"Unknown MEMO_MODEL_PROFILE={v!r}; valid: {sorted(MODEL_PROFILES)}",
+            )
+        return profile
+
     # ── Derived paths ────────────────────────────────────────────────────
 
     @property
@@ -237,12 +286,28 @@ class Config(BaseModel):
             if storage.get(fkey):
                 kwargs[fkey] = storage[fkey]
 
-        # Step 2: env-var overrides.
+        # Step 2: model profile defaults. Individual env vars below
+        # intentionally override profile choices.
+        profile = str(
+            overrides.get("model_profile")
+            or os.environ.get("MEMO_MODEL_PROFILE")
+            or kwargs.get("model_profile")
+            or "balanced"
+        ).strip().lower()
+        if profile not in MODEL_PROFILES:
+            raise ValueError(
+                f"Unknown MEMO_MODEL_PROFILE={profile!r}; valid: {sorted(MODEL_PROFILES)}",
+            )
+        kwargs.update(MODEL_PROFILES[profile])
+        kwargs["model_profile"] = profile
+
+        # Step 3: env-var overrides.
         env_to_field = {
             "MEMO_DATA_DIR": "data_dir",
             "MEMO_VAULT_PATH": "vault_path",
             "MEMO_MEMORY_SUBDIR": "memory_subdir",
             "MEMO_STATE_DIR": "state_dir",
+            "MEMO_MODEL_PROFILE": "model_profile",
             "MEMO_LLM_MODEL": "llm_model",
             "MEMO_HELPER_MODEL": "helper_model",
             "MEMO_EMBEDDER_MODEL": "embedder_model",
@@ -260,7 +325,7 @@ class Config(BaseModel):
                 continue
             kwargs[field] = val
 
-        # Step 3: legacy back-compat — if data_dir is still unset BUT the
+        # Step 4: legacy back-compat — if data_dir is still unset BUT the
         # legacy pair (vault_path + memory_subdir) is set, derive it.
         # This keeps pre-`memo init` installs working unchanged.
         if "data_dir" not in kwargs:
@@ -269,7 +334,7 @@ class Config(BaseModel):
             if vp and sd:
                 kwargs["data_dir"] = str(Path(vp).expanduser() / sd)
 
-        # Step 4: explicit overrides win over everything.
+        # Step 5: explicit overrides win over everything.
         kwargs.update(overrides)
         return cls(**kwargs)
 

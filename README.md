@@ -101,16 +101,20 @@ With the Claude Code plugin installed, two extra hooks plug in:
 ## Install
 
 ```bash
-pip install mlx-memo
+pipx install mlx-memo
 # or
 uv tool install mlx-memo
 # or via the Homebrew tap
 brew tap jagoff/memo && brew install mlx-memo
-# or
-pipx install mlx-memo
+# or, only if you intentionally want it in the active Python env
+pip install mlx-memo
 ```
 
 Any of those expose two binaries: `memo` (CLI) and `memo-mcp` (MCP server).
+For MCP clients, prefer an isolated tool install (`pipx`, `uv tool`, or
+Homebrew) instead of installing into another project's `.venv`; that keeps
+memo's MLX dependencies, sqlite state, and `memo-mcp` runtime independent
+from whichever repo happens to be active in your shell.
 
 > The PyPI distribution is **`mlx-memo`** as of 0.5.0. Earlier
 > versions shipped as `memo-mcp` and the binary names haven't
@@ -159,7 +163,9 @@ After `pip install mlx-memo`, register the MCP with your client.
 ### Claude Code
 
 ```bash
-claude mcp add memo -s user $(which memo-mcp)
+memo mcp-command
+# then run the printed command, e.g.
+claude mcp add memo -s user /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
 ```
 
 Or hand-edit `~/.claude.json`:
@@ -178,6 +184,9 @@ Or hand-edit `~/.claude.json`:
 ```
 
 Restart Claude Code. Tools surface as `mcp__memo__memory_*` inside the agent.
+If Claude starts the wrong server, run `memo doctor --strict-runtime`; it
+will warn when `memo`/`memo-mcp` resolve from a project-local venv or from
+different environments.
 
 ### Claude Desktop
 
@@ -395,6 +404,7 @@ All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 | `MEMO_STATE_DIR` | `~/.local/share/memo` | sqlite-vec DB + state |
 | `MEMO_CONFIG_FILE` | `~/.config/memo/config.toml` | Override config-file path |
 | `MEMO_NONINTERACTIVE` | unset | Set to `1` in hooks to skip the first-run picker |
+| `MEMO_MODEL_PROFILE` | `balanced` | Model bundle: `light`, `balanced`, or `quality` |
 | `MEMO_LLM_MODEL` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Chat tier |
 | `MEMO_HELPER_MODEL` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | Helper tier |
 | `MEMO_EMBEDDER_MODEL` | `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Embedder |
@@ -405,6 +415,21 @@ All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 | `MEMO_PROJECT_TAG` | unset | Explicit project tag (overrides git-toplevel detection) |
 
 Resolution precedence (highest first): explicit kwargs → `MEMO_*` env vars → `~/.config/memo/config.toml` → legacy `MEMO_VAULT_PATH` + `MEMO_MEMORY_SUBDIR` (back-compat) → hardcoded defaults.
+
+Model profiles:
+
+- `light`: 0.6B embedder, no reranker. Best for low-latency hooks.
+- `balanced`: 0.6B embedder + 0.6B reranker. Default for most users.
+- `quality`: 4B embedder (2560 dims) + reranker + Qwen3 4B chat. Requires `rm ~/.local/share/memo/memvec.db && memo reindex` when switching from 1024-dim profiles.
+
+If models are still downloading, you can save without MLX and keep keyword search available:
+
+```bash
+memo save "text to remember" --title "Short title" --defer-embed
+memo search "text" --mode bm25
+# later, once the embedder is cached:
+memo reindex
+```
 
 ## Upgrading the embedder
 

@@ -512,6 +512,7 @@ class Memory:
         auto_derive: bool = False,
         auto_project: bool = True,
         cwd: str | None = None,
+        defer_embed: bool = False,
     ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
@@ -528,6 +529,9 @@ class Memory:
           latency on first call (cold model load) plus ~0.5-1s per save.
           Use for callers (eg. another agent) that don't carry context
           to derive metadata themselves.
+        - `defer_embed`: when True, write markdown + metadata + BM25
+          index only. Semantic search won't see the record until
+          `memo reindex` runs with the embedder available.
         """
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
@@ -583,6 +587,10 @@ class Memory:
         # non-existent file.
         abs_path = self.cfg.memory_dir / rel_path
         abs_path.parent.mkdir(parents=True, exist_ok=True)
+        extra_for_store = dict(extra or {})
+        if defer_embed:
+            extra_for_store["_memo_embed_pending"] = True
+
         post = frontmatter.Post(
             content,
             id=record_id,
@@ -591,9 +599,30 @@ class Memory:
             tags=norm_tags,
             created=now_iso,
             updated=now_iso,
-            **({"extra": extra} if extra else {}),
+            **({"extra": extra_for_store} if extra_for_store else {}),
         )
         abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+        if defer_embed:
+            self.store.upsert_text_only(
+                id_=record_id,
+                path=rel_path,
+                title=title,
+                type_=type_,
+                tags=norm_tags,
+                created=now_iso,
+                updated=now_iso,
+                body_hash=body_hash,
+                extra=extra_for_store,
+                body_text=content,
+            )
+            self.history.log_save(
+                ts=now_iso, record_id=record_id, title=title, type_=type_,
+            )
+            return MemoryRecord(
+                id=record_id, path=rel_path, title=title, type=type_, tags=norm_tags,
+                created=now_iso, updated=now_iso, body=content, extra=extra_for_store,
+            )
 
         # Embed `title + body`: the title carries the highest-density
         # signal for retrieval ("Astor — Informe TO" is a much better
@@ -1071,7 +1100,11 @@ class Memory:
                 )
                 added += 1
                 continue
-            if force or existing["body_hash"] != new_hash:
+            needs_vector = not self.store.has_vector(md_id)
+            if force or existing["body_hash"] != new_hash or needs_vector:
+                if isinstance(extra, dict):
+                    extra = dict(extra)
+                    extra.pop("_memo_embed_pending", None)
                 emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
                 self.store.upsert(
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
