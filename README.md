@@ -312,16 +312,34 @@ Tune lower (0.5) on sparse corpora, higher (0.7) for high-precision only.
 
 ## Slash command — `/memo` (Claude Code only)
 
-A Claude Code [skill](https://docs.claude.com/en/docs/claude-code/skills) ships at `skills/memo/SKILL.md`. Symlink it:
+A Claude Code [skill](https://docs.claude.com/en/docs/claude-code/skills) ships at `skills/memo/SKILL.md`.
+The recommended install path is the bundled plugin because it registers the
+`/memo` skill, MCP server, and ambient hooks together:
 
 ```bash
-ln -s "$(pwd)/skills/memo/SKILL.md" ~/.claude/skills/memo/SKILL.md
+claude plugin marketplace add jagoff/memo
+claude plugin install memo@memo -s user
+claude plugin list
+claude mcp list
 ```
 
-Or install everything (skill + MCP config + hooks) in one shot via the bundled plugin:
+If you are developing from a local checkout, register that checkout as the
+marketplace instead:
 
 ```bash
-/plugin install memo@jagoff/memo
+claude plugin marketplace add /path/to/memo
+claude plugin install memo@memo -s user
+```
+
+Restart Claude Code, or open a new session, after installing from the CLI so
+the slash-command registry reloads. Existing interactive sessions may not pick
+up newly installed plugins until restart.
+
+For skill-only development without hooks or MCP config:
+
+```bash
+mkdir -p ~/.claude/skills/memo
+ln -sf "$(pwd)/skills/memo/SKILL.md" ~/.claude/skills/memo/SKILL.md
 ```
 
 The skill routes user input to the right MCP tool:

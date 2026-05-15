@@ -74,7 +74,10 @@ Submit at <https://mcp.so/submit> with:
 - **[awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers)** — same flow as #1: fork, add entry to the Memory section, PR.
 - **PyPI keywords** — already set in `pyproject.toml`: `mcp`, `memory`, `obsidian`, `mlx`, `rag`, `agents`, `claude`, `local-first`, `apple-silicon`.
 - **Homebrew tap** — see `docs/homebrew-tap.md` (separate flow).
-- **Claude Code plugin marketplace** — already published via this repo's `.claude-plugin/` directory; users install via `/plugin install memo@jagoff/memo`.
+- **Claude Code plugin marketplace** — already published via this repo's
+  `.claude-plugin/` directory; users install with
+  `claude plugin marketplace add jagoff/memo` and
+  `claude plugin install memo@memo -s user`.
 
 ---
 
