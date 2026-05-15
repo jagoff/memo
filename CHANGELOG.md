@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `install.sh`, a curl-pipeable installer that installs memo through
   `pipx`, checks macOS/Apple Silicon + Python >= 3.13, removes the legacy
   `memo-mcp` pipx package if present, and runs `memo doctor --strict-runtime`.
+- Changed the curl installer default to GitHub `master`, with explicit
+  `MEMO_INSTALL_FROM_PYPI=1` / `MEMO_VERSION=...` knobs for PyPI installs.
 - Expanded README install verification with `memo doctor --strict-runtime`,
   `memo mcp-command`, duplicate-install checks, and the model downloads
   needed by the `balanced` / `quality` profiles.
+- Removed stale local-install examples that referenced a non-existent
+  `[mlx]` extra; MLX is part of the normal Apple Silicon dependency set.
 - Updated developer guidance and the Claude Code skill to use the current
   `mlx-memo` distribution name, absolute `memo-mcp` registration flow, and
   package-metadata-based `memo.__version__`.

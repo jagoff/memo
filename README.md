@@ -105,9 +105,9 @@ inside another project's `.venv`; the MLX runtime, model cache, MCP server,
 sqlite state, and CLI should move together as one subsystem.
 
 ```bash
-# One-line installer (uses pipx under the hood)
+# One-line installer (uses pipx under the hood and installs GitHub main)
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
-# or install explicitly
+# or install the latest published PyPI release explicitly
 pipx install mlx-memo
 # or
 uv tool install mlx-memo
@@ -124,12 +124,14 @@ from whichever repo happens to be active in your shell.
 > The PyPI distribution is **`mlx-memo`** as of 0.5.0. Earlier
 > versions shipped as `memo-mcp` and the binary names haven't
 > changed — existing MCP configs keep working.
+> The one-line installer intentionally installs GitHub `master` by default
+> so it can deploy repo changes before the next PyPI release exists.
 
 If you are developing this repo and want the real system install to use your
 checkout:
 
 ```bash
-pipx install --force '/path/to/memo[mlx]'
+pipx install --force /path/to/memo
 memo doctor --strict-runtime
 memo --version
 ```
@@ -137,14 +139,14 @@ memo --version
 Installer knobs:
 
 ```bash
-# Install from GitHub main instead of the latest PyPI release.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_FROM_GIT=1 bash
+# Install the latest published PyPI release instead of GitHub main.
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
 
 # Pin a published PyPI version.
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_VERSION=0.6.0 bash
 
 # Install from an explicit pipx spec (local checkout, git ref, wheel, etc.).
-MEMO_INSTALL_SPEC='/Users/you/repos/memo[mlx]' ./install.sh
+MEMO_INSTALL_SPEC=/Users/you/repos/memo ./install.sh
 ```
 
 Pre-download the MLX models so the first save/search doesn't stall on a multi-GB download:

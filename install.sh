@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="mlx-memo"
 OLD_APP_NAME="memo-mcp"
-DEFAULT_SPEC="mlx-memo"
+PYPI_SPEC="mlx-memo"
 GIT_SPEC="git+https://github.com/jagoff/memo.git"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13
@@ -83,12 +83,12 @@ ensure_pipx() {
 install_spec() {
   if [[ -n "${MEMO_INSTALL_SPEC:-}" ]]; then
     printf '%s\n' "$MEMO_INSTALL_SPEC"
-  elif [[ "${MEMO_INSTALL_FROM_GIT:-0}" == "1" ]]; then
-    printf '%s\n' "$GIT_SPEC"
   elif [[ -n "${MEMO_VERSION:-}" ]]; then
-    printf '%s==%s\n' "$DEFAULT_SPEC" "$MEMO_VERSION"
+    printf '%s==%s\n' "$PYPI_SPEC" "$MEMO_VERSION"
+  elif [[ "${MEMO_INSTALL_FROM_PYPI:-0}" == "1" ]]; then
+    printf '%s\n' "$PYPI_SPEC"
   else
-    printf '%s\n' "$DEFAULT_SPEC"
+    printf '%s\n' "$GIT_SPEC"
   fi
 }
 

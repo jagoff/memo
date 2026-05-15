@@ -34,7 +34,7 @@ memo doctor --strict-runtime
 memo stats
 
 # Real isolated system install from this checkout
-pipx install --force '.[mlx]'
+pipx install --force .
 memo doctor --strict-runtime
 
 # Installer script syntax check
@@ -124,7 +124,7 @@ Version lives in three places — bump together:
 
 `src/memo/__init__.py:__version__` is read from installed package metadata via `importlib.metadata.version("mlx-memo")`; `pyproject.toml` is the source of truth for package builds.
 
-Release/runtime invariant: production use should install memo as an isolated tool (`curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash`, `pipx install mlx-memo`, `uv tool install mlx-memo`, Homebrew, or `pipx install --force '.[mlx]'` from this checkout). Avoid installing it into another project's `.venv`; `memo doctor --strict-runtime` is expected to fail if `memo` and `memo-mcp` resolve from mixed runtimes.
+Release/runtime invariant: production use should install memo as an isolated tool (`curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash`, `pipx install mlx-memo`, `uv tool install mlx-memo`, Homebrew, or `pipx install --force .` from this checkout). The curl installer tracks GitHub `master` by default; use `MEMO_INSTALL_FROM_PYPI=1` or `MEMO_VERSION=...` only when the published PyPI build is the target. Avoid installing it into another project's `.venv`; `memo doctor --strict-runtime` is expected to fail if `memo` and `memo-mcp` resolve from mixed runtimes.
 
 ## Conventions specific to this repo
 
