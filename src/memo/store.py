@@ -240,6 +240,48 @@ class VecStore:
                 (id_, title, " ".join(tags), body_text),
             )
 
+    def upsert_text_only(
+        self,
+        *,
+        id_: str,
+        path: str,
+        title: str,
+        type_: str,
+        tags: list[str],
+        created: str,
+        updated: str,
+        body_hash: str,
+        extra: dict[str, Any] | None = None,
+        body_text: str = "",
+    ) -> None:
+        """Write metadata + FTS row without a vector embedding.
+
+        This keeps CRUD and BM25 search usable on fresh installs or while
+        models are downloading. A later `memo reindex` fills the missing vector.
+        """
+        with self._tx() as cx:
+            cx.execute(
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "path=excluded.path, title=excluded.title, type=excluded.type, "
+                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                "extra_json=excluded.extra_json",
+                (
+                    id_, path, title, type_, json.dumps(tags), created, updated, body_hash,
+                    json.dumps(extra, default=str) if extra is not None else None,
+                ),
+            )
+            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+            cx.execute(
+                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                (id_, title, " ".join(tags), body_text),
+            )
+
+    def has_vector(self, id_: str) -> bool:
+        row = self._conn.execute("SELECT 1 FROM vec WHERE id = ? LIMIT 1", (id_,)).fetchone()
+        return row is not None
+
     def update_meta(
         self,
         *,

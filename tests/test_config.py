@@ -42,6 +42,29 @@ def test_from_env_picks_up_overrides(monkeypatch, tmp_path: Path):
     assert cfg.search_default_limit == 5
 
 
+def test_model_profile_quality_sets_model_bundle(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent-config.toml"))
+    monkeypatch.setenv("MEMO_MODEL_PROFILE", "quality")
+    cfg = Config.from_env()
+
+    assert cfg.model_profile == "quality"
+    assert cfg.embedder_model == "mlx-community/Qwen3-Embedding-4B-4bit-DWQ"
+    assert cfg.embedder_dims == 2560
+    assert cfg.reranker_enabled is True
+
+
+def test_model_profile_allows_specific_env_override(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent-config.toml"))
+    monkeypatch.setenv("MEMO_MODEL_PROFILE", "quality")
+    monkeypatch.setenv("MEMO_EMBEDDER_MODEL", "mlx-community/Custom-Embedding")
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "1024")
+    cfg = Config.from_env()
+
+    assert cfg.model_profile == "quality"
+    assert cfg.embedder_model == "mlx-community/Custom-Embedding"
+    assert cfg.embedder_dims == 1024
+
+
 def test_legacy_env_vars_derive_data_dir(monkeypatch, tmp_path: Path):
     """`MEMO_VAULT_PATH` + `MEMO_MEMORY_SUBDIR` (legacy install) derive
     `data_dir = vault_path / memory_subdir` when `MEMO_DATA_DIR` is not set."""
