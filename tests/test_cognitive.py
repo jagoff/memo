@@ -7,8 +7,8 @@ from memo.cognitive import (
     CognitiveState,
     CognitiveStateTracker,
     ContextAwareRetrieval,
-    ContextualSuggestion,
     ContextType,
+    ContextualSuggestion,
     MentalState,
     ProactiveGuidance,
 )

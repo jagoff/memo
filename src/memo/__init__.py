@@ -30,7 +30,8 @@ from memo.memory import Memory, MemoryRecord
 # `memo.__version__` always matches `pip show mlx-memo`. Falls back to
 # a sentinel when running from an uninstalled checkout.
 try:
-    from importlib.metadata import PackageNotFoundError, version as _version
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _version
     __version__ = _version("mlx-memo")
 except PackageNotFoundError:  # pragma: no cover — editable install w/o metadata
     __version__ = "0.0.0+unknown"

@@ -3,10 +3,10 @@
 import pytest
 
 from memo.collaborative import (
-    CollectiveInsight,
     CollaborativeFilter,
     CollaborativeGraph,
     CollaborativeManager,
+    CollectiveInsight,
     SharedConnection,
     UserProfile,
 )
@@ -138,7 +138,7 @@ def test_collaborative_graph_persistence(tmp_cfg):
 
     # Create first instance and add connection
     graph1 = CollaborativeGraph(state_dir)
-    conn = graph1.add_connection(
+    graph1.add_connection(
         from_user="user1",
         entity_a="MLX",
         entity_b="Apple",

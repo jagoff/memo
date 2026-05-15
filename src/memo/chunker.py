@@ -37,7 +37,6 @@ from __future__ import annotations
 import re
 from typing import TypedDict
 
-
 DEFAULT_TARGET_CHARS = 2000  # ≈ 500 tokens with some headroom
 DEFAULT_OVERLAP_CHARS = 200  # ≈ 50 tokens; included in chunk N+1's start
 

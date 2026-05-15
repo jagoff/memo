@@ -24,7 +24,7 @@ def version_manager(mock_memory):
 
 def test_version_store_init(version_store):
     """Test VersionStore initialization."""
-    assert version_store.db_path.is_dir()
+    assert version_store.db_path.is_file()
 
 
 def test_version_store_save_version(version_store):

@@ -40,10 +40,10 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 
 _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS entities (
@@ -74,6 +74,14 @@ CREATE INDEX IF NOT EXISTS idx_e_mc       ON entities(mention_count);
 VALID_ENTITY_TYPES = frozenset({
     "person", "project", "technology", "file", "org", "concept",
 })
+
+
+@dataclass(frozen=True)
+class EntityMention:
+    """Entity linked to a memoria."""
+    name: str
+    type: str
+    mention_count: int
 
 
 class GraphStore:
@@ -238,16 +246,29 @@ class GraphStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_entity_mentions(self, memoria_id: str) -> list[EntityMention]:
+        """Return entity mentions for compatibility with analytics callers."""
+        return [
+            EntityMention(
+                name=row["name"],
+                type=row["type"],
+                mention_count=int(row["mention_count"]),
+            )
+            for row in self.memoria_entities(memoria_id)
+        ]
+
+    def count_entities(self) -> int:
+        """Return the number of unique entities in the graph."""
+        return int(self._conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0])
+
     def stats(self) -> dict[str, int]:
-        n_entities = self._conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        n_entities = self.count_entities()
         n_links = self._conn.execute("SELECT COUNT(*) FROM entity_memoria").fetchone()[0]
         return {"entities": n_entities, "links": n_links}
 
     def close(self) -> None:
-        try:
+        with suppress(Exception):
             self._conn.close()
-        except Exception:
-            pass
 
 
-__all__ = ["GraphStore", "VALID_ENTITY_TYPES"]
+__all__ = ["VALID_ENTITY_TYPES", "EntityMention", "GraphStore"]

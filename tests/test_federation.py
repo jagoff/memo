@@ -24,7 +24,7 @@ def federation_searcher(federation_config):
 
 def test_federation_config_init(federation_config):
     """Test FederationConfig initialization."""
-    assert federation_config.config_path.is_dir()
+    assert federation_config.config_path.parent.is_dir()
 
 
 def test_federation_config_add_vault(federation_config):

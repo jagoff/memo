@@ -26,14 +26,11 @@ from __future__ import annotations
 
 import json
 import re
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from memo.llm import MLXChat
-
 
 _MERGE_SYSTEM_PROMPT = """You merge multiple related memory notes into a single coherent entry.
 
@@ -345,6 +342,6 @@ class AdvancedConsolidator:
 
 __all__ = [
     "AdvancedConsolidator",
-    "MergeProposal",
     "ConsolidationResult",
+    "MergeProposal",
 ]

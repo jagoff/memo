@@ -3,9 +3,9 @@
 import pytest
 
 from memo.encryption import (
-    Encryptor,
     EncryptionManager,
     EncryptionMetadata,
+    Encryptor,
     KeyDerivation,
     KeyManager,
 )
@@ -45,7 +45,7 @@ def test_key_manager_derive_key(key_manager):
 
 def test_key_manager_save_key_derivation(key_manager):
     """Test saving key derivation parameters."""
-    key, salt, kd = key_manager.derive_key("testpassword")
+    _key, _salt, kd = key_manager.derive_key("testpassword")
     key_manager.save_key_derivation(kd)
 
     loaded = key_manager.load_key_derivation()
@@ -62,7 +62,7 @@ def test_key_manager_load_key_derivation_none(key_manager):
 
 def test_key_manager_set_master_key(key_manager):
     """Test setting master key."""
-    key, salt, kd = key_manager.derive_key("testpassword")
+    key, _salt, _kd = key_manager.derive_key("testpassword")
     key_manager.set_master_key(key)
 
     assert key_manager.get_master_key() == key
@@ -70,7 +70,7 @@ def test_key_manager_set_master_key(key_manager):
 
 def test_key_manager_clear_master_key(key_manager):
     """Test clearing master key."""
-    key, salt, kd = key_manager.derive_key("testpassword")
+    key, _salt, _kd = key_manager.derive_key("testpassword")
     key_manager.set_master_key(key)
     key_manager.clear_master_key()
 
@@ -83,7 +83,7 @@ def test_key_manager_persistence(tmp_cfg):
 
     # Create first instance and save key derivation
     km1 = KeyManager(state_dir)
-    key, salt, kd = km1.derive_key("testpassword")
+    _key, _salt, kd = km1.derive_key("testpassword")
     km1.save_key_derivation(kd)
 
     # Create second instance and verify persistence
@@ -102,7 +102,7 @@ def test_encryptor_init(encryptor):
 def test_encryptor_encrypt_decrypt(encryptor, key_manager):
     """Test encryption and decryption."""
     # Set master key
-    key, salt, kd = key_manager.derive_key("testpassword")
+    key, _salt, _kd = key_manager.derive_key("testpassword")
     key_manager.set_master_key(key)
 
     plaintext = "This is a secret message"
@@ -136,7 +136,7 @@ def test_encryptor_decrypt_no_key(encryptor):
 def test_encryptor_encrypt_file(tmp_path, encryptor, key_manager):
     """Test file encryption."""
     # Set master key
-    key, salt, kd = key_manager.derive_key("testpassword")
+    key, _salt, _kd = key_manager.derive_key("testpassword")
     key_manager.set_master_key(key)
 
     # Create test file
@@ -154,7 +154,7 @@ def test_encryptor_encrypt_file(tmp_path, encryptor, key_manager):
 def test_encryptor_decrypt_file(tmp_path, encryptor, key_manager):
     """Test file decryption."""
     # Set master key
-    key, salt, kd = key_manager.derive_key("testpassword")
+    key, _salt, _kd = key_manager.derive_key("testpassword")
     key_manager.set_master_key(key)
 
     # Create and encrypt test file

@@ -30,13 +30,9 @@ When saving a memoria, suggests linking to existing memorias based on:
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-import frontmatter
-
 
 _WIKILINK_PATTERN = re.compile(r"\[\[([^\]]+)\]\]")
 
@@ -300,9 +296,9 @@ class LinkSuggester:
 
 
 __all__ = [
+    "Backlink",
     "CrossReferenceIndex",
     "LinkSuggester",
-    "Wikilink",
-    "Backlink",
     "LinkSuggestion",
+    "Wikilink",
 ]

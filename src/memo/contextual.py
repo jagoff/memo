@@ -34,7 +34,7 @@ Re-ranks search results based on:
 from __future__ import annotations
 
 import json
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -110,6 +110,13 @@ class ContextStore:
             except Exception:
                 self._preferences = UserPreferences()
 
+    def _sync_context_maxlen(self) -> None:
+        if self._context.maxlen != self.max_context_length:
+            self._context = deque(
+                list(self._context)[-self.max_context_length:],
+                maxlen=self.max_context_length,
+            )
+
     def _save(self) -> None:
         """Save context and preferences to disk."""
         try:
@@ -126,6 +133,7 @@ class ContextStore:
 
     def add_prompt(self, prompt: str, recalled_memorias: list[str]) -> None:
         """Add a prompt to the conversation history."""
+        self._sync_context_maxlen()
         context = PromptContext(
             timestamp=datetime.now(UTC).isoformat(),
             prompt=prompt,
@@ -136,6 +144,7 @@ class ContextStore:
 
     def get_recent_context(self, n: int = 5) -> list[PromptContext]:
         """Get the N most recent prompts."""
+        self._sync_context_maxlen()
         return list(self._context)[-n:]
 
     def record_feedback(self, memoria_id: str, memoria_type: str, entities: list[str]) -> None:
@@ -205,12 +214,15 @@ class ContextualRecall:
         # Re-rank with contextual factors
         contextual_results = []
         for hit in hits:
-            contextual_score = hit.score
+            contextual_score = hit.score or 0.0
             boost_factors = {}
 
             # Entity overlap boost
-            memoria_entities = self.memory.graph.memoria_entities(hit.id)
-            entity_overlap = len(set(memoria_entities) & set(context_entities))
+            memoria_entities = {
+                e["name"] for e in self.memory.graph.memoria_entities(hit.id)
+                if isinstance(e, dict) and e.get("name")
+            }
+            entity_overlap = len(memoria_entities & context_entities)
             if entity_overlap > 0:
                 entity_boost = 0.1 * entity_overlap
                 contextual_score += entity_boost
@@ -259,13 +271,10 @@ class ContextualRecall:
         """Extract entities mentioned in recent conversation context."""
         entities = set()
         for ctx in context:
-            # Use the graph to extract entities from the prompt
-            # For now, simple token-based extraction
-            # In a full implementation, would use the helper LLM
-            prompt_lower = ctx.prompt.lower()
-            # This is a placeholder - real implementation would use NER
-            # For now, just return empty set
-            pass
+            for token in ctx.prompt.lower().replace("-", " ").split():
+                token = token.strip(".,:;!?()[]{}\"'")
+                if len(token) >= 3:
+                    entities.add(token)
         return entities
 
     def record_search(self, query: str, recalled_ids: list[str]) -> None:
@@ -276,14 +285,17 @@ class ContextualRecall:
         """Record that the user clicked/viewed a memoria."""
         rec = self.memory.get(memoria_id)
         if rec:
-            entities = self.memory.graph.memoria_entities(memoria_id)
+            entities = [
+                e["name"] for e in self.memory.graph.memoria_entities(memoria_id)
+                if isinstance(e, dict) and e.get("name")
+            ]
             self.context.record_feedback(memoria_id, rec.type, entities)
 
 
 __all__ = [
     "ContextStore",
     "ContextualRecall",
+    "ContextualSearchResult",
     "PromptContext",
     "UserPreferences",
-    "ContextualSearchResult",
 ]

@@ -46,7 +46,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -469,14 +469,12 @@ class VecStore:
         return self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()[0]
 
     def close(self) -> None:
-        try:
+        with suppress(Exception):
             self._conn.close()
-        except Exception:
-            pass
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    d = {k: row[k] for k in row.keys() if k != "distance"}
+    d = {k: row[k] for k in row.keys() if k != "distance"}  # noqa: SIM118
     if "tags" in d and isinstance(d["tags"], str):
         try:
             d["tags"] = json.loads(d["tags"])

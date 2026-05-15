@@ -163,9 +163,8 @@ class QueryComposer:
                 continue
 
             # Tag filter
-            if query.tags_filter:
-                if not any(tag in hit.tags for tag in query.tags_filter):
-                    continue
+            if query.tags_filter and not any(tag in hit.tags for tag in query.tags_filter):
+                continue
 
             # Date filter
             if query.date_from or query.date_to:
@@ -239,9 +238,8 @@ class QueryComposer:
 
 
 __all__ = [
-    "QueryComposer",
-    "QueryStore",
     "Query",
+    "QueryComposer",
     "QueryResult",
+    "QueryStore",
 ]
-

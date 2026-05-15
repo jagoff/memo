@@ -253,9 +253,9 @@ class VersionManager:
 
 
 __all__ = [
+    "DiffResult",
+    "Version",
     "VersionManager",
     "VersionStore",
-    "Version",
-    "DiffResult",
 ]
 

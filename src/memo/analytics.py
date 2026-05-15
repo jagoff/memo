@@ -310,7 +310,7 @@ class Dashboard:
         <h2>Growth (Last 30 Days)</h2>
         <table>
             <tr><th>Date</th><th>Count</th></tr>
-            {"".join(f"<tr><td>{d}</td><td>{c}</td></tr>" for d, c in zip(growth.dates, growth.counts))}
+            {"".join(f"<tr><td>{d}</td><td>{c}</td></tr>" for d, c in zip(growth.dates, growth.counts, strict=False))}
         </table>
     </div>
 
@@ -323,10 +323,10 @@ class Dashboard:
 
 
 __all__ = [
-    "AnalyticsEngine",
-    "Dashboard",
-    "CorpusMetrics",
-    "GrowthData",
     "AccessPattern",
+    "AnalyticsEngine",
+    "CorpusMetrics",
+    "Dashboard",
+    "GrowthData",
 ]
 

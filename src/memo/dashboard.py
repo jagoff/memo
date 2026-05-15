@@ -22,9 +22,11 @@ cadence than the UI tick so a 1 s refresh doesn't thrash the disk.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
+import threading
 import time
 from collections import Counter
 from datetime import UTC, datetime
@@ -418,7 +420,7 @@ def render(memory: Any, state_dir: Path) -> Layout:
     return layout
 
 
-def _spawn_key_reader(stop_event: "threading.Event") -> None:
+def _spawn_key_reader(stop_event: threading.Event) -> None:
     """Background thread that reads single keystrokes from stdin and
     sets `stop_event` when the user presses `q`, `Q`, or ESC. Falls
     back gracefully when stdin isn't a TTY (CI, pipes) — the thread
@@ -451,10 +453,8 @@ def _spawn_key_reader(stop_event: "threading.Event") -> None:
         # Stdin reads can fail during shutdown — never propagate.
         pass
     finally:
-        try:
+        with contextlib.suppress(Exception):
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        except Exception:
-            pass
 
 
 def run_tui(*, refresh: float = 1.0, no_clear: bool = False) -> None:

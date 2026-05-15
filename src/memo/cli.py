@@ -296,13 +296,12 @@ def init_cmd(force: bool) -> None:
     from memo.setup.config_io import _resolve_config_path
 
     cfg_path = _resolve_config_path()
-    if cfg_path.is_file() and not force:
-        if not click.confirm(
-            f"Config file exists at {cfg_path}. Overwrite?",
-            default=False,
-        ):
-            console.print("[yellow]aborted[/yellow]")
-            return
+    if cfg_path.is_file() and not force and not click.confirm(
+        f"Config file exists at {cfg_path}. Overwrite?",
+        default=False,
+    ):
+        console.print("[yellow]aborted[/yellow]")
+        return
     _run_picker_and_save()
 
 
@@ -698,7 +697,7 @@ def history(limit: int, op: str | None, record_id: str | None, as_json: bool) ->
     for r in rows:
         delta = ""
         if r.get("delta"):
-            delta = ", ".join(f"{k}" for k in r["delta"].keys())
+            delta = ", ".join(f"{k}" for k in r["delta"])
         tbl.add_row(
             (r["ts"] or "")[:19], r["op"], (r["record_id"] or "")[:8],
             r["title"] or "—", delta or "—",
@@ -1435,7 +1434,8 @@ def as_of_group() -> None:
 def _parse_as_of_date(s: str) -> str:
     """Accept date-only (`2026-03-01`) or full ISO. Return ISO with
     a stable noon-UTC anchor for date-only inputs."""
-    from datetime import UTC, datetime as _dt
+    from datetime import UTC
+    from datetime import datetime as _dt
     s = s.strip()
     if len(s) == 10:  # YYYY-MM-DD
         return f"{s}T23:59:59+00:00"  # end-of-day to be inclusive
@@ -1586,15 +1586,13 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
     for "what changed since last Monday" or "what evolved between two
     releases".
     """
-    from datetime import UTC, datetime as _dt
+    from datetime import UTC
+    from datetime import datetime as _dt
 
     from memo.memory import Memory
     from memo.time_machine import diff as _diff
 
-    if to_date is None:
-        to_iso = _dt.now(UTC).isoformat()
-    else:
-        to_iso = _parse_as_of_date(to_date)
+    to_iso = _dt.now(UTC).isoformat() if to_date is None else _parse_as_of_date(to_date)
     from_iso = _parse_as_of_date(from_date)
 
     mem = Memory(Config.from_env())
@@ -1623,7 +1621,7 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
     if d.removed:
         console.print(f"\n[red]- removed ({len(d.removed)})[/red]")
         for r in d.removed[:20]:
-            console.print(f"  [red]−[/red] [{r.id[:8]}] {r.title}  [dim]({r.type})[/dim]")
+            console.print(f"  [red]-[/red] [{r.id[:8]}] {r.title}  [dim]({r.type})[/dim]")
     if d.updated:
         console.print(f"\n[yellow]~ updated ({len(d.updated)})[/yellow]")
         for u in d.updated[:20]:
@@ -2154,10 +2152,7 @@ def _is_high_signal(body: str, fm_tags: Any) -> bool:
     if _URL_RE.search(body):
         return True
 
-    if "```" in body:
-        return True
-
-    return False
+    return "```" in body
 
 
 def _extract_first_h1(body: str) -> str | None:
@@ -3065,7 +3060,7 @@ def consolidate_apply(
         click.echo(json.dumps(result, indent=2))
         return
 
-    proposals = result.get("proposals", [])
+    result.get("proposals", [])
     results = result.get("results", [])
 
     if dry_run:
@@ -3493,7 +3488,6 @@ def contextual_reset_preferences() -> None:
     Example: memo contextual reset-preferences
     """
     cfg = Config.from_env()
-    from memo.contextual import UserPreferences
 
     # Reset preferences file
     prefs_file = cfg.state_dir / "user_preferences.json"
@@ -3820,6 +3814,7 @@ def suggest_analyze(transcript_path: str, as_json: bool) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     from memo.capture import _read_last_exchange
 
     # For now, just use the last exchange as a sample
@@ -4009,7 +4004,7 @@ def version_rollback(memoria_id: str, version_id: int, reason: str | None) -> No
     if success:
         console.print(f"[green]Rolled back {memoria_id[:8]} to version {version_id}[/green]")
     else:
-        console.print(f"[red]Failed to rollback[/red]")
+        console.print("[red]Failed to rollback[/red]")
 
 
 # -- query composition commands ------------------------------------------------
@@ -4405,7 +4400,7 @@ def backup_restore(backup_name: str, skip_memorias: bool, skip_dbs: bool) -> Non
     if success:
         console.print(f"[green]Restored from '{backup_name}'[/green]")
     else:
-        console.print(f"[red]Failed to restore[/red]")
+        console.print("[red]Failed to restore[/red]")
 
 
 @cli.group(name="sync")
@@ -4426,6 +4421,8 @@ def sync_diff(remote: str | None, as_json: bool) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
+    from memo.sync import SyncManager
     remote_path = Path(remote) if remote else None
 
     sync_mgr = SyncManager(mem, remote_path=remote_path)
@@ -4454,6 +4451,8 @@ def sync_push(remote: str | None) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
+    from memo.sync import SyncManager
     remote_path = Path(remote) if remote else None
 
     sync_mgr = SyncManager(mem, remote_path=remote_path)
@@ -4475,6 +4474,8 @@ def sync_pull(remote: str | None) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
+    from memo.sync import SyncManager
     remote_path = Path(remote) if remote else None
 
     sync_mgr = SyncManager(mem, remote_path=remote_path)
@@ -4496,6 +4497,8 @@ def sync_both(remote: str | None) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
+    from memo.sync import SyncManager
     remote_path = Path(remote) if remote else None
 
     sync_mgr = SyncManager(mem, remote_path=remote_path)
@@ -4617,7 +4620,7 @@ def share_unshare(memoria_id: str, shared_with: str) -> None:
     if success:
         console.print(f"[green]Unshared {memoria_id[:8]} from {shared_with}[/green]")
     else:
-        console.print(f"[yellow]Share not found[/yellow]")
+        console.print("[yellow]Share not found[/yellow]")
 
 
 @share_group.command(name="create-link")
@@ -4641,7 +4644,7 @@ def share_create_link(memoria_id: str, permission: str, expires_hours: int, pass
         password=password,
     )
 
-    console.print(f"[green]Share link created[/green]")
+    console.print("[green]Share link created[/green]")
     console.print(f"Link: {link}")
     console.print(f"Expires in {expires_hours} hours")
 
@@ -4706,7 +4709,7 @@ def share_comment(memoria_id: str, content: str, author: str, parent: str | None
         parent_id=parent,
     )
 
-    console.print(f"[green]Comment added[/green]")
+    console.print("[green]Comment added[/green]")
     console.print(f"Author: {comment.author}")
     console.print(f"Content: {comment.content}")
 
@@ -4814,7 +4817,7 @@ def analytics_growth(days: int, as_json: bool) -> None:
     table.add_column("Date", style="cyan")
     table.add_column("Count", style="green")
 
-    for d, c in zip(growth.dates, growth.counts):
+    for d, c in zip(growth.dates, growth.counts, strict=False):
         table.add_row(d, str(c))
 
     console.print(table)
@@ -4891,7 +4894,7 @@ def import_json(input_path: str, format: str | None) -> None:
     from pathlib import Path
     result = mem.import_export.import_from(Path(input_path), format or "json")
 
-    console.print(f"[green]Import complete[/green]")
+    console.print("[green]Import complete[/green]")
     console.print(f"Imported: {result.imported_count}")
     console.print(f"Skipped: {result.skipped_count}")
 
@@ -4912,7 +4915,7 @@ def import_csv(input_path: str) -> None:
     from pathlib import Path
     result = mem.import_export.import_from(Path(input_path), "csv")
 
-    console.print(f"[green]Import complete[/green]")
+    console.print("[green]Import complete[/green]")
     console.print(f"Imported: {result.imported_count}")
     console.print(f"Skipped: {result.skipped_count}")
 
@@ -4933,7 +4936,7 @@ def import_markdown_bundle(input_path: str) -> None:
     from pathlib import Path
     result = mem.import_export.import_from(Path(input_path), "markdown_bundle")
 
-    console.print(f"[green]Import complete[/green]")
+    console.print("[green]Import complete[/green]")
     console.print(f"Imported: {result.imported_count}")
     console.print(f"Skipped: {result.skipped_count}")
 
@@ -4960,7 +4963,7 @@ def export_json(output_path: str) -> None:
     from pathlib import Path
     result = mem.import_export.export_to(Path(output_path), "json")
 
-    console.print(f"[green]Export complete[/green]")
+    console.print("[green]Export complete[/green]")
     console.print(f"Exported: {result.exported_count}")
     console.print(f"Output: {result.output_path}")
 
@@ -4978,7 +4981,7 @@ def export_csv(output_path: str) -> None:
     from pathlib import Path
     result = mem.import_export.export_to(Path(output_path), "csv")
 
-    console.print(f"[green]Export complete[/green]")
+    console.print("[green]Export complete[/green]")
     console.print(f"Exported: {result.exported_count}")
     console.print(f"Output: {result.output_path}")
 
@@ -4996,7 +4999,7 @@ def export_markdown_bundle(output_path: str) -> None:
     from pathlib import Path
     result = mem.import_export.export_to(Path(output_path), "markdown_bundle")
 
-    console.print(f"[green]Export complete[/green]")
+    console.print("[green]Export complete[/green]")
     console.print(f"Exported: {result.exported_count}")
     console.print(f"Output: {result.output_path}")
 
@@ -5032,13 +5035,13 @@ def agent_synthesize(topic: str, as_json: bool) -> None:
 
     console.print("[bold]Synthesis Result[/bold]")
     console.print()
-    console.print(f"[cyan]New Insight:[/cyan]")
+    console.print("[cyan]New Insight:[/cyan]")
     console.print(synthesis.new_insight)
     console.print()
     console.print(f"[green]Confidence:[/green] {synthesis.confidence:.2f}")
     console.print(f"[green]Novelty Score:[/green] {synthesis.novelty_score:.2f}")
     console.print()
-    console.print(f"[yellow]Supporting Memorias:[/yellow]")
+    console.print("[yellow]Supporting Memorias:[/yellow]")
     for mid in synthesis.supporting_memorias:
         console.print(f"  {mid[:8]}")
 
@@ -5135,7 +5138,7 @@ def agent_think(thought: str, thought_type: str) -> None:
 
     agent_thought = mem.agent.think(thought, thought_type)
 
-    console.print(f"[green]Thought registered[/green]")
+    console.print("[green]Thought registered[/green]")
     console.print(f"Type: {agent_thought.thought_type}")
     console.print(f"Content: {agent_thought.content}")
 
@@ -5163,7 +5166,7 @@ def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
     from pathlib import Path
     content = mem.multimodal.add_image(Path(image_path), memoria_id)
 
-    console.print(f"[green]Image added[/green]")
+    console.print("[green]Image added[/green]")
     console.print(f"Content ID: {content.id}")
     console.print(f"Modality: {content.modality}")
 
@@ -5182,7 +5185,7 @@ def multimodal_add_audio(audio_path: str, memoria_id: str | None) -> None:
     from pathlib import Path
     content = mem.multimodal.add_audio(Path(audio_path), memoria_id)
 
-    console.print(f"[green]Audio added[/green]")
+    console.print("[green]Audio added[/green]")
     console.print(f"Content ID: {content.id}")
     console.print(f"Modality: {content.modality}")
 
@@ -5236,7 +5239,7 @@ def multimodal_search_all(query: str, limit: int) -> None:
 
     results = mem.multimodal.search.search_all_modalities(query, limit=limit)
 
-    console.print(f"[bold]Results across modalities[/bold]")
+    console.print("[bold]Results across modalities[/bold]")
     for modality, mod_results in results.items():
         console.print(f"\n[cyan]{modality}:[/cyan] {len(mod_results)} results")
     for r in mod_results[:5]:
@@ -5274,7 +5277,7 @@ def collaborative_share_connection(user_id: str, entity_a: str, entity_b: str, r
         confidence=confidence,
     )
 
-    console.print(f"[green]Connection shared[/green]")
+    console.print("[green]Connection shared[/green]")
     console.print(f"Connection ID: {conn.connection_id}")
     console.print(f"From: {conn.from_user}")
     console.print(f"{entity_a} --{relationship}--> {entity_b}")
@@ -5330,7 +5333,7 @@ def collaborative_share_insight(user_id: str, content: str) -> None:
 
     insight = mem.collaborative.share_insight(user_id, content)
 
-    console.print(f"[green]Insight shared[/green]")
+    console.print("[green]Insight shared[/green]")
     console.print(f"Insight ID: {insight.insight_id}")
     console.print(f"Content: {content[:100]}...")
 
@@ -5347,7 +5350,7 @@ def collaborative_insights(limit: int) -> None:
 
     insights = mem.collaborative.get_top_insights(limit=limit)
 
-    console.print(f"[bold]Top insights[/bold]")
+    console.print("[bold]Top insights[/bold]")
     for i, insight in enumerate(insights, 1):
         console.print(f"[cyan]{i}.[/cyan] {insight.content[:100]}...")
         console.print(f"    Upvotes: {insight.upvotes}, Downvotes: {insight.downvotes}")
@@ -5386,7 +5389,7 @@ def cognitive_set_state(mental_state: str, context_type: str, goal: str | None, 
         stress_level=stress,
     )
 
-    console.print(f"[green]Mental state updated[/green]")
+    console.print("[green]Mental state updated[/green]")
     console.print(f"State: {state.mental_state}")
     console.print(f"Context: {state.context_type}")
     console.print(f"Goal: {state.current_goal or 'None'}")
@@ -5478,7 +5481,7 @@ def _short(text: str, n: int = 120) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _fmt_pair_header(rec_a, rec_b, pair) -> str:  # noqa: ANN001
+def _fmt_pair_header(rec_a, rec_b, pair) -> str:
     rel = pair.relationship
     color = "red" if rel == "contradiction" else "yellow"
     return (
@@ -5614,7 +5617,7 @@ def contradict_list(
     console.print(table)
 
 
-def _display_pair_excerpt(rec, label: str, *, stale_days: int = 180) -> None:  # noqa: ANN001
+def _display_pair_excerpt(rec, label: str, *, stale_days: int = 180) -> None:
     from memo.contradict import is_stale
     age_marker = "  [red](stale)[/red]" if is_stale(rec.updated, stale_days) else ""
     console.print(

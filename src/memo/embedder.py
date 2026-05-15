@@ -109,7 +109,7 @@ class MLXEmbedder:
         each row at its individual EOS position. Causal attention means
         the EOS token only sees real content (everything to its right
         is padding it ignores), so padding doesn't pollute the pooled
-        embedding. Empirically ~3-5× faster than the per-input loop on
+        embedding. Empirically ~3-5x faster than the per-input loop on
         batches of 50+ entries (e.g. `memo reindex` against a corpus).
 
         Returns a list-of-lists of `expected_dims` floats, order-aligned

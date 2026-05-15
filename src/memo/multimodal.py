@@ -20,8 +20,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
 
 class Modality(Enum):
     """Tipos de modalidad de contenido."""
@@ -192,7 +190,7 @@ class MultiModalStore:
         """Calcula similitud coseno entre dos embeddings."""
         import math
 
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         mag_a = math.sqrt(sum(x * x for x in a))
         mag_b = math.sqrt(sum(y * y for y in b))
 
@@ -243,6 +241,21 @@ class UniversalEmbedder:
         self.model_name = model_name
         # En una implementación real, cargaríamos el modelo aquí
 
+    def _hash_embedding(self, payload: bytes, dims: int = 512) -> list[float]:
+        import hashlib
+
+        raw = bytearray()
+        counter = 0
+        while len(raw) < dims:
+            raw.extend(hashlib.sha256(payload + counter.to_bytes(4, "big")).digest())
+            counter += 1
+
+        vector = [((byte / 255.0) * 2.0) - 1.0 for byte in raw[:dims]]
+        mag = sum(x * x for x in vector) ** 0.5
+        if mag > 0:
+            vector = [x / mag for x in vector]
+        return vector
+
     def embed_text(self, text: str) -> list[float]:
         """Genera embedding para texto.
 
@@ -254,16 +267,7 @@ class UniversalEmbedder:
         """
         # Placeholder: en implementación real usaríamos CLIP o similar
         # Por ahora, generamos un embedding determinista basado en hash
-        import hashlib
-
-        hash_val = hashlib.md5(text.encode()).hexdigest()
-        # Convertir a vector de floats
-        vector = [float(int(h, 16) % 256) / 256.0 for h in hash_val[:512]]
-        # Normalizar
-        mag = sum(x * x for x in vector) ** 0.5
-        if mag > 0:
-            vector = [x / mag for x in vector]
-        return vector
+        return self._hash_embedding(text.encode("utf-8"))
 
     def embed_image(self, image_bytes: bytes) -> list[float]:
         """Genera embedding para imagen.
@@ -276,14 +280,7 @@ class UniversalEmbedder:
         """
         # Placeholder: en implementación real usaríamos CLIP vision encoder
         # Por ahora, generamos embedding basado en hash del contenido
-        import hashlib
-
-        hash_val = hashlib.md5(image_bytes).hexdigest()
-        vector = [float(int(h, 16) % 256) / 256.0 for h in hash_val[:512]]
-        mag = sum(x * x for x in vector) ** 0.5
-        if mag > 0:
-            vector = [x / mag for x in vector]
-        return vector
+        return self._hash_embedding(image_bytes)
 
     def embed_audio(self, audio_bytes: bytes) -> list[float]:
         """Genera embedding para audio.
@@ -295,14 +292,7 @@ class UniversalEmbedder:
             Embedding vector.
         """
         # Placeholder: en implementación real usaríamos modelo de audio
-        import hashlib
-
-        hash_val = hashlib.md5(audio_bytes).hexdigest()
-        vector = [float(int(h, 16) % 256) / 256.0 for h in hash_val[:512]]
-        mag = sum(x * x for x in vector) ** 0.5
-        if mag > 0:
-            vector = [x / mag for x in vector]
-        return vector
+        return self._hash_embedding(audio_bytes)
 
 
 class CrossModalSearch:
@@ -484,12 +474,11 @@ class MultiModalManager:
 
 
 __all__ = [
+    "CrossModalResult",
+    "CrossModalSearch",
+    "Modality",
+    "MultiModalContent",
+    "MultiModalManager",
     "MultiModalStore",
     "UniversalEmbedder",
-    "CrossModalSearch",
-    "MultiModalManager",
-    "MultiModalContent",
-    "CrossModalResult",
-    "Modality",
 ]
-
