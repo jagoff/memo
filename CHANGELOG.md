@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needed by the `balanced` / `quality` profiles.
 - Removed stale local-install examples that referenced a non-existent
   `[mlx]` extra; MLX is part of the normal Apple Silicon dependency set.
+- Corrected Claude Code plugin install docs to use the current marketplace
+  flow (`claude plugin marketplace add ...` then `claude plugin install
+  memo@memo`) and noted that existing sessions need a restart to see `/memo`.
 - Updated developer guidance and the Claude Code skill to use the current
   `mlx-memo` distribution name, absolute `memo-mcp` registration flow, and
   package-metadata-based `memo.__version__`.
@@ -315,7 +318,7 @@ Patch release — bug fixes for the v0.3.0 ingest pipeline.
   Cascade Metal GPU error after several mismatches. Fix: wrap input
   in `[composed]` and take `[0]`.
 - **Plugin install path** — bumping from 0.3.0 to 0.3.1 so users on the
-  Claude Code plugin marketplace pick up these fixes via `/plugin update`.
+  Claude Code plugin marketplace pick up these fixes via `claude plugin update memo`.
 
 ## [0.3.0] - 2026-05-07
 
@@ -382,8 +385,8 @@ First public release. Distribution name on PyPI is `memo-mcp`
 ### Added
 
 - Public PyPI distribution as [`memo-mcp`](https://pypi.org/project/memo-mcp/).
-- Claude Code plugin format (`.claude-plugin/plugin.json`) — single-step install
-  via `/plugin install memo@jagoff/memo`.
+- Claude Code plugin format (`.claude-plugin/plugin.json`) — installable via
+  the Claude Code plugin marketplace flow.
 - `.mcp.json` bundled in repo root so MCP-aware clients can auto-register.
 - `skills/memo/SKILL.md` bundled in repo — slash-command UX layer for Claude
   Code CLI users (optional).
