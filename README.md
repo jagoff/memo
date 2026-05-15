@@ -85,10 +85,10 @@ With the Claude Code plugin installed, two extra hooks plug in:
 | Component | Choice | Why |
 |---|---|---|
 | LLM (chat) | [`Qwen2.5-7B-Instruct-4bit`](https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit) + [`3B helper`](https://huggingface.co/mlx-community/Qwen2.5-3B-Instruct-4bit) via [`mlx-lm`](https://github.com/ml-explore/mlx-lm) | Two-tier; 7B for `ask()` synthesis, 3B for cheap helpers. Both 4-bit fit comfortably. |
-| Embedder | [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) | 1024-dim, ~50ms/embed, ~600 MB on disk. Upgrade path to 4B/8B is one env var. |
-| Reranker | [`Qwen3-Reranker-0.6B`](https://huggingface.co/mlx-community/Qwen3-Reranker-0.6B) (optional) | Cross-encoder over top-30 from vec+BM25, then α-fusion. Bumps precision on diffuse queries. |
+| Embedder | [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) by default; [`Qwen3-Embedding-4B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-4B-4bit-DWQ) in `quality` profile | 1024-dim default, 2560-dim quality. Choose via `MEMO_MODEL_PROFILE`. |
+| Reranker | [`mku64/Qwen3-Reranker-0.6B-mlx-8Bit`](https://huggingface.co/mku64/Qwen3-Reranker-0.6B-mlx-8Bit) (enabled in `balanced` / `quality`) | Cross-encoder over top-30 from vec+BM25, then alpha-fusion. Bumps precision on diffuse queries. |
 | Vector store | [`sqlite-vec`](https://github.com/asg017/sqlite-vec) | One file, no daemon, embedded. Reset = `rm memvec.db`. |
-| Source of truth | Markdown files under `<vault>/...` with YAML frontmatter | Human-editable, syncs through iCloud/git/Syncthing/whatever. |
+| Source of truth | Markdown files under `MEMO_DATA_DIR` with YAML frontmatter | Human-editable, syncs through iCloud/git/Syncthing/whatever. |
 | MCP transport | [`fastmcp`](https://github.com/jlowin/fastmcp) | Stdio out of the box. |
 
 ## Requirements
@@ -100,14 +100,19 @@ With the Claude Code plugin installed, two extra hooks plug in:
 
 ## Install
 
+Recommended install: keep memo isolated as its own tool. Do **not** vendor it
+inside another project's `.venv`; the MLX runtime, model cache, MCP server,
+sqlite state, and CLI should move together as one subsystem.
+
 ```bash
+# One-line installer (uses pipx under the hood)
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+# or install explicitly
 pipx install mlx-memo
 # or
 uv tool install mlx-memo
 # or via the Homebrew tap
 brew tap jagoff/memo && brew install mlx-memo
-# or, only if you intentionally want it in the active Python env
-pip install mlx-memo
 ```
 
 Any of those expose two binaries: `memo` (CLI) and `memo-mcp` (MCP server).
@@ -120,13 +125,60 @@ from whichever repo happens to be active in your shell.
 > versions shipped as `memo-mcp` and the binary names haven't
 > changed — existing MCP configs keep working.
 
+If you are developing this repo and want the real system install to use your
+checkout:
+
+```bash
+pipx install --force '/path/to/memo[mlx]'
+memo doctor --strict-runtime
+memo --version
+```
+
+Installer knobs:
+
+```bash
+# Install from GitHub main instead of the latest PyPI release.
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_FROM_GIT=1 bash
+
+# Pin a published PyPI version.
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_VERSION=0.6.0 bash
+
+# Install from an explicit pipx spec (local checkout, git ref, wheel, etc.).
+MEMO_INSTALL_SPEC='/Users/you/repos/memo[mlx]' ./install.sh
+```
+
 Pre-download the MLX models so the first save/search doesn't stall on a multi-GB download:
 
 ```bash
 hf download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
+hf download mku64/Qwen3-Reranker-0.6B-mlx-8Bit
 hf download mlx-community/Qwen2.5-3B-Instruct-4bit
 hf download mlx-community/Qwen2.5-7B-Instruct-4bit
+
+# Optional quality profile.
+hf download mlx-community/Qwen3-Embedding-4B-4bit-DWQ
+hf download mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510
 ```
+
+### Verify no old install is being used
+
+```bash
+which -a memo
+which -a memo-mcp
+pipx list --short
+python3 -m pip show memo mlx-memo memo-mcp
+brew list --versions mlx-memo memo
+memo doctor --strict-runtime
+```
+
+Healthy isolated install:
+
+- `which -a memo` prints a single `~/.local/bin/memo` (or your `uv tool` /
+  Homebrew equivalent).
+- `memo` and `memo-mcp` resolve from the same isolated environment.
+- `pipx list --short` shows `mlx-memo <version>` when installed via `pipx`.
+- `python3 -m pip show ...` does not find a competing global install.
+- `memo doctor --strict-runtime` passes.
 
 ### Dev install (contributors)
 
@@ -158,7 +210,7 @@ memo ask 'qué cambios hice en el embedder este mes?'
 
 ## MCP setup
 
-After `pip install mlx-memo`, register the MCP with your client.
+After installing `mlx-memo`, register the MCP with your client.
 
 ### Claude Code
 
@@ -409,6 +461,10 @@ All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 | `MEMO_HELPER_MODEL` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | Helper tier |
 | `MEMO_EMBEDDER_MODEL` | `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Embedder |
 | `MEMO_EMBEDDER_DIMS` | `1024` | Embedding dim — must match the embedder |
+| `MEMO_RERANKER_ENABLED` | `1` in `balanced` / `quality` | Enable cross-encoder rerank for hybrid search |
+| `MEMO_RERANKER_MODEL` | `mku64/Qwen3-Reranker-0.6B-mlx-8Bit` | MLX reranker model |
+| `MEMO_RERANK_INPUT_K` | `30` | Hybrid candidates sent to the reranker |
+| `MEMO_RERANK_FUSION_ALPHA` | `0.7` | Weight of reranker score vs RRF position bonus |
 | `MEMO_MAX_CONTENT_CHARS` | `64000` | Truncate body before embed |
 | `MEMO_SEARCH_DEFAULT_LIMIT` | `10` | Default `--limit` for search |
 | `MEMO_AUTO_PROJECT_TAG` | `1` | Auto-add `project:<repo>` tag from git toplevel on save. Set `0` to disable. |
@@ -418,9 +474,9 @@ Resolution precedence (highest first): explicit kwargs → `MEMO_*` env vars →
 
 Model profiles:
 
-- `light`: 0.6B embedder, no reranker. Best for low-latency hooks.
-- `balanced`: 0.6B embedder + 0.6B reranker. Default for most users.
-- `quality`: 4B embedder (2560 dims) + reranker + Qwen3 4B chat. Requires `rm ~/.local/share/memo/memvec.db && memo reindex` when switching from 1024-dim profiles.
+- `light`: 0.6B embedder, Qwen2.5 chat/helper, no reranker. Best for low-latency hooks.
+- `balanced`: 0.6B embedder + 0.6B reranker + Qwen2.5 chat/helper. Default for most users.
+- `quality`: 4B embedder (2560 dims) + 0.6B reranker + Qwen3 4B chat. Requires `rm ~/.local/share/memo/memvec.db && memo reindex` when switching from 1024-dim profiles.
 
 If models are still downloading, you can save without MLX and keep keyword search available:
 
@@ -446,10 +502,10 @@ To upgrade (example: 0.6B → 4B):
 ```bash
 # 1) Pre-download.
 hf download mlx-community/Qwen3-Embedding-4B-4bit-DWQ
+hf download mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510
 
-# 2) Point memo at it.
-export MEMO_EMBEDDER_MODEL=mlx-community/Qwen3-Embedding-4B-4bit-DWQ
-export MEMO_EMBEDDER_DIMS=2560
+# 2) Point memo at the quality bundle.
+export MEMO_MODEL_PROFILE=quality
 
 # 3) Backup before destructive re-embed.
 memo backup --out memo-pre-4b.zip
@@ -457,6 +513,7 @@ memo backup --out memo-pre-4b.zip
 # 4) Wipe the index and rebuild.
 rm ~/.local/share/memo/memvec.db
 memo reindex
+memo doctor --strict-runtime
 ```
 
 The dim mismatch is a hard error: `MEMO_EMBEDDER_DIMS` must match the new model's hidden size. `memo doctor` validates the dim at load.
