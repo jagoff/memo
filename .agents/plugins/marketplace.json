@@ -1,0 +1,20 @@
+{
+  "name": "memo",
+  "interface": {
+    "displayName": "memo"
+  },
+  "plugins": [
+    {
+      "name": "memo",
+      "source": {
+        "source": "local",
+        "path": "./plugins/memo"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

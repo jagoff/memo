@@ -312,7 +312,7 @@ A first-party plugin under [`integrations/paperclip-plugin-memo/`](./integration
 
 ## Ambient memory (v0.3.0+) — recall without `/memo`
 
-Install the bundled [Claude Code plugin](#slash-command--memo-claude-code-only) and memo silently consults your past on every prompt and injects the most relevant memorias as `additionalContext` — **the agent sees them before answering**, no manual invocation.
+Install the bundled [Claude Code plugin](#slash-command--memo) and memo silently consults your past on every prompt and injects the most relevant memorias as `additionalContext` — **the agent sees them before answering**, no manual invocation.
 
 ### How it works
 
@@ -343,11 +343,15 @@ On a 223-doc corpus:
 
 Tune lower (0.5) on sparse corpora, higher (0.7) for high-precision only.
 
-## Slash command — `/memo` (Claude Code only)
+## Slash command — `/memo`
 
-A Claude Code [skill](https://docs.claude.com/en/docs/claude-code/skills) ships at `skills/memo/SKILL.md`.
-The recommended install path is the bundled plugin because it registers the
-`/memo` skill, MCP server, and ambient hooks together:
+`/memo` is shipped for the CLIs that expose slash commands or skills. The
+backend is always the same isolated `memo-mcp` server.
+
+### Claude Code
+
+The Claude Code plugin registers the `/memo` skill, MCP server, and ambient
+hooks together:
 
 ```bash
 claude plugin marketplace add jagoff/memo
@@ -374,6 +378,32 @@ For skill-only development without hooks or MCP config:
 mkdir -p ~/.claude/skills/memo
 ln -sf "$(pwd)/skills/memo/SKILL.md" ~/.claude/skills/memo/SKILL.md
 ```
+
+### Codex
+
+The Codex plugin under `plugins/memo/` adds a visible `/memo` command and
+registers the `memo` MCP server:
+
+```bash
+codex plugin marketplace add /path/to/memo
+codex mcp add memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+```
+
+Open a new Codex session after adding the marketplace so the `/` menu reloads.
+
+### Devin
+
+Devin reads skills from `~/.config/devin/skills/<name>/SKILL.md`. Install the
+same `/memo` router skill there:
+
+```bash
+mkdir -p ~/.config/devin/skills/memo
+cp /path/to/memo/skills/memo/SKILL.md ~/.config/devin/skills/memo/SKILL.md
+devin mcp add -s user memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+devin skills list
+```
+
+Open a new Devin session after installing the skill.
 
 The skill routes user input to the right MCP tool:
 

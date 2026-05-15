@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended `memo mcp-command` with `--client codex`, `--client devin`, and
   `--client claude-desktop` so the same isolated `memo-mcp` runtime can be
   registered across the main MCP-capable CLIs without hand-writing config.
+- Added a Codex plugin (`plugins/memo`) with a visible `/memo` slash command
+  and documented the matching Devin skill install so the same command appears
+  across the main agent CLIs.
 - Updated developer guidance and the Claude Code skill to use the current
   `mlx-memo` distribution name, absolute `memo-mcp` registration flow, and
   package-metadata-based `memo.__version__`.
