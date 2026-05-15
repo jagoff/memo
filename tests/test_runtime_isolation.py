@@ -72,3 +72,35 @@ def test_mcp_command_json(monkeypatch):
     assert result.exit_code == 0
     assert '"memo"' in result.output
     assert '"command": "/Users/fer/.local/pipx/venvs/mlx-memo/bin/memo-mcp"' in result.output
+
+
+def test_mcp_command_codex(monkeypatch):
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/Users/fer/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+
+    result = CliRunner().invoke(cli, ["mcp-command", "--client", "codex"])
+
+    assert result.exit_code == 0
+    assert (
+        "codex mcp add memo -- "
+        "/Users/fer/.local/pipx/venvs/mlx-memo/bin/memo-mcp"
+    ) in result.output
+
+
+def test_mcp_command_devin(monkeypatch):
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/Users/fer/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+
+    result = CliRunner().invoke(cli, ["mcp-command", "--client", "devin"])
+
+    assert result.exit_code == 0
+    assert (
+        "devin mcp add -s user memo -- "
+        "/Users/fer/.local/pipx/venvs/mlx-memo/bin/memo-mcp"
+    ) in result.output

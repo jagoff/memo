@@ -212,12 +212,14 @@ memo ask 'qué cambios hice en el embedder este mes?'
 
 ## MCP setup
 
-After installing `mlx-memo`, register the MCP with your client.
+After installing `mlx-memo`, register the MCP with your client. The `memo`
+CLI prints commands pinned to the resolved `memo-mcp` executable so clients
+do not accidentally start a copy from a project `.venv`.
 
 ### Claude Code
 
 ```bash
-memo mcp-command
+memo mcp-command --client claude-code
 # then run the printed command, e.g.
 claude mcp add memo -s user /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
 ```
@@ -242,6 +244,31 @@ If Claude starts the wrong server, run `memo doctor --strict-runtime`; it
 will warn when `memo`/`memo-mcp` resolve from a project-local venv or from
 different environments.
 
+### Codex CLI
+
+Codex supports local stdio MCP servers through `codex mcp add`:
+
+```bash
+memo mcp-command --client codex
+# then run the printed command, e.g.
+codex mcp add memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+codex mcp list
+```
+
+Tools surface as `mcp__memo__memory_*` inside Codex sessions.
+
+### Devin for Terminal
+
+Devin supports stdio MCP servers through `devin mcp add`. Use `-s user` for
+a global install across projects:
+
+```bash
+memo mcp-command --client devin
+# then run the printed command, e.g.
+devin mcp add -s user memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+devin mcp list
+```
+
 ### Claude Desktop
 
 Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
@@ -256,7 +283,13 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ### Cursor / Cline / Continue
 
-Each client has its own MCP config UI but the contract is the same: register a stdio server pointing at the `memo-mcp` binary.
+Each client has its own MCP config UI but the contract is the same: register
+a stdio server pointing at the `memo-mcp` binary. To print a portable
+`mcpServers` block:
+
+```bash
+memo mcp-command --client json
+```
 
 ### Paperclip
 
