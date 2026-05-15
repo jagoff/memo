@@ -1139,10 +1139,10 @@ def doctor(do_gc: bool, fix: bool, strict_runtime: bool) -> None:
 @cli.command(name="mcp-command")
 @click.option(
     "--client",
-    type=click.Choice(["claude-code", "json"]),
+    type=click.Choice(["claude-code", "claude-desktop", "codex", "devin", "json"]),
     default="claude-code",
     show_default=True,
-    help="Emit a Claude Code command or raw MCP JSON config.",
+    help="Emit a client-specific MCP registration command or raw JSON config.",
 )
 def mcp_command(client: str) -> None:
     """Print MCP config pinned to the resolved `memo-mcp` executable.
@@ -1169,6 +1169,23 @@ def mcp_command(client: str) -> None:
                 },
             },
         }, ensure_ascii=False, indent=2))
+        return
+    if client == "claude-desktop":
+        click.echo(json.dumps({
+            "mcpServers": {
+                "memo": {
+                    "command": str(memo_mcp),
+                    "args": [],
+                    "env": {},
+                },
+            },
+        }, ensure_ascii=False, indent=2))
+        return
+    if client == "codex":
+        click.echo(f"codex mcp add memo -- {shlex.quote(str(memo_mcp))}")
+        return
+    if client == "devin":
+        click.echo(f"devin mcp add -s user memo -- {shlex.quote(str(memo_mcp))}")
         return
     click.echo(f"claude mcp add memo -s user {shlex.quote(str(memo_mcp))}")
 

@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected Claude Code plugin install docs to use the current marketplace
   flow (`claude plugin marketplace add ...` then `claude plugin install
   memo@memo`) and noted that existing sessions need a restart to see `/memo`.
+- Extended `memo mcp-command` with `--client codex`, `--client devin`, and
+  `--client claude-desktop` so the same isolated `memo-mcp` runtime can be
+  registered across the main MCP-capable CLIs without hand-writing config.
 - Updated developer guidance and the Claude Code skill to use the current
   `mlx-memo` distribution name, absolute `memo-mcp` registration flow, and
   package-metadata-based `memo.__version__`.
