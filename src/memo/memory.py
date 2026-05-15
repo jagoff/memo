@@ -43,6 +43,7 @@ conversation writer.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -50,36 +51,41 @@ import re
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import frontmatter
 
-from memo.config import Config
-from memo.embedder import MLXEmbedder, assert_valid_embedding
-from memo.graph import VALID_ENTITY_TYPES, GraphStore
-from memo.llm import MLXChat
-from memo.store import VecStore
-from memo.temporal import TemporalAnalyzer
-from memo.consolidation import AdvancedConsolidator
-from memo.contradict import ContradictionScanner, ContradictionStore
-from memo.navigation import GraphNavigator
-from memo.contextual import ContextStore, ContextualRecall
-from memo.crossref import CrossReferenceIndex, LinkSuggester
-from memo.lifecycle import LifecycleManager
-from memo.proactive import ProactiveSuggester
-from memo.versioning import VersionManager
-from memo.queries import QueryComposer, QueryStore
-from memo.federation import FederationConfig, FederationSearcher
-from memo.sync import BackupManager, SyncManager
-from memo.encryption import EncryptionManager, Encryptor, KeyManager
-from memo.sharing import ShareManager, ShareStore
-from memo.analytics import AnalyticsEngine, Dashboard
-from memo.import_export import ImportExportManager
 from memo.agent import AutonomousAgent
-from memo.multimodal import MultiModalManager, MultiModalStore, UniversalEmbedder, CrossModalSearch
-from memo.collaborative import CollaborativeManager, CollaborativeGraph, CollaborativeFilter
-from memo.cognitive import CognitiveManager, CognitiveStateTracker, ContextAwareRetrieval, ProactiveGuidance
-
+from memo.analytics import AnalyticsEngine, Dashboard
+from memo.cognitive import (
+    CognitiveManager,
+    CognitiveStateTracker,
+    ContextAwareRetrieval,
+    ProactiveGuidance,
+)
+from memo.collaborative import CollaborativeFilter, CollaborativeGraph, CollaborativeManager
+from memo.config import Config
+from memo.consolidation import AdvancedConsolidator
+from memo.contextual import ContextStore, ContextualRecall
+from memo.contradict import ContradictionScanner, ContradictionStore
+from memo.crossref import CrossReferenceIndex, LinkSuggester
+from memo.embedder import MLXEmbedder, assert_valid_embedding
+from memo.encryption import EncryptionManager, Encryptor, KeyManager
+from memo.federation import FederationConfig, FederationSearcher
+from memo.graph import GraphStore
+from memo.import_export import ImportExportManager
+from memo.lifecycle import LifecycleManager
+from memo.llm import MLXChat
+from memo.multimodal import CrossModalSearch, MultiModalManager, MultiModalStore, UniversalEmbedder
+from memo.navigation import GraphNavigator
+from memo.proactive import ProactiveSuggester
+from memo.queries import QueryComposer, QueryStore
+from memo.sharing import ShareManager, ShareStore
+from memo.store import VecStore
+from memo.sync import BackupManager, SyncManager
+from memo.temporal import TemporalAnalyzer
+from memo.versioning import VersionManager
 
 # JSON-schema prompt for the helper LLM. Kept terse to fit in Qwen3-3B's
 # attention without hurting accuracy. Empirically the model follows the
@@ -275,6 +281,12 @@ class Memory:
         # that never scan don't pay for the extra sqlite handle.
         self._contradict_store: ContradictionStore | None = None
 
+    def _ensure_chat(self) -> MLXChat:
+        """Construct the chat wrapper without loading model weights yet."""
+        if self._chat is None:
+            self._chat = MLXChat()
+        return self._chat
+
     @property
     def temporal(self) -> TemporalAnalyzer:
         """Lazy accessor for TemporalAnalyzer."""
@@ -389,7 +401,7 @@ class Memory:
     @property
     def agent(self) -> AutonomousAgent:
         """Lazy accessor for AutonomousAgent (THE GAMECHANGER)."""
-        return AutonomousAgent(self, self._chat)
+        return AutonomousAgent(self, self._ensure_chat())
 
     @property
     def multimodal(self) -> MultiModalManager:
@@ -507,6 +519,7 @@ class Memory:
         content: str,
         title: str | None = None,
         type_: str = "note",
+        type: str | None = None,
         tags: list[str] | None = None,
         extra: dict[str, Any] | None = None,
         auto_derive: bool = False,
@@ -519,8 +532,8 @@ class Memory:
         - `content`: free-form markdown body (no frontmatter; we add it).
         - `title`: optional. If omitted, derived from the first line of
           content (truncated, slug-safe).
-        - `type_`: must be in `_VALID_TYPES`. `note` is the default
-          neutral value.
+        - `type_`: must be in `_VALID_TYPES`. `type` is accepted as a
+          compatibility alias. `note` is the default neutral value.
         - `tags`: optional list. Lower-cased + de-duplicated.
         - `extra`: arbitrary JSON-serialisable metadata bag.
         - `auto_derive`: when True, calls the helper LLM
@@ -535,6 +548,10 @@ class Memory:
         """
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
+        if type is not None:
+            if type_ != "note" and type_ != type:
+                raise ValueError("Pass either `type_` or `type`, not conflicting values")
+            type_ = type
         if type_ not in _VALID_TYPES:
             raise ValueError(
                 f"`type_={type_!r}` not in valid set {sorted(_VALID_TYPES)}",
@@ -1018,13 +1035,9 @@ class Memory:
         if not r:
             return False
         existed = self.store.delete(id_)
-        try:
+        # File deletion is best-effort; the store is the authoritative delete signal.
+        with contextlib.suppress(OSError):
             self._resolve_existing(r["path"]).unlink(missing_ok=True)
-        except OSError:
-            # File deletion is best-effort — store is the authoritative
-            # delete signal. Stale `.md` files get cleaned up by a
-            # `memo doctor --gc` pass.
-            pass
         if existed:
             self.history.log_delete(
                 ts=_now_iso(), record_id=id_, title=r["title"], type_=r["type"],
@@ -1036,10 +1049,8 @@ class Memory:
             # Only walks if the sidecar was already opened, so callers
             # that never used the radar pay nothing.
             if self._contradict_store is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._contradict_store.drop_for_memoria(id_)
-                except Exception:
-                    pass
         return existed
 
     # -- reindex / gc -------------------------------------------------------
@@ -1297,7 +1308,7 @@ class Memory:
         """
         # 1) Pull all (id, embedding, title, type, tags) tuples.
         #    Direct SQL is cheaper than going through the public store
-        #    API per-row; we only need 1024 floats × N to fit in RAM,
+        #    API per-row; we only need 1024 floats x N to fit in RAM,
         #    fine for thousands of entries.
         import struct
 

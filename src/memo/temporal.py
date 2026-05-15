@@ -29,11 +29,10 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from memo.llm import MLXChat
-
 
 _CONTRADICTION_SYSTEM_PROMPT = """You analyze two memory notes from a personal archive to detect temporal contradictions.
 
@@ -387,8 +386,8 @@ Analyze the temporal relationship between these two notes."""
 
 
 __all__ = [
-    "TemporalAnalyzer",
     "Contradiction",
-    "TimelineEvent",
     "EntityTimeline",
+    "TemporalAnalyzer",
+    "TimelineEvent",
 ]

@@ -10,13 +10,6 @@ from memo.consolidation import (
 
 
 @pytest.fixture
-def mock_memory(tmp_cfg):
-    """Fixture providing a mock Memory instance for consolidation tests."""
-    from memo.memory import Memory
-    return Memory(tmp_cfg)
-
-
-@pytest.fixture
 def consolidator(mock_memory):
     """Fixture providing AdvancedConsolidator instance."""
     return AdvancedConsolidator(mock_memory)

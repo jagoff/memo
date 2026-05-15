@@ -32,14 +32,12 @@ from __future__ import annotations
 
 import json
 import re
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from memo.llm import MLXChat
-
 
 _SUGGESTION_SYSTEM_PROMPT = """You analyze a conversation to suggest potential memories to save.
 
@@ -124,7 +122,7 @@ class ProactiveSuggester:
 
         # Build context string
         context = "Recent conversation:\n\n"
-        for i, turn in enumerate(recent_turns[-5:], 1):  # Last 5 turns
+        for _i, turn in enumerate(recent_turns[-5:], 1):  # Last 5 turns
             context += f"User: {turn.get('user', '')}\n"
             context += f"Assistant: {turn.get('assistant', '')}\n\n"
 

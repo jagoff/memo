@@ -10,16 +10,14 @@ import pytest
 
 from memo.config import Config
 from memo.contradict import (
-    ContradictionScanner,
+    VALID_STATUSES,
     ContradictionStore,
     PairRecord,
-    VALID_STATUSES,
     _canonical_pair,
     is_stale,
 )
 from memo.memory import Memory
 from memo.temporal import Contradiction, TemporalAnalyzer
-
 
 # -- ContradictionStore unit tests ---------------------------------------------
 
@@ -189,7 +187,7 @@ def _stage_classify_pair(monkeypatch, verdict: Contradiction | None):
     """
     calls: list[tuple[str, str]] = []
 
-    def _fake_classify(self, r1, r2):  # noqa: ANN001
+    def _fake_classify(self, r1, r2):
         calls.append((r1.id, r2.id))
         if verdict is None:
             return None

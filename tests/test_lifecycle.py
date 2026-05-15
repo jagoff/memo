@@ -86,7 +86,7 @@ def test_should_archive_never_accessed(lifecycle_manager, mock_memory):
     )
 
     # Never accessed but recently updated - should not archive
-    should, reason = lifecycle_manager.should_archive(rec.id)
+    should, _reason = lifecycle_manager.should_archive(rec.id)
     assert should is False
 
 
@@ -148,7 +148,7 @@ def test_should_expire_regular_memoria(lifecycle_manager, mock_memory):
     )
 
     # Regular memoria - should not expire
-    should, reason = lifecycle_manager.should_expire(rec.id)
+    should, _reason = lifecycle_manager.should_expire(rec.id)
     assert should is False
 
 

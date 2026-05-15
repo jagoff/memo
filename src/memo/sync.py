@@ -10,7 +10,6 @@ Enables:
 
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
 import shutil
@@ -95,6 +94,17 @@ class BackupManager:
         memoria_count = len(memoria_files)
 
         original_size = sum(f.stat().st_size for f in backup_path.rglob("*"))
+        metadata = BackupMetadata(
+            timestamp=timestamp,
+            memoria_count=memoria_count,
+            checksum=checksum,
+            compressed_size=original_size,
+            original_size=original_size,
+        )
+        (backup_path / "metadata.json").write_text(
+            json.dumps(metadata.__dict__, indent=2),
+            encoding="utf-8",
+        )
 
         if compress:
             # Compress to tar.gz
@@ -111,13 +121,8 @@ class BackupManager:
         else:
             compressed_size = original_size
 
-        return BackupMetadata(
-            timestamp=timestamp,
-            memoria_count=memoria_count,
-            checksum=checksum,
-            compressed_size=compressed_size,
-            original_size=original_size,
-        )
+        metadata.compressed_size = compressed_size
+        return metadata
 
     def list_backups(self) -> list[BackupMetadata]:
         """List all available backups.
@@ -127,23 +132,12 @@ class BackupManager:
         """
         backups = []
 
-        for archive in self.backup_dir.glob("backup_*.tar.gz"):
-            # Extract metadata from filename (simplified)
-            timestamp_str = archive.stem.replace("backup_", "").replace("-", ":")
-            try:
-                timestamp = datetime.fromisoformat(timestamp_str)
-            except Exception:
-                timestamp = datetime.now(UTC)
+        for archive in self.backup_dir.glob("*.tar.gz"):
+            backups.append(self._read_archive_metadata(archive))
 
-            backups.append(
-                BackupMetadata(
-                    timestamp=timestamp.isoformat(),
-                    memoria_count=0,  # Would need to read archive
-                    checksum="",
-                    compressed_size=archive.stat().st_size,
-                    original_size=0,
-                )
-            )
+        for backup_path in self.backup_dir.iterdir():
+            if backup_path.is_dir():
+                backups.append(self._read_directory_metadata(backup_path))
 
         return sorted(backups, key=lambda b: b.timestamp, reverse=True)
 
@@ -163,34 +157,47 @@ class BackupManager:
         Returns:
             True if successful.
         """
-        archive_path = self.backup_dir / f"{backup_name}.tar.gz"
-        if not archive_path.is_file():
+        archive_path = self.backup_dir / (
+            backup_name if backup_name.endswith(".tar.gz") else f"{backup_name}.tar.gz"
+        )
+        directory_path = self.backup_dir / backup_name
+        if not archive_path.is_file() and not directory_path.is_dir():
             return False
 
-        import tarfile
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        self.db_dir.mkdir(parents=True, exist_ok=True)
 
-        # Extract to temp directory
+        if directory_path.is_dir():
+            return self._restore_from_directory(
+                directory_path,
+                restore_memorias=restore_memorias,
+                restore_dbs=restore_dbs,
+            )
+
+        import tarfile
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir).resolve()
             with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(tmpdir)
+                for member in tar.getmembers():
+                    target = (tmp_root / member.name).resolve()
+                    if not str(target).startswith(str(tmp_root)):
+                        raise ValueError(f"Unsafe path in backup archive: {member.name}")
+                tar.extractall(tmp_root)
 
-            extracted_path = Path(tmpdir) / backup_name
+            extracted_path = tmp_root / archive_path.name.removesuffix(".tar.gz")
+            if not extracted_path.is_dir():
+                candidates = [p for p in tmp_root.iterdir() if p.is_dir()]
+                if not candidates:
+                    return False
+                extracted_path = candidates[0]
 
-            if restore_memorias:
-                memoria_backup = extracted_path / "memorias"
-                if memoria_backup.is_dir():
-                    for f in memoria_backup.glob("*.md"):
-                        shutil.copy2(f, self.memory_dir / f.name)
-
-            if restore_dbs:
-                db_backup = extracted_path / "db"
-                if db_backup.is_dir():
-                    for db_file in db_backup.glob("*.db"):
-                        shutil.copy2(db_file, self.db_dir / db_file.name)
-
-        return True
+            return self._restore_from_directory(
+                extracted_path,
+                restore_memorias=restore_memorias,
+                restore_dbs=restore_dbs,
+            )
 
     def _compute_checksum(self, path: Path) -> str:
         """Compute SHA256 checksum of all files in path."""
@@ -199,6 +206,74 @@ class BackupManager:
             if f.is_file():
                 sha.update(f.read_bytes())
         return sha.hexdigest()
+
+    def _restore_from_directory(
+        self,
+        backup_path: Path,
+        *,
+        restore_memorias: bool,
+        restore_dbs: bool,
+    ) -> bool:
+        if restore_memorias:
+            memoria_backup = backup_path / "memorias"
+            if memoria_backup.is_dir():
+                for f in memoria_backup.glob("*.md"):
+                    shutil.copy2(f, self.memory_dir / f.name)
+
+        if restore_dbs:
+            db_backup = backup_path / "db"
+            if db_backup.is_dir():
+                for db_file in db_backup.glob("*.db"):
+                    shutil.copy2(db_file, self.db_dir / db_file.name)
+
+        return True
+
+    def _read_directory_metadata(self, backup_path: Path) -> BackupMetadata:
+        metadata_path = backup_path / "metadata.json"
+        if metadata_path.is_file():
+            data = json.loads(metadata_path.read_text(encoding="utf-8"))
+            return BackupMetadata(**data)
+
+        return BackupMetadata(
+            timestamp=self._timestamp_from_name(backup_path.name),
+            memoria_count=len(list((backup_path / "memorias").glob("*.md"))),
+            checksum=self._compute_checksum(backup_path),
+            compressed_size=sum(f.stat().st_size for f in backup_path.rglob("*") if f.is_file()),
+            original_size=sum(f.stat().st_size for f in backup_path.rglob("*") if f.is_file()),
+        )
+
+    def _read_archive_metadata(self, archive: Path) -> BackupMetadata:
+        import tarfile
+
+        try:
+            with tarfile.open(archive, "r:gz") as tar:
+                for member in tar.getmembers():
+                    if member.name.endswith("/metadata.json"):
+                        extracted = tar.extractfile(member)
+                        if extracted is None:
+                            continue
+                        data = json.loads(extracted.read().decode("utf-8"))
+                        data["compressed_size"] = archive.stat().st_size
+                        return BackupMetadata(**data)
+        except Exception:
+            pass
+
+        return BackupMetadata(
+            timestamp=self._timestamp_from_name(archive.name.removesuffix(".tar.gz")),
+            memoria_count=0,
+            checksum="",
+            compressed_size=archive.stat().st_size,
+            original_size=0,
+        )
+
+    def _timestamp_from_name(self, name: str) -> str:
+        if name.startswith("backup_"):
+            raw = name.removeprefix("backup_").replace("-", ":")
+            try:
+                return datetime.fromisoformat(raw).isoformat()
+            except Exception:
+                pass
+        return datetime.now(UTC).isoformat()
 
 
 class SyncManager:
@@ -294,7 +369,7 @@ class SyncManager:
 
 __all__ = [
     "BackupManager",
-    "SyncManager",
-    "SyncDiff",
     "BackupMetadata",
+    "SyncDiff",
+    "SyncManager",
 ]

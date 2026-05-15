@@ -47,9 +47,7 @@ def test_find_shortest_path_no_entities(navigator):
 
 def test_find_shortest_path_with_data(navigator, mock_memory):
     """Test path finding with actual entity data."""
-    from memo.memory import Memory
-
-    mem = Memory(mock_memory.cfg)
+    mem = mock_memory
 
     # Create test memorias that share entities
     rec1 = mem.save(
@@ -85,9 +83,7 @@ def test_get_neighbors_no_entity(navigator):
 
 def test_get_neighbors_with_data(navigator, mock_memory):
     """Test getting neighbors with actual entity data."""
-    from memo.memory import Memory
-
-    mem = Memory(mock_memory.cfg)
+    mem = mock_memory
 
     rec = mem.save(
         content="Memo about MLX and Qwen",
@@ -110,9 +106,7 @@ def test_detect_communities_empty(navigator):
 
 def test_detect_communities_with_data(navigator, mock_memory):
     """Test community detection with actual entity data."""
-    from memo.memory import Memory
-
-    mem = Memory(mock_memory.cfg)
+    mem = mock_memory
 
     # Create cluster of related memorias
     rec1 = mem.save(
@@ -147,9 +141,7 @@ def test_compute_centrality_empty(navigator):
 
 def test_compute_centrality_with_data(navigator, mock_memory):
     """Test centrality computation with actual entity data."""
-    from memo.memory import Memory
-
-    mem = Memory(mock_memory.cfg)
+    mem = mock_memory
 
     rec = mem.save(
         content="Memo about MLX",
@@ -174,7 +166,7 @@ def test_export_graphviz(navigator):
 def test_export_graphviz_to_file(tmp_path, navigator):
     """Test Graphviz DOT export to file."""
     output_file = tmp_path / "graph.dot"
-    dot = navigator.export_graphviz(output_path=str(output_file))
+    navigator.export_graphviz(output_path=str(output_file))
     assert output_file.is_file()
     content = output_file.read_text()
     assert "graph memo_entities" in content

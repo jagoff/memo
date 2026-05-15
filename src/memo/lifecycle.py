@@ -27,13 +27,9 @@ based on policy.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
-
-from memo.config import Config
 
 
 @dataclass
@@ -84,12 +80,13 @@ class LifecycleManager:
         """Get days since last access, or None if never accessed."""
         events = self.memory.history.list_recent(
             record_id=memoria_id,
-            limit=1,
+            limit=1000,
         )
-        if not events:
+        access_events = [e for e in events if e.get("op") != "save"]
+        if not access_events:
             return None
 
-        last_event = events[0]
+        last_event = access_events[0]
         try:
             last_ts = datetime.fromisoformat(last_event["ts"].replace("Z", "+00:00"))
             days = (datetime.now(UTC) - last_ts).days
@@ -252,7 +249,7 @@ class LifecycleManager:
 
         for rec in all_records:
             # Check expiration first
-            should_expire, expire_reason = self.should_expire(rec.id)
+            should_expire, _expire_reason = self.should_expire(rec.id)
             if should_expire:
                 if self.policy.delete_expired:
                     if not dry_run:
@@ -265,7 +262,7 @@ class LifecycleManager:
                 continue
 
             # Check archival
-            should_archive, archive_reason = self.should_archive(rec.id)
+            should_archive, _archive_reason = self.should_archive(rec.id)
             if should_archive:
                 if not dry_run:
                     self.archive_memoria(rec.id)
@@ -273,8 +270,8 @@ class LifecycleManager:
                 continue
 
             # Check promotion/demotion
-            should_promote, promote_reason = self.should_promote(rec.id)
-            should_demote, demote_reason = self.should_demote(rec.id)
+            should_promote, _promote_reason = self.should_promote(rec.id)
+            should_demote, _demote_reason = self.should_demote(rec.id)
 
             if should_promote:
                 actions["promoted"] += 1
@@ -336,7 +333,7 @@ class LifecycleManager:
 
 
 __all__ = [
+    "LifecycleAction",
     "LifecycleManager",
     "LifecyclePolicy",
-    "LifecycleAction",
 ]

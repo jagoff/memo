@@ -601,8 +601,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         Returns a list of archived memoria entries with metadata including
         the replacement memoria ID and archival timestamp.
         """
+
         import frontmatter
-        from pathlib import Path
 
         archival_dir = memory.cfg.memory_dir / "archived"
         if not archival_dir.is_dir():
@@ -1957,7 +1957,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             from_ts: Start date — YYYY-MM-DD or full ISO 8601.
             to_ts: End date (defaults to "now" when omitted).
         """
-        from datetime import UTC, datetime as _dt
+        from datetime import UTC
+        from datetime import datetime as _dt
 
         from memo.time_machine import diff as _diff
         to_resolved = to_ts or _dt.now(UTC).isoformat()

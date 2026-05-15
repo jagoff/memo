@@ -28,10 +28,7 @@ Ejemplo:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -83,11 +80,27 @@ class AutonomousAgent:
         chat: La instancia MLXChat para razonamiento.
     """
 
-    def __init__(self, memory: Any, chat: Any) -> None:
+    def __init__(self, memory: Any, chat: Any | None) -> None:
         self.memory = memory
+        if chat is None:
+            from memo.llm import MLXChat
+
+            chat = MLXChat()
         self.chat = chat
         self._thoughts: list[AgentThought] = []
         self._synthesis_history: list[SynthesisResult] = []
+
+    def _complete(self, prompt: str, *, temperature: float, max_tokens: int = 512) -> str:
+        """Return plain text from either a test double or the MLXChat wrapper."""
+        if hasattr(self.chat, "complete"):
+            return self.chat.complete(prompt, temperature=temperature)
+
+        out = self.chat.chat(
+            model=self.memory.cfg.llm_model,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": temperature, "max_tokens": max_tokens},
+        )
+        return ((out.get("message") or {}).get("content") or "").strip()
 
     def think(self, thought: str, thought_type: str = "hypothesis") -> AgentThought:
         """Registra un pensamiento del agente (meta-cognición).
@@ -135,7 +148,7 @@ Output JSON:
   "estimated_insight_value": 1-10
 }}"""
 
-        response = self.chat.complete(prompt, temperature=0.3)
+        response = self._complete(prompt, temperature=0.3)
         data = json.loads(response)
 
         return InvestigationPlan(**data)
@@ -222,7 +235,7 @@ Provide a causal explanation:
 
 Focus on CAUSAL links (X caused Y, X implies Y, X is necessary for Y)."""
 
-        response = self.chat.complete(prompt, temperature=0.5)
+        response = self._complete(prompt, temperature=0.5)
         return response
 
     def synthesize_knowledge(self, topic: str) -> SynthesisResult:
@@ -266,7 +279,7 @@ Output JSON:
   "novelty_score": 0.0-1.0
 }}"""
 
-        response = self.chat.complete(prompt, temperature=0.7)
+        response = self._complete(prompt, temperature=0.7)
         data = json.loads(response)
 
         # Construir chain de razonamiento
@@ -368,10 +381,9 @@ Output JSON:
 
 
 __all__ = [
-    "AutonomousAgent",
-    "ReasoningStep",
-    "InvestigationPlan",
-    "SynthesisResult",
     "AgentThought",
+    "AutonomousAgent",
+    "InvestigationPlan",
+    "ReasoningStep",
+    "SynthesisResult",
 ]
-

@@ -25,7 +25,6 @@ for consumption by web visualization libraries (D3.js, Cytoscape.js).
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any
@@ -132,7 +131,7 @@ class GraphNavigator:
             for neighbor, mem_id in adj[current]:
                 if neighbor not in visited:
                     visited.add(neighbor)
-                    queue.append((neighbor, path + [neighbor], memoria_ids + [mem_id]))
+                    queue.append((neighbor, [*path, neighbor], [*memoria_ids, mem_id]))
 
         return None
 
@@ -343,7 +342,7 @@ class GraphNavigator:
 
         # Nodes
         nodes = []
-        for entity in adj.keys():
+        for entity in adj:
             nodes.append({"id": entity, "label": entity})
 
         # Edges
@@ -364,9 +363,9 @@ class GraphNavigator:
 
 
 __all__ = [
-    "GraphNavigator",
-    "EntityPath",
-    "EntityNeighbors",
-    "Community",
     "CentralityScores",
+    "Community",
+    "EntityNeighbors",
+    "EntityPath",
+    "GraphNavigator",
 ]

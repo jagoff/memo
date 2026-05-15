@@ -11,13 +11,6 @@ from memo.temporal import (
 
 
 @pytest.fixture
-def mock_memory(tmp_cfg):
-    """Fixture providing a mock Memory instance for temporal tests."""
-    from memo.memory import Memory
-    return Memory(tmp_cfg)
-
-
-@pytest.fixture
 def temporal_analyzer(mock_memory):
     """Fixture providing TemporalAnalyzer instance."""
     return TemporalAnalyzer(mock_memory)

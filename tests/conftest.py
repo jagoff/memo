@@ -14,12 +14,36 @@ checks env vars / TTY independently.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 from memo.config import Config
+
+
+@pytest.fixture
+def mock_memory(tmp_cfg):
+    """Real `Memory` instance isolated under `tmp_cfg`. Shared across all test modules."""
+    from memo.memory import Memory
+
+    mem = Memory(tmp_cfg)
+
+    def _fake_embedding(text: str) -> list[float]:
+        digest = hashlib.sha256((text or "").encode("utf-8")).digest()
+        values = [
+            ((digest[i % len(digest)] / 255.0) * 2.0) - 1.0
+            for i in range(tmp_cfg.embedder_dims)
+        ]
+        norm = sum(v * v for v in values) ** 0.5
+        return [v / norm for v in values]
+
+    mem.embedder.embed = lambda inputs: [_fake_embedding(text) for text in inputs]
+    mem.embedder.embed_query = lambda query: _fake_embedding(query)
+    mem._chat = _FakeChat()
+    return mem
 
 
 @pytest.fixture
@@ -45,7 +69,86 @@ def tmp_cfg(tmp_path: Path) -> Config:
     # `project:<repo>` tag. Tests that exercise the auto-tag flow opt
     # back in explicitly via monkeypatch.setenv("MEMO_AUTO_PROJECT_TAG", "1").
     os.environ.setdefault("MEMO_AUTO_PROJECT_TAG", "0")
-    return Config(data_dir=data, vault_path=vault, state_dir=state)
+    return Config(data_dir=data, vault_path=vault, state_dir=state, reranker_enabled=False)
+
+
+class _FakeChat:
+    """Deterministic local chat double for non-MLX unit tests."""
+
+    def complete(self, prompt: str, temperature: float = 0.0, **_: object) -> str:
+        if "estimated_complexity" in prompt:
+            goal = "Test goal"
+            for line in prompt.splitlines():
+                if line.startswith("Goal:"):
+                    goal = line.removeprefix("Goal:").strip() or goal
+                    break
+            return json.dumps(
+                {
+                    "goal": goal,
+                    "steps": [f"search for {goal}", "analyze relationships"],
+                    "estimated_complexity": 3,
+                    "estimated_insight_value": 7,
+                }
+            )
+        if "new_insight" in prompt:
+            return json.dumps(
+                {
+                    "new_insight": "Related memorias suggest a practical pattern.",
+                    "supporting_memorias": [],
+                    "confidence": 0.75,
+                    "novelty_score": 0.7,
+                }
+            )
+        return "The notes are causally related through shared constraints and outcomes."
+
+    def chat(self, model: str, messages: list[dict[str, str]], options: dict | None = None) -> dict:
+        system = messages[0].get("content", "") if messages else ""
+        user = messages[-1].get("content", "") if messages else ""
+
+        if "extract entities" in system.lower():
+            entities = []
+            lowered = user.lower()
+            if "mlx" in lowered:
+                entities.append({"name": "mlx", "type": "technology"})
+            if "memo" in lowered:
+                entities.append({"name": "memo", "type": "project"})
+            if "apple" in lowered:
+                entities.append({"name": "apple silicon", "type": "technology"})
+            return {"message": {"content": json.dumps({"entities": entities})}}
+
+        if "temporal relationship" in system.lower():
+            return {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "relationship": "consistent",
+                            "rationale": "The notes do not contradict each other.",
+                            "confidence": 0.8,
+                        }
+                    )
+                }
+            }
+
+        if "suggest" in system.lower():
+            return {"message": {"content": json.dumps({"suggestions": []})}}
+
+        if "cluster" in user.lower() or "merge" in system.lower():
+            return {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "summary": "Related test memorias.",
+                            "relationship": "facets",
+                            "rationale": "They cover compatible aspects.",
+                            "merged_title": "Merged",
+                            "merged_body": "Merged content",
+                            "merge_strategy": "synthesis",
+                        }
+                    )
+                }
+            }
+
+        return {"message": {"content": "{}"}}
 
 
 @pytest.fixture(autouse=True)

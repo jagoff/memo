@@ -19,8 +19,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
 
 class MentalState(Enum):
     """Estados mentales del usuario."""
@@ -407,13 +405,13 @@ class CognitiveManager:
 
 
 __all__ = [
-    "CognitiveStateTracker",
-    "ContextAwareRetrieval",
-    "ProactiveGuidance",
     "CognitiveManager",
     "CognitiveState",
+    "CognitiveStateTracker",
+    "ContextAwareRetrieval",
+    "ContextType",
     "ContextualSuggestion",
     "MentalState",
-    "ContextType",
+    "ProactiveGuidance",
 ]
 

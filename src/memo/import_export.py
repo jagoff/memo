@@ -14,7 +14,6 @@ import csv
 import json
 import zipfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -64,10 +63,10 @@ class Importer:
         for item in memorias:
             try:
                 self.memory.save(
-                    content=item.get("content", ""),
+                    content=item.get("content") or item.get("body") or "",
                     title=item.get("title", ""),
                     tags=item.get("tags", []),
-                    type=item.get("type", "note"),
+                    type_=item.get("type", "note"),
                 )
                 imported += 1
             except Exception as e:
@@ -93,17 +92,17 @@ class Importer:
         skipped = 0
         errors = []
 
-        with open(input_path, "r", encoding="utf-8") as f:
+        with open(input_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
 
             for row in reader:
                 try:
                     tags = row.get("tags", "").split(",") if row.get("tags") else []
                     self.memory.save(
-                        content=row.get("content", ""),
+                        content=row.get("content") or row.get("body") or "",
                         title=row.get("title", ""),
                         tags=[t.strip() for t in tags if t.strip()],
-                        type=row.get("type", "note"),
+                        type_=row.get("type", "note"),
                     )
                     imported += 1
                 except Exception as e:
@@ -141,12 +140,7 @@ class Importer:
                     # Extract frontmatter if present
                     if content.startswith("---"):
                         parts = content.split("---", maxsplit=2)
-                        if len(parts) >= 3:
-                            # Has frontmatter
-                            body = parts[2].strip()
-                            # Parse frontmatter (simplified)
-                        else:
-                            body = content
+                        body = parts[2].strip() if len(parts) >= 3 else content
                     else:
                         body = content
 
@@ -154,7 +148,7 @@ class Importer:
                         content=body,
                         title=title,
                         tags=[],
-                        type="note",
+                        type_="note",
                     )
                     imported += 1
                 except Exception as e:
@@ -329,10 +323,9 @@ class ImportExportManager:
 
 
 __all__ = [
-    "ImportExportManager",
-    "Importer",
-    "Exporter",
-    "ImportResult",
     "ExportResult",
+    "Exporter",
+    "ImportExportManager",
+    "ImportResult",
+    "Importer",
 ]
-

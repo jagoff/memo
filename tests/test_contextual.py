@@ -122,12 +122,12 @@ def test_contextual_recall_init(contextual_recall):
 def test_contextual_recall_search_with_context(contextual_recall, mock_memory):
     """Test contextual search with actual data."""
     # Create test memorias
-    rec1 = mock_memory.save(
+    mock_memory.save(
         content="Memo about MLX",
         title="MLX",
         tags=["mlx"],
     )
-    rec2 = mock_memory.save(
+    mock_memory.save(
         content="Memo about Qwen",
         title="Qwen",
         tags=["qwen"],

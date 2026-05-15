@@ -14,9 +14,8 @@ import json
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Any
 from enum import Enum
+from pathlib import Path
 
 
 class Permission(Enum):
@@ -89,7 +88,7 @@ class ShareStore:
         if self.links_file.is_file():
             try:
                 data = json.loads(self.links_file.read_text(encoding="utf-8"))
-                self._links = [ShareLink(**l) for l in data]
+                self._links = [ShareLink(**link) for link in data]
             except Exception:
                 self._links = []
 
@@ -108,7 +107,7 @@ class ShareStore:
                 encoding="utf-8",
             )
             self.links_file.write_text(
-                json.dumps([l.__dict__ for l in self._links], indent=2),
+                json.dumps([link.__dict__ for link in self._links], indent=2),
                 encoding="utf-8",
             )
             self.comments_file.write_text(
@@ -449,11 +448,10 @@ class ShareManager:
 
 
 __all__ = [
-    "ShareManager",
-    "ShareStore",
-    "Share",
-    "ShareLink",
     "Comment",
     "Permission",
+    "Share",
+    "ShareLink",
+    "ShareManager",
+    "ShareStore",
 ]
-

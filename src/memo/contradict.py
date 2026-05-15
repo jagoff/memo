@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -118,10 +118,8 @@ class ContradictionStore:
             raise
 
     def close(self) -> None:
-        try:
+        with suppress(Exception):
             self._conn.close()
-        except Exception:
-            pass
 
     def upsert_open(
         self,
@@ -361,10 +359,8 @@ class ContradictionScanner:
         for idx, rec in enumerate(records):
             scanned += 1
             if progress:
-                try:
+                with suppress(Exception):
                     progress(idx + 1, total, rec.title)
-                except Exception:
-                    pass
 
             if examined >= max_pairs:
                 break

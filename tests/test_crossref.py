@@ -27,7 +27,7 @@ def link_suggester(mock_memory):
 
 def test_crossref_index_init(crossref_index):
     """Test CrossReferenceIndex initialization."""
-    assert crossref_index.db_path.is_dir()
+    assert crossref_index.db_path.is_file()
 
 
 def test_crossref_index_wikilinks(crossref_index):
@@ -121,12 +121,12 @@ def test_link_suggester_init(link_suggester):
 def test_link_suggester_suggest_links(link_suggester, mock_memory):
     """Test link suggestions based on content."""
     # Create test memorias
-    rec1 = mock_memory.save(
+    mock_memory.save(
         content="Memo about MLX performance",
         title="MLX Performance",
         tags=["mlx"],
     )
-    rec2 = mock_memory.save(
+    mock_memory.save(
         content="Memo about Qwen models",
         title="Qwen Models",
         tags=["qwen"],

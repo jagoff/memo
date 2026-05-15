@@ -32,10 +32,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
-
 
 _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS events (
@@ -151,10 +150,8 @@ class HistoryStore:
         return self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
     def close(self) -> None:
-        try:
+        with suppress(Exception):
             self._conn.close()
-        except Exception:
-            pass
 
 
 __all__ = ["HistoryStore"]

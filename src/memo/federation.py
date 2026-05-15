@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass
@@ -55,7 +54,9 @@ class FederationConfig:
             try:
                 data = json.loads(self.config_path.read_text(encoding="utf-8"))
                 for name, v in data.get("vaults", {}).items():
-                    self._vaults[name] = VaultConfig(name=name, **v)
+                    vault_data = dict(v)
+                    vault_data.pop("name", None)
+                    self._vaults[name] = VaultConfig(name=name, **vault_data)
             except Exception:
                 self._vaults = {}
 
@@ -63,7 +64,14 @@ class FederationConfig:
         """Save vaults to config file."""
         try:
             data = {
-                "vaults": {name: v.__dict__ for name, v in self._vaults.items()}
+                "vaults": {
+                    name: {
+                        "path": v.path,
+                        "weight": v.weight,
+                        "enabled": v.enabled,
+                    }
+                    for name, v in self._vaults.items()
+                }
             }
             self.config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception:
@@ -234,9 +242,8 @@ class FederationSearcher:
 
 
 __all__ = [
+    "FederatedResult",
     "FederationConfig",
     "FederationSearcher",
     "VaultConfig",
-    "FederatedResult",
 ]
-
