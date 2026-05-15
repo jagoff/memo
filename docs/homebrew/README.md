@@ -1,19 +1,15 @@
 # Homebrew tap for `mlx-memo`
 
-This directory carries the reference Homebrew formula. To make it
-installable for end users, you need a *separate* GitHub repo named
-`homebrew-memo` under your account — Homebrew requires tap repos to
-start with the `homebrew-` prefix.
+This directory carries the reference Homebrew formula. The public tap lives at
+[`jagoff/homebrew-memo`](https://github.com/jagoff/homebrew-memo); Homebrew
+requires tap repos to start with the `homebrew-` prefix.
 
 ## One-time setup
 
-1. **Create the tap repo on GitHub.** Empty, public, named
-   `homebrew-memo`. Visit
-   <https://github.com/new> and set:
-   - Owner: `jagoff`
-   - Name: `homebrew-memo`
-   - Description: `Homebrew tap for mlx-memo and friends`
-   - Public, no README (we'll generate one)
+1. **Create the tap repo on GitHub if it does not exist.** Empty, public,
+   named `homebrew-memo`. Visit <https://github.com/new> and set owner
+   `jagoff`, name `homebrew-memo`, and description
+   `Homebrew tap for mlx-memo and friends`.
 
 2. **Clone + populate.**
 
@@ -85,10 +81,9 @@ git commit -am "mlx-memo $NEW_VERSION"
 git push
 ```
 
-A future improvement: add a GitHub Action in this repo that auto-PRs
-the formula update on each tag (see
-[bump-formula-pr](https://github.com/Homebrew/actions/tree/master/bump-formula-pr)
-or `homebrew/bump-pypi-formula`).
+Do not bump this formula to a version until the matching sdist exists on PyPI.
+At the time this note was updated, PyPI's latest `mlx-memo` release was
+`0.6.0`, while the source tree was already preparing `0.7.0`.
 
 ## Why a personal tap, not homebrew-core?
 

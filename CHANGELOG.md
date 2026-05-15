@@ -28,14 +28,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended `memo mcp-command` with `--client codex`, `--client devin`, and
   `--client claude-desktop` so the same isolated `memo-mcp` runtime can be
   registered across the main MCP-capable CLIs without hand-writing config.
-- Added a Codex plugin (`plugins/memo`) with a visible `/memo` slash command
-  and documented the matching Devin skill install so the same command appears
-  across the main agent CLIs.
+- `memo mcp-command` now pins `MEMO_NONINTERACTIVE=1` and forwards current
+  `MEMO_*` model/storage overrides into MCP client configs, preventing
+  1024/2560 embedder-dimension drift between shell and agent sessions.
+- Added `memo install-slash`, a one-shot installer for the visible exact
+  `/memo` command/skill and `memo` MCP server in clients that support that UX:
+  Claude Code and Devin.
+- Changed `memo install-slash --client codex` to fail fast because Codex CLI
+  currently installs plugins/MCP metadata but does not expose arbitrary plugin
+  commands in the interactive `/` menu. Codex remains supported through
+  `memo mcp-command --client codex` and the `plugins/memo` MCP plugin.
+- Packaged Claude/Codex/Devin agent assets into the wheel under
+  `memo/agent_assets`, so `memo install-slash` works from `pipx`, `uv tool`,
+  and Homebrew installs without requiring a local repo checkout.
 - Updated developer guidance and the Claude Code skill to use the current
   `mlx-memo` distribution name, absolute `memo-mcp` registration flow, and
   package-metadata-based `memo.__version__`.
 - Refreshed Homebrew tap examples so they no longer hard-code old 0.5.x
   placeholders.
+
+### Fixed
+
+- Claude Code MCP registration now uses `claude mcp add-json`, avoiding the
+  current `claude mcp add -e ...` argument parsing failure with env vars.
+- `VecStore` now fails fast when an existing `memvec.db` has a vec0 embedding
+  dimension different from the active config, with a direct reindex/remediation
+  message instead of a late sqlite-vec query error.
 
 ## [0.7.0] - 2026-05-13
 

@@ -15,10 +15,12 @@ If MCP tools named `mcp__memo__memory_*` are not available, tell the user to
 register memo first:
 
 ```bash
-memo mcp-command --client codex
+memo install-slash --client claude-code
+# or only print the MCP command:
+memo mcp-command --client claude-code
 ```
 
-Then open a new Codex session so MCP tools reload.
+Then open a new Claude Code session so the `/` menu and MCP tools reload.
 
 ## Routing
 

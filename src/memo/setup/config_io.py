@@ -4,8 +4,8 @@ File shape:
 
 ```toml
 [storage]
-data_dir = "/Users/USER/Documents/memo"
-vault_path = "/Users/USER/Library/.../Notes"  # optional, only when Obsidian was picked
+data_dir = "/Users/you/Documents/memo"
+vault_path = "/Users/you/Library/.../Notes"  # optional, only when Obsidian was picked
 ```
 
 Read uses stdlib `tomllib` (Python ≥3.11; project requires 3.13).

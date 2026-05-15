@@ -22,10 +22,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import selectors
 import shlex
 import shutil
+import subprocess
 import sys
+import time
 from datetime import UTC
+from importlib.resources import files as package_files
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +81,8 @@ def cli(ctx: click.Context) -> None:
 # something invokes them from an interactive shell while debugging).
 _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "init", "doctor", "migrate-vault",
-    "mcp-command", "prewarm", "recall-hook", "capture-stop", "session", "ingest",
+    "mcp-command", "install-slash", "prewarm", "recall-hook", "capture-stop",
+    "session", "ingest",
 }
 
 
@@ -153,12 +158,34 @@ def _safe_resolve(path: Path) -> Path:
         return path
 
 
-def _resolve_command(name: str) -> tuple[Path | None, Path | None]:
+def _resolve_command(
+    name: str,
+    *,
+    prefer_invoked: bool = False,
+    sibling_of: Path | None = None,
+) -> tuple[Path | None, Path | None]:
+    """Resolve an executable, preferring the active install when known."""
+    candidates: list[Path] = []
+
+    if prefer_invoked:
+        invoked = Path(sys.argv[0])
+        if invoked.name == name and invoked.exists():
+            candidates.append(invoked)
+
+    if sibling_of is not None:
+        sibling = sibling_of.with_name(name)
+        if sibling.exists():
+            candidates.append(sibling)
+
     raw = shutil.which(name)
-    if not raw:
-        return None, None
-    raw_path = Path(raw)
-    return raw_path, _safe_resolve(raw_path)
+    if raw:
+        candidates.append(Path(raw))
+
+    for candidate in candidates:
+        resolved = _safe_resolve(candidate)
+        if resolved.exists():
+            return candidate, resolved
+    return None, None
 
 
 def _env_root_for_bin(path: Path | None) -> Path | None:
@@ -202,8 +229,8 @@ def _runtime_install_report(cwd: Path | None = None) -> dict[str, Any]:
     the venv active when the client was configured.
     """
     cwd = _safe_resolve(cwd or Path.cwd())
-    memo_cmd, memo_resolved = _resolve_command("memo")
-    mcp_cmd, mcp_resolved = _resolve_command("memo-mcp")
+    memo_cmd, memo_resolved = _resolve_command("memo", prefer_invoked=True)
+    mcp_cmd, mcp_resolved = _resolve_command("memo-mcp", sibling_of=memo_resolved)
     py_resolved = _safe_resolve(Path(sys.executable))
 
     memo_root = _env_root_for_bin(memo_resolved)
@@ -251,6 +278,286 @@ def _runtime_install_report(cwd: Path | None = None) -> dict[str, Any]:
     }
 
 
+_MCP_ENV_FORWARD_KEYS = (
+    "MEMO_CONFIG_FILE",
+    "MEMO_DATA_DIR",
+    "MEMO_STATE_DIR",
+    "MEMO_VAULT_PATH",
+    "MEMO_MEMORY_SUBDIR",
+    "MEMO_MODEL_PROFILE",
+    "MEMO_LLM_MODEL",
+    "MEMO_HELPER_MODEL",
+    "MEMO_EMBEDDER_MODEL",
+    "MEMO_EMBEDDER_DIMS",
+    "MEMO_RERANKER_ENABLED",
+    "MEMO_RERANKER_MODEL",
+    "MEMO_RERANK_INPUT_K",
+    "MEMO_RERANK_FUSION_ALPHA",
+)
+
+
+def _mcp_server_env() -> dict[str, str]:
+    """Env vars that MCP clients should pin when launching `memo-mcp`."""
+    env = {"MEMO_NONINTERACTIVE": "1"}
+    for key in _MCP_ENV_FORWARD_KEYS:
+        val = os.environ.get(key)
+        if val:
+            env[key] = val
+    return env
+
+
+def _env_flags(client: str, env: dict[str, str]) -> list[str]:
+    opt = "--env" if client == "codex" else "-e"
+    flags: list[str] = []
+    for key, val in env.items():
+        flags.extend([opt, f"{key}={val}"])
+    return flags
+
+
+def _format_command(args: list[str | Path]) -> str:
+    return " ".join(shlex.quote(str(arg)) for arg in args)
+
+
+def _agent_asset_root(repo: Path | None = None) -> Path:
+    candidates = [_safe_resolve(repo)] if repo else [
+        _safe_resolve(Path.cwd()),
+        _safe_resolve(Path(__file__).resolve().parents[2]),
+    ]
+    if not repo:
+        try:
+            packaged_assets = Path(str(package_files("memo") / "agent_assets"))
+        except Exception:
+            packaged_assets = None
+        if packaged_assets is not None:
+            candidates.append(_safe_resolve(packaged_assets))
+    for root in candidates:
+        if (
+            (root / ".claude-plugin" / "plugin.json").is_file()
+            and (root / "commands" / "memo.md").is_file()
+            and (root / "plugins" / "memo" / ".codex-plugin" / "plugin.json").is_file()
+            and (root / "plugins" / "memo" / "skills" / "memo" / "SKILL.md").is_file()
+            and (root / "skills" / "memo" / "SKILL.md").is_file()
+        ):
+            return root
+    checked = ", ".join(str(c) for c in candidates)
+    raise click.ClickException(
+        "Could not find memo plugin assets. Run from the memo checkout or pass "
+        f"`--repo /path/to/memo`. Checked: {checked}"
+    )
+
+
+def _run_agent_command(
+    args: list[str | Path],
+    *,
+    dry_run: bool,
+    ok_errors: tuple[str, ...] = (),
+) -> None:
+    if dry_run:
+        console.print(f"[dim]$ {_format_command(args)}[/dim]")
+        return
+    try:
+        proc = subprocess.run(
+            [str(arg) for arg in args],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise click.ClickException(
+            f"`{args[0]}` not found on PATH; install that client first."
+        ) from exc
+    combined = f"{proc.stdout}\n{proc.stderr}".lower()
+    if proc.returncode != 0 and not any(token in combined for token in ok_errors):
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise click.ClickException(
+            f"Command failed ({proc.returncode}): {_format_command(args)}"
+            + (f"\n{detail}" if detail else "")
+        )
+    if proc.returncode == 0:
+        console.print(f"[green]✓[/green] {_format_command(args)}")
+    else:
+        console.print(f"[dim]↷ already handled: {_format_command(args)}[/dim]")
+
+
+def _mcp_add_command(client: str, memo_mcp: Path, env: dict[str, str]) -> list[str | Path]:
+    if client == "codex":
+        return ["codex", "mcp", "add", "memo", *_env_flags("codex", env), "--", memo_mcp]
+    if client == "devin":
+        return [
+            "devin", "mcp", "add", "-s", "user",
+            *_env_flags("devin", env), "memo", "--", memo_mcp,
+        ]
+    mcp_json = json.dumps(
+        {
+            "type": "stdio",
+            "command": str(memo_mcp),
+            "args": [],
+            "env": env,
+        },
+        separators=(",", ":"),
+    )
+    return [
+        "claude", "mcp", "add-json", "-s", "user", "memo", mcp_json,
+    ]
+
+
+def _codex_home() -> Path:
+    raw = os.environ.get("CODEX_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".codex"
+
+
+def _copy_slash_skill(root: Path, dst: Path, *, dry_run: bool) -> None:
+    src = root / "skills" / "memo" / "SKILL.md"
+    if dry_run:
+        console.print(f"[dim]copy {src} -> {dst}  # /memo[/dim]")
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    console.print(f"[green]✓[/green] copied {src} -> {dst}  [dim](/memo)[/dim]")
+
+
+_MISSING_MCP_OK_ERRORS = (
+    "not found",
+    "unknown",
+    "no such",
+    "does not exist",
+    "no user-scoped mcp server found",
+    "no project-scoped mcp server found",
+    "no local-scoped mcp server found",
+    "no mcp server found",
+)
+
+
+def _codex_send_app_server_request(
+    proc: subprocess.Popen[str],
+    *,
+    request_id: int,
+    method: str,
+    params: dict[str, Any] | None,
+) -> None:
+    if proc.stdin is None:
+        raise click.ClickException("Codex app-server stdin is unavailable.")
+    payload: dict[str, Any] = {"id": request_id, "method": method}
+    if params is not None:
+        payload["params"] = params
+    proc.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    proc.stdin.flush()
+
+
+def _codex_read_app_server_response(
+    proc: subprocess.Popen[str],
+    request_id: int,
+    *,
+    timeout_s: float = 30.0,
+) -> dict[str, Any]:
+    if proc.stdout is None:
+        raise click.ClickException("Codex app-server stdout is unavailable.")
+
+    selector = selectors.DefaultSelector()
+    selector.register(proc.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout_s
+    seen: list[str] = []
+
+    try:
+        while time.monotonic() < deadline:
+            remaining = max(0.0, deadline - time.monotonic())
+            if not selector.select(remaining):
+                break
+            line = proc.stdout.readline()
+            if not line:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            seen.append(line)
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("id") != request_id:
+                continue
+            if "error" in msg:
+                err = msg["error"]
+                message = err.get("message", err) if isinstance(err, dict) else err
+                raise click.ClickException(f"Codex app-server {request_id} failed: {message}")
+            result = msg.get("result")
+            return result if isinstance(result, dict) else {}
+    finally:
+        selector.close()
+
+    preview = "\n".join(seen[-5:])
+    raise click.ClickException(
+        f"Timed out waiting for Codex app-server response id={request_id}."
+        + (f"\nLast output:\n{preview}" if preview else "")
+    )
+
+
+def _install_codex_plugin(root: Path, *, dry_run: bool) -> None:
+    marketplace = root / ".agents" / "plugins" / "marketplace.json"
+    if not marketplace.is_file():
+        raise click.ClickException(
+            f"Codex marketplace manifest not found: {marketplace}"
+        )
+    args = ["codex", "app-server", "--listen", "stdio://", "--enable", "plugins"]
+    if dry_run:
+        console.print(
+            f"[dim]$ {_format_command(args)}  # plugin/install memo from {marketplace}[/dim]"
+        )
+        return
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            cwd=str(root),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise click.ClickException(
+            "`codex` not found on PATH; install Codex first."
+        ) from exc
+
+    try:
+        _codex_send_app_server_request(
+            proc,
+            request_id=0,
+            method="initialize",
+            params={
+                "clientInfo": {
+                    "name": "memo-installer",
+                    "title": "memo installer",
+                    "version": "0.1",
+                },
+                "capabilities": {"experimentalApi": True},
+            },
+        )
+        _codex_read_app_server_response(proc, 0)
+        _codex_send_app_server_request(
+            proc,
+            request_id=1,
+            method="plugin/install",
+            params={
+                "marketplacePath": str(marketplace),
+                "pluginName": "memo",
+            },
+        )
+        _codex_read_app_server_response(proc, 1)
+    finally:
+        if proc.stdin is not None:
+            proc.stdin.close()
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+    console.print("[green]✓[/green] codex plugin/install memo@memo")
+
+
 def _print_runtime_install_report(report: dict[str, Any]) -> None:
     mode = report["mode"]
     root = report.get("root") or "(unknown)"
@@ -277,11 +584,15 @@ def _print_runtime_install_report(report: dict[str, Any]) -> None:
 
 
 def _resolved_memo_mcp() -> Path | None:
+    _, memo_resolved = _resolve_command("memo", prefer_invoked=True)
+    if memo_resolved is not None:
+        sibling = memo_resolved.with_name("memo-mcp")
+        if sibling.exists():
+            return sibling
     _, resolved = _resolve_command("memo-mcp")
     if resolved is not None:
         return resolved
-    fallback = _safe_resolve(Path(sys.executable)).with_name("memo-mcp")
-    return fallback if fallback.exists() else None
+    return None
 
 
 @cli.command(name="init")
@@ -1158,6 +1469,7 @@ def mcp_command(client: str) -> None:
             "`pipx install mlx-memo` or `uv tool install mlx-memo`.",
         )
         sys.exit(1)
+    env = _mcp_server_env()
     if client == "json":
         click.echo(json.dumps({
             "mcpServers": {
@@ -1165,7 +1477,7 @@ def mcp_command(client: str) -> None:
                     "type": "stdio",
                     "command": str(memo_mcp),
                     "args": [],
-                    "env": {},
+                    "env": env,
                 },
             },
         }, ensure_ascii=False, indent=2))
@@ -1176,18 +1488,110 @@ def mcp_command(client: str) -> None:
                 "memo": {
                     "command": str(memo_mcp),
                     "args": [],
-                    "env": {},
+                    "env": env,
                 },
             },
         }, ensure_ascii=False, indent=2))
         return
     if client == "codex":
-        click.echo(f"codex mcp add memo -- {shlex.quote(str(memo_mcp))}")
+        click.echo(_format_command(_mcp_add_command("codex", memo_mcp, env)))
         return
     if client == "devin":
-        click.echo(f"devin mcp add -s user memo -- {shlex.quote(str(memo_mcp))}")
+        click.echo(_format_command(_mcp_add_command("devin", memo_mcp, env)))
         return
-    click.echo(f"claude mcp add memo -s user {shlex.quote(str(memo_mcp))}")
+    click.echo(_format_command(_mcp_add_command("claude-code", memo_mcp, env)))
+
+
+@cli.command(name="install-slash")
+@click.option(
+    "--client",
+    "clients",
+    multiple=True,
+    type=click.Choice(["all", "claude-code", "codex", "devin"]),
+    help="Client to configure. Repeatable. Defaults to all supported slash clients.",
+)
+@click.option(
+    "--repo",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Path to the memo checkout containing plugin/skill assets.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the commands without changing configs.")
+def install_slash(clients: tuple[str, ...], repo: Path | None, dry_run: bool) -> None:
+    """Install the `/memo` skill/plugin assets for supported agent CLIs.
+
+    This configures the client-specific skill/plugin assets and an MCP server
+    named `memo` pinned to the resolved `memo-mcp` binary. Current MEMO_*
+    model/storage env vars are forwarded into the MCP config so agent clients
+    do not accidentally boot with a different embedder profile.
+    """
+    selected = set(clients or ("all",))
+    if "all" in selected:
+        selected.remove("all")
+        selected.update({"claude-code", "codex", "devin"})
+
+    root = _agent_asset_root(repo)
+    memo_mcp = _resolved_memo_mcp()
+    if memo_mcp is None:
+        raise click.ClickException(
+            "memo-mcp not found. Install memo as an isolated tool first: "
+            "`pipx install mlx-memo` or `uv tool install mlx-memo`."
+        )
+    env = _mcp_server_env()
+
+    if "codex" in selected:
+        console.print("[bold]Codex[/bold]")
+        _copy_slash_skill(
+            root,
+            _codex_home() / "skills" / "memo" / "SKILL.md",
+            dry_run=dry_run,
+        )
+        _install_codex_plugin(root, dry_run=dry_run)
+        _run_agent_command(
+            ["codex", "mcp", "remove", "memo"],
+            dry_run=dry_run,
+            ok_errors=_MISSING_MCP_OK_ERRORS,
+        )
+        _run_agent_command(_mcp_add_command("codex", memo_mcp, env), dry_run=dry_run)
+        console.print(
+            "[yellow]![/yellow] Codex CLI's TUI slash menu currently lists only built-in "
+            "slash commands. memo is installed as a model-visible skill and MCP server, "
+            "but `/memo` may not appear in that menu."
+        )
+
+    if "claude-code" in selected:
+        console.print("[bold]Claude Code[/bold]")
+        _run_agent_command(
+            ["claude", "plugin", "marketplace", "add", root],
+            dry_run=dry_run,
+            ok_errors=("already", "exists"),
+        )
+        _run_agent_command(
+            ["claude", "plugin", "install", "memo@memo", "-s", "user"],
+            dry_run=dry_run,
+            ok_errors=("already", "installed", "exists"),
+        )
+        _run_agent_command(
+            ["claude", "mcp", "remove", "-s", "user", "memo"],
+            dry_run=dry_run,
+            ok_errors=_MISSING_MCP_OK_ERRORS,
+        )
+        _run_agent_command(_mcp_add_command("claude-code", memo_mcp, env), dry_run=dry_run)
+
+    if "devin" in selected:
+        console.print("[bold]Devin[/bold]")
+        _copy_slash_skill(
+            root,
+            Path.home() / ".config" / "devin" / "skills" / "memo" / "SKILL.md",
+            dry_run=dry_run,
+        )
+        _run_agent_command(
+            ["devin", "mcp", "remove", "-s", "user", "memo"],
+            dry_run=dry_run,
+            ok_errors=_MISSING_MCP_OK_ERRORS,
+        )
+        _run_agent_command(_mcp_add_command("devin", memo_mcp, env), dry_run=dry_run)
+
+    console.print("[green]✓[/green] memo agent install complete. Open a new agent session to reload.")
 
 
 # ── Ambient memory hooks (v0.3.0) ──────────────────────────────────────────
@@ -1268,9 +1672,9 @@ def recall_hook() -> None:
         _bail(f"prompt too short ({len(prompt)} < {min_chars})")
         return
 
-    # Skip slash commands by default — the user is invoking another skill,
+    # Skip slash commands by default — the user is invoking another command,
     # injecting recall context would be noise. Override with
-    # MEMO_RECALL_SKIP_SLASH=0 if you want recall on /memo:memo etc.
+    # MEMO_RECALL_SKIP_SLASH=0 if you want recall on /memo etc.
     if os.environ.get("MEMO_RECALL_SKIP_SLASH", "1") == "1" and prompt.startswith("/"):
         _bail("slash command, skip recall")
         return
@@ -1377,7 +1781,7 @@ def recall_hook() -> None:
     # tiktoken dep. Last memoria gets head-truncated to fit instead of
     # being dropped wholesale.
     header = "## Relevant memories from your past (memo)"
-    footer = "_Use `/memo:memo get <id>` to see full content._"
+    footer = "_Use `/memo get <id>` to see full content._"
     lines = [header, ""]
     used_chars = 0  # chars of formatted block body, excluding header/footer
 

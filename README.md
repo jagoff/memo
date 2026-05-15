@@ -216,12 +216,29 @@ After installing `mlx-memo`, register the MCP with your client. The `memo`
 CLI prints commands pinned to the resolved `memo-mcp` executable so clients
 do not accidentally start a copy from a project `.venv`.
 
+If you use memo from agent clients, the one-shot installer configures the
+client-visible command/skill where the client supports it and the MCP server
+for supported surfaces: Claude Code, Codex, and Devin.
+
+```bash
+memo install-slash
+```
+
+`install-slash` forwards current `MEMO_*` model/storage env vars into each MCP
+client config. This matters when you run the 2560-dim quality embedder: GUI
+clients often do not inherit your shell env, and a 1024/2560 mismatch will
+break semantic search until the MCP config is updated or `memvec.db` is rebuilt.
+
+Released wheels include the Claude/Codex/Devin agent assets, so a normal
+`pipx` / `uv tool` / Homebrew install is enough. When developing from a local
+checkout, pass `--repo /path/to/memo` to test uncommitted plugin changes.
+
 ### Claude Code
 
 ```bash
 memo mcp-command --client claude-code
 # then run the printed command, e.g.
-claude mcp add memo -s user /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+claude mcp add-json -s user memo '{"type":"stdio","command":"/Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp","args":[],"env":{"MEMO_NONINTERACTIVE":"1"}}'
 ```
 
 Or hand-edit `~/.claude.json`:
@@ -233,7 +250,9 @@ Or hand-edit `~/.claude.json`:
       "type": "stdio",
       "command": "/path/to/memo-mcp",
       "args": [],
-      "env": {}
+      "env": {
+        "MEMO_NONINTERACTIVE": "1"
+      }
     }
   }
 }
@@ -251,11 +270,24 @@ Codex supports local stdio MCP servers through `codex mcp add`:
 ```bash
 memo mcp-command --client codex
 # then run the printed command, e.g.
-codex mcp add memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+codex mcp add memo --env MEMO_NONINTERACTIVE=1 -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
 codex mcp list
 ```
 
 Tools surface as `mcp__memo__memory_*` inside Codex sessions.
+
+Install the Codex assets so the exact `memo` skill is available alongside the
+MCP server:
+
+```bash
+memo install-slash --client codex
+```
+
+Current Codex CLI builds, including 0.130.0, list only built-in slash commands
+in the TUI slash dispatcher. The installer still writes the exact `memo` skill
+to `$CODEX_HOME/skills/memo/SKILL.md`; Codex can load it as a model-visible
+skill and route to the `memo` MCP server, but `/memo` will not appear in that
+TUI menu until Codex exposes custom skills there.
 
 ### Devin for Terminal
 
@@ -265,7 +297,7 @@ a global install across projects:
 ```bash
 memo mcp-command --client devin
 # then run the printed command, e.g.
-devin mcp add -s user memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+devin mcp add -s user -e MEMO_NONINTERACTIVE=1 memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
 devin mcp list
 ```
 
@@ -276,7 +308,12 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```jsonc
 {
   "mcpServers": {
-    "memo": { "command": "/path/to/memo-mcp" }
+    "memo": {
+      "command": "/path/to/memo-mcp",
+      "env": {
+        "MEMO_NONINTERACTIVE": "1"
+      }
+    }
   }
 }
 ```
@@ -345,8 +382,8 @@ Tune lower (0.5) on sparse corpora, higher (0.7) for high-precision only.
 
 ## Slash command — `/memo`
 
-`/memo` is shipped for the CLIs that expose slash commands or skills. The
-backend is always the same isolated `memo-mcp` server.
+`/memo` is shipped only for CLIs that can actually expose an exact custom
+`/memo`. The backend is always the same isolated `memo-mcp` server.
 
 ### Claude Code
 
@@ -354,6 +391,8 @@ The Claude Code plugin registers the `/memo` skill, MCP server, and ambient
 hooks together:
 
 ```bash
+memo install-slash --client claude-code
+# or manually:
 claude plugin marketplace add jagoff/memo
 claude plugin install memo@memo -s user
 claude plugin list
@@ -381,15 +420,25 @@ ln -sf "$(pwd)/skills/memo/SKILL.md" ~/.claude/skills/memo/SKILL.md
 
 ### Codex
 
-The Codex plugin under `plugins/memo/` adds a visible `/memo` command and
-registers the `memo` MCP server:
+`memo install-slash --client codex` installs two things:
+
+- a user skill at `$CODEX_HOME/skills/memo/SKILL.md` (or
+  `~/.codex/skills/memo/SKILL.md`) so Codex can load the memo router skill;
+- the Codex plugin under `plugins/memo/`, which registers the `memo` MCP server
+  and carries the marketplace metadata.
 
 ```bash
+memo install-slash --client codex
+# manual plugin-only path:
 codex plugin marketplace add /path/to/memo
-codex mcp add memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+# then install/enable memo@memo from Codex's plugin UI
 ```
 
-Open a new Codex session after adding the marketplace so the `/` menu reloads.
+Open a new Codex session after installing so plugin skills and MCP tools
+reload. Current Codex CLI builds, including 0.130.0, list only built-in slash
+commands in the TUI slash dispatcher; the installed Codex skill is still named
+`memo`, but `/memo` will not appear in that TUI menu until Codex exposes custom
+skills there.
 
 ### Devin
 
@@ -397,9 +446,11 @@ Devin reads skills from `~/.config/devin/skills/<name>/SKILL.md`. Install the
 same `/memo` router skill there:
 
 ```bash
+memo install-slash --client devin
+# or manually:
 mkdir -p ~/.config/devin/skills/memo
 cp /path/to/memo/skills/memo/SKILL.md ~/.config/devin/skills/memo/SKILL.md
-devin mcp add -s user memo -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+memo mcp-command --client devin
 devin skills list
 ```
 
@@ -426,6 +477,7 @@ The skill routes user input to the right MCP tool:
 memo doctor                       # self-check
 memo doctor --gc                  # report orphans (store ↔ disk)
 memo doctor --gc --fix            # drop orphan store rows (.md never auto-deleted)
+memo install-slash                # install /memo skill/command for agent clients
 memo save 'body markdown' --title 'X' -t mlx -t local
 memo search 'query' --limit 5
 memo list --limit 20 --type decision

@@ -1,13 +1,30 @@
 # Registry submissions — `mlx-memo`
 
-Ready-to-paste blocks for getting `mlx-memo` listed in the MCP
-ecosystem. None of these can be fully automated; each registry needs a
-manual PR or form submission. The text below is calibrated so you can
-copy-paste with at most one or two edits.
+Ready-to-paste blocks for getting `mlx-memo` listed in the MCP ecosystem.
+The official MCP Registry is automated by `.github/workflows/publish.yml`;
+community directories still need a manual PR or form submission.
 
 ---
 
-## 1. Official MCP servers list (`modelcontextprotocol/servers`)
+## 1. Official MCP Registry
+
+The canonical registry entry is `server.json` with the package name
+`mlx-memo` and the MCP name `io.github.jagoff/memo`. On each GitHub Release,
+the `publish` workflow publishes PyPI first, waits for propagation, and then
+runs:
+
+```bash
+mcp-publisher login github-oidc
+mcp-publisher publish
+```
+
+The README also includes the required PyPI metadata hint:
+
+```html
+<!-- mcp-name: io.github.jagoff/memo -->
+```
+
+## 2. Official MCP servers list (`modelcontextprotocol/servers`)
 
 The community-maintained README at
 [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
@@ -47,7 +64,7 @@ lists third-party MCP servers under
 
 ---
 
-## 2. mcp.so
+## 3. mcp.so
 
 [mcp.so](https://mcp.so) is a community directory. It auto-crawls
 GitHub repos tagged with the `mcp-server` topic — which we just set —
@@ -69,15 +86,19 @@ Submit at <https://mcp.so/submit> with:
 
 ---
 
-## 3. Other places to list
+## 4. Other places to list
 
 - **[awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers)** — same flow as #1: fork, add entry to the Memory section, PR.
 - **PyPI keywords** — already set in `pyproject.toml`: `mcp`, `memory`, `obsidian`, `mlx`, `rag`, `agents`, `claude`, `local-first`, `apple-silicon`.
-- **Homebrew tap** — see `docs/homebrew-tap.md` (separate flow).
+- **Homebrew tap** — see `docs/homebrew/README.md`.
 - **Claude Code plugin marketplace** — already published via this repo's
   `.claude-plugin/` directory; users install with
   `claude plugin marketplace add jagoff/memo` and
   `claude plugin install memo@memo -s user`.
+- **Codex plugin marketplace + user skill** — already packaged under
+  `.agents/plugins/` and `plugins/memo/` for MCP metadata. The installer also
+  copies `skills/memo/SKILL.md` to `$CODEX_HOME/skills/memo/SKILL.md` so Codex
+  surfaces that expose skills as slash commands can show the exact `/memo`.
 
 ---
 

@@ -4,7 +4,9 @@
       "type": "stdio",
       "command": "memo-mcp",
       "args": [],
-      "env": {}
+      "env": {
+        "MEMO_NONINTERACTIVE": "1"
+      }
     }
   }
 }
