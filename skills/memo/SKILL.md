@@ -1,12 +1,12 @@
 ---
 name: memo
-description: "Router para memo — el MCP local de memoria persistente backed by Obsidian (markdown plano + sqlite-vec + MLX, 100% local, zero Ollama). Trigger ÚNICO: `/memo`. Sin argumentos → smart capture: destila el insight accionable del turno actual (decisión / fix / discovery / preferencia), arma body en formato CLAUDE.md, auto-deriva title/type/tags y guarda **directo sin gate** (output post-hoc para auditar; si guardó basura, `/memo delete <id>`). Usá cuando el user tipea `/memo <query>` (search semántico — default), `/memo` solo (smart capture), `/memo list [n]` (últimas n por updated, default 20), `/memo save <texto>` (guarda lo que dice el user con auto-derivación de title/type/tags), `/memo get <id|prefix>` (acepta prefix git-style ≥4 chars), `/memo update <id|prefix> [--title X] [--type T] [--tag a --tag b]` (replace metadata o body), `/memo delete <id|prefix>` (PIDE confirmación), `/memo stats` (totales + paths + modelos activos), `/memo reindex` (re-absorbe edits hechos directo en Obsidian), `/memo doctor [--gc [--fix]]` (self-check + orphan detect). Siempre routeá al MCP tool `mcp__memo__memory_*` correspondiente, NUNCA escribas el .md a mano (el MCP maneja frontmatter + sqlite-vec index)."
+description: "Slash command router for `/memo`. Use when the user invokes `/memo` to search, ask, save, list, get, update, delete, reindex, inspect stats, or run doctor against the local memo MCP memory server. Route through `mcp__memo__memory_*` tools whenever available; use the `memo` CLI only for maintenance commands not exposed as MCP tools."
 argument-hint: "(vacío = smart capture) | <query> | list [n] | save <text> | get <id|prefix> | update <id|prefix> [flags] | delete <id|prefix> | stats | reindex | doctor [--gc] [--fix]"
 ---
 
 # /memo — router para memo MCP
 
-`memo` (path local: `/Users/fer/repos/memo/`) es un MCP local que da memoria persistente backed by Markdown/Obsidian. Stack 100% local-first, **zero Ollama, zero cloud**:
+`memo` es un MCP local que da memoria persistente backed by Markdown/Obsidian. Stack 100% local-first, **zero Ollama, zero cloud**:
 
 - LLM: [`mlx-lm`](https://github.com/ml-explore/mlx-lm) loadeando Qwen2.5-Instruct quantizado, in-process en Apple Silicon Metal.
 - Embedder: [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ), 1024-dim, last-token pooling, L2-normalised.
@@ -237,9 +237,9 @@ Llamá `mcp__memo__memory_stats()` y mostrá el dict literal:
 
 ```
 total          142
-data_dir       /Users/fer/Documents/memo
+data_dir       /Users/you/Documents/memo
 vault_path     (unset)
-db_path        /Users/fer/.local/share/memo/memvec.db
+db_path        /Users/you/.local/share/memo/memvec.db
 embedder_model mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 ```
 
@@ -251,7 +251,7 @@ No mezcles `/mv` y `/memo` en la misma operación — son dos sistemas paralelos
 
 ## Errores comunes
 
-- **`memo-mcp: command not found`** → el package no está instalado o no está en PATH. Instalar aislado con `pipx install mlx-memo` o, desde el checkout local, `pipx install --force /Users/fer/repos/memo`.
+- **`memo-mcp: command not found`** → el package no está instalado o no está en PATH. Instalar aislado con `pipx install mlx-memo` o, desde el checkout local, `pipx install --force /path/to/memo`.
 - **`Vault path does not exist`** → la vault de Obsidian no está donde el config la espera. Setear `MEMO_VAULT_PATH=...` (default = iCloud Mobile Documents).
 - **MCP tools no aparecen en la sesión** → el server no fue registrado o el cliente no recargó la config. Correr `memo mcp-command --client <codex|claude-code|devin|json>`, ejecutar el comando absoluto que imprime, y abrir una sesión nueva.
 - **`Embedder produced dim=X but config expects 1024`** → swap de modelo embedder sin actualizar `MEMO_EMBEDDER_DIMS`. Sólo aplica si el user cambió el modelo manualmente.

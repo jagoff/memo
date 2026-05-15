@@ -63,6 +63,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/memo"]
 
+[tool.hatch.build.targets.wheel.force-include]
+".agents" = "memo/agent_assets/.agents"
+".claude-plugin" = "memo/agent_assets/.claude-plugin"
+"commands" = "memo/agent_assets/commands"
+"hooks" = "memo/agent_assets/hooks"
+"plugins" = "memo/agent_assets/plugins"
+"server.json" = "memo/agent_assets/server.json"
+"skills" = "memo/agent_assets/skills"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

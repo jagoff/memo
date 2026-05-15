@@ -115,6 +115,15 @@ def test_dim_mismatch_raises(store: VecStore):
         )
 
 
+def test_existing_vec_table_dim_mismatch_fails_fast(tmp_path: Path):
+    db_path = tmp_path / "vec.db"
+    store = VecStore(db_path, dims=4)
+    store.close()
+
+    with pytest.raises(RuntimeError, match=r"FLOAT\[4\].*FLOAT\[8\]"):
+        VecStore(db_path, dims=8)
+
+
 def test_list_recent_orders_by_updated_desc(store: VecStore):
     for i, ts in enumerate(["2026-05-01", "2026-05-03", "2026-05-02"]):
         store.upsert(

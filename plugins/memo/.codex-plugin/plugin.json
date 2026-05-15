@@ -1,7 +1,7 @@
 {
   "name": "memo",
   "version": "0.7.0",
-  "description": "Slash command and MCP wiring for memo, the local MLX-native memory system.",
+  "description": "Slash skill and MCP wiring for memo, the local MLX-native memory system.",
   "author": {
     "name": "Fernando Ferrari",
     "url": "https://github.com/jagoff"
@@ -17,11 +17,12 @@
     "obsidian",
     "local-first"
   ],
+  "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "memo",
-    "shortDescription": "Persistent local memory as /memo",
-    "longDescription": "Adds a /memo slash command to Codex and registers the memo MCP server. memo stores long-term memories as Markdown, indexes them with sqlite-vec, and runs local MLX models on Apple Silicon.",
+    "shortDescription": "Persistent local memory as a memo skill",
+    "longDescription": "Adds the memo skill for slash-capable Codex surfaces and registers the memo MCP server. memo stores long-term memories as Markdown, indexes them with sqlite-vec, and runs local MLX models on Apple Silicon.",
     "developerName": "Fernando Ferrari",
     "category": "Productivity",
     "capabilities": [
@@ -31,7 +32,7 @@
     "websiteURL": "https://github.com/jagoff/memo",
     "defaultPrompt": [
       "/memo stats",
-      "/memo search what did we decide about embeddings",
+      "/memo search what we decided about embeddings",
       "/memo save remember this project decision"
     ],
     "brandColor": "#2563EB",

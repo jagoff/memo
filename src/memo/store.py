@@ -44,6 +44,7 @@ for clarity even though `vec_distance_l2` would rank identically.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
@@ -132,6 +133,15 @@ class VecStore:
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0("
                 f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
             )
+            actual_dims = self._vec_table_dims()
+            if actual_dims is not None and actual_dims != self.dims:
+                raise RuntimeError(
+                    "Existing memvec.db was created with "
+                    f"embedding FLOAT[{actual_dims}], but current config expects "
+                    f"FLOAT[{self.dims}]. Rebuild the vector index with "
+                    f"`rm {self.db_path} && memo reindex`, or launch memo with "
+                    "matching MEMO_MODEL_PROFILE/MEMO_EMBEDDER_DIMS settings."
+                )
             # FTS5 over title + tags + body for the BM25 side of hybrid
             # search. `unindexed=id` keeps the row id queryable but not
             # tokenised. `tokenize='unicode61 remove_diacritics 2'`
@@ -145,6 +155,15 @@ class VecStore:
                 "tokenize='unicode61 remove_diacritics 2'"
                 ")"
             )
+
+    def _vec_table_dims(self) -> int | None:
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vec'",
+        ).fetchone()
+        if not row or not row["sql"]:
+            return None
+        match = re.search(r"embedding\s+FLOAT\[(\d+)\]", str(row["sql"]))
+        return int(match.group(1)) if match else None
 
     # -- schema-version helpers --------------------------------------------
     #
