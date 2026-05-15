@@ -30,11 +30,14 @@ the fields that changed, with `[old, new]` pairs.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS events (
@@ -82,8 +85,8 @@ class HistoryStore:
                     "INSERT INTO events (ts, op, record_id, title, type) VALUES (?, ?, ?, ?, ?)",
                     (ts, "save", record_id, title, type_),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("history log_save failed (id=%s): %s", record_id[:8], exc)
 
     def log_update(
         self, *, ts: str, record_id: str, title: str, type_: str,
@@ -102,8 +105,8 @@ class HistoryStore:
                     (ts, "update", record_id, title, type_,
                      json.dumps(payload, default=str, ensure_ascii=False)),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("history log_update failed (id=%s): %s", record_id[:8], exc)
 
     def log_delete(self, *, ts: str, record_id: str, title: str, type_: str) -> None:
         try:
@@ -112,8 +115,8 @@ class HistoryStore:
                     "INSERT INTO events (ts, op, record_id, title, type) VALUES (?, ?, ?, ?, ?)",
                     (ts, "delete", record_id, title, type_),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("history log_delete failed (id=%s): %s", record_id[:8], exc)
 
     def list_recent(
         self, *, limit: int = 50, op: str | None = None, record_id: str | None = None,

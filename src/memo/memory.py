@@ -46,6 +46,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import uuid
@@ -86,6 +87,8 @@ from memo.store import VecStore
 from memo.sync import BackupManager, SyncManager
 from memo.temporal import TemporalAnalyzer
 from memo.versioning import VersionManager
+
+_log = logging.getLogger(__name__)
 
 # JSON-schema prompt for the helper LLM. Kept terse to fit in Qwen3-3B's
 # attention without hurting accuracy. Empirically the model follows the
@@ -489,7 +492,8 @@ class Memory:
                 options={"temperature": 0.0, "max_tokens": 256},
             )
             text = (out.get("message") or {}).get("content") or ""
-        except Exception:
+        except Exception as exc:
+            _log.warning("_derive_metadata LLM call failed: %s", exc)
             return {}
         # Tolerate markdown code fences even though the prompt forbids them.
         text = text.strip()
@@ -497,7 +501,8 @@ class Memory:
             text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
         try:
             data = json.loads(text)
-        except Exception:
+        except Exception as exc:
+            _log.warning("_derive_metadata JSON parse failed (%r…): %s", text[:80], exc)
             return {}
         if not isinstance(data, dict):
             return {}
@@ -583,15 +588,23 @@ class Memory:
         # memorias. Skipped when the caller already passed any
         # `project:` tag — explicit always wins.
         if auto_project and os.environ.get("MEMO_AUTO_PROJECT_TAG", "1") == "1":
-            from memo.project import current_project_tag, has_project_tag
-            if not has_project_tag(norm_tags):
-                pt = current_project_tag(cwd)
-                if pt:
-                    norm_tags = _normalise_tags([*norm_tags, pt])
+            try:
+                from memo.project import current_project_tag, has_project_tag
+                if not has_project_tag(norm_tags):
+                    pt = current_project_tag(cwd)
+                    if pt:
+                        norm_tags = _normalise_tags([*norm_tags, pt])
+            except Exception as exc:
+                _log.warning("auto-project tag failed (cwd=%s): %s", cwd, exc)
 
         now_iso = _now_iso()
         # Truncate content for embedding (vec store doesn't truncate;
         # disk file keeps full content). 64KB is the default cap.
+        if len(content) > self.cfg.max_content_chars:
+            _log.warning(
+                "save: content truncated from %d to %d chars (title=%r)",
+                len(content), self.cfg.max_content_chars, title,
+            )
         content = content[: self.cfg.max_content_chars]
 
         record_id = uuid.uuid4().hex
@@ -767,8 +780,8 @@ class Memory:
 
         try:
             reranked = self._reranker.rerank(query, hits, top_n=None)
-        except Exception:
-            # Safety net: degrade to RRF ranking on rerank failure.
+        except Exception as exc:
+            _log.warning("reranker failed, falling back to RRF order: %s", exc)
             return hits[:top_n]
 
         alpha = self.cfg.rerank_fusion_alpha
@@ -808,6 +821,10 @@ class Memory:
         """
         if not question or not question.strip():
             return {"question": question, "answer": "", "sources": []}
+        _MAX_QUESTION_CHARS = 4000
+        if len(question) > _MAX_QUESTION_CHARS:
+            _log.warning("ask: question truncated from %d to %d chars", len(question), _MAX_QUESTION_CHARS)
+            question = question[:_MAX_QUESTION_CHARS]
         hits = self.search(question, limit=k, type_=type_, mode="hybrid")
         if not hits:
             return {
@@ -989,6 +1006,7 @@ class Memory:
         # changes still skip the embedder.
         if body_changed or title_changed:
             embedding = self.embedder.embed([_compose_for_embed(new_title, new_body)])[0]
+            assert_valid_embedding(embedding, self.cfg.embedder_dims, context=f"update id={id_[:8]}")
             self.store.upsert(
                 id_=id_, path=r["path"], title=new_title, type_=new_type,
                 tags=new_tags, created=r["created"], updated=now_iso,
@@ -1078,7 +1096,8 @@ class Memory:
             checked += 1
             try:
                 post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as exc:
+                _log.warning("reindex: skipping %s (parse error): %s", md_path.name, exc)
                 skipped += 1
                 continue
             md_id = post.get("id")
@@ -1095,6 +1114,7 @@ class Memory:
             title = (post.get("title") or _derive_title(body) or "untitled").strip()
             type_ = post.get("type") or "note"
             if type_ not in _VALID_TYPES:
+                _log.warning("reindex: invalid type %r in %s, coercing to 'note'", type_, md_path.name)
                 type_ = "note"
             tags = _normalise_tags(list(post.get("tags") or []))
             created = post.get("created") or _now_iso()
@@ -1103,6 +1123,7 @@ class Memory:
 
             if existing is None:
                 emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
+                assert_valid_embedding(emb, self.cfg.embedder_dims, context=f"reindex add {md_id[:8]}")
                 self.store.upsert(
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
                     created=created, updated=updated, body_hash=new_hash,
@@ -1111,12 +1132,13 @@ class Memory:
                 )
                 added += 1
                 continue
-            needs_vector = not self.store.has_vector(md_id)
-            if force or existing["body_hash"] != new_hash or needs_vector:
+            missing_vector = not self.store.has_vector(md_id)
+            if force or existing["body_hash"] != new_hash or missing_vector:
                 if isinstance(extra, dict):
                     extra = dict(extra)
                     extra.pop("_memo_embed_pending", None)
                 emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
+                assert_valid_embedding(emb, self.cfg.embedder_dims, context=f"reindex update {md_id[:8]}")
                 self.store.upsert(
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
                     created=existing["created"], updated=_now_iso(),
@@ -1336,9 +1358,10 @@ class Memory:
                 "emb": v,
             })
 
-        # 2) Greedy single-link clustering. O(N²) cosine, fine for
+        # 2) Greedy single-link clustering. O(N²) dot product over L2-normalised
+        #    vectors (dot == cosine when vectors are unit-length). Fine for
         #    corpora up to ~5K. For larger, swap to a HNSW pass.
-        def _cos(a, b):
+        def _dot(a, b):
             return sum(x * y for x, y in zip(a, b, strict=True))
 
         clusters: list[list[int]] = []  # list of items[] indices
@@ -1350,7 +1373,7 @@ class Memory:
                 # add. We use the first member as representative for
                 # speed; full single-link would scan all members.
                 rep = items[cluster[0]]
-                if _cos(items[i]["emb"], rep["emb"]) >= threshold:
+                if _dot(items[i]["emb"], rep["emb"]) >= threshold:
                     cluster.append(i)
                     joined = True
                     break

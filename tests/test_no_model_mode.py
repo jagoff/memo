@@ -51,7 +51,8 @@ def test_reindex_fills_missing_vector_for_deferred_save(tmp_cfg, monkeypatch):
         defer_embed=True,
     )
 
-    monkeypatch.setattr(mem.embedder, "embed", lambda _inputs: [[0.5] * 1024])
+    # 1/32 per component → norm = sqrt(1024 * (1/32)²) = 1.0 (L2-normalised)
+    monkeypatch.setattr(mem.embedder, "embed", lambda _inputs: [[1.0 / 32.0] * 1024])
     counts = mem.reindex()
 
     assert counts["reindexed"] == 1

@@ -227,6 +227,12 @@ class VecStore:
             raise ValueError(
                 f"Embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
             )
+        norm = sum(x * x for x in embedding) ** 0.5
+        if not (0.5 < norm < 1.5):
+            raise ValueError(
+                f"Embedding norm {norm:.4f} out of L2-normalised range (expected ≈ 1.0) "
+                f"[id={id_[:8]}] — re-embed or check MLX model output."
+            )
         with self._tx() as cx:
             cx.execute(
                 "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "

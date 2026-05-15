@@ -31,7 +31,10 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import OrderedDict
 from typing import Any
+
+_MAX_LOADED_MODELS = 2
 
 
 class MLXChat:
@@ -52,7 +55,8 @@ class MLXChat:
     """
 
     def __init__(self) -> None:
-        self._loaded: dict[str, tuple[Any, Any]] = {}
+        # OrderedDict used as an LRU cache: most-recently-used moves to end.
+        self._loaded: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._load_lock = threading.Lock()
         self._last_use: dict[str, float] = {}
 
@@ -63,8 +67,22 @@ class MLXChat:
             return self._loaded[model]
         with self._load_lock:
             if model in self._loaded:
+                self._loaded.move_to_end(model)
                 return self._loaded[model]
             from mlx_lm import load as _mlx_load
+
+            # Evict the least-recently-used model before loading a new one
+            # to stay within the _MAX_LOADED_MODELS budget. This prevents
+            # OOM on long sessions that call helper + chat + reranker in
+            # sequence without unloading.
+            while len(self._loaded) >= _MAX_LOADED_MODELS:
+                evicted_key, _ = self._loaded.popitem(last=False)
+                self._last_use.pop(evicted_key, None)
+                try:
+                    import mlx.core as mx
+                    mx.clear_cache()
+                except Exception:
+                    pass
 
             self._loaded[model] = _mlx_load(model)
         return self._loaded[model]
