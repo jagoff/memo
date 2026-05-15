@@ -318,7 +318,8 @@ Patch release — bug fixes for the v0.3.0 ingest pipeline.
   Cascade Metal GPU error after several mismatches. Fix: wrap input
   in `[composed]` and take `[0]`.
 - **Plugin install path** — bumping from 0.3.0 to 0.3.1 so users on the
-  Claude Code plugin marketplace pick up these fixes via `claude plugin update memo`.
+  Claude Code plugin marketplace pick up these fixes via
+  `claude plugin update memo@memo`.
 
 ## [0.3.0] - 2026-05-07
 
