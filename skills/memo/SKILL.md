@@ -249,7 +249,7 @@ No mezcles `/mv` y `/memo` en la misma operación — son dos sistemas paralelos
 
 ## Errores comunes
 
-- **`memo-mcp: command not found`** → el package no está instalado o no está en PATH. Instalar aislado con `pipx install mlx-memo` o, desde el checkout local, `pipx install --force '/Users/fer/repos/memo[mlx]'`.
+- **`memo-mcp: command not found`** → el package no está instalado o no está en PATH. Instalar aislado con `pipx install mlx-memo` o, desde el checkout local, `pipx install --force /Users/fer/repos/memo`.
 - **`Vault path does not exist`** → la vault de Obsidian no está donde el config la espera. Setear `MEMO_VAULT_PATH=...` (default = iCloud Mobile Documents).
 - **MCP tools no aparecen en la sesión** → el server no fue registrado o Claude Code no se reinició. Correr `memo mcp-command`, ejecutar el comando absoluto que imprime, y reabrir Claude Code.
 - **`Embedder produced dim=X but config expects 1024`** → swap de modelo embedder sin actualizar `MEMO_EMBEDDER_DIMS`. Sólo aplica si el user cambió el modelo manualmente.
