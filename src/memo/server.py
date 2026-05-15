@@ -276,6 +276,36 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         return memory.lint()
 
     @server.tool()
+    def memory_record_diff(id: str, limit: int = 50) -> dict[str, Any]:
+        """Full edit history for one memoria with field-level diffs.
+
+        Returns a chronological timeline of every save / update / delete
+        event for `id`, with `delta` dicts showing `{field: [old, new]}`
+        on each update. Use this to answer "when did this change?" or to
+        review how a decision evolved.
+
+        Args:
+            id: Full or prefix id of the memoria (≥4 chars).
+            limit: Max events to include. Default 50.
+        """
+        resolved_id = id
+        if len(resolved_id) < 32:
+            try:
+                resolved_id = memory.resolve_id(resolved_id) or resolved_id
+            except AmbiguousIdError as exc:
+                return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        r = memory.get(resolved_id)
+        events = memory.history.list_recent(limit=limit, record_id=resolved_id)
+        events = list(reversed(events))  # chronological
+        return {
+            "id": resolved_id,
+            "title": r.title if r else None,
+            "type": r.type if r else None,
+            "events": events,
+            "total_events": len(events),
+        }
+
+    @server.tool()
     def memory_history(
         limit: int = 20, op: str | None = None, id: str | None = None,
     ) -> list[dict[str, Any]]:

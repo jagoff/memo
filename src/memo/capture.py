@@ -110,34 +110,15 @@ def _save_state(state_dir: Path, state: dict[str, Any]) -> None:
     _state_file(state_dir).write_text(json.dumps(state), encoding="utf-8")
 
 
-def _read_last_exchange(transcript_path: Path) -> tuple[str, str] | None:
-    """Walk the JSONL transcript backwards to find the last (user,
-    assistant) exchange. Returns (user_text, assistant_text) or None
-    if the transcript doesn't yield a complete pair (e.g. user just
-    typed and the assistant hasn't responded yet).
-
-    A "turn" in Claude Code can contain multiple assistant messages
-    interleaved with tool_use / tool_result entries. The function
-    concatenates ALL assistant text blocks that come AFTER the most
-    recent user message — that's the assistant's full response to the
-    user's last prompt. Without this, the parser would surface only
-    the trailing message of a multi-message turn (often a brief
-    "running this" status update with no insight), missing the
-    substantive prose earlier in the same response.
-
-    The transcript schema is Claude Code's internal format: each line
-    a JSON object with `type` ("user" / "assistant") and `message`
-    containing `content` which is either a string or a list of blocks
-    (tool_use, text, etc.).
-    """
+def _parse_transcript(transcript_path: Path) -> list[tuple[str, str]]:
+    """Parse the full JSONL transcript into a list of (role, text) pairs.
+    Returns [] if unreadable. Only keeps user/assistant entries with text."""
     if not transcript_path.is_file():
-        return None
+        return []
     try:
         lines = transcript_path.read_text(encoding="utf-8").splitlines()
     except Exception:
-        return None
-
-    # Pre-parse: keep only user/assistant entries with non-empty text.
+        return []
     parsed: list[tuple[str, str]] = []
     for line in lines:
         line = line.strip()
@@ -155,26 +136,63 @@ def _read_last_exchange(transcript_path: Path) -> tuple[str, str] | None:
         text = _extract_text(content)
         if text:
             parsed.append((role, text))
+    return parsed
 
+
+def _read_recent_exchanges(
+    transcript_path: Path,
+    n: int = 3,
+) -> tuple[str, str] | None:
+    """Return the last N (user, assistant) pairs from the transcript as a
+    single (combined_user, combined_assistant) tuple so the LLM gets
+    richer context than just the last message pair.
+
+    `n=1` reproduces the original single-exchange behaviour.
+    `n=3` (default) gives the LLM the last 3 rounds of dialogue, which
+    is usually enough to spot multi-step decisions that span turns (e.g.
+    "let's use X" followed by "ok, I updated the config" in turn 2).
+
+    Returns None if the transcript doesn't yield even one complete pair.
+    """
+    parsed = _parse_transcript(transcript_path)
     if not parsed:
         return None
 
-    # Find the LAST user message; everything assistant after it forms
-    # the response. The user msg before that is the prompt.
-    last_user_idx: int | None = None
-    for i in range(len(parsed) - 1, -1, -1):
-        if parsed[i][0] == "user":
-            last_user_idx = i
+    # Collect the last N user→assistant pairs, walking backwards.
+    exchanges: list[tuple[str, str]] = []
+    i = len(parsed) - 1
+    while i >= 0 and len(exchanges) < n:
+        # Find an assistant block.
+        while i >= 0 and parsed[i][0] != "assistant":
+            i -= 1
+        if i < 0:
             break
-    if last_user_idx is None:
+        # Collect all contiguous assistant blocks (multi-message turns).
+        a_chunks: list[str] = []
+        while i >= 0 and parsed[i][0] == "assistant":
+            a_chunks.insert(0, parsed[i][1])
+            i -= 1
+        # Find the preceding user message.
+        while i >= 0 and parsed[i][0] != "user":
+            i -= 1
+        if i < 0:
+            break
+        u_text = parsed[i][1]
+        a_text = "\n\n".join(a_chunks)
+        exchanges.insert(0, (u_text, a_text))
+        i -= 1
+
+    if not exchanges:
         return None
 
-    user_text = parsed[last_user_idx][1]
-    assistant_chunks = [t for r, t in parsed[last_user_idx + 1 :] if r == "assistant"]
-    if not assistant_chunks:
-        return None
-    assistant_text = "\n\n".join(assistant_chunks)
-    return user_text, assistant_text
+    combined_user = "\n\n---\n\n".join(u for u, _ in exchanges)
+    combined_assistant = "\n\n---\n\n".join(a for _, a in exchanges)
+    return combined_user, combined_assistant
+
+
+def _read_last_exchange(transcript_path: Path) -> tuple[str, str] | None:
+    """Backward-compat alias: read only the last (user, assistant) pair."""
+    return _read_recent_exchanges(transcript_path, n=1)
 
 
 def _extract_text(content: Any) -> str:
@@ -299,20 +317,49 @@ def run_capture(
 ) -> dict[str, Any]:
     """Top-level entry: read transcript, extract, dedup, save.
     Returns a result summary dict so the CLI can print + the tests can
-    assert on counts. All errors absorbed (logged to stderr in debug)."""
+    assert on counts. All errors absorbed (logged to stderr in debug).
+
+    Env vars:
+      MEMO_CAPTURE_CONTEXT_TURNS  — number of recent exchanges to include
+          as context for the LLM (default 3). Higher = richer context but
+          longer prompt; lower = cheaper, may miss multi-turn decisions.
+      MEMO_CAPTURE_COOLDOWN_MIN   — minimum minutes between captures in the
+          same session (default 0 = no cooldown). Set to e.g. 30 to avoid
+          flooding the corpus during a long refactoring session.
+    """
+    import os
+    import time
+
     from memo.config import Config
     from memo.memory import Memory
 
     cfg = Config.from_env()
     state = _load_state(cfg.state_dir)
 
-    pair = _read_last_exchange(transcript_path)
+    # Cooldown: skip if we saved too recently.
+    cooldown_min = float(os.environ.get("MEMO_CAPTURE_COOLDOWN_MIN", "0") or 0)
+    if cooldown_min > 0:
+        last_save_ts = state.get("last_save_ts", 0.0)
+        elapsed_min = (time.time() - float(last_save_ts)) / 60.0
+        if elapsed_min < cooldown_min:
+            if debug:
+                print(
+                    f"# memo capture: cooldown — {elapsed_min:.1f}m elapsed, "
+                    f"need {cooldown_min}m", file=sys.stderr,
+                )
+            return {"status": "cooldown"}
+
+    context_turns = max(1, int(os.environ.get("MEMO_CAPTURE_CONTEXT_TURNS", "3") or 3))
+    pair = _read_recent_exchanges(transcript_path, n=context_turns)
     if pair is None:
         return {"status": "no_pair"}
     user_text, assistant_text = pair
 
-    # Idempotence — same assistant message hash → skip.
-    h = _hash_assistant(assistant_text)
+    # Idempotence — hash the assistant text of the LAST turn only (not all
+    # turns in the context window) so multi-turn context doesn't break the
+    # duplicate-detection across successive Stop firings.
+    last_pair = _read_recent_exchanges(transcript_path, n=1)
+    h = _hash_assistant(last_pair[1] if last_pair else assistant_text)
     if state.get("last_hash") == h:
         return {"status": "duplicate_turn"}
 
@@ -355,6 +402,8 @@ def run_capture(
                 print(f"# memo capture: save failed: {exc}", file=sys.stderr)
 
     state["last_hash"] = h
+    if saved:
+        state["last_save_ts"] = time.time()
     _save_state(cfg.state_dir, state)
     return {
         "status": "ok",

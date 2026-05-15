@@ -749,6 +749,13 @@ class Memory:
         # benchmarking the raw bi-encoder or BM25 surfaces.
         if mode == "hybrid" and self.cfg.reranker_enabled and out:
             out = self._rerank(query, out, top_n=limit)
+        # Optional recency decay: blend a freshness bonus into the score so
+        # older memories don't crowd out recent ones. Disabled by default
+        # (halflife_days=0). Enable via MEMO_SEARCH_DECAY_HALFLIFE (days).
+        halflife_days = float(os.environ.get("MEMO_SEARCH_DECAY_HALFLIFE", "0") or 0)
+        if halflife_days > 0 and out:
+            alpha = min(max(float(os.environ.get("MEMO_SEARCH_DECAY_ALPHA", "0.15")), 0.0), 1.0)
+            out = _apply_decay(out, halflife_days=halflife_days, alpha=alpha)
         return out
 
     def _rerank(
@@ -1613,6 +1620,44 @@ def _compose_for_embed(title: str, body: str) -> str:
     if not body:
         return title
     return f"{title}\n\n{body}"
+
+
+def _apply_decay(
+    records: list[MemoryRecord],
+    *,
+    halflife_days: float,
+    alpha: float,
+) -> list[MemoryRecord]:
+    """Blend a freshness bonus into search scores using exponential decay.
+
+    For each record: `decay = exp(-days_since_updated / halflife_days)`.
+    Final score: `(1 - alpha) * original_score + alpha * decay`.
+
+    A halflife of 30 days means a 30-day-old memory retains 50% of the
+    freshness bonus, a 90-day-old retains ~5%. Results are re-sorted by
+    final score so the caller always gets a monotonically ranked list.
+    """
+    import math
+
+    now = datetime.now(tz=UTC)
+    out: list[MemoryRecord] = []
+    for r in records:
+        if r.score is None:
+            out.append(r)
+            continue
+        try:
+            updated = datetime.fromisoformat(r.updated)
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=UTC)
+            days = max(0.0, (now - updated).total_seconds() / 86400)
+        except Exception:
+            out.append(r)
+            continue
+        decay = math.exp(-days / halflife_days)
+        final = (1.0 - alpha) * r.score + alpha * decay
+        out.append(replace(r, score=round(final, 6)))
+    out.sort(key=lambda r: r.score or 0.0, reverse=True)
+    return out
 
 
 def _normalise_tags(tags: list[str]) -> list[str]:
