@@ -82,7 +82,7 @@ def cli(ctx: click.Context) -> None:
 _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "init", "doctor", "migrate-vault",
     "mcp-command", "install-slash", "prewarm", "recall-hook", "capture-stop",
-    "session", "ingest",
+    "session", "ingest", "historia",
 }
 
 
@@ -1754,6 +1754,43 @@ def recall_hook() -> None:
     # Tune via MEMO_RECALL_MIN_SIM if your corpus has different density.
     relevant = [h for h in hits if h.score is None or h.score >= min_sim]
 
+    # Stub filter: skip memorias with tiny bodies — they're usually fragments
+    # that got auto-saved without content and don't add value as context.
+    min_body_chars = int(os.environ.get("MEMO_RECALL_MIN_BODY_CHARS", "40"))
+    if min_body_chars > 0:
+        relevant = [h for h in relevant if len((h.body or "").strip()) >= min_body_chars]
+
+    # Staleness suppression: memories older than MEMO_RECALL_STALENESS_DAYS
+    # only pass if they score well above min_sim (1.5x). This prevents
+    # the corpus from being dominated by old entries on generic queries
+    # while still surfacing them for strong topic-specific matches.
+    staleness_days = float(os.environ.get("MEMO_RECALL_STALENESS_DAYS", "0") or 0)
+    if staleness_days > 0:
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+        _now = _dt.now(_UTC)
+        stale_threshold = min_sim * 1.5
+        filtered: list = []
+        for h in relevant:
+            try:
+                updated = _dt.fromisoformat(h.updated)
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=_UTC)
+                days = (_now - updated).total_seconds() / 86400
+                if days > staleness_days and (h.score or 0.0) < stale_threshold:
+                    if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+                        import sys as _sys2
+                        print(
+                            f"# memo recall-hook: staleness filter — {h.id[:8]} "
+                            f"({days:.0f}d old, score {h.score:.2f} < {stale_threshold:.2f})",
+                            file=_sys2.stderr,
+                        )
+                    continue
+            except Exception:
+                pass
+            filtered.append(h)
+        relevant = filtered
+
     # Telemetry: append every recall (with or without hits) to the
     # JSONL ring buffer consumed by `memo tui`. Best-effort; failures
     # are swallowed inside the helper.
@@ -2050,6 +2087,87 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
                 f"  [yellow]~[/yellow] [{u['id'][:8]}] {u['title']}  "
                 f"[dim](fields: {', '.join(u['changed_fields'])})[/dim]",
             )
+
+
+@cli.command(name="historia")
+@click.argument("id_or_prefix")
+@click.option("--limit", default=50, type=int, show_default=True,
+              help="Max events to show.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def historia_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
+    """Show the full edit history for one memoria.
+
+    Displays every save / update / delete event from the audit log,
+    with field-level diffs on each update (title, type, tags, body_hash).
+    Useful for answering "when did I change this?" or reviewing how a
+    decision evolved over time.
+
+    Examples:
+
+      memo historia abc12345
+      memo historia abc12345 --json
+    """
+    from memo.memory import AmbiguousIdError, Memory
+
+    mem = Memory(Config.from_env())
+    try:
+        resolved = mem.resolve_id(id_or_prefix)
+    except AmbiguousIdError as exc:
+        console.print(f"[red]Ambiguous prefix:[/red] {exc}")
+        raise SystemExit(1) from exc
+    if resolved is None:
+        console.print(f"[red]No record found for:[/red] {id_or_prefix!r}")
+        raise SystemExit(1)
+
+    events = mem.history.list_recent(limit=limit, record_id=resolved)
+    events = list(reversed(events))  # chronological order
+
+    if as_json:
+        click.echo(json.dumps(events, ensure_ascii=False, indent=2, default=str))
+        return
+
+    r = mem.get(resolved)
+    title_str = f"{r.title}" if r else resolved[:8]
+    console.print(Panel.fit(
+        f"[bold]{title_str}[/bold]  [dim]{resolved[:8]}[/dim]",
+        title="historia",
+        border_style="cyan",
+    ))
+
+    if not events:
+        console.print("  [dim](no events in audit log)[/dim]")
+        return
+
+    _OP_STYLE = {"save": "green", "update": "yellow", "delete": "red"}
+
+    for ev in events:
+        op = ev.get("op", "?")
+        ts = ev.get("ts", "")
+        style = _OP_STYLE.get(op, "white")
+        ts_short = ts[:16].replace("T", " ") if ts else "?"
+        console.print(f"\n  [{style}]{op.upper():6s}[/{style}]  [dim]{ts_short}[/dim]")
+
+        delta = ev.get("delta")
+        if not delta:
+            continue
+        for field, pair in delta.items():
+            if not isinstance(pair, list) or len(pair) != 2:
+                continue
+            old_v, new_v = pair
+            if field == "tags":
+                old_s = ", ".join(old_v) if isinstance(old_v, list) else str(old_v)
+                new_s = ", ".join(new_v) if isinstance(new_v, list) else str(new_v)
+            elif field == "body_hash":
+                old_s, new_s = str(old_v)[:12], str(new_v)[:12]
+            else:
+                old_s, new_s = str(old_v), str(new_v)
+            console.print(
+                f"           [dim]{field}:[/dim]  "
+                f"[red]{old_s}[/red]  →  [green]{new_s}[/green]"
+            )
+
+    last_ts = events[-1].get("ts", "")
+    console.print(f"\n  [dim]{len(events)} event(s) · last: {last_ts[:16].replace('T', ' ')}[/dim]")
 
 
 @cli.command(name="tui")
