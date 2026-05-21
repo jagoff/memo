@@ -161,16 +161,26 @@ Happy to provide a demo video or additional metadata. Thanks!
 — Fernando Ferrari
 ```
 
-### 5b. windsurf.run community directory
+### 5b. windsurf.run / cursor.directory community directory
 
-`windsurf.run/mcp` is a community directory backed by
-`pontusab/cursor.directory`. The submission flow is **a web form, not a PR**:
+`windsurf.run/mcp` is a read-only view backed by `pontusab/cursor.directory`.
+The submission form does **not** live on `windsurf.run` (that domain only
+ships listings, the `/plugins/new` route returns 404). Submit on
+**`cursor.directory`** instead — the same database powers both views, so an
+approved entry shows up automatically under `windsurf.run/mcp` and
+`windsurf.directory`.
 
-1. Visit <https://windsurf.run/plugins/new?type=mcp_server> (the `/mcp/new`
-   URL redirects there).
+Submission flow:
+
+1. Visit <https://cursor.directory/plugins/new>.
 2. Sign in with GitHub.
-3. Paste the metadata block below.
-4. Submit and wait for moderation.
+3. Choose "Auto-detect from a GitHub repo" and paste
+   `https://github.com/jagoff/memo`. The parser reads
+   `.claude-plugin/plugin.json` + `.mcp.json` from the repo and pre-fills
+   the form (name, description, version, repo URL, license, keywords, and
+   the `mcp_server` component with `command: memo-mcp`).
+4. Verify the pre-filled fields, adjust if needed, submit, wait for
+   moderation.
 
 Form values:
 
@@ -212,7 +222,8 @@ After acceptance, verify the listing renders correctly:
 - PyPI: <https://pypi.org/project/mlx-memo/> shows latest version
 - GitHub: <https://github.com/jagoff/memo> shows the 13 topic tags on the right sidebar
 - MCP Registry: `curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=jagoff"` returns `io.github.jagoff/memo`
-- windsurf.run: <https://windsurf.run/mcp> search for "memo" shows the entry
+- cursor.directory: <https://cursor.directory/mcp/mlx-memo> resolves once moderation approves
+- windsurf.run: <https://windsurf.run/mcp> search for "memo" shows the entry (mirrors cursor.directory)
 - Cascade in-app: Windsurf → Cascade panel → MCPs icon → Marketplace shows memo (only after Codeium approves the outreach in 5a)
 
 If any registry rejects or requests changes, update this doc with the
