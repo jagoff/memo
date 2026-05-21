@@ -56,6 +56,7 @@ dir size is self-bounding without a separate daemon.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -443,7 +444,7 @@ def format_relative(updated_iso: str | None, now: datetime | None = None) -> str
     return f"hace {secs // 86400}d"
 
 
-_AUTOSAVE_THRESHOLD_KB_DEFAULT = 1024  # ~1MB → roughly 50–200 turns
+_AUTOSAVE_THRESHOLD_KB_DEFAULT = 1024  # ~1MB -> roughly 50-200 turns
 _AUTOSAVE_COOLDOWN_DEFAULT = 300       # 5 min between consecutive autosaves
 
 
@@ -490,10 +491,8 @@ def mark_autosaved(state_dir: Path, session_id: str) -> None:
     if existing is None:
         return
     existing["last_autosave_at"] = _now_iso()
-    try:
+    with contextlib.suppress(OSError):
         _write(state_dir, session_id, existing)
-    except OSError:
-        pass
 
 
 def refresh_summary(
