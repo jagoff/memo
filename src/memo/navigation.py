@@ -1,4 +1,6 @@
-"""Graph-based memory navigation — path finding, community detection, visualization.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Graph-based memory navigation — path finding, community detection, visualization.
 
 Extends the basic entity graph in graph.py with:
 - Shortest path finding between entities (BFS)

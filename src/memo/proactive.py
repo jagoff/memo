@@ -1,4 +1,6 @@
-"""Proactive memory suggestions — detect patterns and suggest saving.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Proactive memory suggestions — detect patterns and suggest saving.
 
 Extends the save-side capture with proactive suggestions:
 - Pattern detection in ongoing conversations

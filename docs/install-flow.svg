@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 560" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arr-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#22c55e"/>
+    </marker>
+    <marker id="arr-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f59e0b"/>
+    </marker>
+    <filter id="sh" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+  <style>
+    .title   { font-size: 20px; font-weight: 700; fill: #0f172a; }
+    .sub     { font-size: 12px; fill: #64748b; }
+    .step    { font-size: 13px; font-weight: 600; fill: #0f172a; text-anchor: middle; }
+    .detail  { font-size: 11px; fill: #475569; text-anchor: middle; }
+    .label   { font-size: 11px; fill: #64748b; text-anchor: middle; }
+    .cmd     { font-size: 11px; fill: #1e40af; text-anchor: middle; font-family: monospace; }
+    .ok      { font-size: 11px; fill: #16a34a; text-anchor: middle; }
+    .warn    { font-size: 11px; fill: #b45309; text-anchor: middle; }
+    .box     { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+    .box-ok  { fill: #f0fdf4; stroke: #22c55e; stroke-width: 1.5; }
+    .box-warn{ fill: #fffbeb; stroke: #f59e0b; stroke-width: 1.5; }
+    .box-blue{ fill: #eff6ff; stroke: #3b82f6; stroke-width: 1.5; }
+    .line    { stroke: #475569; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+    .line-ok { stroke: #22c55e; stroke-width: 1.5; fill: none; marker-end: url(#arr-ok); }
+    .line-w  { stroke: #f59e0b; stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; marker-end: url(#arr-warn); }
+  </style>
+
+  <text x="40" y="38" class="title">memo install flow</text>
+  <text x="40" y="56" class="sub">From curl | bash to a working ambient-memory system</text>
+
+  <!-- Step boxes — vertical chain, centered at x=420 -->
+
+  <!-- Step 1 -->
+  <rect x="260" y="80" width="300" height="58" rx="8" class="box box-blue" filter="url(#sh)"/>
+  <text x="410" y="104" class="step">1 · curl -fsSL … | bash</text>
+  <text x="410" y="121" class="cmd">install.sh</text>
+  <text x="410" y="136" class="detail">platform check · Python ≥3.13 · pipx bootstrap</text>
+
+  <line class="line" x1="410" y1="138" x2="410" y2="165"/>
+
+  <!-- Step 2 -->
+  <rect x="260" y="165" width="300" height="58" rx="8" class="box" filter="url(#sh)"/>
+  <text x="410" y="189" class="step">2 · pipx install mlx-memo</text>
+  <text x="410" y="206" class="detail">isolated venv · memo + memo-mcp binaries</text>
+  <text x="410" y="220" class="detail">11 deps · no Ollama · no Qdrant</text>
+
+  <line class="line" x1="410" y1="223" x2="410" y2="250"/>
+
+  <!-- Step 3 — NEW model download -->
+  <rect x="220" y="250" width="380" height="70" rx="8" class="box box-ok" filter="url(#sh)"/>
+  <text x="410" y="274" class="step">3 · memo prewarm --download-all</text>
+  <text x="410" y="291" class="detail">embedder  (Qwen3-0.6B · ~600 MB)</text>
+  <text x="410" y="307" class="detail">reranker  (Qwen3-Reranker-0.6B · ~600 MB)  ·  chat (Qwen2.5 7B + 3B · ~6.3 GB)</text>
+
+  <!-- success / fallback branches -->
+  <line class="line-ok" x1="340" y1="320" x2="230" y2="358"/>
+  <line class="line-w"  x1="480" y1="320" x2="590" y2="358"/>
+
+  <!-- branch: success -->
+  <rect x="110" y="358" width="240" height="50" rx="8" class="box box-ok"/>
+  <text x="230" y="379" class="ok">✓ models cached</text>
+  <text x="230" y="395" class="detail">~/.cache/huggingface/hub/</text>
+
+  <!-- branch: warn -->
+  <rect x="510" y="358" width="240" height="50" rx="8" class="box box-warn"/>
+  <text x="630" y="379" class="warn">⚠ network failure</text>
+  <text x="630" y="395" class="detail">models download on first use</text>
+
+  <!-- rejoin arrows to step 4 -->
+  <line class="line-ok" x1="230" y1="408" x2="365" y2="442"/>
+  <line class="line-w"  x1="630" y1="408" x2="455" y2="442"/>
+
+  <!-- Step 4 -->
+  <rect x="260" y="442" width="300" height="58" rx="8" class="box" filter="url(#sh)"/>
+  <text x="410" y="466" class="step">4 · memo doctor --strict-runtime</text>
+  <text x="410" y="483" class="detail">vault · sqlite-vec · mlx · model cache</text>
+  <text x="410" y="498" class="ok">all green when models were downloaded in step 3</text>
+
+  <line class="line" x1="410" y1="500" x2="410" y2="527"/>
+
+  <!-- Step 5 -->
+  <rect x="260" y="527" width="300" height="24" rx="6" class="box box-blue"/>
+  <text x="410" y="543" class="step">5 · memo mcp-command  →  register with agent client</text>
+
+  <!-- Size annotation -->
+  <text x="40" y="290" class="label" style="text-anchor:start">first install</text>
+  <text x="40" y="304" class="label" style="text-anchor:start">~7 GB · 5–15 min</text>
+  <text x="40" y="318" class="label" style="text-anchor:start">subsequent installs</text>
+  <text x="40" y="332" class="label" style="text-anchor:start">cached · ~10 s</text>
+</svg>

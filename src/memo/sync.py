@@ -1,4 +1,6 @@
-"""Memory sync & backup — multi-device sync and automated backups.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Memory sync & backup — multi-device sync and automated backups.
 
 Enables:
 - Sync between multiple memo vaults/devices

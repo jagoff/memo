@@ -1,4 +1,6 @@
-"""Multi-vault federation — search across multiple memo vaults.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Multi-vault federation — search across multiple memo vaults.
 
 Enables searching and aggregating results from multiple memo vaults:
 - Configure vault connections (path + name)

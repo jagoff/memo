@@ -66,7 +66,7 @@ memo mcp-command
 memo mcp-command --client json
 ```
 
-…o `memo mcp-command --client codex|claude-code|devin` para imprimir el
+…o `memo mcp-command --client codex|claude-code|devin|windsurf` para imprimir el
 comando específico del cliente. Ejecutá el comando impreso y reiniciá la
 sesión para que el cliente recargue las tools.
 
@@ -253,5 +253,5 @@ No mezcles `/mv` y `/memo` en la misma operación — son dos sistemas paralelos
 
 - **`memo-mcp: command not found`** → el package no está instalado o no está en PATH. Instalar aislado con `pipx install mlx-memo` o, desde el checkout local, `pipx install --force /path/to/memo`.
 - **`Vault path does not exist`** → la vault de Obsidian no está donde el config la espera. Setear `MEMO_VAULT_PATH=...` (default = iCloud Mobile Documents).
-- **MCP tools no aparecen en la sesión** → el server no fue registrado o el cliente no recargó la config. Correr `memo mcp-command --client <codex|claude-code|devin|json>`, ejecutar el comando absoluto que imprime, y abrir una sesión nueva.
+- **MCP tools no aparecen en la sesión** → el server no fue registrado o el cliente no recargó la config. Correr `memo install-slash --client <codex|claude-code|windsurf>` o `memo mcp-command --client <codex|claude-code|devin|windsurf|json>`, ejecutar el comando absoluto que imprime si aplica, y abrir una sesión nueva. En Windsurf, refrescar MCP servers en Cascade.
 - **`Embedder produced dim=X but config expects 1024`** → swap de modelo embedder sin actualizar `MEMO_EMBEDDER_DIMS`. Sólo aplica si el user cambió el modelo manualmente.

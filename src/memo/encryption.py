@@ -1,4 +1,6 @@
-"""Memory encryption — AES-256 encryption of sensitive memorias.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Memory encryption — AES-256 encryption of sensitive memorias.
 
 Enables:
 - Encrypt sensitive memorias with AES-256-GCM

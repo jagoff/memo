@@ -24,8 +24,10 @@
 - **Saves what your agent decides, learns, prefers** as durable Markdown files (`type`, `tags`, `title`, body).
 - **Recalls** the most relevant memorias when you ask — semantic (vec), keyword (BM25), or hybrid w/ cross-encoder rerank.
 - **Injects context automatically**: with the optional Claude Code plugin, every prompt silently consults memory; the agent sees the top-3 memorias *before* answering.
+- **El Briefing** — on session start, surfaces your open loops (recently updated memories), a daily memory rotation, and crash-recovery for the last session in the current project — all before the first prompt.
+- **El Mapa** — generates an interactive 2D semantic canvas of your entire corpus via UMAP/PCA projection + Plotly, with timeline animation, search filter, and hover previews.
 - **Speaks MCP** over stdio so any compliant client picks it up with one line of config.
-- **Speaks shell** too: the same API ships as a `memo` CLI with ~25 commands.
+- **Speaks shell** too: the same API ships as a `memo` CLI with ~30 commands.
 
 ## 🕰️ The unique feature: **time-machine**
 
@@ -60,10 +62,18 @@ Under the hood: `history.db` is an append-only audit log of every save/update/de
 | Cloud memory products see your private notes | **Zero network in the hot path.** Models run in-process. |
 | Ollama / Qdrant / docker daemons just to remember things | **One Python install.** sqlite-vec is one file; MLX is in-process. |
 | DB-only stores lock your knowledge inside an opaque blob | **Markdown is the source of truth.** Edit in Obsidian, vim, anything. |
-| Cold-start latencies of 2-10s per recall | **MLX prewarm hook** → sub-second recalls after session start. |
-| Hand-crafted `/remember` invocations every turn | **Ambient recall**: top-3 hits auto-injected into every prompt. |
+| Cold-start latencies of 2-10s per recall | **Recall daemon** — persistent process keeps embedder in RAM; <200 ms per recall after session start. |
+| Hand-crafted `/remember` invocations every turn | **Ambient recall + auto-capture**: top-3 hits injected on every prompt; insights extracted automatically after each exchange. |
+| Every session starts blind — no recap of where you left off | **El Briefing**: open loops, memory of the day, crash recovery at `SessionStart`. |
+| No way to visualise the corpus or find clusters | **El Mapa**: interactive 2D UMAP/PCA canvas of all embeddings, with timeline animation. |
 | **No way to query past corpus state** | **Time-machine**: snapshot the corpus at any past date (see above). |
 | Vendor lock | **MIT package, open stack** (sqlite-vec Apache 2.0, MLX MIT, Qwen Apache 2.0). |
+
+## Install flow
+
+![memo install flow](docs/install-flow.svg)
+
+The installer handles everything: Python check → pipx install → model download → doctor validation → MCP registration for Claude Code, Codex, and Windsurf. On first install the model download step takes 5-15 minutes depending on your connection (~7 GB). Subsequent installs skip the download (HuggingFace Hub cache hit).
 
 ## How it fits in your stack
 
@@ -75,10 +85,18 @@ Three layers, one direction of data flow:
 2. The **Memory API** runs save / search / rerank / ask against the **MLX models in-process**: embedder for semantic, optional reranker for precision, chat (Qwen2.5-7B) for `ask()`.
 3. The **`.md` vault** is the storage of record; **`sqlite-vec`** is a rebuildable index. Delete the index any time — `memo reindex` rebuilds from the `.md` files.
 
-With the Claude Code plugin installed, two extra hooks plug in:
+With the Claude Code plugin installed, six hooks plug in automatically:
 
-- `SessionStart` → `memo prewarm` (warms MLX so the first recall is fast)
-- `UserPromptSubmit` → `memo recall-hook` (5s budget, injects top-3 memorias as `additionalContext`)
+| Event | Command | Mode | Budget | Purpose |
+|---|---|---|---|---|
+| `SessionStart` (startup/clear) | `memo prewarm` | async | 30 s | Pre-loads MLX embedder + reranker; writes warm-signal file |
+| `SessionStart` (startup/clear) | `memo recall-daemon start` | async | 5 s | Starts the recall daemon (keeps embedder in RAM; <200 ms recall) |
+| `SessionStart` (startup/resume) | `memo briefing` | sync | 5 s | El Briefing panel: open loops, memory of the day, last session |
+| `UserPromptSubmit` | `memo recall-hook` | sync | 8 s | Queries the recall daemon (fast path) or falls back to BM25 when cold |
+| `Stop` | `memo capture-stop` | async | 30 s | Extracts insights from the finished exchange via helper LLM |
+| `Stop` | `memo session checkpoint` | async | 5 s | Snapshots session state for crash recovery |
+
+![ambient memory loop](docs/ambient-loop.svg)
 
 ## Stack
 
@@ -95,7 +113,7 @@ With the Claude Code plugin installed, two extra hooks plug in:
 
 - **macOS on Apple Silicon** (M1 / M2 / M3 / M4). MLX is the load-bearing piece.
 - **Python ≥ 3.13**.
-- **~4 GB** free disk for the default model set (downloaded on first use).
+- **~8 GB** free disk for the default model set (embedder ~600 MB + reranker ~600 MB + chat 7B ~4.3 GB + helper 3B ~1.9 GB). The one-line installer downloads them automatically.
 - *Optional:* an Obsidian vault. If you don't have one, memo defaults to `~/Documents/memo/` and creates the folder for you.
 
 ## Install
@@ -105,7 +123,8 @@ inside another project's `.venv`; the MLX runtime, model cache, MCP server,
 sqlite state, and CLI should move together as one subsystem.
 
 ```bash
-# One-line installer (uses pipx under the hood and installs GitHub main)
+# One-line installer (uses pipx under the hood, installs GitHub main,
+# and configures Claude Code + Codex + Windsurf when available)
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
 # or install the latest published PyPI release explicitly
 pipx install mlx-memo
@@ -147,11 +166,24 @@ curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEM
 
 # Install from an explicit pipx spec (local checkout, git ref, wheel, etc.).
 MEMO_INSTALL_SPEC=/Users/you/repos/memo ./install.sh
+
+# Skip agent-client configuration during install.
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
+
+# Force-skip the MLX model download (models will load lazily on first use).
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
+
+# Force-yes the MLX model download (skip the interactive confirmation).
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
 ```
 
-Pre-download the MLX models so the first save/search doesn't stall on a multi-GB download:
+**Model download** is part of memo's structure (embedder + reranker + chat models are required for retrieval and ambient recall). On an interactive terminal the installer asks for confirmation (default `Y`). On a piped install (`curl … | bash`, no TTY) the default is also yes. Override with `MEMO_INSTALL_DOWNLOAD_MODELS=yes|no|auto`. You can re-run the download manually any time:
 
 ```bash
+# Download all default-profile models (~7 GB, shows progress, safe to re-run)
+MEMO_NONINTERACTIVE=1 memo prewarm --download-all
+
+# Or download individual models with the HF CLI
 hf download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 hf download mku64/Qwen3-Reranker-0.6B-mlx-8Bit
 hf download mlx-community/Qwen2.5-3B-Instruct-4bit
@@ -161,6 +193,38 @@ hf download mlx-community/Qwen2.5-7B-Instruct-4bit
 hf download mlx-community/Qwen3-Embedding-4B-4bit-DWQ
 hf download mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510
 ```
+
+### Installing on another Mac
+
+For a fresh Apple Silicon Mac, run the one-line installer first, then bring over the corpus:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+memo doctor --strict-runtime
+memo install-slash --client claude-code --client codex --client windsurf
+```
+
+The installer already runs the `install-slash` command in best-effort mode. Re-run it manually after installing or updating Claude Code, Codex, or Windsurf so each client reloads the absolute `memo-mcp` path from the new machine.
+
+To move existing data:
+
+```bash
+# On the old Mac: portable zip with .md memorias + memvec.db + history.db.
+memo backup --out ~/Desktop/memo-transfer.zip
+
+# On the new Mac, after installing memo:
+memo restore ~/Desktop/memo-transfer.zip --reindex --yes
+memo doctor --strict-runtime
+```
+
+If your memorias already live in an iCloud/Syncthing/Git-synced Obsidian folder, point the new Mac at that same folder instead of copying the zip:
+
+```bash
+memo init
+memo reindex
+```
+
+`MEMO_DATA_DIR` contains the human-readable `.md` source of truth. `MEMO_STATE_DIR` defaults to `~/.local/share/memo` and contains rebuildable indexes plus sidecars such as `history.db`; keep `history.db` if you want time-machine snapshots to survive the move. See [docs/install-new-mac.md](docs/install-new-mac.md) for the full checklist.
 
 ### Verify no old install is being used
 
@@ -218,7 +282,7 @@ do not accidentally start a copy from a project `.venv`.
 
 If you use memo from agent clients, the one-shot installer configures the
 client-visible command/skill where the client supports it and the MCP server
-for supported surfaces: Claude Code, Codex, and Devin.
+for supported surfaces: Claude Code, Codex, Windsurf, and Devin.
 
 ```bash
 memo install-slash
@@ -318,6 +382,26 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
+### Windsurf / Cascade
+
+Windsurf stores Cascade MCP servers in `~/.codeium/windsurf/mcp_config.json`
+and asks you to refresh MCP servers after editing the config. memo can write
+that file directly:
+
+```bash
+memo install-slash --client windsurf
+```
+
+Or print the JSON block for manual editing:
+
+```bash
+memo mcp-command --client windsurf
+```
+
+This preserves any existing `mcpServers` and only replaces the `memo` entry.
+If you need a non-standard config path, set `WINDSURF_MCP_CONFIG` before
+running the installer.
+
 ### Cursor / Cline / Continue
 
 Each client has its own MCP config UI but the contract is the same: register
@@ -345,7 +429,9 @@ A first-party plugin under [`integrations/paperclip-plugin-memo/`](./integration
 | `memory_delete(id)` | Removes from vec + disk. |
 | `memory_ask(question)` | RAG synthesis; cites memorias by id. |
 | `memory_stats()` | Counts, paths, active models. |
-| `memory_consolidate()`, `memory_extract_entities()`, `memory_entities()`, `memory_history()` | Post-v0 endpoints — see CHANGELOG. |
+| `memory_history(limit?, record_id?)` | Recent save/update/delete events, optionally filtered to one record. |
+| `memory_record_diff(id, limit?)` | Chronological audit trail for one record with field-level diffs (same as `memo historia <id>`). |
+| `memory_consolidate()`, `memory_extract_entities()`, `memory_entities()` | Corpus maintenance — see CHANGELOG. |
 
 ## Ambient memory (v0.3.0+) — recall without `/memo`
 
@@ -353,12 +439,44 @@ Install the bundled [Claude Code plugin](#slash-command--memo) and memo silently
 
 ### How it works
 
-- `SessionStart` hook → `memo prewarm` (async) — pre-loads the MLX embedder so the first recall is fast.
-- `UserPromptSubmit` hook → `memo recall-hook` (5s timeout) — embeds your prompt, runs vec-only search, returns top-3 memorias above cosine 0.6.
+- **`SessionStart` (startup/clear)** → `memo prewarm` (async, 30 s) — loads the MLX embedder + reranker into the OS disk cache and writes a warm-signal file (`~/.local/share/memo/.prewarm_ts`).
+- **`SessionStart` (startup/clear)** → `memo recall-daemon start` (async, 5 s) — starts the **recall daemon**, a persistent process that keeps the embedder loaded in RAM. Once running, every `recall-hook` call in the session queries it via a Unix socket and gets a result in <200 ms instead of 1–2 s. Logs to `~/Library/Logs/memo/recall-daemon.log`.
+- **`SessionStart` (startup/resume)** → `memo briefing` (5 s) — emits El Briefing as `additionalContext` at the top of every session.
+- **`UserPromptSubmit`** → `memo recall-hook` (8 s) — queries the recall daemon (fast path, <200 ms) or falls back to BM25 keyword search if the daemon isn't running yet (cold start). Returns top-3 memorias above cosine 0.6 as `additionalContext` before the agent answers.
+- **`Stop`** → `memo capture-stop` (async, 30 s) — helper LLM reads the just-finished exchange, extracts actionable insights, runs a quality gate (`MEMO_CAPTURE_MIN_WORDS`), deduplicates against the corpus, and saves survivors automatically.
+- **`Stop`** → `memo session checkpoint` (async, 5 s) — snapshots `cwd`, branch, summary, and last message to `~/.local/share/memo/sessions/` so crashed sessions can be resumed.
 
-Both run 100% local. Your prompt never leaves the machine.
+All hooks run 100 % local. Your prompts never leave the machine.
 
-### Tuning
+### Recall daemon
+
+The recall daemon is the hot-path optimization that makes ambient recall feel instant. Without it, each `UserPromptSubmit` spawns a fresh Python process that re-imports MLX from disk (~1–2 s even when cached). With it, a single long-lived process keeps the embedder in RAM and answers socket requests in **<200 ms**.
+
+```
+SessionStart
+  └─ memo recall-daemon start (async)
+       └─ loads Memory + embedder
+       └─ listens on ~/.local/share/memo/recall.sock
+
+UserPromptSubmit
+  └─ memo recall-hook
+       ├─ daemon running? → socket request → <200 ms → additionalContext
+       └─ daemon not ready? → BM25 fallback → ~100 ms → additionalContext
+```
+
+The daemon is started automatically. You can also manage it manually:
+
+```bash
+memo recall-daemon start    # start in background
+memo recall-daemon stop     # send SIGTERM + cleanup
+memo recall-daemon status   # pid, socket path, warm/cold state
+```
+
+Logs: `~/Library/Logs/memo/recall-daemon.log`
+
+The daemon restarts automatically on the next session start if it has exited (macOS may kill background processes under memory pressure).
+
+### Recall tuning
 
 | Env var | Default | Purpose |
 |---|---|---|
@@ -370,7 +488,20 @@ Both run 100% local. Your prompt never leaves the machine.
 | `MEMO_RECALL_SKIP_SLASH` | `1` | Skip recall on `/` prompts |
 | `MEMO_RECALL_TOKEN_BUDGET` | `0` | When > 0, pack memorias greedily until ~N tokens; truncate tail to fit |
 | `MEMO_RECALL_PROJECT_BOOST` | `0.15` | Additive score boost for memorias whose tags match the current project tag |
+| `MEMO_RECALL_MIN_BODY_CHARS` | `40` | Filter out stub memorias (empty or near-empty bodies) |
+| `MEMO_RECALL_FORCE_MODE` | unset | Set to `1` to disable the warm-signal cold-start check (always use `MEMO_RECALL_MODE`) |
 | `MEMO_RECALL_DEBUG` | unset | Print failure reasons to stderr |
+
+### Capture tuning
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MEMO_CAPTURE_CONTEXT_TURNS` | `3` | Number of recent exchanges fed to the helper LLM (richer context catches multi-turn decisions) |
+| `MEMO_CAPTURE_COOLDOWN_MIN` | `0` | Min minutes between captures in the same session (prevents corpus flooding during long refactors) |
+| `MEMO_CAPTURE_MIN_WORDS` | `15` | Minimum word count for an extracted insight. Generic session summaries and very short extracts are discarded. Set to `0` to disable. |
+| `MEMO_CAPTURE_DEBUG` | unset | Print extraction results to stderr |
+
+The capture pipeline applies a **quality gate** before saving. Extracted insights are discarded if they are too short (< `MEMO_CAPTURE_MIN_WORDS` words) or start with session-narrative openers like `"the user "`, `"we discussed "`, `"i helped "`, etc. This prevents the corpus from accumulating low-value summaries that degrade recall precision over time. Only specific, durable knowledge passes through.
 
 ### Empirical tuning of `MIN_SIM=0.6`
 
@@ -379,6 +510,80 @@ On a 223-doc corpus:
 - `how to bake apple pie` (no food memorias) → 0 hits at 0.6 ✓ (3 noise hits at 0.51–0.56 cut by the floor)
 
 Tune lower (0.5) on sparse corpora, higher (0.7) for high-precision only.
+
+## El Briefing — session start panel
+
+`memo briefing` is the `SessionStart` hook entrypoint. Every time you open a new Claude Code session it emits an `additionalContext` panel with three blocks:
+
+1. **Last session in this project** — summary of the most recent session in the current `cwd`, with a one-line `claude --resume <session_id>` for instant crash recovery.
+2. **Open loops** — the N memories most recently updated (default: 7-day window), numbered for interactive selection. Say *"dame el loop 2"* and the agent retrieves it.
+3. **Memory of the day** — one memory picked deterministically by a SHA-256 hash of today's date, biased toward the least-recently-touched entries so the corpus rotates over time.
+
+```markdown
+## El Briefing
+
+**Última sesión en este proyecto** (hace 12m): revisa el proyecto…
+`claude --resume be72126f-3bcb-4faa-9a0f-dd97b8caa296`
+
+### Loops abiertos (últimos 7 días)
+
+1. `91fc486c` **note** · memo diff como superficie de cambio real — hoy [memory, versioning]
+2. `5da4cdc1` **note** · Recall hook más inteligente — hoy [memory, recall]
+…
+
+### Memoria del día
+`064031dd` **fact** · sqlite-vec L2 normalisation invariant — hace 3 días
+> El embedder debe normalizar a L2 antes de guardar…
+
+_Para continuar: `dame el loop N` · `/memo get <id>` · `/memo ask <pregunta>`_
+```
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MEMO_BRIEFING_DISABLE` | unset | Set to `1` to skip the panel |
+| `MEMO_BRIEFING_LOOPS_N` | `5` | Number of open loops to show |
+| `MEMO_BRIEFING_LOOPS_DAYS` | `7` | Recency window for open loops |
+| `MEMO_BRIEFING_DEBUG` | unset | Print failures to stderr |
+
+Run `memo briefing` directly from the shell to preview the output.
+
+## El Mapa — 2D semantic canvas
+
+`memo mapa` reads all embeddings stored in `memvec.db`, projects them to 2D via **UMAP** (if `umap-learn` is installed) or **PCA** (numpy fallback), and renders a self-contained interactive HTML file.
+
+```bash
+# Generate and open in default browser
+memo mapa
+
+# Specify output path, skip auto-open
+memo mapa --output ~/Desktop/mapa.html --no-open
+
+# Limit to the 200 most recent entries
+memo mapa --limit 200
+
+# Skip timeline animation (faster for large corpora)
+memo mapa --no-animate
+```
+
+Features of the generated HTML:
+
+- **Points coloured by type** (decision, fact, bug, preference, feedback, note, manual)
+- **Hover** → title, type, tags, creation date
+- **Click** → sidebar opens with full metadata and a one-click copy button for `/memo get <id>`
+- **Search filter** — type to highlight matching memories, dim others
+- **Timeline slider** — animate the corpus growth over time from oldest to newest entry
+- **Dark theme**, self-contained (Plotly via CDN, no other assets)
+
+For better cluster topology, install `umap-learn`:
+
+```bash
+# In memo's isolated environment
+pipx runpip mlx-memo install umap-learn
+# or if developing from checkout:
+.venv/bin/pip install umap-learn
+```
+
+Without it, PCA is used — fast and correct in terms of variance ordering, but it collapses nonlinear cluster structure. UMAP reveals the semantic groupings more faithfully for corpora of 50+ entries.
 
 ## Slash command — `/memo`
 
@@ -467,38 +672,90 @@ The skill routes user input to the right MCP tool:
 | `/memo get <id\|prefix>` | full record (prefix ≥4 chars) |
 | `/memo update <id\|prefix> [flags] [body]` | patch metadata or body |
 | `/memo delete <id\|prefix>` | delete (asks confirmation) |
+| `/memo ask <question>` | RAG synthesis with citations |
 | `/memo stats` | totals + paths + models |
 | `/memo reindex` | absorb edits made directly in Obsidian |
+| `/memo history [op] [id]` | audit log of save/update/delete |
+| `/memo consolidate [threshold]` | cluster near-duplicates + merge proposals |
+| `/memo mapa [--output FILE]` | generate 2D semantic canvas HTML |
 | `/memo doctor [--gc] [--fix]` | self-check + orphan detect |
 
 ## CLI reference
 
 ```bash
-memo doctor                       # self-check
-memo doctor --gc                  # report orphans (store ↔ disk)
-memo doctor --gc --fix            # drop orphan store rows (.md never auto-deleted)
-memo install-slash                # install /memo skill/command for agent clients
+# ── Core CRUD ──────────────────────────────────────────────────────────────
 memo save 'body markdown' --title 'X' -t mlx -t local
 memo search 'query' --limit 5
 memo list --limit 20 --type decision
 memo get <id>
 memo update <id> --title 'X2' -t mlx -t local --type decision
 memo update <id> --content -      # read replacement body from stdin
-memo reindex                      # absorb edits made directly in Obsidian
 memo delete <id> --yes
+memo reindex                      # absorb edits made directly in Obsidian
 memo stats
+memo ask 'what changed in the embedder this month?'
+
+# ── History & audit ────────────────────────────────────────────────────────
+memo historia <id>                # chronological audit trail for one record with field diffs
+memo history                      # recent save/update/delete events across all records
+
+# ── Ambient memory commands (also run by hooks) ────────────────────────────
+memo briefing                     # preview the SessionStart panel in the terminal
+memo recall-hook                  # UserPromptSubmit hook (reads JSON from stdin)
+memo prewarm                      # pre-load MLX models (SessionStart hook)
+memo capture-stop                 # extract insights from last exchange (Stop hook)
+memo session checkpoint           # snapshot current session state (Stop hook)
+memo session recent --limit 5     # list recent sessions
+
+# ── El Mapa — 2D semantic canvas ───────────────────────────────────────────
+memo mapa                         # generate + open in browser (UMAP or PCA → Plotly HTML)
+memo mapa --output ~/Desktop/mapa.html --no-open
+memo mapa --limit 200 --no-animate
+
+# ── Setup & maintenance ────────────────────────────────────────────────────
+memo doctor                       # self-check
+memo doctor --gc                  # report orphans (store ↔ disk)
+memo doctor --gc --fix            # drop orphan store rows (.md never auto-deleted)
+memo install-slash                # configure Claude Code, Codex, Windsurf, Devin
+memo mcp-command --client windsurf # print Windsurf mcp_config.json block
 memo init                         # re-run first-run picker
 memo migrate-vault <new-path>     # move memorias to a different folder
 memo backup --out memo.zip        # backup .md files + index
-memo mine-history --since 30      # backfill memorias from past Claude Code chats
-memo watch                        # foreground file-watcher: auto-reindex on .md edit
-memo install-watcher              # background watcher via launchd plist
-memo uninstall-watcher            # remove the launchd watcher job
-memo tui                          # live terminal dashboard (Ctrl+C exits)
+
+# ── Time-machine ───────────────────────────────────────────────────────────
 memo as-of search 'query' --date 2026-03-01    # search a past snapshot
 memo as-of ask 'question' --date 2026-03-01    # RAG on a past snapshot
 memo as-of list --date 2026-03-01              # memorias that existed then
 memo diff --from 2026-03-01 --to 2026-04-30    # diff between two snapshots
+
+# ── Knowledge graph ─────────────────────────────────────────────────────────
+memo entities                     # top entities across the corpus
+memo entity <name>                # memorias that mention a specific entity
+memo extract-entities --all       # populate the entity graph (Qwen 3B, batch)
+memo consolidate                  # cluster near-duplicates + merge proposals
+
+# ── Backfill & watching ────────────────────────────────────────────────────
+memo mine-history --since 30      # backfill memorias from past Claude Code chats
+memo watch                        # foreground file-watcher: auto-reindex on .md edit
+memo install-watcher              # background watcher via launchd plist
+memo uninstall-watcher            # remove the launchd watcher job
+
+# ── Recall daemon ───────────────────────────────────────────────────────────
+memo recall-daemon start          # start the persistent recall daemon (started automatically by the hook)
+memo recall-daemon stop           # stop the daemon
+memo recall-daemon status         # show pid + socket + warm/cold state
+
+# ── Observability ───────────────────────────────────────────────────────────
+memo hook-log                     # last 20 recall-hook entries: mode, via, hits, latency
+memo hook-log --limit 50
+memo hook-log --follow            # stream new entries as they arrive (Ctrl+C to stop)
+
+# ── Updates ─────────────────────────────────────────────────────────────────
+memo self-update                  # upgrade via pipx/uv + re-warm models
+memo self-update --check          # check PyPI for a newer version without installing
+
+# ── Live dashboard ─────────────────────────────────────────────────────────
+memo tui                          # live terminal dashboard (Ctrl+C exits)
 ```
 
 ### Live dashboard — `memo tui`
@@ -510,17 +767,42 @@ Six panels, all-colored, refresh every second by default:
 - **corpus** — total memorias, distinct project tags, top 3 types
 - **runtime** — MLX warm/cold flags (`emb` / `rrk` / `chat`), vault size, watcher state
 - **recent saves** — last 5 entries from `history.db`
-- **recent recalls** — last 4 entries from the recall log (`~/.local/share/memo/recall.log`)
+- **recent recalls** — last 4 entries from the recall log, with mode (`vec`/`bm25`) and path (`daemon`/`subprocess`) per row. Panel title shows `daemon: running | warm` / `daemon: off | cold` live status.
 - **top tags** — most-frequent corpus tags (`project:*` highlighted)
 - **activity** — 14-day saves/recalls sparklines (`▁▂▃▄▅▆▇█`)
 
-Reads read-only from the existing `history.db` (saves), a JSONL recall
-log written by `memo recall-hook` (auto-rotated at ~200 KB), and the
-live MLX object flags (`embedder._model is not None`). Watcher state
-comes from `launchctl print`. No new dependencies — Rich was already
-pulled in.
+Reads read-only from `history.db` (saves), the JSONL recall log written by `memo recall-hook` (auto-rotated at ~200 KB), the daemon PID file, and the warm-signal file. No new dependencies — Rich was already pulled in.
 
 Quit with `q`, `ESC`, or `Ctrl+C`.
+
+### Hook observability — `memo hook-log`
+
+Every `recall-hook` invocation is appended to a JSONL ring buffer at `~/.local/share/memo/recall.log` (auto-rotated at ~200 KB). `memo hook-log` reads it and prints a human-readable summary:
+
+```
+2026-05-16 14:32:01  vec     daemon   3 hits   187 ms   "como podemos mejorar todo?"
+2026-05-16 14:31:44  bm25    subproc  1 hit    94 ms    "resolve todo"
+2026-05-16 14:28:12  vec     daemon   0 hits   203 ms   "que hace el prewarm"
+```
+
+Each row shows: timestamp · search mode (`vec` / `bm25`) · path (`daemon` / `subprocess`) · hit count · latency · prompt snippet.
+
+```bash
+memo hook-log              # last 20 entries
+memo hook-log --limit 100
+memo hook-log --follow     # stream live (Ctrl+C to stop)
+```
+
+The TUI (`memo tui`) also shows the last 4 recalls in its recall panel, including the daemon/subprocess indicator and a `daemon: running | warm` status line.
+
+### Updating — `memo self-update`
+
+```bash
+memo self-update           # detect pipx/uv, upgrade, re-warm models
+memo self-update --check   # compare installed vs latest PyPI, no install
+```
+
+`self-update` detects the active install method automatically (checks `pipx list` then `uv tool list`) and runs the appropriate upgrade command. After a successful upgrade it runs `memo prewarm --download-all` to ensure any new model versions are cached before the next session. If neither pipx nor uv is detected (e.g. custom install path), it prints the manual commands to run.
 
 ### Backfill from past Claude Code conversations
 
@@ -584,6 +866,8 @@ Hooks (recall, prewarm, capture, session) get `MEMO_NONINTERACTIVE=1` prefixed i
 
 All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 
+**Storage & paths**
+
 | Env var | Default | What |
 |---|---|---|
 | `MEMO_DATA_DIR` | `~/Documents/memo` | Where memoria `.md` files live |
@@ -591,6 +875,11 @@ All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 | `MEMO_STATE_DIR` | `~/.local/share/memo` | sqlite-vec DB + state |
 | `MEMO_CONFIG_FILE` | `~/.config/memo/config.toml` | Override config-file path |
 | `MEMO_NONINTERACTIVE` | unset | Set to `1` in hooks to skip the first-run picker |
+
+**Models**
+
+| Env var | Default | What |
+|---|---|---|
 | `MEMO_MODEL_PROFILE` | `balanced` | Model bundle: `light`, `balanced`, or `quality` |
 | `MEMO_LLM_MODEL` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Chat tier |
 | `MEMO_HELPER_MODEL` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | Helper tier |
@@ -600,10 +889,55 @@ All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 | `MEMO_RERANKER_MODEL` | `mku64/Qwen3-Reranker-0.6B-mlx-8Bit` | MLX reranker model |
 | `MEMO_RERANK_INPUT_K` | `30` | Hybrid candidates sent to the reranker |
 | `MEMO_RERANK_FUSION_ALPHA` | `0.7` | Weight of reranker score vs RRF position bonus |
+
+**Search**
+
+| Env var | Default | What |
+|---|---|---|
 | `MEMO_MAX_CONTENT_CHARS` | `64000` | Truncate body before embed |
 | `MEMO_SEARCH_DEFAULT_LIMIT` | `10` | Default `--limit` for search |
+| `MEMO_SEARCH_DECAY_HALFLIFE` | `0` | When > 0, blend recency into scores. Half-life in days (`exp(-days/N)`) |
+| `MEMO_SEARCH_DECAY_ALPHA` | `0.15` | Weight of decay signal vs raw similarity (0 = off, 1 = decay only) |
+
+**Tagging**
+
+| Env var | Default | What |
+|---|---|---|
 | `MEMO_AUTO_PROJECT_TAG` | `1` | Auto-add `project:<repo>` tag from git toplevel on save. Set `0` to disable. |
 | `MEMO_PROJECT_TAG` | unset | Explicit project tag (overrides git-toplevel detection) |
+
+**Recall hook** — see also [Recall tuning](#recall-tuning)
+
+| Env var | Default | What |
+|---|---|---|
+| `MEMO_RECALL_DISABLE` | unset | Set to `1` to skip recall entirely |
+| `MEMO_RECALL_TOP_K` | `3` | Max memorias to inject |
+| `MEMO_RECALL_MIN_SIM` | `0.6` | Cosine similarity floor |
+| `MEMO_RECALL_MIN_BODY_CHARS` | `40` | Filter stub memorias (short/empty bodies) |
+| `MEMO_RECALL_MIN_PROMPT_CHARS` | `12` | Skip very short prompts |
+| `MEMO_RECALL_BODY_CHARS` | `240` | Snippet length per memoria |
+| `MEMO_RECALL_TOKEN_BUDGET` | `0` | When > 0, pack until ~N tokens; truncate tail |
+| `MEMO_RECALL_PROJECT_BOOST` | `0.15` | Score boost for memorias matching current project |
+| `MEMO_RECALL_SKIP_SLASH` | `1` | Skip recall on `/` prompts |
+| `MEMO_RECALL_DEBUG` | unset | Print failure reasons to stderr |
+
+**Auto-capture** — see also [Capture tuning](#capture-tuning)
+
+| Env var | Default | What |
+|---|---|---|
+| `MEMO_CAPTURE_CONTEXT_TURNS` | `3` | Recent exchanges sent to helper LLM for insight extraction |
+| `MEMO_CAPTURE_COOLDOWN_MIN` | `0` | Min minutes between captures (0 = no cooldown) |
+| `MEMO_CAPTURE_MIN_WORDS` | `15` | Minimum word count for an extracted insight (0 = disabled) |
+| `MEMO_CAPTURE_DEBUG` | unset | Print extraction details to stderr |
+
+**El Briefing** — see also [El Briefing](#el-briefing--session-start-panel)
+
+| Env var | Default | What |
+|---|---|---|
+| `MEMO_BRIEFING_DISABLE` | unset | Set to `1` to skip the briefing panel |
+| `MEMO_BRIEFING_LOOPS_N` | `5` | Open loops to show |
+| `MEMO_BRIEFING_LOOPS_DAYS` | `7` | Recency window for open loops |
+| `MEMO_BRIEFING_DEBUG` | unset | Print failures to stderr |
 
 Resolution precedence (highest first): explicit kwargs → `MEMO_*` env vars → `~/.config/memo/config.toml` → legacy `MEMO_VAULT_PATH` + `MEMO_MEMORY_SUBDIR` (back-compat) → hardcoded defaults.
 
@@ -675,13 +1009,15 @@ A handful of projects sit in the same neighbourhood. They diverge on the things 
 | **LLM/embed location** | local Mac (MLX) | OpenAI/Anthropic/Ollama | Anthropic/OpenAI/Ollama | OpenAI/Ollama/other | hosted | Ollama (`:11434`) | provider-supplied | provider-supplied |
 | **Network in hot path** | **0** | yes (cloud) or `:11434` | yes (LLM API) | yes (LLM API) | always | `:11434` + `:6333` | yes (LLM API) | 0 |
 | **Vector store** | sqlite-vec (one file) | Qdrant / pgvector | Postgres + pgvector | LanceDB / Qdrant / pgvector | hosted | Qdrant (server) | in-memory JSON | SQLite |
-| **External daemons** | **none** | Ollama + Qdrant | Postgres | Postgres / vector DB | none (SaaS) | Ollama + Qdrant | none | none |
+| **External daemons** | **none** (recall daemon is optional, auto-managed) | Ollama + Qdrant | Postgres | Postgres / vector DB | none (SaaS) | Ollama + Qdrant | none | none |
 | **Storage of record** | **markdown files** | DB blob | DB rows | DB rows + graph | hosted DB | markdown files | JSON entity graph | DB rows |
 | **Human-readable / editable** | ✅ open in Obsidian/vim | ❌ | ❌ | ❌ | ❌ | ✅ | partial (JSON dump) | ❌ |
 | **MCP server (stdio)** | ✅ 13 tools | ❌ | ❌ | ❌ | ❌ | ✅ (unregistered) | ✅ (official ref) | ✅ |
 | **Hybrid retrieval** | vec + BM25 + RRF | vec | vec | vec + graph | vec | vec | n/a (entity-based) | vec |
 | **Cross-encoder reranker** | ✅ MLX Qwen3-Reranker | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Ambient recall (zero invoke)** | ✅ Claude Code hooks | ❌ | n/a | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Ambient recall (zero invoke)** | ✅ Claude Code hooks + recall daemon (<200 ms) | ❌ | n/a | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Session briefing + open loops** | ✅ `memo briefing` at `SessionStart` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **2D semantic canvas** | ✅ `memo mapa` (UMAP/PCA + Plotly) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Time-machine (past snapshots)** | ✅ `memo as-of ask --date …` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Apple Silicon optimisation** | ✅ first-class (MLX) | runs, no opt | runs, no opt | runs, no opt | n/a | works | n/a | works |
 | **License** | MIT | Apache-2.0 | Apache-2.0 | Apache-2.0 | proprietary (SaaS) | MIT | MIT | MIT |
@@ -699,7 +1035,7 @@ A handful of projects sit in the same neighbourhood. They diverge on the things 
 
 3. **Hybrid retrieval + cross-encoder reranker out of the box.** memo fuses semantic (vec) and keyword (BM25 over FTS5 with unicode61 + diacritic stripping for Spanish/Portuguese) via RRF, then optionally reranks the top-30 with a Qwen3-Reranker cross-encoder and fuses scores α-weighted. mem0 / letta / supermemory ship vec-only. cognee adds a graph but no cross-encoder. This is the single biggest precision lift for noisy or short queries.
 
-4. **Ambient recall as a first-class feature.** With the bundled Claude Code plugin, `SessionStart` prewarms MLX and `UserPromptSubmit` consults memory on every prompt (5 s budget, top-3 above cosine 0.6, injected as `additionalContext`). The agent sees the right memorias *before* it answers — no `/memo` call from you. No alternative ships this as a turnkey hook bundle.
+4. **Ambient recall + session awareness as a first-class feature.** With the bundled Claude Code plugin, `SessionStart` starts the **recall daemon** (keeps embedder in RAM for <200 ms recall), fires **El Briefing** (open loops, memory of the day, crash recovery), and `UserPromptSubmit` queries the daemon on every prompt (8 s budget, top-3 above cosine 0.6, injected as `additionalContext`). A `Stop` hook extracts insights from every exchange automatically through a quality gate. The agent sees the right memorias *before* it answers, the session starts with a structured recap of where you left off, and the corpus grows without you lifting a finger. No alternative ships this as a turnkey hook bundle.
 
 5. **MCP is a primary interface, not an afterthought.** memo exposes 13 tools over stdio so Claude Code, Cursor, Cline, Continue, Paperclip, and any future MCP client get the same contract on day one. mem0 and letta have no MCP server; mem-vault has one but isn't published in the registry; the official MCP `memory` reference is entity-graph-only and stores in JSON.
 
@@ -733,13 +1069,28 @@ memo's bet is the opposite: a single user, one machine, plain markdown, MLX, and
 Ship-ready today:
 
 - [x] Memory API: save / search / list / get / update / delete / reindex / consolidate / ask / stats
-- [x] CLI: ~28 commands including `doctor`, `migrate-vault`, `backup`, `ingest`, `mine-history`, `watch`
+- [x] CLI: ~32 commands including `doctor`, `migrate-vault`, `backup`, `ingest`, `mine-history`, `watch`, `historia`, `mapa`, `briefing`
 - [x] MCP server (13 tools + `memo://recent` / `memo://memory/{id}` resources)
 - [x] Hybrid search (vec + BM25 + RRF + cross-encoder rerank)
 - [x] Prefix-ID lookup (git-style, ≥4 chars)
-- [x] Ambient recall (Claude Code plugin)
+- [x] Ambient recall (Claude Code plugin — 6 hooks: prewarm, recall-daemon start, briefing, recall-hook, capture-stop, session checkpoint)
+- [x] **El Briefing** — session-start panel: open loops, memory of the day, crash recovery
+- [x] **El Mapa** — 2D semantic canvas via UMAP/PCA + Plotly HTML
+- [x] **Recall daemon** (`memo recall-daemon start|stop|status`) — persistent Unix socket server; <200 ms recall vs 1–2 s subprocess per prompt
+- [x] **Warm-signal + cold-start fallback** — `recall-hook` detects cold start and uses BM25 instead of timing out; never blocks prompt submission
+- [x] **Auto-capture** (`memo capture-stop` Stop hook — extracts insights from each exchange automatically)
+- [x] **Capture quality gate** (`MEMO_CAPTURE_MIN_WORDS`) — filters low-value session summaries before saving
+- [x] **Multi-turn capture context** (`MEMO_CAPTURE_CONTEXT_TURNS`) — richer LLM context for extraction
+- [x] **Capture cooldown** (`MEMO_CAPTURE_COOLDOWN_MIN`) — prevents corpus flooding in long sessions
+- [x] **Relevance decay** (`MEMO_SEARCH_DECAY_HALFLIFE`) — optional recency blend in search ranking
+- [x] **Session snapshots + crash recovery** (`memo session checkpoint` / `memo session recent`)
+- [x] **Record history** (`memo historia <id>`) — chronological audit trail with field diffs
 - [x] **Project-scoped recall** (auto-tag + cwd-based boost)
 - [x] **Token-budget-aware recall** packing
+- [x] **Staleness suppression in recall** (old memories require 1.5× min_sim to surface)
+- [x] **Hook observability** (`memo hook-log`) — per-call mode, via, hits, latency; `--follow` for live tail
+- [x] **Self-update** (`memo self-update`) — detects pipx/uv, upgrades, re-warms models; `--check` for PyPI diff
+- [x] **Model pre-download at install time** (`memo prewarm --download-all`) — installer downloads all models; no silent first-use stall
 - [x] **Transcript miner** (`memo mine-history` over `~/.claude/projects/`)
 - [x] **File-watcher daemon** (`memo watch` / `install-watcher` launchd plist)
 - [x] First-run picker + migration tooling
@@ -750,6 +1101,32 @@ Post-v0:
 - [ ] Entity graph queries over `graph.db`
 - [ ] LLM-driven consolidation / dedup using the 3B helper tier
 - [ ] Multi-hop `ask()` over `[[wikilinks]]`
+- [ ] UMAP install bundled in the pipx/brew formula so `memo mapa` uses it out of the box
+
+## Experimental modules
+
+The following modules ship in the package but are **not** covered by CI, not
+exposed via MCP tools, and may change without notice. They are prototypes for
+future capabilities. See `src/memo/experimental_index.md` for fuller notes.
+
+| Module | What it does |
+|---|---|
+| `multimodal` | Cross-modal semantic search over images, audio, and text |
+| `collaborative` | Shared knowledge graph across multiple users |
+| `cognitive` | Cognitive-state model that biases recall toward current user goals |
+| `federation` | Aggregate search across multiple independent memo vaults |
+| `sharing` | Per-memoria sharing links and permission grants |
+| `encryption` | AES-256-GCM at-rest encryption for sensitive memories |
+| `contradict` | Contradiction and staleness radar with triage workflow |
+| `chunker` | Heading-aware sub-document chunking for long memories |
+| `crossref` | Obsidian `[[wikilink]]` backlink index and multi-hop traversal |
+| `contextual` | Conversation-history-aware recall boosting |
+| `lifecycle` | Archival, promotion, and expiration policies |
+| `navigation` | BFS path finding and community detection on the entity graph |
+| `proactive` | Proactive save suggestions based on conversation patterns |
+| `sync` | Multi-device sync and compressed backups |
+| `versioning` | Per-memoria version history and unified-diff rollback |
+| `agent` | Autonomous ReAct-style reasoning agent over the corpus |
 
 ## Provenance
 

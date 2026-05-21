@@ -1,4 +1,6 @@
-"""Memoria Social Colaborativa con Grafo de Conocimiento Compartido.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Memoria Social Colaborativa con Grafo de Conocimiento Compartido.
 
 Una red neural de memorias compartidas entre múltiples usuarios que aprende
 de las conexiones de todos.

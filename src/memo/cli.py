@@ -81,8 +81,8 @@ def cli(ctx: click.Context) -> None:
 # something invokes them from an interactive shell while debugging).
 _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "init", "doctor", "migrate-vault",
-    "mcp-command", "install-slash", "prewarm", "recall-hook", "capture-stop",
-    "session", "ingest", "historia",
+    "mcp-command", "install-slash", "prewarm", "recall-hook", "recall-daemon",
+    "capture-stop", "session", "ingest", "historia", "briefing", "mapa",
 }
 
 
@@ -318,6 +318,17 @@ def _format_command(args: list[str | Path]) -> str:
     return " ".join(shlex.quote(str(arg)) for arg in args)
 
 
+def _mcp_server_json(memo_mcp: Path, env: dict[str, str], *, include_type: bool) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "command": str(memo_mcp),
+        "args": [],
+        "env": env,
+    }
+    if include_type:
+        config = {"type": "stdio", **config}
+    return config
+
+
 def _agent_asset_root(repo: Path | None = None) -> Path:
     candidates = [_safe_resolve(repo)] if repo else [
         _safe_resolve(Path.cwd()),
@@ -387,18 +398,51 @@ def _mcp_add_command(client: str, memo_mcp: Path, env: dict[str, str]) -> list[s
             "devin", "mcp", "add", "-s", "user",
             *_env_flags("devin", env), "memo", "--", memo_mcp,
         ]
-    mcp_json = json.dumps(
-        {
-            "type": "stdio",
-            "command": str(memo_mcp),
-            "args": [],
-            "env": env,
-        },
-        separators=(",", ":"),
-    )
+    mcp_json = json.dumps(_mcp_server_json(memo_mcp, env, include_type=True), separators=(",", ":"))
     return [
         "claude", "mcp", "add-json", "-s", "user", "memo", mcp_json,
     ]
+
+
+def _windsurf_mcp_config_path() -> Path:
+    raw = os.environ.get("WINDSURF_MCP_CONFIG")
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".codeium" / "windsurf" / "mcp_config.json"
+
+
+def _install_windsurf_mcp(memo_mcp: Path, env: dict[str, str], *, dry_run: bool) -> None:
+    path = _windsurf_mcp_config_path()
+    server_config = _mcp_server_json(memo_mcp, env, include_type=False)
+    if dry_run:
+        console.print(
+            f"[dim]write {path}  # mcpServers.memo = "
+            f"{json.dumps(server_config, ensure_ascii=False, separators=(',', ':'))}[/dim]"
+        )
+        return
+
+    data: dict[str, Any]
+    if path.is_file() and path.read_text(encoding="utf-8").strip():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(
+                f"Windsurf MCP config is not valid JSON: {path} ({exc})"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise click.ClickException(f"Windsurf MCP config must be a JSON object: {path}")
+        data = loaded
+    else:
+        data = {}
+
+    servers = data.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise click.ClickException(f"`mcpServers` must be a JSON object in {path}")
+    servers["memo"] = server_config
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    console.print(f"[green]✓[/green] wrote Windsurf MCP config: {path}")
 
 
 def _codex_home() -> Path:
@@ -1199,10 +1243,7 @@ def lint(category: str | None, limit: int, as_json: bool) -> None:
             console.print(f"  · …and {n - limit} more")
 
 
-@cli.command()
-@click.option("--out", "out_path", default=None, type=click.Path(),
-              help="Output zip path. Default: ./memo-backup-<YYYYMMDD-HHMMSS>.zip")
-def backup(out_path: str | None) -> None:
+def _portable_backup(out_path: str | None) -> None:
     """Snapshot memory dir + sqlite-vec DB + history DB into a zip.
 
     Use before risky operations (mass migration, embedder swap, schema
@@ -1450,7 +1491,7 @@ def doctor(do_gc: bool, fix: bool, strict_runtime: bool) -> None:
 @cli.command(name="mcp-command")
 @click.option(
     "--client",
-    type=click.Choice(["claude-code", "claude-desktop", "codex", "devin", "json"]),
+    type=click.Choice(["claude-code", "claude-desktop", "codex", "devin", "windsurf", "json"]),
     default="claude-code",
     show_default=True,
     help="Emit a client-specific MCP registration command or raw JSON config.",
@@ -1473,23 +1514,21 @@ def mcp_command(client: str) -> None:
     if client == "json":
         click.echo(json.dumps({
             "mcpServers": {
-                "memo": {
-                    "type": "stdio",
-                    "command": str(memo_mcp),
-                    "args": [],
-                    "env": env,
-                },
+                "memo": _mcp_server_json(memo_mcp, env, include_type=True),
             },
         }, ensure_ascii=False, indent=2))
         return
     if client == "claude-desktop":
         click.echo(json.dumps({
             "mcpServers": {
-                "memo": {
-                    "command": str(memo_mcp),
-                    "args": [],
-                    "env": env,
-                },
+                "memo": _mcp_server_json(memo_mcp, env, include_type=False),
+            },
+        }, ensure_ascii=False, indent=2))
+        return
+    if client == "windsurf":
+        click.echo(json.dumps({
+            "mcpServers": {
+                "memo": _mcp_server_json(memo_mcp, env, include_type=False),
             },
         }, ensure_ascii=False, indent=2))
         return
@@ -1507,8 +1546,8 @@ def mcp_command(client: str) -> None:
     "--client",
     "clients",
     multiple=True,
-    type=click.Choice(["all", "claude-code", "codex", "devin"]),
-    help="Client to configure. Repeatable. Defaults to all supported slash clients.",
+    type=click.Choice(["all", "claude-code", "codex", "devin", "windsurf"]),
+    help="Client to configure. Repeatable. Defaults to all supported agent clients.",
 )
 @click.option(
     "--repo",
@@ -1516,7 +1555,17 @@ def mcp_command(client: str) -> None:
     help="Path to the memo checkout containing plugin/skill assets.",
 )
 @click.option("--dry-run", is_flag=True, help="Print the commands without changing configs.")
-def install_slash(clients: tuple[str, ...], repo: Path | None, dry_run: bool) -> None:
+@click.option(
+    "--best-effort",
+    is_flag=True,
+    help="Warn and continue if a client CLI is missing or rejects configuration.",
+)
+def install_slash(
+    clients: tuple[str, ...],
+    repo: Path | None,
+    dry_run: bool,
+    best_effort: bool,
+) -> None:
     """Install the `/memo` skill/plugin assets for supported agent CLIs.
 
     This configures the client-specific skill/plugin assets and an MCP server
@@ -1527,9 +1576,10 @@ def install_slash(clients: tuple[str, ...], repo: Path | None, dry_run: bool) ->
     selected = set(clients or ("all",))
     if "all" in selected:
         selected.remove("all")
-        selected.update({"claude-code", "codex", "devin"})
+        selected.update({"claude-code", "codex", "devin", "windsurf"})
 
-    root = _agent_asset_root(repo)
+    needs_assets = bool(selected & {"claude-code", "codex", "devin"})
+    root = _agent_asset_root(repo) if needs_assets else None
     memo_mcp = _resolved_memo_mcp()
     if memo_mcp is None:
         raise click.ClickException(
@@ -1538,7 +1588,19 @@ def install_slash(clients: tuple[str, ...], repo: Path | None, dry_run: bool) ->
         )
     env = _mcp_server_env()
 
-    if "codex" in selected:
+    failures: list[str] = []
+
+    def run_client(label: str, fn) -> None:
+        try:
+            fn()
+        except click.ClickException as exc:
+            if not best_effort:
+                raise
+            failures.append(label)
+            console.print(f"[yellow]![/yellow] {label}: {exc.message}")
+
+    def install_codex() -> None:
+        assert root is not None
         console.print("[bold]Codex[/bold]")
         _copy_slash_skill(
             root,
@@ -1558,7 +1620,8 @@ def install_slash(clients: tuple[str, ...], repo: Path | None, dry_run: bool) ->
             "but `/memo` may not appear in that menu."
         )
 
-    if "claude-code" in selected:
+    def install_claude_code() -> None:
+        assert root is not None
         console.print("[bold]Claude Code[/bold]")
         _run_agent_command(
             ["claude", "plugin", "marketplace", "add", root],
@@ -1577,7 +1640,8 @@ def install_slash(clients: tuple[str, ...], repo: Path | None, dry_run: bool) ->
         )
         _run_agent_command(_mcp_add_command("claude-code", memo_mcp, env), dry_run=dry_run)
 
-    if "devin" in selected:
+    def install_devin() -> None:
+        assert root is not None
         console.print("[bold]Devin[/bold]")
         _copy_slash_skill(
             root,
@@ -1591,7 +1655,31 @@ def install_slash(clients: tuple[str, ...], repo: Path | None, dry_run: bool) ->
         )
         _run_agent_command(_mcp_add_command("devin", memo_mcp, env), dry_run=dry_run)
 
-    console.print("[green]✓[/green] memo agent install complete. Open a new agent session to reload.")
+    def install_windsurf() -> None:
+        console.print("[bold]Windsurf[/bold]")
+        _install_windsurf_mcp(memo_mcp, env, dry_run=dry_run)
+        console.print("[dim]Refresh MCP servers in Windsurf Cascade after editing config.[/dim]")
+
+    if "codex" in selected:
+        run_client("Codex", install_codex)
+    if "claude-code" in selected:
+        run_client("Claude Code", install_claude_code)
+    if "devin" in selected:
+        run_client("Devin", install_devin)
+    if "windsurf" in selected:
+        run_client("Windsurf", install_windsurf)
+
+    if failures:
+        console.print(
+            "[yellow]![/yellow] memo agent install finished with skipped clients: "
+            + ", ".join(failures)
+        )
+        console.print(
+            "[dim]Install those clients, then rerun: "
+            "memo install-slash --client claude-code --client codex --client windsurf[/dim]"
+        )
+    else:
+        console.print("[green]✓[/green] memo agent install complete. Open a new agent session to reload.")
 
 
 # ── Ambient memory hooks (v0.3.0) ──────────────────────────────────────────
@@ -1679,6 +1767,30 @@ def recall_hook() -> None:
         _bail("slash command, skip recall")
         return
 
+    # Fast path: try the recall daemon socket first (<200 ms when running).
+    # If the socket is not there or the connection fails, fall through to
+    # the regular in-process search below. The daemon returns the same JSON
+    # format as the subprocess path, so we can print-and-exit immediately.
+    _t0 = time.time()
+    try:
+        from memo.recall_server import connect_and_recall
+        _daemon_result = connect_and_recall(
+            Config.from_env().state_dir,
+            prompt=prompt,
+            cwd=payload.get("cwd"),
+            timeout=1.0,
+        )
+        if _daemon_result is not None:
+            _latency_ms = int((time.time() - _t0) * 1000)
+            if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+                print(f"# memo recall-hook: daemon hit ({_latency_ms} ms)", file=_sys.stderr)
+            # Log to recall.log (daemon path already logs internally, but
+            # update the 'via' field for hook-log observability)
+            print(_daemon_result)
+            _sys.exit(0)
+    except Exception:
+        pass
+
     top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
     min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.6"))
     body_chars = int(os.environ.get("MEMO_RECALL_BODY_CHARS", "240"))
@@ -1717,6 +1829,26 @@ def recall_hook() -> None:
             "MEMO_RERANK_INPUT_K",
             os.environ.get("MEMO_RECALL_RERANK_INPUT_K", "10"),
         )
+
+    # Warm-signal check: if prewarm hasn't run recently and the requested
+    # mode needs the embedder, downgrade to bm25 to avoid cold-load timeout.
+    # The signal file is written by `memo prewarm` after a successful warm.
+    # A missing or >60 min old file means the Mac just woke / first boot.
+    if mode in ("vec", "hybrid") and os.environ.get("MEMO_RECALL_FORCE_MODE") != "1":
+        try:
+            import time as _time_mod
+            _signal = Config.from_env().state_dir / ".prewarm_ts"
+            _warm = (
+                _signal.exists()
+                and (_time_mod.time() - float(_signal.read_text().strip())) < 3600
+            )
+            if not _warm:
+                if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+                    print("# memo recall-hook: cold start — downgrading to bm25", file=_sys.stderr)
+                mode = "bm25"
+        except Exception:
+            pass
+
     # Widen the pool when a project boost is active — we need enough
     # candidates so that off-project hits can be re-ranked below
     # on-project ones without starving the final top_k.
@@ -1738,10 +1870,8 @@ def recall_hook() -> None:
 
     # Apply project boost — additive on the raw score, then re-sort.
     if project_tag:
-        for h in hits:
-            if h.score is not None and project_tag in (h.tags or []):
-                h.score = h.score + project_boost
-        hits.sort(key=lambda h: (h.score or 0.0), reverse=True)
+        from memo.recall_server import _apply_project_boost
+        hits = _apply_project_boost(hits, project_tag, project_boost)
     # Trim back to top_k after boost-aware re-sort.
     hits = hits[:top_k]
 
@@ -1794,12 +1924,16 @@ def recall_hook() -> None:
     # Telemetry: append every recall (with or without hits) to the
     # JSONL ring buffer consumed by `memo tui`. Best-effort; failures
     # are swallowed inside the helper.
+    _latency_ms_subprocess = int((time.time() - _t0) * 1000)
     try:
         from memo.dashboard import append_recall_log
         append_recall_log(
             Config.from_env().state_dir,
             prompt=prompt,
             hits=[{"id": h.id, "score": h.score, "title": h.title} for h in relevant],
+            mode=mode,
+            latency_ms=_latency_ms_subprocess,
+            via="subprocess",
         )
     except Exception:
         pass
@@ -1876,6 +2010,109 @@ def recall_hook() -> None:
     }
     print(_json.dumps(output, ensure_ascii=False))
     _sys.exit(0)
+
+
+# ── Recall daemon — persistent socket server for low-latency recall ──────────
+
+
+@cli.group(name="recall-daemon")
+def recall_daemon_group() -> None:
+    """Manage the persistent recall daemon (fast socket-based recall).
+
+    The daemon keeps the MLX embedder in RAM so recall-hook answers in
+    <200 ms instead of 1-2 s per prompt (cold Python + MLX load).
+
+    Subcommands: start, stop, status, (internal) _serve.
+    """
+
+
+@recall_daemon_group.command(name="start")
+def recall_daemon_start() -> None:
+    """Start the recall daemon in the background."""
+    import subprocess as _subprocess
+
+    from memo.config import Config
+    from memo.recall_server import _is_pid_alive, _read_pid, _socket_path
+
+    cfg = Config.from_env()
+    pid = _read_pid(cfg.state_dir)
+    if pid is not None and _is_pid_alive(pid):
+        console.print(f"[dim]recall daemon already running (pid={pid})[/dim]")
+        return
+
+    log_dir = Path.home() / "Library" / "Logs" / "memo"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "recall-daemon.log"
+
+    env = os.environ.copy()
+    env["MEMO_NONINTERACTIVE"] = "1"
+
+    with open(log_file, "a") as lf:
+        proc = _subprocess.Popen(
+            [sys.executable, "-m", "memo.cli", "recall-daemon", "_serve"],
+            stdout=lf,
+            stderr=lf,
+            stdin=_subprocess.DEVNULL,  # don't inherit hook stdin pipe
+            start_new_session=True,
+            env=env,
+        )
+
+    # Wait briefly for the socket to appear
+    sock_path = _socket_path(cfg.state_dir)
+    for _ in range(20):
+        time.sleep(0.1)
+        if sock_path.exists():
+            break
+
+    click.echo(f"recall daemon started (pid={proc.pid})", err=True)
+
+
+@recall_daemon_group.command(name="stop")
+def recall_daemon_stop() -> None:
+    """Stop the recall daemon (sends SIGTERM)."""
+    import signal as _signal
+
+    from memo.config import Config
+    from memo.recall_server import _cleanup, _is_pid_alive, _read_pid
+
+    cfg = Config.from_env()
+    pid = _read_pid(cfg.state_dir)
+    if pid is None:
+        console.print("[dim]recall daemon not running (no PID file)[/dim]")
+        return
+    if not _is_pid_alive(pid):
+        console.print("[dim]recall daemon not running (stale PID file)[/dim]")
+        _cleanup(cfg.state_dir)
+        return
+    try:
+        os.kill(pid, _signal.SIGTERM)
+        console.print(f"recall daemon stopped (pid={pid})")
+    except ProcessLookupError:
+        console.print("[dim]recall daemon already gone[/dim]")
+    _cleanup(cfg.state_dir)
+
+
+@recall_daemon_group.command(name="status")
+def recall_daemon_status() -> None:
+    """Print whether the recall daemon is running."""
+    from memo.config import Config
+    from memo.recall_server import _is_pid_alive, _read_pid, _socket_path
+
+    cfg = Config.from_env()
+    pid = _read_pid(cfg.state_dir)
+    sock = _socket_path(cfg.state_dir)
+
+    if pid is not None and _is_pid_alive(pid):
+        console.print(f"[green]running[/green] pid={pid}  socket={sock}")
+    else:
+        console.print(f"[red]stopped[/red]  socket={sock}")
+
+
+@recall_daemon_group.command(name="_serve", hidden=True)
+def recall_daemon_serve() -> None:
+    """Internal: run the daemon in the foreground (called by 'start')."""
+    from memo.recall_server import run_server
+    run_server()
 
 
 @cli.group(name="as-of")
@@ -2186,6 +2423,194 @@ def tui(refresh: float, no_clear: bool) -> None:
     from memo.dashboard import run_tui
 
     run_tui(refresh=refresh, no_clear=no_clear)
+
+
+@cli.command(name="hook-log")
+@click.option("--limit", default=20, type=int, show_default=True,
+              help="Number of recent entries to show.")
+@click.option("--follow", is_flag=True,
+              help="Tail the log file (like tail -f). Ctrl+C to stop.")
+def hook_log(limit: int, follow: bool) -> None:
+    """Show recent recall-hook activity.
+
+    Reads the recall log written by `memo recall-hook` and prints the
+    last N entries with timestamp, mode (vec/bm25/daemon), hit count,
+    and latency. Use --follow to stream new entries as they arrive.
+
+    \b
+    Fields printed per entry:
+      ts       — ISO timestamp of the recall
+      mode     — vec / bm25 / daemon (how the search ran)
+      hits     — number of memorias injected
+      latency  — round-trip latency if logged
+      via      — subprocess or daemon
+    """
+    from memo.dashboard import read_recall_log
+
+    cfg = Config.from_env()
+    state_dir = cfg.state_dir
+
+    def _fmt_entry(e: dict) -> str:
+        ts = (e.get("ts") or "")[:19].replace("T", " ")
+        mode_val = e.get("mode") or "—"
+        via_val = e.get("via") or "—"
+        hits_list = e.get("hits") or []
+        n_hits = len(hits_list)
+        latency = e.get("latency_ms")
+        latency_str = f"{latency} ms" if latency is not None else "—"
+        prompt = (e.get("prompt") or "").replace("\n", " ")[:60]
+        return (
+            f"[dim]{ts}[/dim]  "
+            f"mode=[cyan]{mode_val}[/cyan]  "
+            f"via=[yellow]{via_val}[/yellow]  "
+            f"hits=[bold]{n_hits}[/bold]  "
+            f"latency=[magenta]{latency_str}[/magenta]  "
+            f"[dim]\"{prompt}\"[/dim]"
+        )
+
+    if not follow:
+        entries = read_recall_log(state_dir, limit=limit)
+        if not entries:
+            console.print("[dim](no recall log entries yet)[/dim]")
+            return
+        # entries is newest-first; print oldest-first for readability
+        for e in reversed(entries):
+            console.print(_fmt_entry(e))
+        return
+
+    # --follow: tail the log file
+    from memo.dashboard import recall_log_path
+    log_path = recall_log_path(state_dir)
+    console.print(f"[dim]tailing {log_path} … Ctrl+C to stop[/dim]")
+
+    # Seek to end, then loop
+    last_pos = log_path.stat().st_size if log_path.exists() else 0
+    try:
+        while True:
+            if log_path.exists():
+                new_size = log_path.stat().st_size
+                if new_size < last_pos:
+                    # File was rotated (truncated and rewritten) — reset position
+                    last_pos = 0
+                if new_size > last_pos:
+                    with log_path.open("r", encoding="utf-8") as f:
+                        f.seek(last_pos)
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                e = json.loads(line)
+                                console.print(_fmt_entry(e))
+                            except json.JSONDecodeError:
+                                pass
+                    last_pos = new_size
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+
+
+@cli.command(name="self-update")
+@click.option("--check", is_flag=True, help="Check for a newer version without installing.")
+def self_update(check: bool) -> None:
+    """Update memo to the latest version.
+
+    Runs `pipx upgrade mlx-memo` (or the equivalent for the active install
+    method) then re-warms the MLX models. Use --check to see if an update
+    is available without installing.
+
+    Detects the active install method (pipx or uv tool) automatically.
+    If memo was installed via the curl installer or another method, prints
+    instructions to re-run the installer.
+    """
+    import importlib.metadata
+    import urllib.error
+    import urllib.request
+
+    current_version = importlib.metadata.version("mlx-memo")
+    console.print(f"[dim]current version:[/dim] {current_version}")
+
+    # Fetch latest version from PyPI
+    try:
+        url = "https://pypi.org/pypi/mlx-memo/json"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        latest_version = data["info"]["version"]
+    except (urllib.error.URLError, KeyError, json.JSONDecodeError, OSError) as exc:
+        console.print(f"[red]Could not fetch PyPI version:[/red] {exc}")
+        if check:
+            return
+        latest_version = None
+
+    if latest_version:
+        console.print(f"[dim]latest version:[/dim]  {latest_version}")
+        if current_version == latest_version:
+            console.print("[green]memo is already up to date.[/green]")
+            if check:
+                return
+        else:
+            console.print(
+                f"[yellow]Update available:[/yellow] {current_version} → {latest_version}"
+            )
+            if check:
+                return
+
+    # Detect install method and upgrade
+    installed_via: str | None = None
+
+    # Check pipx
+    try:
+        res = subprocess.run(
+            ["pipx", "list", "--short"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if "mlx-memo" in res.stdout:
+            installed_via = "pipx"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Check uv tool
+    if installed_via is None:
+        try:
+            res = subprocess.run(
+                ["uv", "tool", "list"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if "mlx-memo" in res.stdout:
+                installed_via = "uv"
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    if installed_via == "pipx":
+        console.print("[dim]Upgrading via pipx…[/dim]")
+        result = subprocess.run(["pipx", "upgrade", "mlx-memo"], check=False)
+        if result.returncode != 0:
+            raise click.ClickException("pipx upgrade failed.")
+    elif installed_via == "uv":
+        console.print("[dim]Upgrading via uv tool…[/dim]")
+        result = subprocess.run(["uv", "tool", "upgrade", "mlx-memo"], check=False)
+        if result.returncode != 0:
+            raise click.ClickException("uv tool upgrade failed.")
+    else:
+        console.print(
+            "[yellow]Could not detect install method (pipx/uv).[/yellow]\n"
+            "Re-run the installer:\n"
+            "  curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash\n"
+            "or:\n"
+            "  pipx install --force mlx-memo\n"
+            "  uv tool install --force mlx-memo"
+        )
+        return
+
+    console.print("[green]✓[/green] upgrade complete. Pre-warming MLX models…")
+    import shutil as _shutil
+    memo_bin = _shutil.which("memo") or sys.executable
+    _prewarm_cmd = (
+        [memo_bin, "prewarm", "--download-all"]
+        if memo_bin.endswith("memo")
+        else [memo_bin, "-m", "memo.cli", "prewarm", "--download-all"]
+    )
+    subprocess.run(_prewarm_cmd, check=False)
 
 
 @cli.command(name="watch")
@@ -2766,19 +3191,31 @@ def capture_stop() -> None:
 
 
 @cli.command(name="prewarm")
-def prewarm() -> None:
+@click.option(
+    "--download-all",
+    "download_all",
+    is_flag=True,
+    default=False,
+    help="Also pre-download the chat LLM models (7B + 3B helper). Used by the installer.",
+)
+def prewarm(download_all: bool) -> None:
     """SessionStart hook — pre-load the MLX embedder so first recall is fast.
 
-    Loads the embedder model into memory + warms the lazy `mlx_lm.load()`
-    path. Subsequent `recall-hook` calls in the session benefit from the
-    OS file cache (the model weights stay in RAM-backed disk cache for
-    minutes after a load), shaving cold-load latency from ~2s to ~500ms.
+    Loads the embedder + optional reranker into memory so subsequent
+    recall-hook calls benefit from the OS file cache (cold-load drops
+    from ~2 s to ~500 ms). Writes a warm-signal file so the recall-hook
+    can detect a cold start and fall back to BM25 instead of timing out.
 
-    Designed to be invoked async at SessionStart so the user doesn't see
-    the delay. Failures are silent (the recall-hook will just be slower).
+    With --download-all, also pre-downloads the chat LLM models (7B + 3B)
+    so the first `memo ask` doesn't stall on a multi-GB download. Designed
+    to be called by the installer immediately after `pipx install`.
+
+    Failures are silent when run as a hook — a hook crash must never block
+    Claude Code's prompt submission.
     """
     import os
     import sys as _sys
+    import time as _time
 
     if os.environ.get("MEMO_RECALL_DISABLE") == "1":
         _sys.exit(0)
@@ -2794,6 +3231,23 @@ def prewarm() -> None:
             from memo.reranker import MLXReranker
             r = MLXReranker(model_path=cfg.reranker_model)
             r.warmup()
+        # Write warm-signal so recall-hook knows disk cache is fresh.
+        # The file's mtime is the only datum read by recall-hook.
+        cfg.state_dir.mkdir(parents=True, exist_ok=True)
+        warm_signal = cfg.state_dir / ".prewarm_ts"
+        warm_signal.write_text(str(_time.time()))
+        if download_all:
+            # Pre-download the chat models so the first `memo ask` doesn't
+            # stall. snapshot_download is a no-op when the model is already
+            # cached, so re-running this is safe.
+            try:
+                from huggingface_hub import snapshot_download
+                for repo in (cfg.llm_model, cfg.helper_model):
+                    click.echo(f"[memo] downloading {repo}…")
+                    snapshot_download(repo_id=repo)
+                    click.echo(f"[memo] ready: {repo}")
+            except Exception as dl_exc:
+                click.echo(f"[memo] chat model download failed: {dl_exc}", err=True)
     except Exception as exc:
         if os.environ.get("MEMO_RECALL_DEBUG") == "1":
             print(f"# memo prewarm failed: {exc}", file=_sys.stderr)
@@ -2862,6 +3316,7 @@ def session_checkpoint(
     sid = session_id or payload.get("session_id")
     cwd_resolved = cwd or payload.get("cwd") or _os.getcwd()
     transcript = transcript_path or payload.get("transcript_path")
+    prompt_text = payload.get("prompt")  # present in UserPromptSubmit events
 
     if not sid:
         # Without a session_id we can't key the snapshot. Fail silently
@@ -2880,6 +3335,7 @@ def session_checkpoint(
             session_id=sid,
             cwd=cwd_resolved,
             transcript_path=transcript,
+            prompt=prompt_text,
             lru_cap=lru_cap,
         )
     except Exception as exc:
@@ -2891,6 +3347,147 @@ def session_checkpoint(
 
     if as_json:
         click.echo(_json.dumps(snap, ensure_ascii=False, indent=2))
+
+
+@session_group.command(name="autosave")
+@click.option("--threshold-kb", default=1024, type=int, show_default=True,
+              help="Transcript size (KB) that triggers an autosave.")
+@click.option("--cooldown", default=300, type=int, show_default=True,
+              help="Minimum seconds between autosaves for the same session.")
+def session_autosave(threshold_kb: int, cooldown: int) -> None:
+    """UserPromptSubmit hook — proactive save when context approaches limits.
+
+    Stats the transcript file (fast, O(1)). If it exceeds threshold_kb
+    and the per-session cooldown has elapsed, spawns ``memo capture-stop``
+    in a detached background process and emits an additionalContext warning.
+
+    Always exits 0 — never blocks the prompt.
+    """
+    import json as _json
+    import os as _os
+    import subprocess as _sp
+    import sys as _sys
+
+    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+        print("{}")
+        _sys.exit(0)
+
+    payload: dict[str, Any] = {}
+    if not _sys.stdin.isatty():
+        try:
+            raw = _sys.stdin.read()
+            if raw.strip():
+                payload = _json.loads(raw)
+        except _json.JSONDecodeError:
+            payload = {}
+
+    sid = payload.get("session_id")
+    transcript = payload.get("transcript_path")
+    cwd = payload.get("cwd") or _os.getcwd()
+
+    if not sid or not transcript:
+        print("{}")
+        _sys.exit(0)
+
+    try:
+        from memo.session import check_autosave, mark_autosaved
+        cfg = Config.from_env()
+        should_save, size_kb = check_autosave(
+            cfg.state_dir,
+            session_id=sid,
+            transcript_path=transcript,
+            threshold_kb=threshold_kb,
+            cooldown_secs=cooldown,
+        )
+    except Exception as exc:
+        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+            print(f"# session autosave check failed: {exc}", file=_sys.stderr)
+        print("{}")
+        _sys.exit(0)
+
+    if not should_save:
+        print("{}")
+        _sys.exit(0)
+
+    # Spawn capture-stop detached, passing the hook payload via stdin.
+    try:
+        env = {**_os.environ, "MEMO_NONINTERACTIVE": "1"}
+        capture_payload = _json.dumps({
+            "session_id": sid,
+            "transcript_path": transcript,
+            "cwd": cwd,
+        }).encode()
+        proc = _sp.Popen(
+            ["memo", "capture-stop"],
+            stdin=_sp.PIPE,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            start_new_session=True,
+            env=env,
+            cwd=cwd,
+        )
+        proc.stdin.write(capture_payload)
+        proc.stdin.close()
+        mark_autosaved(cfg.state_dir, sid)
+    except Exception as exc:
+        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+            print(f"# session autosave spawn failed: {exc}", file=_sys.stderr)
+        print("{}")
+        _sys.exit(0)
+
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": (
+                "## ⚠️ Snapshot automático\n\n"
+                f"El transcript de esta sesión supera los {size_kb} KB "
+                f"(umbral: {threshold_kb} KB) — contexto próximo al límite. "
+                "Lancé `memo capture-stop` en segundo plano para preservar "
+                "los insights más importantes. Podés continuar con normalidad; "
+                "si hay compactación automática, lo esencial ya está en memo.\n"
+            ),
+        }
+    }
+    print(_json.dumps(output, ensure_ascii=False))
+
+
+@session_group.command(name="refresh-summary")
+def session_refresh_summary() -> None:
+    """Stop hook entrypoint — generate/update running_summary for the active session.
+
+    Reads the Stop hook payload from stdin, runs the 3B LLM helper to
+    summarize the session arc, and stores it in the snapshot. Throttled:
+    skips if fewer than 3 new turns since the last summary. Always exits 0.
+    """
+    import json as _json
+    import os as _os
+    import sys as _sys
+
+    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+        _sys.exit(0)
+
+    payload: dict[str, Any] = {}
+    if not _sys.stdin.isatty():
+        try:
+            raw = _sys.stdin.read()
+            if raw.strip():
+                payload = _json.loads(raw)
+        except _json.JSONDecodeError:
+            payload = {}
+
+    sid = payload.get("session_id")
+    if not sid:
+        _sys.exit(0)
+
+    try:
+        from memo.session import refresh_summary as _refresh_summary
+        cfg = Config.from_env()
+        cfg.ensure_dirs()
+        _refresh_summary(cfg.state_dir, sid)
+    except Exception as exc:
+        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+            print(f"# memo session refresh-summary failed: {exc}", file=_sys.stderr)
+    _sys.exit(0)
 
 
 @cli.command(name="resume")
@@ -3048,48 +3645,72 @@ def session_recent(limit: int) -> None:
         print("{}")
         _sys.exit(0)
 
-    # Highlight the most recent session for the current cwd. The whole
-    # point of the picker is crash recovery: if Claude Code died and
-    # the user reopened the terminal in the same project, the first
-    # signal they want is "you crashed in <X>, retomar con <comando>".
     from pathlib import Path as _Path
     cur_cwd = str(_Path(_os.getcwd()).resolve())
     same_cwd = [r for r in rows if (r.get("cwd") or "") == cur_cwd]
     top = same_cwd[0] if same_cwd else None
 
-    lines: list[str] = ["## Sesiones recientes (memo)", ""]
+    lines: list[str] = []
 
     if top:
         sid = top.get("session_id") or ""
         when = format_relative(top.get("updated"))
+        branch = top.get("branch") or "—"
+        turns = top.get("turn_count") or 0
+        # Prefer running_summary (LLM-generated arc) over plain last_user_msg.
+        running_summary = top.get("running_summary")
         summary = (
             top.get("summary") or top.get("last_user_msg") or "—"
         ).replace("\n", " ")[:120]
-        lines.append(f"**Última en este proyecto** ({when}): {summary}")
-        lines.append("")
-        lines.append("```")
-        lines.append(f"claude --resume {sid}")
-        lines.append("```")
-        lines.append("")
+        lines.extend([
+            "## Sesión anterior detectada — ¿continuar?",
+            "",
+            f"Había una sesión activa en este directorio ({when}):",
+            f"- **Resumen**: {summary}",
+            f"- **Branch**: `{branch}`  |  **Turnos**: {turns}",
+            f"- **Para retomar** (en una nueva terminal): `claude --resume {sid}`",
+            "",
+        ])
+        if running_summary:
+            lines.extend([
+                "### El Briefing",
+                "",
+                running_summary.strip(),
+                "",
+            ])
+        prompt_trail = top.get("prompt_trail") or []
+        if prompt_trail:
+            lines.append("### Loops abiertos (últimos 7 días)")
+            lines.append("")
+            for i, p in enumerate(reversed(prompt_trail[-3:]), 1):
+                lines.append(f"{i}. {p.strip()}")
+            lines.append("")
+        lines.extend([
+            "> **Acción**: Al iniciar esta conversación, pregunta al usuario si quiere "
+            "retomar la sesión anterior (ejecutando el comando de arriba en la terminal) "
+            "o continuar con esta sesión nueva.",
+            "",
+        ])
 
-    lines.extend([
-        "| # | cuándo | proyecto | branch | resumen | session_id |",
-        "|---|--------|----------|--------|---------|------------|",
-    ])
-    for i, r in enumerate(rows, start=1):
-        summary = (r.get("summary") or r.get("last_user_msg") or "—").replace("|", "·").replace("\n", " ")
-        lines.append(
-            f"| {i} | {format_relative(r.get('updated'))} | "
-            f"{(r.get('project') or '—')[:20]} | "
-            f"{(r.get('branch') or '—')[:16]} | "
-            f"{summary[:60]} | "
-            f"`{r.get('session_id') or ''}` |"
-        )
-    lines.append("")
-    lines.append(
-        "_Para detalle: `memo resume <id|prefix>`. "
-        "Para retomar otra: `claude --resume <session_id>`._"
-    )
+    if len(rows) > (1 if top else 0):
+        others = [r for r in rows if r is not top][:5]
+        lines.extend([
+            "### Otras sesiones recientes",
+            "",
+            "| cuándo | proyecto | branch | resumen | id |",
+            "|--------|----------|--------|---------|----|",
+        ])
+        for r in others:
+            s = (r.get("summary") or r.get("last_user_msg") or "—").replace("|", "·").replace("\n", " ")
+            lines.append(
+                f"| {format_relative(r.get('updated'))} | "
+                f"{(r.get('project') or '—')[:18]} | "
+                f"{(r.get('branch') or '—')[:14]} | "
+                f"{s[:55]} | "
+                f"`{(r.get('session_id') or '')[:8]}` |"
+            )
+        lines.append("")
+        lines.append("_`memo resume <id>` para ver detalles. `claude --resume <id>` para retomar._")
 
     output = {
         "hookSpecificOutput": {
@@ -3130,64 +3751,106 @@ _WRAPPER_SNIPPET_ZSH = r"""# >>> memo session-resume wrapper >>>
 # to:   MEMO_CLAUDE_EXTRA_ARGS=(--flag1 --flag2)
 # Those flags are forwarded to every `command claude` invocation.
 
+# ISO-8601 → relative string (macOS date -j).
+_memo_reltime() {
+    local iso="${1:0:19}" then now diff
+    then=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$iso" "+%s" 2>/dev/null) || { echo "?"; return; }
+    now=$(date +%s); diff=$(( now - then ))
+    (( diff < 60    )) && { echo "ahora"; return; }
+    (( diff < 3600  )) && { printf "hace %dm" $(( diff/60   )); return; }
+    (( diff < 86400 )) && { printf "hace %dh" $(( diff/3600 )); return; }
+                           printf "hace %dd"  $(( diff/86400 ))
+}
+
+# One │ padded-content │ row. Reads _CW, C, R from caller scope (dynamic).
+_memo_bl() {
+    local padded
+    padded=$(printf "%-${_CW}s" "${1:0:${_CW}}")
+    printf "  ${C}│${R} ${2:-}${padded}${R} ${C}│${R}\n"
+}
+
 function claude() {
     local extra_args=("${MEMO_CLAUDE_EXTRA_ARGS[@]}")
 
-    # 1. Args present → pass-through, no prompt (covers `claude --resume X`,
-    #    `claude -p "..."`, `claude --help`, etc.).
-    if (( $# > 0 )); then
-        command claude "${extra_args[@]}" "$@"
-        return
-    fi
-    # 2. Stdin not a TTY → can't prompt safely.
-    if [[ ! -t 0 ]]; then
-        command claude "${extra_args[@]}"
-        return
-    fi
-    # 3. Required tools missing → degrade silently.
-    if ! command -v memo >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-        command claude "${extra_args[@]}"
-        return
-    fi
-    # 4. Ask memo what's recent for this cwd.
+    # Pass-through: args present, stdin not a TTY, or required tools missing.
+    (( $# > 0 ))  && { command claude "${extra_args[@]}" "$@"; return; }
+    [[ ! -t 0 ]] && { command claude "${extra_args[@]}"; return; }
+    { command -v memo && command -v jq; } >/dev/null 2>&1 \
+        || { command claude "${extra_args[@]}"; return; }
+
     local raw count
     raw=$(memo resume --json --limit 5 --cwd "$PWD" 2>/dev/null) || raw=""
-    if [[ -z "$raw" ]]; then
-        command claude "${extra_args[@]}"
-        return
-    fi
-    count=$(echo "$raw" | jq 'length' 2>/dev/null)
-    if [[ -z "$count" || "$count" == "0" ]]; then
-        command claude "${extra_args[@]}"
-        return
-    fi
+    count=$(printf '%s' "$raw" | jq 'length' 2>/dev/null)
+    [[ -z "$count" || "$count" == "0" ]] && { command claude "${extra_args[@]}"; return; }
 
-    # 5. Selector.
-    echo ""
+    # ANSI colors — suppressed on dumb terminals.
+    local R='' B='' D='' C='' G='' GR='' W=''
+    [[ -t 1 && "${TERM:-dumb}" != "dumb" ]] && {
+        R=$'\e[0m' B=$'\e[1m' D=$'\e[2m'
+        C=$'\e[96m' G=$'\e[92m' GR=$'\e[90m' W=$'\e[97m'
+    }
+
+    # Box: 60 chars of content, 62-char horizontal rule.
+    local _CW=60
+    local _HL; _HL=$(printf '%0.s─' {1..62})
+
+    printf "\n  ${C}╭${_HL}╮${R}\n"
+
     if [[ "$count" == "1" ]]; then
-        local sid summary
-        sid=$(echo "$raw" | jq -r '.[0].session_id')
-        summary=$(echo "$raw" | jq -r '.[0].summary // .[0].last_user_msg // "—"')
-        echo "Sesión reciente en este cwd:"
-        printf "  %s\n" "${summary:0:120}"
-        local ans
-        printf "Retomar? [Y/n] "
-        read ans
-        if [[ -z "$ans" || "$ans" == [yY]* ]]; then
+        local sid project branch turns when summary
+        sid=$(     printf '%s' "$raw" | jq -r '.[0].session_id')
+        project=$( printf '%s' "$raw" | jq -r '.[0].project    // "?"')
+        branch=$(  printf '%s' "$raw" | jq -r '.[0].branch     // "?"')
+        turns=$(   printf '%s' "$raw" | jq -r '.[0].turn_count // 0')
+        when=$(    _memo_reltime "$(printf '%s' "$raw" | jq -r '.[0].updated')")
+        summary=$( printf '%s' "$raw" | jq -r '.[0].summary // .[0].last_user_msg // "—"')
+
+        _memo_bl ""
+        _memo_bl "  ${project}  ·  ${branch}  ·  ${when}  ·  ${turns} turnos" "${D}"
+        _memo_bl "  ${summary}" "${B}${W}"
+        _memo_bl ""
+        printf "  ${C}╰${_HL}╯${R}\n"
+
+        printf "\n  ${G}${B}¿Continuar?${R}  ${B}Y${R}${G} retomar  ${GR}n nueva sesión${R}  "
+        local ans; read -rk1 ans; printf "\n\n"
+
+        if [[ "$ans" == [yY] || "$ans" == $'\n' || "$ans" == $'\r' || -z "$ans" ]]; then
             command claude --resume "$sid" "${extra_args[@]}"
         else
             command claude "${extra_args[@]}"
         fi
+
     else
-        echo "Sesiones recientes en este cwd ($count):"
-        echo "$raw" | jq -r 'to_entries | .[] | "  [\(.key + 1)] \((.value.summary // .value.last_user_msg // "—") | .[0:120])"'
-        echo "  [n] nueva sesión"
-        local choice
-        printf "Elegí: "
-        read choice
+        local sw=$(( _CW - 2 - 1 - 8 - 1 - 12 - 1 ))  # 35 chars for summary
+        _memo_bl "  ${count} sesiones anteriores — elegí cuál retomar" "${D}"
+        _memo_bl ""
+
+        local i idx r_branch r_when r_summary pn pw pb ps
+        for (( i=1; i<=count; i++ )); do
+            idx=$(( i - 1 ))
+            r_branch=$( printf '%s' "$raw" | jq -r ".[${idx}].branch // \"—\"")
+            r_when=$(   _memo_reltime "$(printf '%s' "$raw" | jq -r ".[${idx}].updated")")
+            r_summary=$(printf '%s' "$raw" | jq -r ".[${idx}].summary // .[${idx}].last_user_msg // \"—\"")
+
+            pn=$(printf "%-2s"      "$i")
+            pw=$(printf "%-8s"      "${r_when}")
+            pb=$(printf "%-12s"     "${r_branch:0:12}")
+            ps=$(printf "%-${sw}s"  "${r_summary:0:${sw}}")
+
+            printf "  ${C}│${R} ${B}${pn}${R} ${D}${pw}${R} ${pb} ${W}${ps}${R} ${C}│${R}\n"
+        done
+
+        _memo_bl ""
+        _memo_bl "  n  nueva sesión" "${GR}"
+        _memo_bl ""
+        printf "  ${C}╰${_HL}╯${R}\n"
+
+        printf "\n  ${G}${B}Elegí${R}  ${GR}[1-${count}] retomar  n nueva${R}  "
+        local choice; read choice; printf "\n"
+
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
             local sid
-            sid=$(echo "$raw" | jq -r ".[$((choice - 1))].session_id")
+            sid=$(printf '%s' "$raw" | jq -r ".[$(( choice - 1 ))].session_id")
             command claude --resume "$sid" "${extra_args[@]}"
         else
             command claude "${extra_args[@]}"
@@ -4847,9 +5510,14 @@ def federation_search(query: str, limit: int, mode: str, as_json: bool) -> None:
 # -- sync & backup commands ------------------------------------------------------
 
 
-@cli.group(name="backup")
-def backup_group() -> None:
-    """Backup management — create, list, restore backups."""
+@cli.group(name="backup", invoke_without_command=True)
+@click.option("--out", "out_path", default=None, type=click.Path(),
+              help="Output portable zip path. Default: ./memo-backup-<YYYYMMDD-HHMMSS>.zip")
+@click.pass_context
+def backup_group(ctx: click.Context, out_path: str | None) -> None:
+    """Create a portable backup, or manage named backups with subcommands."""
+    if ctx.invoked_subcommand is None:
+        _portable_backup(out_path)
     pass
 
 
@@ -6440,6 +7108,578 @@ def dedupe_cmd(
             f"{result.merged_id[:8] if result.merged_id else 'n/a'}  "
             f"archived={len(result.archived_ids)}"
         )
+
+
+@cli.command(name="briefing")
+def briefing() -> None:
+    """SessionStart hook — rich context panel.
+
+    Emits a `hookSpecificOutput` JSON with `additionalContext` markdown
+    containing:
+      - Last session for the current project (crash recovery)
+      - Open loops: recently updated memories (in-flight decisions)
+      - Memory of the day: one memory picked deterministically by date
+      - Quick interaction guide
+
+    All errors swallowed — a failed briefing is worse than no briefing
+    only if it blocks the session. Exit 0 + `{}` on any failure.
+
+    Env vars:
+      MEMO_BRIEFING_DISABLE        — set to "1" to skip entirely
+      MEMO_BRIEFING_LOOPS_N        — open-loop count to show (default 5)
+      MEMO_BRIEFING_LOOPS_DAYS     — how recent counts as "open" (default 7)
+      MEMO_BRIEFING_DEBUG          — print errors to stderr
+    """
+    import hashlib as _hashlib
+    import json as _json
+    import os as _os
+    import sys as _sys
+    from datetime import UTC, datetime, timedelta
+
+    debug = _os.environ.get("MEMO_BRIEFING_DEBUG") == "1"
+
+    def _bail(reason: str = "") -> None:
+        if reason and debug:
+            print(f"# memo briefing: {reason}", file=_sys.stderr)
+        print("{}")
+        _sys.exit(0)
+
+    if _os.environ.get("MEMO_BRIEFING_DISABLE") == "1":
+        _bail("disabled")
+        return
+
+    try:
+        cfg = Config.from_env()
+        from memo.memory import Memory
+        mem = Memory(cfg)
+    except Exception as exc:
+        _bail(f"Memory init failed: {exc}")
+        return
+
+    loops_n = max(1, int(_os.environ.get("MEMO_BRIEFING_LOOPS_N", "5") or 5))
+    loops_days = max(1, int(_os.environ.get("MEMO_BRIEFING_LOOPS_DAYS", "7") or 7))
+
+    lines: list[str] = []
+
+    # ── 1. Last session for this project ──────────────────────────────────
+    try:
+        from pathlib import Path as _Path
+
+        from memo.session import format_relative, list_sessions
+
+        cur_cwd = str(_Path(_os.getcwd()).resolve())
+        all_sessions = list_sessions(cfg.state_dir, limit=20)
+        same_proj = [r for r in all_sessions if (r.get("cwd") or "") == cur_cwd]
+        if same_proj:
+            top = same_proj[0]
+            sid = top.get("session_id") or ""
+            when = format_relative(top.get("updated"))
+            summary = (
+                top.get("summary") or top.get("last_user_msg") or "—"
+            ).replace("\n", " ")[:120]
+            lines.append("## El Briefing")
+            lines.append("")
+            lines.append(f"**Última sesión en este proyecto** ({when}): {summary}")
+            lines.append(f"`claude --resume {sid}`")
+            lines.append("")
+    except Exception as exc:
+        if debug:
+            print(f"# memo briefing: session lookup failed: {exc}", file=_sys.stderr)
+        if not lines:
+            lines.append("## El Briefing")
+            lines.append("")
+
+    # ── 2. Open loops: recently updated memories ──────────────────────────
+    try:
+        cutoff = (datetime.now(tz=UTC) - timedelta(days=loops_days)).isoformat()
+        all_recent = mem.store.list_recent(limit=loops_n * 4)
+        open_loops = [
+            r for r in all_recent
+            if (r.get("updated") or "") >= cutoff
+        ][:loops_n]
+
+        if open_loops:
+            lines.append(f"### Loops abiertos (últimos {loops_days} días)")
+            lines.append("")
+            for i, r in enumerate(open_loops, start=1):
+                tags = r.get("tags") or []
+                if isinstance(tags, str):
+                    import json as _j
+                    try:
+                        tags = _j.loads(tags)
+                    except Exception:
+                        tags = []
+                tag_str = ", ".join(str(t) for t in tags[:3]) if tags else ""
+                title = r.get("title") or "—"
+                type_ = r.get("type") or "note"
+                id_short = (r.get("id") or "")[:8]
+                updated = r.get("updated") or ""
+                try:
+                    dt = datetime.fromisoformat(updated)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=UTC)
+                    delta = datetime.now(tz=UTC) - dt
+                    days_ago = delta.days
+                    age = f"hace {days_ago}d" if days_ago > 0 else "hoy"
+                except Exception:
+                    age = updated[:10]
+                lines.append(
+                    f"{i}. `{id_short}` **{type_}** · {title}"
+                    + (f" — {age}" if age else "")
+                    + (f" [{tag_str}]" if tag_str else "")
+                )
+            lines.append("")
+    except Exception as exc:
+        if debug:
+            print(f"# memo briefing: open-loops failed: {exc}", file=_sys.stderr)
+
+    # ── 3. Memory of the day (date-seeded, biased to least-recent) ────────
+    try:
+        # Use today's date as seed so the pick is stable within a day but
+        # rotates daily. Favour memories whose `updated` is oldest (least
+        # recently revisited) so the corpus gets covered over time.
+        today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+        all_ids_rows = mem.store.list_recent(limit=500)
+        if all_ids_rows:
+            # Sort oldest-updated first so the seed picks from the back of
+            # the corpus on average.
+            sorted_rows = sorted(all_ids_rows, key=lambda r: r.get("updated") or "")
+            seed_int = int(_hashlib.sha256(today_str.encode()).hexdigest(), 16)
+            pick_row = sorted_rows[seed_int % len(sorted_rows)]
+            pick_id = pick_row.get("id") or ""
+            pick_rec = mem.get(pick_id) if pick_id else None
+            if pick_rec:
+                body_preview = (pick_rec.body or "").strip()[:200].replace("\n", " ")
+                tags = pick_rec.tags or []
+                tag_str = ", ".join(str(t) for t in tags[:4]) if tags else ""
+                lines.append("### Memoria del día")
+                lines.append("")
+                lines.append(
+                    f"`{pick_rec.id[:8]}` **{pick_rec.type}** · {pick_rec.title}"
+                    + (f" [{tag_str}]" if tag_str else "")
+                )
+                if body_preview:
+                    lines.append(f"> {body_preview}{'…' if len(pick_rec.body or '') > 200 else ''}")
+                lines.append("")
+    except Exception as exc:
+        if debug:
+            print(f"# memo briefing: memory-of-day failed: {exc}", file=_sys.stderr)
+
+    # ── 4. Interaction guide ──────────────────────────────────────────────
+    lines.append(
+        "_Para continuar: `dame el loop N` (retoma por número) · "
+        "`/memo get <id>` · `/memo ask <pregunta>`_"
+    )
+
+    if not any(ln for ln in lines if ln and not ln.startswith("#") and not ln.startswith("_")):
+        _bail("nothing to show")
+        return
+
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "\n".join(lines),
+        }
+    }
+    print(_json.dumps(output, ensure_ascii=False))
+
+
+@cli.command(name="mapa")
+@click.option(
+    "--output", "-o", default=None,
+    help="Output HTML path. Default: ~/.local/share/memo/mapa.html",
+)
+@click.option(
+    "--open/--no-open", "open_browser", default=True,
+    help="Open in default browser after generating.",
+)
+@click.option(
+    "--limit", default=500, show_default=True,
+    help="Maximum number of memories to include.",
+)
+@click.option(
+    "--animate/--no-animate", default=True,
+    help="Include timeline animation slider.",
+)
+def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -> None:
+    """Generate an interactive 2D semantic map of the memory corpus.
+
+    Projects all memory embeddings (stored in memvec.db) to 2D space using
+    UMAP when available, falling back to PCA via numpy. Renders a
+    self-contained HTML file with Plotly — hover for preview, click to copy ID.
+
+    Requirements:
+      Mandatory: numpy (already a transitive dep via mlx/scipy)
+      Optional:  umap-learn (pip install umap-learn) for better topology.
+                 Without it the map uses PCA (fast but loses cluster structure).
+    """
+    import json as _json
+    import sqlite3 as _sqlite3
+    import struct
+    import webbrowser as _wb
+    from pathlib import Path as _Path
+
+    cfg = Config.from_env()
+    db_path = cfg.state_dir / "memvec.db"
+    if not db_path.is_file():
+        console.print(f"[red]DB not found:[/red] {db_path}. Run `memo reindex` first.")
+        raise SystemExit(1)
+
+    # ── Read embeddings + metadata directly from SQLite ───────────────────
+    # We bypass VecStore to avoid loading MLX. sqlite-vec stores
+    # FLOAT[N] columns as raw 4-byte little-endian blobs.
+    console.print("[dim]Reading corpus from DB…[/dim]")
+    try:
+        import sqlite_vec as _sv  # type: ignore[import-not-found]
+
+        conn = _sqlite3.connect(str(db_path), timeout=10.0)
+        conn.enable_load_extension(True)
+        _sv.load(conn)
+        conn.enable_load_extension(False)
+        conn.row_factory = _sqlite3.Row
+    except Exception as exc:
+        console.print(f"[red]Cannot open DB:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    try:
+        rows = conn.execute(
+            "SELECT vec.id, vec.embedding, "
+            "       meta.title, meta.type, meta.tags, "
+            "       meta.created, meta.updated "
+            "FROM vec JOIN meta ON meta.id = vec.id "
+            "ORDER BY meta.updated DESC "
+            f"LIMIT {int(limit)}"
+        ).fetchall()
+    except Exception as exc:
+        console.print(f"[red]Query failed:[/red] {exc}")
+        raise SystemExit(1) from exc
+    finally:
+        conn.close()
+
+    if len(rows) < 3:
+        console.print(
+            f"[yellow]Not enough memories to map ({len(rows)} found, need ≥ 3).[/yellow]\n"
+            "Save some memories first with `/memo save` or `memo capture-stop`."
+        )
+        raise SystemExit(0)
+
+    ids: list[str] = []
+    titles: list[str] = []
+    types: list[str] = []
+    tags_list: list[str] = []
+    created_list: list[str] = []
+    updated_list: list[str] = []
+    raw_vecs: list[list[float]] = []
+
+    for row in rows:
+        blob = row["embedding"]
+        if blob is None:
+            continue
+        n = len(blob) // 4
+        vec = list(struct.unpack(f"<{n}f", blob))
+        if not vec:
+            continue
+        ids.append(row["id"])
+        titles.append(row["title"] or "—")
+        types.append(row["type"] or "note")
+        try:
+            tags = _json.loads(row["tags"] or "[]")
+            tags_list.append(", ".join(str(t) for t in tags[:4]) if tags else "")
+        except Exception:
+            tags_list.append("")
+        created_list.append((row["created"] or "")[:10])
+        updated_list.append((row["updated"] or "")[:10])
+        raw_vecs.append(vec)
+
+    n_pts = len(raw_vecs)
+    if n_pts < 3:
+        console.print(f"[yellow]Only {n_pts} memories have vectors. Run `memo reindex`.[/yellow]")
+        raise SystemExit(0)
+
+    # ── 2D projection ─────────────────────────────────────────────────────
+    console.print(f"[dim]Projecting {n_pts} memories to 2D…[/dim]")
+    try:
+        import numpy as np  # type: ignore[import-not-found]
+    except ImportError as exc:
+        console.print("[red]numpy is required for mapa.[/red] Install: pip install numpy")
+        raise SystemExit(1) from exc
+
+    mat = np.array(raw_vecs, dtype=np.float32)
+
+    xs: list[float]
+    ys: list[float]
+    method_name: str
+
+    try:
+        import umap  # type: ignore[import-not-found]
+
+        n_neighbors = min(15, n_pts - 1)
+        reducer = umap.UMAP(
+            n_components=2, n_neighbors=n_neighbors,
+            min_dist=0.1, metric="cosine", random_state=42,
+        )
+        coords = reducer.fit_transform(mat)
+        xs = coords[:, 0].tolist()
+        ys = coords[:, 1].tolist()
+        method_name = "UMAP"
+    except ImportError:
+        # PCA fallback — fast, preserves global variance, loses local clusters.
+        mat_centered = mat - mat.mean(axis=0)
+        _, _, vt = np.linalg.svd(mat_centered, full_matrices=False)
+        coords = mat_centered @ vt[:2].T
+        xs = coords[:, 0].tolist()
+        ys = coords[:, 1].tolist()
+        method_name = "PCA (install umap-learn for better topology)"
+
+    console.print(f"[green]✓[/green] Projected via {method_name}")
+
+    # ── Build timeline frames for animation ───────────────────────────────
+    # Sort unique dates; each frame shows memories up to that date.
+    if animate:
+        dates_sorted = sorted(set(created_list))
+        frames_data: list[dict] = []
+        for d in dates_sorted:
+            mask = [c <= d for c in created_list]
+            frames_data.append({
+                "name": d,
+                "x": [xs[i] for i, m in enumerate(mask) if m],
+                "y": [ys[i] for i, m in enumerate(mask) if m],
+                "ids": [ids[i][:8] for i, m in enumerate(mask) if m],
+                "titles": [titles[i] for i, m in enumerate(mask) if m],
+                "types": [types[i] for i, m in enumerate(mask) if m],
+                "tags": [tags_list[i] for i, m in enumerate(mask) if m],
+            })
+    else:
+        frames_data = []
+
+    # ── Type → colour mapping ─────────────────────────────────────────────
+    TYPE_COLORS = {
+        "decision": "#4f8ef7",
+        "fact": "#34d399",
+        "bug": "#f87171",
+        "preference": "#a78bfa",
+        "feedback": "#fb923c",
+        "note": "#94a3b8",
+        "manual": "#e2e8f0",
+    }
+
+    # ── Emit self-contained HTML ──────────────────────────────────────────
+    out_path = _Path(output) if output else cfg.state_dir / "mapa.html"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Encode data as JSON to embed in the HTML script block
+    data_json = _json.dumps({
+        "xs": xs,
+        "ys": ys,
+        "ids": [i[:8] for i in ids],
+        "titles": titles,
+        "types": types,
+        "tags": tags_list,
+        "created": created_list,
+        "updated": updated_list,
+        "frames": frames_data,
+        "method": method_name,
+        "n": n_pts,
+        "type_colors": TYPE_COLORS,
+    }, ensure_ascii=False)
+
+    html = _MAPA_HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
+    out_path.write_text(html, encoding="utf-8")
+
+    console.print(f"[green]✓[/green] Mapa saved → [bold]{out_path}[/bold]")
+    console.print(
+        f"[dim]{n_pts} memories · {method_name}[/dim]"
+        + (" [dim]· animation enabled[/dim]" if animate and frames_data else "")
+    )
+
+    if open_browser:
+        _wb.open(out_path.as_uri())
+
+
+_MAPA_HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>El Mapa — memo</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f172a; color: #e2e8f0; font-family: ui-monospace, 'Cascadia Code', monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  #header { padding: 12px 20px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #1e293b; flex-shrink: 0; }
+  #header h1 { font-size: 1rem; font-weight: 600; color: #f1f5f9; letter-spacing: 0.05em; }
+  #header .meta { font-size: 0.75rem; color: #64748b; }
+  #search-box { margin-left: auto; background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; outline: none; width: 220px; }
+  #search-box:focus { border-color: #4f8ef7; }
+  #plot { flex: 1; width: 100%; }
+  #sidebar { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; background: #1e293b; border-left: 1px solid #334155; padding: 20px; transform: translateX(100%); transition: transform 0.2s ease; overflow-y: auto; z-index: 10; }
+  #sidebar.open { transform: translateX(0); }
+  #sidebar-close { float: right; cursor: pointer; color: #64748b; font-size: 1.2rem; line-height: 1; margin-bottom: 16px; }
+  #sidebar-close:hover { color: #e2e8f0; }
+  #sidebar h2 { font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  #sidebar-title { font-size: 1rem; font-weight: 600; color: #f1f5f9; margin-bottom: 6px; line-height: 1.4; }
+  #sidebar-meta { font-size: 0.75rem; color: #64748b; margin-bottom: 12px; }
+  #sidebar-id { font-size: 0.75rem; background: #0f172a; padding: 6px 10px; border-radius: 4px; color: #a78bfa; cursor: pointer; display: inline-block; margin-bottom: 12px; }
+  #sidebar-id:hover { background: #1e293b; }
+  #sidebar-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+  .tag-chip { font-size: 0.7rem; background: #0f172a; color: #94a3b8; padding: 2px 8px; border-radius: 10px; }
+  #legend { position: fixed; bottom: 20px; left: 20px; background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; font-size: 0.73rem; }
+  #legend h3 { color: #64748b; margin-bottom: 6px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  #toast { position: fixed; bottom: 20px; right: 20px; background: #1e293b; border: 1px solid #4f8ef7; color: #e2e8f0; padding: 8px 14px; border-radius: 6px; font-size: 0.8rem; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 20; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>El Mapa</h1>
+  <span class="meta" id="meta-label"></span>
+  <input id="search-box" type="search" placeholder="Filtrar memorias…" />
+</div>
+<div id="plot"></div>
+<div id="sidebar">
+  <span id="sidebar-close" onclick="closeSidebar()">✕</span>
+  <h2>Memoria</h2>
+  <div id="sidebar-title"></div>
+  <div id="sidebar-meta"></div>
+  <div id="sidebar-id" onclick="copyId()" title="Click para copiar ID"></div>
+  <div id="sidebar-tags"></div>
+</div>
+<div id="legend"><h3>Tipos</h3><div id="legend-items"></div></div>
+<div id="toast" id="toast">ID copiado</div>
+
+<script>
+const DATA = __DATA_JSON__;
+let currentId = null;
+
+// Build legend
+const li = document.getElementById('legend-items');
+Object.entries(DATA.type_colors).forEach(([type, color]) => {
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  item.innerHTML = `<div class="legend-dot" style="background:${color}"></div><span>${type}</span>`;
+  li.appendChild(item);
+});
+document.getElementById('meta-label').textContent =
+  `${DATA.n} memorias · ${DATA.method}`;
+
+// Point colours from type
+const colors = DATA.types.map(t => DATA.type_colors[t] || '#94a3b8');
+
+const hovertext = DATA.ids.map((id, i) =>
+  `<b>${DATA.titles[i]}</b><br><span style="color:#94a3b8">${DATA.types[i]}</span>`
+  + (DATA.tags[i] ? `<br><span style="color:#64748b">${DATA.tags[i]}</span>` : '')
+  + `<br><span style="color:#475569">${DATA.created[i]}</span>`
+);
+
+const trace = {
+  x: DATA.xs, y: DATA.ys,
+  mode: 'markers',
+  type: 'scatter',
+  marker: {
+    size: 8, color: colors, opacity: 0.85,
+    line: { width: 0.5, color: '#1e293b' }
+  },
+  text: hovertext,
+  hovertemplate: '%{text}<extra></extra>',
+  customdata: DATA.ids,
+};
+
+const layout = {
+  paper_bgcolor: '#0f172a',
+  plot_bgcolor: '#0f172a',
+  xaxis: { visible: false, zeroline: false },
+  yaxis: { visible: false, zeroline: false },
+  margin: { t: 10, l: 10, r: 10, b: 10 },
+  hovermode: 'closest',
+  hoverlabel: {
+    bgcolor: '#1e293b', bordercolor: '#334155',
+    font: { family: 'ui-monospace', size: 12, color: '#e2e8f0' }
+  },
+};
+
+let frames = [];
+let sliders = [];
+if (DATA.frames && DATA.frames.length > 1) {
+  frames = DATA.frames.map(f => ({
+    name: f.name,
+    data: [{
+      x: f.x, y: f.y,
+      text: f.ids.map((id, i) =>
+        `<b>${f.titles[i]}</b><br><span style="color:#94a3b8">${f.types[i]}</span>`
+      ),
+      marker: { color: f.types.map(t => DATA.type_colors[t] || '#94a3b8') },
+      customdata: f.ids,
+    }]
+  }));
+  sliders = [{
+    active: frames.length - 1,
+    steps: DATA.frames.map((f, i) => ({
+      label: f.name, method: 'animate',
+      args: [[f.name], { mode: 'immediate', frame: { duration: 0 }, transition: { duration: 0 } }],
+    })),
+    x: 0.05, y: 0, xanchor: 'left', yanchor: 'top',
+    len: 0.9,
+    bgcolor: '#1e293b', bordercolor: '#334155',
+    font: { color: '#64748b', size: 10 },
+    currentvalue: { prefix: 'Hasta: ', font: { color: '#94a3b8', size: 11 }, xanchor: 'center' },
+  }];
+  layout.sliders = sliders;
+}
+
+Plotly.newPlot('plot', [trace], layout, { responsive: true, displayModeBar: false })
+  .then(gd => {
+    if (frames.length > 1) Plotly.addFrames(gd, frames);
+  });
+
+document.getElementById('plot').on('plotly_click', function(data) {
+  const pt = data.points[0];
+  const idx = pt.pointIndex;
+  currentId = DATA.ids[idx];
+  document.getElementById('sidebar-title').textContent = DATA.titles[idx];
+  document.getElementById('sidebar-meta').textContent =
+    `${DATA.types[idx]} · creado ${DATA.created[idx]} · actualizado ${DATA.updated[idx]}`;
+  document.getElementById('sidebar-id').textContent = `/memo get ${currentId}`;
+  const tagsEl = document.getElementById('sidebar-tags');
+  tagsEl.innerHTML = '';
+  (DATA.tags[idx] || '').split(',').filter(Boolean).forEach(t => {
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip';
+    chip.textContent = t.trim();
+    tagsEl.appendChild(chip);
+  });
+  document.getElementById('sidebar').classList.add('open');
+});
+
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+}
+
+function copyId() {
+  if (!currentId) return;
+  navigator.clipboard.writeText(currentId).then(() => {
+    const t = document.getElementById('toast');
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 1800);
+  });
+}
+
+// Search filter
+document.getElementById('search-box').addEventListener('input', function() {
+  const q = this.value.toLowerCase().trim();
+  if (!q) {
+    Plotly.restyle('plot', { 'marker.opacity': [0.85] });
+    return;
+  }
+  const opacities = DATA.titles.map((title, i) =>
+    title.toLowerCase().includes(q) || DATA.tags[i].toLowerCase().includes(q) ||
+    DATA.types[i].toLowerCase().includes(q) ? 0.9 : 0.08
+  );
+  Plotly.restyle('plot', { 'marker.opacity': [opacities] });
+});
+</script>
+</body>
+</html>"""
 
 
 def main() -> None:

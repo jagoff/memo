@@ -1,4 +1,6 @@
-"""Memory lifecycle management — archival, promotion, expiration.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Memory lifecycle management — archival, promotion, expiration.
 
 Manages the lifecycle of memories over time:
 - Automatic archival of inactive memories

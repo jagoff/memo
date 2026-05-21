@@ -58,7 +58,7 @@ lists third-party MCP servers under
 
 - Repo: <https://github.com/jagoff/memo>
 - PyPI: <https://pypi.org/project/mlx-memo/>
-- Install: `pip install mlx-memo` (Apple Silicon only)
+- Install: `pipx install mlx-memo` or the one-line installer in the README (Apple Silicon only)
 - License: MIT
 ```
 
@@ -99,6 +99,107 @@ Submit at <https://mcp.so/submit> with:
   `.agents/plugins/` and `plugins/memo/` for MCP metadata. The installer also
   copies `skills/memo/SKILL.md` to `$CODEX_HOME/skills/memo/SKILL.md` so Codex
   surfaces that expose skills as slash commands can show the exact `/memo`.
+- **Windsurf / Cascade (local install)** — configured by `memo install-slash --client windsurf`,
+  which writes a stdio `memo` server entry to
+  `~/.codeium/windsurf/mcp_config.json`. Windsurf users then refresh MCP
+  servers in Cascade. This handles per-user installs but does **not** list memo
+  in the public Windsurf marketplace — see section 5 for that.
+
+---
+
+## 5. Windsurf marketplace (Cascade in-app + windsurf.run)
+
+There are two Windsurf-adjacent surfaces and they have different submission
+flows. Both depend on prereqs being green (PyPI `mlx-memo` at the latest
+version + MCP Registry entry `io.github.jagoff/memo` published via
+`.github/workflows/publish.yml`).
+
+### 5a. Cascade in-app marketplace (official, curated)
+
+The marketplace shown inside Windsurf (MCPs icon → Marketplace) is curated by
+Codeium. There is **no public PR or form**. Inclusion is granted via direct
+outreach. Recommended path:
+
+1. Confirm the MCP Registry entry is live:
+   ```bash
+   curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=jagoff" | jq
+   ```
+   Should return at least one server with name `io.github.jagoff/memo`.
+2. Email `support@codeium.com` with the template below.
+3. Mirror the ask on X tagging `@windsurf_ai` (public visibility helps).
+
+Email / DM template:
+
+```
+Subject: MCP marketplace inclusion — memo (local-first MLX memory)
+
+Hi Windsurf team,
+
+I maintain memo, a local-first persistent-memory MCP server for Apple
+Silicon. It's already published to the official MCP Registry as
+`io.github.jagoff/memo` and to PyPI as `mlx-memo`. I'd like it listed in
+the Cascade in-app MCP marketplace.
+
+- Repo: https://github.com/jagoff/memo
+- PyPI: https://pypi.org/project/mlx-memo/
+- MCP Registry: io.github.jagoff/memo
+- Transport: stdio
+- License: MIT
+- Platform: macOS arm64 (Apple Silicon)
+
+Differentiators:
+- 100 % local — MLX-native embedder (Qwen3), reranker (Qwen3-Reranker),
+  and chat LLM (Qwen2.5). No Ollama, no cloud API.
+- Markdown is the storage of record (Obsidian-compatible vault).
+- Hybrid retrieval out of the box: sqlite-vec + BM25 (FTS5) fused via RRF
+  with cross-encoder rerank.
+- 13 MCP tools + 2 resources. Windsurf install already supported via
+  `memo install-slash --client windsurf`.
+
+Happy to provide a demo video or additional metadata. Thanks!
+
+— Fernando Ferrari
+```
+
+### 5b. windsurf.run community directory
+
+`windsurf.run/mcp` is a community directory backed by
+`pontusab/cursor.directory`. The submission flow is **a web form, not a PR**:
+
+1. Visit <https://windsurf.run/plugins/new?type=mcp_server> (the `/mcp/new`
+   URL redirects there).
+2. Sign in with GitHub.
+3. Paste the metadata block below.
+4. Submit and wait for moderation.
+
+Form values:
+
+| Field | Value |
+| --- | --- |
+| Type | MCP Server |
+| Name | `memo` |
+| Slug | `mlx-memo` |
+| Repo URL | `https://github.com/jagoff/memo` |
+| Install command | `pipx install mlx-memo` |
+| MCP config snippet | (see below) |
+| Category / Tag | Memory · Knowledge · Local-first |
+| Description | Local-first persistent memory for AI agents. MLX-native runtime (Apple Silicon), markdown-on-disk source of record, sqlite-vec + BM25 hybrid retrieval with a cross-encoder reranker, ambient-recall Claude Code hooks. Zero Ollama, zero cloud APIs. |
+| Author | Fernando Ferrari |
+| License | MIT |
+
+MCP config snippet to paste in the form:
+
+```json
+{
+  "mcpServers": {
+    "memo": {
+      "command": "memo-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
 
 ---
 
@@ -110,6 +211,9 @@ After acceptance, verify the listing renders correctly:
 - modelcontextprotocol/servers: README renders the new bullet under M
 - PyPI: <https://pypi.org/project/mlx-memo/> shows latest version
 - GitHub: <https://github.com/jagoff/memo> shows the 13 topic tags on the right sidebar
+- MCP Registry: `curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=jagoff"` returns `io.github.jagoff/memo`
+- windsurf.run: <https://windsurf.run/mcp> search for "memo" shows the entry
+- Cascade in-app: Windsurf → Cascade panel → MCPs icon → Marketplace shows memo (only after Codeium approves the outreach in 5a)
 
 If any registry rejects or requests changes, update this doc with the
 revised submission so the next release reuses the polished copy.

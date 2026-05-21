@@ -1,4 +1,6 @@
-"""Persistent contradiction & staleness radar for the memory corpus.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Persistent contradiction & staleness radar for the memory corpus.
 
 This module sits on top of `TemporalAnalyzer` (which already classifies
 pairs as contradiction / evolution / consistent / unrelated) and adds

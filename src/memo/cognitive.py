@@ -1,4 +1,6 @@
-"""Memoria con Estado Mental del Usuario (Cognitive State Model).
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Memoria con Estado Mental del Usuario (Cognitive State Model).
 
 Modela el estado mental, objetivos y contexto del usuario para proporcionar
 información relevante en el momento justo.

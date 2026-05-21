@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -106,6 +107,15 @@ def test_mcp_command_pins_resolved_memo_mcp(monkeypatch):
     assert '"MEMO_NONINTERACTIVE":"1"' in result.output
 
 
+def test_backup_group_keeps_portable_out_option():
+    result = CliRunner().invoke(cli, ["backup", "--help"])
+
+    assert result.exit_code == 0
+    assert "--out" in result.output
+    assert "create" in result.output
+    assert "restore" in result.output
+
+
 def test_mcp_command_json(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
@@ -154,6 +164,23 @@ def test_mcp_command_devin(monkeypatch):
         "devin mcp add -s user -e MEMO_NONINTERACTIVE=1 memo -- "
         "/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"
     ) in result.output
+
+
+def test_mcp_command_windsurf(monkeypatch):
+    _clear_memo_env(monkeypatch)
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+
+    result = CliRunner().invoke(cli, ["mcp-command", "--client", "windsurf"])
+
+    assert result.exit_code == 0
+    assert '"memo"' in result.output
+    assert '"command": "/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"' in result.output
+    assert '"MEMO_NONINTERACTIVE": "1"' in result.output
+    assert '"type": "stdio"' not in result.output
 
 
 def test_mcp_command_forwards_model_env(monkeypatch):
@@ -233,6 +260,35 @@ def test_install_slash_claude_uses_add_json(monkeypatch):
     assert '"MEMO_NONINTERACTIVE":"1"' in result.output
 
 
+def test_install_slash_windsurf_writes_mcp_config(monkeypatch, tmp_path):
+    _clear_memo_env(monkeypatch)
+    cfg_path = tmp_path / "mcp_config.json"
+    cfg_path.write_text(
+        '{"mcpServers":{"existing":{"command":"node","args":["server.js"]}}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WINDSURF_MCP_CONFIG", str(cfg_path))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
+    monkeypatch.setattr(
+        cli_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+
+    result = CliRunner().invoke(cli, ["install-slash", "--client", "windsurf"])
+
+    assert result.exit_code == 0
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data["mcpServers"]["existing"]["command"] == "node"
+    memo = data["mcpServers"]["memo"]
+    assert memo["command"] == "/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"
+    assert memo["args"] == []
+    assert memo["env"]["MEMO_NONINTERACTIVE"] == "1"
+    assert memo["env"]["MEMO_EMBEDDER_DIMS"] == "2560"
+    assert "type" not in memo
+
+
 def _clear_memo_env(monkeypatch):
     for key in cli_mod._MCP_ENV_FORWARD_KEYS:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("WINDSURF_MCP_CONFIG", raising=False)

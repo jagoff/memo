@@ -1,4 +1,6 @@
-"""Memory versioning & diff UI — track changes, visualize diffs, rollback.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Memory versioning & diff UI — track changes, visualize diffs, rollback.
 
 Tracks version history for each memoria:
 - Automatic version tracking on updates

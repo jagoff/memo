@@ -1,5 +1,5 @@
 {
-  "description": "memo ambient memory hooks — proactive recall on every UserPromptSubmit, passive auto-capture on Stop, prewarm on SessionStart for fast cold-load, session snapshots so closed/crashed sessions can be resumed. Every command is prefixed with MEMO_NONINTERACTIVE=1 so the first-run picker never fires inside a hook (the picker would block waiting for stdin and exhaust the hook's timeout).",
+  "description": "memo ambient memory hooks — proactive recall on every UserPromptSubmit, passive auto-capture on Stop, prewarm on SessionStart for fast cold-load, session snapshots so closed/crashed sessions can be resumed, and El Briefing (open loops + memory of the day) at startup. Every command is prefixed with MEMO_NONINTERACTIVE=1 so the first-run picker never fires inside a hook.",
   "hooks": {
     "SessionStart": [
       {
@@ -11,6 +11,18 @@
             "timeout": 30,
             "async": true,
             "statusMessage": "memo: warming MLX models…"
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo recall-daemon start",
+            "timeout": 5,
+            "async": true,
+            "statusMessage": "memo: starting recall daemon…"
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session recent",
+            "timeout": 5
           }
         ]
       },
@@ -19,8 +31,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "MEMO_NONINTERACTIVE=1 memo session recent --limit 5",
-            "timeout": 3
+            "command": "MEMO_NONINTERACTIVE=1 memo briefing",
+            "timeout": 5
           }
         ]
       }
@@ -31,7 +43,18 @@
           {
             "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo recall-hook",
-            "timeout": 5
+            "timeout": 8
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session autosave",
+            "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session checkpoint",
+            "timeout": 5,
+            "async": true
           }
         ]
       }
@@ -50,6 +73,13 @@
             "command": "MEMO_NONINTERACTIVE=1 memo session checkpoint",
             "timeout": 5,
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session refresh-summary",
+            "timeout": 20,
+            "async": true,
+            "statusMessage": "memo: actualizando resumen de sesión…"
           }
         ]
       }

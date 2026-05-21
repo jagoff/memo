@@ -1,4 +1,6 @@
-"""Memoria Multi-Modal con Embeddings Universales.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Memoria Multi-Modal con Embeddings Universales.
 
 Captura información que no es texto (diagramas, capturas, audio) y permite
 búsqueda semántica cruzada entre modalidades.

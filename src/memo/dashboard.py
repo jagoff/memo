@@ -58,13 +58,16 @@ def append_recall_log(
     prompt: str,
     hits: list[dict[str, Any]],
     cap: int = 200,
+    mode: str | None = None,
+    latency_ms: int | None = None,
+    via: str | None = None,
 ) -> None:
     """Append a recall event to the JSONL ring buffer. Rotates by
     keeping only the most recent `cap` lines after writing. Errors are
     swallowed — the recall hook must never fail because of telemetry."""
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
-        entry = {
+        entry: dict[str, Any] = {
             "ts": datetime.now(UTC).isoformat(timespec="seconds"),
             "prompt": prompt[:200],
             "hits": [
@@ -72,6 +75,12 @@ def append_recall_log(
                 for h in hits[:5]
             ],
         }
+        if mode is not None:
+            entry["mode"] = mode
+        if latency_ms is not None:
+            entry["latency_ms"] = latency_ms
+        if via is not None:
+            entry["via"] = via
         path = recall_log_path(state_dir)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -289,16 +298,41 @@ def _panel_recent_saves(memory: Any, limit: int = 10) -> Panel:
                  border_style="yellow")
 
 
+def _daemon_status(state_dir: Path) -> str:
+    """Return a one-line daemon status string for the TUI panels."""
+    try:
+        from memo.recall_server import _is_pid_alive, _read_pid
+        pid = _read_pid(state_dir)
+        running = pid is not None and _is_pid_alive(pid)
+    except Exception:
+        running = False
+
+    try:
+        warm_signal = state_dir / ".prewarm_ts"
+        warm = (
+            warm_signal.exists()
+            and (time.time() - float(warm_signal.read_text().strip())) < 3600
+        )
+    except Exception:
+        warm = False
+
+    daemon_label = "[green]running[/green]" if running else "[dim]off[/dim]"
+    warm_label = "[green]warm[/green]" if warm else "[yellow]cold[/yellow]"
+    return f"daemon: {daemon_label} | {warm_label}"
+
+
 def _panel_recent_recalls(state_dir: Path, limit: int = 8) -> Panel:
     entries = read_recall_log(state_dir, limit=limit)
     tbl = Table.grid(padding=(0, 1))
     tbl.add_column(style="dim", width=8)
+    tbl.add_column(style="cyan", width=6)   # mode column
     tbl.add_column()
     if not entries:
-        tbl.add_row("—", Text("(no recalls logged yet)", style="dim italic"))
+        tbl.add_row("—", "—", Text("(no recalls logged yet)", style="dim italic"))
     for e in entries:
-        prompt = (e.get("prompt") or "").replace("\n", " ")[:70]
+        prompt = (e.get("prompt") or "").replace("\n", " ")[:60]
         hits = e.get("hits") or []
+        mode_val = e.get("mode") or "—"
         scores = ", ".join(
             f"{h.get('score', 0):.2f}" for h in hits if h.get("score") is not None
         )
@@ -315,9 +349,11 @@ def _panel_recent_recalls(state_dir: Path, limit: int = 8) -> Panel:
                 ("\"" + prompt + "\"", "white"),
                 ("  → no hits", "dim"),
             )
-        tbl.add_row(_human_age(e.get("ts")), line)
-    return Panel(tbl, title="[bold green]recent recalls[/bold green]",
-                 border_style="green")
+        tbl.add_row(_human_age(e.get("ts")), mode_val, line)
+
+    status_line = _daemon_status(state_dir)
+    title = f"[bold green]recent recalls[/bold green]  [{status_line}]"
+    return Panel(tbl, title=title, border_style="green")
 
 
 def _panel_top_tags(memory: Any, limit: int = 8) -> Panel:
