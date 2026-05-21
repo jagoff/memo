@@ -1,4 +1,6 @@
-"""Contextual recall enhancement — conversation history + user preferences.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Contextual recall enhancement — conversation history + user preferences.
 
 Extends the basic recall-hook with:
 - Conversation context tracking (last N prompts)

@@ -116,6 +116,36 @@ resolve_memo_bin() {
   return 1
 }
 
+# Ask Y/n on a TTY. Returns 0 for yes, 1 for no.
+# If stdin is not a TTY (e.g. `curl | bash`), uses default ($2, "Y" or "n").
+ask_yes_no() {
+  local prompt="$1" default="${2:-Y}" reply
+  if [[ ! -t 0 ]]; then
+    [[ "$default" == "Y" || "$default" == "y" ]] && return 0 || return 1
+  fi
+  read -rp "$prompt " reply || reply=""
+  reply="${reply:-$default}"
+  [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+# Decide whether to download MLX models during install.
+# Models are part of memo's structure (embedder + reranker + chat are required
+# for retrieval and ambient recall), so the default answer is yes. The user can
+# decline interactively or force a value via MEMO_INSTALL_DOWNLOAD_MODELS.
+should_download_models() {
+  case "${MEMO_INSTALL_DOWNLOAD_MODELS:-auto}" in
+    yes|true|1|Y|y) return 0 ;;
+    no|false|0|N|n) return 1 ;;
+    auto|"")
+      ask_yes_no "[memo install] Download MLX models now (~7 GB, required for retrieval)? [Y/n]" Y
+      ;;
+    *)
+      warn "unknown MEMO_INSTALL_DOWNLOAD_MODELS='${MEMO_INSTALL_DOWNLOAD_MODELS}', defaulting to yes"
+      return 0
+      ;;
+  esac
+}
+
 main() {
   if [[ "${MEMO_INSTALL_SKIP_PLATFORM_CHECK:-0}" != "1" ]] && ! is_macos_arm64; then
     die "memo requires macOS on Apple Silicon (Darwin arm64). Set MEMO_INSTALL_SKIP_PLATFORM_CHECK=1 to bypass."
@@ -140,10 +170,41 @@ main() {
   memo_bin="$(resolve_memo_bin)" || die "memo was installed but no memo binary was found in PATH or ~/.local/bin"
 
   say "installed: $("$memo_bin" --version)"
+
+  if should_download_models; then
+    say "downloading MLX models (~7 GB, first install may take 5–15 min)…"
+    say "(embedder + reranker load now; chat models download in background)"
+    if MEMO_NONINTERACTIVE=1 "$memo_bin" prewarm --download-all; then
+      say "models ready"
+    else
+      warn "model download did not complete — models will download on first use."
+      warn "Re-run: MEMO_NONINTERACTIVE=1 memo prewarm --download-all"
+    fi
+  else
+    say "skipping MLX model download (models will load lazily on first use)."
+    say "Run later: MEMO_NONINTERACTIVE=1 memo prewarm --download-all"
+  fi
+
   say "runtime check:"
   MEMO_NONINTERACTIVE=1 "$memo_bin" doctor --strict-runtime
 
-  say "MCP registration command:"
+  if [[ "${MEMO_INSTALL_SKIP_AGENT_CONFIG:-0}" != "1" ]]; then
+    say "configuring MCP clients: Claude Code, Codex, Windsurf"
+    if MEMO_NONINTERACTIVE=1 "$memo_bin" install-slash \
+      --client claude-code \
+      --client codex \
+      --client windsurf \
+      --best-effort; then
+      say "agent clients configured"
+    else
+      warn "agent client configuration did not complete."
+      warn "Re-run after installing clients: memo install-slash --client claude-code --client codex --client windsurf"
+    fi
+  else
+    say "skipping agent client configuration (MEMO_INSTALL_SKIP_AGENT_CONFIG=1)"
+  fi
+
+  say "MCP registration command (manual fallback):"
   MEMO_NONINTERACTIVE=1 "$memo_bin" mcp-command
 }
 

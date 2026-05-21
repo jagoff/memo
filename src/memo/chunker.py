@@ -1,4 +1,6 @@
-"""Heading-aware markdown chunker.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Heading-aware markdown chunker.
 
 memo uses single-vector-per-doc by default — each `.md` produces one
 embedding regardless of length. Works well for short notes (<2000 chars)

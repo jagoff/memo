@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re as _re
 import sys
 from pathlib import Path
 from typing import Any
@@ -229,6 +230,37 @@ def _passes_prefilter(text: str, min_chars: int = 200) -> bool:
     return any(p in lower for p in _TRIGGER_PATTERNS)
 
 
+# Generic openers that produce low-value, session-scoped memories.
+_GENERIC_PREFIXES = (
+    # Session-narrative openers — produce low-value "what happened today" summaries
+    # rather than durable knowledge. "today i " is intentionally excluded here
+    # because many genuine decision memories start with "Today I decided/chose/..."
+    "the user ", "today the ", "we discussed ", "we worked on ",
+    "i helped ", "i assisted ", "this session ", "during this ",
+)
+
+def _passes_quality(text: str, min_words: int | None = None) -> bool:
+    """True if text is specific enough to be worth saving as a long-term memory.
+
+    Env vars:
+      MEMO_CAPTURE_MIN_WORDS — minimum word count (default 15; set to 0 to disable).
+    """
+    import os as _os
+    if min_words is None:
+        raw = _os.environ.get("MEMO_CAPTURE_MIN_WORDS", "15")
+        min_words = max(0, int(raw or 15))
+    t = text.strip()
+    # Too short
+    if min_words > 0 and len(t.split()) < min_words:
+        return False
+    lower = t.lower()
+    # Generic session-narrative openers
+    if any(lower.startswith(p) for p in _GENERIC_PREFIXES):
+        return False
+    # Pure temporal noise: "on 2026-05-16 ..."
+    return not _re.match(r'^(on )?\d{4}-\d{2}-\d{2}', lower)
+
+
 def _hash_assistant(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
 
@@ -383,7 +415,19 @@ def run_capture(
 
     saved: list[str] = []
     skipped_dup = 0
+    skipped_quality = 0
     for cand in insights:
+        # Quality gate: skip low-specificity memories before hitting the
+        # embedder or disk. Threshold controlled by MEMO_CAPTURE_MIN_WORDS.
+        body_for_quality = f"{cand['title']}\n\n{cand['body']}"
+        if not _passes_quality(body_for_quality):
+            skipped_quality += 1
+            if debug:
+                print(
+                    f"# memo capture: skip quality '{cand['title']}'",
+                    file=sys.stderr,
+                )
+            continue
         if is_near_duplicate(mem, cand):
             skipped_dup += 1
             if debug:
@@ -410,4 +454,5 @@ def run_capture(
         "candidates": len(insights),
         "saved": saved,
         "skipped_dup": skipped_dup,
+        "skipped_quality": skipped_quality,
     }

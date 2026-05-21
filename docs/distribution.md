@@ -16,6 +16,7 @@ This project has two separate distribution contracts:
 | Official MCP Registry | Manifest ready, release workflow added | Registry clients discover `io.github.jagoff/memo` | `server.json`, README `mcp-name`, `.github/workflows/publish.yml` |
 | Claude Code marketplace | Repo marketplace ready | `claude plugin marketplace add jagoff/memo` then `claude plugin install memo@memo -s user` | `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, `commands/memo.md`, `skills/memo/SKILL.md`, `hooks/hooks.json` |
 | Codex plugin marketplace + user skill | Repo marketplace ready for MCP metadata; installer also copies exact `memo` skill to `$CODEX_HOME/skills/memo/SKILL.md`. Codex CLI 0.130.0 does not expose custom skills in the TUI slash menu. | `memo install-slash --client codex`; plugin-only: `codex plugin marketplace add /path/to/memo`, then install `memo@memo` | `.agents/plugins/marketplace.json`, `plugins/memo/.codex-plugin/plugin.json`, `plugins/memo/skills/memo/SKILL.md`, `plugins/memo/.mcp.json`, `skills/memo/SKILL.md` |
+| Windsurf / Cascade | Direct MCP config install supported | `memo install-slash --client windsurf` writes `~/.codeium/windsurf/mcp_config.json` | `src/memo/cli.py`, README MCP setup |
 | Devin | User skill install supported | `memo install-slash --client devin` | `skills/memo/SKILL.md` |
 
 ## Explicit Non-Goals
@@ -48,6 +49,7 @@ containerizing the MLX runtime.
    - `curl https://registry.modelcontextprotocol.io/v0.1/servers/io.github.jagoff/memo`
    - `claude plugin marketplace add jagoff/memo`
    - `memo install-slash --client codex --dry-run --repo /path/to/memo`
+   - `WINDSURF_MCP_CONFIG=$(mktemp) memo install-slash --client windsurf`
 
 The live PyPI package is currently `0.6.0`; do not update Homebrew to `0.7.0`
 until the `0.7.0` sdist exists on PyPI.

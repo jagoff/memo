@@ -1,4 +1,6 @@
-"""Cross-reference and backlink system for memories.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Cross-reference and backlink system for memories.
 
 Detects and manages wikilinks between memories, enabling:
 - Automatic detection of [[wikilinks]] in memoria content

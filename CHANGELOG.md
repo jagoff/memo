@@ -7,8 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-21
+
 ### Changed
 
+- The one-line installer now asks for confirmation before downloading the
+  ~7 GB MLX model bundle. On an interactive terminal it prompts `[Y/n]`
+  (default yes); on a piped install it defaults to yes. Override with
+  `MEMO_INSTALL_DOWNLOAD_MODELS=yes|no|auto`. Models are part of memo's
+  structure (embedder + reranker + chat are required for retrieval and
+  ambient recall), so the default behaviour is unchanged — only the UX
+  surfaced a confirmation knob.
+- Marked the experimental modules (`agent`, `cognitive`, `collaborative`,
+  `contextual`, `contradict`, `crossref`, `encryption`, `federation`,
+  `lifecycle`, `multimodal`, `navigation`, `proactive`, `sharing`, `sync`,
+  `versioning`, `chunker`) as EXPERIMENTAL in their docstrings — not
+  covered by the test suite, not exposed via MCP, API may change without
+  notice. Added `src/memo/experimental_index.md` listing them.
+- Added a recall server (`src/memo/recall_server.py`) plus
+  `tests/test_recall_hooks.py` covering the ambient recall path.
+- Expanded `src/memo/cli.py` significantly (+1.5 k lines) with new
+  commands, session-capture work, and the install-flow helpers.
+- The one-line installer now attempts to configure memo in Claude Code, Codex,
+
+  and Windsurf after model download and `doctor --strict-runtime`. It runs that
+  agent setup in best-effort mode so a missing client CLI warns instead of
+  aborting the memo install.
+- Added `memo mcp-command --client windsurf` and
+  `memo install-slash --client windsurf`, which update
+  `~/.codeium/windsurf/mcp_config.json` with an absolute `memo-mcp` stdio
+  server while preserving existing Windsurf MCP servers.
+- Restored the documented `memo backup --out <zip>` portable backup shape by
+  making the `backup` group invoke the portable zip path when no subcommand is
+  provided.
+- Added `docs/install-new-mac.md`, a fresh-Mac migration checklist covering
+  install, agent registration, portable restore, synced folders, model-profile
+  parity, and verification.
 - Documented the supported production install shape: keep memo isolated as
   `pipx` / `uv tool` / Homebrew rather than vendoring it into a project
   virtualenv.
@@ -25,9 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected Claude Code plugin install docs to use the current marketplace
   flow (`claude plugin marketplace add ...` then `claude plugin install
   memo@memo`) and noted that existing sessions need a restart to see `/memo`.
-- Extended `memo mcp-command` with `--client codex`, `--client devin`, and
-  `--client claude-desktop` so the same isolated `memo-mcp` runtime can be
-  registered across the main MCP-capable CLIs without hand-writing config.
+- Extended `memo mcp-command` with `--client codex`, `--client devin`,
+  `--client claude-desktop`, and `--client windsurf` so the same isolated
+  `memo-mcp` runtime can be registered across the main MCP-capable clients
+  without hand-writing config.
 - `memo mcp-command` now pins `MEMO_NONINTERACTIVE=1` and forwards current
   `MEMO_*` model/storage overrides into MCP client configs, preventing
   1024/2560 embedder-dimension drift between shell and agent sessions.

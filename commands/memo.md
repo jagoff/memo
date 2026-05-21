@@ -18,6 +18,9 @@ register memo first:
 memo install-slash --client claude-code
 # or only print the MCP command:
 memo mcp-command --client claude-code
+# other client installers:
+memo install-slash --client codex
+memo install-slash --client windsurf
 ```
 
 Then open a new Claude Code session so the `/` menu and MCP tools reload.

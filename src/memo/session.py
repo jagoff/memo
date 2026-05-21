@@ -20,18 +20,24 @@ mtime-sorted on read.
 
 ```
 {
-  "session_id": str,           # canonical Claude Code session id
-  "cwd": str,                  # absolute path of the project
-  "project": str,              # basename of cwd, for the picker
-  "branch": str | null,        # current git branch
-  "head_commit": str | null,   # short oneline of HEAD
-  "modified_files": list[str], # `git status --porcelain` paths (truncated)
+  "session_id": str,              # canonical Claude Code session id
+  "cwd": str,                     # absolute path of the project
+  "project": str,                 # basename of cwd, for the picker
+  "branch": str | null,           # current git branch
+  "head_commit": str | null,      # short oneline of HEAD
+  "modified_files": list[str],    # `git status --porcelain` paths (truncated)
   "transcript_path": str | null,  # ~/.claude/projects/.../<sid>.jsonl
-  "last_user_msg": str | null, # first 240 chars of the most recent user msg
-  "summary": str | null,       # human-friendly label; defaults to last_user_msg[:80]
-  "created": str,              # ISO-8601 first checkpoint
-  "updated": str,              # ISO-8601 last checkpoint
-  "turn_count": int            # incremented on every Stop
+  "last_user_msg": str | null,    # first 240 chars of the most recent user msg
+  "last_assistant_tail": str | null,  # last 200 chars of last assistant message
+  "prompt_trail": list[str],      # ring buffer of last 5 user prompts (100 chars each)
+                                  # updated on UserPromptSubmit — survives crashes
+  "running_summary": str | null,  # LLM-generated arc summary (what/decided/pending)
+                                  # updated on Stop every ≥3 turns
+  "summary_turn": int,            # turn_count when running_summary was last written
+  "summary": str | null,          # human-friendly label; defaults to last_user_msg[:80]
+  "created": str,                 # ISO-8601 first checkpoint
+  "updated": str,                 # ISO-8601 last checkpoint
+  "turn_count": int               # incremented on every Stop
 }
 ```
 
@@ -61,6 +67,11 @@ _LRU_CAP_DEFAULT = 50
 _LAST_USER_MSG_CHARS = 240
 _SUMMARY_FALLBACK_CHARS = 80
 _MODIFIED_FILES_CAP = 30
+_PROMPT_TRAIL_MAX = 5
+_PROMPT_TRAIL_CHARS = 100
+_ASSISTANT_TAIL_CHARS = 200
+_RUNNING_SUMMARY_CHARS = 400
+_SUMMARY_MIN_NEW_TURNS = 3
 
 
 def sessions_dir(state_dir: Path) -> Path:
@@ -162,6 +173,36 @@ def read_last_user_msg(transcript_path: Path) -> str | None:
     return None
 
 
+def read_last_assistant_tail(transcript_path: Path) -> str | None:
+    """Walk the JSONL transcript backwards, return the tail of the latest
+    assistant message (last ~200 chars). Used to give context about what
+    Claude was doing when the session was interrupted.
+    """
+    if not transcript_path.is_file():
+        return None
+    try:
+        lines = transcript_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        role = obj.get("type") or obj.get("role")
+        if role != "assistant":
+            continue
+        msg = obj.get("message", obj)
+        content = msg.get("content") if isinstance(msg, dict) else None
+        text = _extract_text(content)
+        if text:
+            return text[-_ASSISTANT_TAIL_CHARS:] if len(text) > _ASSISTANT_TAIL_CHARS else text
+    return None
+
+
 def _extract_text(content: Any) -> str:
     """Same shape as capture._extract_text — Claude Code message content
     is either a plain string or a list of blocks. Skip tool blocks.
@@ -213,6 +254,7 @@ def checkpoint(
     session_id: str,
     cwd: str,
     transcript_path: str | None = None,
+    prompt: str | None = None,
     lru_cap: int = _LRU_CAP_DEFAULT,
 ) -> dict[str, Any]:
     """Idempotent upsert keyed by `session_id`. Returns the persisted
@@ -221,6 +263,10 @@ def checkpoint(
     First call for a `session_id` creates the JSON file. Subsequent
     calls preserve `created` + bump `turn_count`. Git state and last
     user msg are refreshed every call.
+
+    `prompt` (optional): the user message from a UserPromptSubmit event.
+    Appended to the `prompt_trail` ring buffer (last 5, 100 chars each)
+    so the trail survives even if the session crashes before Stop fires.
     """
     if not session_id:
         raise ValueError("session_id required")
@@ -231,8 +277,18 @@ def checkpoint(
     git_state = gather_git_state(cwd_path)
 
     last_user_msg: str | None = None
+    last_assistant_tail: str | None = None
     if transcript_path:
-        last_user_msg = read_last_user_msg(Path(transcript_path).expanduser())
+        tp = Path(transcript_path).expanduser()
+        last_user_msg = read_last_user_msg(tp)
+        last_assistant_tail = read_last_assistant_tail(tp)
+
+    # prompt_trail: ring buffer of last N user prompts, crash-resilient
+    # because it's updated on UserPromptSubmit (not just Stop).
+    trail = list(existing.get("prompt_trail") or [])
+    if prompt:
+        trail.append(prompt.strip()[:_PROMPT_TRAIL_CHARS])
+        trail = trail[-_PROMPT_TRAIL_MAX:]
 
     now = _now_iso()
     snapshot: dict[str, Any] = {
@@ -244,6 +300,10 @@ def checkpoint(
         "modified_files": git_state["modified_files"],
         "transcript_path": str(transcript_path) if transcript_path else existing.get("transcript_path"),
         "last_user_msg": last_user_msg or existing.get("last_user_msg"),
+        "last_assistant_tail": last_assistant_tail or existing.get("last_assistant_tail"),
+        "prompt_trail": trail,
+        "running_summary": existing.get("running_summary"),
+        "summary_turn": int(existing.get("summary_turn") or 0),
         # Default summary to last user msg head; an external enricher
         # (e.g. capture-stop with MLX warm) may overwrite later.
         "summary": existing.get("summary") or (
@@ -381,6 +441,149 @@ def format_relative(updated_iso: str | None, now: datetime | None = None) -> str
     if secs < 86400:
         return f"hace {secs // 3600}h"
     return f"hace {secs // 86400}d"
+
+
+_AUTOSAVE_THRESHOLD_KB_DEFAULT = 1024  # ~1MB → roughly 50–200 turns
+_AUTOSAVE_COOLDOWN_DEFAULT = 300       # 5 min between consecutive autosaves
+
+
+def check_autosave(
+    state_dir: Path,
+    *,
+    session_id: str,
+    transcript_path: str | None,
+    threshold_kb: int = _AUTOSAVE_THRESHOLD_KB_DEFAULT,
+    cooldown_secs: int = _AUTOSAVE_COOLDOWN_DEFAULT,
+) -> tuple[bool, int]:
+    """Return (should_autosave, transcript_size_kb).
+
+    Fast path: one os.stat() call. JSON read only if threshold is breached.
+    Never raises.
+    """
+    if not transcript_path:
+        return False, 0
+    try:
+        size_kb = Path(transcript_path).expanduser().stat().st_size // 1024
+    except OSError:
+        return False, 0
+
+    if size_kb < threshold_kb:
+        return False, size_kb
+
+    existing = _load(state_dir, session_id)
+    if existing:
+        last = existing.get("last_autosave_at")
+        if last:
+            try:
+                elapsed = (datetime.now(UTC) - datetime.fromisoformat(last)).total_seconds()
+                if elapsed < cooldown_secs:
+                    return False, size_kb
+            except (ValueError, TypeError):
+                pass
+
+    return True, size_kb
+
+
+def mark_autosaved(state_dir: Path, session_id: str) -> None:
+    """Stamp last_autosave_at in the session JSON (best-effort, silent)."""
+    existing = _load(state_dir, session_id)
+    if existing is None:
+        return
+    existing["last_autosave_at"] = _now_iso()
+    try:
+        _write(state_dir, session_id, existing)
+    except OSError:
+        pass
+
+
+def refresh_summary(
+    state_dir: Path,
+    session_id: str,
+    *,
+    helper_model: str = "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    min_new_turns: int = _SUMMARY_MIN_NEW_TURNS,
+) -> bool:
+    """Generate/update `running_summary` from the transcript using the 3B helper.
+
+    Called from the Stop hook. Throttled by `min_new_turns` so we don't
+    pay LLM cost on every single turn. Returns True if the summary was
+    written, False if skipped or failed.
+
+    Idempotent: if `turn_count - summary_turn < min_new_turns`, skip.
+    On crash the last written `running_summary` is preserved in the snapshot.
+    """
+    existing = _load(state_dir, session_id)
+    if existing is None:
+        return False
+
+    turn_count = int(existing.get("turn_count") or 0)
+    summary_turn = int(existing.get("summary_turn") or 0)
+    if turn_count - summary_turn < min_new_turns:
+        return False
+
+    transcript_path_str = existing.get("transcript_path")
+    if not transcript_path_str:
+        return False
+    transcript_path = Path(transcript_path_str).expanduser()
+    if not transcript_path.is_file():
+        return False
+
+    try:
+        lines = transcript_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return False
+
+    # Collect last ~10 user+assistant exchanges for the LLM prompt.
+    exchanges: list[str] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        role = obj.get("type") or obj.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        msg = obj.get("message", obj)
+        content = msg.get("content") if isinstance(msg, dict) else None
+        text = _extract_text(content)
+        if text:
+            label = "Usuario" if role == "user" else "Asistente"
+            exchanges.append(f"[{label}] {text[:300]}")
+    if not exchanges:
+        return False
+
+    recent = "\n\n".join(exchanges[-10:])
+    llm_prompt = (
+        "Basado en esta sesión de trabajo, escribe UN PÁRRAFO breve (2-3 oraciones) "
+        "en español que resuma: (1) qué se estaba trabajando, (2) qué decisiones o "
+        "progreso hubo, (3) qué quedó pendiente o era el siguiente paso.\n\n"
+        f"Sesión:\n{recent}\n\n"
+        "Resumen (2-3 oraciones, sin viñetas ni encabezados):"
+    )
+
+    try:
+        from memo.llm import MLXChat
+        chat = MLXChat()
+        result = chat.chat(
+            helper_model,
+            [{"role": "user", "content": llm_prompt}],
+            options={"temperature": 0.0, "num_predict": 150},
+        )
+        summary = (result.get("message") or {}).get("content") or ""
+        summary = summary.strip()
+    except Exception:
+        return False
+
+    if not summary:
+        return False
+
+    existing["running_summary"] = summary[:_RUNNING_SUMMARY_CHARS]
+    existing["summary_turn"] = turn_count
+    _write(state_dir, session_id, existing)
+    return True
 
 
 def update_summary(

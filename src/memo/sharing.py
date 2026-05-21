@@ -1,4 +1,6 @@
-"""Memory sharing & collaboration — share memorias with other users.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Memory sharing & collaboration — share memorias with other users.
 
 Enables:
 - Share memorias with other users (permissions)

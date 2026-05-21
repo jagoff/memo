@@ -15,9 +15,12 @@ If `mcp__memo__memory_*` tools are unavailable, tell the user to run:
 
 ```bash
 memo install-slash --client codex
+# for Windsurf/Cascade MCP config:
+memo install-slash --client windsurf
 ```
 
-Then start a new Codex session so plugin skills and MCP tools reload.
+Then start a new Codex session so plugin skills and MCP tools reload, or
+refresh MCP servers in Windsurf Cascade.
 
 ## Routing
 

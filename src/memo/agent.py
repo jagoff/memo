@@ -1,4 +1,6 @@
-"""Autonomous Memory Agent — razonamiento causal y síntesis de conocimiento.
+"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+
+Autonomous Memory Agent — razonamiento causal y síntesis de conocimiento.
 
 Este es EL GAMECHANGER: transforma memo de un sistema de recuperación pasivo
 a un sistema de razonamiento activo que puede generar nuevo conocimiento.
