@@ -7,6 +7,7 @@ requiring the MLX runtime, so they run on any platform with
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,24 @@ def test_existing_vec_table_dim_mismatch_fails_fast(tmp_path: Path):
 
     with pytest.raises(RuntimeError, match=r"FLOAT\[4\].*FLOAT\[8\]"):
         VecStore(db_path, dims=8)
+
+
+def test_existing_schema_init_does_not_need_writer_lock(tmp_path: Path):
+    db_path = tmp_path / "vec.db"
+    first = VecStore(db_path, dims=4)
+    first.close()
+
+    writer = sqlite3.connect(db_path, timeout=0.1)
+    writer.execute("BEGIN IMMEDIATE")
+    try:
+        reader = VecStore(db_path, dims=4)
+        try:
+            assert reader.count() == 0
+        finally:
+            reader.close()
+    finally:
+        writer.rollback()
+        writer.close()
 
 
 def test_list_recent_orders_by_updated_desc(store: VecStore):
