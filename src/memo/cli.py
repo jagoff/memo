@@ -39,7 +39,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from memo.config import Config
+from memo.config import MODEL_PROFILES, Config
 
 # Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
 # `run_picker` itself defers the heavy `questionary` import until called.
@@ -233,6 +233,276 @@ def _db_health_report(cfg: Config) -> list[dict[str, Any]]:
     return [_sqlite_db_health(label, path, cfg) for label, path in _managed_sqlite_dbs(cfg)]
 
 
+_PROFILE_FIELDS = (
+    "llm_model",
+    "helper_model",
+    "embedder_model",
+    "embedder_dims",
+    "reranker_enabled",
+    "reranker_model",
+)
+
+_PROFILE_ENV_KEYS = (
+    "MEMO_MODEL_PROFILE",
+    "MEMO_LLM_MODEL",
+    "MEMO_HELPER_MODEL",
+    "MEMO_EMBEDDER_MODEL",
+    "MEMO_EMBEDDER_DIMS",
+    "MEMO_RERANKER_ENABLED",
+    "MEMO_RERANKER_MODEL",
+    "MEMO_RERANK_INPUT_K",
+    "MEMO_RERANK_FUSION_ALPHA",
+)
+
+
+def _profile_active_config(cfg: Config) -> dict[str, Any]:
+    return {field: getattr(cfg, field) for field in _PROFILE_FIELDS}
+
+
+def _profile_expected_config(cfg: Config) -> dict[str, Any]:
+    raw = MODEL_PROFILES.get(cfg.model_profile, {})
+    return {field: raw[field] for field in _PROFILE_FIELDS if field in raw}
+
+
+def _profile_overrides(cfg: Config) -> list[dict[str, Any]]:
+    active = _profile_active_config(cfg)
+    expected = _profile_expected_config(cfg)
+    overrides: list[dict[str, Any]] = []
+    for field, expected_value in expected.items():
+        actual_value = active.get(field)
+        if actual_value != expected_value:
+            overrides.append({
+                "field": field,
+                "expected": expected_value,
+                "actual": actual_value,
+            })
+    return overrides
+
+
+def _model_cache_report(cfg: Config) -> list[dict[str, Any]]:
+    hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
+    roles = [
+        ("embedder", cfg.embedder_model),
+        ("llm", cfg.llm_model),
+        ("helper", cfg.helper_model),
+    ]
+    if cfg.reranker_enabled:
+        roles.append(("reranker", cfg.reranker_model))
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for role, model in roles:
+        key = (role, model)
+        if key in seen:
+            continue
+        seen.add(key)
+        cache_dir = hf_cache / f"models--{model.replace('/', '--')}"
+        out.append({
+            "role": role,
+            "model": model,
+            "cached": cache_dir.is_dir(),
+            "cache_path": str(cache_dir),
+        })
+    return out
+
+
+def _profile_status_report(
+    cfg: Config,
+    *,
+    include_db: bool = True,
+    include_env: bool = True,
+) -> dict[str, Any]:
+    db_report = _db_health_report(cfg) if include_db else []
+    memvec = next((item for item in db_report if item.get("label") == "memvec"), {})
+    db_dims = {
+        "vec_dims": memvec.get("vec_dims"),
+        "repo_vec_dims": memvec.get("repo_vec_dims"),
+        "expected_dims": cfg.embedder_dims,
+        "status": memvec.get("status") or ("not_checked" if not include_db else "missing"),
+    }
+    dimension_mismatch = bool(
+        include_db
+        and memvec
+        and memvec.get("exists")
+        and (
+            (memvec.get("vec_dims") is not None and memvec.get("vec_dims") != cfg.embedder_dims)
+            or (
+                memvec.get("repo_vec_dims") is not None
+                and memvec.get("repo_vec_dims") != cfg.embedder_dims
+            )
+        )
+    )
+    env = {
+        key: os.environ[key]
+        for key in _PROFILE_ENV_KEYS
+        if include_env and os.environ.get(key) not in (None, "")
+    }
+    status = "dimension_mismatch" if dimension_mismatch else "ok"
+    return {
+        "schema": "memo.profile_status.v1",
+        "ok": not dimension_mismatch,
+        "status": status,
+        "profile": cfg.model_profile,
+        "known_profiles": sorted(MODEL_PROFILES),
+        "active": _profile_active_config(cfg),
+        "expected": _profile_expected_config(cfg),
+        "overrides": _profile_overrides(cfg),
+        "environment": env,
+        "models": _model_cache_report(cfg),
+        "paths": {
+            "data_dir": str(cfg.data_dir),
+            "state_dir": str(cfg.state_dir),
+            "db_path": str(cfg.db_path),
+        },
+        "db": db_dims,
+    }
+
+
+def _profile_repair_plan(cfg: Config, *, include_db: bool = True) -> dict[str, Any]:
+    status = _profile_status_report(cfg, include_db=include_db)
+    actions: list[dict[str, Any]] = []
+    raw_db = status.get("db")
+    db: dict[str, Any] = raw_db if isinstance(raw_db, dict) else {}
+    vec_dims = db.get("vec_dims")
+    repo_vec_dims = db.get("repo_vec_dims")
+    expected_dims = db.get("expected_dims")
+    if vec_dims is not None and vec_dims != expected_dims:
+        actions.append({
+            "severity": "high",
+            "kind": "memory_index_rebuild",
+            "reason": f"memvec vec table is FLOAT[{vec_dims}] but active config expects FLOAT[{expected_dims}]",
+            "commands": [
+                "memo backup --out memo-pre-profile-repair.zip",
+                f"rm {shlex.quote(str(cfg.db_path))}",
+                "memo reindex",
+            ],
+            "destructive": True,
+            "review_required": True,
+        })
+    if repo_vec_dims is not None and repo_vec_dims != expected_dims:
+        actions.append({
+            "severity": "high",
+            "kind": "repo_index_rebuild",
+            "reason": (
+                f"memvec repo_vec table is FLOAT[{repo_vec_dims}] but active config "
+                f"expects FLOAT[{expected_dims}]"
+            ),
+            "commands": [
+                "memo backup --out memo-pre-profile-repair.zip",
+                f"rm {shlex.quote(str(cfg.db_path))}",
+                "memo reindex",
+                "memo repo index <repo> --force",
+            ],
+            "destructive": True,
+            "review_required": True,
+        })
+    if db.get("status") == "missing":
+        actions.append({
+            "severity": "medium",
+            "kind": "memory_index_create",
+            "reason": "memvec.db is missing; semantic search will need a rebuild",
+            "commands": ["memo reindex"],
+            "destructive": False,
+            "review_required": False,
+        })
+    if status.get("overrides"):
+        actions.append({
+            "severity": "info",
+            "kind": "profile_override_review",
+            "reason": "active MEMO_* values override the named model profile",
+            "commands": [
+                "memo profile status --json",
+                "memo install-slash --client all",
+            ],
+            "destructive": False,
+            "review_required": False,
+        })
+    if not actions:
+        actions.append({
+            "severity": "info",
+            "kind": "no_repair_required",
+            "reason": "active model profile, configured dims, and checked DB dims are aligned",
+            "commands": [],
+            "destructive": False,
+            "review_required": False,
+        })
+    return {
+        "schema": "memo.profile_repair_plan.v1",
+        "ok": status.get("ok", True),
+        "status": status.get("status", "ok"),
+        "profile_status": status,
+        "actions": actions,
+    }
+
+
+def _json_import_check(label: str, check: Callable[[], None]) -> dict[str, Any]:
+    try:
+        check()
+    except Exception as exc:
+        return {"label": label, "ok": False, "error": str(exc)}
+    return {"label": label, "ok": True, "error": ""}
+
+
+def _doctor_report(
+    cfg: Config,
+    *,
+    check_db: bool,
+    strict_runtime: bool,
+    do_gc: bool,
+    fix: bool,
+) -> dict[str, Any]:
+    def check_sqlite_vec() -> None:
+        import sqlite3
+
+        import sqlite_vec  # type: ignore[import-untyped]
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+        finally:
+            conn.close()
+
+    def check_mlx() -> None:
+        import mlx.core  # noqa: F401
+        import mlx_lm  # noqa: F401
+
+    runtime = _runtime_install_report()
+    data_dir = {"path": str(cfg.data_dir), "ok": cfg.data_dir.is_dir()}
+    vault_path = {
+        "path": str(cfg.vault_path) if cfg.vault_path else "",
+        "ok": True if cfg.vault_path is None else cfg.vault_path.is_dir(),
+        "set": cfg.vault_path is not None,
+    }
+    imports = [
+        _json_import_check("sqlite_vec", check_sqlite_vec),
+        _json_import_check("mlx", check_mlx),
+    ]
+    db_report = _db_health_report(cfg) if check_db else []
+    gc_report: dict[str, Any] | None = None
+    if do_gc:
+        from memo.memory import Memory
+
+        gc_report = Memory(cfg).gc(fix=fix)
+    ok = (
+        data_dir["ok"]
+        and vault_path["ok"]
+        and all(item["ok"] for item in imports)
+        and (not strict_runtime or not runtime["warnings"])
+        and all(item.get("ok", True) for item in db_report)
+    )
+    return {
+        "schema": "memo.doctor.v1",
+        "ok": ok,
+        "runtime": runtime,
+        "storage": {"data_dir": data_dir, "vault_path": vault_path},
+        "profile": _profile_status_report(cfg, include_db=check_db),
+        "imports": imports,
+        "models": _model_cache_report(cfg),
+        "db": db_report,
+        "gc": gc_report,
+    }
+
+
 def _resolved(thunk):
     """Run `thunk()` translating `AmbiguousIdError` into a friendly print
     + exit code 2. Used by every CLI verb that takes an id-or-prefix
@@ -269,7 +539,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "init", "doctor", "migrate-vault",
     "mcp-command", "install-slash", "prewarm", "recall-hook", "recall-daemon",
     "capture-stop", "session", "ingest", "historia", "briefing", "mapa",
-    "backend-native",
+    "backend-native", "profile",
 }
 
 
@@ -970,6 +1240,7 @@ def backend_native_group() -> None:
 def backend_native_capabilities(as_json: bool, trace_id: str) -> None:
     from memo.memory import NATIVE_BACKEND_PROTOCOL_VERSION, SYNAPSE_BACKEND_NATIVE_SCHEMA
 
+    cfg = Config.from_env()
     payload = {
         "schema": SYNAPSE_BACKEND_NATIVE_SCHEMA,
         "protocol_version": NATIVE_BACKEND_PROTOCOL_VERSION,
@@ -990,6 +1261,7 @@ def backend_native_capabilities(as_json: bool, trace_id: str) -> None:
         },
         "provenance_prefixes": ["memo://"],
         "trace_id": _backend_native_trace_id(trace_id),
+        "model_profile": _profile_status_report(cfg, include_db=False, include_env=False),
     }
     if as_json:
         click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -2032,6 +2304,63 @@ def stats() -> None:
         console.print(f"[dim]{k:14s}[/dim] {v}")
 
 
+@cli.group(name="profile")
+def profile_group() -> None:
+    """Inspect active model profile, embedding dims, and repair guidance."""
+
+
+@profile_group.command(name="status")
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--no-db", "no_db", is_flag=True, help="Skip read-only DB dimension checks.")
+def profile_status(as_json: bool, no_db: bool) -> None:
+    """Show the active model profile and whether DB dimensions align."""
+    cfg = Config.from_env()
+    report = _profile_status_report(cfg, include_db=not no_db)
+    if as_json:
+        click.echo(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+
+    marker = "[green]✓[/green]" if report["ok"] else "[red]✗[/red]"
+    console.print(f"{marker} profile: {report['profile']} ({report['status']})")
+    active = report["active"]
+    console.print(f"  embedder: {active['embedder_model']} [{active['embedder_dims']}]")
+    console.print(f"  llm:      {active['llm_model']}")
+    console.print(f"  helper:   {active['helper_model']}")
+    console.print(f"  reranker: {active['reranker_model']} enabled={active['reranker_enabled']}")
+    db = report["db"]
+    if db["status"] != "not_checked":
+        console.print(
+            "  db dims:  "
+            f"vec={db.get('vec_dims')} repo_vec={db.get('repo_vec_dims')} "
+            f"expected={db.get('expected_dims')}"
+        )
+    for override in report["overrides"]:
+        console.print(
+            "[yellow]![/yellow] override "
+            f"{override['field']}: expected={override['expected']} actual={override['actual']}"
+        )
+    for model in report["models"]:
+        marker = "[green]✓[/green]" if model["cached"] else "[yellow]![/yellow]"
+        console.print(f"  {marker} cached {model['role']}: {model['model']}")
+
+
+@profile_group.command(name="repair-plan")
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--no-db", "no_db", is_flag=True, help="Skip read-only DB dimension checks.")
+def profile_repair_plan(as_json: bool, no_db: bool) -> None:
+    """Print a non-executing repair plan for profile or dimension drift."""
+    cfg = Config.from_env()
+    plan = _profile_repair_plan(cfg, include_db=not no_db)
+    if as_json:
+        click.echo(json.dumps(plan, ensure_ascii=False, indent=2))
+        return
+    console.print(f"profile repair plan: {plan['status']}")
+    for action in plan["actions"]:
+        console.print(f"- {action['severity']} {action['kind']}: {action['reason']}")
+        for command in action["commands"]:
+            console.print(f"  {command}")
+
+
 @cli.command()
 @click.option("--gc", "do_gc", is_flag=True, help="Detect orphans between store and disk.")
 @click.option("--fix", is_flag=True, help="With --gc: drop orphan store rows. .md files are never deleted automatically.")
@@ -2041,7 +2370,8 @@ def stats() -> None:
     is_flag=True,
     help="Exit non-zero if memo/memo-mcp are not running from an isolated tool install.",
 )
-def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Emit a stable JSON health report.")
+def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json: bool) -> None:
     """Self-check: vault present, sqlite-vec loadable, MLX importable, models in cache.
 
     `--gc` reports orphans (store rows whose `.md` is gone, `.md` files
@@ -2049,6 +2379,17 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool) -> None
     rows; orphan `.md` files are listed but never deleted automatically.
     """
     cfg = Config.from_env()
+    if as_json:
+        report = _doctor_report(
+            cfg,
+            check_db=check_db,
+            strict_runtime=strict_runtime,
+            do_gc=do_gc,
+            fix=fix,
+        )
+        click.echo(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        sys.exit(0 if report["ok"] else 1)
+
     ok = True
 
     runtime_report = _runtime_install_report()
