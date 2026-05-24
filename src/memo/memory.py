@@ -137,15 +137,16 @@ Definitions:
 Output ONLY the JSON, no markdown fences, no commentary."""
 
 
-_ASK_SYSTEM_PROMPT = """You answer questions over the user's personal memory archive.
+_ASK_SYSTEM_PROMPT = """You answer questions over the user's personal memory archive and indexed repositories.
 
-You receive a list of relevant memory snippets (each with an `[id]` label
-and metadata) and a question. Synthesise a concise answer in the same
-language as the question (Spanish rioplatense if the question is in
-Spanish). Rules:
+You receive a list of relevant memory snippets and repo snippets (each with a
+label like `[id-prefix]` or `[repo:name:path:start-end@commit]`) and a question.
+Synthesise a concise answer in the same language as the question (Spanish
+rioplatense if the question is in Spanish). Rules:
 
 - Cite sources INLINE with `[id-prefix]` after each claim, e.g.
   "Decidí migrar a MLX [d61fe730] para reducir dependencias [4e0b2e6]".
+  For repo evidence, cite the full repo label you received.
 - Use only information from the provided snippets. If the answer is not
   present, say "no encuentro la respuesta en las memorias guardadas"
   and stop.
@@ -176,6 +177,25 @@ Output ONLY the JSON, no markdown fences, no commentary, no preamble."""
 _VALID_TYPES = frozenset(
     {"decision", "fact", "bug", "feedback", "preference", "note", "manual"}
 )
+
+SYNAPSE_BACKEND_NATIVE_SCHEMA = "synapse.backend_native.v1"
+NATIVE_BACKEND_PROTOCOL_VERSION = "backend_native.v1"
+MEMO_BACKEND_NAME = "memo"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _stable_content_hash(value: Any) -> str:
+    raw = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class AmbiguousIdError(ValueError):
@@ -758,6 +778,73 @@ class Memory:
             out = _apply_decay(out, halflife_days=halflife_days, alpha=alpha)
         return out
 
+    # -- repo corpus -------------------------------------------------------
+
+    def _repo_corpus(self):
+        from memo.repo_index import RepoCorpus
+
+        return RepoCorpus(self.cfg, store=self.store, embedder=self.embedder)
+
+    def repo_index(
+        self,
+        url: str,
+        *,
+        name: str | None = None,
+        ref: str | None = None,
+        force: bool = False,
+        with_embeddings: bool = True,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+        max_file_bytes: int | None = None,
+        progress=None,
+    ) -> dict[str, Any]:
+        return self._repo_corpus().index(
+            url,
+            name=name,
+            ref=ref,
+            force=force,
+            with_embeddings=with_embeddings,
+            include=include,
+            exclude=exclude,
+            max_file_bytes=max_file_bytes,
+            progress=progress,
+        )
+
+    def repo_embed(self, repo: str, *, force: bool = False, progress=None) -> dict[str, Any]:
+        return self._repo_corpus().embed(repo, force=force, progress=progress)
+
+    def repo_status(self, repo: str) -> dict[str, Any] | None:
+        return self._repo_corpus().status(repo)
+
+    def repo_search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        repo: str | None = None,
+        path: str | None = None,
+        mode: str = "hybrid",
+    ):
+        return self._repo_corpus().search(
+            query, limit=limit, repo=repo, path=path, mode=mode,
+        )
+
+    def repo_get_file(
+        self,
+        repo: str,
+        path: str,
+        *,
+        start: int | None = None,
+        end: int | None = None,
+    ) -> dict[str, Any] | None:
+        return self._repo_corpus().get_file(repo, path, start=start, end=end)
+
+    def repo_list(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        return self._repo_corpus().list(limit=limit)
+
+    def repo_delete(self, repo: str, *, remove_clone: bool = True) -> bool:
+        return self._repo_corpus().delete(repo, remove_clone=remove_clone)
+
     def _rerank(
         self, query: str, hits: list[MemoryRecord], *, top_n: int,
     ) -> list[MemoryRecord]:
@@ -806,7 +893,7 @@ class Memory:
 
     def ask(
         self, question: str, *, k: int = 5, type_: str | None = None,
-        snippet_chars: int = 800,
+        snippet_chars: int = 800, include_repos: bool = True,
     ) -> dict[str, Any]:
         """Synthesised Q&A over the memory archive (RAG).
 
@@ -833,7 +920,11 @@ class Memory:
             _log.warning("ask: question truncated from %d to %d chars", len(question), _MAX_QUESTION_CHARS)
             question = question[:_MAX_QUESTION_CHARS]
         hits = self.search(question, limit=k, type_=type_, mode="hybrid")
-        if not hits:
+        repo_hits = []
+        if include_repos and self.store.list_repo_sources(limit=1):
+            with contextlib.suppress(Exception):
+                repo_hits = self.repo_search(question, limit=k, mode="hybrid")
+        if not hits and not repo_hits:
             return {
                 "question": question,
                 "answer": "no encuentro la respuesta en las memorias guardadas",
@@ -856,6 +947,7 @@ class Memory:
                 f"{snippet}\n"
             )
             sources.append({
+                "source": "memory",
                 "id": h.id,
                 "id_short": id_short,
                 "title": h.title,
@@ -863,10 +955,34 @@ class Memory:
                 "score": h.score,
                 "snippet": snippet,
             })
+        for h in repo_hits:
+            label = h.locator
+            snippet = (h.text or "")[:snippet_chars]
+            if len(h.text or "") > snippet_chars:
+                snippet = snippet.rstrip() + "…"
+            snippet_lines.append(
+                f"[{label}] source: repo  |  path: {h.path}  |  "
+                f"lines: {h.line_start}-{h.line_end}  |  match: {h.match_type}\n"
+                f"{snippet}\n"
+            )
+            sources.append({
+                "source": "repo",
+                "id": h.id,
+                "id_short": label,
+                "title": h.path,
+                "type": "repo",
+                "score": h.score,
+                "snippet": snippet,
+                "repo_name": h.repo_name,
+                "path": h.path,
+                "line_start": h.line_start,
+                "line_end": h.line_end,
+                "locator": label,
+            })
 
         user_msg = (
             f"Pregunta del user:\n{question}\n\n"
-            f"Memorias relevantes (top {len(hits)} por hybrid search):\n\n"
+            f"Contexto relevante ({len(hits)} memorias, {len(repo_hits)} snippets de repo):\n\n"
             + "\n---\n".join(snippet_lines)
         )
 
@@ -947,6 +1063,59 @@ class Memory:
             id=r["id"], path=r["path"], title=r["title"], type=r["type"],
             tags=r["tags"], created=r["created"], updated=r["updated"],
             body=self._read_body(r["path"]), extra=r.get("extra") or {},
+        )
+
+    def backend_native_replay_resolve(
+        self,
+        uri: str,
+        *,
+        trace_id: str = "",
+        backend_version: str = "",
+    ) -> dict[str, Any]:
+        """Resolve Synapse backend_native.v1 evidence without mutating Memo."""
+
+        def payload(
+            status: str,
+            detail: str,
+            *,
+            content_hash: str = "",
+        ) -> dict[str, Any]:
+            return {
+                "schema": SYNAPSE_BACKEND_NATIVE_SCHEMA,
+                "protocol_version": NATIVE_BACKEND_PROTOCOL_VERSION,
+                "backend": MEMO_BACKEND_NAME,
+                "uri": uri,
+                "status": status,
+                "detail": detail,
+                "content_hash": content_hash,
+                "observed_at": _utc_now_iso(),
+                "backend_version": backend_version,
+                "trace_id": trace_id,
+                "resolution_mode": "backend_native",
+            }
+
+        prefix = "memo://memoria/"
+        if not uri.startswith(prefix):
+            return payload(
+                "unsupported",
+                "Memo backend-native only replays memo://memoria/<id> evidence.",
+            )
+        memoria_id = uri[len(prefix):].strip()
+        if not memoria_id:
+            return payload("missing", "memo://memoria URI did not include an id.")
+        try:
+            rec = self.get(memoria_id)
+        except AmbiguousIdError as exc:
+            return payload(
+                "error",
+                f"ambiguous memoria id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+            )
+        if rec is None:
+            return payload("missing", "Memo memoria was not found.")
+        return payload(
+            "found",
+            f"resolved memoria: {rec.id}",
+            content_hash=_stable_content_hash(rec.to_dict()),
         )
 
     # -- update -------------------------------------------------------------

@@ -132,3 +132,80 @@ def test_list_recent_orders_by_updated_desc(store: VecStore):
         )
     rows = store.list_recent(limit=10)
     assert [r["title"] for r in rows] == ["n1", "n2", "n0"]
+
+
+def test_repo_index_rows_search_and_delete(store: VecStore):
+    source = {
+        "id": "repo1",
+        "name": "sample",
+        "url": "https://example.test/sample.git",
+        "ref": "HEAD",
+        "commit_sha": "abc123",
+        "clone_path": "/tmp/sample",
+        "indexed_at": "2026-05-23T00:00:00Z",
+        "status": "ready",
+        "extra": {},
+    }
+    store.upsert_repo_index(
+        source=source,
+        files=[
+            {
+                "id": "file1",
+                "path": "src/app.py",
+                "language": "py",
+                "size_bytes": 42,
+                "sha256": "sha",
+                "line_count": 2,
+                "lines": [
+                    {"id": "line1", "line_no": 1, "text": "def alpha():", "text_hash": "l1"},
+                    {"id": "line2", "line_no": 2, "text": "    return 'needle'", "text_hash": "l2"},
+                ],
+                "chunks": [
+                    {
+                        "id": "chunk1",
+                        "chunk_seq": 0,
+                        "line_start": 1,
+                        "line_end": 2,
+                        "text_hash": "c1",
+                        "body_text": "def alpha():\n    return 'needle'",
+                        "embedding": _emb(1, 0, 0, 0),
+                    }
+                ],
+            }
+        ],
+    )
+
+    repo_source = store.get_repo_source("sample")
+    assert repo_source is not None
+    assert repo_source["commit_sha"] == "abc123"
+    assert store.repo_file_hashes("repo1")["src/app.py"]["sha256"] == "sha"
+
+    vec_hits = store.search_repo_vec(_emb(1, 0, 0, 0), limit=5)
+    assert vec_hits[0]["path"] == "src/app.py"
+    assert vec_hits[0]["line_start"] == 1
+
+    line_hits = store.search_repo_lines("needle", limit=5)
+    assert line_hits[0]["match_type"] == "line"
+    assert line_hits[0]["line_start"] == 2
+
+    lines = store.get_repo_file_lines("repo1", "src/app.py", start=2, end=2)
+    assert lines == [{"line_no": 2, "text": "    return 'needle'"}]
+
+    assert store.delete_repo("sample") is True
+    assert store.get_repo_source("sample") is None
+    assert store.search_repo_lines("needle", limit=5) == []
+
+
+def test_repo_embedding_cache_is_scoped_by_model_and_dims(store: VecStore):
+    store.upsert_repo_embedding_cache(
+        model="model-a",
+        dims=4,
+        embeddings=[("hash1", _emb(1, 0, 0, 0))],
+        created_at="2026-05-23T00:00:00Z",
+    )
+
+    hit = store.get_repo_embedding_cache(model="model-a", dims=4, input_hashes=["hash1"])
+
+    assert hit == {"hash1": _emb(1, 0, 0, 0)}
+    assert store.get_repo_embedding_cache(model="model-b", dims=4, input_hashes=["hash1"]) == {}
+    assert store.get_repo_embedding_cache(model="model-a", dims=8, input_hashes=["hash1"]) == {}

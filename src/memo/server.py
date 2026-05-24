@@ -116,6 +116,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         k: int = 5,
         type: str | None = None,
         snippet_chars: int = 800,
+        include_repos: bool = True,
     ) -> dict[str, Any]:
         """RAG over the memory archive.
 
@@ -132,7 +133,13 @@ def build_server(memory: Memory | None = None) -> FastMCP:
                 (default 800). Lower = cheaper + smaller context window
                 used; higher = more grounding for long bodies.
         """
-        return memory.ask(question, k=k, type_=type, snippet_chars=snippet_chars)
+        return memory.ask(
+            question,
+            k=k,
+            type_=type,
+            snippet_chars=snippet_chars,
+            include_repos=include_repos,
+        )
 
     @server.tool()
     def memory_list(
@@ -193,6 +200,85 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         Returns `{"checked", "reindexed", "added", "skipped"}`.
         """
         return memory.reindex(force=force)
+
+    @server.tool()
+    def memory_repo_index(
+        url: str,
+        name: str | None = None,
+        ref: str | None = None,
+        force: bool = False,
+        with_embeddings: bool = True,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+        max_file_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Clone/fetch a Git repo and index all included text files.
+
+        Auth is delegated to local `git`: public repos work directly;
+        private repos work when SSH agent / credential helpers / tokens
+        already let `git clone <url>` succeed on this machine.
+        """
+        return memory.repo_index(
+            url,
+            name=name,
+            ref=ref,
+            force=force,
+            with_embeddings=with_embeddings,
+            include=include,
+            exclude=exclude,
+            max_file_bytes=max_file_bytes,
+        )
+
+    @server.tool()
+    def memory_repo_embed(repo: str, force: bool = False) -> dict[str, Any]:
+        """Embed pending repo chunks. Runs automatically during repo index by default."""
+        return memory.repo_embed(repo, force=force)
+
+    @server.tool()
+    def memory_repo_status(repo: str) -> dict[str, Any] | None:
+        """Return exact and semantic index counts for one repo."""
+        return memory.repo_status(repo)
+
+    @server.tool()
+    def memory_repo_search(
+        query: str,
+        limit: int = 10,
+        repo: str | None = None,
+        path: str | None = None,
+        mode: str = "hybrid",
+    ) -> list[dict[str, Any]]:
+        """Search indexed repositories.
+
+        Modes: `hybrid` fuses chunk embeddings, chunk BM25, and line
+        BM25; `vec` is semantic chunk search; `bm25` is keyword chunk
+        search; `line` searches the exact per-line index.
+        """
+        return [
+            hit.to_dict()
+            for hit in memory.repo_search(
+                query, limit=limit, repo=repo, path=path, mode=mode,
+            )
+        ]
+
+    @server.tool()
+    def memory_repo_get_file(
+        repo: str,
+        path: str,
+        start: int | None = None,
+        end: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Return indexed text for one repo file or line range."""
+        return memory.repo_get_file(repo, path, start=start, end=end)
+
+    @server.tool()
+    def memory_repo_list(limit: int = 100) -> list[dict[str, Any]]:
+        """List indexed repositories."""
+        return memory.repo_list(limit=limit)
+
+    @server.tool()
+    def memory_repo_delete(repo: str, remove_clone: bool = True) -> dict[str, bool]:
+        """Delete one indexed repo and optionally remove memo's managed clone."""
+        return {"deleted": memory.repo_delete(repo, remove_clone=remove_clone)}
 
     @server.tool()
     def memory_delete(id: str) -> dict[str, Any]:
