@@ -52,19 +52,33 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _stable_json_hash(value: Any) -> str:
+    import hashlib
+
+    raw = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def _repo_index_operational_receipt(out: dict[str, Any]) -> dict[str, Any]:
     name = str(out.get("name") or "repo")
     commit = str(out.get("commit_sha") or "")
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-") or "repo"
     receipt_id = f"{safe_name}/{commit[:12] or 'unknown'}"
     status = "partial" if int(out.get("errors") or 0) else "ok"
-    return {
+    receipt = {
         "schema": "memo.operational_receipt.v1",
         "source": "memo",
         "operation": "repo_index",
         "status": status,
         "uri": f"memo://repo-index/{receipt_id}",
         "generated_at": _now_iso(),
+        "trace_id": _backend_native_trace_id(),
         "repo": {
             "id": out.get("repo_id") or "",
             "name": name,
@@ -89,6 +103,8 @@ def _repo_index_operational_receipt(out: dict[str, Any]) -> dict[str, Any]:
             "clone_path": out.get("clone_path") or "",
         },
     }
+    receipt["content_hash"] = _stable_json_hash(receipt)
+    return receipt
 
 
 def _managed_sqlite_dbs(cfg: Config) -> list[tuple[str, Path]]:
@@ -964,6 +980,8 @@ def backend_native_capabilities(as_json: bool, trace_id: str) -> None:
             "health": True,
             "capabilities": True,
             "replay_resolve": True,
+            "memory_replay": True,
+            "operational_replay": True,
             "trace_id": True,
         },
         "endpoints": {
@@ -1347,13 +1365,27 @@ def _run_with_repo_progress(
             elif event == "write_start":
                 console.print(
                     "[dim]write sqlite[/dim] "
+                    f"flush_batch={data.get('flush_batch')}"
+                )
+            elif event == "write_done":
+                console.print(
+                    "[dim]write sqlite done[/dim] "
                     f"files={data.get('files')} chunks={data.get('chunks')} "
                     f"lines={data.get('lines')}"
+                )
+            elif event == "semantic_prepare":
+                console.print(
+                    "[dim]embedder[/dim] preparing pending chunks "
+                    f"for {data.get('repo') or 'repo'}"
                 )
             elif event == "semantic_start":
                 total = int(data.get("chunks") or 0)
                 if total:
                     repo = data.get("repo") or "repo"
+                    console.print(
+                        "[dim]embedder[/dim] "
+                        f"{total} pending chunks; use --no-embeddings to skip"
+                    )
                     progress_state["semantic_task"] = progress.add_task(
                         f"embedder {repo}",
                         total=total,

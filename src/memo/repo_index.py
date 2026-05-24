@@ -351,7 +351,14 @@ class RepoCorpus:
 
         semantic_status = "semantic_pending"
         self.store.update_repo_status(repo_id, semantic_status, indexed_at=_now_iso())
-        _emit(progress, "write_done")
+        _emit(
+            progress,
+            "write_done",
+            files=indexed_files_total,
+            chunks=indexed_chunks,
+            lines=indexed_lines,
+            flushed_files=flushed_files,
+        )
 
         index_embed_counts: dict[str, Any] = {}
         if with_embeddings:
@@ -447,6 +454,7 @@ class RepoCorpus:
         if source is None:
             raise ValueError(f"repo not found: {repo}")
 
+        _emit(progress, "semantic_prepare", repo=source["name"])
         pending_rows = self.store.repo_pending_chunks(repo_id, force=force)
         _emit(progress, "semantic_start", repo=source["name"], chunks=len(pending_rows))
         if not pending_rows:
