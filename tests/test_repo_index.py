@@ -398,57 +398,8 @@ def test_repo_cli_index_search_and_get(tmp_path: Path, monkeypatch):
     assert "needle-value" in result.output
 
 
-def test_repo_cli_index_emits_memflow_receipt(tmp_path: Path, monkeypatch):
+def test_repo_cli_index_json_omits_memflow_receipt(tmp_path: Path, monkeypatch):
     repo = _make_repo(tmp_path)
-    memflow_root = tmp_path / "memflow"
-    memflow_root.mkdir()
-    cfg_file = tmp_path / "memo.toml"
-    env = {
-        "MEMO_CONFIG_FILE": str(cfg_file),
-        "MEMO_NONINTERACTIVE": "1",
-        "MEMO_DATA_DIR": str(tmp_path / "data"),
-        "MEMO_STATE_DIR": str(tmp_path / "state"),
-        "MEMO_EMBEDDER_DIMS": "4",
-        "MEMO_EMBEDDER_MODEL": "stub",
-        "MEMO_RERANKER_ENABLED": "0",
-        "MEMFLOW_PROJECT_ROOT": str(memflow_root),
-        "MEMO_MEMFLOW_BIN": "memflow-test",
-    }
-    calls: list[list[str]] = []
-
-    def _fake_receipt(command, *, cwd, env):
-        calls.append(list(command))
-        assert cwd == memflow_root
-        assert env["MEMFLOW_PROJECT_ROOT"] == str(memflow_root)
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=".memflow/events/memories/fact/receipt.md\n",
-            stderr="",
-        )
-
-    monkeypatch.setattr("memo.cli._run_memflow_receipt_command", _fake_receipt)
-
-    result = CliRunner().invoke(
-        cli,
-        ["repo", "index", str(repo), "--name", "sample", "--no-embeddings"],
-        env=env,
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "memflow receipt:" in result.output
-    command = calls[0]
-    assert command[:3] == ["memflow-test", "write", "fact"]
-    assert "status=ok" in command
-    assert "operation=repo_index" in command
-    assert "repo_name=sample" in command
-    assert "indexed_files=2" in command
-
-
-def test_repo_cli_index_json_includes_memflow_receipt(tmp_path: Path, monkeypatch):
-    repo = _make_repo(tmp_path)
-    memflow_root = tmp_path / "memflow"
-    memflow_root.mkdir()
     env = {
         "MEMO_NONINTERACTIVE": "1",
         "MEMO_DATA_DIR": str(tmp_path / "data"),
@@ -456,19 +407,7 @@ def test_repo_cli_index_json_includes_memflow_receipt(tmp_path: Path, monkeypatc
         "MEMO_EMBEDDER_DIMS": "4",
         "MEMO_EMBEDDER_MODEL": "stub",
         "MEMO_RERANKER_ENABLED": "0",
-        "MEMFLOW_PROJECT_ROOT": str(memflow_root),
-        "MEMO_MEMFLOW_BIN": "memflow-test",
     }
-
-    def _fake_receipt(command, *, cwd, env):
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=".memflow/events/memories/fact/receipt.md\n",
-            stderr="",
-        )
-
-    monkeypatch.setattr("memo.cli._run_memflow_receipt_command", _fake_receipt)
 
     result = CliRunner().invoke(
         cli,
@@ -479,126 +418,7 @@ def test_repo_cli_index_json_includes_memflow_receipt(tmp_path: Path, monkeypatc
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["name"] == "sample"
-    assert payload["memflow_receipt"] == {
-        "ok": True,
-        "path": ".memflow/events/memories/fact/receipt.md",
-    }
-
-
-def test_repo_cli_index_can_skip_memflow_receipt(tmp_path: Path, monkeypatch):
-    repo = _make_repo(tmp_path)
-    memflow_root = tmp_path / "memflow"
-    memflow_root.mkdir()
-    env = {
-        "MEMO_NONINTERACTIVE": "1",
-        "MEMO_DATA_DIR": str(tmp_path / "data"),
-        "MEMO_STATE_DIR": str(tmp_path / "state"),
-        "MEMO_EMBEDDER_DIMS": "4",
-        "MEMO_EMBEDDER_MODEL": "stub",
-        "MEMO_RERANKER_ENABLED": "0",
-        "MEMFLOW_PROJECT_ROOT": str(memflow_root),
-        "MEMO_MEMFLOW_BIN": "memflow-test",
-    }
-    calls: list[list[str]] = []
-
-    def _fake_receipt(command, *, cwd, env):
-        calls.append(list(command))
-        return subprocess.CompletedProcess(command, 0, stdout="receipt.md\n", stderr="")
-
-    monkeypatch.setattr("memo.cli._run_memflow_receipt_command", _fake_receipt)
-
-    result = CliRunner().invoke(
-        cli,
-        [
-            "repo",
-            "index",
-            str(repo),
-            "--name",
-            "sample",
-            "--no-embeddings",
-            "--no-memflow-receipt",
-            "--json",
-        ],
-        env=env,
-    )
-
-    assert result.exit_code == 0, result.output
-    assert calls == []
-    payload = json.loads(result.output)
-    assert payload["memflow_receipt"] == {
-        "ok": False,
-        "skipped": True,
-        "reason": "disabled",
-    }
-
-
-def test_repo_cli_index_survives_memflow_receipt_failure(tmp_path: Path, monkeypatch):
-    repo = _make_repo(tmp_path)
-    memflow_root = tmp_path / "memflow"
-    memflow_root.mkdir()
-    env = {
-        "MEMO_NONINTERACTIVE": "1",
-        "MEMO_DATA_DIR": str(tmp_path / "data"),
-        "MEMO_STATE_DIR": str(tmp_path / "state"),
-        "MEMO_EMBEDDER_DIMS": "4",
-        "MEMO_EMBEDDER_MODEL": "stub",
-        "MEMO_RERANKER_ENABLED": "0",
-        "MEMFLOW_PROJECT_ROOT": str(memflow_root),
-        "MEMO_MEMFLOW_BIN": "memflow-test",
-    }
-
-    def _fake_receipt(command, *, cwd, env):
-        return subprocess.CompletedProcess(command, 2, stdout="", stderr="memflow down")
-
-    monkeypatch.setattr("memo.cli._run_memflow_receipt_command", _fake_receipt)
-
-    result = CliRunner().invoke(
-        cli,
-        ["repo", "index", str(repo), "--name", "sample", "--no-embeddings", "--json"],
-        env=env,
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["memflow_receipt"] == {"ok": False, "error": "memflow down"}
-
-
-def test_repo_cli_index_error_emits_memflow_receipt(tmp_path: Path, monkeypatch):
-    memflow_root = tmp_path / "memflow"
-    memflow_root.mkdir()
-    env = {
-        "MEMO_NONINTERACTIVE": "1",
-        "MEMO_DATA_DIR": str(tmp_path / "data"),
-        "MEMO_STATE_DIR": str(tmp_path / "state"),
-        "MEMO_EMBEDDER_DIMS": "4",
-        "MEMO_EMBEDDER_MODEL": "stub",
-        "MEMO_RERANKER_ENABLED": "0",
-        "MEMFLOW_PROJECT_ROOT": str(memflow_root),
-        "MEMO_MEMFLOW_BIN": "memflow-test",
-    }
-    calls: list[list[str]] = []
-
-    def _raise_repo_index(self, *args, **kwargs):
-        raise RuntimeError("index failed")
-
-    def _fake_receipt(command, *, cwd, env):
-        calls.append(list(command))
-        return subprocess.CompletedProcess(command, 0, stdout="receipt.md\n", stderr="")
-
-    monkeypatch.setattr("memo.memory.Memory.repo_index", _raise_repo_index)
-    monkeypatch.setattr("memo.cli._run_memflow_receipt_command", _fake_receipt)
-
-    result = CliRunner().invoke(
-        cli,
-        ["repo", "index", "https://example.test/repo.git", "--name", "sample"],
-        env=env,
-    )
-
-    assert result.exit_code != 0
-    command = calls[0]
-    assert "status=error" in command
-    assert "error_type=RuntimeError" in command
-    assert "error=index failed" in command
+    assert "memflow_receipt" not in payload
 
 
 def test_repo_mcp_tools(tmp_path: Path, monkeypatch):

@@ -992,9 +992,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         """
         return memory.link_suggester.format_wikilink(memoria_id, title)
 
-    # -- lifecycle management tools -----------------------------------------------
+    # -- lifecycle management helpers ---------------------------------------------
 
-    @server.tool()
     def memory_lifecycle_report(
         limit: int = 100,
     ) -> dict[str, Any]:
@@ -1009,7 +1008,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         """
         return memory.lifecycle.get_lifecycle_report(limit=limit)
 
-    @server.tool()
     def memory_lifecycle_apply(
         dry_run: bool = False,
         limit: int = 100,
@@ -1025,7 +1023,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         """
         return memory.lifecycle.apply_lifecycle_rules(dry_run=dry_run, limit=limit)
 
-    @server.tool()
     def memory_lifecycle_access_count(
         memoria_id: str,
     ) -> dict[str, Any]:
@@ -1039,9 +1036,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         count = memory.lifecycle.get_access_count(memoria_id)
         return {"memoria_id": memoria_id, "access_count": count}
 
-    # -- proactive suggestions tools -----------------------------------------------
+    # -- proactive suggestions helpers --------------------------------------------
 
-    @server.tool()
     def memory_suggest_analyze(
         recent_turns: list[dict[str, str]],
         limit: int = 3,
@@ -1058,7 +1054,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         suggestions = memory.proactive.analyze_conversation(recent_turns, limit=limit)
         return [s.__dict__ for s in suggestions]
 
-    @server.tool()
     def memory_suggest_feedback_stats() -> dict[str, Any]:
         """Show statistics on suggestion feedback (acceptance rate).
 
@@ -1216,9 +1211,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         success = memory.query_composer.query_store.delete_query(name)
         return {"success": success, "name": name}
 
-    # -- federation tools ---------------------------------------------------------
+    # -- federation helpers -------------------------------------------------------
 
-    @server.tool()
     def memory_federation_add_vault(
         name: str,
         path: str,
@@ -1237,7 +1231,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         memory.federation.config.add_vault(name, path, weight)
         return {"status": "added", "name": name}
 
-    @server.tool()
     def memory_federation_list_vaults() -> list[dict[str, Any]]:
         """List all configured vaults in the federation.
 
@@ -1247,7 +1240,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         vaults = memory.federation.config.list_vaults()
         return [v.__dict__ for v in vaults]
 
-    @server.tool()
     def memory_federation_remove_vault(
         name: str,
     ) -> dict[str, Any]:
@@ -1261,7 +1253,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         success = memory.federation.config.remove_vault(name)
         return {"success": success, "name": name}
 
-    @server.tool()
     def memory_federation_search(
         query: str,
         limit: int = 10,
@@ -1678,9 +1669,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         result = memory.import_export.export_to(Path(output_path), "markdown_bundle")
         return result.__dict__
 
-    # -- autonomous agent tools (THE GAMECHANGER) ------------------------------------
+    # -- autonomous agent helpers -------------------------------------------------
 
-    @server.tool()
     def memory_agent_synthesize(
         topic: str,
     ) -> dict[str, Any]:
@@ -1695,7 +1685,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         synthesis = memory.agent.synthesize_knowledge(topic)
         return synthesis.model_dump()
 
-    @server.tool()
     def memory_agent_investigate(
         goal: str,
     ) -> dict[str, Any]:
@@ -1710,7 +1699,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         plan = memory.agent.plan_investigation(goal)
         return plan.model_dump()
 
-    @server.tool()
     def memory_agent_discover() -> list[dict[str, Any]]:
         """Proactive discovery: explore the corpus without user request.
 
@@ -1723,7 +1711,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         discoveries = memory.agent.proactive_discovery()
         return [d.model_dump() for d in discoveries]
 
-    @server.tool()
     def memory_agent_thoughts(
         thought_type: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -1737,7 +1724,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         thoughts = memory.agent.get_thoughts(thought_type)
         return [t.model_dump() for t in thoughts]
 
-    @server.tool()
     def memory_agent_think(
         thought: str,
         thought_type: str = "hypothesis",
@@ -1932,9 +1918,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         insights = memory.collaborative.get_top_insights(limit=limit)
         return [i.__dict__ for i in insights]
 
-    # -- cognitive tools (gamechanger #19) -----------------------------------------
+    # -- cognitive helpers --------------------------------------------------------
 
-    @server.tool()
     def memory_cognitive_set_state(
         mental_state: str,
         context_type: str,
@@ -1966,7 +1951,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         )
         return state.__dict__
 
-    @server.tool()
     def memory_cognitive_get_state() -> dict[str, Any] | None:
         """Get the current mental state.
 
@@ -1976,7 +1960,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         state = memory.cognitive.get_mental_state()
         return state.__dict__ if state else None
 
-    @server.tool()
     def memory_cognitive_history(
         limit: int = 10,
     ) -> list[dict[str, Any]]:
@@ -1991,7 +1974,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         history = memory.cognitive.tracker.get_history(limit=limit)
         return [h.__dict__ for h in history]
 
-    @server.tool()
     def memory_cognitive_suggestions(
         limit: int = 5,
     ) -> list[dict[str, Any]]:
