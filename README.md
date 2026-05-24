@@ -1116,8 +1116,9 @@ Architecture boundary: coordination, federation, conflict policy, lifecycle
 policy, proactive orchestration, and autonomous agent behavior belong outside
 Memo's public surface. Synapse owns brain/front-door decisions across systems;
 Memflow owns operational continuity and cross-agent handoff state. Memo may
-provide corpus primitives to those systems, but it does not write Memflow events
-or publish brain-like MCP/CLI tools directly.
+provide corpus primitives and backend-agnostic operation receipts to those
+systems, but it does not write Memflow events or publish brain-like MCP/CLI
+tools directly.
 
 | Module | What it does |
 |---|---|

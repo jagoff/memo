@@ -29,7 +29,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
-from datetime import UTC
+from datetime import UTC, datetime
 from importlib.resources import files as package_files
 from pathlib import Path
 from typing import Any
@@ -46,6 +46,175 @@ from memo.config import Config
 from memo.setup import run_picker, write_config_file
 
 console = Console()
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _repo_index_operational_receipt(out: dict[str, Any]) -> dict[str, Any]:
+    name = str(out.get("name") or "repo")
+    commit = str(out.get("commit_sha") or "")
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-") or "repo"
+    receipt_id = f"{safe_name}/{commit[:12] or 'unknown'}"
+    status = "partial" if int(out.get("errors") or 0) else "ok"
+    return {
+        "schema": "memo.operational_receipt.v1",
+        "source": "memo",
+        "operation": "repo_index",
+        "status": status,
+        "uri": f"memo://repo-index/{receipt_id}",
+        "generated_at": _now_iso(),
+        "repo": {
+            "id": out.get("repo_id") or "",
+            "name": name,
+            "url": out.get("url") or "",
+            "ref": out.get("ref") or "",
+            "commit_sha": commit,
+            "semantic_status": out.get("semantic_status") or "",
+        },
+        "counts": {
+            "checked_files": int(out.get("checked_files") or 0),
+            "indexed_files": int(out.get("indexed_files") or 0),
+            "unchanged_files": int(out.get("unchanged_files") or 0),
+            "deleted_files": int(out.get("deleted_files") or 0),
+            "indexed_chunks": int(out.get("indexed_chunks") or 0),
+            "indexed_lines": int(out.get("indexed_lines") or 0),
+            "embedded_chunks": int(out.get("embedded_chunks") or 0),
+            "pending_chunks": int(out.get("pending_chunks") or 0),
+            "errors": int(out.get("errors") or 0),
+        },
+        "provenance": {
+            "memo_uri": f"memo://repo/{out.get('repo_id') or safe_name}",
+            "clone_path": out.get("clone_path") or "",
+        },
+    }
+
+
+def _managed_sqlite_dbs(cfg: Config) -> list[tuple[str, Path]]:
+    return [
+        ("memvec", cfg.db_path),
+        ("history", cfg.history_db),
+        ("graph", cfg.graph_db),
+        ("crossref", cfg.crossref_db),
+        ("contradictions", cfg.contradictions_db),
+    ]
+
+
+def _sqlite_table_exists(conn: Any, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _sqlite_table_count(conn: Any, table: str) -> int | None:
+    if not _sqlite_table_exists(conn, table):
+        return None
+    row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+    return int(row[0]) if row else 0
+
+
+def _sqlite_max_text(conn: Any, table: str, column: str) -> str:
+    if not _sqlite_table_exists(conn, table):
+        return ""
+    row = conn.execute(f"SELECT max({column}) FROM {table}").fetchone()
+    return str(row[0] or "") if row else ""
+
+
+def _sqlite_vec_dims(conn: Any, table: str) -> int | None:
+    if table not in {"vec", "repo_vec"}:
+        raise ValueError(f"unknown vector table: {table}")
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    match = re.search(r"embedding\s+FLOAT\[(\d+)\]", str(row[0]))
+    return int(match.group(1)) if match else None
+
+
+def _sqlite_db_health(label: str, path: Path, cfg: Config) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "label": label,
+        "path": str(path),
+        "exists": path.exists(),
+        "ok": True,
+        "status": "missing",
+    }
+    if not path.exists():
+        return report
+
+    import sqlite3
+
+    try:
+        stat = path.stat()
+        report.update({
+            "status": "checked",
+            "size_bytes": int(stat.st_size),
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+        })
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            conn.execute("PRAGMA query_only=ON")
+            integrity = str(conn.execute("PRAGMA integrity_check").fetchone()[0])
+            user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            table_count = int(
+                conn.execute(
+                    "SELECT count(*) FROM sqlite_master WHERE type IN ('table', 'view')"
+                ).fetchone()[0]
+            )
+            report.update({
+                "integrity_check": integrity,
+                "user_version": user_version,
+                "table_count": table_count,
+            })
+            if label == "memvec":
+                vec_dims = _sqlite_vec_dims(conn, "vec")
+                repo_vec_dims = _sqlite_vec_dims(conn, "repo_vec")
+                report.update({
+                    "records": _sqlite_table_count(conn, "meta"),
+                    "repo_sources": _sqlite_table_count(conn, "repo_sources"),
+                    "repo_chunks": _sqlite_table_count(conn, "repo_chunks"),
+                    "vec_dims": vec_dims,
+                    "repo_vec_dims": repo_vec_dims,
+                    "expected_dims": cfg.embedder_dims,
+                    "latest_memory_update": _sqlite_max_text(conn, "meta", "updated"),
+                    "latest_repo_index": _sqlite_max_text(conn, "repo_sources", "indexed_at"),
+                })
+                if vec_dims is not None and vec_dims != cfg.embedder_dims:
+                    report["ok"] = False
+                    report["status"] = "dimension_mismatch"
+                if repo_vec_dims is not None and repo_vec_dims != cfg.embedder_dims:
+                    report["ok"] = False
+                    report["status"] = "dimension_mismatch"
+            elif label == "history":
+                report.update({
+                    "events": _sqlite_table_count(conn, "events"),
+                    "latest_event": _sqlite_max_text(conn, "events", "ts"),
+                })
+            elif label == "graph":
+                report.update({
+                    "entities": _sqlite_table_count(conn, "entities"),
+                    "links": _sqlite_table_count(conn, "entity_memoria"),
+                    "latest_seen": _sqlite_max_text(conn, "entities", "last_seen"),
+                })
+            if integrity.lower() != "ok":
+                report["ok"] = False
+                report["status"] = "integrity_failed"
+        finally:
+            conn.close()
+    except Exception as exc:
+        report.update({"ok": False, "status": "error", "error": str(exc)})
+    return report
+
+
+def _db_health_report(cfg: Config) -> list[dict[str, Any]]:
+    return [_sqlite_db_health(label, path, cfg) for label, path in _managed_sqlite_dbs(cfg)]
 
 
 def _resolved(thunk):
@@ -1260,6 +1429,8 @@ def repo_index_cmd(
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
+    receipt = _repo_index_operational_receipt(out)
+    out = {**out, "operational_receipt": receipt}
     if as_json:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -1272,6 +1443,7 @@ def repo_index_cmd(
         f"pending={out['pending_chunks']} status={out['semantic_status']} "
         f"errors={out['errors']}"
     )
+    console.print(f"[dim]receipt[/dim] {receipt['uri']}")
 
 
 @repo_group.command(name="embed")
@@ -1831,12 +2003,13 @@ def stats() -> None:
 @cli.command()
 @click.option("--gc", "do_gc", is_flag=True, help="Detect orphans between store and disk.")
 @click.option("--fix", is_flag=True, help="With --gc: drop orphan store rows. .md files are never deleted automatically.")
+@click.option("--db", "check_db", is_flag=True, help="Run read-only integrity checks on managed sqlite DBs.")
 @click.option(
     "--strict-runtime",
     is_flag=True,
     help="Exit non-zero if memo/memo-mcp are not running from an isolated tool install.",
 )
-def doctor(do_gc: bool, fix: bool, strict_runtime: bool) -> None:
+def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool) -> None:
     """Self-check: vault present, sqlite-vec loadable, MLX importable, models in cache.
 
     `--gc` reports orphans (store rows whose `.md` is gone, `.md` files
@@ -1904,6 +2077,31 @@ def doctor(do_gc: bool, fix: bool, strict_runtime: bool) -> None:
                 f"[yellow]![/yellow] not cached: {model}  "
                 f"[dim](run `hf download {model}`)[/dim]",
             )
+
+    if check_db:
+        for db in _db_health_report(cfg):
+            marker = "[green]✓[/green]" if db["ok"] else "[red]✗[/red]"
+            if db["exists"]:
+                console.print(
+                    f"{marker} db:{db['label']} {db['status']} "
+                    f"integrity={db.get('integrity_check', '-')} "
+                    f"tables={db.get('table_count', 0)} "
+                    f"size={db.get('size_bytes', 0)}"
+                )
+                if db.get("vec_dims") is not None:
+                    console.print(
+                        f"  dims vec={db.get('vec_dims')} "
+                        f"repo_vec={db.get('repo_vec_dims')} "
+                        f"expected={db.get('expected_dims')}"
+                    )
+                if db.get("latest_memory_update"):
+                    console.print(f"  latest_memory_update={db['latest_memory_update']}")
+                if db.get("latest_repo_index"):
+                    console.print(f"  latest_repo_index={db['latest_repo_index']}")
+            else:
+                console.print(f"[yellow]![/yellow] db:{db['label']} missing: {db['path']}")
+            if not db["ok"]:
+                ok = False
 
     if do_gc:
         from memo.memory import Memory
