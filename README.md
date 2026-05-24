@@ -1109,27 +1109,29 @@ Post-v0:
 ## Experimental modules
 
 The following modules ship in the package but are **not** covered by CI, not
-exposed via MCP tools, and may change without notice. They are prototypes for
-future capabilities. See `src/memo/experimental_index.md` for fuller notes.
+exposed via MCP tools, and may change without notice. They stay inside Memo's
+pillar: local semantic storage, retrieval, and corpus-level memory utilities.
+
+Architecture boundary: coordination, federation, conflict policy, lifecycle
+policy, proactive orchestration, and autonomous agent behavior belong outside
+Memo's public surface. Synapse owns brain/front-door decisions across systems;
+Memflow owns operational continuity and cross-agent handoff state. Memo may
+provide corpus primitives to those systems, but it does not write Memflow events
+or publish brain-like MCP/CLI tools directly.
 
 | Module | What it does |
 |---|---|
 | `multimodal` | Cross-modal semantic search over images, audio, and text |
 | `collaborative` | Shared knowledge graph across multiple users |
-| `cognitive` | Cognitive-state model that biases recall toward current user goals |
-| `federation` | Aggregate search across multiple independent memo vaults |
 | `sharing` | Per-memoria sharing links and permission grants |
 | `encryption` | AES-256-GCM at-rest encryption for sensitive memories |
 | `contradict` | Contradiction and staleness radar with triage workflow |
 | `chunker` | Heading-aware sub-document chunking for long memories |
 | `crossref` | Obsidian `[[wikilink]]` backlink index and multi-hop traversal |
 | `contextual` | Conversation-history-aware recall boosting |
-| `lifecycle` | Archival, promotion, and expiration policies |
 | `navigation` | BFS path finding and community detection on the entity graph |
-| `proactive` | Proactive save suggestions based on conversation patterns |
 | `sync` | Multi-device sync and compressed backups |
 | `versioning` | Per-memoria version history and unified-diff rollback |
-| `agent` | Autonomous ReAct-style reasoning agent over the corpus |
 
 ## Provenance
 
