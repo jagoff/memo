@@ -52,7 +52,7 @@ import math
 import threading
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from memo.memory import MemoryRecord
@@ -104,8 +104,8 @@ class MLXReranker:
         self.max_seq_len = max_seq_len
         self.task = task or _DEFAULT_TASK
 
-        self._model = None
-        self._tokenizer = None
+        self._model: Any | None = None
+        self._tokenizer: Any | None = None
         self._yes_id: int | None = None
         self._no_id: int | None = None
         self._load_lock = threading.Lock()
@@ -120,7 +120,9 @@ class MLXReranker:
             from mlx_lm import load  # deferred — Apple-Silicon-only import
 
             t0 = time.time()
-            self._model, self._tokenizer = load(self.model_path)
+            loaded = load(self.model_path)
+            self._model = loaded[0]
+            self._tokenizer = loaded[1]
             self._yes_id = self._tokenizer.convert_tokens_to_ids("yes")
             self._no_id = self._tokenizer.convert_tokens_to_ids("no")
             if self._yes_id is None or self._no_id is None:
@@ -143,17 +145,24 @@ class MLXReranker:
         self._ensure_loaded()
         import mlx.core as mx
 
+        model = self._model
+        tokenizer = self._tokenizer
+        yes_id = self._yes_id
+        no_id = self._no_id
+        if model is None or tokenizer is None or yes_id is None or no_id is None:
+            raise RuntimeError("Reranker failed to load.")
+
         text = self._format(query, doc)
-        ids = self._tokenizer.encode(text, add_special_tokens=False)
+        ids = tokenizer.encode(text, add_special_tokens=False)
         # Tail-truncate if a long doc blows past the window. Preserves
         # the prefix + query + early doc which carries the most signal.
         if len(ids) > self.max_seq_len:
             ids = ids[: self.max_seq_len]
         arr = mx.array([ids])
-        logits = self._model(arr)
+        logits = model(arr)
         last = logits[:, -1, :]  # [1, V]
-        y = float(last[0, self._yes_id])
-        n = float(last[0, self._no_id])
+        y = float(last[0, yes_id])
+        n = float(last[0, no_id])
         # Softmax over the (no, yes) pair only — we don't care about
         # the rest of the vocab. Numerical-stable form.
         m = max(y, n)

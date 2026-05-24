@@ -272,6 +272,9 @@ memo list --limit 5
 
 # RAG — ask a question, memo cites memorias by id
 memo ask 'qué cambios hice en el embedder este mes?'
+
+# Chat-shaped RAG envelope for Synapse and other front doors
+memo chat-ask 'qué cambios hice en el embedder este mes?' --json
 ```
 
 ## MCP setup

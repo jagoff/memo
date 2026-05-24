@@ -44,6 +44,7 @@ when the body changed).
 
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -87,14 +88,14 @@ class CorpusSnapshot:
     def __len__(self) -> int:
         return len(self.records)
 
-    def list(self, *, type_: str | None = None) -> list[SnapshotRecord]:
+    def list(self, *, type_: str | None = None) -> builtins.list[SnapshotRecord]:
         rows = [r for r in self.records.values() if not r.body_unavailable]
         if type_:
             rows = [r for r in rows if r.type == type_]
         rows.sort(key=lambda r: r.updated or "", reverse=True)
         return rows
 
-    def search(self, query: str, *, limit: int = 10, mode: str = "hybrid") -> list[Any]:
+    def search(self, query: str, *, limit: int = 10, mode: str = "hybrid") -> builtins.list[Any]:
         """Run live search, then keep only hits whose id is in the snapshot
         AND was reachable at as_of (body present, not deleted-after)."""
         if self._memory is None:
@@ -126,8 +127,8 @@ class CorpusSnapshot:
                 "snapshot_size": len(self),
             }
 
-        snippet_lines: list[str] = []
-        sources: list[dict[str, Any]] = []
+        snippet_lines: builtins.list[str] = []
+        sources: builtins.list[dict[str, Any]] = []
         for h in hits:
             id_short = h.id[:8]
             snippet = (h.body or "")[:snippet_chars]

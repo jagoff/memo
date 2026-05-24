@@ -28,7 +28,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC
 from importlib.resources import files as package_files
 from pathlib import Path
@@ -316,7 +316,7 @@ def _env_flags(client: str, env: dict[str, str]) -> list[str]:
     return flags
 
 
-def _format_command(args: list[str | Path]) -> str:
+def _format_command(args: Sequence[str | Path]) -> str:
     return " ".join(shlex.quote(str(arg)) for arg in args)
 
 
@@ -955,14 +955,7 @@ def chat_ask(
     context_json,
     as_json: bool,
 ) -> None:
-    """Chat-shaped RAG over memo.
-
-    Wraps `Memory.ask()` and returns a chat envelope `{question, answer,
-    sources, history_used, schema, source}` ready for Synapse's chat
-    orchestrator to delegate to. v1 stub: hands off to Memory.ask under
-    the hood; richer pipeline (query expansion + reranking + multi-source
-    fusion) lives in Synapse's `chat_search.py` until it migrates here.
-    """
+    """Chat-shaped RAG over memo."""
     from memo.memory import Memory
 
     history: list[dict] = []
@@ -984,17 +977,13 @@ def chat_ask(
             context = {}
 
     mem = Memory(Config.from_env())
-    rag = mem.ask(question, k=k, type_=type_)
-    envelope = {
-        "schema": "memo.chat_ask.v1",
-        "question": question,
-        "answer": rag.get("answer", ""),
-        "sources": rag.get("sources", []),
-        "history_turns_received": len(history),
-        "context_keys": sorted(context.keys()) if context else [],
-        "source": "memo.ask",
-        "k": k,
-    }
+    envelope = mem.chat_ask(
+        question,
+        k=k,
+        type_=type_,
+        history=history,
+        context=context,
+    )
     if as_json:
         click.echo(json.dumps(envelope, ensure_ascii=False, indent=2))
         return
@@ -1881,7 +1870,7 @@ def doctor(do_gc: bool, fix: bool, strict_runtime: bool) -> None:
     try:
         import sqlite3
 
-        import sqlite_vec  # type: ignore[import-not-found]
+        import sqlite_vec  # type: ignore[import-untyped]
 
         conn = sqlite3.connect(":memory:")
         conn.enable_load_extension(True)
@@ -3887,8 +3876,9 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
             env=env,
             cwd=cwd,
         )
-        proc.stdin.write(capture_payload)
-        proc.stdin.close()
+        if proc.stdin is not None:
+            proc.stdin.write(capture_payload)
+            proc.stdin.close()
         mark_autosaved(cfg.state_dir, sid)
     except Exception as exc:
         if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
@@ -7791,7 +7781,7 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
     # FLOAT[N] columns as raw 4-byte little-endian blobs.
     console.print("[dim]Reading corpus from DB…[/dim]")
     try:
-        import sqlite_vec as _sv  # type: ignore[import-not-found]
+        import sqlite_vec as _sv  # type: ignore[import-untyped]
 
         conn = _sqlite3.connect(str(db_path), timeout=10.0)
         conn.enable_load_extension(True)

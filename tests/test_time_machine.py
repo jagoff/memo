@@ -83,6 +83,7 @@ def test_snapshot_reverts_title_update(mem: Memory) -> None:
     mem.update(rec.id, title="New Title")
     # Live state has new title.
     live = mem.get(rec.id)
+    assert live is not None
     assert live.title == "New Title"
     # Snapshot before update should still show original.
     snap = reconstruct(mem, as_of=snap_before)

@@ -64,6 +64,7 @@ def test_atomic_write_doesnt_corrupt_existing(tmp_path: Path):
     # Overwrite with a new value.
     write_config_file(data_dir=Path("/tmp/v2"), path=cfg_path)
     loaded = load_config_file(path=cfg_path)
+    assert loaded is not None
     assert loaded["storage"]["data_dir"] == "/tmp/v2"
     # No leftover .tmp sidecar.
     assert not (cfg_path.with_suffix(cfg_path.suffix + ".tmp")).exists()

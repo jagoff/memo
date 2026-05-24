@@ -862,7 +862,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     def memory_contextual_record_search(
         query: str,
         memoria_ids: list[str],
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Record a search in the conversation history for learning.
 
         Use this after each search to build context for future searches.
@@ -879,7 +879,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     @server.tool()
     def memory_contextual_record_click(
         memoria_id: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Record that the user clicked/viewed a memoria (for preference learning).
 
         Use this when the user explicitly selects a memoria from search results.
@@ -1139,7 +1139,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         search_mode: str = "hybrid",
         limit: int = 10,
         description: str | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Save a query for reuse.
 
         Stores a query with its parameters so it can be executed later
@@ -1205,7 +1205,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     @server.tool()
     def memory_query_delete(
         name: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Delete a saved query.
 
         Removes a saved query by name.
@@ -1223,7 +1223,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         name: str,
         path: str,
         weight: float = 1.0,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Add a vault to the federation.
 
         Adds a new vault to the federation configuration so it can be
@@ -1250,7 +1250,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     @server.tool()
     def memory_federation_remove_vault(
         name: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Remove a vault from the federation.
 
         Removes a vault from the federation configuration.
@@ -1410,7 +1410,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     @server.tool()
     def memory_encrypt_unlock(
         password: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Unlock the vault with password.
 
         Derives master key from password using PBKDF2 and stores it
@@ -1477,7 +1477,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     def memory_share_unshare(
         memoria_id: str,
         shared_with: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Unshare a memoria from a user.
 
         Removes a share for a specific user.

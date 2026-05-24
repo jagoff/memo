@@ -70,13 +70,13 @@ class AnalyticsEngine:
         type_distribution = dict(type_counter)
 
         # Tag frequency
-        tag_counter = Counter()
+        tag_counter: Counter[str] = Counter()
         for m in memorias:
             tag_counter.update(m.tags)
         tag_frequency = dict(tag_counter.most_common(50))
 
         # Entity frequency
-        entity_counter = Counter()
+        entity_counter: Counter[str] = Counter()
         for m in memorias:
             entities = self.memory.graph.get_entity_mentions(m.id)
             for e in entities:
@@ -121,7 +121,7 @@ class AnalyticsEngine:
         memorias = self.memory.list(limit=10000)
 
         # Group by date
-        date_counts = Counter()
+        date_counts: Counter[str] = Counter()
         for m in memorias:
             date_str = m.updated[:10]  # YYYY-MM-DD
             date_counts[date_str] += 1
@@ -329,4 +329,3 @@ __all__ = [
     "Dashboard",
     "GrowthData",
 ]
-

@@ -55,6 +55,7 @@ def test_upsert_replaces_on_same_id(store: VecStore):
         body_hash="h2", embedding=_emb(0, 1, 0, 0),
     )
     got = store.get("abc")
+    assert got is not None
     assert got["title"] == "V2"
     assert got["tags"] == ["new"]
     assert store.count() == 1

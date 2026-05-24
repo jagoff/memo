@@ -125,11 +125,11 @@ def sparkline(values: list[int], width: int = 12) -> str:
     if len(values) > width:
         # Bucket into `width` chunks.
         step = len(values) / width
-        buckets = []
+        buckets: list[float] = []
         for i in range(width):
             lo = int(i * step)
-            hi = max(lo + 1, int((i + 1) * step))
-            chunk = values[lo:hi]
+            bucket_hi = max(lo + 1, int((i + 1) * step))
+            chunk = values[lo:bucket_hi]
             buckets.append(sum(chunk) / len(chunk) if chunk else 0)
         series: list[float] = buckets
     else:
