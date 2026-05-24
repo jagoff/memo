@@ -137,6 +137,23 @@ CREATE TABLE IF NOT EXISTS repo_embedding_cache (
 """
 
 
+_REQUIRED_SCHEMA_OBJECTS = frozenset(
+    {
+        "meta",
+        "vec",
+        "fts",
+        "repo_sources",
+        "repo_files",
+        "repo_chunks",
+        "repo_lines",
+        "repo_vec",
+        "repo_chunk_fts",
+        "repo_line_fts",
+        "repo_embedding_cache",
+    }
+)
+
+
 class VecStore:
     """sqlite-vec store for memory metadata + embeddings.
 
@@ -163,6 +180,9 @@ class VecStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA busy_timeout = 10000")
+        with suppress(sqlite3.OperationalError):
+            self._conn.execute("PRAGMA journal_mode=WAL")
         self._load_vec0()
         self._init_schema()
 
@@ -186,6 +206,13 @@ class VecStore:
         self._conn.enable_load_extension(False)
 
     def _init_schema(self) -> None:
+        # Most CLI commands are reads. If the schema already exists, avoid
+        # no-op DDL because it still needs a write/schema lock and can fail
+        # while long repo indexing is writing batches.
+        if self._schema_ready():
+            self._validate_vec_dims()
+            return
+
         with self._conn:
             self._conn.executescript(_SCHEMA_DDL)
             # `vec0` is a virtual table; we can't include it in the
@@ -205,24 +232,7 @@ class VecStore:
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS repo_vec USING vec0("
                 f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
             )
-            actual_dims = self._vec_table_dims("vec")
-            if actual_dims is not None and actual_dims != self.dims:
-                raise RuntimeError(
-                    "Existing memvec.db was created with "
-                    f"embedding FLOAT[{actual_dims}], but current config expects "
-                    f"FLOAT[{self.dims}]. Rebuild the vector index with "
-                    f"`rm {self.db_path} && memo reindex`, or launch memo with "
-                    "matching MEMO_MODEL_PROFILE/MEMO_EMBEDDER_DIMS settings."
-                )
-            repo_actual_dims = self._vec_table_dims("repo_vec")
-            if repo_actual_dims is not None and repo_actual_dims != self.dims:
-                raise RuntimeError(
-                    "Existing memvec.db repo index was created with "
-                    f"embedding FLOAT[{repo_actual_dims}], but current config expects "
-                    f"FLOAT[{self.dims}]. Rebuild the repo index with "
-                    f"`rm {self.db_path} && memo reindex` or delete/re-index repos "
-                    "with matching MEMO_MODEL_PROFILE/MEMO_EMBEDDER_DIMS settings."
-                )
+            self._validate_vec_dims()
             # FTS5 over title + tags + body for the BM25 side of hybrid
             # search. `unindexed=id` keeps the row id queryable but not
             # tokenised. `tokenize='unicode61 remove_diacritics 2'`
@@ -249,6 +259,13 @@ class VecStore:
                 ")"
             )
 
+    def _schema_ready(self) -> bool:
+        rows = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+        ).fetchall()
+        present = {str(row["name"]) for row in rows}
+        return _REQUIRED_SCHEMA_OBJECTS.issubset(present)
+
     def _vec_table_dims(self, table: str) -> int | None:
         if table not in {"vec", "repo_vec"}:
             raise ValueError(f"unknown vector table: {table!r}")
@@ -260,6 +277,27 @@ class VecStore:
             return None
         match = re.search(r"embedding\s+FLOAT\[(\d+)\]", str(row["sql"]))
         return int(match.group(1)) if match else None
+
+    def _validate_vec_dims(self) -> None:
+        actual_dims = self._vec_table_dims("vec")
+        if actual_dims is not None and actual_dims != self.dims:
+            raise RuntimeError(
+                "Existing memvec.db was created with "
+                f"embedding FLOAT[{actual_dims}], but current config expects "
+                f"FLOAT[{self.dims}]. Rebuild the vector index with "
+                f"`rm {self.db_path} && memo reindex`, or launch memo with "
+                "matching MEMO_MODEL_PROFILE/MEMO_EMBEDDER_DIMS settings."
+            )
+        repo_actual_dims = self._vec_table_dims("repo_vec")
+        if repo_actual_dims is not None and repo_actual_dims != self.dims:
+            raise RuntimeError(
+                "Existing memvec.db repo index was created with "
+                f"embedding FLOAT[{repo_actual_dims}], but current config expects "
+                f"FLOAT[{self.dims}]. Rebuild the repo index with "
+                f"`rm {self.db_path} && memo reindex` or delete/re-index repos "
+                "with matching MEMO_MODEL_PROFILE/MEMO_EMBEDDER_DIMS settings."
+            )
+
 
     # -- schema-version helpers --------------------------------------------
     #
