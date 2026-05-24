@@ -219,6 +219,7 @@ class GraphStore:
     def entity_memorias(self, name: str, type_: str | None = None) -> list[str]:
         """Memoria IDs that mention `name` (and optionally a specific type)."""
         name = name.strip().lower()
+        params: tuple[str, ...]
         if type_:
             type_ = type_.strip().lower()
             sql = (

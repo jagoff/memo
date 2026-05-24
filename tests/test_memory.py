@@ -553,6 +553,34 @@ def test_ask_returns_no_answer_when_no_hits(mem_with_stub: Memory):
     assert out["sources"] == []
 
 
+def test_chat_ask_v2_uses_history_and_context(mem_with_stub: Memory, monkeypatch):
+    rec = mem_with_stub.save(content="alpha architectural decision", title="Alpha")
+    captured: dict = {}
+
+    def _stub_chat(self, model, messages, options=None):
+        captured["user"] = messages[-1]["content"]
+        return {"message": {"content": f"Alpha answer [{rec.id[:8]}]."}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+
+    out = mem_with_stub.chat_ask(
+        "what did we decide?",
+        k=2,
+        history=[{"role": "user", "text": "previous alpha question"}],
+        context={"packet_status": "ready", "route_decision": {"target": "memo"}},
+    )
+
+    assert out["schema"] == "memo.chat_ask.v2"
+    assert out["synthesis_status"] == "ok"
+    assert out["answer"].startswith("Alpha answer")
+    assert out["history_turns_used"] == 1
+    assert out["context_keys"] == ["packet_status", "route_decision"]
+    assert out["citations"][0]["source"] == "memo"
+    assert out["retrieval_trace"][0]["stage"] == "memo.chat_ask"
+    assert "previous alpha question" in captured["user"]
+    assert "packet_status" in captured["user"]
+
+
 def test_hybrid_search_fuses_vec_and_bm25(mem_with_stub: Memory):
     """Hybrid mode (default) combines vec + bm25 via reciprocal rank
     fusion. A doc that ranks high in BOTH sources beats a doc that only

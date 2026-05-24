@@ -194,7 +194,7 @@ class FederationSearcher:
         results = []
         for hit in hits:
             # Apply vault weight to score
-            weighted_score = hit.score * vault.weight
+            weighted_score = (hit.score or 0.0) * vault.weight
 
             results.append(
                 FederatedResult(

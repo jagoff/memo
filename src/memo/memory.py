@@ -43,12 +43,14 @@ conversation writer.
 
 from __future__ import annotations
 
+import builtins
 import contextlib
 import hashlib
 import json
 import logging
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -292,7 +294,7 @@ class Memory:
         # Reranker is lazy — first hybrid `search()` triggers the load
         # if `cfg.reranker_enabled`. Cold load of Qwen3-Reranker-0.6B
         # is ~1-2s; users who disable it (CI, vec-only mode) pay zero.
-        self._reranker = None  # type: ignore[var-annotated]
+        self._reranker: Any | None = None
         # Self-heal probe: warn (don't crash) if the store has paths
         # that don't resolve in the current `memory_dir` layout. Common
         # after upgrading from a legacy install without running
@@ -861,9 +863,11 @@ class Memory:
         if MLX runs into a Metal hiccup mid-rerank we fall back to the
         original RRF order so search never goes dark on the user.
         """
-        if self._reranker is None:
+        reranker = self._reranker
+        if reranker is None:
             from memo.reranker import MLXReranker
-            self._reranker = MLXReranker(model_path=self.cfg.reranker_model)
+            reranker = MLXReranker(model_path=self.cfg.reranker_model)
+            self._reranker = reranker
 
         # Snapshot original RRF positions BEFORE rerank rewrites the
         # `score` field. Index by id rather than object identity so the
@@ -873,7 +877,7 @@ class Memory:
         rrf_pos: dict[str, int] = {h.id: i for i, h in enumerate(hits)}
 
         try:
-            reranked = self._reranker.rerank(query, hits, top_n=None)
+            reranked = reranker.rerank(query, hits, top_n=None)
         except Exception as exc:
             _log.warning("reranker failed, falling back to RRF order: %s", exc)
             return hits[:top_n]
@@ -888,6 +892,132 @@ class Memory:
             fused.append(replace(h, score=final))
         fused.sort(key=lambda h: h.score or 0.0, reverse=True)
         return fused[:top_n]
+
+    # -- chat ask -----------------------------------------------------------
+
+    def chat_ask(
+        self,
+        question: str,
+        *,
+        k: int = 7,
+        type_: str | None = None,
+        history: list[dict[str, Any]] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Chat-shaped RAG envelope owned by Memo.
+
+        Synapse may provide federation context and Memflow-backed history, but
+        retrieval, citations, and synthesis stay inside Memo.
+        """
+        started = time.perf_counter()
+        clean_history = self._normalize_chat_history(history or [])
+        clean_context = context or {}
+        retrieval_question = self._chat_retrieval_question(
+            question,
+            history=clean_history,
+            context=clean_context,
+        )
+        rag = self.ask(retrieval_question, k=k, type_=type_)
+        total_ms = int((time.perf_counter() - started) * 1000)
+        answer = str(rag.get("answer") or "").strip()
+        sources = [item for item in (rag.get("sources") or []) if isinstance(item, dict)]
+        synthesis_error = ""
+        if not question.strip():
+            status = "unavailable"
+            synthesis_error = "empty question"
+        elif answer.startswith("(error consultando el modelo:"):
+            status = "error"
+            synthesis_error = answer
+        elif not answer:
+            status = "error"
+            synthesis_error = "empty answer"
+        elif not sources:
+            status = "unavailable"
+            synthesis_error = answer
+        else:
+            status = "ok"
+        context_keys = sorted(str(key) for key in clean_context)
+        return {
+            "schema": "memo.chat_ask.v2",
+            "question": question,
+            "answer": answer,
+            "sources": sources,
+            "citations": self._chat_citations(sources),
+            "retrieval_trace": [
+                {
+                    "stage": "memo.chat_ask",
+                    "ms": total_ms,
+                    "source_count": len(sources),
+                    "history_turns": len(clean_history),
+                    "context_keys": context_keys,
+                    "retrieval_query_chars": len(retrieval_question),
+                }
+            ],
+            "synthesis_status": status,
+            "synthesis_source": f"memo.ask:{self.cfg.llm_model}" if sources else "memo.ask",
+            "synthesis_error": synthesis_error,
+            "total_ms": total_ms,
+            "history_turns_used": len(clean_history),
+            "context_keys": context_keys,
+        }
+
+    @staticmethod
+    def _normalize_chat_history(history: list[dict[str, Any]]) -> list[dict[str, str]]:
+        normalized: list[dict[str, str]] = []
+        for item in history[-8:]:
+            role = str(item.get("role") or "").strip().lower()
+            text = str(item.get("text") or item.get("content") or "").strip()
+            if role not in {"user", "assistant"} or not text:
+                continue
+            normalized.append({"role": role, "text": text[:1200]})
+        return normalized
+
+    @staticmethod
+    def _chat_retrieval_question(
+        question: str,
+        *,
+        history: list[dict[str, str]],
+        context: dict[str, Any],
+    ) -> str:
+        parts = [question.strip()]
+        if history:
+            turns = "\n".join(
+                f"{turn['role']}: {turn['text']}" for turn in history[-6:]
+            )
+            parts.append(f"Conversation history:\n{turns}")
+        if context:
+            compact = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
+            parts.append(f"Federation context:\n{compact[:2400]}")
+        return "\n\n".join(part for part in parts if part)
+
+    @staticmethod
+    def _chat_citations(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        citations: list[dict[str, Any]] = []
+        for index, source in enumerate(sources, start=1):
+            source_kind = str(source.get("source") or "memo")
+            source_id = str(
+                source.get("id_short")
+                or source.get("locator")
+                or source.get("id")
+                or index
+            )
+            metadata: dict[str, Any] = {}
+            if source.get("id"):
+                metadata["id"] = source.get("id")
+            if source.get("path"):
+                metadata["path"] = source.get("path")
+            if source.get("repo_name"):
+                metadata["repo_name"] = source.get("repo_name")
+            citations.append(
+                {
+                    "n": index,
+                    "id": source_id,
+                    "source": "memo" if source_kind == "memory" else source_kind,
+                    "title": str(source.get("title") or source_id),
+                    "metadata": metadata,
+                }
+            )
+        return citations
 
     # -- ask ----------------------------------------------------------------
 
@@ -1126,7 +1256,7 @@ class Memory:
         *,
         title: str | None = None,
         type_: str | None = None,
-        tags: list[str] | None = None,
+        tags: builtins.list[str] | None = None,
         content: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> MemoryRecord | None:
@@ -1329,7 +1459,7 @@ class Memory:
         self.store.set_user_version(1)
         return {"checked": checked, "reindexed": reindexed, "added": added, "skipped": skipped}
 
-    def lint(self) -> dict[str, list[dict[str, Any]]]:
+    def lint(self) -> dict[str, builtins.list[dict[str, Any]]]:
         """Surface memorias with quality issues.
 
         Categories:
@@ -1381,7 +1511,7 @@ class Memory:
     # -- knowledge graph ----------------------------------------------------
 
     def extract_entities(
-        self, *, ids: list[str] | None = None, all_: bool = False,
+        self, *, ids: builtins.list[str] | None = None, all_: bool = False,
         skip_already_indexed: bool = True,
     ) -> dict[str, int]:
         """Extract named entities from memorias and write to the graph.
@@ -1482,7 +1612,7 @@ class Memory:
     def consolidate(
         self, *, threshold: float = 0.85, max_clusters: int = 50,
         type_: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         """Find clusters of near-duplicate memorias and propose actions.
 
         Algorithm:
@@ -1620,7 +1750,7 @@ class Memory:
             })
         return out
 
-    def gc(self, *, fix: bool = False) -> dict[str, list[str]]:
+    def gc(self, *, fix: bool = False) -> dict[str, builtins.list[str]]:
         """Find orphans between the store and the memory dir.
 
         - `orphan_store`: store rows whose `.md` is missing on disk.

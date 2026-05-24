@@ -304,12 +304,12 @@ class SyncManager:
         local_memorias = {r.id: r.updated for r in self.local_memory.list(limit=10000)}
 
         # Get remote memoria IDs (simplified - would need to load remote Memory)
-        remote_memorias = {}  # Would load from remote_path
+        remote_memorias: dict[str, str] = {}  # Would load from remote_path
 
-        new = []
-        modified = []
-        deleted = []
-        conflicts = []
+        new: list[str] = []
+        modified: list[str] = []
+        deleted: list[str] = []
+        conflicts: list[str] = []
 
         for mem_id in remote_memorias:
             if mem_id not in local_memorias:

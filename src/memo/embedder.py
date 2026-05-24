@@ -97,7 +97,9 @@ class MLXEmbedder:
                 return
             from mlx_lm import load as _mlx_load
 
-            self._model, self._tokenizer = _mlx_load(self.model_path)
+            loaded = _mlx_load(self.model_path)
+            self._model = loaded[0]
+            self._tokenizer = loaded[1]
 
     # -- public -------------------------------------------------------------
 

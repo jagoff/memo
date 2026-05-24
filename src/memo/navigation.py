@@ -112,7 +112,9 @@ class GraphNavigator:
             return None
 
         # BFS
-        queue = deque([(source, [source], [])])  # (current, path, memoria_ids)
+        queue: deque[tuple[str, list[str], list[str]]] = deque(
+            [(source, [source], [])],
+        )  # (current, path, memoria_ids)
         visited = {source}
 
         while queue:

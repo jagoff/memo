@@ -84,7 +84,8 @@ class MLXChat:
                 except Exception:
                     pass
 
-            self._loaded[model] = _mlx_load(model)
+            loaded = _mlx_load(model)
+            self._loaded[model] = (loaded[0], loaded[1])
         return self._loaded[model]
 
     # -- public -------------------------------------------------------------
