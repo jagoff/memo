@@ -1204,6 +1204,144 @@ def _run_with_repo_progress(
         return thunk(_on_progress)
 
 
+def _memflow_receipt_project_root() -> Path | None:
+    raw = os.environ.get("MEMFLOW_PROJECT_ROOT")
+    if raw:
+        return Path(raw).expanduser()
+    try:
+        start = Path.cwd().expanduser()
+    except OSError:
+        return None
+    for candidate in (start, *start.parents):
+        if (candidate / ".memflow").is_dir():
+            return candidate
+    return None
+
+
+def _memflow_receipt_bin() -> str | None:
+    raw = os.environ.get("MEMO_MEMFLOW_BIN")
+    if raw:
+        return raw
+    return shutil.which("memflow")
+
+
+def _memflow_receipt_meta_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    text = str(value).replace("\n", " ").strip()
+    return text[:500]
+
+
+def _run_memflow_receipt_command(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(command),
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+        check=False,
+    )
+
+
+def _repo_index_receipt_text(
+    *,
+    url: str,
+    requested_name: str | None,
+    out: dict[str, Any] | None,
+    exc: BaseException | None,
+) -> str:
+    if out is not None:
+        name = str(out.get("name") or requested_name or url)
+        commit = str(out.get("commit_sha") or "")[:8] or "unknown"
+        return (
+            f"Memo repo index completed for {name} at {commit}: "
+            f"files={out.get('indexed_files', 0)} "
+            f"chunks={out.get('indexed_chunks', 0)} "
+            f"embedded={out.get('embedded_chunks', 0)} "
+            f"pending={out.get('pending_chunks', 0)} "
+            f"status={out.get('semantic_status', '')}"
+        )
+    error_type = type(exc).__name__ if exc is not None else "Error"
+    error = str(exc or "").replace("\n", " ").strip()
+    target = requested_name or url
+    return f"Memo repo index failed for {target}: {error_type}: {error}"
+
+
+def _repo_index_memflow_receipt(
+    *,
+    url: str,
+    requested_name: str | None,
+    ref: str | None,
+    out: dict[str, Any] | None = None,
+    exc: BaseException | None = None,
+    disabled: bool = False,
+) -> dict[str, Any]:
+    if disabled:
+        return {"ok": False, "skipped": True, "reason": "disabled"}
+    raw_enabled = os.environ.get("MEMO_MEMFLOW_RECEIPT")
+    if raw_enabled is not None and raw_enabled.strip().lower() in {"0", "false", "no", "off"}:
+        return {"ok": False, "skipped": True, "reason": "disabled"}
+
+    project_root = _memflow_receipt_project_root()
+    if project_root is None:
+        return {"ok": False, "skipped": True, "reason": "memflow project root not found"}
+    memflow_bin = _memflow_receipt_bin()
+    if memflow_bin is None:
+        return {"ok": False, "skipped": True, "reason": "memflow binary not found"}
+
+    status = "ok" if out is not None and exc is None else "error"
+    meta: dict[str, Any] = {
+        "client": "memo",
+        "topic": "memo-repo-index",
+        "operation": "repo_index",
+        "status": status,
+        "repo_url": (out or {}).get("url") or url,
+        "repo_name": (out or {}).get("name") or requested_name or "",
+        "repo_id": (out or {}).get("repo_id") or "",
+        "ref": (out or {}).get("ref") or ref or "",
+        "commit_sha": (out or {}).get("commit_sha") or "",
+        "semantic_status": (out or {}).get("semantic_status") or "",
+        "indexed_files": (out or {}).get("indexed_files") or 0,
+        "indexed_chunks": (out or {}).get("indexed_chunks") or 0,
+        "embedded_chunks": (out or {}).get("embedded_chunks") or 0,
+        "pending_chunks": (out or {}).get("pending_chunks") or 0,
+        "errors": (out or {}).get("errors") or 0,
+    }
+    if exc is not None:
+        meta["error_type"] = type(exc).__name__
+        meta["error"] = str(exc)
+
+    text = _repo_index_receipt_text(url=url, requested_name=requested_name, out=out, exc=exc)
+    command = [memflow_bin, "write", "fact", text]
+    for key, value in meta.items():
+        command.extend(["--meta", f"{key}={_memflow_receipt_meta_value(value)}"])
+
+    env = dict(os.environ)
+    env["MEMFLOW_PROJECT_ROOT"] = str(project_root)
+    try:
+        proc = _run_memflow_receipt_command(command, cwd=project_root, env=env)
+    except Exception as receipt_exc:
+        return {"ok": False, "error": f"{type(receipt_exc).__name__}: {receipt_exc}"}
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or f"memflow exited {proc.returncode}").strip()
+        return {"ok": False, "error": detail[:500]}
+
+    path = (proc.stdout or "").strip().splitlines()[0] if proc.stdout.strip() else ""
+    result: dict[str, Any] = {"ok": True}
+    if path:
+        result["path"] = path
+    return result
+
+
 @repo_group.command(name="index")
 @click.argument("url")
 @click.option("--name", default=None, help="Stable repo label. Defaults to repo basename.")
@@ -1213,6 +1351,7 @@ def _run_with_repo_progress(
 @click.option("--include", multiple=True, help="Glob to include. Repeatable. Default: all text files.")
 @click.option("--exclude", multiple=True, help="Glob to exclude. Repeatable.")
 @click.option("--max-file-bytes", default=None, type=int, help="Skip files above this byte size.")
+@click.option("--no-memflow-receipt", is_flag=True, help="Do not emit a best-effort Memflow receipt.")
 @click.option("--json", "as_json", is_flag=True)
 def repo_index_cmd(
     url: str,
@@ -1223,6 +1362,7 @@ def repo_index_cmd(
     include: tuple[str, ...],
     exclude: tuple[str, ...],
     max_file_bytes: int | None,
+    no_memflow_receipt: bool,
     as_json: bool,
 ) -> None:
     """Clone/fetch URL and index included text files line-by-line."""
@@ -1258,7 +1398,23 @@ def repo_index_cmd(
 
             out = _run_with_repo_progress(_run)
     except Exception as exc:
+        _repo_index_memflow_receipt(
+            url=url,
+            requested_name=name,
+            ref=ref_,
+            exc=exc,
+            disabled=no_memflow_receipt,
+        )
         raise click.ClickException(str(exc)) from exc
+
+    receipt = _repo_index_memflow_receipt(
+        url=url,
+        requested_name=name,
+        ref=ref_,
+        out=out,
+        disabled=no_memflow_receipt,
+    )
+    out["memflow_receipt"] = receipt
 
     if as_json:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
@@ -1272,6 +1428,8 @@ def repo_index_cmd(
         f"pending={out['pending_chunks']} status={out['semantic_status']} "
         f"errors={out['errors']}"
     )
+    if receipt.get("ok") and receipt.get("path"):
+        console.print(f"[dim]memflow receipt:[/dim] {receipt['path']}")
 
 
 @repo_group.command(name="embed")
