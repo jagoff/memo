@@ -398,7 +398,10 @@ def test_repo_cli_index_search_and_get(tmp_path: Path, monkeypatch):
     assert "needle-value" in result.output
 
 
-def test_repo_cli_index_json_omits_memflow_receipt(tmp_path: Path, monkeypatch):
+def test_repo_cli_index_json_emits_backend_agnostic_operational_receipt(
+    tmp_path: Path,
+    monkeypatch,
+):
     repo = _make_repo(tmp_path)
     env = {
         "MEMO_NONINTERACTIVE": "1",
@@ -418,6 +421,10 @@ def test_repo_cli_index_json_omits_memflow_receipt(tmp_path: Path, monkeypatch):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["name"] == "sample"
+    assert payload["operational_receipt"]["schema"] == "memo.operational_receipt.v1"
+    assert payload["operational_receipt"]["source"] == "memo"
+    assert payload["operational_receipt"]["operation"] == "repo_index"
+    assert payload["operational_receipt"]["uri"].startswith("memo://repo-index/sample/")
     assert "memflow_receipt" not in payload
 
 
