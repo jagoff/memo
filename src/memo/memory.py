@@ -1209,8 +1209,9 @@ class Memory:
             detail: str,
             *,
             content_hash: str = "",
+            target: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
-            return {
+            out: dict[str, Any] = {
                 "schema": SYNAPSE_BACKEND_NATIVE_SCHEMA,
                 "protocol_version": NATIVE_BACKEND_PROTOCOL_VERSION,
                 "backend": MEMO_BACKEND_NAME,
@@ -1223,30 +1224,114 @@ class Memory:
                 "trace_id": trace_id,
                 "resolution_mode": "backend_native",
             }
+            if target is not None:
+                out["target"] = target
+            return out
 
-        prefix = "memo://memoria/"
-        if not uri.startswith(prefix):
+        memoria_prefix = "memo://memoria/"
+        repo_index_prefix = "memo://repo-index/"
+        repo_prefix = "memo://repo/"
+
+        if uri.startswith(memoria_prefix):
+            memoria_id = uri[len(memoria_prefix):].strip()
+            if not memoria_id:
+                return payload("missing", "memo://memoria URI did not include an id.")
+            try:
+                rec = self.get(memoria_id)
+            except AmbiguousIdError as exc:
+                return payload(
+                    "error",
+                    f"ambiguous memoria id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+                )
+            if rec is None:
+                return payload("missing", "Memo memoria was not found.")
             return payload(
-                "unsupported",
-                "Memo backend-native only replays memo://memoria/<id> evidence.",
+                "found",
+                f"resolved memoria: {rec.id}",
+                content_hash=_stable_content_hash(rec.to_dict()),
+                target={"kind": "memoria", "id": rec.id, "path": rec.path},
             )
-        memoria_id = uri[len(prefix):].strip()
-        if not memoria_id:
-            return payload("missing", "memo://memoria URI did not include an id.")
-        try:
-            rec = self.get(memoria_id)
-        except AmbiguousIdError as exc:
+
+        if uri.startswith(repo_index_prefix):
+            rest = uri[len(repo_index_prefix):].strip("/")
+            if not rest or "/" not in rest:
+                return payload(
+                    "missing",
+                    "memo://repo-index URI must include <repo-name>/<commit-prefix>.",
+                )
+            repo_name, commit_prefix = rest.split("/", 1)
+            source = self.store.get_repo_source(repo_name)
+            if source is None:
+                return payload("missing", "Memo repo source was not found.")
+            commit = str(source.get("commit_sha") or "")
+            if commit_prefix and commit_prefix != "unknown" and not commit.startswith(commit_prefix):
+                return payload(
+                    "missing",
+                    "Memo repo source exists but commit did not match the receipt URI.",
+                    target={
+                        "kind": "repo_index",
+                        "repo_id": source.get("id") or "",
+                        "name": source.get("name") or repo_name,
+                        "commit_sha": commit,
+                    },
+                )
+            resolved = self._repo_replay_payload(source)
             return payload(
-                "error",
-                f"ambiguous memoria id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+                "found",
+                f"resolved repo index: {source.get('name')}@{commit[:12]}",
+                content_hash=_stable_content_hash(resolved),
+                target=resolved,
             )
-        if rec is None:
-            return payload("missing", "Memo memoria was not found.")
+
+        if uri.startswith(repo_prefix):
+            repo_key = uri[len(repo_prefix):].strip()
+            if not repo_key:
+                return payload("missing", "memo://repo URI did not include a repo id/name/url.")
+            source = self.store.get_repo_source(repo_key)
+            if source is None:
+                return payload("missing", "Memo repo source was not found.")
+            resolved = self._repo_replay_payload(source)
+            return payload(
+                "found",
+                f"resolved repo: {source.get('name')}",
+                content_hash=_stable_content_hash(resolved),
+                target=resolved,
+            )
+
         return payload(
-            "found",
-            f"resolved memoria: {rec.id}",
-            content_hash=_stable_content_hash(rec.to_dict()),
+            "unsupported",
+            "Memo backend-native only replays memo://memoria/<id>, "
+            "memo://repo/<id|name|url>, and memo://repo-index/<name>/<commit> evidence.",
         )
+
+    def _repo_replay_payload(self, source: dict[str, Any]) -> dict[str, Any]:
+        repo_id = str(source.get("id") or "")
+        counts = self.store.repo_counts(repo_id) if repo_id else {
+            "files": 0,
+            "lines": 0,
+            "chunks": 0,
+            "embedded_chunks": 0,
+        }
+        pending_chunks = counts["chunks"] - counts["embedded_chunks"]
+        return {
+            "kind": "repo",
+            "id": repo_id,
+            "name": source.get("name") or "",
+            "url": source.get("url") or "",
+            "ref": source.get("ref") or "",
+            "commit_sha": source.get("commit_sha") or "",
+            "indexed_at": source.get("indexed_at") or "",
+            "status": source.get("status") or "",
+            "semantic_status": (
+                "semantic_ready" if counts["chunks"] and pending_chunks == 0
+                else "semantic_pending" if pending_chunks > 0
+                else str(source.get("status") or "")
+            ),
+            "counts": {
+                **counts,
+                "pending_chunks": pending_chunks,
+            },
+        }
 
     # -- update -------------------------------------------------------------
 
