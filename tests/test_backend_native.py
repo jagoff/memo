@@ -13,7 +13,11 @@ def test_backend_native_capabilities_cli_json(monkeypatch) -> None:
     result = CliRunner().invoke(
         cli,
         ["backend-native", "capabilities", "--json"],
-        env={"MEMO_NONINTERACTIVE": "1"},
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_MODEL_PROFILE": "balanced",
+            "MEMO_EMBEDDER_DIMS": "",
+        },
     )
     payload = json.loads(result.output)
 
@@ -25,6 +29,8 @@ def test_backend_native_capabilities_cli_json(monkeypatch) -> None:
     assert payload["capabilities"]["memory_replay"] is True
     assert payload["capabilities"]["operational_replay"] is True
     assert payload["trace_id"] == "synapse://trace/test"
+    assert payload["model_profile"]["schema"] == "memo.profile_status.v1"
+    assert payload["model_profile"]["active"]["embedder_dims"] == 1024
 
 
 def test_backend_native_replay_resolves_memoria(mock_memory) -> None:
