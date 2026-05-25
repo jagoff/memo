@@ -1513,6 +1513,20 @@ class Memory:
             extra = post.get("extra") or {}
 
             if existing is None:
+                # Path-collision guard: an .md may have its frontmatter id
+                # regenerated (manual edit, restore-from-backup, or a stale
+                # row pointing at a file whose id was rewritten) while the
+                # vault-relative path stays the same. The store's
+                # UNIQUE(meta.path) constraint blocks a plain INSERT, so we
+                # drop the orphan row before re-adding under the new id.
+                stale = self.store.get_by_path(rel)
+                if stale is not None:
+                    _log.warning(
+                        "reindex: path %r reused with new id (%s → %s); "
+                        "replacing stale row",
+                        rel, stale["id"][:8], md_id[:8],
+                    )
+                    self.store.delete(stale["id"])
                 emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
                 assert_valid_embedding(emb, self.cfg.embedder_dims, context=f"reindex add {md_id[:8]}")
                 self.store.upsert(
