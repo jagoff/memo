@@ -111,6 +111,39 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         return out
 
     @server.tool()
+    def memory_embed_query(text: str) -> dict[str, Any]:
+        """Embed a single query string with memo's MLX embedder.
+
+        Returns `{vector, dim, model}`. Uses the **asymmetric query
+        prefix** — appropriate for the query side of a cosine search.
+        For symmetric (document) embedding use `memory_embed_batch`.
+
+        Synapse calls this to unify the vector space across retrieval +
+        rerank + HyDE (previously Synapse used its own Ollama embedder
+        in a different space).
+        """
+        if not text or not text.strip():
+            raise ValueError("memory_embed_query: empty text")
+        vec = memory.embedder.embed_query(text)
+        return {"vector": vec, "dim": len(vec), "model": memory.cfg.embedder_model}
+
+    @server.tool()
+    def memory_embed_batch(texts: list[str]) -> dict[str, Any]:
+        """Batched **symmetric** embed for a list of texts.
+
+        Returns `{vectors, dim, model}` where `vectors[i]` matches
+        `texts[i]`. Use for document/snippet/hypothesis embedding (no
+        query prefix). One call amortizes MLX inference; preferred over
+        N individual `memory_embed_query` calls when callers have a
+        batch in hand.
+        """
+        if not texts:
+            return {"vectors": [], "dim": 0, "model": memory.cfg.embedder_model}
+        vecs = memory.embedder.embed(texts)
+        dim = len(vecs[0]) if vecs else 0
+        return {"vectors": vecs, "dim": dim, "model": memory.cfg.embedder_model}
+
+    @server.tool()
     def memory_ask(
         question: str,
         k: int = 5,

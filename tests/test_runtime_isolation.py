@@ -97,7 +97,7 @@ def test_mcp_command_pins_resolved_memo_mcp(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(cli, ["mcp-command"])
@@ -121,14 +121,14 @@ def test_mcp_command_json(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(cli, ["mcp-command", "--client", "json"])
 
     assert result.exit_code == 0
     assert '"memo"' in result.output
-    assert '"command": "/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"' in result.output
+    assert '"command": "/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"' in result.output
     assert '"MEMO_NONINTERACTIVE": "1"' in result.output
 
 
@@ -137,7 +137,7 @@ def test_mcp_command_codex(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(cli, ["mcp-command", "--client", "codex"])
@@ -145,7 +145,7 @@ def test_mcp_command_codex(monkeypatch):
     assert result.exit_code == 0
     assert (
         "codex mcp add memo --env MEMO_NONINTERACTIVE=1 -- "
-        "/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"
+        "/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"
     ) in result.output
 
 
@@ -154,7 +154,7 @@ def test_mcp_command_devin(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(cli, ["mcp-command", "--client", "devin"])
@@ -162,7 +162,7 @@ def test_mcp_command_devin(monkeypatch):
     assert result.exit_code == 0
     assert (
         "devin mcp add -s user -e MEMO_NONINTERACTIVE=1 memo -- "
-        "/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"
+        "/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"
     ) in result.output
 
 
@@ -171,14 +171,14 @@ def test_mcp_command_windsurf(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(cli, ["mcp-command", "--client", "windsurf"])
 
     assert result.exit_code == 0
     assert '"memo"' in result.output
-    assert '"command": "/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"' in result.output
+    assert '"command": "/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"' in result.output
     assert '"MEMO_NONINTERACTIVE": "1"' in result.output
     assert '"type": "stdio"' not in result.output
 
@@ -190,7 +190,7 @@ def test_mcp_command_forwards_model_env(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(cli, ["mcp-command", "--client", "codex"])
@@ -205,7 +205,7 @@ def test_install_slash_dry_run(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(
@@ -224,7 +224,7 @@ def test_install_slash_codex_installs_plugin_and_mcp(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(
@@ -246,7 +246,7 @@ def test_install_slash_claude_uses_add_json(monkeypatch):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(
@@ -272,7 +272,7 @@ def test_install_slash_windsurf_writes_mcp_config(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli_mod,
         "_resolved_memo_mcp",
-        lambda: Path("/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"),
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
     result = CliRunner().invoke(cli, ["install-slash", "--client", "windsurf"])
@@ -281,7 +281,7 @@ def test_install_slash_windsurf_writes_mcp_config(monkeypatch, tmp_path):
     data = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert data["mcpServers"]["existing"]["command"] == "node"
     memo = data["mcpServers"]["memo"]
-    assert memo["command"] == "/Users/USER/.local/pipx/venvs/mlx-memo/bin/memo-mcp"
+    assert memo["command"] == "/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"
     assert memo["args"] == []
     assert memo["env"]["MEMO_NONINTERACTIVE"] == "1"
     assert memo["env"]["MEMO_EMBEDDER_DIMS"] == "2560"

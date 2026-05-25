@@ -17,7 +17,6 @@ import hashlib
 import sqlite3
 import sys
 from collections import Counter
-from pathlib import Path
 
 import frontmatter
 
@@ -83,7 +82,7 @@ def main() -> int:
     con.close()
 
     # Report
-    print(f"=== memo data-integrity audit ===")
+    print("=== memo data-integrity audit ===")
     print(f"vault_path:    {vault}")
     print(f"db_path:       {db}")
     print(f"total records: {total}")

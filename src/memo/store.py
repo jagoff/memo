@@ -153,6 +153,18 @@ _REQUIRED_SCHEMA_OBJECTS = frozenset(
     }
 )
 
+# FTS5 column weights for repo retrieval BM25.
+# `bm25(table, w0, w1, w2, ...)` takes one weight per column (UNINDEXED
+# columns receive a weight but ignore it). Path is boosted because a
+# query term matching the filename or directory is a strong canonical
+# signal (e.g. `99-Contacts/Grecia.md` for "Grecia") that pure body
+# term-density would otherwise drown in dumps with many repeats of the
+# same keyword.
+_BM25_REPO_NAME_WEIGHT = 0.5
+_BM25_PATH_WEIGHT = 5.0
+_BM25_BODY_WEIGHT = 1.0
+_BM25_UNINDEXED_WEIGHT = 0.0  # harmless filler for UNINDEXED columns
+
 
 class VecStore:
     """sqlite-vec store for memory metadata + embeddings.
@@ -1148,8 +1160,10 @@ class VecStore:
         if not match_expr:
             return []
         candidate_k = limit * 5 if (repo_id or path_glob) else limit
+        # Column weights: (id UNINDEXED, repo_name, path, body)
         sql = (
-            "SELECT repo_chunks.id AS id, bm25(repo_chunk_fts) AS bm25_score, "
+            "SELECT repo_chunks.id AS id, "
+            "       bm25(repo_chunk_fts, ?, ?, ?, ?) AS bm25_score, "
             "       repo_chunks.repo_id, repo_sources.name AS repo_name, repo_sources.url, "
             "       repo_sources.ref, repo_sources.commit_sha, repo_chunks.file_id, "
             "       repo_chunks.path, repo_files.language, repo_chunks.line_start, "
@@ -1160,7 +1174,13 @@ class VecStore:
             "JOIN repo_sources ON repo_sources.id = repo_chunks.repo_id "
             "WHERE repo_chunk_fts MATCH ? "
         )
-        params: list[Any] = [match_expr]
+        params: list[Any] = [
+            _BM25_UNINDEXED_WEIGHT,
+            _BM25_REPO_NAME_WEIGHT,
+            _BM25_PATH_WEIGHT,
+            _BM25_BODY_WEIGHT,
+            match_expr,
+        ]
         if repo_id:
             sql += "AND repo_chunks.repo_id = ? "
             params.append(repo_id)
@@ -1186,8 +1206,10 @@ class VecStore:
         if not match_expr:
             return []
         candidate_k = limit * 5 if (repo_id or path_glob) else limit
+        # Column weights: (id UNINDEXED, repo_name, path, line_no UNINDEXED, body)
         sql = (
-            "SELECT repo_lines.id AS id, bm25(repo_line_fts) AS bm25_score, "
+            "SELECT repo_lines.id AS id, "
+            "       bm25(repo_line_fts, ?, ?, ?, ?, ?) AS bm25_score, "
             "       repo_lines.repo_id, repo_sources.name AS repo_name, repo_sources.url, "
             "       repo_sources.ref, repo_sources.commit_sha, repo_lines.file_id, "
             "       repo_lines.path, repo_files.language, repo_lines.line_no AS line_start, "
@@ -1198,7 +1220,14 @@ class VecStore:
             "JOIN repo_sources ON repo_sources.id = repo_lines.repo_id "
             "WHERE repo_line_fts MATCH ? "
         )
-        params: list[Any] = [match_expr]
+        params: list[Any] = [
+            _BM25_UNINDEXED_WEIGHT,
+            _BM25_REPO_NAME_WEIGHT,
+            _BM25_PATH_WEIGHT,
+            _BM25_UNINDEXED_WEIGHT,
+            _BM25_BODY_WEIGHT,
+            match_expr,
+        ]
         if repo_id:
             sql += "AND repo_lines.repo_id = ? "
             params.append(repo_id)
