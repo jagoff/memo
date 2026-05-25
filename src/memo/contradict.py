@@ -372,7 +372,7 @@ class ContradictionScanner:
                 continue
 
             try:
-                emb = self.memory.embedder.embed([body])[0]
+                emb = self.memory.embedder.embed_query(body)
             except Exception:
                 continue
 

@@ -6,10 +6,13 @@ dir. The `tmp_cfg` fixture builds an isolated `Config` rooted at
 MLX inference are gated by `@pytest.mark.requires_mlx` — auto-skipped
 if `mlx_lm` isn't importable.
 
-CliRunner-based tests must invoke commands with `env={"MEMO_NONINTERACTIVE":
-"1"}` so the first-run picker doesn't fire mid-test. The `tmp_cfg`
-fixture only protects the storage layer — the CLI's first-run gate
-checks env vars / TTY independently.
+CliRunner-based tests inherit `MEMO_NONINTERACTIVE=1` and a non-existent
+`MEMO_CONFIG_FILE` from the module-level `os.environ.setdefault` calls
+below, so the first-run picker never fires mid-test and the developer's
+real `~/.config/memo/config.toml` never leaks in. Individual tests can
+still override via `monkeypatch.setenv` or `CliRunner().invoke(env=...)`
+when verifying first-run/interactive behavior. The `tmp_cfg` fixture
+adds isolated storage on top.
 """
 
 from __future__ import annotations
@@ -17,9 +20,21 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
+
+# Test-wide defaults applied at conftest import. These are `setdefault` so
+# individual tests can still override via `monkeypatch.setenv` /
+# `CliRunner().invoke(env=...)`. Goal: even tests that forget to pin these
+# explicitly never read the developer's real `~/.config/memo/config.toml`
+# and never trigger the first-run picker mid-test.
+os.environ.setdefault("MEMO_NONINTERACTIVE", "1")
+os.environ.setdefault(
+    "MEMO_CONFIG_FILE",
+    str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-config.toml"),
+)
 
 from memo.config import Config
 

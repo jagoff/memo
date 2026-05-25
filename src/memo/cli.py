@@ -1396,6 +1396,57 @@ def ask(question: str, k: int, type_: str | None, as_json: bool) -> None:
             )
 
 
+@cli.command(name="embed")
+@click.argument("text", required=False)
+@click.option(
+    "--batch-json", type=click.File("r"), default=None,
+    help="Read JSON list of texts from this path (or '-' for stdin). "
+         "Each text is embedded with the SYMMETRIC (document) prefix. "
+         "Mutually exclusive with positional TEXT.",
+)
+def embed_cmd(text: str | None, batch_json) -> None:
+    """Compute embedding vector(s) using memo's MLX embedder.
+
+    Single (asymmetric query prefix):
+        memo embed "hablame de Grecia"
+
+    Batch (symmetric document prefix, single MLX forward pass):
+        echo '["alpha","beta","gamma"]' | memo embed --batch-json -
+
+    Output: one JSON object per invocation (no indent), written to
+    stdout. Shape:
+      single: {"vector": [...], "dim": int, "model": "..."}
+      batch:  {"vectors": [[...], ...], "dim": int, "model": "..."}
+
+    Synapse consumes this as its unified embed RPC (replaces a separate
+    Ollama embedder so query/document vectors share memo's space).
+    """
+    from memo.memory import Memory
+
+    if batch_json is not None and text:
+        raise click.UsageError("--batch-json and TEXT are mutually exclusive")
+    if batch_json is None and not text:
+        raise click.UsageError("provide TEXT or --batch-json")
+
+    mem = Memory(Config.from_env())
+    if batch_json is not None:
+        try:
+            texts = json.load(batch_json)
+        except json.JSONDecodeError as exc:
+            raise click.UsageError(f"--batch-json: invalid JSON: {exc}") from exc
+        if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
+            raise click.UsageError("--batch-json: expected JSON list of strings")
+        vecs = mem.embedder.embed(texts)
+        dim = len(vecs[0]) if vecs else 0
+        out = {"vectors": vecs, "dim": dim, "model": mem.cfg.embedder_model}
+    else:
+        assert text is not None
+        vec = mem.embedder.embed_query(text)
+        out = {"vector": vec, "dim": len(vec), "model": mem.cfg.embedder_model}
+    sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
 @cli.command(name="chat-ask")
 @click.argument("question")
 @click.option("--k", default=7, type=int, show_default=True,
@@ -1406,6 +1457,13 @@ def ask(question: str, k: int, type_: str | None, as_json: bool) -> None:
 @click.option("--context-json", type=click.File("r"), default=None,
               help="Caller-supplied federation context (e.g. Synapse packet) for richer synthesis.")
 @click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--stream", "as_stream", is_flag=True,
+    help=(
+        "Emit one NDJSON event per line (context/token/done/error) flushed "
+        "immediately. Forces JSON output and disables the panel."
+    ),
+)
 def chat_ask(
     question: str,
     k: int,
@@ -1413,6 +1471,7 @@ def chat_ask(
     history_json,
     context_json,
     as_json: bool,
+    as_stream: bool,
 ) -> None:
     """Chat-shaped RAG over memo."""
     from memo.memory import Memory
@@ -1436,6 +1495,20 @@ def chat_ask(
             context = {}
 
     mem = Memory(Config.from_env())
+
+    if as_stream:
+        import sys
+        for event in mem.chat_ask_stream(
+            question,
+            k=k,
+            type_=type_,
+            history=history,
+            context=context,
+        ):
+            sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+        return
+
     envelope = mem.chat_ask(
         question,
         k=k,

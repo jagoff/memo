@@ -32,6 +32,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Iterator
 from typing import Any
 
 _MAX_LOADED_MODELS = 2
@@ -131,6 +132,51 @@ class MLXChat:
         content = text if isinstance(text, str) else getattr(text, "text", str(text))
         self._last_use[model] = time.time()
         return {"message": {"content": (content or "").strip()}}
+
+    def chat_stream(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        options: dict[str, Any] | None = None,
+    ) -> Iterator[str]:
+        """Streaming chat completion — yields token deltas (str) as they
+        are decoded. Same options as `chat()`. Empty deltas are skipped.
+
+        Consumer pattern:
+            for delta in chat.chat_stream(model, messages, options):
+                process(delta)
+
+        Raises `RuntimeError` if the installed `mlx_lm` lacks
+        `stream_generate` (mlx-lm < 0.18).
+        """
+        try:
+            from mlx_lm import stream_generate as _mlx_stream
+        except ImportError as exc:
+            raise RuntimeError(
+                "MLXChat.chat_stream requires mlx-lm with stream_generate "
+                "(mlx-lm >= 0.18). Upgrade with: pip install -U mlx-lm"
+            ) from exc
+        from mlx_lm.sample_utils import make_sampler
+
+        opts = options or {}
+        temperature = float(opts.get("temperature", 0.0))
+        top_p = float(opts.get("top_p", 1.0))
+        max_tokens = int(opts.get("num_predict") or opts.get("max_tokens") or 512)
+
+        m, tok = self._ensure_model(model)
+        prompt = tok.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+        )
+        sampler = make_sampler(temp=temperature, top_p=top_p)
+        try:
+            for resp in _mlx_stream(
+                m, tok, prompt, max_tokens=max_tokens, sampler=sampler,
+            ):
+                delta = getattr(resp, "text", "") or ""
+                if delta:
+                    yield delta
+        finally:
+            self._last_use[model] = time.time()
 
     def unload(self, model: str | None = None) -> bool:
         """Drop one (or all) loaded models from memory. Returns True if

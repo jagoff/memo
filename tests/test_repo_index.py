@@ -10,7 +10,11 @@ from click.testing import CliRunner
 from memo.cli import cli
 from memo.config import Config
 from memo.memory import Memory
-from memo.repo_index import _chunk_lines
+from memo.repo_index import (
+    _chunk_lines,
+    _extract_query_terms,
+    _path_name_boost,
+)
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -468,3 +472,111 @@ def test_repo_mcp_tools(tmp_path: Path, monkeypatch):
     embedded = embed(repo="sample")
     assert embedded["pending_chunks"] == 0
     assert status(repo="sample")["semantic_status"] == "semantic_ready"
+
+
+# --- Path-name boost: ranking quality regression tests --------------------
+
+
+def test_path_name_boost_exact_basename_match() -> None:
+    assert _path_name_boost("notes/grecia.md", ["grecia"]) == 1.0
+    # Match is case-insensitive on the basename side.
+    assert _path_name_boost("notes/Grecia.md", ["grecia"]) == 1.0
+
+
+def test_path_name_boost_substring_match() -> None:
+    # Substring (`grecia-school` contains `grecia`) → partial boost.
+    boost = _path_name_boost("notes/grecia-school.md", ["grecia"])
+    assert 0.0 < boost < 1.0
+
+
+def test_path_name_boost_no_match_returns_zero() -> None:
+    assert _path_name_boost("notes/random.md", ["grecia"]) == 0.0
+    assert _path_name_boost("", ["grecia"]) == 0.0
+    assert _path_name_boost("notes/grecia.md", []) == 0.0
+
+
+def test_path_name_boost_skips_ingest_dumps() -> None:
+    # Ingest dumps may have the query term in filename but they are not
+    # canonical sources — boost must be 0.
+    assert _path_name_boost(
+        "99-obsidian/99-AI/external-ingest/Claude/grecia-dump.md", ["grecia"]
+    ) == 0.0
+
+
+def test_extract_query_terms_filters_stopwords_and_short_tokens() -> None:
+    terms = _extract_query_terms("Quién es Grecia?")
+    # "es" too short, "quién" is a stopword, "grecia" survives.
+    assert "grecia" in terms
+    assert "es" not in terms
+    assert "quién" not in terms
+
+
+def _make_grecia_repo(root: Path) -> Path:
+    """Build a tiny obsidian-vault-shaped fixture with two competing files:
+    a canonical contact note (`Grecia.md`, low body density) and a
+    body-dense area note (`Grecia Accesos.md`, many mentions). The
+    canonical file must win after path-name boost."""
+    files = {
+        "99-obsidian/99-Contacts/Grecia.md": (
+            "---\ntype: mention\nkinship: family-immediate\n---\n"
+            "[[Grecia|@Grecia]]\n\n"
+            "- Relación: hija\n- Cumpleaños: 07/06/2010\n- Email: grecia@example.com\n"
+        ),
+        "02-Areas/Grecia/Grecia Accesos.md": (
+            "---\ntags: [grecia, passwords]\n---\n"
+            "Grecia codigo telefono 12367\n"
+            "Grecia codigo wifi grecia2024\n"
+            "Grecia credencial Grecia escuela Grecia banco Grecia\n"
+        ),
+        "02-Areas/Grecia/Pagar escuela Grecia.md": (
+            "---\ntags: [grecia, escuela]\n---\n"
+            "Link de pago escuela Grecia\nhttps://example.com/pagar?Grecia=1\n"
+        ),
+    }
+    return _make_text_repo(root, "grecia-vault", files)
+
+
+def test_repo_search_boosts_filename_match_over_body_density(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Single-term query "Grecia" must surface `99-Contacts/Grecia.md`
+    (exact basename match) ahead of `02-Areas/Grecia/Grecia Accesos.md`
+    even though the area file has many more body mentions of `grecia`.
+    Regression for the diagnosis that BM25 term-density was beating
+    canonical filename matches."""
+    _patch_embedder(monkeypatch)
+    repo = _make_grecia_repo(tmp_path)
+    mem = Memory(_cfg(tmp_path))
+
+    out = mem.repo_index(str(repo), name="grecia-vault")
+    assert out["semantic_status"] == "semantic_ready"
+
+    hits = mem.repo_search("Grecia", repo="grecia-vault", limit=3, mode="hybrid")
+    assert hits, "expected at least one hit for query 'Grecia'"
+    assert hits[0].path == "99-obsidian/99-Contacts/Grecia.md", (
+        f"contact note must win — got {[h.path for h in hits]}"
+    )
+
+
+def test_repo_search_ignores_ingest_dump_paths(tmp_path: Path, monkeypatch) -> None:
+    """An ingest-dump path whose filename happens to include the query
+    term must NOT receive the canonical-filename boost. The contact note
+    must still rank above the dump."""
+    _patch_embedder(monkeypatch)
+    files = {
+        "99-obsidian/99-Contacts/Grecia.md": (
+            "[[Grecia|@Grecia]]\nGrecia Ferrari hija\n"
+        ),
+        "99-obsidian/99-AI/external-ingest/Claude/grecia-session.md": (
+            "Grecia Grecia Grecia Grecia Grecia Grecia\n" * 20
+        ),
+    }
+    repo = _make_text_repo(tmp_path, "ingest-vault", files)
+    mem = Memory(_cfg(tmp_path))
+    mem.repo_index(str(repo), name="ingest-vault")
+
+    hits = mem.repo_search("Grecia", repo="ingest-vault", limit=2, mode="hybrid")
+    assert hits
+    assert hits[0].path == "99-obsidian/99-Contacts/Grecia.md", (
+        f"contact must outrank ingest dump — got {[h.path for h in hits]}"
+    )

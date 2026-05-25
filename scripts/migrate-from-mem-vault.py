@@ -57,7 +57,6 @@ import frontmatter
 
 from memo.config import Config
 
-
 # Fields memo writes natively. Anything else gets stashed in `extra`.
 _NATIVE_FIELDS = frozenset({"id", "title", "type", "tags", "created", "updated", "extra"})
 
@@ -70,7 +69,7 @@ _RENAMES = {
 
 
 def _now_iso() -> str:
-    return _dt.datetime.now(tz=_dt.timezone.utc).astimezone().isoformat(timespec="seconds")
+    return _dt.datetime.now(tz=_dt.UTC).astimezone().isoformat(timespec="seconds")
 
 
 def _coerce_iso(value) -> str:

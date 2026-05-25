@@ -52,6 +52,7 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -961,6 +962,142 @@ class Memory:
             "context_keys": context_keys,
         }
 
+    def chat_ask_stream(
+        self,
+        question: str,
+        *,
+        k: int = 7,
+        type_: str | None = None,
+        history: list[dict[str, Any]] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Streaming chat-shaped RAG envelope.
+
+        Wraps `ask_stream`, re-shaping events into the `memo.chat_ask.v2`
+        schema and emitting:
+
+          - {"event":"context", "schema":"memo.chat_ask.v2",
+             "sources":[...], "citations":[...]}              once
+          - {"event":"token",   "delta":"..."}                 N times
+          - {"event":"done",    ...full envelope...}           once
+          - on synthesis error: a single `done` with
+             synthesis_status="error", synthesis_error=<exc>,
+             answer=<partial accumulator>
+        """
+        started = time.perf_counter()
+        clean_history = self._normalize_chat_history(history or [])
+        clean_context = context or {}
+        retrieval_question = self._chat_retrieval_question(
+            question,
+            history=clean_history,
+            context=clean_context,
+        )
+        context_keys = sorted(str(key) for key in clean_context)
+
+        sources: list[dict[str, Any]] = []
+        accum_parts: list[str] = []
+        synthesis_error = ""
+        had_error = False
+
+        if not question.strip():
+            total_ms = int((time.perf_counter() - started) * 1000)
+            yield {
+                "event": "done",
+                "schema": "memo.chat_ask.v2",
+                "question": question,
+                "answer": "",
+                "sources": [],
+                "citations": [],
+                "retrieval_trace": [{
+                    "stage": "memo.chat_ask_stream",
+                    "ms": total_ms,
+                    "source_count": 0,
+                    "history_turns": len(clean_history),
+                    "context_keys": context_keys,
+                    "retrieval_query_chars": len(retrieval_question),
+                }],
+                "synthesis_status": "unavailable",
+                "synthesis_source": "memo.ask",
+                "synthesis_error": "empty question",
+                "total_ms": total_ms,
+                "history_turns_used": len(clean_history),
+                "context_keys": context_keys,
+            }
+            return
+
+        for ev in self.ask_stream(retrieval_question, k=k, type_=type_):
+            kind = ev.get("event")
+            if kind == "sources":
+                sources = list(ev.get("sources") or [])
+                yield {
+                    "event": "context",
+                    "schema": "memo.chat_ask.v2",
+                    "sources": sources,
+                    "citations": self._chat_citations(sources),
+                }
+            elif kind == "token":
+                delta = str(ev.get("delta") or "")
+                if delta:
+                    accum_parts.append(delta)
+                    yield {"event": "token", "delta": delta}
+            elif kind == "error":
+                had_error = True
+                synthesis_error = str(ev.get("message") or "synthesis error")
+                partial = str(ev.get("answer_partial") or "")
+                if partial and not accum_parts:
+                    accum_parts.append(partial)
+                break
+            elif kind == "done":
+                # ask_stream's done carries the final accumulated answer and
+                # the source list; prefer it as the authoritative state.
+                done_answer = str(ev.get("answer") or "")
+                done_sources = ev.get("sources")
+                if done_answer and not accum_parts:
+                    accum_parts.append(done_answer)
+                if isinstance(done_sources, list) and not sources:
+                    sources = done_sources
+
+        total_ms = int((time.perf_counter() - started) * 1000)
+        answer = "".join(accum_parts).strip()
+        if had_error:
+            status = "error"
+        elif answer.startswith("(error consultando el modelo:"):
+            status = "error"
+            synthesis_error = answer
+        elif not answer:
+            status = "error"
+            synthesis_error = "empty answer"
+        elif not sources:
+            status = "unavailable"
+            synthesis_error = answer
+        else:
+            status = "ok"
+
+        yield {
+            "event": "done",
+            "schema": "memo.chat_ask.v2",
+            "question": question,
+            "answer": answer,
+            "sources": sources,
+            "citations": self._chat_citations(sources),
+            "retrieval_trace": [{
+                "stage": "memo.chat_ask_stream",
+                "ms": total_ms,
+                "source_count": len(sources),
+                "history_turns": len(clean_history),
+                "context_keys": context_keys,
+                "retrieval_query_chars": len(retrieval_question),
+            }],
+            "synthesis_status": status,
+            "synthesis_source": (
+                f"memo.ask_stream:{self.cfg.llm_model}" if sources else "memo.ask_stream"
+            ),
+            "synthesis_error": synthesis_error,
+            "total_ms": total_ms,
+            "history_turns_used": len(clean_history),
+            "context_keys": context_keys,
+        }
+
     @staticmethod
     def _normalize_chat_history(history: list[dict[str, Any]]) -> list[dict[str, str]]:
         normalized: list[dict[str, str]] = []
@@ -1021,33 +1158,23 @@ class Memory:
 
     # -- ask ----------------------------------------------------------------
 
-    def ask(
-        self, question: str, *, k: int = 5, type_: str | None = None,
-        snippet_chars: int = 800, include_repos: bool = True,
-    ) -> dict[str, Any]:
-        """Synthesised Q&A over the memory archive (RAG).
+    def _build_ask_context(
+        self, question: str, *, k: int, type_: str | None,
+        snippet_chars: int, include_repos: bool,
+    ) -> tuple[str, list[dict[str, Any]], str]:
+        """Retrieval half of ask()/ask_stream().
 
-        Pipeline: hybrid search top-`k` → format snippets with `[id]`
-        citations → MLXChat 7B (`MEMO_LLM_MODEL`) generates a prose
-        answer with inline citations. Returns:
-
-            {
-                "question": str,
-                "answer": str,            # may say "no encuentro ..."
-                "sources": [               # the snippets the LLM saw
-                    {id, title, type, score, snippet}, ...
-                ],
-            }
-
-        Latency: ~3-8s on a cold 7B load + ~1-2s decode for short
-        answers. Streaming is not exposed yet — caller blocks. Use
-        `search` if you only need IDs to scan manually.
+        Returns (normalized_question, sources, user_msg). When no hits
+        found, returns (question, [], "") — caller must short-circuit.
         """
         if not question or not question.strip():
-            return {"question": question, "answer": "", "sources": []}
+            return question, [], ""
         _MAX_QUESTION_CHARS = 4000
         if len(question) > _MAX_QUESTION_CHARS:
-            _log.warning("ask: question truncated from %d to %d chars", len(question), _MAX_QUESTION_CHARS)
+            _log.warning(
+                "ask: question truncated from %d to %d chars",
+                len(question), _MAX_QUESTION_CHARS,
+            )
             question = question[:_MAX_QUESTION_CHARS]
         hits = self.search(question, limit=k, type_=type_, mode="hybrid")
         repo_hits = []
@@ -1055,16 +1182,9 @@ class Memory:
             with contextlib.suppress(Exception):
                 repo_hits = self.repo_search(question, limit=k, mode="hybrid")
         if not hits and not repo_hits:
-            return {
-                "question": question,
-                "answer": "no encuentro la respuesta en las memorias guardadas",
-                "sources": [],
-            }
+            return question, [], ""
 
-        # Build the user prompt: snippets with `[id-prefix]` labels.
-        # Truncate each body to `snippet_chars` to keep the prompt cheap;
-        # the full body is in the file if the LLM ever needs to drill in.
-        snippet_lines = []
+        snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
         for h in hits:
             id_short = h.id[:8]
@@ -1115,6 +1235,42 @@ class Memory:
             f"Contexto relevante ({len(hits)} memorias, {len(repo_hits)} snippets de repo):\n\n"
             + "\n---\n".join(snippet_lines)
         )
+        return question, sources, user_msg
+
+    def ask(
+        self, question: str, *, k: int = 5, type_: str | None = None,
+        snippet_chars: int = 800, include_repos: bool = True,
+    ) -> dict[str, Any]:
+        """Synthesised Q&A over the memory archive (RAG).
+
+        Pipeline: hybrid search top-`k` → format snippets with `[id]`
+        citations → MLXChat 7B (`MEMO_LLM_MODEL`) generates a prose
+        answer with inline citations. Returns:
+
+            {
+                "question": str,
+                "answer": str,            # may say "no encuentro ..."
+                "sources": [               # the snippets the LLM saw
+                    {id, title, type, score, snippet}, ...
+                ],
+            }
+
+        Latency: ~3-8s on a cold 7B load + ~1-2s decode for short
+        answers. For token-by-token output use `ask_stream`. Use
+        `search` if you only need IDs to scan manually.
+        """
+        if not question or not question.strip():
+            return {"question": question, "answer": "", "sources": []}
+        norm_question, sources, user_msg = self._build_ask_context(
+            question, k=k, type_=type_,
+            snippet_chars=snippet_chars, include_repos=include_repos,
+        )
+        if not sources:
+            return {
+                "question": norm_question,
+                "answer": "no encuentro la respuesta en las memorias guardadas",
+                "sources": [],
+            }
 
         # Lazy-construct the chat client (same instance used by auto_derive).
         if self._chat is None:
@@ -1135,8 +1291,68 @@ class Memory:
             answer = f"(error consultando el modelo: {type(exc).__name__})"
 
         return {
-            "question": question,
+            "question": norm_question,
             "answer": answer,
+            "sources": sources,
+        }
+
+    def ask_stream(
+        self, question: str, *, k: int = 5, type_: str | None = None,
+        snippet_chars: int = 800, include_repos: bool = True,
+    ) -> Iterator[dict[str, Any]]:
+        """Streaming variant of `ask()` — yields token-level events.
+
+        Event protocol (NDJSON-compatible dicts):
+          - {"event": "sources", "sources": [...]}            once, after retrieval
+          - {"event": "token",   "delta": "<chunk>"}          one per LLM yield
+          - {"event": "done",    "answer": "<acc>", "sources": [...]}
+          - {"event": "error",   "message": "...", "answer_partial": "..."}
+
+        Empty-question / no-hits paths short-circuit with a single `done`
+        carrying the same refusal text as `ask()`.
+        """
+        if not question or not question.strip():
+            yield {"event": "done", "answer": "", "sources": []}
+            return
+        _, sources, user_msg = self._build_ask_context(
+            question, k=k, type_=type_,
+            snippet_chars=snippet_chars, include_repos=include_repos,
+        )
+        if not sources:
+            yield {
+                "event": "done",
+                "answer": "no encuentro la respuesta en las memorias guardadas",
+                "sources": [],
+            }
+            return
+
+        yield {"event": "sources", "sources": sources}
+
+        if self._chat is None:
+            self._chat = MLXChat()
+        accum_parts: list[str] = []
+        try:
+            for delta in self._chat.chat_stream(
+                model=self.cfg.llm_model,
+                messages=[
+                    {"role": "system", "content": _ASK_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+                options={"temperature": 0.0, "max_tokens": 768},
+            ):
+                accum_parts.append(delta)
+                yield {"event": "token", "delta": delta}
+        except Exception as exc:
+            yield {
+                "event": "error",
+                "message": f"{type(exc).__name__}: {exc}",
+                "answer_partial": "".join(accum_parts).strip(),
+            }
+            return
+
+        yield {
+            "event": "done",
+            "answer": "".join(accum_parts).strip(),
             "sources": sources,
         }
 

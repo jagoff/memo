@@ -417,13 +417,19 @@ class RepoCorpus:
                 self.store.search_repo_bm25(query, limit=limit, repo_id=repo_id, path_glob=path)
             )
 
+        query_terms = _extract_query_terms(query)
+
         if repo_id is not None and self.store.repo_counts(repo_id)["embedded_chunks"] == 0:
             if mode == "vec":
                 return []
-            rows = _rrf_fuse_repo([
-                self.store.search_repo_bm25(query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path),
-                self.store.search_repo_lines(query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path),
-            ], limit=limit)
+            rows = _rrf_fuse_repo(
+                [
+                    self.store.search_repo_bm25(query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path),
+                    self.store.search_repo_lines(query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path),
+                ],
+                limit=limit,
+                query_terms=query_terms,
+            )
             return _hits_from_rows(rows)
 
         emb = self.embedder.embed_query(query)
@@ -438,7 +444,11 @@ class RepoCorpus:
         vec_hits = self.store.search_repo_vec(emb, limit=input_k, repo_id=repo_id, path_glob=path)
         bm_hits = self.store.search_repo_bm25(query, limit=input_k, repo_id=repo_id, path_glob=path)
         line_hits = self.store.search_repo_lines(query, limit=input_k, repo_id=repo_id, path_glob=path)
-        return _hits_from_rows(_rrf_fuse_repo([vec_hits, bm_hits, line_hits], limit=limit))
+        return _hits_from_rows(_rrf_fuse_repo(
+            [vec_hits, bm_hits, line_hits],
+            limit=limit,
+            query_terms=query_terms,
+        ))
 
     def embed(
         self,
@@ -903,7 +913,72 @@ def _hits_from_rows(rows: list[dict[str, Any]]) -> list[RepoSearchHit]:
     ]
 
 
-def _rrf_fuse_repo(hit_lists: list[list[dict[str, Any]]], *, limit: int, k: int = 60) -> list[dict[str, Any]]:
+# Paths that should NEVER get a filename boost — these are ingest dumps
+# (e.g. raw Claude/agent transcripts) that mention canonical names many
+# times but are not themselves the canonical source. Boosting them
+# defeats the purpose of preferring `99-Contacts/Grecia.md` over a dump
+# whose filename happens to also include "Grecia".
+_INGEST_PATH_MARKERS = (
+    "99-obsidian/99-AI/external-ingest/",
+    "external-ingest/",
+)
+
+# Lightweight stopword + token-min-length guard. We strip puncuation,
+# lowercase, and drop tokens shorter than 3 chars so noise like "es",
+# "de", or "?" doesn't trigger spurious path-name boosts.
+_QUERY_TERM_MIN_LEN = 3
+_QUERY_TERM_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "que", "los", "las", "una", "del",
+    "como", "qué", "cuál", "quién", "donde", "cuando", "este", "esta",
+})
+
+
+def _extract_query_terms(query: str) -> list[str]:
+    """Tokenize a query into significant terms for path-name boosting.
+
+    Lowercased, punctuation-stripped, stopwords + short tokens removed.
+    Used to compare query intent against path basenames in the post-RRF
+    boost — not used for FTS5 matching (FTS5 has its own tokenizer).
+    """
+    if not query:
+        return []
+    raw = re.split(r"[^\w]+", query.lower(), flags=re.UNICODE)
+    return [
+        tok for tok in raw
+        if len(tok) >= _QUERY_TERM_MIN_LEN and tok not in _QUERY_TERM_STOPWORDS
+    ]
+
+
+def _path_name_boost(path: str, terms: list[str]) -> float:
+    """Compute a boost in [0.0, 1.0] for filename-match relevance.
+
+    1.0: basename (sans extension) matches a query term exactly.
+    0.5: basename contains a query term as substring.
+    0.0: no match, OR path lies under an ingest-dump prefix (noisy).
+    """
+    if not path or not terms:
+        return 0.0
+    if any(marker in path for marker in _INGEST_PATH_MARKERS):
+        return 0.0
+    basename = Path(path).stem.lower()  # strips dir + extension
+    if not basename:
+        return 0.0
+    for term in terms:
+        if basename == term:
+            return 1.0
+    for term in terms:
+        if term in basename:
+            return 0.5
+    return 0.0
+
+
+def _rrf_fuse_repo(
+    hit_lists: list[list[dict[str, Any]]],
+    *,
+    limit: int,
+    k: int = 60,
+    query_terms: list[str] | None = None,
+) -> list[dict[str, Any]]:
     fused: dict[str, float] = {}
     canon: dict[str, dict[str, Any]] = {}
     for hits in hit_lists:
@@ -911,6 +986,11 @@ def _rrf_fuse_repo(hit_lists: list[list[dict[str, Any]]], *, limit: int, k: int 
             rid = hit["id"]
             fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
             canon.setdefault(rid, hit)
+    if query_terms:
+        for rid, score in list(fused.items()):
+            boost = _path_name_boost(canon[rid].get("path") or "", query_terms)
+            if boost:
+                fused[rid] = score * (1.0 + boost)
     ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
     out: list[dict[str, Any]] = []
     for rid, score in ranked:
