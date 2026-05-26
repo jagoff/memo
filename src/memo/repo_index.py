@@ -23,6 +23,9 @@ from typing import Any
 
 from memo.config import Config
 from memo.embedder import MLXEmbedder, assert_valid_embedding
+from memo.obsidian_links import find_image_embeds, resolve_image_path
+from memo.ocr import extract_text_cached, ocr_enabled_via_env
+from memo.retrieval_boost import boost_for as _retrieval_boost_for
 from memo.store import VecStore
 
 DEFAULT_EXCLUDE_DIRS = frozenset({
@@ -308,6 +311,49 @@ class RepoCorpus:
                 sha = hashlib.sha256(raw).hexdigest()
                 seen_paths.add(rel_posix)
 
+                # OCR enrichment for .md files with embedded images
+                # (`![[image.png]]`). Appends extracted text to the body so
+                # the embedder sees screenshot content. Hash is composed
+                # with each image's bytes hash so changing the image
+                # invalidates the cache.
+                if (
+                    ocr_enabled_via_env()
+                    and rel_posix.lower().endswith(".md")
+                    and "![[" in text
+                ):
+                    image_names = find_image_embeds(text)
+                    if image_names:
+                        ocr_blocks: list[str] = []
+                        ocr_hash_inputs: list[bytes] = []
+                        for img_name in image_names:
+                            img_path = resolve_image_path(
+                                img_name, clone_path,
+                                note_dir=path.parent,
+                            )
+                            if img_path is None:
+                                continue
+                            ocr_text = extract_text_cached(
+                                img_path,
+                                cache_dir=self.cfg.state_dir / "ocr_cache",
+                            )
+                            if ocr_text:
+                                ocr_blocks.append(
+                                    f"\n\n<!-- OCR: {img_name} -->\n{ocr_text}\n"
+                                )
+                                try:
+                                    ocr_hash_inputs.append(
+                                        hashlib.sha256(img_path.read_bytes()).digest()
+                                    )
+                                except Exception:
+                                    pass
+                        if ocr_blocks:
+                            text = text + "".join(ocr_blocks)
+                            # Compose sha so image content changes invalidate cache.
+                            h = hashlib.sha256(raw)
+                            for piece in ocr_hash_inputs:
+                                h.update(piece)
+                            sha = h.hexdigest()
+
                 file_id = _stable_id("repo-file", repo_id, rel_posix)
                 existing = existing_files.get(rel_posix)
                 if existing and existing["sha256"] == sha and not force:
@@ -408,14 +454,20 @@ class RepoCorpus:
         if repo and repo_id is None:
             return []
 
+        # Over-fetch so the title/filename boost has a chance to promote
+        # notes whose body BM25 / line match score is dwarfed by noisy
+        # transcripts. Without this, a procedural note can sit at rank 20
+        # behind a YouTube transcript and never reach the boost stage.
+        oversample = max(limit * 4, 40)
+
         if mode == "line":
-            return _hits_from_rows(
-                self.store.search_repo_lines(query, limit=limit, repo_id=repo_id, path_glob=path)
-            )
+            return _boost_and_resort(_hits_from_rows(
+                self.store.search_repo_lines(query, limit=oversample, repo_id=repo_id, path_glob=path)
+            ), query=query, limit=limit)
         if mode == "bm25":
-            return _hits_from_rows(
-                self.store.search_repo_bm25(query, limit=limit, repo_id=repo_id, path_glob=path)
-            )
+            return _boost_and_resort(_hits_from_rows(
+                self.store.search_repo_bm25(query, limit=oversample, repo_id=repo_id, path_glob=path)
+            ), query=query, limit=limit)
 
         query_terms = _extract_query_terms(query)
 
@@ -430,25 +482,29 @@ class RepoCorpus:
                 limit=limit,
                 query_terms=query_terms,
             )
-            return _hits_from_rows(rows)
+            return _boost_and_resort(_hits_from_rows(rows), query=query, limit=limit)
 
         emb = self.embedder.embed_query(query)
         assert_valid_embedding(emb, self.cfg.embedder_dims, context="repo search query")
 
         if mode == "vec":
-            return _hits_from_rows(
+            return _boost_and_resort(_hits_from_rows(
                 self.store.search_repo_vec(emb, limit=limit, repo_id=repo_id, path_glob=path)
-            )
+            ), query=query, limit=limit)
 
         input_k = max(limit * 2, 30)
         vec_hits = self.store.search_repo_vec(emb, limit=input_k, repo_id=repo_id, path_glob=path)
         bm_hits = self.store.search_repo_bm25(query, limit=input_k, repo_id=repo_id, path_glob=path)
         line_hits = self.store.search_repo_lines(query, limit=input_k, repo_id=repo_id, path_glob=path)
-        return _hits_from_rows(_rrf_fuse_repo(
-            [vec_hits, bm_hits, line_hits],
+        return _boost_and_resort(
+            _hits_from_rows(_rrf_fuse_repo(
+                [vec_hits, bm_hits, line_hits],
+                limit=max(limit * 2, 30),
+                query_terms=query_terms,
+            )),
+            query=query,
             limit=limit,
-            query_terms=query_terms,
-        ))
+        )
 
     def embed(
         self,
@@ -911,6 +967,43 @@ def _hits_from_rows(rows: list[dict[str, Any]]) -> list[RepoSearchHit]:
         )
         for r in rows
     ]
+
+
+def _boost_and_resort(
+    hits: list[RepoSearchHit],
+    *,
+    query: str,
+    limit: int,
+) -> list[RepoSearchHit]:
+    """Apply filename/title/heading boost to each hit's score, re-sort,
+    and truncate to ``limit``. Hits with ``None`` score keep their order
+    (no boost applied to unknown scores).
+
+    Boost is multiplicative on the existing hybrid score, so callers
+    that compare scores across queries still get monotonic-by-query
+    ordering. The boost field is not surfaced on the dataclass — it's
+    folded into ``score`` so downstream consumers see a unified number.
+    """
+    if not hits or not query:
+        return hits[:limit]
+    from dataclasses import replace
+
+    boosted: list[tuple[RepoSearchHit, float]] = []
+    for h in hits:
+        if h.score is None:
+            boosted.append((h, -1.0))
+            continue
+        b = _retrieval_boost_for(
+            query=query,
+            filename=h.path,
+            title="",
+            headings=[],
+            tags=[],
+        )
+        new_score = float(h.score) * b
+        boosted.append((replace(h, score=new_score), new_score))
+    boosted.sort(key=lambda pair: pair[1], reverse=True)
+    return [pair[0] for pair in boosted[:limit]]
 
 
 # Paths that should NEVER get a filename boost — these are ingest dumps
