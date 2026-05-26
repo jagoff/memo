@@ -166,6 +166,13 @@ class Config(BaseModel):
             "`vserifsaglam/Qwen3-Reranker-4B-4bit-MLX`."
         ),
     )
+    reranker_revision: str | None = Field(
+        default=None,
+        description=(
+            "Optional Hugging Face commit hash or revision for the reranker. "
+            "Set via MEMO_RERANKER_REVISION to pin user-hosted model repos."
+        ),
+    )
     rerank_input_k: int = Field(
         default=30,
         ge=1,
@@ -316,6 +323,7 @@ class Config(BaseModel):
             "MEMO_SEARCH_DEFAULT_LIMIT": "search_default_limit",
             "MEMO_RERANKER_ENABLED": "reranker_enabled",
             "MEMO_RERANKER_MODEL": "reranker_model",
+            "MEMO_RERANKER_REVISION": "reranker_revision",
             "MEMO_RERANK_INPUT_K": "rerank_input_k",
             "MEMO_RERANK_FUSION_ALPHA": "rerank_fusion_alpha",
         }

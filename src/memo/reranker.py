@@ -97,10 +97,12 @@ class MLXReranker:
     def __init__(
         self,
         model_path: str = "mku64/Qwen3-Reranker-0.6B-mlx-8Bit",
+        revision: str | None = None,
         max_seq_len: int = 4096,
         task: str | None = None,
     ) -> None:
         self.model_path = model_path
+        self.revision = revision
         self.max_seq_len = max_seq_len
         self.task = task or _DEFAULT_TASK
 
@@ -111,6 +113,13 @@ class MLXReranker:
         self._load_lock = threading.Lock()
         self._loaded_at: float | None = None
 
+    def _resolve_model_path(self) -> str:
+        if not self.revision:
+            return self.model_path
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(repo_id=self.model_path, revision=self.revision)
+
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
@@ -120,7 +129,8 @@ class MLXReranker:
             from mlx_lm import load  # deferred — Apple-Silicon-only import
 
             t0 = time.time()
-            loaded = load(self.model_path)
+            load_path = self._resolve_model_path()
+            loaded = load(load_path)
             self._model = loaded[0]
             self._tokenizer = loaded[1]
             self._yes_id = self._tokenizer.convert_tokens_to_ids("yes")

@@ -42,6 +42,13 @@ def test_from_env_picks_up_overrides(monkeypatch, tmp_path: Path):
     assert cfg.search_default_limit == 5
 
 
+def test_from_env_picks_up_reranker_revision(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent-config.toml"))
+    monkeypatch.setenv("MEMO_RERANKER_REVISION", "9655b27")
+    cfg = Config.from_env()
+    assert cfg.reranker_revision == "9655b27"
+
+
 def test_model_profile_quality_sets_model_bundle(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent-config.toml"))
     monkeypatch.setenv("MEMO_MODEL_PROFILE", "quality")
