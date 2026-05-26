@@ -19,6 +19,28 @@ the missing pieces needed for a triage workflow:
 
 The store is kept in its own sqlite file (mirrors `history.db` /
 `graph.db`) to avoid WAL contention with the hot vec reader.
+
+Consciousness-stack integration
+-------------------------------
+
+Memo does **not** push contradictions into Synapse's `RealityConflict`
+ledger. The direction is **pull**, not push:
+
+* Synapse's `conflict_sync.project_memo_contradictions()` (see
+  `synapse/src/synapse/conflict_sync.py`) calls
+  `MemoBackend.contradict_list()`, which shells out to
+  `memo contradict list --json --status open` and projects each row
+  into a `RealityConflict` for the Reality Workbench.
+* Synapse has no `conflicts register` verb today — there is no
+  externally-writable surface to push to. Adding one belongs on the
+  Synapse side, not here.
+* The opposite direction is GC4: `Memory.save()` queries Synapse's
+  freeze-write protocol via `memo.synapse_client` and refuses writes
+  while a `RealityConflict` is open. See
+  `src/memo/synapse_client.py`.
+
+If you find yourself adding a `_register_with_synapse()` here, stop:
+the loop is already closed.
 """
 
 from __future__ import annotations
