@@ -1,9 +1,14 @@
 # Experimental Modules
 
-These modules ship in the `memo` package but are **not** part of the stable
-API. They are not covered by the test suite, not exposed via MCP tools, and
-their interfaces may change without notice. They are provided as a starting
-point for contributors who want to extend memo's capabilities.
+These modules still ship in the `memo` package but are **not** part of the
+stable API. They are not exposed via MCP tools, and their interfaces may
+change without notice. They are provided as starting points for contributors
+who want to extend Memo's corpus-level capabilities.
+
+Memo no longer ships autonomous-agent or cognitive-state modules. Those
+experiments crossed the product boundary: Synapse owns orchestration and
+front-door policy, while Memo owns local semantic storage, retrieval, replay,
+and backend-agnostic receipts.
 
 ## multimodal.py
 
@@ -18,13 +23,6 @@ Collaborative social memory graph. Shares memorias and derived knowledge
 connections across multiple users so that discoveries made by one user can
 surface for others. Requires a shared storage backend that is not yet
 implemented in the core.
-
-## cognitive.py
-
-Cognitive-state model for the user. Tracks the user's current goals,
-focus areas, and mental state (derived from recent prompts) and biases
-recall toward information relevant to that state. The state machine and
-heuristics are not yet empirically validated.
 
 ## federation.py
 
@@ -111,11 +109,3 @@ Per-memoria version history and diff UI. Stores a snapshot of each memory
 on every update, visualises unified diffs between versions, and supports
 rollback to any prior state. The version store is separate from `history.db`
 and is not yet garbage-collected.
-
-## agent.py
-
-Autonomous reasoning agent. Runs the 7B chat LLM in a ReAct-style loop
-over the corpus — causal reasoning, multi-step knowledge synthesis,
-meta-cognition about its own search process. Designed as a "second brain"
-that generates new insights rather than just retrieving stored ones. Prompt
-templates are in early draft.

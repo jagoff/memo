@@ -240,6 +240,7 @@ _PROFILE_FIELDS = (
     "embedder_dims",
     "reranker_enabled",
     "reranker_model",
+    "reranker_revision",
 )
 
 _PROFILE_ENV_KEYS = (
@@ -250,6 +251,7 @@ _PROFILE_ENV_KEYS = (
     "MEMO_EMBEDDER_DIMS",
     "MEMO_RERANKER_ENABLED",
     "MEMO_RERANKER_MODEL",
+    "MEMO_RERANKER_REVISION",
     "MEMO_RERANK_INPUT_K",
     "MEMO_RERANK_FUSION_ALPHA",
 )
@@ -748,6 +750,7 @@ _MCP_ENV_FORWARD_KEYS = (
     "MEMO_EMBEDDER_DIMS",
     "MEMO_RERANKER_ENABLED",
     "MEMO_RERANKER_MODEL",
+    "MEMO_RERANKER_REVISION",
     "MEMO_RERANK_INPUT_K",
     "MEMO_RERANK_FUSION_ALPHA",
 )
@@ -1306,19 +1309,39 @@ def backend_native_replay_resolve(uri: str, as_json: bool, trace_id: str) -> Non
               help="Skip the auto `project:<repo>` tag derived from the current git toplevel.")
 @click.option("--defer-embed", is_flag=True,
               help="Save markdown + BM25 index only; run `memo reindex` later for semantic search.")
+@click.option("--meta", "meta_pairs", multiple=True, metavar="KEY=VALUE",
+              help="Repeatable. Adds an entry to the `extra` metadata bag persisted "
+                   "to frontmatter + meta.extra_json. Synapse uses this to attach "
+                   "provenance (`--meta synapse_trace_id=...`, `--meta synapse_agent_id=...`).")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a panel.")
 def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
-         auto_derive: bool, no_project_tag: bool, defer_embed: bool, as_json: bool) -> None:
+         auto_derive: bool, no_project_tag: bool, defer_embed: bool,
+         meta_pairs: tuple[str, ...], as_json: bool) -> None:
     """Persist CONTENT to the vault + index. Pass `-` to read CONTENT from stdin."""
     from memo.memory import Memory
 
     if content == "-":
         content = sys.stdin.read()
+    extra: dict[str, Any] | None = None
+    if meta_pairs:
+        extra = {}
+        for pair in meta_pairs:
+            if "=" not in pair:
+                raise click.BadParameter(
+                    f"--meta expects KEY=VALUE, got {pair!r}", param_hint="--meta",
+                )
+            key, _, value = pair.partition("=")
+            key = key.strip()
+            if not key:
+                raise click.BadParameter(
+                    f"--meta key cannot be empty: {pair!r}", param_hint="--meta",
+                )
+            extra[key] = value
     mem = Memory(Config.from_env())
     rec = mem.save(content=content, title=title, type_=type_,
                    tags=list(tags), auto_derive=auto_derive,
                    auto_project=not no_project_tag,
-                   defer_embed=defer_embed)
+                   defer_embed=defer_embed, extra=extra)
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return
@@ -1530,6 +1553,95 @@ def chat_ask(
                 f"  [dim][{s.get('id_short','?')}][/dim] {(s.get('title','') or '')[:60]}  "
                 f"[dim](score {s.get('score', 0):.3f})[/dim]"
             )
+
+
+@cli.command(name="rerank")
+@click.option("--query", "query", required=True, help="The search query.")
+@click.option(
+    "--hits-file", type=click.Path(exists=True, dir_okay=False),
+    default=None, help="JSON file with hits array. If omitted, reads stdin.",
+)
+@click.option(
+    "--top-n", type=int, default=None,
+    help="Truncate output to top-N after reranking.",
+)
+@click.option(
+    "--body-chars", type=int, default=1200, show_default=True,
+    help="Per-hit body truncation before scoring.",
+)
+@click.option("--trace-id", default="", help="Trace ID for provenance (unused locally).")
+def rerank_cmd(
+    query: str,
+    hits_file: str | None,
+    top_n: int | None,
+    body_chars: int,
+    trace_id: str,
+) -> None:
+    """Rerank externally supplied hits via MLXReranker.
+
+    Reads a JSON array of hits ({title, snippet|body, ...}) from
+    ``--hits-file`` or stdin, scores each (query, hit) pair with the
+    configured ``reranker_model``, and writes the reordered array to
+    stdout with a new ``rerank_score`` field per hit. Original fields
+    are preserved verbatim.
+
+    Designed for Synapse to delegate rerank to memo's already-cached
+    Qwen3-Reranker without loading the model in a second process.
+    """
+    import sys
+
+    del trace_id  # accepted for compat; not used locally
+
+    if hits_file:
+        with open(hits_file, encoding="utf-8") as f:
+            hits = json.load(f)
+    else:
+        hits = json.load(sys.stdin)
+
+    if not isinstance(hits, list) or not hits:
+        click.echo(json.dumps([], ensure_ascii=False))
+        return
+
+    cfg = Config.from_env()
+    if not cfg.reranker_enabled:
+        # Pass-through when reranker is disabled in this memo install,
+        # so callers can rely on the subcommand always returning a list.
+        click.echo(json.dumps(hits, ensure_ascii=False))
+        return
+
+    from memo.reranker import MLXReranker
+
+    r = MLXReranker(
+        model_path=cfg.reranker_model,
+        revision=cfg.reranker_revision,
+    )
+
+    scored: list[tuple[float, dict]] = []
+    for h in hits:
+        if not isinstance(h, dict):
+            continue
+        title = str(h.get("title") or "")
+        body_src = str(h.get("snippet") or h.get("body") or "")[
+            : max(0, body_chars)
+        ]
+        doc = f"{title}\n\n{body_src}" if body_src else title
+        try:
+            p = float(r.score(query, doc))
+        except Exception:
+            p = 0.0
+        scored.append((p, h))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    out: list[dict] = []
+    for p, h in scored:
+        new = dict(h)
+        new["rerank_score"] = p
+        out.append(new)
+
+    if top_n is not None and top_n > 0:
+        out = out[:top_n]
+
+    click.echo(json.dumps(out, ensure_ascii=False))
 
 
 @cli.command(name="list")
@@ -2059,6 +2171,77 @@ def history(limit: int, op: str | None, record_id: str | None, as_json: bool) ->
     console.print(tbl)
 
 
+@cli.command(name="ocr-image")
+@click.argument("image_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--json", "as_json", is_flag=True)
+def ocr_image(image_path: str, as_json: bool) -> None:
+    """Extract text from an image using Apple Vision OCR.
+
+    Results cached by SHA256 under `<state_dir>/ocr_cache`. Returns the
+    raw extracted text on stdout (or JSON envelope with `--json`).
+    Empty output indicates Vision unavailable or no text recognized.
+    """
+    from pathlib import Path
+
+    from memo.ocr import extract_text_cached, vision_available
+
+    cfg = Config.from_env()
+    cache_dir = cfg.state_dir / "ocr_cache"
+    if not vision_available():
+        if as_json:
+            click.echo(json.dumps({"text": "", "error": "vision unavailable"}))
+        else:
+            console.print("[yellow]Apple Vision not available[/yellow]")
+        return
+    text = extract_text_cached(Path(image_path), cache_dir=cache_dir)
+    if as_json:
+        click.echo(json.dumps({"text": text, "cached": True}))
+    else:
+        click.echo(text)
+
+
+@cli.command()
+@click.argument("id_", metavar="ID")
+@click.option("--json", "as_json", is_flag=True)
+def provenance(id_: str, as_json: bool) -> None:
+    """Provenance trail for one memoria.
+
+    Returns the current synapse_*/agent_* keys plus every save/update
+    event carrying its own provenance snapshot. Useful to audit which
+    agent / trace_id / route_reason produced each version of a memoria.
+    """
+    from memo.memory import Memory
+
+    mem = Memory(Config.from_env())
+    payload = mem.provenance(id_)
+    if payload is None:
+        console.print(f"[red]not found:[/red] {id_}")
+        sys.exit(1)
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return
+    cur = payload.get("current") or {}
+    if cur:
+        console.print(Panel.fit(
+            "\n".join(f"[dim]{k}:[/dim] {v}" for k, v in cur.items()),
+            title=f"provenance {payload['id'][:8]}", border_style="cyan",
+        ))
+    else:
+        console.print(f"[dim]no provenance for {payload['id'][:8]} (current state)[/dim]")
+    events = payload.get("events") or []
+    if not events:
+        return
+    tbl = Table(show_lines=False, expand=True, title="history")
+    tbl.add_column("ts", width=20)
+    tbl.add_column("op", width=7)
+    tbl.add_column("provenance", overflow="fold")
+    for ev in events:
+        prov = ev.get("provenance") or {}
+        prov_str = ", ".join(f"{k}={v}" for k, v in prov.items()) if prov else "—"
+        tbl.add_row((ev.get("ts") or "")[:19], ev.get("op") or "", prov_str)
+    console.print(tbl)
+
+
 @cli.command(name="extract-entities")
 @click.option("--all", "all_", is_flag=True, help="Process every memoria in the store.")
 @click.option("--id", "id_", default=None, multiple=True,
@@ -2399,7 +2582,11 @@ def profile_status(as_json: bool, no_db: bool) -> None:
     console.print(f"  embedder: {active['embedder_model']} [{active['embedder_dims']}]")
     console.print(f"  llm:      {active['llm_model']}")
     console.print(f"  helper:   {active['helper_model']}")
-    console.print(f"  reranker: {active['reranker_model']} enabled={active['reranker_enabled']}")
+    revision = active.get("reranker_revision") or "unpinned"
+    console.print(
+        f"  reranker: {active['reranker_model']} "
+        f"revision={revision} enabled={active['reranker_enabled']}"
+    )
     db = report["db"]
     if db["status"] != "not_checked":
         console.print(
@@ -2765,7 +2952,7 @@ def install_slash(
 
     if failures:
         console.print(
-            "[yellow]![/yellow] memo agent install finished with skipped clients: "
+            "[yellow]![/yellow] agent-client install finished with skipped clients: "
             + ", ".join(failures)
         )
         console.print(
@@ -2773,7 +2960,7 @@ def install_slash(
             "memo install-slash --client claude-code --client codex --client windsurf[/dim]"
         )
     else:
-        console.print("[green]✓[/green] memo agent install complete. Open a new agent session to reload.")
+        console.print("[green]✓[/green] agent-client install complete. Open a new agent session to reload.")
 
 
 # ── Ambient memory hooks (v0.3.0) ──────────────────────────────────────────
@@ -3207,6 +3394,88 @@ def recall_daemon_serve() -> None:
     """Internal: run the daemon in the foreground (called by 'start')."""
     from memo.recall_server import run_server
     run_server()
+
+
+# ── Embed daemon — observability over the shared embedder sidecar ────────────
+
+
+@cli.group(name="embed-daemon")
+def embed_daemon_group() -> None:
+    """Inspect the recall daemon's shared embedder sidecar.
+
+    The recall daemon doubles as a shared MLX embedder so peers
+    (synapse, memflow, other memo CLIs) can reuse one warm model.
+    These commands surface its metrics without opening the socket
+    by hand. See `memo.embedder_client` for the in-process client.
+    """
+
+
+@embed_daemon_group.command(name="status")
+def embed_daemon_status() -> None:
+    """Show whether the daemon is alive plus model + uptime."""
+    from memo.embedder_client import status as _status
+
+    info = _status()
+    if info is None:
+        console.print("[red]daemon: not running[/red]")
+        sys.exit(1)
+    uptime = info.get("uptime_s")
+    uptime_str = f"{uptime}s" if isinstance(uptime, int) else "?"
+    console.print(
+        f"[green]daemon: running[/green] "
+        f"model={info.get('model', '?')} dims={info.get('dims', '?')} "
+        f"uptime={uptime_str}"
+    )
+
+
+@embed_daemon_group.command(name="stats")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def embed_daemon_stats(as_json: bool) -> None:
+    """Per-op request counters + latency p50/p95/p99."""
+    from memo.embedder_client import stats as _stats
+
+    info = _stats()
+    if info is None:
+        console.print("[red]daemon: not running[/red]")
+        sys.exit(1)
+
+    if as_json:
+        click.echo(json.dumps(info, indent=2))
+        return
+
+    uptime = info.get("uptime_s")
+    uptime_str = f"{uptime}s" if isinstance(uptime, int) else "?"
+    console.print(
+        f"[bold]Embedder daemon stats[/bold] "
+        f"model={info.get('model', '?')} dims={info.get('dims', '?')} "
+        f"uptime={uptime_str}"
+    )
+    ops = info.get("ops") or {}
+    if not ops:
+        console.print("[dim]no requests recorded yet[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("op")
+    table.add_column("count", justify="right")
+    table.add_column("errors", justify="right")
+    table.add_column("samples", justify="right")
+    table.add_column("p50 ms", justify="right")
+    table.add_column("p95 ms", justify="right")
+    table.add_column("p99 ms", justify="right")
+    for op, row in sorted(ops.items()):
+        def _fmt(v: float | None) -> str:
+            return "-" if v is None else f"{v:.1f}"
+        table.add_row(
+            op,
+            str(row.get("count", 0)),
+            str(row.get("errors", 0)),
+            str(row.get("samples", 0)),
+            _fmt(row.get("p50_ms")),
+            _fmt(row.get("p95_ms")),
+            _fmt(row.get("p99_ms")),
+        )
+    console.print(table)
 
 
 @cli.group(name="as-of")
@@ -4323,7 +4592,10 @@ def prewarm(download_all: bool) -> None:
         # 30s budget on machines that opted out of rerank entirely.
         if cfg.reranker_enabled:
             from memo.reranker import MLXReranker
-            r = MLXReranker(model_path=cfg.reranker_model)
+            r = MLXReranker(
+                model_path=cfg.reranker_model,
+                revision=cfg.reranker_revision,
+            )
             r.warmup()
         # Write warm-signal so recall-hook knows disk cache is fresh.
         # The file's mtime is the only datum read by recall-hook.
@@ -7306,145 +7578,6 @@ def export_markdown_bundle(output_path: str) -> None:
     console.print(f"Output: {result.output_path}")
 
 
-# -- autonomous agent commands (THE GAMECHANGER) --------------------------------
-
-
-@click.group(name="agent")
-def agent_group() -> None:
-    """Autonomous Memory Agent — razonamiento causal y síntesis de conocimiento."""
-    pass
-
-
-@agent_group.command(name="synthesize")
-@click.argument("topic")
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def agent_synthesize(topic: str, as_json: bool) -> None:
-    """Sintetiza nuevo conocimiento a partir de memorias existentes.
-
-    THE GAMECHANGER: genera insights que NO existían antes combinando
-    y razonando sobre memorias existentes.
-
-    Example: memo agent synthesize "MLX edge computing implications"
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    synthesis = mem.agent.synthesize_knowledge(topic)
-
-    if as_json:
-        click.echo(json.dumps(synthesis.model_dump(), indent=2))
-        return
-
-    console.print("[bold]Synthesis Result[/bold]")
-    console.print()
-    console.print("[cyan]New Insight:[/cyan]")
-    console.print(synthesis.new_insight)
-    console.print()
-    console.print(f"[green]Confidence:[/green] {synthesis.confidence:.2f}")
-    console.print(f"[green]Novelty Score:[/green] {synthesis.novelty_score:.2f}")
-    console.print()
-    console.print("[yellow]Supporting Memorias:[/yellow]")
-    for mid in synthesis.supporting_memorias:
-        console.print(f"  {mid[:8]}")
-
-
-@agent_group.command(name="investigate")
-@click.argument("goal")
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def agent_investigate(goal: str, as_json: bool) -> None:
-    """Planifica y ejecuta una investigación compleja.
-
-    Example: memo agent investigate "implications of using MLX for edge devices"
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    plan = mem.agent.plan_investigation(goal)
-
-    if as_json:
-        click.echo(json.dumps(plan.model_dump(), indent=2))
-        return
-
-    console.print("[bold]Investigation Plan[/bold]")
-    console.print()
-    console.print(f"Goal: {plan.goal}")
-    console.print(f"Complexity: {plan.estimated_complexity}/10")
-    console.print(f"Insight Value: {plan.estimated_insight_value}/10")
-    console.print()
-    console.print("[bold]Steps:[/bold]")
-    for i, step in enumerate(plan.steps, 1):
-        console.print(f"  {i}. {step}")
-
-
-@agent_group.command(name="discover")
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def agent_discover(as_json: bool) -> None:
-    """Descubrimiento proactivo: explora el corpus sin que el usuario lo pida.
-
-    El agente identifica áreas del corpus que podrían contener insights
-    no descubiertos y los explora proactivamente.
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    discoveries = mem.agent.proactive_discovery()
-
-    if as_json:
-        click.echo(json.dumps([d.model_dump() for d in discoveries], indent=2))
-        return
-
-    console.print(f"[bold]Proactive Discoveries[/bold] ({len(discoveries)} found)")
-    console.print()
-
-    for i, discovery in enumerate(discoveries, 1):
-        console.print(f"[cyan]{i}. Insight:[/cyan]")
-        console.print(f"  {discovery.new_insight[:150]}...")
-        console.print(f"  [green]Novelty: {discovery.novelty_score:.2f}[/green]")
-
-
-@agent_group.command(name="thoughts")
-@click.option("--type", "thought_type", help="Filter by thought type")
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def agent_thoughts(thought_type: str | None, as_json: bool) -> None:
-    """Ver los pensamientos del agente (meta-cognición).
-
-    Example: memo agent thoughts --type insight
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    thoughts = mem.agent.get_thoughts(thought_type)
-
-    if as_json:
-        click.echo(json.dumps([t.model_dump() for t in thoughts], indent=2))
-        return
-
-    console.print(f"[bold]Agent Thoughts[/bold] ({len(thoughts)} total)")
-    console.print()
-
-    for t in thoughts[-10:]:  # Show last 10
-        console.print(f"[cyan]{t.thought_type}:[/cyan] {t.content[:100]}...")
-        console.print(f"  [dim]{t.timestamp}[/dim]")
-
-
-@agent_group.command(name="think")
-@click.argument("thought")
-@click.option("--type", "thought_type", default="hypothesis", help="Thought type")
-def agent_think(thought: str, thought_type: str) -> None:
-    """Registra un pensamiento del agente.
-
-    Example: memo agent think "Maybe MLX is ideal for edge because..." --type hypothesis
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    agent_thought = mem.agent.think(thought, thought_type)
-
-    console.print("[green]Thought registered[/green]")
-    console.print(f"Type: {agent_thought.thought_type}")
-    console.print(f"Content: {agent_thought.content}")
-
-
 # -- multi-modal commands (gamechanger #17) ---------------------------------------
 
 
@@ -7656,111 +7789,6 @@ def collaborative_insights(limit: int) -> None:
     for i, insight in enumerate(insights, 1):
         console.print(f"[cyan]{i}.[/cyan] {insight.content[:100]}...")
         console.print(f"    Upvotes: {insight.upvotes}, Downvotes: {insight.downvotes}")
-
-
-# -- cognitive commands (gamechanger #19) ---------------------------------------
-
-
-@click.group(name="cognitive")
-def cognitive_group() -> None:
-    """Memoria con Estado Mental del Usuario."""
-    pass
-
-
-@cognitive_group.command(name="set-state")
-@click.argument("mental-state")
-@click.argument("context-type")
-@click.option("--goal", help="Current goal")
-@click.option("--focus", help="Focus area")
-@click.option("--energy", type=int, default=50, help="Energy level (0-100)")
-@click.option("--stress", type=int, default=30, help="Stress level (0-100)")
-def cognitive_set_state(mental_state: str, context_type: str, goal: str | None, focus: str | None, energy: int, stress: int) -> None:
-    """Actualiza el estado mental del usuario.
-
-    Example: memo cognitive set-state focused work --goal "Finish MLX integration" --focus MLX
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    state = mem.cognitive.update_mental_state(
-        mental_state=mental_state,
-        context_type=context_type,
-        current_goal=goal,
-        focus_area=focus,
-        energy_level=energy,
-        stress_level=stress,
-    )
-
-    console.print("[green]Mental state updated[/green]")
-    console.print(f"State: {state.mental_state}")
-    console.print(f"Context: {state.context_type}")
-    console.print(f"Goal: {state.current_goal or 'None'}")
-    console.print(f"Focus: {state.focus_area or 'None'}")
-
-
-@cognitive_group.command(name="get-state")
-def cognitive_get_state() -> None:
-    """Obtiene el estado mental actual.
-
-    Example: memo cognitive get-state
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    state = mem.cognitive.get_mental_state()
-
-    if not state:
-        console.print("[yellow]No mental state set[/yellow]")
-        return
-
-    console.print("[bold]Current Mental State[/bold]")
-    console.print(f"State: {state.mental_state}")
-    console.print(f"Context: {state.context_type}")
-    console.print(f"Goal: {state.current_goal or 'None'}")
-    console.print(f"Focus: {state.focus_area or 'None'}")
-    console.print(f"Energy: {state.energy_level}/100")
-    console.print(f"Stress: {state.stress_level}/100")
-
-
-@cognitive_group.command(name="history")
-@click.option("--limit", type=int, default=10, help="Máximo de resultados")
-def cognitive_history(limit: int) -> None:
-    """Ver el historial de estados mentales.
-
-    Example: memo cognitive history --limit 5
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    history = mem.cognitive.tracker.get_history(limit=limit)
-
-    console.print(f"[bold]Mental State History[/bold] ({len(history)} entries)")
-    for h in history:
-        console.print(f"[cyan]{h.timestamp}[/cyan]")
-        console.print(f"  {h.mental_state} | {h.context_type}")
-        console.print(f"  Goal: {h.current_goal or 'None'}, Focus: {h.focus_area or 'None'}")
-
-
-@cognitive_group.command(name="suggestions")
-@click.option("--limit", type=int, default=5, help="Máximo de sugerencias")
-def cognitive_suggestions(limit: int) -> None:
-    """Obtiene sugerencias proactivas basadas en estado mental.
-
-    Example: memo cognitive suggestions
-    """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    # Use the memory's search function
-    def search_func(query: str, limit: int) -> list:
-        return mem.search(query, limit=limit)
-
-    suggestions = mem.cognitive.get_proactive_suggestions(search_func, limit=limit)
-
-    console.print(f"[bold]Proactive Suggestions[/bold] ({len(suggestions)} found)")
-    for s in suggestions:
-        console.print(f"[cyan]{s.memoria_id[:8]}[/cyan] - {s.relevance_reason}")
-        console.print(f"  Confidence: {s.confidence:.2f}")
 
 
 # -- contradiction radar + dedupe ---------------------------------------------
@@ -8283,6 +8311,25 @@ def briefing() -> None:
         if not lines:
             lines.append("## El Briefing")
             lines.append("")
+
+    # ── 1b. Unified consciousness (Synapse) ───────────────────────────────
+    # Pulls present_state (memflow handoffs/focus) + reality_conflicts from
+    # `synapse packet`. No-op when synapse is not installed or unreachable —
+    # the rest of the briefing is unaffected (graceful, opt-in boundary).
+    if _os.environ.get("MEMO_BRIEFING_SYNAPSE_DISABLE") != "1":
+        try:
+            from memo.briefing import synapse_briefing_lines
+
+            try:
+                cur_cwd_str = _os.getcwd()
+            except Exception:
+                cur_cwd_str = ""
+            syn_lines = synapse_briefing_lines(cur_cwd_str)
+            if syn_lines:
+                lines.extend(syn_lines)
+        except Exception as exc:
+            if debug:
+                print(f"# memo briefing: synapse lookup failed: {exc}", file=_sys.stderr)
 
     # ── 2. Open loops: recently updated memories ──────────────────────────
     try:

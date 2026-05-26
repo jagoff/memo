@@ -50,6 +50,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         type: str = "note",
         tags: list[str] | None = None,
         auto_derive: bool = False,
+        extra: dict[str, Any] | None = None,
+        respect_synapse_freeze: bool | None = None,
     ) -> dict[str, Any]:
         """Persist a memory to the vault + index it.
 
@@ -65,14 +67,89 @@ def build_server(memory: Memory | None = None) -> FastMCP:
                 Qwen2.5-3B helper LLM derives them from the content.
                 Adds ~1-2s latency on cold call. Use when the calling
                 agent doesn't have enough context to derive metadata.
+            extra: Optional metadata bag persisted into the frontmatter
+                `extra` block and `meta.extra_json`. Synapse callers set
+                provenance keys here (`synapse_trace_id`,
+                `synapse_route_reason`, `synapse_write_policy_schema`,
+                `synapse_write_target`, `synapse_agent_id`,
+                `synapse_agent_signature`); those are also mirrored into
+                `history.events.delta_json` so `memory_provenance(id)`
+                can replay them.
+            respect_synapse_freeze: When True, query synapse's
+                RealityConflict ledger before commit and refuse the
+                save if a blocking `freeze_write` covers this
+                memoria's topic. Returns
+                `{"status": "refused", "conflict": {...}}` instead of
+                the persisted record. Defaults to the env knob
+                `MEMO_RESPECT_SYNAPSE_FREEZE=1`. Only fires when
+                `extra.synapse_trace_id` is set.
 
-        Returns the persisted record (id, path, title, ...).
+        Returns the persisted record (id, path, title, ...). When a
+        synapse freeze blocks the write, returns
+        `{"status": "refused", "conflict": {...}, "message": "..."}`.
         """
-        rec = memory.save(
-            content=content, title=title, type_=type, tags=tags,
-            auto_derive=auto_derive,
-        )
+        from memo.memory import WriteRefused
+
+        try:
+            rec = memory.save(
+                content=content, title=title, type_=type, tags=tags,
+                auto_derive=auto_derive, extra=extra,
+                respect_synapse_freeze=respect_synapse_freeze,
+            )
+        except WriteRefused as exc:
+            return {
+                "status": "refused",
+                "conflict": exc.conflict,
+                "message": str(exc),
+            }
         return rec.to_dict()
+
+    @server.tool()
+    def memory_provenance(id: str) -> dict[str, Any] | None:
+        """Return the full provenance trail for one memoria.
+
+        Combines the current synapse_*/agent_* keys (subset of
+        `meta.extra_json`) with the per-op history (each save/update
+        carries its own provenance snapshot). Returns `None` if the id
+        is unknown.
+
+        Shape:
+
+            {
+              "id": "<full id>",
+              "current": {synapse_trace_id, synapse_route_reason, ...},
+              "events": [{"ts", "op", "title", "type", "provenance"}, ...]
+            }
+        """
+        return memory.provenance(id)
+
+    @server.tool()
+    def memory_unified_briefing(cwd: str | None = None) -> dict[str, Any]:
+        """Return a synapse-aware briefing for the current focus.
+
+        Pulls `synapse packet` (present_state + reality_conflicts) and
+        composes it as markdown lines suitable for a SessionStart hook
+        or any agent that wants a one-shot view of the consciousness
+        stack. Falls back to an empty payload when synapse is
+        unreachable — callers should layer the local `memo briefing`
+        sections on top if they want a complete panel.
+
+        Shape:
+
+            {
+              "available": bool,        # true iff synapse returned data
+              "markdown": "<lines...>",  # empty when not available
+              "lines": [str, ...],
+            }
+        """
+        from memo.briefing import synapse_briefing_lines
+
+        lines = synapse_briefing_lines(cwd)
+        return {
+            "available": bool(lines),
+            "markdown": "\n".join(lines),
+            "lines": lines,
+        }
 
     @server.tool()
     def memory_search(
@@ -1702,76 +1779,37 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         result = memory.import_export.export_to(Path(output_path), "markdown_bundle")
         return result.__dict__
 
-    # -- autonomous agent helpers -------------------------------------------------
+    # -- OCR tools -----------------------------------------------------------------
 
-    def memory_agent_synthesize(
-        topic: str,
+    @server.tool()
+    def memory_ocr_image(
+        image_path: str,
     ) -> dict[str, Any]:
-        """Synthesize new knowledge from existing memorias.
+        """Run Apple Vision OCR on an image and return extracted text.
 
-        THE GAMECHANGER: generates insights that did NOT exist before
-        by combining and reasoning over existing memorias.
-
-        Args:
-            topic: The topic to synthesize knowledge about.
-        """
-        synthesis = memory.agent.synthesize_knowledge(topic)
-        return synthesis.model_dump()
-
-    def memory_agent_investigate(
-        goal: str,
-    ) -> dict[str, Any]:
-        """Plan and execute a complex investigation.
-
-        The agent analyzes the goal and generates a plan of steps
-        to investigate it through the memory corpus.
+        Cached by SHA256 in `<state_dir>/ocr_cache`. Used by Synapse as a
+        chat-time fallback for screenshots that have not been picked up
+        by the indexer yet. Returns empty `text` if Vision is unavailable
+        (non-macOS or missing PyObjC) or the file is missing.
 
         Args:
-            goal: The investigation goal.
+            image_path: Absolute path to the image file. The caller is
+                responsible for resolving Obsidian `![[...]]` syntax
+                to a real path on disk.
         """
-        plan = memory.agent.plan_investigation(goal)
-        return plan.model_dump()
+        from pathlib import Path
 
-    def memory_agent_discover() -> list[dict[str, Any]]:
-        """Proactive discovery: explore the corpus without user request.
+        from memo.ocr import extract_text_cached, vision_available
 
-        The agent identifies areas of the corpus that might contain
-        undiscovered insights and explores them proactively.
-
-        Returns:
-            List of discovered SynthesisResult objects.
-        """
-        discoveries = memory.agent.proactive_discovery()
-        return [d.model_dump() for d in discoveries]
-
-    def memory_agent_thoughts(
-        thought_type: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Get the agent's thought history (meta-cognition).
-
-        Returns the agent's thoughts, optionally filtered by type.
-
-        Args:
-            thought_type: Filter by thought type (optional).
-        """
-        thoughts = memory.agent.get_thoughts(thought_type)
-        return [t.model_dump() for t in thoughts]
-
-    def memory_agent_think(
-        thought: str,
-        thought_type: str = "hypothesis",
-    ) -> dict[str, str]:
-        """Register an agent thought (meta-cognition).
-
-        Args:
-            thought: The thought content.
-            thought_type: Type of thought.
-
-        Returns:
-            Registered thought data.
-        """
-        agent_thought = memory.agent.think(thought, thought_type)
-        return agent_thought.model_dump()
+        if not vision_available():
+            return {"text": "", "cached": False, "error": "vision unavailable"}
+        path = Path(image_path)
+        if not path.exists():
+            return {"text": "", "cached": False, "error": "file not found"}
+        cache_dir = memory.cfg.state_dir / "ocr_cache"
+        text = extract_text_cached(path, cache_dir=cache_dir)
+        cached = (cache_dir / f"{__import__('hashlib').sha256(path.read_bytes()).hexdigest()[:32]}.txt").exists()
+        return {"text": text, "cached": cached}
 
     # -- multi-modal tools (gamechanger #17) ----------------------------------------
 
@@ -1950,79 +1988,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         """
         insights = memory.collaborative.get_top_insights(limit=limit)
         return [i.__dict__ for i in insights]
-
-    # -- cognitive helpers --------------------------------------------------------
-
-    def memory_cognitive_set_state(
-        mental_state: str,
-        context_type: str,
-        current_goal: str | None = None,
-        focus_area: str | None = None,
-        energy_level: int = 50,
-        stress_level: int = 30,
-    ) -> dict[str, Any]:
-        """Update the user's mental state.
-
-        Args:
-            mental_state: Current mental state.
-            context_type: Type of context.
-            current_goal: Current goal.
-            focus_area: Focus area.
-            energy_level: Energy level (0-100).
-            stress_level: Stress level (0-100).
-
-        Returns:
-            Updated CognitiveState.
-        """
-        state = memory.cognitive.update_mental_state(
-            mental_state=mental_state,
-            context_type=context_type,
-            current_goal=current_goal,
-            focus_area=focus_area,
-            energy_level=energy_level,
-            stress_level=stress_level,
-        )
-        return state.__dict__
-
-    def memory_cognitive_get_state() -> dict[str, Any] | None:
-        """Get the current mental state.
-
-        Returns:
-            CognitiveState or None.
-        """
-        state = memory.cognitive.get_mental_state()
-        return state.__dict__ if state else None
-
-    def memory_cognitive_history(
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Get mental state history.
-
-        Args:
-            limit: Max results.
-
-        Returns:
-            List of CognitiveState objects.
-        """
-        history = memory.cognitive.tracker.get_history(limit=limit)
-        return [h.__dict__ for h in history]
-
-    def memory_cognitive_suggestions(
-        limit: int = 5,
-    ) -> list[dict[str, Any]]:
-        """Get proactive suggestions based on mental state.
-
-        Args:
-            limit: Max suggestions.
-
-        Returns:
-            List of ContextualSuggestion objects.
-        """
-        def search_func(query: str, limit: int) -> list:
-            return memory.search(query, limit=limit)
-
-        suggestions = memory.cognitive.get_proactive_suggestions(search_func, limit=limit)
-        return [s.__dict__ for s in suggestions]
 
     # -- time-machine (as-of) ---------------------------------------------------
 
