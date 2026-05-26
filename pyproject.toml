@@ -51,6 +51,12 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+# Apple Vision OCR for screenshots/images embedded in Obsidian notes.
+# macOS-only. Install with: pip install -e ".[ocr]"
+ocr = [
+    "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+]
 
 [project.scripts]
 memo = "memo.cli:main"

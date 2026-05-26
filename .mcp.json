@@ -7,6 +7,30 @@
       "env": {
         "MEMO_NONINTERACTIVE": "1"
       }
+    },
+    "sqlite-explorer": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--no-project",
+        "--with",
+        "fastmcp==0.4.1",
+        "fastmcp",
+        "run",
+        "/Users/USER/repos/sqlite-explorer-fastmcp/sqlite_explorer.py"
+      ],
+      "env": {
+        "SQLITE_DB_PATH": "/Users/USER/.local/share/memo/memvec.db"
+      }
+    },
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
     }
   }
 }

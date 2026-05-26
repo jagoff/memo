@@ -890,6 +890,7 @@ All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 | `MEMO_EMBEDDER_DIMS` | `1024` | Embedding dim — must match the embedder |
 | `MEMO_RERANKER_ENABLED` | `1` in `balanced` / `quality` | Enable cross-encoder rerank for hybrid search |
 | `MEMO_RERANKER_MODEL` | `mku64/Qwen3-Reranker-0.6B-mlx-8Bit` | MLX reranker model |
+| `MEMO_RERANKER_REVISION` | unset | Optional HF commit/revision pin for user-hosted reranker repos |
 | `MEMO_RERANK_INPUT_K` | `30` | Hybrid candidates sent to the reranker |
 | `MEMO_RERANK_FUSION_ALPHA` | `0.7` | Weight of reranker score vs RRF position bonus |
 
@@ -1133,6 +1134,23 @@ tools directly.
 | `navigation` | BFS path finding and community detection on the entity graph |
 | `sync` | Multi-device sync and compressed backups |
 | `versioning` | Per-memoria version history and unified-diff rollback |
+
+## Consciousness stack integration
+
+Memo is one of three sovereign systems in the user's consciousness
+stack: **Synapse** (federator + Reality Workbench),
+**[Memflow](https://github.com/jagoff/memflow)** (cross-Mac
+operational continuity), and Memo (semantic corpus). The integration
+is opt-in everywhere — single-Mac users without synapse or memflow
+see zero behaviour change.
+
+| Surface | Doc | Default | Opt-in knob |
+|---|---|---|---|
+| Synapse adapter — `MemoSynapseBackend`, provenance fields, freeze-write | [`docs/synapse-adapter.md`](docs/synapse-adapter.md) | OFF | `MEMO_RESPECT_SYNAPSE_FREEZE=1` |
+| Embedder daemon — shared MLX sidecar protocol + `memo embed-daemon stats` | [`docs/embedder-daemon.md`](docs/embedder-daemon.md) | ON via `SessionStart` hook | — |
+| Contradict loop — synapse pulls via `memo contradict list --json` | [`docs/contradict-loop.md`](docs/contradict-loop.md) | ON (synapse-side) | — |
+| Receipts — operational breadcrumbs to memflow | [`docs/receipts.md`](docs/receipts.md) | OFF | `MEMO_EMIT_RECEIPTS=1` |
+| Briefing — synapse `present_state` + `reality_conflicts` in session start panel | [`docs/briefing.md`](docs/briefing.md) | ON when `synapse` is on PATH | `MEMO_BRIEFING_SYNAPSE_DISABLE=1` to force off |
 
 ## Provenance
 

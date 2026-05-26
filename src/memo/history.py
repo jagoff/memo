@@ -78,12 +78,37 @@ class HistoryStore:
             self._conn.rollback()
             raise
 
-    def log_save(self, *, ts: str, record_id: str, title: str, type_: str) -> None:
+    def log_save(
+        self,
+        *,
+        ts: str,
+        record_id: str,
+        title: str,
+        type_: str,
+        provenance: dict[str, Any] | None = None,
+    ) -> None:
+        # `provenance` is an optional bag of synapse_* / agent_* keys
+        # (trace_id, route_reason, write_policy_schema, agent_id,
+        # agent_signature, write_target). Stored as a {"_provenance": {...}}
+        # envelope inside `delta_json` so the events schema stays unchanged
+        # and `list_recent` exposes it transparently.
+        delta_json = None
+        if provenance:
+            try:
+                delta_json = json.dumps(
+                    {"_provenance": provenance}, default=str, ensure_ascii=False,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                _log.warning(
+                    "history log_save provenance encode failed (id=%s): %s",
+                    record_id[:8], exc,
+                )
         try:
             with self._tx() as cx:
                 cx.execute(
-                    "INSERT INTO events (ts, op, record_id, title, type) VALUES (?, ?, ?, ?, ?)",
-                    (ts, "save", record_id, title, type_),
+                    "INSERT INTO events (ts, op, record_id, title, type, delta_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (ts, "save", record_id, title, type_, delta_json),
                 )
         except Exception as exc:
             _log.warning("history log_save failed (id=%s): %s", record_id[:8], exc)

@@ -60,14 +60,7 @@ from typing import Any
 
 import frontmatter
 
-from memo.agent import AutonomousAgent
 from memo.analytics import AnalyticsEngine, Dashboard
-from memo.cognitive import (
-    CognitiveManager,
-    CognitiveStateTracker,
-    ContextAwareRetrieval,
-    ProactiveGuidance,
-)
 from memo.collaborative import CollaborativeFilter, CollaborativeGraph, CollaborativeManager
 from memo.config import Config
 from memo.consolidation import AdvancedConsolidator
@@ -185,6 +178,28 @@ SYNAPSE_BACKEND_NATIVE_SCHEMA = "synapse.backend_native.v1"
 NATIVE_BACKEND_PROTOCOL_VERSION = "backend_native.v1"
 MEMO_BACKEND_NAME = "memo"
 
+# Provenance keys carried in `extra` and persisted to both `meta.extra_json`
+# and `history.events.delta_json`. Set by callers that operate as part of a
+# Synapse-orchestrated write (route_intent → remember). Each key is optional;
+# memo never invents values. Listed here so `Memory.provenance()` and
+# `MemoSynapseBackend` know exactly which fields are "provenance" vs "user
+# extra metadata" without hardcoding the prefix string in multiple places.
+_PROVENANCE_KEYS: frozenset[str] = frozenset({
+    "synapse_trace_id",
+    "synapse_route_reason",
+    "synapse_write_policy_schema",
+    "synapse_write_target",
+    "synapse_agent_id",
+    "synapse_agent_signature",
+})
+
+
+def _extract_provenance(extra: dict[str, Any] | None) -> dict[str, Any]:
+    """Return only the provenance subset of an extra bag (or {})."""
+    if not extra:
+        return {}
+    return {k: extra[k] for k in _PROVENANCE_KEYS if k in extra}
+
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -212,6 +227,26 @@ class AmbiguousIdError(ValueError):
         )
         self.prefix = prefix
         self.matches = matches
+
+
+class WriteRefused(RuntimeError):
+    """Raised by `Memory.save()` when a synapse RealityConflict with
+    `freeze_write=true` overlaps the topic of the pending write.
+
+    Carries the offending conflict dict so callers (CLI / MCP / agent)
+    can show the user the conflict id, severity, and summary before
+    they decide to retry with `respect_synapse_freeze=False`.
+    """
+
+    def __init__(self, conflict: dict[str, Any]) -> None:
+        cid = conflict.get("conflict_id") or "?"
+        summary = conflict.get("summary") or "(no summary)"
+        super().__init__(
+            f"Synapse freeze-write active on conflict {cid}: {summary}. "
+            f"Resolve the conflict in synapse or retry with "
+            f"`respect_synapse_freeze=False`.",
+        )
+        self.conflict = dict(conflict)
 
 
 @dataclass(frozen=True)
@@ -425,11 +460,6 @@ class Memory:
         return ImportExportManager(self)
 
     @property
-    def agent(self) -> AutonomousAgent:
-        """Lazy accessor for AutonomousAgent (THE GAMECHANGER)."""
-        return AutonomousAgent(self, self._ensure_chat())
-
-    @property
     def multimodal(self) -> MultiModalManager:
         """Lazy accessor for MultiModalManager."""
         store = MultiModalStore(self.cfg.state_dir)
@@ -443,14 +473,6 @@ class Memory:
         graph = CollaborativeGraph(self.cfg.state_dir)
         filter = CollaborativeFilter(graph)
         return CollaborativeManager(graph, filter)
-
-    @property
-    def cognitive(self) -> CognitiveManager:
-        """Lazy accessor for CognitiveManager."""
-        tracker = CognitiveStateTracker(self.cfg.state_dir)
-        retrieval = ContextAwareRetrieval(tracker)
-        guidance = ProactiveGuidance(tracker)
-        return CognitiveManager(tracker, retrieval, guidance)
 
     def _maybe_warn_legacy_paths(self) -> None:
         """Stderr warning when stored `meta.path` rows don't resolve.
@@ -554,6 +576,8 @@ class Memory:
         auto_project: bool = True,
         cwd: str | None = None,
         defer_embed: bool = False,
+        respect_synapse_freeze: bool | None = None,
+        skip_memflow_receipt: bool = False,
     ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
@@ -573,9 +597,30 @@ class Memory:
         - `defer_embed`: when True, write markdown + metadata + BM25
           index only. Semantic search won't see the record until
           `memo reindex` runs with the embedder available.
+        - `respect_synapse_freeze`: when True, query synapse's
+          `RealityConflict` ledger before commit and raise
+          `WriteRefused` if a blocking freeze-write covers this
+          memoria's topic. Defaults to the env knob
+          `MEMO_RESPECT_SYNAPSE_FREEZE=1` (opt-in). Only fires when
+          `extra` carries a `synapse_trace_id` — anonymous saves
+          bypass the check.
         """
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
+
+        # Freeze-write protocol: opt-in pre-write check against synapse.
+        # Only fires when (a) the caller asked (kwarg or env), (b) the
+        # save carries provenance (otherwise we have no agent context
+        # to reason about), and (c) synapse is on PATH.
+        if respect_synapse_freeze is None:
+            respect_synapse_freeze = (
+                os.environ.get("MEMO_RESPECT_SYNAPSE_FREEZE") == "1"
+            )
+        if respect_synapse_freeze and extra and extra.get("synapse_trace_id"):
+            self._enforce_synapse_freeze(
+                title=title, content=content, tags=tags,
+                trace_id=str(extra.get("synapse_trace_id") or ""),
+            )
         if type is not None:
             if type_ != "note" and type_ != type:
                 raise ValueError("Pass either `type_` or `type`, not conflicting values")
@@ -671,11 +716,16 @@ class Memory:
             )
             self.history.log_save(
                 ts=now_iso, record_id=record_id, title=title, type_=type_,
+                provenance=_extract_provenance(extra_for_store),
             )
-            return MemoryRecord(
+            deferred_rec = MemoryRecord(
                 id=record_id, path=rel_path, title=title, type=type_, tags=norm_tags,
                 created=now_iso, updated=now_iso, body=content, extra=extra_for_store,
             )
+            self._emit_save_receipt(
+                deferred_rec, deferred=True, disabled=skip_memflow_receipt,
+            )
+            return deferred_rec
 
         # Embed `title + body`: the title carries the highest-density
         # signal for retrieval ("Astor — Informe TO" is a much better
@@ -704,11 +754,41 @@ class Memory:
 
         self.history.log_save(
             ts=now_iso, record_id=record_id, title=title, type_=type_,
+            provenance=_extract_provenance(extra),
         )
 
-        return MemoryRecord(
+        rec = MemoryRecord(
             id=record_id, path=rel_path, title=title, type=type_, tags=norm_tags,
             created=now_iso, updated=now_iso, body=content, extra=extra or {},
+        )
+        self._emit_save_receipt(rec, deferred=False, disabled=skip_memflow_receipt)
+        return rec
+
+    def _emit_save_receipt(
+        self, rec: MemoryRecord, *, deferred: bool, disabled: bool,
+    ) -> None:
+        """Fire-and-forget memflow receipt for a successful save.
+
+        No-op unless `MEMO_EMIT_RECEIPTS=1`; never raises. `disabled`
+        is the synapse-originated opt-out (synapse keeps its own ledger).
+        """
+        from memo.receipts import emit_receipt
+
+        prov = _extract_provenance(rec.extra or {})
+        emit_receipt(
+            "save",
+            text=f"Memo saved memoria {rec.id[:8]} ({rec.type}): {rec.title}",
+            meta={
+                "id": rec.id,
+                "type": rec.type,
+                "tags": ",".join(rec.tags),
+                "path": rec.path,
+                "deferred": deferred,
+                "synapse_trace_id": prov.get("synapse_trace_id", ""),
+                "synapse_route_reason": prov.get("synapse_route_reason", ""),
+                "synapse_agent_id": prov.get("synapse_agent_id", ""),
+            },
+            disabled=disabled,
         )
 
     # -- search -------------------------------------------------------------
@@ -867,7 +947,10 @@ class Memory:
         reranker = self._reranker
         if reranker is None:
             from memo.reranker import MLXReranker
-            reranker = MLXReranker(model_path=self.cfg.reranker_model)
+            reranker = MLXReranker(
+                model_path=self.cfg.reranker_model,
+                revision=self.cfg.reranker_revision,
+            )
             self._reranker = reranker
 
         # Snapshot original RRF positions BEFORE rerank rewrites the
@@ -1636,17 +1719,37 @@ class Memory:
             delta["tags"] = (r["tags"], new_tags)
         if body_changed:
             delta["body_hash"] = (r["body_hash"], new_body_hash)
+        # Track provenance churn so a re-route (e.g. Synapse re-issues a
+        # different trace_id on the same memoria) shows up in history.
+        old_prov = _extract_provenance(r.get("extra") or {})
+        new_prov = _extract_provenance(new_extra)
+        if old_prov != new_prov:
+            delta["_provenance"] = (old_prov, new_prov)
         if delta:
             self.history.log_update(
                 ts=now_iso, record_id=id_, title=new_title, type_=new_type,
                 delta=delta,
             )
 
-        return MemoryRecord(
+        updated_rec = MemoryRecord(
             id=id_, path=r["path"], title=new_title, type=new_type,
             tags=new_tags, created=r["created"], updated=now_iso,
             body=new_body, extra=new_extra,
         )
+        if delta:
+            from memo.receipts import emit_receipt
+
+            emit_receipt(
+                "update",
+                text=f"Memo updated memoria {id_[:8]}: {', '.join(sorted(delta.keys()))}",
+                meta={
+                    "id": id_,
+                    "type": new_type,
+                    "title": new_title,
+                    "delta_keys": ",".join(sorted(delta.keys())),
+                },
+            )
+        return updated_rec
 
     # -- delete -------------------------------------------------------------
 
@@ -1676,7 +1779,105 @@ class Memory:
             if self._contradict_store is not None:
                 with contextlib.suppress(Exception):
                     self._contradict_store.drop_for_memoria(id_)
+            from memo.receipts import emit_receipt
+
+            emit_receipt(
+                "delete",
+                text=f"Memo deleted memoria {id_[:8]} ({r['type']}): {r['title']}",
+                meta={
+                    "id": id_,
+                    "type": r["type"],
+                    "title": r["title"],
+                    "path": r["path"],
+                },
+            )
         return existed
+
+    # -- synapse freeze-write protocol -------------------------------------
+
+    def _enforce_synapse_freeze(
+        self,
+        *,
+        title: str | None,
+        content: str,
+        tags: list[str] | None,
+        trace_id: str,
+    ) -> None:
+        """Query synapse for blocking RealityConflicts; raise on hit.
+
+        Derives a query from the most signal-dense fields available
+        (title, first non-empty tags, first content line). Best-effort:
+        if synapse is not on PATH, returns without raising — the
+        opt-in nature already implies "best information available".
+        """
+        # Deferred import: keeps memo's hard deps free of synapse.
+        from memo import synapse_client
+
+        if not synapse_client.is_available():
+            return
+        query = _build_freeze_query(title=title, content=content, tags=tags)
+        if not query:
+            return
+        try:
+            conflicts = synapse_client.list_conflicts(
+                query, trace_id=trace_id,
+            )
+        except Exception as exc:  # pragma: no cover - subprocess noise
+            _log.debug("synapse freeze-check failed: %s", exc)
+            return
+        blocked, conflict = synapse_client.has_blocking_freeze(conflicts)
+        if blocked and conflict is not None:
+            raise WriteRefused(conflict)
+
+    # -- provenance ---------------------------------------------------------
+
+    def provenance(self, id_: str) -> dict[str, Any] | None:
+        """Return the full provenance trail for a memoria.
+
+        Combines the current state (provenance subset of `meta.extra_json`)
+        with the per-op history (each save/update event carrying its own
+        provenance snapshot in `delta_json`). Returns `None` if the id is
+        unknown.
+
+        Shape:
+
+            {
+              "id": "<full id>",
+              "current": {synapse_trace_id, synapse_route_reason, ...},
+              "events": [
+                {"ts", "op", "title", "type", "provenance": {...}},
+                ...
+              ]
+            }
+        """
+        resolved = self.resolve_id(id_)
+        if resolved is None:
+            return None
+        rec = self.store.get(resolved)
+        if rec is None:
+            return None
+        current = _extract_provenance(rec.get("extra") or {})
+        events: list[dict[str, Any]] = []
+        for raw in self.history.list_recent(limit=10_000, record_id=resolved):
+            entry: dict[str, Any] = {
+                "ts": raw.get("ts"),
+                "op": raw.get("op"),
+                "title": raw.get("title"),
+                "type": raw.get("type"),
+            }
+            delta = raw.get("delta") or {}
+            if isinstance(delta, dict) and "_provenance" in delta:
+                prov = delta["_provenance"]
+                # save op stores `{...keys...}`; update op stores
+                # `[old_dict, new_dict]` (delta-pair convention). Surface
+                # the post-state in both cases.
+                if isinstance(prov, list) and len(prov) == 2:
+                    entry["provenance"] = prov[1] or {}
+                elif isinstance(prov, dict):
+                    entry["provenance"] = prov
+            events.append(entry)
+        events.reverse()  # oldest first
+        return {"id": resolved, "current": current, "events": events}
 
     # -- reindex / gc -------------------------------------------------------
 
@@ -1772,7 +1973,25 @@ class Memory:
         # memory_dir-relative layout, so future startups can skip the
         # legacy-path probe in `_maybe_warn_legacy_paths`.
         self.store.set_user_version(1)
-        return {"checked": checked, "reindexed": reindexed, "added": added, "skipped": skipped}
+        counts = {"checked": checked, "reindexed": reindexed, "added": added, "skipped": skipped}
+        if reindexed or added:
+            from memo.receipts import emit_receipt
+
+            emit_receipt(
+                "reindex",
+                text=(
+                    f"Memo reindex: checked={checked} reindexed={reindexed} "
+                    f"added={added} skipped={skipped} force={force}"
+                ),
+                meta={
+                    "checked": checked,
+                    "reindexed": reindexed,
+                    "added": added,
+                    "skipped": skipped,
+                    "force": force,
+                },
+            )
+        return counts
 
     def lint(self) -> dict[str, builtins.list[dict[str, Any]]]:
         """Surface memorias with quality issues.
@@ -2286,4 +2505,30 @@ def _normalise_tags(tags: list[str]) -> list[str]:
     return out
 
 
-__all__ = ["AmbiguousIdError", "Memory", "MemoryRecord"]
+def _build_freeze_query(
+    *,
+    title: str | None,
+    content: str,
+    tags: list[str] | None,
+) -> str:
+    """Compose a synapse `conflicts` query from the most signal-dense
+    fields of a pending write.
+
+    Priority: explicit title → first non-empty tag → first non-empty
+    content line (truncated). Synapse semantic search is keyword-tier
+    today, so a 4-8 word query is the sweet spot.
+    """
+    if title and title.strip():
+        return title.strip()[:120]
+    for tag in tags or []:
+        tag = (tag or "").strip()
+        if tag and not tag.startswith("project:"):
+            return tag[:120]
+    for line in (content or "").splitlines():
+        line = line.strip()
+        if line:
+            return line[:120]
+    return ""
+
+
+__all__ = ["AmbiguousIdError", "Memory", "MemoryRecord", "WriteRefused"]
