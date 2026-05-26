@@ -17,7 +17,9 @@ removing it would let "looks fine, totally broken" regressions through.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 import pytest
@@ -146,17 +148,59 @@ def test_rerank_overwrites_score_on_returned_records(monkeypatch):
     assert out[0].score == pytest.approx(0.42)
 
 
+def test_reranker_revision_downloads_pinned_snapshot(monkeypatch):
+    calls: dict[str, str] = {}
+
+    hf = ModuleType("huggingface_hub")
+
+    def snapshot_download(*, repo_id: str, revision: str) -> str:
+        calls["repo_id"] = repo_id
+        calls["revision"] = revision
+        return "/tmp/pinned-reranker"
+
+    hf.snapshot_download = snapshot_download  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hf)
+
+    mlx_lm = ModuleType("mlx_lm")
+
+    class _Tokenizer:
+        def convert_tokens_to_ids(self, token: str) -> int:
+            return {"yes": 1, "no": 2}[token]
+
+    def load(path: str) -> tuple[object, _Tokenizer]:
+        calls["load_path"] = path
+        return object(), _Tokenizer()
+
+    mlx_lm.load = load  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx_lm", mlx_lm)
+
+    rr = MLXReranker(
+        model_path="vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
+        revision="9655b27c01d2ff1c49f7e672a04b70d630161b46",
+    )
+    rr._ensure_loaded()
+
+    assert calls == {
+        "repo_id": "vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
+        "revision": "9655b27c01d2ff1c49f7e672a04b70d630161b46",
+        "load_path": "/tmp/pinned-reranker",
+    }
+
+
 # ── real MLX smoke ────────────────────────────────────────────────────────
 
 
 @pytest.mark.requires_mlx
 @pytest.mark.slow
 def test_score_real_model_separates_relevant_from_irrelevant():
-    """Loads the actual Qwen3-Reranker-0.6B-MLX-8Bit and verifies
+    """Loads the pinned Qwen3-Reranker-4B MLX model and verifies
     that a relevant doc scores >> an irrelevant one. This is the only
     test that catches end-to-end wiring breakage (token id mismatch,
     prompt-template drift, dtype regression)."""
-    rr = MLXReranker()
+    rr = MLXReranker(
+        model_path="vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
+        revision="9655b27c01d2ff1c49f7e672a04b70d630161b46",
+    )
     query = "favourite TV series"
     relevant = "List of best TV series: Breaking Bad, The Office, Dexter, True Detective."
     irrelevant = "Quarterly revenue report for Q3 2024 — supply chain logistics."
@@ -166,9 +210,8 @@ def test_score_real_model_separates_relevant_from_irrelevant():
 
     assert 0.0 <= p_rel <= 1.0
     assert 0.0 <= p_irr <= 1.0
-    # Looser margin than absolute thresholds so quantisation drift in
-    # MLX-8bit weights doesn't fail the test on a model swap. The
-    # ratio is what matters for ranking.
-    assert p_rel > 0.5
-    assert p_irr < 0.5
-    assert p_rel - p_irr > 0.3
+    # The 4B MLX quantization is conservative in absolute probability,
+    # so the separation is what matters for ranking.
+    assert p_rel > 0.1
+    assert p_irr < 0.05
+    assert p_rel - p_irr > 0.1
