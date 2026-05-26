@@ -165,6 +165,34 @@ _BM25_PATH_WEIGHT = 5.0
 _BM25_BODY_WEIGHT = 1.0
 _BM25_UNINDEXED_WEIGHT = 0.0  # harmless filler for UNINDEXED columns
 
+# Main `fts` column weights (id UNINDEXED, title, tags, body). Title is the
+# canonical-name signal (e.g. "Grecia.md" for "Grecia"); tags carry curated
+# topic labels; body is full text. Without these, bm25() collapses to a
+# uniform weight and short, on-topic titles get drowned by long bodies that
+# happen to mention the term in passing.
+_BM25_FTS_TITLE_WEIGHT = 5.0
+_BM25_FTS_TAGS_WEIGHT = 3.0
+_BM25_FTS_BODY_WEIGHT = 1.0
+
+# Spanish stopwords stripped before FTS5 tokenisation. AND-of-tokens
+# semantics means every kept token must hit; "cuando es el cumple de
+# Grecia?" with stopwords kept becomes a 5-token AND that almost never
+# matches. Drop only high-frequency function words; keep nouns/verbs.
+# Conservative list — proper names, abbreviations, and content verbs stay.
+_BM25_ES_STOPWORDS: frozenset[str] = frozenset({
+    "a", "al", "ante", "bajo", "con", "contra", "de", "del", "desde",
+    "donde", "dónde", "durante", "e", "el", "ella", "ellas", "ellos",
+    "en", "entre", "era", "eres", "es", "esa", "esas", "ese", "eso",
+    "esos", "esta", "estas", "este", "esto", "estos", "fue", "fueron",
+    "hacia", "hasta", "hay", "la", "las", "le", "les", "lo", "los",
+    "mas", "más", "me", "mi", "mis", "mí", "ni", "no", "nos", "o", "para",
+    "pero", "por", "porque", "pues", "que", "qué", "quien", "quién",
+    "quienes", "quiénes", "sea", "ser", "si", "sí", "sin", "sobre",
+    "son", "su", "sus", "te", "ti", "tu", "tus", "tú", "un", "una",
+    "unas", "uno", "unos", "u", "y", "ya", "yo", "como", "cómo",
+    "cual", "cuál", "cuales", "cuáles", "cuando", "cuándo",
+})
+
 
 class VecStore:
     """sqlite-vec store for memory metadata + embeddings.
@@ -601,31 +629,56 @@ class VecStore:
         # `"Astor" "terapia" "ocupacional"` — matches any doc containing
         # all 3 words anywhere, in any order.
         import re as _re
-        _tokens = [t for t in _re.findall(r"\w+", query, flags=_re.UNICODE) if t]
-        if not _tokens:
+        _raw_tokens = [t for t in _re.findall(r"\w+", query, flags=_re.UNICODE) if t]
+        if not _raw_tokens:
             return []
-        match_expr = " ".join(f'"{t}"' for t in _tokens)
-        candidate_k = limit * 5 if type_ else limit
-        sql = (
-            "SELECT fts.id AS id, bm25(fts) AS bm25_score, "
-            "       meta.path, meta.title, meta.type, meta.tags, "
-            "       meta.created, meta.updated, meta.body_hash, meta.extra_json "
-            "FROM fts JOIN meta ON meta.id = fts.id "
-            "WHERE fts MATCH ? "
-        )
-        params: list[Any] = [match_expr]
-        if type_:
-            sql += "AND meta.type = ? "
-            params.append(type_)
-        sql += "ORDER BY bm25_score ASC LIMIT ?"
-        params.append(candidate_k)
-        try:
-            rows = self._conn.execute(sql, params).fetchall()
-        except sqlite3.OperationalError:
-            # Malformed FTS expression (e.g. unbalanced quotes after
-            # escape). Fall back to no results — Memory.search_hybrid
-            # treats this as "no BM25 signal" and uses pure vec.
-            return []
+        # Strip Spanish stopwords, but only if doing so keeps ≥ 2 tokens.
+        # Single-token queries like "Grecia" or stopword-heavy short
+        # questions ("que es eso?") must still produce a match expression.
+        _filtered = [t for t in _raw_tokens if t.lower() not in _BM25_ES_STOPWORDS]
+        _tokens = _filtered if len(_filtered) >= 2 else _raw_tokens
+
+        def _run(tokens: list[str], joiner: str) -> list[Any]:
+            expr = joiner.join(f'"{t}"' for t in tokens)
+            candidate_k = limit * 5 if type_ else limit
+            sql = (
+                "SELECT fts.id AS id, "
+                "       bm25(fts, ?, ?, ?, ?) AS bm25_score, "
+                "       meta.path, meta.title, meta.type, meta.tags, "
+                "       meta.created, meta.updated, meta.body_hash, meta.extra_json "
+                "FROM fts JOIN meta ON meta.id = fts.id "
+                "WHERE fts MATCH ? "
+            )
+            params: list[Any] = [
+                _BM25_UNINDEXED_WEIGHT,
+                _BM25_FTS_TITLE_WEIGHT,
+                _BM25_FTS_TAGS_WEIGHT,
+                _BM25_FTS_BODY_WEIGHT,
+                expr,
+            ]
+            if type_:
+                sql += "AND meta.type = ? "
+                params.append(type_)
+            sql += "ORDER BY bm25_score ASC LIMIT ?"
+            params.append(candidate_k)
+            try:
+                return list(self._conn.execute(sql, params).fetchall())
+            except sqlite3.OperationalError:
+                # Malformed FTS expression (e.g. unbalanced quotes after
+                # escape). Fall back to no results — Memory.search_hybrid
+                # treats this as "no BM25 signal" and uses pure vec.
+                return []
+
+        rows = _run(_tokens, " ")
+        # AND-of-tokens zero-recall fallback: only when the strict AND
+        # match returns nothing on a multi-token query, retry with OR.
+        # Triggering on `<limit` (partial recall) caused RRF rank
+        # washing — OR brings in popular single-token matches that
+        # demote the AND-matched correct doc once fused with the vec
+        # leg. Triggering only on zero is the safe floor: it cannot
+        # make a successful AND query worse.
+        if not rows and len(_tokens) >= 2:
+            rows = _run(_tokens, " OR ")
         out: list[dict[str, Any]] = []
         for r in rows:
             d = _row_to_dict(r)
