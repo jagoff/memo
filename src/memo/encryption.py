@@ -1,6 +1,8 @@
-"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+"""DEPRECATED — Memory encryption module.
 
-Memory encryption — AES-256 encryption of sensitive memorias.
+AES-256 encryption of sensitive memorias (not integrated into Memory yet).
+This module is not covered by tests and not exposed via MCP.
+Do not use in production. Kept for reference only.
 
 Enables:
 - Encrypt sensitive memorias with AES-256-GCM

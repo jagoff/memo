@@ -130,8 +130,10 @@ class ContextStore:
                 json.dumps(self._preferences.__dict__, indent=2),
                 encoding="utf-8",
             )
-        except Exception:
-            pass  # Fail silently - context loss is not critical
+        except Exception as exc:
+            import logging
+            _log = logging.getLogger(__name__)
+            _log.debug("contextual preferences save failed: %s", exc)
 
     def add_prompt(self, prompt: str, recalled_memorias: list[str]) -> None:
         """Add a prompt to the conversation history."""
