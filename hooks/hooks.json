@@ -43,12 +43,14 @@
           {
             "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo recall-hook",
-            "timeout": 8
+            "timeout": 12,
+            "comment": "Increased from 8s: daemon cold-start ~2s + inference ~3s + margin"
           },
           {
             "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo session autosave",
-            "timeout": 3
+            "timeout": 5,
+            "comment": "Increased from 3s: DB writes can be slow on first call"
           },
           {
             "type": "command",

@@ -1378,7 +1378,7 @@ class VecStore:
             raise ValueError(
                 f"query_emb dim mismatch: got {len(query_emb)}, expected {self.dims}"
             )
-        now = _utc_now_iso()
+        now = datetime.now(UTC).isoformat()
         # Find any existing row for this (source, query) regardless of rating.
         existing = self._conn.execute(
             "SELECT id, rating FROM source_feedback "
@@ -1398,7 +1398,7 @@ class VecStore:
                     "DELETE FROM source_feedback WHERE id = ?",
                     (existing["id"],),
                 )
-            fid = feedback_id or _uuid_hex()
+            fid = feedback_id or uuid.uuid4().hex
             self._conn.execute(
                 "INSERT INTO source_feedback "
                 "(id, source_id, query_text, rating, created_at, extra_json) "

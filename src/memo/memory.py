@@ -934,6 +934,21 @@ class Memory:
                     body=body, extra=r.get("extra") or {}, score=r.get("score"),
                 ),
             )
+        # Source-level feedback (👍 / 👎) — applied AFTER RRF/vec retrieval
+        # but BEFORE cross-encoder rerank so the reranker doesn't waste
+        # cycles on hits the user already vetoed. Embeds the query once
+        # (reusing the vec-mode embedding when available) and consults
+        # the `source_feedback` table for each hit. Disabled when
+        # MEMO_FEEDBACK_DISABLED=1.
+        if out and os.environ.get("MEMO_FEEDBACK_DISABLED") != "1":
+            try:
+                fb_emb = locals().get("emb")
+                if fb_emb is None:
+                    fb_emb = self.embedder.embed_query(query)
+                out = self._apply_source_feedback(out, fb_emb)
+            except Exception as exc:
+                _log.debug("source feedback skipped: %s", exc)
+
         # Cross-encoder rerank on hybrid mode only. Skipped for vec/bm25
         # since those callers explicitly opted out of fusion entirely;
         # adding rerank to single-mode searches would surprise users
@@ -1015,6 +1030,122 @@ class Memory:
 
     def repo_delete(self, repo: str, *, remove_clone: bool = True) -> bool:
         return self._repo_corpus().delete(repo, remove_clone=remove_clone)
+
+    # -- source feedback (public) ------------------------------------------
+
+    def feedback_record(
+        self, source_id: str, *, query_text: str, rating: str,
+    ) -> dict[str, Any]:
+        """Public wrapper around store.record_source_feedback.
+
+        Accepts `rating` as "up"/"down" or "+1"/"-1". Resolves a short
+        `source_id` prefix to a full meta.id when possible (errors on
+        ambiguity). Embeds `query_text` with the asymmetric retrieval
+        prefix so future queries — which use the same prefix — can be
+        compared on equal footing.
+        """
+        rating_norm = self._normalize_rating(rating)
+        resolved = self._resolve_source_id(source_id)
+        if not query_text or not query_text.strip():
+            raise ValueError("query_text is required")
+        emb = self.embedder.embed_query(query_text)
+        fid = self.store.record_source_feedback(
+            source_id=resolved,
+            query_text=query_text,
+            query_emb=list(emb),
+            rating=rating_norm,
+        )
+        return {
+            "feedback_id": fid,
+            "source_id": resolved,
+            "query_text": query_text,
+            "rating": "up" if rating_norm > 0 else "down",
+        }
+
+    def feedback_list(
+        self, *, source_id: str | None = None, limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if source_id:
+            source_id = self._resolve_source_id(source_id)
+        return self.store.list_source_feedback(source_id=source_id, limit=limit)
+
+    def feedback_clear(self, source_id: str) -> int:
+        resolved = self._resolve_source_id(source_id)
+        return self.store.clear_source_feedback(resolved)
+
+    @staticmethod
+    def _normalize_rating(rating: str | int) -> int:
+        raw = str(rating).strip().lower()
+        if raw in {"up", "+1", "1", "thumbs_up", "positive", "pos"}:
+            return 1
+        if raw in {"down", "-1", "thumbs_down", "negative", "neg"}:
+            return -1
+        raise ValueError(f"unknown rating {rating!r}; expected up/down")
+
+    def _resolve_source_id(self, source_id: str) -> str:
+        sid = (source_id or "").strip()
+        if not sid:
+            raise ValueError("source_id is required")
+        # Already a full id (32 hex chars) — accept as-is.
+        if len(sid) >= 32:
+            return sid
+        # Prefix lookup. Must match exactly one row.
+        matches = self.store.find_by_prefix(sid, limit=2)
+        if not matches:
+            raise ValueError(f"no memoria matches source_id prefix {sid!r}")
+        if len(matches) > 1:
+            raise AmbiguousIdError(
+                f"source_id prefix {sid!r} matched multiple ids; use a longer prefix"
+            )
+        return matches[0]
+
+    def _apply_source_feedback(
+        self, hits: list[MemoryRecord], query_emb: list[float],
+        *, sim_threshold: float = 0.85, boost_per_vote: float = 0.15,
+        boost_cap: float = 0.6,
+    ) -> list[MemoryRecord]:
+        """Filter/boost hits using prior 👍/👎 votes for the user query.
+
+        For each hit, look up `source_feedback` rows on `hit.id` whose
+        query embedding is cosine-similar to `query_emb` at >=
+        `sim_threshold`. Then:
+
+        - Any negative match → drop the hit (hard exclude). User said
+          this source is wrong for this kind of query; trust them.
+        - Positive matches → score += `boost_per_vote * n`, capped at
+          `boost_cap`. Doesn't replace ranking entirely — just lifts
+          well-reviewed sources up the list.
+        - No relevant feedback → hit passes through unchanged.
+
+        Tunables (env, optional):
+        - `MEMO_FEEDBACK_SIM_THRESHOLD` (default 0.85)
+        - `MEMO_FEEDBACK_BOOST_PER_VOTE` (default 0.15)
+        - `MEMO_FEEDBACK_BOOST_CAP` (default 0.6)
+        """
+        sim_threshold = float(os.environ.get("MEMO_FEEDBACK_SIM_THRESHOLD") or sim_threshold)
+        boost_per_vote = float(os.environ.get("MEMO_FEEDBACK_BOOST_PER_VOTE") or boost_per_vote)
+        boost_cap = float(os.environ.get("MEMO_FEEDBACK_BOOST_CAP") or boost_cap)
+        from dataclasses import replace
+        out: list[MemoryRecord] = []
+        for h in hits:
+            try:
+                fb = self.store.find_feedback_for_source(
+                    h.id, query_emb, threshold=sim_threshold,
+                )
+            except Exception:
+                fb = []
+            if not fb:
+                out.append(h)
+                continue
+            if any(r["rating"] < 0 for r in fb):
+                # Hard exclude — user vetoed this source for similar queries.
+                continue
+            pos = sum(1 for r in fb if r["rating"] > 0)
+            if pos > 0:
+                boost = min(boost_cap, boost_per_vote * pos)
+                h = replace(h, score=(h.score or 0.0) + boost)
+            out.append(h)
+        return out
 
     def _rerank(
         self, query: str, hits: list[MemoryRecord], *, top_n: int,

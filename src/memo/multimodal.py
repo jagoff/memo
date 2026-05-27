@@ -1,6 +1,6 @@
-"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+"""Memoria Multi-Modal con Embeddings Universales.
 
-Memoria Multi-Modal con Embeddings Universales.
+NOTE: Covered by test suite (tests/test_multimodal.py). Not exposed via MCP yet.
 
 Captura información que no es texto (diagramas, capturas, audio) y permite
 búsqueda semántica cruzada entre modalidades.

@@ -344,7 +344,25 @@ class Config(BaseModel):
 
         # Step 5: explicit overrides win over everything.
         kwargs.update(overrides)
-        return cls(**kwargs)
+        cfg = cls(**kwargs)
+        
+        # Step 6: validate reranker model exists if enabled
+        if cfg.reranker_enabled:
+            try:
+                from huggingface_hub import model_info
+                model_info(cfg.reranker_model, revision=cfg.reranker_revision)
+            except Exception as exc:
+                import logging
+                _log = logging.getLogger(__name__)
+                _log.warning(
+                    "Reranker model validation failed (will retry on first use): "
+                    "model=%s revision=%s error=%s",
+                    cfg.reranker_model,
+                    cfg.reranker_revision,
+                    exc,
+                )
+        
+        return cfg
 
     def ensure_dirs(self) -> None:
         """Create state + data dirs if missing.
