@@ -1,5 +1,8 @@
 import { definePlugin, runWorker, type ToolResult } from "@paperclipai/plugin-sdk";
 import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const pExecFile = promisify(execFile);
@@ -75,6 +78,37 @@ function asNumber(v: unknown, fallback: number): number {
 function asStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.filter((x): x is string => typeof x === "string");
+}
+
+function asObject(v: unknown): Record<string, unknown> | null {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+  return v as Record<string, unknown>;
+}
+
+function asObjectArray(v: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is Record<string, unknown> => asObject(x) !== null);
+}
+
+async function withJsonTempFiles<T>(
+  files: Record<string, unknown>,
+  fn: (paths: Record<string, string>) => Promise<T>,
+): Promise<T> {
+  const entries = Object.entries(files);
+  if (entries.length === 0) return fn({});
+
+  const dir = await mkdtemp(join(tmpdir(), "memo-paperclip-"));
+  try {
+    const paths: Record<string, string> = {};
+    for (const [name, value] of entries) {
+      const path = join(dir, `${name}.json`);
+      await writeFile(path, JSON.stringify(value), "utf8");
+      paths[name] = path;
+    }
+    return await fn(paths);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 const plugin = definePlugin({
@@ -235,15 +269,24 @@ const plugin = definePlugin({
     ctx.tools.register(
       "memo_ask",
       {
-        displayName: "Memo: RAG ask",
+        displayName: "Memo: chat RAG ask",
         description:
-          "RAG over memorias. Returns a prose answer with `[id]` citations.",
+          "Chat-shaped RAG over memorias. Returns the memo.chat_ask.v2 envelope.",
         parametersSchema: {
           type: "object",
           properties: {
             question: { type: "string" },
             k: { type: "number" },
             type: { type: "string" },
+            history: {
+              type: "array",
+              items: { type: "object" },
+              description: "Optional chat history turns as {role,text} or {role,content}.",
+            },
+            context: {
+              type: "object",
+              description: "Optional caller context to include in the retrieval question.",
+            },
           },
           required: ["question"],
         },
@@ -253,11 +296,20 @@ const plugin = definePlugin({
         const p = (params ?? {}) as Record<string, unknown>;
         const question = asString(p.question).trim();
         if (!question) return { error: "question is required" };
-        const args = ["ask", question, "--json", "--k", String(asNumber(p.k, 5))];
+        const args = ["chat-ask", question, "--json", "--k", String(asNumber(p.k, 7))];
         const type = asString(p.type);
         if (type) args.push("--type", type);
+        const tempInputs: Record<string, unknown> = {};
+        const history = asObjectArray(p.history);
+        if (history.length > 0) tempInputs.history = history;
+        const context = asObject(p.context);
+        if (context !== null) tempInputs.context = context;
         try {
-          const data = await runMemo(cfg.memoBinary, args);
+          const data = await withJsonTempFiles(tempInputs, async (paths) => {
+            if (paths.history) args.push("--history-json", paths.history);
+            if (paths.context) args.push("--context-json", paths.context);
+            return await runMemo(cfg.memoBinary, args);
+          });
           return { content: `memo ask: ${question}`, data };
         } catch (err) {
           return { error: `memo ask failed: ${(err as Error).message}` };

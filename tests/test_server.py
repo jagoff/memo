@@ -90,3 +90,42 @@ def test_get_returns_ambiguous_shape(mem: Memory, monkeypatch):
     assert isinstance(out, dict)
     assert out.get("error") == "ambiguous"
     assert len(out["matches"]) == 2
+
+
+def test_memory_chat_ask_returns_v2_envelope(mem: Memory, monkeypatch):
+    rec = mem.save(content="alpha delivery result", title="Alpha")
+
+    def _stub_chat(self, model, messages, options=None):
+        assert "previous alpha question" in messages[-1]["content"]
+        assert "packet_status" in messages[-1]["content"]
+        return {"message": {"content": f"Alpha answer [{rec.id[:8]}]."}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+
+    server = build_server(memory=mem)
+    chat_ask = _tool(server, "memory_chat_ask")
+    out = chat_ask(
+        question="what did alpha decide?",
+        k=2,
+        history=[{"role": "user", "text": "previous alpha question"}],
+        context={"packet_status": "ready"},
+    )
+
+    assert out["schema"] == "memo.chat_ask.v2"
+    assert out["synthesis_status"] == "ok"
+    assert out["answer"].startswith("Alpha answer")
+    assert out["citations"][0]["source"] == "memo"
+    assert out["history_turns_used"] == 1
+    assert out["context_keys"] == ["packet_status"]
+
+
+def test_memory_chat_ask_no_hits_returns_unavailable(mem: Memory):
+    server = build_server(memory=mem)
+    chat_ask = _tool(server, "memory_chat_ask")
+    out = chat_ask(question="missing context")
+
+    assert out["schema"] == "memo.chat_ask.v2"
+    assert out["synthesis_status"] == "unavailable"
+    assert "no encuentro" in out["answer"].lower()
+    assert out["sources"] == []
+    assert out["citations"] == []

@@ -1483,7 +1483,7 @@ def embed_cmd(text: str | None, batch_json) -> None:
 @click.option(
     "--stream", "as_stream", is_flag=True,
     help=(
-        "Emit one NDJSON event per line (context/token/done/error) flushed "
+        "Emit one NDJSON event per line (context/token/done) flushed "
         "immediately. Forces JSON output and disables the panel."
     ),
 )
@@ -4186,7 +4186,17 @@ def mine_history(
 @click.option("--force", is_flag=True, help="Re-embed even if body unchanged.")
 @click.option("--dry-run", is_flag=True, help="Walk + report counts, don't embed/write.")
 @click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/99-obsidian/")
-def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclude: tuple[str, ...]) -> None:
+@click.option("--ocr/--no-ocr", default=True, help="Run OCR on ![[image]] embeds inside notes (Apple Vision). Default on.")
+@click.option("--chunk/--no-chunk", default=True, help="Semantically chunk markdown/PDF bodies for better retrieval precision. Default on.")
+@click.option("--chunk-chars", default=1500, show_default=True, type=int, help="Target chunk size in characters.")
+@click.option("--chunk-overlap", default=250, show_default=True, type=int, help="Overlap between consecutive chunks.")
+@click.option("--include-pdf/--no-include-pdf", default=True, help="Extract text from .pdf via pdftotext + chunk + embed.")
+@click.option("--include-orphan-images/--no-include-orphan-images", default=True, help="OCR images not referenced by any note and ingest them as standalone memorias.")
+def ingest(
+    vault_path: str, name: str | None, force: bool, dry_run: bool, exclude: tuple[str, ...],
+    ocr: bool, chunk: bool, chunk_chars: int, chunk_overlap: int,
+    include_pdf: bool, include_orphan_images: bool,
+) -> None:
     """Bulk-ingest all .md from a vault into the memo index.
 
     Walks `<vault_path>/**/*.md`, embeds each, stores under path
@@ -4205,12 +4215,21 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
     so we don't double-index curated memorias.
     """
     import hashlib
+    import os as _os_min
     from datetime import datetime
     from pathlib import Path
 
     import frontmatter
 
-    from memo.embedder import MLXEmbedder
+    from memo.chunker import chunk_markdown
+    from memo.embedder import MLXEmbedder, assert_valid_embedding
+    from memo.ingest_helpers import (
+        IMAGE_EXTENSIONS,
+        enrich_with_ocr,
+        extract_pdf_text,
+        find_orphan_images,
+        pdftotext_available,
+    )
     from memo.store import VecStore
 
     cfg = Config.from_env()
@@ -4222,13 +4241,9 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
     # ingesting that exact vault, paths are stored without a label
     # prefix (e.g. `01-Projects/foo.md`); external vaults get a
     # `<label>/` prefix so multiple vaults coexist in one store.
-    # For users who haven't set `cfg.vault_path` (non-Obsidian
-    # workflows), every ingest is treated as external.
     is_principal_vault = cfg.vault_path is not None and vault == cfg.vault_path
     label = "" if is_principal_vault else (name or vault.name)
 
-    # Default exclusions — Obsidian dotdirs + memo's own memory subdir
-    # to avoid double-indexing the curated memorias managed by reindex.
     default_excludes = (
         ".obsidian", ".git", ".trash", ".makemd", ".smart-env", ".space",
         ".claude", ".devin", "99-obsidian",
@@ -4239,32 +4254,153 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
         s = str(rel)
         return any(s.startswith(pat) or f"/{pat}/" in f"/{s}/" for pat in exclude_patterns)
 
-    md_files = []
-    for p in vault.rglob("*.md"):
+    md_files: list[Path] = []
+    pdf_files: list[Path] = []
+    for p in vault.rglob("*"):
+        if not p.is_file():
+            continue
         rel = p.relative_to(vault)
         if _excluded(rel):
             continue
-        md_files.append(p)
+        suffix = p.suffix.lower()
+        if suffix == ".md":
+            md_files.append(p)
+        elif suffix == ".pdf" and include_pdf:
+            pdf_files.append(p)
     md_files.sort()
+    pdf_files.sort()
 
-    console.print(f"[cyan]found[/cyan] {len(md_files)} .md in {label} (after exclusions)")
+    pdf_supported = include_pdf and pdftotext_available()
+    if include_pdf and not pdf_supported:
+        console.print("[yellow]pdftotext not found on PATH — skipping PDFs[/yellow]")
+        pdf_files = []
+
+    console.print(
+        f"[cyan]found[/cyan] {len(md_files)} .md, {len(pdf_files)} .pdf in {label} "
+        f"(after exclusions)"
+    )
 
     if dry_run:
         console.print("[dim](dry-run — exiting before embed/write)[/dim]")
-        # Show first few + a few from deep dirs
         for p in md_files[:5]:
             console.print(f"  · {p.relative_to(vault)}")
         if len(md_files) > 5:
             console.print(f"  · …and {len(md_files) - 5} more")
+        if pdf_files:
+            console.print(f"  · PDFs: {len(pdf_files)}")
         return
 
-    # Lazy-load heavy stuff after the dry-run gate
     embedder = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
     store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
 
     skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0
+    skipped_pdf_empty = pdf_added = orphan_added = orphan_skipped = 0
+    chunks_emitted = 0
+    referenced_images: set[Path] = set()
+
+    min_chars = int(_os_min.environ.get("MEMO_INGEST_MIN_CHARS", "200"))
+    strict_mode = _os_min.environ.get("MEMO_INGEST_STRICT") == "1"
+    debug_mode = _os_min.environ.get("MEMO_INGEST_DEBUG") == "1"
 
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
+
+    def _emit_record(
+        *, store_path: str, title: str, tags: list[str], body: str,
+        abs_path: Path, source: str, extra_meta: dict | None = None,
+    ) -> str | None:
+        """Embed `title + body` (chunked if --chunk and large) and upsert
+        one row per chunk. Returns "added" / "updated" / None on error.
+
+        Single-chunk path keeps the canonical store_path so dedup +
+        idempotence keep working. Multi-chunk path suffixes
+        `#chunk-N` to the store_path so each chunk is its own row.
+        """
+        nonlocal errors, chunks_emitted
+        composed_full = f"{title}\n\n{body}"
+        if chunk and len(composed_full) > chunk_chars:
+            pieces = chunk_markdown(composed_full, target_chars=chunk_chars, overlap_chars=chunk_overlap)
+        else:
+            pieces = None  # single-vector path
+
+        if pieces is None or len(pieces) <= 1:
+            composed = composed_full[: cfg.max_content_chars]
+            try:
+                emb = embedder.embed([composed])[0]
+                assert_valid_embedding(emb, cfg.embedder_dims, context=str(abs_path))
+            except Exception as exc:
+                errors += 1
+                if strict_mode:
+                    raise
+                if debug_mode:
+                    console.print(f"[red]reject:[/] {exc}")
+                return None
+            now = datetime.now(UTC).isoformat()
+            id_ = hashlib.sha256(store_path.encode("utf-8")).hexdigest()[:32]
+            existing = store.get(id_)
+            body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+            extra = {"source": source, "vault": label, "abs_path": str(abs_path)}
+            if extra_meta:
+                extra.update(extra_meta)
+            store.upsert(
+                id_=id_, path=store_path, title=title[:200], type_="note",
+                tags=tags, created=existing["created"] if existing else now,
+                updated=now, body_hash=body_hash, embedding=emb,
+                extra=extra, body_text=body,
+            )
+            chunks_emitted += 1
+            return "updated" if existing else "added"
+
+        # Multi-chunk path. Each chunk = own meta row; parent_path lets
+        # the chat-ask dedup collapse chunks back to one source.
+        any_added = any_updated = False
+        for piece in pieces:
+            seq = piece["seq"]
+            heading = piece["heading"]
+            chunk_body = piece["body"]
+            chunk_path = f"{store_path}#chunk-{seq}"
+            id_ = hashlib.sha256(chunk_path.encode("utf-8")).hexdigest()[:32]
+            chunk_body_hash = hashlib.sha256(chunk_body.encode("utf-8")).hexdigest()[:16]
+            existing = store.get(id_)
+            if existing and existing["body_hash"] == chunk_body_hash and not force:
+                continue
+            chunk_composed = chunk_body[: cfg.max_content_chars]
+            try:
+                emb = embedder.embed([chunk_composed])[0]
+                assert_valid_embedding(emb, cfg.embedder_dims, context=f"{abs_path}#chunk-{seq}")
+            except Exception as exc:
+                errors += 1
+                if strict_mode:
+                    raise
+                if debug_mode:
+                    console.print(f"[red]reject:[/] {exc}")
+                continue
+            now = datetime.now(UTC).isoformat()
+            chunk_title = f"{title} (§{seq+1}/{len(pieces)})"
+            if heading:
+                chunk_title = f"{title} — {heading}"
+            extra = {
+                "source": source, "vault": label, "abs_path": str(abs_path),
+                "parent_path": store_path, "chunk_seq": seq,
+                "chunk_count": len(pieces), "chunk_heading": heading,
+            }
+            if extra_meta:
+                extra.update(extra_meta)
+            store.upsert(
+                id_=id_, path=chunk_path, title=chunk_title[:200], type_="note",
+                tags=tags + ["chunk"], created=existing["created"] if existing else now,
+                updated=now, body_hash=chunk_body_hash, embedding=emb,
+                extra=extra, body_text=chunk_body,
+            )
+            chunks_emitted += 1
+            if existing:
+                any_updated = True
+            else:
+                any_added = True
+        if any_added:
+            return "added"
+        if any_updated:
+            return "updated"
+        return None
 
     with Progress(
         SpinnerColumn(),
@@ -4282,53 +4418,25 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
 
                 raw = path.read_text(encoding="utf-8", errors="replace")
 
-                # Parse frontmatter (tolerant — files without frontmatter
-                # treated as plain markdown).
                 try:
                     fm = frontmatter.loads(raw)
                 except Exception:
                     fm = frontmatter.Post(raw)
 
-                # Skip curated memorias (have explicit id) — those are
-                # managed by `memo reindex` from memory_dir.
+                # Skip curated memorias (have explicit id).
                 if fm.metadata.get("id"):
                     skipped_id += 1
-                    progress.advance(task_id)
                     continue
 
                 body = fm.content.strip()
                 if not body:
                     skipped_empty += 1
-                    progress.advance(task_id)
                     continue
 
-                # Skip very short notes — they're typically tag-only stubs
-                # (`#tagA #tagB` + a 1-line question) that produce
-                # noise embeddings near the centroid. They match
-                # generic queries with high false-positive rate.
-                # Tunable via MEMO_INGEST_MIN_CHARS env (default 200).
-                #
-                # EXCEPTION — high-signal short notes. Some short notes
-                # exist precisely BECAUSE they pin an atomic fact: a
-                # payment URL, a CBU, a one-off shell command, an API
-                # endpoint. Discarding them by char count loses notes
-                # the user explicitly created as quick-lookup pins. We
-                # detect them via _is_high_signal and bypass the
-                # threshold. The same loud-fail guards still apply
-                # downstream (dim + norm asserts), so adding these
-                # doesn't open the door to malformed embeddings.
-                import os as _os_min  # local import — avoids tedious refactor
-                min_chars = int(_os_min.environ.get("MEMO_INGEST_MIN_CHARS", "200"))
                 if len(body) < min_chars and not _is_high_signal(body, fm.metadata.get("tags")):
-                    skipped_empty += 1  # bucket together with empty
-                    progress.advance(task_id)
+                    skipped_empty += 1
                     continue
 
-                # Synthesize stable id from path. sha256[:32] = 128-bit,
-                # collision risk negligible for any realistic vault size.
-                id_ = hashlib.sha256(store_path.encode("utf-8")).hexdigest()[:32]
-
-                # Title: explicit frontmatter > first H1 > filename stem.
                 title = (
                     fm.metadata.get("title")
                     or _extract_first_h1(body)
@@ -4336,8 +4444,6 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
                 )
                 title = str(title).strip() or path.stem
 
-                # Tags: frontmatter tags + directory parts (skipping
-                # numeric prefixes used in PARA folders like "01-Projects").
                 tags: list[str] = []
                 fm_tags = fm.metadata.get("tags") or []
                 if isinstance(fm_tags, str):
@@ -4349,82 +4455,115 @@ def ingest(vault_path: str, name: str | None, force: bool, dry_run: bool, exclud
                     if part and part not in tags:
                         tags.append(part)
 
-                body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+                # OCR enrichment — appends <!-- OCR: img.png -->\n<text>
+                # blocks for every ![[image]] embed in the note. Tracks
+                # resolved image paths so the orphan-image pass below
+                # knows which files are already claimed.
+                if ocr:
+                    enriched, resolved, _ = enrich_with_ocr(
+                        body, path, vault, cfg.state_dir,
+                    )
+                    referenced_images.update(resolved)
+                    body = enriched
 
-                # Idempotence check
+                body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+                id_ = hashlib.sha256(store_path.encode("utf-8")).hexdigest()[:32]
                 existing = store.get(id_)
                 if existing and existing["body_hash"] == body_hash and not force:
                     skipped_unchanged += 1
-                    progress.advance(task_id)
                     continue
 
-                # Embed: title + body, capped at max_content_chars.
-                composed = f"{title}\n\n{body}"
-                if len(composed) > cfg.max_content_chars:
-                    composed = composed[: cfg.max_content_chars]
-                # `embedder.embed()` is batched — takes Sequence[str] and
-                # returns list[list[float]]. Passing a bare string iterates
-                # per-char (str IS a Sequence of chars), producing wrong-
-                # dim outputs. Wrap in a list and take [0].
-                embedding = embedder.embed([composed])[0]
-
-                # Loud-fail guard. Past silent-failure mode (string
-                # iterated as chars, partial Metal recovery, etc.)
-                # produced records with wrong-dim or zero-norm vectors
-                # that polluted the index without surfacing in the
-                # ingest summary. Centralised in `assert_valid_embedding`
-                # so save/update/ingest share one definition of "valid".
-                # Strict mode (env var MEMO_INGEST_STRICT=1) re-raises
-                # — for CI runs / golden-corpus rebuilds where any
-                # rejection should be surfaced loudly.
-                from memo.embedder import assert_valid_embedding as _assert_emb
-                try:
-                    _assert_emb(embedding, cfg.embedder_dims, context=str(path))
-                except ValueError as _ve:
-                    errors += 1
-                    import os as _os_strict
-                    if _os_strict.environ.get("MEMO_INGEST_STRICT") == "1":
-                        raise
-                    if _os_strict.environ.get("MEMO_INGEST_DEBUG") == "1":
-                        console.print(f"[red]reject:[/] {_ve}")
-                    progress.advance(task_id)
-                    continue
-
-                now = datetime.now(UTC).isoformat()
-                # Preserve created if known (existing row), else now.
-                created = existing["created"] if existing else now
-
-                store.upsert(
-                    id_=id_,
-                    path=store_path,
-                    title=title[:200],  # title is meta.title field, keep snug
-                    type_="note",
-                    tags=tags,
-                    created=created,
-                    updated=now,
-                    body_hash=body_hash,
-                    embedding=embedding,
-                    extra={"source": "vault-ingest", "vault": label, "abs_path": str(path)},
-                    body_text=body,
+                outcome = _emit_record(
+                    store_path=store_path, title=title, tags=tags, body=body,
+                    abs_path=path, source="vault-ingest",
                 )
-
-                if existing:
-                    updated += 1
-                else:
+                if outcome == "added":
                     added += 1
+                elif outcome == "updated":
+                    updated += 1
             except Exception as exc:
                 errors += 1
-                import os as _os
-                if _os.environ.get("MEMO_INGEST_DEBUG") == "1":
+                if debug_mode:
                     console.print(f"[red]err[/] {path}: {exc}")
             finally:
                 progress.advance(task_id)
+
+        if pdf_files:
+            pdf_task = progress.add_task(f"PDF {label}", total=len(pdf_files))
+            for pdf_path in pdf_files:
+                try:
+                    rel = pdf_path.relative_to(vault)
+                    text = extract_pdf_text(pdf_path).strip()
+                    if not text:
+                        skipped_pdf_empty += 1
+                        continue
+                    store_path = f"{label}/{rel}" if label else str(rel)
+                    title = pdf_path.stem.replace("-", " ").replace("_", " ")
+                    tags = [p for p in rel.parent.parts if p] + ["pdf"]
+                    outcome = _emit_record(
+                        store_path=store_path, title=title, tags=tags, body=text,
+                        abs_path=pdf_path, source="vault-ingest-pdf",
+                    )
+                    if outcome == "added":
+                        pdf_added += 1
+                except Exception as exc:
+                    errors += 1
+                    if debug_mode:
+                        console.print(f"[red]err pdf[/] {pdf_path}: {exc}")
+                finally:
+                    progress.advance(pdf_task)
+
+        if include_orphan_images and ocr:
+            orphans = find_orphan_images(vault, referenced_images, excluded_dirs=tuple(exclude_patterns))
+            # Filter image extensions we actually OCR (Apple Vision covers png/jpg/webp/heic).
+            orphans = [o for o in orphans if o.suffix.lower() in IMAGE_EXTENSIONS]
+            if orphans:
+                orphan_task = progress.add_task(f"OCR orphan imgs {label}", total=len(orphans))
+                from memo.ocr import extract_text_cached
+                cache_dir = cfg.state_dir / "ocr_cache"
+                for img_path in orphans:
+                    try:
+                        ocr_text = (extract_text_cached(img_path, cache_dir=cache_dir) or "").strip()
+                        if not ocr_text:
+                            orphan_skipped += 1
+                            continue
+                        rel = img_path.relative_to(vault)
+                        store_path = f"{label}/{rel}" if label else str(rel)
+                        title = img_path.stem.replace("-", " ").replace("_", " ")
+                        tags = [p for p in rel.parent.parts if p] + ["standalone-image"]
+                        outcome = _emit_record(
+                            store_path=store_path, title=title, tags=tags, body=ocr_text,
+                            abs_path=img_path, source="vault-ingest-image",
+                            extra_meta={"image_ext": img_path.suffix.lower()},
+                        )
+                        if outcome == "added":
+                            orphan_added += 1
+                    except Exception as exc:
+                        errors += 1
+                        if debug_mode:
+                            console.print(f"[red]err img[/] {img_path}: {exc}")
+                    finally:
+                        progress.advance(orphan_task)
+
+    # Bump on-disk schema version so the legacy-paths probe in
+    # `Memory._maybe_warn_legacy_paths` doesn't fire for ingest-only
+    # vaults (vault-ingest rows live outside `cfg.data_dir` and the
+    # probe can't resolve them; setting user_version=1 marks "this DB
+    # is post-init, the legacy fallback is no longer relevant").
+    if added or updated or pdf_added or orphan_added:
+        try:
+            store.set_user_version(1)
+        except Exception:
+            pass
 
     console.print(
         f"\n[green]done[/] "
         f"added={added} updated={updated} "
         f"skipped_unchanged={skipped_unchanged} "
         f"skipped_id={skipped_id} skipped_empty={skipped_empty} "
+        f"pdf_added={pdf_added} pdf_empty={skipped_pdf_empty} "
+        f"orphan_added={orphan_added} orphan_skipped={orphan_skipped} "
+        f"chunks_emitted={chunks_emitted} "
         f"errors={errors}"
     )
 

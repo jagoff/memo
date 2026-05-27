@@ -1,0 +1,4 @@
+allowBuilds:
+  esbuild: true
+overrides:
+  "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"

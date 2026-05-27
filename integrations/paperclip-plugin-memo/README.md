@@ -16,7 +16,7 @@ Five agent tools, namespaced by the host as
 | `memo_save` | Persist a new memory; auto-derives title/type/tags optionally. |
 | `memo_list` | Most recent memorias by `updated` desc. |
 | `memo_get` | Fetch one memory by id (git-style prefix ≥ 4 chars OK). |
-| `memo_ask` | RAG synthesis with `[id]` citations using the local 7B chat model. |
+| `memo_ask` | Chat-shaped RAG envelope with answer, citations, retrieval trace, and synthesis status. |
 
 Plus a small dashboard widget showing `memo stats` (total memorias, vault path,
 embedder + LLM in use).

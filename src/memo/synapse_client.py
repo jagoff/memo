@@ -93,17 +93,28 @@ def list_conflicts(
             env=env,
             check=False,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        _log.warning(
+            "synapse_client.list_conflicts: timeout after %.1fs (query=%r)",
+            exc.timeout,
+            query,
+        )
+        return []
+    except (FileNotFoundError, OSError) as exc:
         _log.debug("synapse_client.list_conflicts: subprocess failed: %s", exc)
         return []
     if proc.returncode != 0:
-        _log.debug("synapse_client.list_conflicts: exit=%s stderr=%r",
-                   proc.returncode, proc.stderr[:200])
+        _log.warning(
+            "synapse_client.list_conflicts: exit=%s (query=%r) stderr=%r",
+            proc.returncode,
+            query,
+            proc.stderr[:200],
+        )
         return []
     try:
         payload = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        _log.debug("synapse_client.list_conflicts: bad JSON: %s", exc)
+        _log.warning("synapse_client.list_conflicts: bad JSON: %s", exc)
         return []
     rows = payload.get("conflicts") if isinstance(payload, dict) else None
     if not isinstance(rows, list):

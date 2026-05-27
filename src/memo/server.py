@@ -252,6 +252,39 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         )
 
     @server.tool()
+    def memory_chat_ask(
+        question: str,
+        k: int = 7,
+        type: str | None = None,
+        history: list[dict[str, Any]] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Chat-shaped RAG over the memory archive.
+
+        This is the structured chat delivery contract for agents that
+        need status, citations, and retrieval metadata in addition to the
+        prose answer. It returns the `memo.chat_ask.v2` envelope:
+        `{schema, question, answer, sources, citations, retrieval_trace,
+        synthesis_status, synthesis_source, synthesis_error, total_ms,
+        history_turns_used, context_keys}`.
+
+        Args:
+            question: Natural-language question.
+            k: How many memorias to feed the LLM as context. Default 7.
+            type: Optional filter to one record type before retrieval.
+            history: Optional chat history as `{role, text}` or
+                `{role, content}` turns. Only user/assistant turns are used.
+            context: Optional caller context included in retrieval question.
+        """
+        return memory.chat_ask(
+            question,
+            k=k,
+            type_=type,
+            history=history,
+            context=context,
+        )
+
+    @server.tool()
     def memory_list(
         limit: int = 20, type: str | None = None,
     ) -> list[dict[str, Any]]:

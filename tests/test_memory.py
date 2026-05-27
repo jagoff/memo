@@ -172,6 +172,59 @@ def test_update_reembeds_when_content_changes(mem_with_stub: Memory, monkeypatch
     assert "cuerpo nuevo y diferente" in on_disk
 
 
+def test_contextual_retrieval_prepends_context_only_when_enabled(
+    mem_with_stub: Memory,
+    monkeypatch,
+):
+    seen_inputs: list[str] = []
+
+    def _spy_embed(inputs):
+        seen_inputs.extend(inputs)
+        out = []
+        for _s in inputs:
+            out.append([1.0, 0.0, 0.0, 0.0])
+        return out
+
+    monkeypatch.setenv("MEMO_CONTEXTUAL_RETRIEVAL", "1")
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _spy_embed)
+    monkeypatch.setattr(
+        mem_with_stub,
+        "_generate_contextual_summary",
+        lambda _prompt: "Esta memoria trata sobre el runbook de ingestion.",
+    )
+    body = "Runbook de ingestion.\n\n" + ("detalle operacional " * 40)
+
+    rec = mem_with_stub.save(content=body, title="Ingestion Runbook")
+
+    assert rec.body == body
+    assert seen_inputs
+    assert seen_inputs[0].startswith("[contexto: Esta memoria trata")
+    assert "Ingestion Runbook" in seen_inputs[0]
+    assert "Runbook de ingestion" in seen_inputs[0]
+
+
+def test_contextual_retrieval_cache_reuses_generated_summary(
+    mem_with_stub: Memory,
+    monkeypatch,
+):
+    calls: list[str] = []
+
+    def _generate(prompt: str) -> str:
+        calls.append(prompt)
+        return "Contexto cacheado para búsqueda semántica."
+
+    monkeypatch.setenv("MEMO_CONTEXTUAL_RETRIEVAL", "1")
+    monkeypatch.setattr(mem_with_stub, "_generate_contextual_summary", _generate)
+    body = "Nota larga.\n\n" + ("contenido importante " * 40)
+
+    first = mem_with_stub._compose_for_embed("Nota", body)
+    second = mem_with_stub._compose_for_embed("Nota", body)
+
+    assert first == second
+    assert first.startswith("[contexto: Contexto cacheado")
+    assert len(calls) == 1
+
+
 def test_update_missing_returns_none(mem_with_stub: Memory):
     assert mem_with_stub.update("nope", title="x") is None
 
@@ -544,6 +597,92 @@ def test_ask_synthesises_with_citations(mem_with_stub: Memory, monkeypatch):
     assert f"[{rec_a.id[:8]}]" in user_msg or f"[{rec_b.id[:8]}]" in user_msg
     # 7B chat tier (not the helper 3B used for auto_derive).
     assert "7B" in captured["model"] or "Qwen2.5" in captured["model"]
+
+
+def test_ask_dedups_repo_hits_against_vault_and_intra_repo(
+    mem_with_stub: Memory, monkeypatch,
+):
+    """_build_ask_context must drop repo hits whose path collides with a
+    vault memoria, AND collapse multiple chunks of the same repo file
+    into one source. Regression: chat previously showed N copies of the
+    same file across vault + repo + repeated chunks."""
+    from memo.repo_index import RepoSearchHit
+
+    rec = mem_with_stub.save(
+        content="Sos la sal de este mar",
+        title="01-Projects/Album-Muros-Fractales/Letra - Sal.md",
+    )
+    vault_path = rec.path
+
+    def _fake_repo_hit(line_start: int) -> RepoSearchHit:
+        return RepoSearchHit(
+            id=f"chunk-{line_start}",
+            repo_id="r1",
+            repo_name="obsidian-personal",
+            url="https://example.com/r.git",
+            ref="HEAD",
+            commit_sha="abcdef12",
+            file_id="f1",
+            path=vault_path,
+            language="markdown",
+            line_start=line_start,
+            line_end=line_start + 10,
+            text="Sos la sal de este mar",
+            score=0.5,
+            match_type="hybrid",
+        )
+
+    monkeypatch.setattr(
+        Memory, "repo_search",
+        lambda self, q, **kw: [_fake_repo_hit(1), _fake_repo_hit(20), _fake_repo_hit(40)],
+    )
+    monkeypatch.setattr(
+        type(mem_with_stub.store), "list_repo_sources",
+        lambda self, **kw: [{"name": "obsidian-personal"}],
+    )
+
+    _, sources, _, _ = mem_with_stub._build_ask_context(
+        "sal de este mar", k=5, type_=None,
+        snippet_chars=200, include_repos=True,
+    )
+
+    # 1 vault memoria + 0 repo (all collide with vault title/basename) → 1 source.
+    assert [s["source"] for s in sources] == ["memory"]
+    assert sources[0]["title"] == rec.title
+
+
+def test_ask_dedups_repo_chunks_when_no_vault_overlap(
+    mem_with_stub: Memory, monkeypatch,
+):
+    """If repo file has no matching vault memoria, keep the first chunk
+    only (intra-repo dedup by (repo_name, path))."""
+    from memo.repo_index import RepoSearchHit
+
+    def _hit(line_start: int) -> RepoSearchHit:
+        return RepoSearchHit(
+            id=f"c-{line_start}", repo_id="r2", repo_name="code-repo",
+            url="x", ref="HEAD", commit_sha="deadbeef", file_id="f",
+            path="src/foo.py", language="python",
+            line_start=line_start, line_end=line_start + 5,
+            text="def foo(): pass", score=0.8, match_type="hybrid",
+        )
+
+    monkeypatch.setattr(
+        Memory, "repo_search",
+        lambda self, q, **kw: [_hit(1), _hit(50), _hit(100)],
+    )
+    monkeypatch.setattr(
+        type(mem_with_stub.store), "list_repo_sources",
+        lambda self, **kw: [{"name": "code-repo"}],
+    )
+
+    _, sources, _, _ = mem_with_stub._build_ask_context(
+        "foo", k=5, type_=None, snippet_chars=200, include_repos=True,
+    )
+
+    repo_sources = [s for s in sources if s["source"] == "repo"]
+    assert len(repo_sources) == 1
+    assert repo_sources[0]["line_start"] == 1
 
 
 def test_ask_returns_no_answer_when_no_hits(mem_with_stub: Memory):

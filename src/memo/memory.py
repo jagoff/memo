@@ -65,6 +65,7 @@ from memo.collaborative import CollaborativeFilter, CollaborativeGraph, Collabor
 from memo.config import Config
 from memo.consolidation import AdvancedConsolidator
 from memo.contextual import ContextStore, ContextualRecall
+from memo.contextual_retrieval import get_or_generate_context, prepend_context
 from memo.contradict import ContradictionScanner, ContradictionStore
 from memo.crossref import CrossReferenceIndex, LinkSuggester
 from memo.embedder import MLXEmbedder, assert_valid_embedding
@@ -137,20 +138,47 @@ _ASK_SYSTEM_PROMPT = """You answer questions over the user's personal memory arc
 
 You receive a list of relevant memory snippets and repo snippets (each with a
 label like `[id-prefix]` or `[repo:name:path:start-end@commit]`) and a question.
-Synthesise a concise answer in the same language as the question (Spanish
-rioplatense if the question is in Spanish). Rules:
+Respond in the same language as the question (Spanish rioplatense if the
+question is in Spanish). Rules:
 
-- Cite sources INLINE with `[id-prefix]` after each claim, e.g.
+- VERBATIM-FIRST. When the user's question matches a phrase, lyric, quote,
+  list, command, URL, or any piece of literal content present in the
+  snippets, reproduce that content EXACTLY as it appears — character for
+  character, line by line, preserving formatting and line breaks. Do not
+  paraphrase, summarise, or interpret literal content.
+- When the matched content is a short phrase that comes from a larger
+  block (a song lyric, a poem, a list, a code block, a step-by-step
+  procedure), reproduce the ENTIRE surrounding block from the snippet,
+  not just the matching line. The user's question is a probe into the
+  document — they want the whole passage.
+- If the matched snippet is a short note (under ~2000 characters total),
+  reproduce its FULL body verbatim. Don't pick fragments — give them the
+  whole thing. The user already paid the search cost; quoting the entire
+  short snippet is the helpful default.
+- For lyrics/poems/lists/procedures specifically: NEVER quote fewer
+  than 8 lines if the snippet has them. Prefer over-quoting to under-
+  quoting.
+- If the question is open-ended ("what did we decide", "why X"), then
+  synthesise concisely (2-5 sentences) instead of quoting.
+- Cite sources INLINE with `[id-prefix]` after each claim or block, e.g.
   "Decidí migrar a MLX [d61fe730] para reducir dependencias [4e0b2e6]".
   For repo evidence, cite the full repo label you received.
 - Use only information from the provided snippets. If the answer is not
   present, say "no encuentro la respuesta en las memorias guardadas"
   and stop.
-- Stay terse. 2-5 sentences unless the question explicitly asks for a
-  long form. Do not pad with disclaimers, restatements, or apologies.
-- No bulleting unless the question asks for a list; prose preferred.
+- Do not pad with disclaimers, restatements, or apologies.
+- No bulleting unless the source itself has bullets or the question asks
+  for a list; otherwise prose preferred.
 - Do not invent IDs. Only cite `[id-prefix]` values that appear in the
-  snippets you were given."""
+  snippets you were given.
+
+CRITICAL OVERRIDE: If any snippet in the context is a lyric, poem, list,
+procedure, or any block-structured short note (under ~2000 chars) AND
+the user's question references content inside that block, your response
+MUST be the FULL snippet body reproduced verbatim, line by line, no
+omissions. Do not select "the best matching lines" — output every line
+of the snippet. The user can read selectively; you do not pre-filter for
+them. End with the citation IDs."""
 
 
 _DERIVE_SYSTEM_PROMPT = """You classify a memory note into a structured JSON object.
@@ -203,6 +231,41 @@ def _extract_provenance(extra: dict[str, Any] | None) -> dict[str, Any]:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _norm_dedup_path(path: str | None) -> str:
+    """Normalise a vault/repo path for cross-source dedup in ask context.
+
+    Strips leading ./ and / segments, lowercases, and removes any
+    `#chunk-N` suffix so multi-chunk memorias deduplicate back to their
+    parent path. Conservative: same string after normalisation means
+    same file for the purposes of source merging.
+    """
+    if not path:
+        return ""
+    normalised = path.strip().lstrip("./").lstrip("/").lower()
+    chunk_idx = normalised.find("#chunk-")
+    if chunk_idx != -1:
+        normalised = normalised[:chunk_idx]
+    return normalised
+
+
+def _vault_dedup_keys(rec: "MemoryRecord") -> set[str]:
+    """Signals used to detect that a repo hit covers the same file as a
+    vault memoria. Vault ingestion may slugify the on-disk path, so we
+    cross-reference title, `extra.abs_path`, and basename.
+    """
+    keys: set[str] = set()
+    for raw in (rec.path, rec.title, (rec.extra or {}).get("abs_path")):
+        norm = _norm_dedup_path(raw)
+        if norm:
+            keys.add(norm)
+            # Also key by basename for cases where one side carries the
+            # full path and the other only the filename.
+            base = norm.rsplit("/", 1)[-1]
+            if base:
+                keys.add(base)
+    return keys
 
 
 def _stable_content_hash(value: Any) -> str:
@@ -348,11 +411,31 @@ class Memory:
             self._chat = MLXChat()
         return self._chat
 
+    def _generate_contextual_summary(self, prompt: str) -> str:
+        """Generate the short indexing-only context for contextual retrieval."""
+        out = self._ensure_chat().chat(
+            model=self.cfg.helper_model,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.0, "max_tokens": 96},
+        )
+        return str((out.get("message") or {}).get("content") or "")
+
+    def _compose_for_embed(self, title: str, body: str) -> str:
+        base = _compose_for_embed(title, body)
+        context = get_or_generate_context(
+            title=title,
+            body=body,
+            state_dir=self.cfg.state_dir,
+            generate=self._generate_contextual_summary,
+        )
+        return prepend_context(base, context)
+
     @property
     def temporal(self) -> TemporalAnalyzer:
         """Lazy accessor for TemporalAnalyzer."""
         if self._temporal is None:
-            self._temporal = TemporalAnalyzer(self, self._chat)
+            chat = self._ensure_chat()
+            self._temporal = TemporalAnalyzer(self, chat)
         return self._temporal
 
     @property
@@ -364,7 +447,12 @@ class Memory:
     def contradict_store(self) -> ContradictionStore:
         """Lazy accessor for the persistent contradictions sidecar."""
         if self._contradict_store is None:
-            self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
+            try:
+                self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
+            except Exception as exc:
+                _log.warning("contradict_store init failed: %s", exc)
+                # Return a fresh instance that will fail gracefully on use
+                self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
         return self._contradict_store
 
     @property
@@ -733,7 +821,7 @@ class Memory:
         # than the body's clinical paragraphs alone). Prepending also
         # protects the title from head-truncation when the body is
         # long — see embedder.py for the truncation rationale.
-        embedding = self.embedder.embed([_compose_for_embed(title, content)])[0]
+        embedding = self.embedder.embed([self._compose_for_embed(title, content)])[0]
         assert_valid_embedding(
             embedding, self.cfg.embedder_dims, context=f"save id={record_id[:8]}",
         )
@@ -963,7 +1051,13 @@ class Memory:
         try:
             reranked = reranker.rerank(query, hits, top_n=None)
         except Exception as exc:
-            _log.warning("reranker failed, falling back to RRF order: %s", exc)
+            _log.error(
+                "reranker failed (model=%s, revision=%s): %s",
+                self.cfg.reranker_model,
+                self.cfg.reranker_revision,
+                exc,
+            )
+            _log.info("falling back to RRF order (no cross-encoder reranking)")
             return hits[:top_n]
 
         alpha = self.cfg.rerank_fusion_alpha
@@ -1063,7 +1157,7 @@ class Memory:
              "sources":[...], "citations":[...]}              once
           - {"event":"token",   "delta":"..."}                 N times
           - {"event":"done",    ...full envelope...}           once
-          - on synthesis error: a single `done` with
+          - on synthesis error: final `done` has
              synthesis_status="error", synthesis_error=<exc>,
              answer=<partial accumulator>
         """
@@ -1244,14 +1338,17 @@ class Memory:
     def _build_ask_context(
         self, question: str, *, k: int, type_: str | None,
         snippet_chars: int, include_repos: bool,
-    ) -> tuple[str, list[dict[str, Any]], str]:
+    ) -> tuple[str, list[dict[str, Any]], str, list["MemoryRecord"]]:
         """Retrieval half of ask()/ask_stream().
 
-        Returns (normalized_question, sources, user_msg). When no hits
-        found, returns (question, [], "") — caller must short-circuit.
+        Returns (normalized_question, sources, user_msg, hits). When no
+        hits found, returns (question, [], "", []) — caller must
+        short-circuit. `hits` is the raw `MemoryRecord` list (with `body`
+        populated) so callers can run cheap heuristics like verbatim
+        short-circuit without re-running search.
         """
         if not question or not question.strip():
-            return question, [], ""
+            return question, [], "", []
         _MAX_QUESTION_CHARS = 4000
         if len(question) > _MAX_QUESTION_CHARS:
             _log.warning(
@@ -1259,16 +1356,17 @@ class Memory:
                 len(question), _MAX_QUESTION_CHARS,
             )
             question = question[:_MAX_QUESTION_CHARS]
-        hits = self.search(question, limit=k, type_=type_, mode="hybrid")
+        hits: list[MemoryRecord] = self.search(question, limit=k, type_=type_, mode="hybrid")
         repo_hits = []
         if include_repos and self.store.list_repo_sources(limit=1):
             with contextlib.suppress(Exception):
                 repo_hits = self.repo_search(question, limit=k, mode="hybrid")
         if not hits and not repo_hits:
-            return question, [], ""
+            return question, [], "", []
 
         snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
+        seen_paths: set[str] = set()
         for h in hits:
             id_short = h.id[:8]
             snippet = (h.body or "")[:snippet_chars]
@@ -1288,7 +1386,19 @@ class Memory:
                 "score": h.score,
                 "snippet": snippet,
             })
+            seen_paths.update(_vault_dedup_keys(h))
+        seen_repo_keys: set[tuple[str, str]] = set()
         for h in repo_hits:
+            norm = _norm_dedup_path(h.path)
+            base = norm.rsplit("/", 1)[-1] if norm else ""
+            # Skip if same file already surfaced as a vault memoria.
+            if norm and (norm in seen_paths or base in seen_paths):
+                continue
+            # Dedup intra-repo: keep only the first (highest-score) chunk per file.
+            repo_key = (h.repo_name, norm)
+            if repo_key in seen_repo_keys:
+                continue
+            seen_repo_keys.add(repo_key)
             label = h.locator
             snippet = (h.text or "")[:snippet_chars]
             if len(h.text or "") > snippet_chars:
@@ -1318,11 +1428,42 @@ class Memory:
             f"Contexto relevante ({len(hits)} memorias, {len(repo_hits)} snippets de repo):\n\n"
             + "\n---\n".join(snippet_lines)
         )
-        return question, sources, user_msg
+        return question, sources, user_msg, hits
+
+    def _verbatim_short_circuit(
+        self, question: str, hits: list["MemoryRecord"],
+    ) -> str | None:
+        """If the query is a literal phrase lookup (short, no `?`) and the
+        text appears inside the top hit's body, return that body verbatim
+        instead of calling the LLM.
+
+        The LLM tends to "helpfully" condense — for `letra`, `comando`,
+        `snippet`, `CBU`, `URL` style lookups the user wants the WHOLE
+        note dumped, not a 2-sentence summary. Returning early dodges
+        token spend and avoids the model second-guessing the user.
+        """
+        if not hits:
+            return None
+        q = (question or "").strip()
+        if not q:
+            return None
+        # Question form → defer to synthesis.
+        if "?" in q or "¿" in q:
+            return None
+        tokens = [t for t in q.split() if t]
+        if len(tokens) > 12:
+            return None
+        top = hits[0]
+        body = (top.body or "").strip()
+        if not body or len(body) <= len(q):
+            return None
+        if q.lower() not in body.lower():
+            return None
+        return f"{body}\n\n[{top.id[:8]}]"
 
     def ask(
         self, question: str, *, k: int = 5, type_: str | None = None,
-        snippet_chars: int = 800, include_repos: bool = True,
+        snippet_chars: int = 2000, include_repos: bool = True,
     ) -> dict[str, Any]:
         """Synthesised Q&A over the memory archive (RAG).
 
@@ -1344,7 +1485,7 @@ class Memory:
         """
         if not question or not question.strip():
             return {"question": question, "answer": "", "sources": []}
-        norm_question, sources, user_msg = self._build_ask_context(
+        norm_question, sources, user_msg, hits = self._build_ask_context(
             question, k=k, type_=type_,
             snippet_chars=snippet_chars, include_repos=include_repos,
         )
@@ -1353,6 +1494,17 @@ class Memory:
                 "question": norm_question,
                 "answer": "no encuentro la respuesta en las memorias guardadas",
                 "sources": [],
+            }
+
+        # Verbatim short-circuit: literal phrase lookups bypass the LLM
+        # and return the matched note body directly. Avoids the model
+        # over-summarising when the user clearly wants the raw content.
+        verbatim = self._verbatim_short_circuit(question, hits)
+        if verbatim is not None:
+            return {
+                "question": norm_question,
+                "answer": verbatim,
+                "sources": sources,
             }
 
         # Lazy-construct the chat client (same instance used by auto_derive).
@@ -1381,7 +1533,7 @@ class Memory:
 
     def ask_stream(
         self, question: str, *, k: int = 5, type_: str | None = None,
-        snippet_chars: int = 800, include_repos: bool = True,
+        snippet_chars: int = 2000, include_repos: bool = True,
     ) -> Iterator[dict[str, Any]]:
         """Streaming variant of `ask()` — yields token-level events.
 
@@ -1397,7 +1549,7 @@ class Memory:
         if not question or not question.strip():
             yield {"event": "done", "answer": "", "sources": []}
             return
-        _, sources, user_msg = self._build_ask_context(
+        _, sources, user_msg, hits = self._build_ask_context(
             question, k=k, type_=type_,
             snippet_chars=snippet_chars, include_repos=include_repos,
         )
@@ -1410,6 +1562,15 @@ class Memory:
             return
 
         yield {"event": "sources", "sources": sources}
+
+        # Verbatim short-circuit (literal-phrase queries): emit body as a
+        # single token-style event so consumers that show progressive
+        # output still get something to render, then a terminal `done`.
+        verbatim = self._verbatim_short_circuit(question, hits)
+        if verbatim is not None:
+            yield {"event": "token", "delta": verbatim}
+            yield {"event": "done", "answer": verbatim, "sources": sources}
+            return
 
         if self._chat is None:
             self._chat = MLXChat()
@@ -1695,7 +1856,7 @@ class Memory:
         # embed input now (see `_compose_for_embed`). Pure retag/type
         # changes still skip the embedder.
         if body_changed or title_changed:
-            embedding = self.embedder.embed([_compose_for_embed(new_title, new_body)])[0]
+            embedding = self.embedder.embed([self._compose_for_embed(new_title, new_body)])[0]
             assert_valid_embedding(embedding, self.cfg.embedder_dims, context=f"update id={id_[:8]}")
             self.store.upsert(
                 id_=id_, path=r["path"], title=new_title, type_=new_type,
@@ -1944,7 +2105,7 @@ class Memory:
                         rel, stale["id"][:8], md_id[:8],
                     )
                     self.store.delete(stale["id"])
-                emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
+                emb = self.embedder.embed([self._compose_for_embed(title, body)])[0]
                 assert_valid_embedding(emb, self.cfg.embedder_dims, context=f"reindex add {md_id[:8]}")
                 self.store.upsert(
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
@@ -1959,7 +2120,7 @@ class Memory:
                 if isinstance(extra, dict):
                     extra = dict(extra)
                     extra.pop("_memo_embed_pending", None)
-                emb = self.embedder.embed([_compose_for_embed(title, body)])[0]
+                emb = self.embedder.embed([self._compose_for_embed(title, body)])[0]
                 assert_valid_embedding(emb, self.cfg.embedder_dims, context=f"reindex update {md_id[:8]}")
                 self.store.upsert(
                     id_=md_id, path=rel, title=title, type_=type_, tags=tags,
@@ -2352,15 +2513,31 @@ class Memory:
         return new_path
 
     def _read_body(self, rel_path: str) -> str:
+        # Fast path: curated memorias live on disk under memory_dir / vault_path.
         abs_path = self._resolve_existing(rel_path)
-        if not abs_path.is_file():
-            return ""
+        if abs_path.is_file():
+            try:
+                text = abs_path.read_text(encoding="utf-8")
+                post = frontmatter.loads(text)
+                return post.content
+            except Exception:
+                pass
+        # Fallback: vault-ingest rows (e.g. `notes/01-Projects/Foo.md`,
+        # `work/.../bar.md#chunk-3`) don't resolve to disk via `memory_dir`
+        # because the label-prefixed path lives outside `data_dir`. The
+        # body was written into the FTS table at ingest time — read it
+        # from there so retrieval surfaces real snippets instead of "".
         try:
-            text = abs_path.read_text(encoding="utf-8")
-            post = frontmatter.loads(text)
-            return post.content
+            row = self.store._conn.execute(
+                "SELECT body FROM fts WHERE id = "
+                "(SELECT id FROM meta WHERE path = ?)",
+                (rel_path,),
+            ).fetchone()
+            if row and row["body"]:
+                return str(row["body"])
         except Exception:
-            return ""
+            pass
+        return ""
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
