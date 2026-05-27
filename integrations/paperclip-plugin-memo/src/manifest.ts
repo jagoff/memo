@@ -145,18 +145,29 @@ const manifest: PaperclipPluginManifestV1 = {
     },
     {
       name: "memo_ask",
-      displayName: "Memo: RAG over memories",
+      displayName: "Memo: chat RAG over memories",
       description:
-        "RAG over the memory archive — synthesises a prose answer with inline `[id]` citations using the local 7B chat model.",
+        "Chat-shaped RAG over the memory archive. Returns the `memo.chat_ask.v2` envelope with answer, citations, retrieval trace, and synthesis status.",
       parametersSchema: {
         type: "object",
         properties: {
           question: { type: "string" },
           k: {
             type: "number",
-            description: "Top-K memorias to feed the LLM. Default 5.",
+            description: "Top-K memorias to feed the LLM. Default 7.",
           },
           type: { type: "string", description: "Restrict to one record type." },
+          history: {
+            type: "array",
+            items: { type: "object" },
+            description:
+              "Optional chat history turns as {role,text} or {role,content}.",
+          },
+          context: {
+            type: "object",
+            description:
+              "Optional caller context included in the retrieval question.",
+          },
         },
         required: ["question"],
       },

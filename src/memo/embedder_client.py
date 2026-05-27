@@ -144,6 +144,10 @@ def embed_query(text: str, *, state_dir: Path | None = None) -> list[float]:
             "embed_query: daemon unreachable and "
             "MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1 disables in-process fallback"
         )
+    _log.warning(
+        "embedder_client: daemon unreachable, falling back to in-process "
+        "(first call will be slow ~2s, cold MLX load)"
+    )
     return _inproc().embed_query(text)
 
 
@@ -180,6 +184,11 @@ def embed(
             "embed: daemon unreachable and "
             "MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1 disables in-process fallback"
         )
+    _log.warning(
+        "embedder_client: daemon unreachable, falling back to in-process "
+        "(batch of %d items, first call will be slow ~2s, cold MLX load)",
+        len(items),
+    )
     return _inproc().embed(items)
 
 

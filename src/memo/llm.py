@@ -29,12 +29,14 @@ monkeypatch `MLXChat.chat` directly to skip the load.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterator
 from typing import Any
 
+_log = logging.getLogger(__name__)
 _MAX_LOADED_MODELS = 2
 
 
@@ -79,6 +81,12 @@ class MLXChat:
             while len(self._loaded) >= _MAX_LOADED_MODELS:
                 evicted_key, _ = self._loaded.popitem(last=False)
                 self._last_use.pop(evicted_key, None)
+                _log.debug(
+                    "LLM cache evicted: %s (loading %s, now have %d models)",
+                    evicted_key,
+                    model,
+                    len(self._loaded),
+                )
                 try:
                     import mlx.core as mx
                     mx.clear_cache()

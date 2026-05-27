@@ -48,11 +48,14 @@ the lazy `load()` is guarded by a single lock.
 
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from memo.memory import MemoryRecord
@@ -130,6 +133,12 @@ class MLXReranker:
 
             t0 = time.time()
             load_path = self._resolve_model_path()
+            if self.revision:
+                _log.info(
+                    "Loading reranker with pinned revision: %s (path=%s)",
+                    self.revision,
+                    load_path,
+                )
             loaded = load(load_path)
             self._model = loaded[0]
             self._tokenizer = loaded[1]
@@ -142,6 +151,7 @@ class MLXReranker:
                     "Qwen3-Reranker variant."
                 )
             self._loaded_at = time.time() - t0
+            _log.debug("Reranker loaded in %.2fs", self._loaded_at)
 
     def _format(self, query: str, doc: str) -> str:
         return (

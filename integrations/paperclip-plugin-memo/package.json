@@ -24,11 +24,6 @@
   ],
   "author": "Plugin Author",
   "license": "MIT",
-  "pnpm": {
-    "overrides": {
-      "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"
-    }
-  },
   "devDependencies": {
     "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz",
     "@paperclipai/plugin-sdk": "file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz",

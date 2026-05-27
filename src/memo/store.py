@@ -46,8 +46,10 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +136,19 @@ CREATE TABLE IF NOT EXISTS repo_embedding_cache (
     created_at  TEXT NOT NULL,
     PRIMARY KEY(model, dims, input_hash)
 );
+
+CREATE TABLE IF NOT EXISTS source_feedback (
+    id          TEXT PRIMARY KEY,
+    source_id   TEXT NOT NULL,
+    query_text  TEXT NOT NULL,
+    rating      INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    extra_json  TEXT,
+    UNIQUE(source_id, query_text, rating)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_feedback_source ON source_feedback(source_id);
+CREATE INDEX IF NOT EXISTS idx_source_feedback_rating ON source_feedback(rating);
 """
 
 
@@ -150,6 +165,8 @@ _REQUIRED_SCHEMA_OBJECTS = frozenset(
         "repo_chunk_fts",
         "repo_line_fts",
         "repo_embedding_cache",
+        "source_feedback",
+        "source_feedback_vec",
     }
 )
 
@@ -272,6 +289,14 @@ class VecStore:
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS repo_vec USING vec0("
                 f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
             )
+            # Per-source feedback uses query embeddings to detect "similar"
+            # future queries. `feedback_id` mirrors `source_feedback.id` so
+            # joins are cheap; `distance_metric=cosine` lets the rank hook
+            # threshold on absolute cosine similarity (1 - distance).
+            self._conn.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS source_feedback_vec USING vec0("
+                f"feedback_id TEXT PRIMARY KEY, query_emb FLOAT[{self.dims}] distance_metric=cosine)"
+            )
             self._validate_vec_dims()
             # FTS5 over title + tags + body for the BM25 side of hybrid
             # search. `unindexed=id` keeps the row id queryable but not
@@ -322,20 +347,18 @@ class VecStore:
         actual_dims = self._vec_table_dims("vec")
         if actual_dims is not None and actual_dims != self.dims:
             raise RuntimeError(
-                "Existing memvec.db was created with "
-                f"embedding FLOAT[{actual_dims}], but current config expects "
-                f"FLOAT[{self.dims}]. Rebuild the vector index with "
-                f"`rm {self.db_path} && memo reindex`, or launch memo with "
-                "matching MEMO_MODEL_PROFILE/MEMO_EMBEDDER_DIMS settings."
+                f"Embedding dimension mismatch: store has {actual_dims}D vectors "
+                f"but config expects {self.dims}D.\n"
+                f"Fix: rm {self.db_path} && memo reindex\n"
+                f"Or check: MEMO_MODEL_PROFILE={self.dims}D or MEMO_EMBEDDER_DIMS={self.dims}"
             )
         repo_actual_dims = self._vec_table_dims("repo_vec")
         if repo_actual_dims is not None and repo_actual_dims != self.dims:
             raise RuntimeError(
-                "Existing memvec.db repo index was created with "
-                f"embedding FLOAT[{repo_actual_dims}], but current config expects "
-                f"FLOAT[{self.dims}]. Rebuild the repo index with "
-                f"`rm {self.db_path} && memo reindex` or delete/re-index repos "
-                "with matching MEMO_MODEL_PROFILE/MEMO_EMBEDDER_DIMS settings."
+                f"Repo embedding dimension mismatch: store has {repo_actual_dims}D vectors "
+                f"but config expects {self.dims}D.\n"
+                f"Fix: rm {self.db_path} && memo reindex\n"
+                f"Or check: MEMO_MODEL_PROFILE={self.dims}D or MEMO_EMBEDDER_DIMS={self.dims}"
             )
 
 
@@ -1329,6 +1352,153 @@ class VecStore:
 
     def count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()[0]
+
+    # -- source-level feedback (👍 / 👎) ------------------------------------
+
+    def record_source_feedback(
+        self,
+        *,
+        source_id: str,
+        query_text: str,
+        query_emb: list[float],
+        rating: int,
+        feedback_id: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> str:
+        """Persist a 👍/👎 vote on `source_id` for `query_text`.
+
+        Idempotent on `(source_id, query_text, rating)` — re-recording the
+        same vote returns the existing feedback id. Changing rating for
+        the same (source, query) replaces the old row (cancel-and-replace
+        so the unique constraint stays clean).
+        """
+        if rating not in (-1, 1):
+            raise ValueError(f"rating must be -1 or 1, got {rating!r}")
+        if len(query_emb) != self.dims:
+            raise ValueError(
+                f"query_emb dim mismatch: got {len(query_emb)}, expected {self.dims}"
+            )
+        now = _utc_now_iso()
+        # Find any existing row for this (source, query) regardless of rating.
+        existing = self._conn.execute(
+            "SELECT id, rating FROM source_feedback "
+            "WHERE source_id = ? AND query_text = ?",
+            (source_id, query_text),
+        ).fetchone()
+        if existing and int(existing["rating"]) == rating:
+            return str(existing["id"])
+        with self._conn:
+            if existing:
+                # Replacing rating — drop old vec + row first.
+                self._conn.execute(
+                    "DELETE FROM source_feedback_vec WHERE feedback_id = ?",
+                    (existing["id"],),
+                )
+                self._conn.execute(
+                    "DELETE FROM source_feedback WHERE id = ?",
+                    (existing["id"],),
+                )
+            fid = feedback_id or _uuid_hex()
+            self._conn.execute(
+                "INSERT INTO source_feedback "
+                "(id, source_id, query_text, rating, created_at, extra_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    fid, source_id, query_text, rating, now,
+                    json.dumps(extra) if extra else None,
+                ),
+            )
+            self._conn.execute(
+                "INSERT INTO source_feedback_vec (feedback_id, query_emb) "
+                "VALUES (?, ?)",
+                (fid, json.dumps(query_emb)),
+            )
+        return fid
+
+    def find_feedback_for_source(
+        self,
+        source_id: str,
+        query_emb: list[float],
+        *,
+        threshold: float = 0.85,
+        limit: int = 16,
+    ) -> list[dict[str, Any]]:
+        """Return prior feedback rows on `source_id` whose query embedding
+        is cosine-similar to `query_emb` at >= `threshold`.
+
+        Returns a list of dicts with keys: id, rating, query_text,
+        similarity (float in [0, 1]), created_at. Empty list if none.
+        """
+        if len(query_emb) != self.dims:
+            return []
+        rows = self._conn.execute(
+            "SELECT fb.id, fb.rating, fb.query_text, fb.created_at, "
+            "       fv.distance "
+            "FROM source_feedback fb "
+            "JOIN source_feedback_vec fv ON fb.id = fv.feedback_id "
+            "WHERE fb.source_id = ? "
+            "  AND fv.query_emb MATCH ? "
+            "  AND k = ? "
+            "ORDER BY fv.distance ASC",
+            (source_id, json.dumps(query_emb), int(limit)),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            dist = float(r["distance"])
+            sim = 1.0 - dist
+            if sim < threshold:
+                continue
+            out.append({
+                "id": r["id"],
+                "rating": int(r["rating"]),
+                "query_text": r["query_text"],
+                "created_at": r["created_at"],
+                "similarity": sim,
+            })
+        return out
+
+    def list_source_feedback(
+        self,
+        *,
+        source_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if source_id:
+            rows = self._conn.execute(
+                "SELECT id, source_id, query_text, rating, created_at, extra_json "
+                "FROM source_feedback WHERE source_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (source_id, int(limit)),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, source_id, query_text, rating, created_at, extra_json "
+                "FROM source_feedback ORDER BY created_at DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def clear_source_feedback(self, source_id: str) -> int:
+        """Drop all feedback rows for a source. Returns count deleted."""
+        ids = [
+            r["id"] for r in self._conn.execute(
+                "SELECT id FROM source_feedback WHERE source_id = ?",
+                (source_id,),
+            ).fetchall()
+        ]
+        if not ids:
+            return 0
+        with self._conn:
+            placeholders = ",".join("?" * len(ids))
+            self._conn.execute(
+                f"DELETE FROM source_feedback_vec WHERE feedback_id IN ({placeholders})",
+                ids,
+            )
+            self._conn.execute(
+                f"DELETE FROM source_feedback WHERE id IN ({placeholders})",
+                ids,
+            )
+        return len(ids)
 
     def close(self) -> None:
         with suppress(Exception):

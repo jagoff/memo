@@ -23,8 +23,8 @@ from typing import Any
 
 from memo.config import Config
 from memo.embedder import MLXEmbedder, assert_valid_embedding
-from memo.obsidian_links import find_image_embeds, resolve_image_path
-from memo.ocr import extract_text_cached, ocr_enabled_via_env
+from memo.ingest_helpers import enrich_with_ocr
+from memo.ocr import ocr_enabled_via_env
 from memo.retrieval_boost import boost_for as _retrieval_boost_for
 from memo.store import VecStore
 
@@ -319,40 +319,16 @@ class RepoCorpus:
                 if (
                     ocr_enabled_via_env()
                     and rel_posix.lower().endswith(".md")
-                    and "![[" in text
                 ):
-                    image_names = find_image_embeds(text)
-                    if image_names:
-                        ocr_blocks: list[str] = []
-                        ocr_hash_inputs: list[bytes] = []
-                        for img_name in image_names:
-                            img_path = resolve_image_path(
-                                img_name, clone_path,
-                                note_dir=path.parent,
-                            )
-                            if img_path is None:
-                                continue
-                            ocr_text = extract_text_cached(
-                                img_path,
-                                cache_dir=self.cfg.state_dir / "ocr_cache",
-                            )
-                            if ocr_text:
-                                ocr_blocks.append(
-                                    f"\n\n<!-- OCR: {img_name} -->\n{ocr_text}\n"
-                                )
-                                try:
-                                    ocr_hash_inputs.append(
-                                        hashlib.sha256(img_path.read_bytes()).digest()
-                                    )
-                                except Exception:
-                                    pass
-                        if ocr_blocks:
-                            text = text + "".join(ocr_blocks)
-                            # Compose sha so image content changes invalidate cache.
-                            h = hashlib.sha256(raw)
-                            for piece in ocr_hash_inputs:
-                                h.update(piece)
-                            sha = h.hexdigest()
+                    enriched, _resolved, img_hashes = enrich_with_ocr(
+                        text, path, clone_path, self.cfg.state_dir,
+                    )
+                    if img_hashes:
+                        text = enriched
+                        h = hashlib.sha256(raw)
+                        for piece in img_hashes:
+                            h.update(piece)
+                        sha = h.hexdigest()
 
                 file_id = _stable_id("repo-file", repo_id, rel_posix)
                 existing = existing_files.get(rel_posix)

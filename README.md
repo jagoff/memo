@@ -431,6 +431,7 @@ A first-party plugin under [`integrations/paperclip-plugin-memo/`](./integration
 | `memory_reindex()` | Re-scan vault, re-embed entries whose `body_hash` diverged. |
 | `memory_delete(id)` | Removes from vec + disk. |
 | `memory_ask(question)` | RAG synthesis; cites memorias by id. |
+| `memory_chat_ask(question, history?, context?)` | Chat-shaped RAG envelope (`memo.chat_ask.v2`) with answer, citations, retrieval trace, and synthesis status. |
 | `memory_stats()` | Counts, paths, active models. |
 | `memory_history(limit?, record_id?)` | Recent save/update/delete events, optionally filtered to one record. |
 | `memory_record_diff(id, limit?)` | Chronological audit trail for one record with field-level diffs (same as `memo historia <id>`). |

@@ -35,8 +35,11 @@ def vision_available() -> bool:
         import Quartz  # noqa: F401
         import Vision  # noqa: F401
         _VISION_OK = True
-    except Exception as exc:  # ImportError or env issue
-        _log.debug("Apple Vision unavailable: %s", exc)
+    except ImportError as exc:
+        _log.debug("Apple Vision not installed: %s", exc)
+        _VISION_OK = False
+    except Exception as exc:
+        _log.warning("Apple Vision import failed: %s", exc)
         _VISION_OK = False
     return _VISION_OK
 
@@ -76,16 +79,16 @@ def extract_text(
         request = Vision.VNRecognizeTextRequest.alloc().init()
         try:
             request.setRecognitionLevel_(1)  # VNRequestTextRecognitionLevelAccurate
-        except Exception:
-            pass
+        except AttributeError:
+            pass  # Method not available in this macOS version
         try:
             request.setUsesLanguageCorrection_(True)
-        except Exception:
-            pass
+        except AttributeError:
+            pass  # Method not available in this macOS version
         try:
             request.setRecognitionLanguages_(list(languages))
-        except Exception:
-            pass
+        except (AttributeError, TypeError):
+            pass  # Method not available or invalid language list
 
         ok, err = handler.performRequests_error_([request], None)
         if not ok:

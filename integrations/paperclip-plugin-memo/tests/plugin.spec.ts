@@ -30,6 +30,18 @@ describe("memo paperclip plugin", () => {
     expect(saved).toHaveProperty("data");
     const savedData = (saved as { data: { raw: string } }).data;
     expect(savedData.raw).toContain("save - --json --title t");
+
+    // memo_ask uses the chat-shaped envelope and forwards optional history/context.
+    const asked = await harness.executeTool("memo_ask", {
+      question: "what changed?",
+      history: [{ role: "user", text: "previous turn" }],
+      context: { packet_status: "ready" },
+    });
+    expect(asked).toHaveProperty("data");
+    const askedData = (asked as { data: { raw: string } }).data;
+    expect(askedData.raw).toContain("chat-ask what changed? --json --k 7");
+    expect(askedData.raw).toContain("--history-json");
+    expect(askedData.raw).toContain("--context-json");
   });
 
   it("rejects empty arguments", async () => {
@@ -47,5 +59,8 @@ describe("memo paperclip plugin", () => {
 
     const g = await harness.executeTool("memo_get", { id: "" });
     expect(g).toEqual({ error: "id is required" });
+
+    const a = await harness.executeTool("memo_ask", { question: "" });
+    expect(a).toEqual({ error: "question is required" });
   });
 });
