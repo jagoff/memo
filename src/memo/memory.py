@@ -696,6 +696,15 @@ class Memory:
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
 
+        # Auto-attach SYNAPSE_TRACE_ID from env when the caller did not
+        # carry an explicit trace_id in `extra`. Lets provenance walks
+        # link memo writes back to the synapse session that spawned the
+        # subprocess, even for direct `memo save` CLI invocations.
+        env_trace = os.environ.get("SYNAPSE_TRACE_ID", "").strip()
+        if env_trace and (extra is None or not extra.get("synapse_trace_id")):
+            extra = dict(extra or {})
+            extra["synapse_trace_id"] = env_trace
+
         # Freeze-write protocol: opt-in pre-write check against synapse.
         # Only fires when (a) the caller asked (kwarg or env), (b) the
         # save carries provenance (otherwise we have no agent context
@@ -877,6 +886,34 @@ class Memory:
                 "synapse_agent_id": prov.get("synapse_agent_id", ""),
             },
             disabled=disabled,
+        )
+        # M2b: also emit to the unified trinity ledger (best-effort,
+        # independent of the memflow receipt path).
+        self._emit_ledger("save", rec, prov, deferred=deferred)
+
+    def _emit_ledger(
+        self,
+        op: str,
+        rec: MemoryRecord,
+        prov: dict[str, Any] | None = None,
+        *,
+        deferred: bool = False,
+    ) -> None:
+        """Fire-and-forget ConsciousnessEvent for the unified ledger (M2)."""
+        from memo.consciousness_ledger import emit_event
+
+        emit_event(
+            op,
+            subject_uri=f"memo://memoria/{rec.id}",
+            trace_id=(prov or {}).get("synapse_trace_id", "") or "",
+            actor=(prov or {}).get("synapse_agent_id", "") or "memo",
+            payload={
+                "id": rec.id,
+                "type": rec.type,
+                "title": rec.title or "",
+                "tags": list(rec.tags or []),
+                "deferred": deferred,
+            },
         )
 
     # -- search -------------------------------------------------------------
@@ -2041,6 +2078,8 @@ class Memory:
                     "delta_keys": ",".join(sorted(delta.keys())),
                 },
             )
+            # M2b: also emit to the unified trinity ledger.
+            self._emit_ledger("update", updated_rec, new_prov)
         return updated_rec
 
     # -- delete -------------------------------------------------------------
@@ -2077,6 +2116,21 @@ class Memory:
                 "delete",
                 text=f"Memo deleted memoria {id_[:8]} ({r['type']}): {r['title']}",
                 meta={
+                    "id": id_,
+                    "type": r["type"],
+                    "title": r["title"],
+                    "path": r["path"],
+                },
+            )
+            # M2b: also emit to the unified trinity ledger.
+            from memo.consciousness_ledger import emit_event
+
+            emit_event(
+                "delete",
+                subject_uri=f"memo://memoria/{id_}",
+                trace_id=(_extract_provenance(r.get("extra") or {}) or {}).get("synapse_trace_id", ""),
+                actor="memo",
+                payload={
                     "id": id_,
                     "type": r["type"],
                     "title": r["title"],
