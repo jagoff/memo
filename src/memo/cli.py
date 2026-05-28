@@ -4518,6 +4518,27 @@ def mine_history(
     console.print(Panel.fit(body, title="✓ mine-history", border_style="green"))
 
 
+def _resolve_ingest_row(store, path_str):
+    """Resolve the (id, existing-row) an ingest path should write to.
+
+    The vault lives on a case-insensitive filesystem (APFS), so the same
+    file can be walked under different directory casing (`notes/Foo.md`
+    vs `Notes/Foo.md`). A fresh sha256(path) id would differ per casing
+    and mint duplicate rows on re-ingest. So first look for an existing
+    row by case-insensitive path and reuse ITS id — the upsert then
+    updates that row in place instead of inserting a duplicate. This
+    needs no id migration: existing rows keep their original id. Only a
+    genuinely new file (no row under any casing) mints a fresh id.
+    """
+    import hashlib
+
+    existing = store.get_by_path_ci(path_str)
+    if existing is not None:
+        return existing["id"], existing
+    id_ = hashlib.sha256(path_str.encode("utf-8")).hexdigest()[:32]
+    return id_, store.get(id_)
+
+
 @cli.command(name="ingest")
 @click.argument("vault_path", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.option("--name", default=None, help="Vault label (default: dirname). Used as path prefix in store.")
@@ -4675,8 +4696,7 @@ def ingest(
                     console.print(f"[red]reject:[/] {exc}")
                 return None
             now = datetime.now(UTC).isoformat()
-            id_ = hashlib.sha256(store_path.encode("utf-8")).hexdigest()[:32]
-            existing = store.get(id_)
+            id_, existing = _resolve_ingest_row(store, store_path)
             body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
             extra = {"source": source, "vault": label, "abs_path": str(abs_path)}
             if extra_meta:
@@ -4698,9 +4718,8 @@ def ingest(
             heading = piece["heading"]
             chunk_body = piece["body"]
             chunk_path = f"{store_path}#chunk-{seq}"
-            id_ = hashlib.sha256(chunk_path.encode("utf-8")).hexdigest()[:32]
+            id_, existing = _resolve_ingest_row(store, chunk_path)
             chunk_body_hash = hashlib.sha256(chunk_body.encode("utf-8")).hexdigest()[:16]
-            existing = store.get(id_)
             if existing and existing["body_hash"] == chunk_body_hash and not force:
                 continue
             chunk_composed = chunk_body[: cfg.max_content_chars]
@@ -4807,8 +4826,7 @@ def ingest(
                     body = enriched
 
                 body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
-                id_ = hashlib.sha256(store_path.encode("utf-8")).hexdigest()[:32]
-                existing = store.get(id_)
+                _, existing = _resolve_ingest_row(store, store_path)
                 if existing and existing["body_hash"] == body_hash and not force:
                     skipped_unchanged += 1
                     continue

@@ -569,6 +569,22 @@ class VecStore:
         ).fetchone()
         return _row_to_dict(row) if row else None
 
+    def get_by_path_ci(self, path: str) -> dict[str, Any] | None:
+        """Like `get_by_path`, but case-insensitive on the path.
+
+        The vault sits on a case-insensitive filesystem, so `notes/Foo.md`
+        and `Notes/Foo.md` are the same file. Ingest uses this to find an
+        existing row regardless of the casing a re-walk produced, so it
+        reuses that row's id instead of minting a duplicate. Returns the
+        oldest match if several casings somehow coexist.
+        """
+        row = self._conn.execute(
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            "FROM meta WHERE path = ? COLLATE NOCASE ORDER BY created LIMIT 1",
+            (path,),
+        ).fetchone()
+        return _row_to_dict(row) if row else None
+
     def list_recent(self, limit: int = 20, type_: str | None = None) -> list[dict[str, Any]]:
         sql = (
             "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
