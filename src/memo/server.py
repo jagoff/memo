@@ -124,6 +124,52 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         return memory.provenance(id)
 
     @server.tool()
+    def memory_get_embedder_profile() -> dict[str, Any]:
+        """Return the authoritative embedder profile for the trinity.
+
+        Memo owns the embedding model + dimensions for the entire
+        memo+memflow+synapse stack (M4). Other backends MUST read this
+        profile at startup and refuse to operate when dims or model_id
+        differ from their own caches — silent dimension mismatch is the
+        single most common cause of "search returns nothing" failures.
+
+        Returns ``consciousness_contracts.EmbedderProfile.to_dict()``
+        when the contracts package is installed, else a memo-native
+        fallback shape with the same field names. Field summary:
+
+            {
+              "schema": "consciousness.embedder_profile.v1",
+              "model_id": "mlx-community/Qwen3-Embedding-...",
+              "dims": 1024,
+              "normalization": "l2",
+              "max_seq_len": null,
+              "quantization": null,
+              "provider": "memo"
+            }
+        """
+        cfg = memory.cfg
+        try:
+            from consciousness_contracts import EmbedderProfile
+
+            profile = EmbedderProfile(
+                model_id=cfg.embedder_model,
+                dims=int(cfg.embedder_dims),
+                normalization="l2",
+                provider="memo",
+            )
+            return profile.to_dict()
+        except ImportError:
+            return {
+                "schema": "consciousness.embedder_profile.v1",
+                "model_id": cfg.embedder_model,
+                "dims": int(cfg.embedder_dims),
+                "normalization": "l2",
+                "max_seq_len": None,
+                "quantization": None,
+                "provider": "memo",
+            }
+
+    @server.tool()
     def memory_unified_briefing(cwd: str | None = None) -> dict[str, Any]:
         """Return a synapse-aware briefing for the current focus.
 
@@ -591,6 +637,11 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     @server.tool()
     def memory_stats() -> dict[str, Any]:
         """Summary stats — total records, recent counts. No body load."""
+        history_errors = 0
+        try:
+            history_errors = int(getattr(memory.history, "error_count", 0))
+        except Exception:
+            pass
         return {
             "total": memory.store.count(),
             "data_dir": str(memory.cfg.data_dir),
@@ -599,6 +650,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             ),
             "db_path": str(memory.cfg.db_path),
             "embedder_model": memory.cfg.embedder_model,
+            "history_errors": history_errors,
         }
 
     # -- temporal reasoning tools ----------------------------------------------

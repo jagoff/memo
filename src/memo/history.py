@@ -67,6 +67,14 @@ class HistoryStore:
         self._conn.row_factory = sqlite3.Row
         with self._conn:
             self._conn.executescript(_SCHEMA_DDL)
+        # Count of swallowed log failures. Surfaced via `error_count` and
+        # `Memory.stats()` so silent audit drops don't disappear from sight.
+        self._error_count = 0
+
+    @property
+    def error_count(self) -> int:
+        """Total log_* failures swallowed since construction."""
+        return self._error_count
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -111,6 +119,7 @@ class HistoryStore:
                     (ts, "save", record_id, title, type_, delta_json),
                 )
         except Exception as exc:
+            self._error_count += 1
             _log.warning("history log_save failed (id=%s): %s", record_id[:8], exc)
 
     def log_update(
@@ -131,6 +140,7 @@ class HistoryStore:
                      json.dumps(payload, default=str, ensure_ascii=False)),
                 )
         except Exception as exc:
+            self._error_count += 1
             _log.warning("history log_update failed (id=%s): %s", record_id[:8], exc)
 
     def log_delete(self, *, ts: str, record_id: str, title: str, type_: str) -> None:
@@ -141,6 +151,7 @@ class HistoryStore:
                     (ts, "delete", record_id, title, type_),
                 )
         except Exception as exc:
+            self._error_count += 1
             _log.warning("history log_delete failed (id=%s): %s", record_id[:8], exc)
 
     def list_recent(
