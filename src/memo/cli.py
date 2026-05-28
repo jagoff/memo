@@ -310,6 +310,27 @@ def _model_cache_report(cfg: Config) -> list[dict[str, Any]]:
     return out
 
 
+def _typed_embedder_profile(cfg: Config) -> dict[str, Any] | None:
+    """Return a ``consciousness_contracts.EmbedderProfile`` dict.
+
+    Memo is the authoritative source of the active vector space across the
+    trinity (M4). Other repos must read this profile and refuse to operate
+    on incompatible dimensions / models. Returns ``None`` when the optional
+    contracts package is not installed (memo functions fine without it).
+    """
+    try:
+        from consciousness_contracts import EmbedderProfile
+    except ImportError:
+        return None
+    profile = EmbedderProfile(
+        model_id=cfg.embedder_model,
+        dims=int(cfg.embedder_dims),
+        normalization="l2",
+        provider="memo",
+    )
+    return profile.to_dict()
+
+
 def _profile_status_report(
     cfg: Config,
     *,
@@ -342,7 +363,7 @@ def _profile_status_report(
         if include_env and os.environ.get(key) not in (None, "")
     }
     status = "dimension_mismatch" if dimension_mismatch else "ok"
-    return {
+    report: dict[str, Any] = {
         "schema": "memo.profile_status.v1",
         "ok": not dimension_mismatch,
         "status": status,
@@ -360,6 +381,10 @@ def _profile_status_report(
         },
         "db": db_dims,
     }
+    typed = _typed_embedder_profile(cfg)
+    if typed is not None:
+        report["typed_profile"] = typed
+    return report
 
 
 def _profile_repair_plan(cfg: Config, *, include_db: bool = True) -> dict[str, Any]:
@@ -471,6 +496,18 @@ def _doctor_report(
         import mlx.core  # noqa: F401
         import mlx_lm  # noqa: F401
 
+    def check_fts5() -> None:
+        # FTS5 is the BM25 backbone. If sqlite was built without it, hybrid
+        # search degrades silently to vec-only. Probe with a throwaway table.
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")
+            conn.execute("DROP TABLE probe")
+        finally:
+            conn.close()
+
     runtime = _runtime_install_report()
     data_dir = {"path": str(cfg.data_dir), "ok": cfg.data_dir.is_dir()}
     vault_path = {
@@ -480,8 +517,10 @@ def _doctor_report(
     }
     imports = [
         _json_import_check("sqlite_vec", check_sqlite_vec),
+        _json_import_check("sqlite_fts5", check_fts5),
         _json_import_check("mlx", check_mlx),
     ]
+    daemon = _recall_daemon_health(cfg)
     db_report = _db_health_report(cfg) if check_db else []
     gc_report: dict[str, Any] | None = None
     if do_gc:
@@ -505,6 +544,56 @@ def _doctor_report(
         "models": _model_cache_report(cfg),
         "db": db_report,
         "gc": gc_report,
+        "recall_daemon": daemon,
+    }
+
+
+def _recall_daemon_health(cfg: Config) -> dict[str, Any]:
+    """Probe the recall daemon: PID alive + socket responding to ping.
+
+    Never raises. Returns a dict the doctor surfaces under `recall_daemon`.
+    """
+    from memo.recall_server import (
+        _is_pid_alive,
+        _pid_file,
+        _read_pid,
+        _socket_path,
+    )
+
+    state_dir = cfg.state_dir
+    sock = _socket_path(state_dir)
+    pid_path = _pid_file(state_dir)
+    pid = _read_pid(state_dir)
+    sock_exists = sock.exists()
+
+    if pid is None and not sock_exists:
+        return {
+            "running": False, "pid": None, "socket": str(sock),
+            "pid_file": str(pid_path), "socket_exists": False,
+            "pid_alive": False, "ping_ok": False, "note": "not started",
+            "error": "",
+        }
+
+    alive = pid is not None and _is_pid_alive(pid)
+    ping_ok = False
+    ping_err = ""
+    if sock_exists:
+        try:
+            from memo import embedder_client
+
+            resp = embedder_client.ping(state_dir=state_dir)
+            ping_ok = isinstance(resp, dict) and resp.get("ok") is not False
+        except Exception as exc:
+            ping_err = f"{type(exc).__name__}: {exc}"
+
+    return {
+        "running": bool(alive and ping_ok),
+        "pid": pid,
+        "pid_alive": alive,
+        "socket": str(sock),
+        "socket_exists": sock_exists,
+        "ping_ok": ping_ok,
+        "error": ping_err,
     }
 
 
@@ -2618,6 +2707,11 @@ def stats() -> None:
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
+    history_errors = 0
+    try:
+        history_errors = int(getattr(mem.history, "error_count", 0))
+    except Exception:
+        pass
     info: dict[str, Any] = {
         "total": mem.store.count(),
         "data_dir": str(mem.cfg.data_dir),
@@ -2626,6 +2720,7 @@ def stats() -> None:
         "model_profile": mem.cfg.model_profile,
         "embedder_model": mem.cfg.embedder_model,
         "llm_model": mem.cfg.llm_model,
+        "history_errors": history_errors,
     }
     for k, v in info.items():
         console.print(f"[dim]{k:14s}[/dim] {v}")
@@ -2758,6 +2853,24 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
         console.print(f"[red]✗[/red] sqlite-vec: {exc}")
         ok = False
 
+    # 2b. FTS5 (BM25 backbone — hybrid search silently downgrades without it)
+    try:
+        import sqlite3 as _sqlite3_fts
+
+        _c = _sqlite3_fts.connect(":memory:")
+        try:
+            _c.execute("CREATE VIRTUAL TABLE _fts_probe USING fts5(x)")
+            _c.execute("DROP TABLE _fts_probe")
+        finally:
+            _c.close()
+        console.print("[green]✓[/green] sqlite FTS5 available")
+    except Exception as exc:
+        console.print(
+            f"[red]✗[/red] sqlite FTS5 unavailable: {exc}  "
+            "[dim](BM25/hybrid search will degrade to vec-only)[/dim]"
+        )
+        ok = False
+
     # 3. MLX importable
     try:
         import mlx.core  # noqa: F401
@@ -2781,6 +2894,30 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
                 f"[yellow]![/yellow] not cached: {model}  "
                 f"[dim](run `hf download {model}`)[/dim]",
             )
+
+    # 5. Recall daemon health (best-effort, never blocks)
+    daemon = _recall_daemon_health(cfg)
+    if daemon.get("running"):
+        console.print(
+            f"[green]✓[/green] recall-daemon: running "
+            f"(pid={daemon.get('pid')}, ping ok)"
+        )
+    elif daemon.get("pid_alive") and not daemon.get("ping_ok"):
+        err = daemon.get("error") or "no ping response"
+        console.print(
+            f"[yellow]![/yellow] recall-daemon: pid {daemon.get('pid')} alive "
+            f"but socket unresponsive ({err})"
+        )
+    elif daemon.get("socket_exists") and not daemon.get("pid_alive"):
+        console.print(
+            f"[yellow]![/yellow] recall-daemon: stale socket without process — "
+            "run `memo recall-daemon stop` to clean up"
+        )
+    else:
+        console.print(
+            "[dim]•[/dim] recall-daemon: not running "
+            "[dim](`memo recall-daemon start` to enable warm recall)[/dim]"
+        )
 
     if check_db:
         for db in _db_health_report(cfg):
@@ -3088,6 +3225,20 @@ def recall_hook() -> None:
     def _bail(reason: str = "") -> None:
         if reason and os.environ.get("MEMO_RECALL_DEBUG") == "1":
             print(f"# memo recall-hook: {reason}", file=_sys.stderr)
+        # Always append to recall.log so `memo logs` surfaces bails even when
+        # MEMO_RECALL_DEBUG is unset. Best-effort; swallows internal errors.
+        if reason:
+            try:
+                from memo.dashboard import append_recall_log
+                append_recall_log(
+                    Config.from_env().state_dir,
+                    prompt="",
+                    hits=[],
+                    via="bail",
+                    reason=reason,
+                )
+            except Exception:
+                pass
         print("{}")
         _sys.exit(0)
 
@@ -3140,8 +3291,21 @@ def recall_hook() -> None:
             # update the 'via' field for hook-log observability)
             print(_daemon_result)
             _sys.exit(0)
-    except Exception:
-        pass
+    except Exception as _daemon_exc:
+        # Don't bail — fall back to in-process search below. Telemetry only:
+        # capture daemon failure so `memo logs` can surface why we paid the
+        # cold-start cost.
+        try:
+            from memo.dashboard import append_recall_log
+            append_recall_log(
+                Config.from_env().state_dir,
+                prompt=prompt,
+                hits=[],
+                via="daemon_error",
+                error=f"{type(_daemon_exc).__name__}: {_daemon_exc}",
+            )
+        except Exception:
+            pass
 
     top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
     min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.6"))
@@ -3944,6 +4108,109 @@ def hook_log(limit: int, follow: bool) -> None:
         pass
 
 
+@cli.command(name="logs")
+@click.option(
+    "--source",
+    type=click.Choice(["recall", "daemon", "watcher", "all"]),
+    default="all",
+    show_default=True,
+    help="Which log to read. 'all' interleaves by timestamp where possible.",
+)
+@click.option("--tail", default=40, type=int, show_default=True,
+              help="Number of recent lines per source.")
+@click.option("--paths", is_flag=True,
+              help="Just print the log file paths (for tail -f / less).")
+def logs(source: str, tail: int, paths: bool) -> None:
+    """Show recent memo log activity in one place.
+
+    \b
+    Aggregates three log surfaces:
+      recall   — JSONL of every recall-hook invocation
+                 (bails, daemon hits, in-process fallbacks)
+      daemon   — recall-daemon stdout/stderr (MLX warm-state, errors)
+      watcher  — filesystem watcher stdout/stderr (launchd plist)
+
+    Use --paths if you'd rather pipe to your own `tail -f` / `less +F`.
+    """
+    from memo.dashboard import recall_log_path, read_recall_log
+
+    cfg = Config.from_env()
+    state_dir = cfg.state_dir
+
+    recall_p = recall_log_path(state_dir)
+    daemon_p = Path.home() / "Library" / "Logs" / "memo" / "recall-daemon.log"
+    watch_out_p = Path.home() / "Library" / "Logs" / "memo" / "watch.out.log"
+    watch_err_p = Path.home() / "Library" / "Logs" / "memo" / "watch.err.log"
+
+    if paths:
+        console.print(f"recall:  {recall_p}")
+        console.print(f"daemon:  {daemon_p}")
+        console.print(f"watcher: {watch_out_p}  +  {watch_err_p}")
+        return
+
+    def _tail_file(p: Path, n: int) -> list[str]:
+        if not p.is_file():
+            return []
+        try:
+            return p.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+        except Exception as exc:  # pragma: no cover - permission edge
+            return [f"# (read error: {exc})"]
+
+    if source in ("recall", "all"):
+        entries = read_recall_log(state_dir, limit=tail)
+        console.print(f"[bold]recall[/bold]  [dim]{recall_p}[/dim]")
+        if not entries:
+            console.print("  [dim](empty)[/dim]")
+        else:
+            for e in reversed(entries):
+                ts = (e.get("ts") or "")[:19].replace("T", " ")
+                via = e.get("via") or "—"
+                hits = len(e.get("hits") or [])
+                latency = e.get("latency_ms")
+                latency_str = f" {latency}ms" if latency is not None else ""
+                reason = e.get("reason")
+                error = e.get("error")
+                tail_str = ""
+                if reason:
+                    tail_str = f"  [yellow]reason=[/yellow]{reason}"
+                elif error:
+                    tail_str = f"  [red]error=[/red]{error}"
+                else:
+                    prompt = (e.get("prompt") or "").replace("\n", " ")[:50]
+                    tail_str = f'  [dim]"{prompt}"[/dim]' if prompt else ""
+                console.print(
+                    f"  [dim]{ts}[/dim] via=[cyan]{via}[/cyan] "
+                    f"hits=[bold]{hits}[/bold]{latency_str}{tail_str}"
+                )
+        if source == "all":
+            console.print()
+
+    if source in ("daemon", "all"):
+        console.print(f"[bold]daemon[/bold]  [dim]{daemon_p}[/dim]")
+        lines = _tail_file(daemon_p, tail)
+        if not lines:
+            console.print("  [dim](no log — daemon never started, or logs rotated)[/dim]")
+        else:
+            for line in lines:
+                console.print(f"  {line}")
+        if source == "all":
+            console.print()
+
+    if source in ("watcher", "all"):
+        console.print(f"[bold]watcher.out[/bold]  [dim]{watch_out_p}[/dim]")
+        out_lines = _tail_file(watch_out_p, tail)
+        if not out_lines:
+            console.print("  [dim](no log — watcher inactive or never wrote)[/dim]")
+        else:
+            for line in out_lines:
+                console.print(f"  {line}")
+        err_lines = _tail_file(watch_err_p, tail)
+        if err_lines:
+            console.print(f"[bold]watcher.err[/bold]  [dim]{watch_err_p}[/dim]")
+            for line in err_lines:
+                console.print(f"  [red]{line}[/red]")
+
+
 @cli.command(name="self-update")
 @click.option("--check", is_flag=True, help="Check for a newer version without installing.")
 def self_update(check: bool) -> None:
@@ -4256,7 +4523,7 @@ def mine_history(
 @click.option("--name", default=None, help="Vault label (default: dirname). Used as path prefix in store.")
 @click.option("--force", is_flag=True, help="Re-embed even if body unchanged.")
 @click.option("--dry-run", is_flag=True, help="Walk + report counts, don't embed/write.")
-@click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/99-obsidian/")
+@click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/99-obsidian/99-AI/")
 @click.option("--ocr/--no-ocr", default=True, help="Run OCR on ![[image]] embeds inside notes (Apple Vision). Default on.")
 @click.option("--chunk/--no-chunk", default=True, help="Semantically chunk markdown/PDF bodies for better retrieval precision. Default on.")
 @click.option("--chunk-chars", default=1500, show_default=True, type=int, help="Target chunk size in characters.")
@@ -4282,8 +4549,10 @@ def ingest(
     embedder model swap).
 
     Default exclusions skip Obsidian system dirs (.obsidian/, .trash/,
-    etc.) and memo's own memory subdir (`99-obsidian/`)
-    so we don't double-index curated memorias.
+    etc.) and memo's own memory subtree (`99-obsidian/99-AI/`) so we
+    don't double-index curated memorias. Note: sibling user content
+    under `99-obsidian/` — `99-Contacts/`, `99-Forms/`, `99-Templates/`
+    — IS indexed (e.g. `99-obsidian/99-Contacts/Grecia.md`).
     """
     import hashlib
     import os as _os_min
@@ -4317,7 +4586,7 @@ def ingest(
 
     default_excludes = (
         ".obsidian", ".git", ".trash", ".makemd", ".smart-env", ".space",
-        ".claude", ".devin", "99-obsidian",
+        ".claude", ".devin", "99-obsidian/99-AI",
     )
     exclude_patterns = list(exclude) + list(default_excludes)
 
