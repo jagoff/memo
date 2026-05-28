@@ -61,6 +61,8 @@ def append_recall_log(
     mode: str | None = None,
     latency_ms: int | None = None,
     via: str | None = None,
+    reason: str | None = None,
+    error: str | None = None,
 ) -> None:
     """Append a recall event to the JSONL ring buffer. Rotates by
     keeping only the most recent `cap` lines after writing. Errors are
@@ -81,6 +83,10 @@ def append_recall_log(
             entry["latency_ms"] = latency_ms
         if via is not None:
             entry["via"] = via
+        if reason is not None:
+            entry["reason"] = reason[:200]
+        if error is not None:
+            entry["error"] = error[:200]
         path = recall_log_path(state_dir)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")

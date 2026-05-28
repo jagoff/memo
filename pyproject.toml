@@ -36,6 +36,9 @@ dependencies = [
     # MLX runtime — Apple Silicon only.
     "mlx>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # Shared schemas across memo + memflow + synapse.
+    # Local editable install during dev; switch to versioned dep when published.
+    "consciousness-contracts>=0.1.0",
 ]
 
 [project.urls]

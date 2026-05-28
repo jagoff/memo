@@ -122,8 +122,14 @@ def test_existing_vec_table_dim_mismatch_fails_fast(tmp_path: Path):
     store = VecStore(db_path, dims=4)
     store.close()
 
-    with pytest.raises(RuntimeError, match=r"FLOAT\[4\].*FLOAT\[8\]"):
+    # Audit fix (commit a68ae7c) reworded the error to surface the
+    # actual mismatch + a concrete fix command. Lock down the new shape.
+    with pytest.raises(RuntimeError) as excinfo:
         VecStore(db_path, dims=8)
+    msg = str(excinfo.value)
+    assert "dimension mismatch" in msg
+    assert "4D" in msg and "8D" in msg
+    assert "memo reindex" in msg
 
 
 def test_existing_schema_init_does_not_need_writer_lock(tmp_path: Path):

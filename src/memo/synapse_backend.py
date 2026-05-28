@@ -51,6 +51,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from consciousness_contracts import EvidenceRef, WriteReceipt
+
 from memo.memory import (
     _PROVENANCE_KEYS,
     MEMO_BACKEND_NAME,
@@ -60,8 +62,10 @@ from memo.memory import (
 
 _log = logging.getLogger(__name__)
 
-# Schema strings kept in sync with synapse.models / synapse.memo_backend.
-_WRITE_RECEIPT_SCHEMA = "synapse.memory_write_receipt.v1"
+# Wire schema strings — pinned to the synapse.* legacy strings until synapse
+# itself migrates to consciousness_contracts (then both can flip together).
+# The typed objects below ensure shape stays in sync with the contract package.
+_WRITE_RECEIPT_LEGACY_SCHEMA = "synapse.memory_write_receipt.v1"
 _EVIDENCE_URI_PREFIX = "memo://memoria/"
 _DEFAULT_TYPE = "note"
 # Kinds synapse uses that don't map 1:1 to memo's frozenset of types are
@@ -150,14 +154,14 @@ class MemoSynapseBackend:
         for h in hits:
             extra = dict(h.extra or {})
             prov = _extract_provenance(extra)
-            refs.append({
-                "source": self.backend_name,
-                "uri": f"{_EVIDENCE_URI_PREFIX}{h.id}",
-                "title": h.title or "Memo memoria",
-                "snippet": _clip(h.body or ""),
-                "score": float(h.score) if h.score is not None else None,
-                "updated_at": h.updated or "",
-                "metadata": {
+            ref = EvidenceRef(
+                source=self.backend_name,
+                uri=f"{_EVIDENCE_URI_PREFIX}{h.id}",
+                title=h.title or "Memo memoria",
+                snippet=_clip(h.body or ""),
+                score=float(h.score) if h.score is not None else None,
+                updated_at=h.updated or "",
+                metadata={
                     "type": h.type,
                     "tags": list(h.tags),
                     "path": h.path,
@@ -166,7 +170,12 @@ class MemoSynapseBackend:
                     "extra": {k: v for k, v in extra.items() if k not in _PROVENANCE_KEYS},
                     "synapse_trace_id": trace_id,
                 },
-            })
+            )
+            # Drop the "schema" field — memo's wire format for collect() never
+            # carried one, and synapse parses by position not schema string.
+            d = ref.to_dict()
+            d.pop("schema", None)
+            refs.append(d)
         return refs
 
     def remember(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -242,24 +251,28 @@ class MemoSynapseBackend:
             skip_memflow_receipt=True,
         )
 
-        return {
-            "schema": _WRITE_RECEIPT_SCHEMA,
-            "generated_at": _utc_now_iso(),
-            "requested_target": target,
-            "backend": self.backend_name,
-            "kind": kind,
-            "uri": f"{_EVIDENCE_URI_PREFIX}{rec.id}",
-            "trace_id": str(extra.get("synapse_trace_id") or ""),
-            "title": rec.title,
-            "evidence_paths": evidence_paths,
-            "metadata": {
+        receipt = WriteReceipt(
+            backend=self.backend_name,
+            receipt_id=rec.id,
+            trace_id=str(extra.get("synapse_trace_id") or ""),
+            kind=kind,  # type: ignore[arg-type]  # synapse may send arbitrary string
+            uri=f"{_EVIDENCE_URI_PREFIX}{rec.id}",
+            title=rec.title,
+            requested_target=target,  # type: ignore[arg-type]  # tolerated by wire
+            generated_at=_utc_now_iso(),
+            evidence_paths=tuple(evidence_paths),
+            metadata={
                 "memo_type": memo_type,
                 "memoria_id": rec.id,
                 "path": rec.path,
                 "tags": list(rec.tags),
                 "provenance": _extract_provenance(extra),
             },
-        }
+        )
+        # Keep legacy synapse.* schema string on the wire until synapse migrates.
+        d = receipt.to_dict()
+        d["schema"] = _WRITE_RECEIPT_LEGACY_SCHEMA
+        return d
 
 
 # -- helpers --------------------------------------------------------------

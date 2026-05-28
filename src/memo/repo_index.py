@@ -747,11 +747,40 @@ class RepoCorpus:
         return source["id"] if source else None
 
 
-def _git(args: list[str], *, check: bool = True) -> str:
+def _git_timeout(default: float) -> float:
+    """Cap for `subprocess.run` of git commands.
+
+    Why: a network-flaky `git clone` or `ls-files` would otherwise hang
+    indefinitely, blocking the indexer thread (and any caller awaiting it).
+    Configurable via MEMO_REPO_GIT_TIMEOUT_S (seconds, 0 disables).
+    """
+    raw = os.environ.get("MEMO_REPO_GIT_TIMEOUT_S")
+    if not raw:
+        return default
     try:
-        proc = subprocess.run(args, check=False, capture_output=True, text=True)
+        v = float(raw)
+    except ValueError:
+        return default
+    return v if v > 0 else 0.0
+
+
+def _git(args: list[str], *, check: bool = True, timeout: float | None = None) -> str:
+    t = _git_timeout(120.0 if timeout is None else timeout)
+    try:
+        proc = subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=t if t > 0 else None,
+        )
     except FileNotFoundError as exc:
         raise RuntimeError("`git` not found on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"git timed out after {t:.0f}s: {' '.join(args)} "
+            f"(raise MEMO_REPO_GIT_TIMEOUT_S to extend)"
+        ) from exc
     if check and proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(f"git command failed ({proc.returncode}): {' '.join(args)}\n{detail}")
@@ -803,15 +832,22 @@ def _embed_cache_model(embedder: MLXEmbedder, cfg: Config) -> str:
 
 def _tracked_files(clone_path: Path) -> list[str]:
     """Return Git-tracked files without walking generated/untracked trees."""
+    t = _git_timeout(60.0)
     try:
         proc = subprocess.run(
             ["git", "-C", str(clone_path), "ls-files", "-z"],
             check=False,
             capture_output=True,
             text=True,
+            timeout=t if t > 0 else None,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("`git` not found on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"git ls-files timed out after {t:.0f}s on {clone_path} "
+            f"(raise MEMO_REPO_GIT_TIMEOUT_S to extend)"
+        ) from exc
     if proc.returncode == 0:
         paths = [p for p in proc.stdout.split("\0") if p]
         return sorted(paths)
