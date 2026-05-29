@@ -275,44 +275,18 @@ def _vault_dedup_keys(rec: MemoryRecord) -> set[str]:
     return keys
 
 
-class MemoError(Exception):
-    """Base for all memo-domain errors. Lets callers catch everything memo
-    raises with one `except MemoError` while specific subclasses keep their
-    legacy base (ValueError/RuntimeError) for existing handlers. Named
-    MemoError (not MemoryError) to avoid shadowing the builtin OOM error."""
-
-
-class AmbiguousIdError(MemoError, ValueError):
-    """Raised when an id prefix matches more than one record. Carries
-    the candidate matches so the caller can surface them in an error."""
-
-    def __init__(self, prefix: str, matches: list[str]) -> None:
-        super().__init__(
-            f"Ambiguous id prefix {prefix!r}: {len(matches)} matches "
-            f"({', '.join(m[:8] for m in matches[:5])}...)",
-        )
-        self.prefix = prefix
-        self.matches = matches
-
-
-class WriteRefused(MemoError, RuntimeError):
-    """Raised by `Memory.save()` when a synapse RealityConflict with
-    `freeze_write=true` overlaps the topic of the pending write.
-
-    Carries the offending conflict dict so callers (CLI / MCP / agent)
-    can show the user the conflict id, severity, and summary before
-    they decide to retry with `respect_synapse_freeze=False`.
-    """
-
-    def __init__(self, conflict: dict[str, Any]) -> None:
-        cid = conflict.get("conflict_id") or "?"
-        summary = conflict.get("summary") or "(no summary)"
-        super().__init__(
-            f"Synapse freeze-write active on conflict {cid}: {summary}. "
-            f"Resolve the conflict in synapse or retry with "
-            f"`respect_synapse_freeze=False`.",
-        )
-        self.conflict = dict(conflict)
+# Domain error hierarchy lives in memo.errors; re-exported here so existing
+# `from memo.memory import AmbiguousIdError / WriteRefused / MemoError` imports
+# keep working. New code may import from either module.
+from memo.errors import (  # noqa: E402, F401
+    AmbiguousIdError,
+    FederationError,
+    MemoError,
+    NotFoundError,
+    StorageError,
+    ValidationError,
+    WriteRefused,
+)
 
 
 @dataclass(frozen=True)
