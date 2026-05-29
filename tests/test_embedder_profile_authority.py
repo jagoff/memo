@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from memo.cli import _profile_status_report, _typed_embedder_profile
+from memo.cli_diag import _profile_status_report, _typed_embedder_profile
 from memo.config import Config
 
 cc = pytest.importorskip("consciousness_contracts")

@@ -7,6 +7,7 @@ be a circular import. cli.py and every cli_*.py group import from here.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import click
@@ -49,3 +50,13 @@ def _parse_as_of_date(s: str) -> str:
         raise click.ClickException(
             f"Could not parse --date {s!r}. Use YYYY-MM-DD or ISO 8601.",
         ) from exc
+
+
+def _backend_native_trace_id(trace_id: str = "") -> str:
+    return (trace_id or os.environ.get("SYNAPSE_TRACE_ID", "")).strip()
+
+
+def _memo_backend_version() -> str:
+    from memo import __version__
+
+    return __version__

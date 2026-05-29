@@ -6,7 +6,8 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from memo.cli import _profile_repair_plan, cli
+from memo.cli import cli
+from memo.cli_diag import _profile_repair_plan
 from memo.config import Config
 
 

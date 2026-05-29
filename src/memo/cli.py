@@ -32,7 +32,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from importlib.resources import files as package_files
 from pathlib import Path
@@ -44,6 +44,7 @@ from rich.table import Table
 
 from memo.cli_analytics import analytics_group
 from memo.cli_as_of import as_of_group
+from memo.cli_backend_native import backend_native_group
 from memo.cli_backup import backup_group
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import _parse_as_of_date, _short, console
@@ -51,6 +52,7 @@ from memo.cli_common import get_memory as _get_memory
 from memo.cli_consolidate import consolidate_group
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
+from memo.cli_diag import _db_health_report, _doctor_report, _recall_daemon_health
 from memo.cli_embed_daemon import embed_daemon_group
 from memo.cli_encrypt import encrypt_group
 from memo.cli_export import export_group
@@ -59,6 +61,7 @@ from memo.cli_graph import graph_group
 from memo.cli_import import import_group
 from memo.cli_links import links_group
 from memo.cli_multimodal import multimodal_group
+from memo.cli_profile import profile_group
 from memo.cli_query import query_group
 from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_repo import repo_group
@@ -67,506 +70,11 @@ from memo.cli_share import share_group
 from memo.cli_sync import sync_group
 from memo.cli_temporal import temporal_group
 from memo.cli_version import version_group
-from memo.config import MODEL_PROFILES, Config
+from memo.config import Config
 
 # Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
 # `run_picker` itself defers the heavy `questionary` import until called.
 from memo.setup import run_picker, write_config_file
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
-
-
-
-
-def _managed_sqlite_dbs(cfg: Config) -> list[tuple[str, Path]]:
-    return [
-        ("memvec", cfg.db_path),
-        ("history", cfg.history_db),
-        ("graph", cfg.graph_db),
-        ("crossref", cfg.crossref_db),
-        ("contradictions", cfg.contradictions_db),
-    ]
-
-
-def _sqlite_table_exists(conn: Any, table: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?",
-        (table,),
-    ).fetchone()
-    return row is not None
-
-
-def _sqlite_table_count(conn: Any, table: str) -> int | None:
-    if not _sqlite_table_exists(conn, table):
-        return None
-    row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()
-    return int(row[0]) if row else 0
-
-
-def _sqlite_max_text(conn: Any, table: str, column: str) -> str:
-    if not _sqlite_table_exists(conn, table):
-        return ""
-    row = conn.execute(f"SELECT max({column}) FROM {table}").fetchone()
-    return str(row[0] or "") if row else ""
-
-
-def _sqlite_vec_dims(conn: Any, table: str) -> int | None:
-    if table not in {"vec", "repo_vec"}:
-        raise ValueError(f"unknown vector table: {table}")
-    row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table,),
-    ).fetchone()
-    if not row or not row[0]:
-        return None
-    match = re.search(r"embedding\s+FLOAT\[(\d+)\]", str(row[0]))
-    return int(match.group(1)) if match else None
-
-
-def _sqlite_db_health(label: str, path: Path, cfg: Config) -> dict[str, Any]:
-    report: dict[str, Any] = {
-        "label": label,
-        "path": str(path),
-        "exists": path.exists(),
-        "ok": True,
-        "status": "missing",
-    }
-    if not path.exists():
-        return report
-
-    import sqlite3
-
-    try:
-        stat = path.stat()
-        report.update({
-            "status": "checked",
-            "size_bytes": int(stat.st_size),
-            "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC)
-            .isoformat()
-            .replace("+00:00", "Z"),
-        })
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
-            conn.execute("PRAGMA query_only=ON")
-            integrity = str(conn.execute("PRAGMA integrity_check").fetchone()[0])
-            user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-            table_count = int(
-                conn.execute(
-                    "SELECT count(*) FROM sqlite_master WHERE type IN ('table', 'view')"
-                ).fetchone()[0]
-            )
-            report.update({
-                "integrity_check": integrity,
-                "user_version": user_version,
-                "table_count": table_count,
-            })
-            if label == "memvec":
-                vec_dims = _sqlite_vec_dims(conn, "vec")
-                repo_vec_dims = _sqlite_vec_dims(conn, "repo_vec")
-                report.update({
-                    "records": _sqlite_table_count(conn, "meta"),
-                    "repo_sources": _sqlite_table_count(conn, "repo_sources"),
-                    "repo_chunks": _sqlite_table_count(conn, "repo_chunks"),
-                    "vec_dims": vec_dims,
-                    "repo_vec_dims": repo_vec_dims,
-                    "expected_dims": cfg.embedder_dims,
-                    "latest_memory_update": _sqlite_max_text(conn, "meta", "updated"),
-                    "latest_repo_index": _sqlite_max_text(conn, "repo_sources", "indexed_at"),
-                })
-                if vec_dims is not None and vec_dims != cfg.embedder_dims:
-                    report["ok"] = False
-                    report["status"] = "dimension_mismatch"
-                if repo_vec_dims is not None and repo_vec_dims != cfg.embedder_dims:
-                    report["ok"] = False
-                    report["status"] = "dimension_mismatch"
-            elif label == "history":
-                report.update({
-                    "events": _sqlite_table_count(conn, "events"),
-                    "latest_event": _sqlite_max_text(conn, "events", "ts"),
-                })
-            elif label == "graph":
-                report.update({
-                    "entities": _sqlite_table_count(conn, "entities"),
-                    "links": _sqlite_table_count(conn, "entity_memoria"),
-                    "latest_seen": _sqlite_max_text(conn, "entities", "last_seen"),
-                })
-            if integrity.lower() != "ok":
-                report["ok"] = False
-                report["status"] = "integrity_failed"
-        finally:
-            conn.close()
-    except Exception as exc:
-        report.update({"ok": False, "status": "error", "error": str(exc)})
-    return report
-
-
-def _db_health_report(cfg: Config) -> list[dict[str, Any]]:
-    return [_sqlite_db_health(label, path, cfg) for label, path in _managed_sqlite_dbs(cfg)]
-
-
-_PROFILE_FIELDS = (
-    "llm_model",
-    "helper_model",
-    "embedder_model",
-    "embedder_dims",
-    "reranker_enabled",
-    "reranker_model",
-    "reranker_revision",
-)
-
-_PROFILE_ENV_KEYS = (
-    "MEMO_MODEL_PROFILE",
-    "MEMO_LLM_MODEL",
-    "MEMO_HELPER_MODEL",
-    "MEMO_EMBEDDER_MODEL",
-    "MEMO_EMBEDDER_DIMS",
-    "MEMO_RERANKER_ENABLED",
-    "MEMO_RERANKER_MODEL",
-    "MEMO_RERANKER_REVISION",
-    "MEMO_RERANK_INPUT_K",
-    "MEMO_RERANK_FUSION_ALPHA",
-)
-
-
-def _profile_active_config(cfg: Config) -> dict[str, Any]:
-    return {field: getattr(cfg, field) for field in _PROFILE_FIELDS}
-
-
-def _profile_expected_config(cfg: Config) -> dict[str, Any]:
-    raw = MODEL_PROFILES.get(cfg.model_profile, {})
-    return {field: raw[field] for field in _PROFILE_FIELDS if field in raw}
-
-
-def _profile_overrides(cfg: Config) -> list[dict[str, Any]]:
-    active = _profile_active_config(cfg)
-    expected = _profile_expected_config(cfg)
-    overrides: list[dict[str, Any]] = []
-    for field, expected_value in expected.items():
-        actual_value = active.get(field)
-        if actual_value != expected_value:
-            overrides.append({
-                "field": field,
-                "expected": expected_value,
-                "actual": actual_value,
-            })
-    return overrides
-
-
-def _model_cache_report(cfg: Config) -> list[dict[str, Any]]:
-    hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
-    roles = [
-        ("embedder", cfg.embedder_model),
-        ("llm", cfg.llm_model),
-        ("helper", cfg.helper_model),
-    ]
-    if cfg.reranker_enabled:
-        roles.append(("reranker", cfg.reranker_model))
-    seen: set[tuple[str, str]] = set()
-    out: list[dict[str, Any]] = []
-    for role, model in roles:
-        key = (role, model)
-        if key in seen:
-            continue
-        seen.add(key)
-        cache_dir = hf_cache / f"models--{model.replace('/', '--')}"
-        out.append({
-            "role": role,
-            "model": model,
-            "cached": cache_dir.is_dir(),
-            "cache_path": str(cache_dir),
-        })
-    return out
-
-
-def _typed_embedder_profile(cfg: Config) -> dict[str, Any] | None:
-    """Return a ``consciousness_contracts.EmbedderProfile`` dict.
-
-    Memo is the authoritative source of the active vector space across the
-    trinity (M4). Other repos must read this profile and refuse to operate
-    on incompatible dimensions / models. Returns ``None`` when the optional
-    contracts package is not installed (memo functions fine without it).
-    """
-    try:
-        from consciousness_contracts import EmbedderProfile
-    except ImportError:
-        return None
-    profile = EmbedderProfile(
-        model_id=cfg.embedder_model,
-        dims=int(cfg.embedder_dims),
-        normalization="l2",
-        provider="memo",
-    )
-    return profile.to_dict()
-
-
-def _profile_status_report(
-    cfg: Config,
-    *,
-    include_db: bool = True,
-    include_env: bool = True,
-) -> dict[str, Any]:
-    db_report = _db_health_report(cfg) if include_db else []
-    memvec = next((item for item in db_report if item.get("label") == "memvec"), {})
-    db_dims = {
-        "vec_dims": memvec.get("vec_dims"),
-        "repo_vec_dims": memvec.get("repo_vec_dims"),
-        "expected_dims": cfg.embedder_dims,
-        "status": memvec.get("status") or ("not_checked" if not include_db else "missing"),
-    }
-    dimension_mismatch = bool(
-        include_db
-        and memvec
-        and memvec.get("exists")
-        and (
-            (memvec.get("vec_dims") is not None and memvec.get("vec_dims") != cfg.embedder_dims)
-            or (
-                memvec.get("repo_vec_dims") is not None
-                and memvec.get("repo_vec_dims") != cfg.embedder_dims
-            )
-        )
-    )
-    env = {
-        key: os.environ[key]
-        for key in _PROFILE_ENV_KEYS
-        if include_env and os.environ.get(key) not in (None, "")
-    }
-    status = "dimension_mismatch" if dimension_mismatch else "ok"
-    report: dict[str, Any] = {
-        "schema": "memo.profile_status.v1",
-        "ok": not dimension_mismatch,
-        "status": status,
-        "profile": cfg.model_profile,
-        "known_profiles": sorted(MODEL_PROFILES),
-        "active": _profile_active_config(cfg),
-        "expected": _profile_expected_config(cfg),
-        "overrides": _profile_overrides(cfg),
-        "environment": env,
-        "models": _model_cache_report(cfg),
-        "paths": {
-            "data_dir": str(cfg.data_dir),
-            "state_dir": str(cfg.state_dir),
-            "db_path": str(cfg.db_path),
-        },
-        "db": db_dims,
-    }
-    typed = _typed_embedder_profile(cfg)
-    if typed is not None:
-        report["typed_profile"] = typed
-    return report
-
-
-def _profile_repair_plan(cfg: Config, *, include_db: bool = True) -> dict[str, Any]:
-    status = _profile_status_report(cfg, include_db=include_db)
-    actions: list[dict[str, Any]] = []
-    raw_db = status.get("db")
-    db: dict[str, Any] = raw_db if isinstance(raw_db, dict) else {}
-    vec_dims = db.get("vec_dims")
-    repo_vec_dims = db.get("repo_vec_dims")
-    expected_dims = db.get("expected_dims")
-    if vec_dims is not None and vec_dims != expected_dims:
-        actions.append({
-            "severity": "high",
-            "kind": "memory_index_rebuild",
-            "reason": f"memvec vec table is FLOAT[{vec_dims}] but active config expects FLOAT[{expected_dims}]",
-            "commands": [
-                "memo backup --out memo-pre-profile-repair.zip",
-                f"rm {shlex.quote(str(cfg.db_path))}",
-                "memo reindex",
-            ],
-            "destructive": True,
-            "review_required": True,
-        })
-    if repo_vec_dims is not None and repo_vec_dims != expected_dims:
-        actions.append({
-            "severity": "high",
-            "kind": "repo_index_rebuild",
-            "reason": (
-                f"memvec repo_vec table is FLOAT[{repo_vec_dims}] but active config "
-                f"expects FLOAT[{expected_dims}]"
-            ),
-            "commands": [
-                "memo backup --out memo-pre-profile-repair.zip",
-                f"rm {shlex.quote(str(cfg.db_path))}",
-                "memo reindex",
-                "memo repo index <repo> --force",
-            ],
-            "destructive": True,
-            "review_required": True,
-        })
-    if db.get("status") == "missing":
-        actions.append({
-            "severity": "medium",
-            "kind": "memory_index_create",
-            "reason": "memvec.db is missing; semantic search will need a rebuild",
-            "commands": ["memo reindex"],
-            "destructive": False,
-            "review_required": False,
-        })
-    if status.get("overrides"):
-        actions.append({
-            "severity": "info",
-            "kind": "profile_override_review",
-            "reason": "active MEMO_* values override the named model profile",
-            "commands": [
-                "memo profile status --json",
-                "memo install-slash --client all",
-            ],
-            "destructive": False,
-            "review_required": False,
-        })
-    if not actions:
-        actions.append({
-            "severity": "info",
-            "kind": "no_repair_required",
-            "reason": "active model profile, configured dims, and checked DB dims are aligned",
-            "commands": [],
-            "destructive": False,
-            "review_required": False,
-        })
-    return {
-        "schema": "memo.profile_repair_plan.v1",
-        "ok": status.get("ok", True),
-        "status": status.get("status", "ok"),
-        "profile_status": status,
-        "actions": actions,
-    }
-
-
-def _json_import_check(label: str, check: Callable[[], None]) -> dict[str, Any]:
-    try:
-        check()
-    except Exception as exc:
-        return {"label": label, "ok": False, "error": str(exc)}
-    return {"label": label, "ok": True, "error": ""}
-
-
-def _doctor_report(
-    cfg: Config,
-    *,
-    check_db: bool,
-    strict_runtime: bool,
-    do_gc: bool,
-    fix: bool,
-) -> dict[str, Any]:
-    def check_sqlite_vec() -> None:
-        import sqlite3
-
-        import sqlite_vec  # type: ignore[import-untyped]
-
-        conn = sqlite3.connect(":memory:")
-        try:
-            conn.enable_load_extension(True)
-            sqlite_vec.load(conn)
-        finally:
-            conn.close()
-
-    def check_mlx() -> None:
-        import mlx.core  # noqa: F401
-        import mlx_lm  # noqa: F401
-
-    def check_fts5() -> None:
-        # FTS5 is the BM25 backbone. If sqlite was built without it, hybrid
-        # search degrades silently to vec-only. Probe with a throwaway table.
-        import sqlite3
-
-        conn = sqlite3.connect(":memory:")
-        try:
-            conn.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")
-            conn.execute("DROP TABLE probe")
-        finally:
-            conn.close()
-
-    runtime = _runtime_install_report()
-    data_dir = {"path": str(cfg.data_dir), "ok": cfg.data_dir.is_dir()}
-    vault_path = {
-        "path": str(cfg.vault_path) if cfg.vault_path else "",
-        "ok": True if cfg.vault_path is None else cfg.vault_path.is_dir(),
-        "set": cfg.vault_path is not None,
-    }
-    imports = [
-        _json_import_check("sqlite_vec", check_sqlite_vec),
-        _json_import_check("sqlite_fts5", check_fts5),
-        _json_import_check("mlx", check_mlx),
-    ]
-    daemon = _recall_daemon_health(cfg)
-    db_report = _db_health_report(cfg) if check_db else []
-    gc_report: dict[str, Any] | None = None
-    if do_gc:
-        from memo.memory import Memory
-
-        gc_report = Memory(cfg).gc(fix=fix)
-    ok = (
-        data_dir["ok"]
-        and vault_path["ok"]
-        and all(item["ok"] for item in imports)
-        and (not strict_runtime or not runtime["warnings"])
-        and all(item.get("ok", True) for item in db_report)
-    )
-    return {
-        "schema": "memo.doctor.v1",
-        "ok": ok,
-        "runtime": runtime,
-        "storage": {"data_dir": data_dir, "vault_path": vault_path},
-        "profile": _profile_status_report(cfg, include_db=check_db),
-        "imports": imports,
-        "models": _model_cache_report(cfg),
-        "db": db_report,
-        "gc": gc_report,
-        "recall_daemon": daemon,
-    }
-
-
-def _recall_daemon_health(cfg: Config) -> dict[str, Any]:
-    """Probe the recall daemon: PID alive + socket responding to ping.
-
-    Never raises. Returns a dict the doctor surfaces under `recall_daemon`.
-    """
-    from memo.recall_server import (
-        _is_pid_alive,
-        _pid_file,
-        _read_pid,
-        _socket_path,
-    )
-
-    state_dir = cfg.state_dir
-    sock = _socket_path(state_dir)
-    pid_path = _pid_file(state_dir)
-    pid = _read_pid(state_dir)
-    sock_exists = sock.exists()
-
-    if pid is None and not sock_exists:
-        return {
-            "running": False, "pid": None, "socket": str(sock),
-            "pid_file": str(pid_path), "socket_exists": False,
-            "pid_alive": False, "ping_ok": False, "note": "not started",
-            "error": "",
-        }
-
-    alive = pid is not None and _is_pid_alive(pid)
-    ping_ok = False
-    ping_err = ""
-    if sock_exists:
-        try:
-            from memo import embedder_client
-
-            resp = embedder_client.ping(state_dir=state_dir)
-            ping_ok = isinstance(resp, dict) and resp.get("ok") is not False
-        except Exception as exc:
-            ping_err = f"{type(exc).__name__}: {exc}"
-
-    return {
-        "running": bool(alive and ping_ok),
-        "pid": pid,
-        "pid_alive": alive,
-        "socket": str(sock),
-        "socket_exists": sock_exists,
-        "ping_ok": ping_ok,
-        "error": ping_err,
-    }
 
 
 def _resolved(thunk):
@@ -597,6 +105,8 @@ def cli(ctx: click.Context) -> None:
 
 # Command groups extracted from this module live in cli_*.py and register here.
 cli.add_command(graph_group)
+cli.add_command(profile_group)
+cli.add_command(backend_native_group)
 cli.add_command(feedback_group)
 cli.add_command(repo_group)
 cli.add_command(recall_daemon_group)
@@ -1312,73 +822,10 @@ def migrate_vault(
     )
 
 
-def _backend_native_trace_id(trace_id: str = "") -> str:
-    return (trace_id or os.environ.get("SYNAPSE_TRACE_ID", "")).strip()
 
 
-def _memo_backend_version() -> str:
-    from memo import __version__
-
-    return __version__
 
 
-@cli.group(name="backend-native")
-def backend_native_group() -> None:
-    """Expose Synapse backend_native.v1 endpoints."""
-
-
-@backend_native_group.command(name="capabilities")
-@click.option("--json", "as_json", is_flag=True)
-@click.option("--trace-id", default="")
-def backend_native_capabilities(as_json: bool, trace_id: str) -> None:
-    from memo.memory import NATIVE_BACKEND_PROTOCOL_VERSION, SYNAPSE_BACKEND_NATIVE_SCHEMA
-
-    cfg = Config.from_env()
-    payload = {
-        "schema": SYNAPSE_BACKEND_NATIVE_SCHEMA,
-        "protocol_version": NATIVE_BACKEND_PROTOCOL_VERSION,
-        "backend": "memo",
-        "supported": True,
-        "backend_version": _memo_backend_version(),
-        "capabilities": {
-            "health": True,
-            "capabilities": True,
-            "replay_resolve": True,
-            "memory_replay": True,
-            "operational_replay": True,
-            "trace_id": True,
-        },
-        "endpoints": {
-            "capabilities": "backend-native capabilities --json",
-            "replay_resolve": "backend-native replay-resolve <uri> --json",
-        },
-        "provenance_prefixes": ["memo://"],
-        "trace_id": _backend_native_trace_id(trace_id),
-        "model_profile": _profile_status_report(cfg, include_db=False, include_env=False),
-    }
-    if as_json:
-        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-    console.print("[green]memo backend_native.v1: supported[/green]")
-
-
-@backend_native_group.command(name="replay-resolve")
-@click.argument("uri")
-@click.option("--json", "as_json", is_flag=True)
-@click.option("--trace-id", default="")
-def backend_native_replay_resolve(uri: str, as_json: bool, trace_id: str) -> None:
-    from memo.memory import Memory
-
-    mem = Memory(Config.from_env())
-    payload = mem.backend_native_replay_resolve(
-        uri,
-        trace_id=_backend_native_trace_id(trace_id),
-        backend_version=_memo_backend_version(),
-    )
-    if as_json:
-        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
-    console.print(f"{payload['status']}: {payload['detail']}")
 
 
 @cli.command()
@@ -2278,65 +1725,6 @@ def stats() -> None:
         console.print(f"[dim]{k:14s}[/dim] {v}")
 
 
-@cli.group(name="profile")
-def profile_group() -> None:
-    """Inspect active model profile, embedding dims, and repair guidance."""
-
-
-@profile_group.command(name="status")
-@click.option("--json", "as_json", is_flag=True)
-@click.option("--no-db", "no_db", is_flag=True, help="Skip read-only DB dimension checks.")
-def profile_status(as_json: bool, no_db: bool) -> None:
-    """Show the active model profile and whether DB dimensions align."""
-    cfg = Config.from_env()
-    report = _profile_status_report(cfg, include_db=not no_db)
-    if as_json:
-        click.echo(json.dumps(report, ensure_ascii=False, indent=2))
-        return
-
-    marker = "[green]✓[/green]" if report["ok"] else "[red]✗[/red]"
-    console.print(f"{marker} profile: {report['profile']} ({report['status']})")
-    active = report["active"]
-    console.print(f"  embedder: {active['embedder_model']} [{active['embedder_dims']}]")
-    console.print(f"  llm:      {active['llm_model']}")
-    console.print(f"  helper:   {active['helper_model']}")
-    revision = active.get("reranker_revision") or "unpinned"
-    console.print(
-        f"  reranker: {active['reranker_model']} "
-        f"revision={revision} enabled={active['reranker_enabled']}"
-    )
-    db = report["db"]
-    if db["status"] != "not_checked":
-        console.print(
-            "  db dims:  "
-            f"vec={db.get('vec_dims')} repo_vec={db.get('repo_vec_dims')} "
-            f"expected={db.get('expected_dims')}"
-        )
-    for override in report["overrides"]:
-        console.print(
-            "[yellow]![/yellow] override "
-            f"{override['field']}: expected={override['expected']} actual={override['actual']}"
-        )
-    for model in report["models"]:
-        marker = "[green]✓[/green]" if model["cached"] else "[yellow]![/yellow]"
-        console.print(f"  {marker} cached {model['role']}: {model['model']}")
-
-
-@profile_group.command(name="repair-plan")
-@click.option("--json", "as_json", is_flag=True)
-@click.option("--no-db", "no_db", is_flag=True, help="Skip read-only DB dimension checks.")
-def profile_repair_plan(as_json: bool, no_db: bool) -> None:
-    """Print a non-executing repair plan for profile or dimension drift."""
-    cfg = Config.from_env()
-    plan = _profile_repair_plan(cfg, include_db=not no_db)
-    if as_json:
-        click.echo(json.dumps(plan, ensure_ascii=False, indent=2))
-        return
-    console.print(f"profile repair plan: {plan['status']}")
-    for action in plan["actions"]:
-        console.print(f"- {action['severity']} {action['kind']}: {action['reason']}")
-        for command in action["commands"]:
-            console.print(f"  {command}")
 
 
 @cli.command()
@@ -3800,7 +3188,6 @@ def ingest(
     """
     import hashlib
     import os as _os_min
-    from datetime import datetime
     from pathlib import Path
 
     import frontmatter
@@ -4991,7 +4378,7 @@ def briefing() -> None:
     import json as _json
     import os as _os
     import sys as _sys
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, timedelta
 
     debug = _os.environ.get("MEMO_BRIEFING_DEBUG") == "1"
 
