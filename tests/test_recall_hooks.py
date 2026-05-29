@@ -153,3 +153,24 @@ def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
                   cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
     assert recorded["prompt"] == "mi pregunta"
     assert recorded["ids"] == ["surf0001"]
+
+
+def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) -> None:
+    hits = [_rec(f"id{i:07d}", f"hit {i}", 0.9 - i * 0.05) for i in range(5)]
+
+    class StubMemory:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+            return hits
+
+    monkeypatch.setenv("MEMO_RECALL_TOP_K", "3")
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")  # isolate from prefs
+
+    result = _recall_logic("q", cwd=None, mem=StubMemory(),
+                           cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
+    context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
+    # top-3 in the main block, next 2 in the related nudge
+    nudge_line = context.split("relacionado):", 1)[1]
+    assert "hit 3" in nudge_line and "hit 4" in nudge_line
+    assert "hit 0" not in nudge_line  # top hits stay in the main block

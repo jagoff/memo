@@ -93,6 +93,38 @@ Bump the version in sync across **four** source-of-truth files:
 `server.json` (version + package version), and `CHANGELOG.md`
 (Keep-a-Changelog). Commit / tag / push stays manual.
 
+## Source of truth — role & contract
+
+memo is the canonical store of **durable semantic knowledge**: decisions,
+facts, preferences, learnings. It is consulted automatically (recall hook every
+prompt; El Briefing at SessionStart) and stays fresh on its own (`memo
+maintain` supersedes contradictions, merges duplicates, archives stale —
+reversibly). The injected recall block is labelled authoritative, so treat
+surfaced memorias as established facts: prefer them over assumptions, build on
+them, and contradict one only explicitly.
+
+Role split (resolve the "first place to look" overlap by role, not rivalry):
+
+- **memo** — durable facts/decisions/preferences. Source of truth for *what is
+  known*. Reads: recall hook, `memory_search`/`memory_ask`,
+  `memory_unified_briefing`. Writes: `memory_save` (+ ambient capture on Stop).
+- **Memflow** — live cross-agent/cross-machine working state and presence.
+  Source of truth for *what is happening right now*, not durable knowledge.
+
+Contract for any layer above memo (synapse, memflow, agents):
+1. **Read first** — consult memo recall before deciding; `memory_unified_briefing`
+   is the entry point.
+2. **Write back** — persist durable facts to memo via `memory_save` so the next
+   session inherits them.
+3. **Respect freshness** — memo's contradiction/freshness state is authoritative
+   for durable knowledge; don't reintroduce a fact memo has superseded.
+
+memo deliberately keeps cognition OFF its MCP surface
+(`test_brain_like_mcp_tools_are_not_registered`): no `suggest`/`agent`/
+`cognitive` verbs. Proactivity lives in memo's own recall/briefing output (the
+"También en tu memoria" nudge), not as a brain tool — memo is the store, the
+layer above is the cognition.
+
 ## CI gates
 
 `pytest`, `mypy`, and coverage run per commit. Keep the suite green.
