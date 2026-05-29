@@ -31,6 +31,7 @@ import click
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.flags import flag_bool
 
 
 def _state_path(cfg: Config):
@@ -84,7 +85,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
     if if_due:
         import os as _os
         import subprocess as _sp
-        if _os.environ.get("MEMO_MAINTAIN_DISABLE") == "1":
+        if flag_bool("MEMO_MAINTAIN_DISABLE"):
             return
         ts_file = _state_path(cfg) / ".last_run_ts"
         try:

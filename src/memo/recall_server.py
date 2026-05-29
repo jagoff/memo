@@ -295,7 +295,8 @@ def _recall_logic(
 
     # Feedback loop: when on (default), widen the pool so learned type
     # preferences can re-rank, and record what surfaced afterwards.
-    contextual = _os.environ.get("MEMO_RECALL_CONTEXTUAL", "1") != "0"
+    from memo.flags import flag_bool
+    contextual = flag_bool("MEMO_RECALL_CONTEXTUAL")
     search_k = top_k * 3 if (project_tag or contextual) else top_k
 
     try:
