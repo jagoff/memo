@@ -262,10 +262,18 @@ def rows_to_table(rows: list[Row], k: int) -> str:
     return "\n".join(lines)
 
 
+# The recall hook (UserPromptSubmit) has a ~5s end-to-end budget; cold MLX
+# load eats ~2s, leaving ~3s for embed + search + format. A config whose p50
+# search latency exceeds this can't be the *hook's* default mode even if it
+# wins on precision — flag that tradeoff instead of recommending blindly.
+_HOOK_SEARCH_BUDGET_MS = 3000.0
+
+
 def recommend(rows: list[Row]) -> str:
     """Concrete next-step suggestion: pick the config with the best
     precision (tie-break: lower noise), and if it beats the baseline, map it
-    to the MEMO_* knobs that reproduce it."""
+    to the MEMO_* knobs that reproduce it. Warns when the winner's p50 search
+    latency would blow the recall-hook budget."""
     if not rows:
         return "no configs evaluated."
     baseline = rows[0]
@@ -281,8 +289,13 @@ def recommend(rows: list[Row]) -> str:
                  f"  export MEMO_RECALL_MIN_SIM={cfg.floor}")
         if cfg.exclude_archived:
             knobs += "\n  (and keep archive exclusion on in the recall hook)"
-    return (f"Best config: {best.config} "
-            f"(prec {dp:+.3f}, noise {dn:+.3f} vs baseline).\n{knobs}")
+    out = (f"Best config: {best.config} "
+           f"(prec {dp:+.3f}, noise {dn:+.3f} vs baseline).\n{knobs}")
+    if best.latency_ms_p50 > _HOOK_SEARCH_BUDGET_MS:
+        out += (f"\n  ⚠ p50 search {best.latency_ms_p50:.0f}ms exceeds the "
+                f"~{_HOOK_SEARCH_BUDGET_MS:.0f}ms recall-hook budget — best for "
+                f"`memo ask`/chat, but keep a faster mode for the hook.")
+    return out
 
 
 def fingerprint_corpus(mem: Any) -> str:
