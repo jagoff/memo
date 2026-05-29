@@ -16,8 +16,9 @@ Output style:
 - Default: rich table for list/search, panel for `get`, plain stats.
 - `--json` flag (where applicable): emit raw JSON for piping.
 
-NOTE: This file is 9000+ lines. Refactoring in progress via cli_commands.py.
-See src/memo/cli_commands.py for structure plan.
+Most command groups have been extracted into `cli_*.py` modules
+(`cli_memory`, `cli_repo`, `cli_session`, `cli_graph`, `cli_diag`, …);
+this file wires them together and hosts the remaining inline commands.
 """
 
 from __future__ import annotations
