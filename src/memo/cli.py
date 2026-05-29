@@ -49,6 +49,7 @@ from memo.cli_backup import backup_group
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import _parse_as_of_date, _short, console
 from memo.cli_common import get_memory as _get_memory
+from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
@@ -108,6 +109,7 @@ def cli(ctx: click.Context) -> None:
 
 # Command groups extracted from this module live in cli_*.py and register here.
 cli.add_command(graph_group)
+cli.add_command(config_group)
 cli.add_command(save)
 cli.add_command(search)
 cli.add_command(ask)
