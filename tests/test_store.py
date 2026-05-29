@@ -235,3 +235,43 @@ def test_repo_embedding_cache_is_scoped_by_model_and_dims(store: VecStore):
     assert hit == {"hash1": _emb(1, 0, 0, 0)}
     assert store.get_repo_embedding_cache(model="model-b", dims=4, input_hashes=["hash1"]) == {}
     assert store.get_repo_embedding_cache(model="model-a", dims=8, input_hashes=["hash1"]) == {}
+
+
+def test_concurrent_writes_and_reads_do_not_collide(store: VecStore):
+    """Regression: the FastMCP HTTP transport dispatches sync tool calls on a
+    worker threadpool, so multiple threads hit one VecStore at once. A single
+    shared connection collided on `BEGIN IMMEDIATE` ("cannot start a
+    transaction within a transaction") / recursive cursor use. Per-thread
+    connections must let concurrent writers + readers run without error."""
+    import threading
+
+    errors: list[Exception] = []
+    conn_ids: set[int] = set()
+    conn_ids_lock = threading.Lock()
+    barrier = threading.Barrier(8)
+
+    def worker(n: int) -> None:
+        try:
+            barrier.wait()  # maximise overlap
+            for i in range(10):
+                store.upsert(
+                    id_=f"t{n}-{i}", path=f"memory/t{n}-{i}.md", title=f"t{n}-{i}",
+                    type_="note", tags=[], created="t", updated="t",
+                    body_hash="h", embedding=_emb(1, n % 4, i % 4, 0),
+                )
+                store.search(_emb(1, 0, 0, 0), limit=5)
+            with conn_ids_lock:
+                conn_ids.add(id(store._conn))
+        except Exception as exc:  # noqa: BLE001 — capture to fail in main thread
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"concurrent access raised: {errors!r}"
+    assert store.count() == 80
+    # Each worker thread saw a distinct connection object (thread-local).
+    assert len(conn_ids) == 8
