@@ -314,17 +314,23 @@ def _recall_logic(
             hits = _apply_preference_boost(hits, mem.contextual.context.get_preferences())
         except Exception:
             pass
-    hits = hits[:top_k]
+    # Collapse near-duplicates across the whole widened pool so neither the
+    # main block nor the "also related" nudge repeats a fact.
+    hits = dedup_hits(hits)
 
-    # Similarity floor
-    relevant = [h for h in hits if h.score is None or h.score >= min_sim]
+    def _passes(h: Any) -> bool:
+        if h.score is not None and h.score < min_sim:
+            return False
+        if min_body_chars > 0 and len((h.body or "").strip()) < min_body_chars:
+            return False
+        return True
 
-    # Body stub filter
-    if min_body_chars > 0:
-        relevant = [h for h in relevant if len((h.body or "").strip()) >= min_body_chars]
-
-    # Collapse near-duplicates so the model never sees the same fact twice.
-    relevant = dedup_hits(relevant)
+    qualifying = [h for h in hits if _passes(h)]
+    relevant = qualifying[:top_k]
+    # Proactive nudge: the next best matches that just missed the cut. Surfaced
+    # as a terse footnote so the model knows more exists without drowning the
+    # prompt — memo offering, not just answering.
+    nudge = qualifying[top_k:top_k + 2]
 
     if not relevant:
         return "{}"
@@ -369,6 +375,9 @@ def _recall_logic(
             else:
                 break
 
+    if nudge:
+        also = "; ".join(f"[{h.id[:8]}] {h.title}" for h in nudge)
+        lines.append(f"_También en tu memoria (relacionado): {also} — `/memo get <id>`._")
     lines.append(footer)
 
     # Log to recall.log
