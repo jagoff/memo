@@ -839,7 +839,7 @@ def test_high_signal_detector_rescues_pin_notes():
     facts (URLs, CBUs, commands) must bypass MIN_CHARS so memo can
     surface them on title-match queries. Without this, a 67-char
     "Link de pago escuela Grecia" note never reaches the index."""
-    from memo.cli import _is_high_signal
+    from memo.cli_capture import _is_high_signal
 
     real_case = (
         "# Link de pago escuela Grecia\n\n"
