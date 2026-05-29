@@ -23,6 +23,13 @@
             "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo session recent",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo maintain --if-due",
+            "timeout": 5,
+            "async": true,
+            "comment": "Daily corpus freshness (archive-only, reversible). No-op unless >24h since last run; spawns detached so it never blocks startup. Disable with MEMO_MAINTAIN_DISABLE=1."
           }
         ]
       },
