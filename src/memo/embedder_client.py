@@ -114,7 +114,7 @@ def _inproc() -> Any:
 
         cfg = Config.from_env()
         _inproc_embedder = MLXEmbedder(
-            model_name=cfg.embedder_model,
+            model_path=cfg.embedder_model,
             expected_dims=cfg.embedder_dims,
         )
         return _inproc_embedder

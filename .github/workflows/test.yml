@@ -30,5 +30,9 @@ jobs:
           uv pip install -e '.[dev]'
       - name: Lint (ruff)
         run: .venv/bin/ruff check src/ tests/
+      - name: Type check (mypy)
+        run: .venv/bin/mypy src/memo
       - name: Tests (excluding slow real-MLX smoke)
-        run: .venv/bin/python -m pytest -q -m "not slow"
+        # -n auto: parallelize across cores. --timeout: kill hung MLX/socket
+        # tests. --cov + fail_under (pyproject) gates coverage regressions.
+        run: .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120 --cov=memo --cov-report=term-missing

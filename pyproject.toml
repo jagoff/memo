@@ -51,6 +51,8 @@ Changelog = "https://github.com/jagoff/memo/blob/main/CHANGELOG.md"
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pytest-xdist>=3.6",
+    "pytest-timeout>=2.3",
     "ruff>=0.5",
     "mypy>=1.10",
 ]
@@ -92,8 +94,25 @@ markers = [
 python_version = "3.13"
 
 [[tool.mypy.overrides]]
-module = ["frontmatter", "sqlite_vec"]
+# pyobjc (Quartz/Vision/Foundation) ship no py.typed marker.
+module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation"]
 ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["memo"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+# Floor is current measured coverage (~60%) minus a small buffer so a
+# one-line dip doesn't redden CI. Ratchet upward as untested modules
+# (embedder, llm, recall_server, graph, …) get backfilled.
+fail_under = 58
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
 
 [tool.ruff]
 line-length = 100

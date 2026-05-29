@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal, cast
 
 from consciousness_contracts import EvidenceRef, WriteReceipt
 
@@ -61,6 +61,10 @@ from memo.memory import (
 )
 
 _log = logging.getLogger(__name__)
+
+# The contracts constrain source/backend to a closed set; backend_name is a
+# str config constant that always holds one of these at runtime.
+_BackendName = Literal["memo", "memflow", "synapse"]
 
 # Wire schema strings — pinned to the synapse.* legacy strings until synapse
 # itself migrates to consciousness_contracts (then both can flip together).
@@ -155,7 +159,7 @@ class MemoSynapseBackend:
             extra = dict(h.extra or {})
             prov = _extract_provenance(extra)
             ref = EvidenceRef(
-                source=self.backend_name,
+                source=cast(_BackendName, self.backend_name),
                 uri=f"{_EVIDENCE_URI_PREFIX}{h.id}",
                 title=h.title or "Memo memoria",
                 snippet=_clip(h.body or ""),
@@ -252,7 +256,7 @@ class MemoSynapseBackend:
         )
 
         receipt = WriteReceipt(
-            backend=self.backend_name,
+            backend=cast(_BackendName, self.backend_name),
             receipt_id=rec.id,
             trace_id=str(extra.get("synapse_trace_id") or ""),
             kind=kind,  # type: ignore[arg-type]  # synapse may send arbitrary string

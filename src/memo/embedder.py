@@ -90,9 +90,13 @@ class MLXEmbedder:
         self._last_use: float = 0.0
         # Query embedding cache (LRU, opt-in via MEMO_QUERY_CACHE_SIZE)
         cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
-        self._query_cache: OrderedDict[str, list[float]] = OrderedDict() if cache_size > 0 else None
+        self._query_cache: OrderedDict[str, list[float]] | None = (
+            OrderedDict() if cache_size > 0 else None
+        )
         self._query_cache_size = cache_size
-        self._cache_lock = threading.Lock() if cache_size > 0 else None
+        # Always present so `with self._cache_lock` is unconditionally valid;
+        # the cache itself is what's gated on MEMO_QUERY_CACHE_SIZE.
+        self._cache_lock = threading.Lock()
 
     # -- internal -----------------------------------------------------------
 
