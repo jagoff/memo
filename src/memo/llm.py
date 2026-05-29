@@ -167,8 +167,15 @@ class MLXChat:
                 try:
                     import mlx.core as mx
                     mx.clear_cache()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Don't swallow: a failed cache flush means the evicted
+                    # model's buffers may still be resident, which is exactly
+                    # what pushes a 36GB box toward OOM when cycling
+                    # helper+chat+reranker. Surface it so it's diagnosable.
+                    _log.warning(
+                        "LLM cache: mx.clear_cache() failed after evicting %s: %s",
+                        evicted_key, exc,
+                    )
 
             loaded = _mlx_load(model)
             self._loaded[model] = (loaded[0], loaded[1])

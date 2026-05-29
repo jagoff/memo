@@ -64,6 +64,10 @@ from typing import Any
 
 _STATS_SAMPLE_CAP = 1024
 _STATS_DEFAULT_PERSIST_INTERVAL_S = 60.0
+# Cap a single request/response line so a client that never sends a newline
+# can't make us buffer unboundedly. Requests are small JSON ({op, prompt,
+# cwd}); 1 MiB is far above any legitimate prompt.
+_MAX_LINE_BYTES = 1 << 20
 
 
 def _percentile(sorted_values: list[float], pct: int) -> float | None:
@@ -380,8 +384,12 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         error = False
         try:
             try:
-                line = self.rfile.readline()
+                line = self.rfile.readline(_MAX_LINE_BYTES)
                 if not line:
+                    self._write_response("{}", debug=debug)
+                    return
+                if len(line) >= _MAX_LINE_BYTES and not line.endswith(b"\n"):
+                    error = True
                     self._write_response("{}", debug=debug)
                     return
                 req = json.loads(line.decode("utf-8", errors="replace").strip())
@@ -561,6 +569,8 @@ def _send_request(state_dir: Path, payload: dict[str, Any], timeout: float) -> s
                 if not chunk:
                     break
                 buf += chunk
+                if len(buf) >= _MAX_LINE_BYTES:
+                    break  # runaway response — stop buffering
         line = buf.decode("utf-8", errors="replace").strip()
         return line if line else None
     except (FileNotFoundError, ConnectionRefusedError, OSError, TimeoutError):
