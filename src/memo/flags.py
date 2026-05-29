@@ -1,0 +1,225 @@
+"""Central registry for `MEMO_*` feature/tuning environment flags.
+
+One documented source of truth for every behavioral env var memo reads.
+Storage/model config lives in `config.py` (typed `Config` model); this
+module covers the ~60 *behavioral* flags that were historically read inline
+via scattered `os.environ.get("MEMO_...")` calls with per-call-site defaults.
+
+Each flag is a `FlagSpec` (kind + default + group + help). Use the typed
+accessors — `flag_bool`, `flag_int`, `flag_float`, `flag_str` — or the
+generic `flag(name)` which coerces by the registered kind. `validate()`
+parses every *set* flag and reports misconfiguration; `active_flags()`
+lists which are currently set in the environment. The `memo config`
+command group surfaces both.
+
+Rewiring every legacy call site to read through here is incremental; until
+then this registry is authoritative for names/defaults/types and powers
+`memo config validate`.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Any, Literal
+
+FlagKind = Literal["bool", "int", "float", "str"]
+
+# Truthy spellings accepted for bool flags. Mirrors the historical mix of
+# `== "1"` and `.lower() in (...)` checks across the codebase.
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off", ""}
+
+
+@dataclass(frozen=True)
+class FlagSpec:
+    """One `MEMO_*` flag: how to parse it, its default, and what it does."""
+
+    name: str
+    kind: FlagKind
+    default: Any
+    group: str
+    help: str
+    # Some bools are checked with inverted polarity (`!= "1"` → default-on,
+    # opt-out). Recorded so `config flags` can show the real default.
+    opt_out: bool = False
+
+
+def _spec(name, kind, default, group, help, opt_out=False) -> FlagSpec:
+    return FlagSpec(name, kind, default, group, help, opt_out)
+
+
+# ── Registry ────────────────────────────────────────────────────────────────
+# Grouped by subsystem. Defaults mirror the historical inline call sites.
+_SPECS: tuple[FlagSpec, ...] = (
+    # recall hook / daemon (UserPromptSubmit hot path — 5s budget)
+    _spec("MEMO_RECALL_DISABLE", "bool", False, "recall", "Disable the recall hook entirely."),
+    _spec("MEMO_RECALL_DEBUG", "bool", False, "recall", "Verbose recall-hook diagnostics to stderr."),
+    _spec("MEMO_RECALL_MODE", "str", "vec", "recall", "Retrieval mode: vec | hybrid | bm25."),
+    _spec("MEMO_RECALL_FORCE_MODE", "bool", True, "recall", "Honor MEMO_RECALL_MODE even when risky.", opt_out=True),
+    _spec("MEMO_RECALL_TOP_K", "int", 3, "recall", "Number of memorias injected per prompt."),
+    _spec("MEMO_RECALL_MIN_SIM", "float", 0.6, "recall", "Cosine similarity floor for a hit."),
+    _spec("MEMO_RECALL_BODY_CHARS", "int", 240, "recall", "Max body chars per injected memoria."),
+    _spec("MEMO_RECALL_MIN_BODY_CHARS", "int", 40, "recall", "Skip memorias with bodies shorter than this."),
+    _spec("MEMO_RECALL_MIN_PROMPT_CHARS", "int", 12, "recall", "Skip recall for prompts shorter than this."),
+    _spec("MEMO_RECALL_TOKEN_BUDGET", "int", 0, "recall", "Token budget for injected context (0 = off)."),
+    _spec("MEMO_RECALL_PROJECT_BOOST", "float", 0.15, "recall", "Score boost for memorias tagged to the cwd project."),
+    _spec("MEMO_RECALL_RERANK_INPUT_K", "int", 10, "recall", "Candidates fed to the reranker."),
+    _spec("MEMO_RECALL_STALENESS_DAYS", "int", 0, "recall", "Down-rank memorias older than N days (0 = off)."),
+    _spec("MEMO_RECALL_SKIP_SLASH", "bool", True, "recall", "Skip recall when the prompt starts with '/'."),
+    # search ranking
+    _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking."),
+    _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),
+    _spec("MEMO_QUERY_CACHE_SIZE", "int", 0, "search", "LRU size for query embeddings (0 = off)."),
+    # session checkpoints / resume
+    _spec("MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."),
+    _spec("MEMO_SESSION_DEBUG", "bool", False, "session", "Verbose session-hook diagnostics."),
+    # turn capture
+    _spec("MEMO_CAPTURE_DISABLE", "bool", False, "capture", "Disable Stop-hook turn capture."),
+    _spec("MEMO_CAPTURE_DEBUG", "bool", False, "capture", "Verbose capture diagnostics."),
+    _spec("MEMO_CAPTURE_MIN_WORDS", "int", 15, "capture", "Minimum words for a turn to be captured."),
+    _spec("MEMO_CAPTURE_CONTEXT_TURNS", "int", 3, "capture", "Prior turns included as capture context."),
+    _spec("MEMO_CAPTURE_COOLDOWN_MIN", "int", 0, "capture", "Minutes between captures (0 = no cooldown)."),
+    # briefing (SessionStart panel)
+    _spec("MEMO_BRIEFING_DISABLE", "bool", False, "briefing", "Disable the SessionStart briefing panel."),
+    _spec("MEMO_BRIEFING_DEBUG", "bool", False, "briefing", "Verbose briefing diagnostics."),
+    _spec("MEMO_BRIEFING_SYNAPSE_DISABLE", "bool", False, "briefing", "Skip the Synapse section of the briefing.", opt_out=True),
+    _spec("MEMO_BRIEFING_LOOPS_N", "int", 5, "briefing", "Open-loop items shown in the briefing."),
+    _spec("MEMO_BRIEFING_LOOPS_DAYS", "int", 7, "briefing", "Look-back window (days) for open loops."),
+    # repo indexing
+    _spec("MEMO_REPO_MAX_FILE_BYTES", "int", None, "repo", "Skip repo files larger than this (bytes)."),
+    _spec("MEMO_REPO_EMBED_BATCH", "int", None, "repo", "Chunks per embed batch during repo index."),
+    _spec("MEMO_REPO_FLUSH_BATCH", "int", None, "repo", "Rows per DB flush during repo index."),
+    _spec("MEMO_REPO_GIT_TIMEOUT_S", "int", None, "repo", "Timeout (s) for git operations on clone."),
+    # embedder daemon / client
+    _spec("MEMO_EMBEDDER_VIA_DAEMON", "bool", False, "embedder", "Route embeddings through the embed daemon."),
+    _spec("MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON", "bool", False, "embedder", "Fail instead of falling back to in-process embed."),
+    _spec("MEMO_EMBEDDER_CLIENT_TIMEOUT", "float", None, "embedder", "Embed-daemon client socket timeout (s)."),
+    _spec("MEMO_EMBEDDER_STATS_INTERVAL_S", "float", None, "embedder", "Embed-daemon stats log interval (s)."),
+    # feedback boosting
+    _spec("MEMO_FEEDBACK_DISABLED", "bool", False, "feedback", "Disable relevance-feedback score boosting.", opt_out=True),
+    _spec("MEMO_FEEDBACK_SIM_THRESHOLD", "float", None, "feedback", "Similarity threshold for feedback matching."),
+    _spec("MEMO_FEEDBACK_BOOST_PER_VOTE", "float", None, "feedback", "Score boost added per upvote."),
+    _spec("MEMO_FEEDBACK_BOOST_CAP", "float", None, "feedback", "Maximum cumulative feedback boost."),
+    # MCP transport
+    _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
+    _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),
+    _spec("MEMO_MCP_PORT", "int", 18768, "mcp", "Bind port for the HTTP MCP transport."),
+    # synapse / memflow integration
+    _spec("MEMO_RESPECT_SYNAPSE_FREEZE", "bool", False, "synapse", "Honor a Synapse write-freeze signal."),
+    _spec("MEMO_SYNAPSE_EXECUTABLE", "str", "", "synapse", "Override path to the synapse executable."),
+    _spec("MEMO_SYNAPSE_CLIENT_TIMEOUT", "float", None, "synapse", "Synapse client request timeout (s)."),
+    _spec("MEMO_MEMFLOW_BIN", "str", "", "synapse", "Override path to the memflow binary."),
+    _spec("MEMO_EMIT_RECEIPTS", "bool", False, "synapse", "Emit operational receipts for Synapse."),
+    _spec("MEMO_EMIT_LEDGER", "bool", True, "synapse", "Emit consciousness-ledger entries.", opt_out=True),
+    # misc behavior
+    _spec("MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True),
+    _spec("MEMO_PROMPT_CACHE", "bool", False, "misc", "Enable LLM prompt caching."),
+    _spec("MEMO_CONTEXTUAL_RETRIEVAL", "bool", False, "misc", "Enable contextual-retrieval re-ranking."),
+    _spec("MEMO_AUTO_PROJECT_TAG", "bool", True, "misc", "Auto-tag saved memorias with the cwd project.", opt_out=True),
+    _spec("MEMO_PROJECT_TAG", "str", "", "misc", "Pin a project tag (overrides cwd detection)."),
+    _spec("MEMO_MODEL_PROFILE", "str", "", "misc", "Model profile: light | balanced | quality."),
+    _spec("MEMO_NONINTERACTIVE", "bool", False, "misc", "Suppress interactive prompts (hooks/CI)."),
+    _spec("MEMO_SUPPRESS_LEGACY_WARN", "bool", False, "misc", "Silence legacy-config deprecation warnings."),
+)
+
+REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}
+
+
+def _coerce(spec: FlagSpec, raw: str) -> Any:
+    """Parse `raw` per the spec's kind. Raises ValueError on bad input."""
+    if spec.kind == "bool":
+        low = raw.strip().lower()
+        if low in _TRUE:
+            return True
+        if low in _FALSE:
+            return False
+        raise ValueError(f"expected a boolean (1/0/true/false), got {raw!r}")
+    if spec.kind == "int":
+        return int(raw.strip())
+    if spec.kind == "float":
+        return float(raw.strip())
+    return raw  # str
+
+
+def flag(name: str, *, env: dict[str, str] | None = None) -> Any:
+    """Return the typed, parsed value for `name`, or its default if unset.
+
+    Unknown flags raise KeyError — every flag must be registered above.
+    """
+    spec = REGISTRY[name]
+    src = os.environ if env is None else env
+    raw = src.get(name)
+    if raw is None or raw == "":
+        # empty string counts as unset except for str flags whose default is ""
+        if raw == "" and spec.kind == "str":
+            return ""
+        return spec.default
+    try:
+        return _coerce(spec, raw)
+    except ValueError:
+        return spec.default
+
+
+def flag_bool(name: str, *, env: dict[str, str] | None = None) -> bool:
+    return bool(flag(name, env=env))
+
+
+def flag_int(name: str, *, env: dict[str, str] | None = None) -> int | None:
+    v = flag(name, env=env)
+    return None if v is None else int(v)
+
+
+def flag_float(name: str, *, env: dict[str, str] | None = None) -> float | None:
+    v = flag(name, env=env)
+    return None if v is None else float(v)
+
+
+def flag_str(name: str, *, env: dict[str, str] | None = None) -> str:
+    v = flag(name, env=env)
+    return "" if v is None else str(v)
+
+
+def active_flags(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Registered flags currently set (non-empty) in the environment."""
+    src = os.environ if env is None else env
+    return {n: src[n] for n in REGISTRY if src.get(n)}
+
+
+def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
+    """`MEMO_*` env vars set but NOT in the registry (possible typos).
+
+    Excludes storage/model vars owned by config.py.
+    """
+    src = os.environ if env is None else env
+    owned = {
+        "MEMO_DATA_DIR", "MEMO_STATE_DIR", "MEMO_VAULT_PATH", "MEMO_MEMORY_SUBDIR",
+        "MEMO_EMBEDDER_MODEL", "MEMO_EMBEDDER_DIMS", "MEMO_LLM_MODEL",
+        "MEMO_HELPER_MODEL", "MEMO_RERANKER_MODEL", "MEMO_RERANKER_ENABLED",
+        "MEMO_RERANKER_REVISION", "MEMO_RERANK_FUSION_ALPHA", "MEMO_RERANK_INPUT_K",
+        "MEMO_MAX_CONTENT_CHARS", "MEMO_SEARCH_DEFAULT_LIMIT",
+    }
+    return sorted(
+        k for k in src
+        if k.startswith("MEMO_") and k not in REGISTRY and k not in owned
+    )
+
+
+def validate(env: dict[str, str] | None = None) -> list[dict[str, str]]:
+    """Parse every set flag; return a list of problems (empty = all good).
+
+    Each problem is {flag, value, error}.
+    """
+    src = os.environ if env is None else env
+    problems: list[dict[str, str]] = []
+    for name, spec in REGISTRY.items():
+        raw = src.get(name)
+        if raw is None or raw == "":
+            continue
+        try:
+            _coerce(spec, raw)
+        except ValueError as exc:
+            problems.append({"flag": name, "value": raw, "error": str(exc)})
+    for var in unknown_memo_vars(env):
+        problems.append({"flag": var, "value": src[var], "error": "unknown MEMO_* var (typo? not in registry)"})
+    return problems
