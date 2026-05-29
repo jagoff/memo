@@ -912,6 +912,7 @@ class Memory:
     def search(
         self, query: str, *, limit: int | None = None, type_: str | None = None,
         mode: str = "hybrid", load_bodies: bool = True, disable_reranker: bool = False,
+        recency: bool = False,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
 
@@ -934,6 +935,11 @@ class Memory:
             disable_reranker: If True, skip cross-encoder reranking even
                 when enabled in config. Useful for chat synthesis where
                 RRF is sufficient and reranker adds latency.
+            recency: If True, blend a freshness bonus into the final score
+                (newer memorias rank higher) even when MEMO_SEARCH_DECAY_HALFLIFE
+                is unset. The consumer-facing paths (recall hook, ask/chat) pass
+                this so stale facts don't crowd out recent ones; the eval
+                harness leaves it False to keep a raw, comparable baseline.
         """
         if not query or not query.strip():
             return []
@@ -992,10 +998,15 @@ class Memory:
         # Also skipped when disable_reranker=True (e.g., chat synthesis).
         if mode == "hybrid" and self.cfg.reranker_enabled and not disable_reranker and out:
             out = self._rerank(query, out, top_n=limit)
-        # Optional recency decay: blend a freshness bonus into the score so
-        # older memories don't crowd out recent ones. Disabled by default
-        # (halflife_days=0). Enable via MEMO_SEARCH_DECAY_HALFLIFE (days).
+        # Recency decay: blend a freshness bonus into the score so older
+        # memories don't crowd out recent ones. MEMO_SEARCH_DECAY_HALFLIFE
+        # (days) sets the halflife explicitly; if unset, the consumer paths
+        # (recall/ask/chat) still get a sensible default when they pass
+        # `recency=True`, while raw `search()` callers (e.g. the eval harness)
+        # stay decay-free for a comparable baseline.
         halflife_days = float(os.environ.get("MEMO_SEARCH_DECAY_HALFLIFE", "0") or 0)
+        if halflife_days <= 0 and recency:
+            halflife_days = _RECALL_DECAY_HALFLIFE_DEFAULT
         if halflife_days > 0 and out:
             alpha = min(max(float(os.environ.get("MEMO_SEARCH_DECAY_ALPHA", "0.15")), 0.0), 1.0)
             out = _apply_decay(out, halflife_days=halflife_days, alpha=alpha)
@@ -2879,6 +2890,13 @@ def _compose_for_embed(title: str, body: str) -> str:
     if not body:
         return title
     return f"{title}\n\n{body}"
+
+
+# Default recency halflife (days) applied when a consumer path requests
+# `search(recency=True)` without an explicit MEMO_SEARCH_DECAY_HALFLIFE. ~6
+# months: a fact stays at full weight for weeks, then gently yields to fresher
+# memorias rather than being crowded out forever.
+_RECALL_DECAY_HALFLIFE_DEFAULT = 180.0
 
 
 def _apply_decay(

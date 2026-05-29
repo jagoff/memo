@@ -1249,6 +1249,11 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         return {"memoria_id": memoria_id, "access_count": count}
 
     # -- proactive suggestions helpers --------------------------------------------
+    # NOTE: deliberately NOT registered as @server.tool(). The architecture
+    # boundary (tests/test_architecture_boundaries.py) keeps "brain-like" verbs
+    # — suggest/agent/cognitive/… — off memo's MCP surface: memo is the memory
+    # store, not the cognition layer. Proactive surfacing lives in memo's own
+    # briefing/recall output instead (see cli briefing nudge).
 
     def memory_suggest_analyze(
         recent_turns: list[dict[str, str]],

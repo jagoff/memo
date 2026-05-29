@@ -880,3 +880,26 @@ def test_save_rejects_zero_norm_embedding(tmp_cfg: Config, monkeypatch):
     mem = Memory(cfg)
     with pytest.raises(ValueError, match="norm out of"):
         mem.save(content="x", title="t")
+
+
+def test_apply_decay_lets_fresher_memory_win_a_tie():
+    """Recency decay: two equally-scored hits, the fresher one ranks first."""
+    from datetime import UTC, datetime, timedelta
+
+    from memo.memory import MemoryRecord, _apply_decay
+
+    now = datetime.now(tz=UTC)
+
+    def _rec(id_: str, updated: datetime) -> MemoryRecord:
+        return MemoryRecord(
+            id=id_, path=f"{id_}.md", title=id_, type="note", tags=[],
+            created=updated.isoformat(), updated=updated.isoformat(),
+            body="b", extra={}, score=0.70,
+        )
+
+    old = _rec("old", now - timedelta(days=400))
+    fresh = _rec("fresh", now - timedelta(days=1))
+
+    out = _apply_decay([old, fresh], halflife_days=180.0, alpha=0.15)
+    assert [r.id for r in out] == ["fresh", "old"]
+    assert out[0].score > out[1].score
