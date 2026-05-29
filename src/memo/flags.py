@@ -67,6 +67,7 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_RERANK_INPUT_K", "int", 10, "recall", "Candidates fed to the reranker."),
     _spec("MEMO_RECALL_STALENESS_DAYS", "int", 0, "recall", "Down-rank memorias older than N days (0 = off)."),
     _spec("MEMO_RECALL_SKIP_SLASH", "bool", True, "recall", "Skip recall when the prompt starts with '/'."),
+    _spec("MEMO_RECALL_CONTEXTUAL", "bool", True, "recall", "Re-rank recall by learned type preferences + record what surfaces.", opt_out=True),
     # search ranking
     _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking."),
     _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),
@@ -80,6 +81,12 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_CAPTURE_MIN_WORDS", "int", 15, "capture", "Minimum words for a turn to be captured."),
     _spec("MEMO_CAPTURE_CONTEXT_TURNS", "int", 3, "capture", "Prior turns included as capture context."),
     _spec("MEMO_CAPTURE_COOLDOWN_MIN", "int", 0, "capture", "Minutes between captures (0 = no cooldown)."),
+    # corpus maintenance (memo maintain)
+    _spec("MEMO_MAINTAIN_DISABLE", "bool", False, "maintain", "Disable the daily `memo maintain --if-due` auto-run."),
+    # transcript ingest
+    _spec("MEMO_INGEST_MIN_CHARS", "int", 200, "ingest", "Minimum chars for an ingested transcript turn."),
+    _spec("MEMO_INGEST_STRICT", "bool", False, "ingest", "Strict ingest filtering."),
+    _spec("MEMO_INGEST_DEBUG", "bool", False, "ingest", "Verbose ingest diagnostics."),
     # briefing (SessionStart panel)
     _spec("MEMO_BRIEFING_DISABLE", "bool", False, "briefing", "Disable the SessionStart briefing panel."),
     _spec("MEMO_BRIEFING_DEBUG", "bool", False, "briefing", "Verbose briefing diagnostics."),

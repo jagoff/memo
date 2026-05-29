@@ -13,6 +13,7 @@ import click
 
 from memo.cli_common import console
 from memo.config import Config
+from memo.flags import flag_bool
 
 
 @click.group(name="session")
@@ -50,7 +51,7 @@ def session_checkpoint(
     import os as _os
     import sys as _sys
 
-    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+    if flag_bool("MEMO_SESSION_DISABLE"):
         if as_json:
             click.echo("{}")
         sys.exit(0)
@@ -91,7 +92,7 @@ def session_checkpoint(
             lru_cap=lru_cap,
         )
     except Exception as exc:
-        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+        if flag_bool("MEMO_SESSION_DEBUG"):
             print(f"# memo session checkpoint failed: {exc}", file=_sys.stderr)
         if as_json:
             click.echo("{}")
@@ -120,7 +121,7 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
     import subprocess as _sp
     import sys as _sys
 
-    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+    if flag_bool("MEMO_SESSION_DISABLE"):
         print("{}")
         _sys.exit(0)
 
@@ -152,7 +153,7 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
             cooldown_secs=cooldown,
         )
     except Exception as exc:
-        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+        if flag_bool("MEMO_SESSION_DEBUG"):
             print(f"# session autosave check failed: {exc}", file=_sys.stderr)
         print("{}")
         _sys.exit(0)
@@ -183,7 +184,7 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
             proc.stdin.close()
         mark_autosaved(cfg.state_dir, sid)
     except Exception as exc:
-        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+        if flag_bool("MEMO_SESSION_DEBUG"):
             print(f"# session autosave spawn failed: {exc}", file=_sys.stderr)
         print("{}")
         _sys.exit(0)
@@ -216,7 +217,7 @@ def session_refresh_summary() -> None:
     import os as _os
     import sys as _sys
 
-    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+    if flag_bool("MEMO_SESSION_DISABLE"):
         _sys.exit(0)
 
     payload: dict[str, Any] = {}
@@ -238,7 +239,7 @@ def session_refresh_summary() -> None:
         cfg.ensure_dirs()
         _refresh_summary(cfg.state_dir, sid)
     except Exception as exc:
-        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+        if flag_bool("MEMO_SESSION_DEBUG"):
             print(f"# memo session refresh-summary failed: {exc}", file=_sys.stderr)
     _sys.exit(0)
 
@@ -252,7 +253,7 @@ def session_recent(limit: int) -> None:
     import os as _os
     import sys as _sys
 
-    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+    if flag_bool("MEMO_SESSION_DISABLE"):
         print("{}")
         _sys.exit(0)
 
@@ -261,7 +262,7 @@ def session_recent(limit: int) -> None:
         cfg = Config.from_env()
         rows = list_sessions(cfg.state_dir, limit=limit)
     except Exception as exc:
-        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+        if flag_bool("MEMO_SESSION_DEBUG"):
             print(f"# memo session recent failed: {exc}", file=_sys.stderr)
         print("{}")
         _sys.exit(0)

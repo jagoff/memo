@@ -245,10 +245,9 @@ def _passes_quality(text: str, min_words: int | None = None) -> bool:
     Env vars:
       MEMO_CAPTURE_MIN_WORDS — minimum word count (default 15; set to 0 to disable).
     """
-    import os as _os
     if min_words is None:
-        raw = _os.environ.get("MEMO_CAPTURE_MIN_WORDS", "15")
-        min_words = max(0, int(raw or 15))
+        from memo.flags import flag_int
+        min_words = max(0, flag_int("MEMO_CAPTURE_MIN_WORDS") or 15)
     t = text.strip()
     # Too short
     if min_words > 0 and len(t.split()) < min_words:
@@ -359,8 +358,9 @@ def run_capture(
           same session (default 0 = no cooldown). Set to e.g. 30 to avoid
           flooding the corpus during a long refactoring session.
     """
-    import os
     import time
+
+    from memo.flags import flag_int
 
     from memo.config import Config
     from memo.memory import Memory
@@ -369,7 +369,7 @@ def run_capture(
     state = _load_state(cfg.state_dir)
 
     # Cooldown: skip if we saved too recently.
-    cooldown_min = float(os.environ.get("MEMO_CAPTURE_COOLDOWN_MIN", "0") or 0)
+    cooldown_min = float(flag_int("MEMO_CAPTURE_COOLDOWN_MIN") or 0)
     if cooldown_min > 0:
         last_save_ts = state.get("last_save_ts", 0.0)
         elapsed_min = (time.time() - float(last_save_ts)) / 60.0
@@ -381,7 +381,7 @@ def run_capture(
                 )
             return {"status": "cooldown"}
 
-    context_turns = max(1, int(os.environ.get("MEMO_CAPTURE_CONTEXT_TURNS", "3") or 3))
+    context_turns = max(1, flag_int("MEMO_CAPTURE_CONTEXT_TURNS") or 3)
     pair = _read_recent_exchanges(transcript_path, n=context_turns)
     if pair is None:
         return {"status": "no_pair"}
