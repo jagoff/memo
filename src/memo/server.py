@@ -2330,7 +2330,10 @@ def main() -> None:
     transport = os.environ.get("MEMO_MCP_TRANSPORT", "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
         host = os.environ.get("MEMO_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-        port = int(os.environ.get("MEMO_MCP_PORT", "18768").strip() or "18768")
+        try:
+            port = int(os.environ.get("MEMO_MCP_PORT", "18768").strip() or "18768")
+        except ValueError:
+            port = 18768  # malformed env → default rather than crash the daemon
         server.run(transport=transport, host=host, port=port)
     else:
         server.run()
