@@ -84,15 +84,6 @@ def test_feedback_isolated_to_similar_queries(mem_with_stub: Memory):
     for i in range(5):
         mem_with_stub.save(content=f"unrelated body {i}", title=f"u{i}")
     mem_with_stub.feedback_record(rec_a.id, query_text="alpha", rating="down")
-    # "alpha" → bucket = sum(ord)%4 → deterministic. Pick a query whose
-    # sum % 4 differs so the embeddings are orthogonal.
-    other_query = "zzzz"  # sum 122*4 = 488 % 4 = 0; "alpha" sums to 524%4 = 0 — actually same.
-    # Construct a query that maps to a different bucket.
-    for candidate in ["beta query", "qq", "kk", "rr"]:
-        if sum(ord(c) for c in candidate) % 4 != sum(ord(c) for c in "alpha") % 4:
-            other_query = candidate
-            break
-    ids = {h.id for h in mem_with_stub.search(other_query, limit=5)}
     # Source must still be discoverable for a dissimilar query — its
     # presence depends on bm25/vec hits for the other query string,
     # but if it surfaces here at all, the filter must not drop it.

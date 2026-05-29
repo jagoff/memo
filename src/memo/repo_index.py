@@ -48,6 +48,23 @@ DEFAULT_EXCLUDE_GLOBS = (
 DEFAULT_MAX_FILE_BYTES = 2_000_000
 DEFAULT_CHUNK_TARGET_CHARS = 3500
 DEFAULT_CHUNK_OVERLAP_LINES = 8
+# Chunks shorter than this with no heading/link carry almost no semantic
+# signal (stray punctuation, empty list items, frontmatter fragments) and
+# only add noise + cost to the embedding index. They are dropped at build
+# time. Lines are still kept in full in repo_lines for keyword search.
+MIN_CHUNK_CHARS = 60
+_LINK_RE = re.compile(r"\[\[.+?\]\]|\[.+?\]\(.+?\)|https?://\S+")
+
+
+def _is_noise_chunk(body: str) -> bool:
+    """True for near-empty chunks with no heading and no link/URL."""
+    stripped = body.strip()
+    if len(stripped) >= MIN_CHUNK_CHARS:
+        return False
+    if "#" in stripped and re.search(r"^#{1,6}\s+\S", stripped, re.MULTILINE):
+        return False  # markdown heading — keep
+    # wikilink / md link / URL — keep; otherwise it's noise
+    return not _LINK_RE.search(stripped)
 DEFAULT_EMBED_BATCH = 64
 MIN_EMBED_BATCH = 1
 DEFAULT_FLUSH_BATCH = 25
@@ -238,6 +255,14 @@ class RepoCorpus:
 
         existing_files = self.store.repo_file_hashes(repo_id)
         seen_paths: set[str] = set()
+        # (dev, inode) of every file already indexed this run. On a
+        # case-insensitive filesystem (APFS default) git can track the same
+        # physical file under two casings (e.g. `notes/x.md` + `Notes/x.md`),
+        # which otherwise index twice as distinct file_ids and duplicate every
+        # chunk. Inode collision catches that without skipping genuinely
+        # distinct files on a case-sensitive FS.
+        seen_inodes: set[tuple[int, int]] = set()
+        skipped_dup_path = 0
         pending_files: list[dict[str, Any]] = []
         checked = unchanged = skipped_binary = skipped_excluded = skipped_too_large = errors = 0
         indexed_files_total = indexed_chunks = indexed_lines = 0
@@ -297,7 +322,14 @@ class RepoCorpus:
                 continue
             checked += 1
             try:
-                size = path.stat().st_size
+                st = path.stat()
+                size = st.st_size
+                inode_key = (st.st_dev, st.st_ino)
+                if inode_key in seen_inodes:
+                    # Same physical file already indexed under another casing.
+                    skipped_dup_path += 1
+                    _emit(progress, "file_skipped", path=rel_posix, reason="duplicate_path")
+                    continue
                 if size > max_bytes:
                     skipped_too_large += 1
                     _emit(progress, "file_skipped", path=rel_posix, reason="too_large")
@@ -310,6 +342,7 @@ class RepoCorpus:
                 text = raw.decode("utf-8", errors="replace")
                 sha = hashlib.sha256(raw).hexdigest()
                 seen_paths.add(rel_posix)
+                seen_inodes.add(inode_key)
 
                 # OCR enrichment for .md files with embedded images
                 # (`![[image.png]]`). Appends extracted text to the body so
@@ -410,6 +443,7 @@ class RepoCorpus:
             "skipped_binary": skipped_binary,
             "skipped_excluded": skipped_excluded,
             "skipped_too_large": skipped_too_large,
+            "skipped_dup_path": skipped_dup_path,
             "errors": errors,
             "skipped_repo_unchanged": False,
             "resumed_partial": resuming_partial,
@@ -718,7 +752,13 @@ class RepoCorpus:
         ]
 
         chunk_payloads: list[dict[str, Any]] = []
+        # The noise filter is markdown-centric (headings, wikilinks, frontmatter
+        # fragments). Code files can be legitimately short — a 2-line function is
+        # real signal, not noise — so only filter markdown.
+        is_markdown = path.lower().endswith((".md", ".markdown"))
         for seq, line_start, line_end, body in _chunk_lines(lines):
+            if is_markdown and _is_noise_chunk(body):
+                continue  # near-empty md chunk, no heading/link — ingest noise
             chunk_id = _stable_id("repo-chunk", file_id, str(seq), _short_hash(body))
             chunk_payloads.append({
                 "id": chunk_id,

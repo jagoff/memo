@@ -6,8 +6,6 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from memo import synapse_client
 
 
@@ -26,15 +24,19 @@ class TestExecutable:
 
     def test_executable_respects_env_override(self) -> None:
         """_executable() respeta MEMO_SYNAPSE_EXECUTABLE env var."""
-        with patch.dict("os.environ", {"MEMO_SYNAPSE_EXECUTABLE": "/custom/synapse"}):
-            with patch("os.path.exists", return_value=True):
-                assert synapse_client._executable() == "/custom/synapse"
+        with (
+            patch.dict("os.environ", {"MEMO_SYNAPSE_EXECUTABLE": "/custom/synapse"}),
+            patch("os.path.exists", return_value=True),
+        ):
+            assert synapse_client._executable() == "/custom/synapse"
 
     def test_executable_returns_none_if_env_override_missing(self) -> None:
         """_executable() retorna None si env override no existe."""
-        with patch.dict("os.environ", {"MEMO_SYNAPSE_EXECUTABLE": "/missing/synapse"}):
-            with patch("os.path.exists", return_value=False):
-                assert synapse_client._executable() is None
+        with (
+            patch.dict("os.environ", {"MEMO_SYNAPSE_EXECUTABLE": "/missing/synapse"}),
+            patch("os.path.exists", return_value=False),
+        ):
+            assert synapse_client._executable() is None
 
 
 class TestTimeout:
@@ -86,13 +88,15 @@ class TestListConflicts:
 
     def test_list_conflicts_returns_empty_on_timeout(self) -> None:
         """list_conflicts() retorna [] en timeout."""
-        with patch.object(synapse_client, "_executable", return_value="/usr/bin/synapse"):
-            with patch(
+        with (
+            patch.object(synapse_client, "_executable", return_value="/usr/bin/synapse"),
+            patch(
                 "subprocess.run",
                 side_effect=subprocess.TimeoutExpired("cmd", 5.0),
-            ):
-                result = synapse_client.list_conflicts("test query", timeout=5.0)
-                assert result == []
+            ),
+        ):
+            result = synapse_client.list_conflicts("test query", timeout=5.0)
+            assert result == []
 
     def test_list_conflicts_returns_empty_on_nonzero_exit(self) -> None:
         """list_conflicts() retorna [] si synapse exit != 0."""

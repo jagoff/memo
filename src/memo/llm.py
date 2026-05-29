@@ -117,7 +117,7 @@ class MLXChat:
             held = []
 
         common = 0
-        for a, b in zip(held, prompt_tokens):
+        for a, b in zip(held, prompt_tokens, strict=False):
             if a != b:
                 break
             common += 1
