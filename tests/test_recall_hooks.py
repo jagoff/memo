@@ -6,7 +6,12 @@ from types import SimpleNamespace
 import pytest
 
 from memo.memory import MemoryRecord
-from memo.recall_server import _apply_project_boost, _recall_logic
+from memo.recall_server import (
+    RECALL_DIRECTIVE,
+    _apply_project_boost,
+    _recall_logic,
+    dedup_hits,
+)
 
 
 def _rec(id_: str, title: str, score: float, tags: list[str] | None = None) -> MemoryRecord:
@@ -40,7 +45,7 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
     project_hit = _rec("project1", "Project", 0.60, ["project:memo"])
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str) -> list[MemoryRecord]:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
             return [global_hit, project_hit]
 
     monkeypatch.setenv("MEMO_PROJECT_TAG", "memo")
@@ -60,3 +65,49 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
 
     assert context.index("Project") < context.index("Global")
     assert "score 0.75" in context
+
+
+def test_dedup_hits_drops_duplicate_id_and_near_identical_content() -> None:
+    a = _rec("id000001", "Decisión MLX", 0.80)
+    a_dup_id = _rec("id000001", "Decisión MLX", 0.50)  # same id, lower score
+    a_near = _rec("id000002", "Decisión MLX", 0.70)    # different id, same title+body
+    b = _rec("id000003", "Otra cosa distinta", 0.65)
+
+    out = dedup_hits([a, a_dup_id, a_near, b])
+
+    ids = [h.id for h in out]
+    assert ids == ["id000001", "id000003"]  # dup id + near-dup content collapsed
+
+
+def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
+    hit = _rec("auth0001", "Some fact", 0.80)
+
+    class StubMemory:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+            return [hit]
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+
+    result = _recall_logic(
+        "anything", cwd=None, mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
+    )
+    context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
+    assert RECALL_DIRECTIVE in context
+    assert "authoritative" in context.lower()
+
+
+def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:
+    seen = {}
+
+    class StubMemory:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+            seen["recency"] = recency
+            return [_rec("r0000001", "Fresh", 0.9)]
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    _recall_logic("q", cwd=None, mem=StubMemory(),
+                  cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
+    assert seen["recency"] is True

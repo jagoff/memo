@@ -692,7 +692,7 @@ def recall_hook() -> None:
     try:
         from memo.memory import Memory
         mem = Memory(Config.from_env())
-        hits = mem.search(prompt, limit=search_k, mode=mode)
+        hits = mem.search(prompt, limit=search_k, mode=mode, recency=True)
     except Exception as exc:
         _bail(f"search failed: {exc}")
         return
@@ -750,6 +750,10 @@ def recall_hook() -> None:
             filtered.append(h)
         relevant = filtered
 
+    # Collapse near-duplicates so the same fact isn't injected twice.
+    from memo.recall_server import dedup_hits
+    relevant = dedup_hits(relevant)
+
     # Telemetry: append every recall (with or without hits) to the
     # JSONL ring buffer consumed by `memo tui`. Best-effort; failures
     # are swallowed inside the helper.
@@ -780,9 +784,9 @@ def recall_hook() -> None:
     # (English/Spanish prose); good-enough rule-of-thumb that avoids a
     # tiktoken dep. Last memoria gets head-truncated to fit instead of
     # being dropped wholesale.
-    header = "## Relevant memories from your past (memo)"
-    footer = "_Use `/memo get <id>` to see full content._"
-    lines = [header, ""]
+    from memo.recall_server import RECALL_DIRECTIVE, RECALL_FOOTER, RECALL_HEADER
+    footer = RECALL_FOOTER
+    lines = [RECALL_HEADER, RECALL_DIRECTIVE, ""]
     used_chars = 0  # chars of formatted block body, excluding header/footer
 
     def _est_tokens(s: str) -> int:

@@ -199,6 +199,46 @@ def _apply_project_boost(hits: list[Any], project_tag: str | None, project_boost
     return boosted
 
 
+# Recall block framing. The header + directive tell the model to treat the
+# injected memorias as the user's own established facts (source of truth),
+# not optional trivia — the single highest-leverage nudge for "always look
+# here first" behaviour. Shared by the daemon and the in-process fallback.
+RECALL_HEADER = "## 📌 From your memory (memo) — treat as established facts"
+RECALL_DIRECTIVE = (
+    "_These are facts the user saved previously. Treat them as authoritative: "
+    "prefer them over assumptions, build on them, and if you must contradict "
+    "one, say so explicitly rather than silently ignoring it._"
+)
+RECALL_FOOTER = "_Use `/memo get <id>` for full content._"
+
+
+def _dedup_key(hit: Any) -> str:
+    """Identity for near-duplicate collapse: normalised title + body head.
+    Catches the same fact surfaced twice (e.g. an evolved copy) without
+    needing embeddings at recall time."""
+    title = " ".join((getattr(hit, "title", "") or "").lower().split())
+    body = " ".join((getattr(hit, "body", "") or "").lower().split())[:120]
+    return f"{title}|{body}"
+
+
+def dedup_hits(hits: list[Any]) -> list[Any]:
+    """Drop hits with a duplicate id or near-identical title+body head,
+    keeping the first (highest-ranked) occurrence."""
+    seen_ids: set[str] = set()
+    seen_keys: set[str] = set()
+    out: list[Any] = []
+    for h in hits:
+        hid = getattr(h, "id", None)
+        key = _dedup_key(h)
+        if hid in seen_ids or key in seen_keys:
+            continue
+        if hid is not None:
+            seen_ids.add(hid)
+        seen_keys.add(key)
+        out.append(h)
+    return out
+
+
 def _recall_logic(
     prompt: str,
     cwd: str | None,
@@ -234,7 +274,7 @@ def _recall_logic(
     search_k = top_k * 3 if project_tag else top_k
 
     try:
-        hits = mem.search(prompt, limit=search_k, mode=mode)
+        hits = mem.search(prompt, limit=search_k, mode=mode, recency=True)
     except Exception as exc:
         if debug:
             print(f"# recall-daemon: search failed: {exc}", file=sys.stderr)
@@ -252,13 +292,15 @@ def _recall_logic(
     if min_body_chars > 0:
         relevant = [h for h in relevant if len((h.body or "").strip()) >= min_body_chars]
 
+    # Collapse near-duplicates so the model never sees the same fact twice.
+    relevant = dedup_hits(relevant)
+
     if not relevant:
         return "{}"
 
     # Format markdown additionalContext
-    header = "## Relevant memories from your past (memo)"
-    footer = "_Use `/memo get <id>` to see full content._"
-    lines = [header, ""]
+    lines = [RECALL_HEADER, RECALL_DIRECTIVE, ""]
+    footer = RECALL_FOOTER
     budget_chars = token_budget * 4 if token_budget > 0 else None
     used_chars = 0
 
