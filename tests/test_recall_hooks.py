@@ -8,6 +8,7 @@ import pytest
 from memo.memory import MemoryRecord
 from memo.recall_server import (
     RECALL_DIRECTIVE,
+    _apply_preference_boost,
     _apply_project_boost,
     _recall_logic,
     dedup_hits,
@@ -111,3 +112,44 @@ def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:
     _recall_logic("q", cwd=None, mem=StubMemory(),
                   cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
     assert seen["recency"] is True
+
+
+def test_apply_preference_boost_reorders_by_learned_type() -> None:
+    note = _rec("n0000001", "a note", 0.70)
+    decision = _rec("d0000001", "a decision", 0.68)
+    object.__setattr__(decision, "type", "decision")  # frozen record
+
+    prefs = SimpleNamespace(preferred_types={"decision": 0.9})
+    out = _apply_preference_boost([note, decision], prefs)
+
+    # decision was behind on raw score but the learned type pref lifts it
+    assert [h.id for h in out][0] == "d0000001"
+    # empty prefs → unchanged order
+    same = _apply_preference_boost([note, decision], SimpleNamespace(preferred_types={}))
+    assert [h.id for h in same] == ["n0000001", "d0000001"]
+
+
+def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
+    recorded = {}
+
+    class FakeContextual:
+        class context:
+            @staticmethod
+            def get_preferences():
+                return SimpleNamespace(preferred_types={})
+        @staticmethod
+        def record_search(prompt, ids):
+            recorded["prompt"] = prompt
+            recorded["ids"] = ids
+
+    class StubMemory:
+        contextual = FakeContextual()
+        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+            return [_rec("surf0001", "surfaced", 0.9)]
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    _recall_logic("mi pregunta", cwd=None, mem=StubMemory(),
+                  cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
+    assert recorded["prompt"] == "mi pregunta"
+    assert recorded["ids"] == ["surf0001"]
