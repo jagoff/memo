@@ -44,8 +44,10 @@ for clarity even though `vec_distance_l2` would rank identically.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
@@ -54,6 +56,8 @@ from pathlib import Path
 from typing import Any
 
 from sqlite_vec import serialize_float32
+
+_log = logging.getLogger(__name__)
 
 # vec0 accepts either a JSON array (text, must be parsed) or a packed
 # float32 blob. Blobs skip JSON encode on write and JSON parse on every
@@ -242,32 +246,62 @@ class VecStore:
         self.db_path = db_path
         self.dims = dims
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA busy_timeout = 10000")
-        with suppress(sqlite3.OperationalError):
-            self._conn.execute("PRAGMA journal_mode=WAL")
-        self._load_vec0()
+        # One sqlite connection PER THREAD. A single shared connection is
+        # unsafe under the FastMCP HTTP transport, which dispatches sync
+        # tool calls on an anyio worker threadpool: two threads issuing
+        # `BEGIN IMMEDIATE` (see `_tx`) on the same connection collide
+        # ("cannot start a transaction within a transaction" / recursive
+        # cursor use). Per-thread connections + WAL give real reader/writer
+        # concurrency instead, with `busy_timeout` absorbing writer waits.
+        # The CLI and recall daemon are single-threaded / lock-serialised,
+        # so they simply reuse their one thread-local connection.
+        self._local = threading.local()
+        self._connect()
         self._init_schema()
 
     # -- internals ---------------------------------------------------------
 
-    def _load_vec0(self) -> None:
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._connect()
+        return conn
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open + configure a connection for the calling thread, load vec0,
+        and stash it on thread-local storage. Idempotent per thread."""
+        conn = sqlite3.connect(str(self.db_path), timeout=10.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 10000")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError as exc:
+            # WAL is what makes concurrent readers + a writer safe. If the
+            # filesystem can't support it (e.g. some network mounts) we fall
+            # back to the rollback journal — slower concurrency, still
+            # correct — but surface it so the degradation isn't silent.
+            _log.warning("could not enable WAL journal mode on %s: %s", self.db_path, exc)
+        self._load_vec0(conn)
+        self._local.conn = conn
+        return conn
+
+    def _load_vec0(self, conn: sqlite3.Connection) -> None:
         import sqlite_vec  # type: ignore[import-not-found]
 
         # `enable_load_extension` must be called BEFORE `load_extension`.
         # Wrapped in try/except because some Python builds disable it
         # for security reasons — we surface a clear error in that case.
         try:
-            self._conn.enable_load_extension(True)
+            conn.enable_load_extension(True)
         except sqlite3.NotSupportedError as exc:
             raise RuntimeError(
                 "Python's sqlite3 was compiled without `enable_load_extension`. "
                 "Reinstall Python via Homebrew (`brew install python@3.13`) which "
                 "bundles a sqlite3 with extension support enabled."
             ) from exc
-        sqlite_vec.load(self._conn)
-        self._conn.enable_load_extension(False)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
 
     def _init_schema(self) -> None:
         # Most CLI commands are reads. If the schema already exists, avoid
@@ -1536,8 +1570,14 @@ class VecStore:
         return len(ids)
 
     def close(self) -> None:
-        with suppress(Exception):
-            self._conn.close()
+        # Closes the calling thread's connection. Other threads' connections
+        # are released when their threads end (or at process exit) — adequate
+        # for the daemon/CLI lifecycles that use this store.
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            with suppress(Exception):
+                conn.close()
+            self._local.conn = None
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
