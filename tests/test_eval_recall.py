@@ -129,6 +129,22 @@ def test_recommend_maps_winner_to_knobs():
     assert "MEMO_RECALL_MIN_SIM=0.4" in out
 
 
+def test_recommend_warns_when_winner_blows_hook_budget():
+    rows = [
+        eval_recall.Row(config="A vec/0.60/keep", precision_at_k=0.6, noise_at_k=0.4, latency_ms_p50=120),
+        eval_recall.Row(config="D hyb/0.40/ctx", precision_at_k=1.0, noise_at_k=0.0, latency_ms_p50=14000),
+    ]
+    out = eval_recall.recommend(rows)
+    assert "D hyb/0.40/ctx" in out
+    assert "recall-hook budget" in out
+    # a fast winner gets no latency warning
+    fast = [
+        eval_recall.Row(config="A vec/0.60/keep", precision_at_k=0.6, noise_at_k=0.4, latency_ms_p50=120),
+        eval_recall.Row(config="B vec/0.72/excl", precision_at_k=0.9, noise_at_k=0.0, latency_ms_p50=130),
+    ]
+    assert "recall-hook budget" not in eval_recall.recommend(fast)
+
+
 # --- end-to-end (isolated, stubbed embedder) --------------------------------
 
 
