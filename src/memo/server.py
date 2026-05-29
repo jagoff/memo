@@ -2329,6 +2329,9 @@ def main() -> None:
     server = build_server()
     transport = os.environ.get("MEMO_MCP_TRANSPORT", "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
+        # Enable prompt cache + query embedding cache for long-lived daemon
+        os.environ.setdefault("MEMO_PROMPT_CACHE", "1")
+        os.environ.setdefault("MEMO_QUERY_CACHE_SIZE", "500")
         host = os.environ.get("MEMO_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
         try:
             port = int(os.environ.get("MEMO_MCP_PORT", "18768").strip() or "18768")

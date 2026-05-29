@@ -30,8 +30,11 @@ by `_load_lock` so concurrent first calls don't race-load the weights.
 
 from __future__ import annotations
 
+import hashlib
+import os
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any
 
@@ -86,6 +89,11 @@ class MLXEmbedder:
         self._tokenizer: Any = None
         self._load_lock = threading.Lock()
         self._last_use: float = 0.0
+        # Query embedding cache (LRU, opt-in via MEMO_QUERY_CACHE_SIZE)
+        cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
+        self._query_cache: OrderedDict[str, list[float]] = OrderedDict() if cache_size > 0 else None
+        self._query_cache_size = cache_size
+        self._cache_lock = threading.Lock() if cache_size > 0 else None
 
     # -- internal -----------------------------------------------------------
 
@@ -209,8 +217,31 @@ class MLXEmbedder:
         vectors, or vice versa) collapses cosine similarity toward zero
         — the model places prefixed and raw inputs in different regions
         of the space.
+
+        Query embeddings are cached (LRU) when MEMO_QUERY_CACHE_SIZE > 0.
         """
-        return self.embed([_QUERY_INSTRUCTION_PREFIX + (query or "")])[0]
+        # Check cache first (if enabled)
+        if self._query_cache is not None:
+            cache_key = query.strip()
+            with self._cache_lock:
+                if cache_key in self._query_cache:
+                    # Move to end (most-recently-used)
+                    self._query_cache.move_to_end(cache_key)
+                    return list(self._query_cache[cache_key])
+        
+        # Compute embedding
+        result = self.embed([_QUERY_INSTRUCTION_PREFIX + (query or "")])[0]
+        
+        # Store in cache (if enabled)
+        if self._query_cache is not None:
+            cache_key = query.strip()
+            with self._cache_lock:
+                self._query_cache[cache_key] = result
+                # Evict oldest if over capacity
+                if len(self._query_cache) > self._query_cache_size:
+                    self._query_cache.popitem(last=False)
+        
+        return result
 
     def unload(self) -> None:
         """Drop the model + tokenizer; clear the MLX cache. Idempotent."""
