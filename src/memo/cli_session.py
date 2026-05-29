@@ -11,6 +11,7 @@ from typing import Any
 
 import click
 
+from memo.cli_common import console
 from memo.config import Config
 
 
@@ -240,3 +241,117 @@ def session_refresh_summary() -> None:
         if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
             print(f"# memo session refresh-summary failed: {exc}", file=_sys.stderr)
     _sys.exit(0)
+
+
+@session_group.command(name="recent")
+@click.option("--limit", default=5, type=int, show_default=True)
+def session_recent(limit: int) -> None:
+    """SessionStart hook entrypoint — emit `additionalContext` markdown
+    listing recent sessions. Same exit-0-silent contract as recall-hook."""
+    import json as _json
+    import os as _os
+    import sys as _sys
+
+    if _os.environ.get("MEMO_SESSION_DISABLE") == "1":
+        print("{}")
+        _sys.exit(0)
+
+    try:
+        from memo.session import format_relative, list_sessions
+        cfg = Config.from_env()
+        rows = list_sessions(cfg.state_dir, limit=limit)
+    except Exception as exc:
+        if _os.environ.get("MEMO_SESSION_DEBUG") == "1":
+            print(f"# memo session recent failed: {exc}", file=_sys.stderr)
+        print("{}")
+        _sys.exit(0)
+
+    if not rows:
+        print("{}")
+        _sys.exit(0)
+
+    from pathlib import Path as _Path
+    cur_cwd = str(_Path(_os.getcwd()).resolve())
+    same_cwd = [r for r in rows if (r.get("cwd") or "") == cur_cwd]
+    top = same_cwd[0] if same_cwd else None
+
+    lines: list[str] = []
+
+    if top:
+        sid = top.get("session_id") or ""
+        when = format_relative(top.get("updated"))
+        branch = top.get("branch") or "—"
+        turns = top.get("turn_count") or 0
+        # Prefer running_summary (LLM-generated arc) over plain last_user_msg.
+        running_summary = top.get("running_summary")
+        summary = (
+            top.get("summary") or top.get("last_user_msg") or "—"
+        ).replace("\n", " ")[:120]
+        lines.extend([
+            "## Sesión anterior detectada — ¿continuar?",
+            "",
+            f"Había una sesión activa en este directorio ({when}):",
+            f"- **Resumen**: {summary}",
+            f"- **Branch**: `{branch}`  |  **Turnos**: {turns}",
+            f"- **Para retomar** (en una nueva terminal): `claude --resume {sid}`",
+            "",
+        ])
+        if running_summary:
+            lines.extend([
+                "### El Briefing",
+                "",
+                running_summary.strip(),
+                "",
+            ])
+        prompt_trail = top.get("prompt_trail") or []
+        if prompt_trail:
+            lines.append("### Loops abiertos (últimos 7 días)")
+            lines.append("")
+            for i, p in enumerate(reversed(prompt_trail[-3:]), 1):
+                lines.append(f"{i}. {p.strip()}")
+            lines.append("")
+        lines.extend([
+            "> **Acción**: Al iniciar esta conversación, pregunta al usuario si quiere "
+            "retomar la sesión anterior (ejecutando el comando de arriba en la terminal) "
+            "o continuar con esta sesión nueva.",
+            "",
+        ])
+
+    if len(rows) > (1 if top else 0):
+        others = [r for r in rows if r is not top][:5]
+        lines.extend([
+            "### Otras sesiones recientes",
+            "",
+            "| cuándo | proyecto | branch | resumen | id |",
+            "|--------|----------|--------|---------|----|",
+        ])
+        for r in others:
+            s = (r.get("summary") or r.get("last_user_msg") or "—").replace("|", "·").replace("\n", " ")
+            lines.append(
+                f"| {format_relative(r.get('updated'))} | "
+                f"{(r.get('project') or '—')[:18]} | "
+                f"{(r.get('branch') or '—')[:14]} | "
+                f"{s[:55]} | "
+                f"`{(r.get('session_id') or '')[:8]}` |"
+            )
+        lines.append("")
+        lines.append("_`memo resume <id>` para ver detalles. `claude --resume <id>` para retomar._")
+
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "\n".join(lines),
+        }
+    }
+    print(_json.dumps(output, ensure_ascii=False))
+
+
+@session_group.command(name="prune")
+@click.option("--cap", default=50, type=int, show_default=True)
+def session_prune(cap: int) -> None:
+    """Delete oldest sessions beyond `cap`. Idempotent."""
+    from memo.session import prune_lru
+
+    cfg = Config.from_env()
+    n = prune_lru(cfg.state_dir, cap=cap)
+    console.print(f"[green]✓[/green] pruned {n} session(s); cap={cap}")
