@@ -53,6 +53,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sqlite_vec import serialize_float32
+
+# vec0 accepts either a JSON array (text, must be parsed) or a packed
+# float32 blob. Blobs skip JSON encode on write and JSON parse on every
+# search MATCH — the hot path. vec0 stores float32 internally regardless,
+# so existing JSON-written rows stay readable; no migration needed.
+
 _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS meta (
     id          TEXT PRIMARY KEY,
@@ -403,6 +410,15 @@ class VecStore:
             self._conn.rollback()
             raise
 
+    def _checkpoint(self) -> None:
+        """Truncate the WAL back into the main DB. Call after large batch
+        writes (repo indexing) so the -wal file doesn't grow unbounded
+        before the default autocheckpoint (1000 pages) fires, which keeps
+        crash-recovery fast. Best-effort: a checkpoint can be blocked by a
+        concurrent reader, in which case autocheckpoint catches up later."""
+        with suppress(sqlite3.OperationalError):
+            self._conn.execute("PRAGMA wal_checkpoint(RESTART)")
+
     # -- public CRUD --------------------------------------------------------
 
     def upsert(
@@ -453,7 +469,7 @@ class VecStore:
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
             cx.execute(
                 "INSERT INTO vec (id, embedding) VALUES (?, ?)",
-                (id_, json.dumps(embedding)),
+                (id_, serialize_float32(embedding)),
             )
             # Same dance for the FTS index — no upsert support.
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
@@ -621,7 +637,7 @@ class VecStore:
             "JOIN meta ON meta.id = vec.id "
             "WHERE embedding MATCH ? AND k = ? "
         )
-        params: list[Any] = [json.dumps(embedding), candidate_k]
+        params: list[Any] = [serialize_float32(embedding), candidate_k]
         if type_:
             sql += "AND meta.type = ? "
             params.append(type_)
@@ -890,7 +906,7 @@ class VecStore:
             cx.executemany("DELETE FROM repo_vec WHERE id = ?", [(cid,) for cid, _ in embeddings])
             cx.executemany(
                 "INSERT INTO repo_vec (id, embedding) VALUES (?, ?)",
-                [(cid, json.dumps(emb)) for cid, emb in embeddings],
+                [(cid, serialize_float32(emb)) for cid, emb in embeddings],
             )
             if status is not None:
                 if indexed_at is None:
@@ -900,6 +916,7 @@ class VecStore:
                         "UPDATE repo_sources SET status = ?, indexed_at = ? WHERE id = ?",
                         (status, indexed_at, repo_id),
                     )
+        self._checkpoint()
 
     def upsert_repo_index(
         self,
@@ -1008,7 +1025,7 @@ class VecStore:
                 cx.executemany(
                     "INSERT INTO repo_vec (id, embedding) VALUES (?, ?)",
                     [
-                        (chunk["id"], json.dumps(chunk["embedding"]))
+                        (chunk["id"], serialize_float32(chunk["embedding"]))
                         for chunk in file_data.get("chunks") or []
                         if chunk.get("embedding") is not None
                     ],
@@ -1021,6 +1038,7 @@ class VecStore:
                         for chunk in chunk_rows
                     ],
                 )
+        self._checkpoint()
 
     def upsert_repo_source(self, source: dict[str, Any]) -> None:
         """Upsert only the repo source row (no file payloads).
@@ -1137,7 +1155,7 @@ class VecStore:
                 cx.executemany(
                     "INSERT INTO repo_vec (id, embedding) VALUES (?, ?)",
                     [
-                        (chunk["id"], json.dumps(chunk["embedding"]))
+                        (chunk["id"], serialize_float32(chunk["embedding"]))
                         for chunk in file_data.get("chunks") or []
                         if chunk.get("embedding") is not None
                     ],
@@ -1150,6 +1168,7 @@ class VecStore:
                         for chunk in chunk_rows
                     ],
                 )
+        self._checkpoint()
 
     def delete_repo_files(self, repo_id: str, file_ids: list[str]) -> None:
         """Drop a set of files (and their lines/chunks/embeddings) from one repo."""
@@ -1223,7 +1242,7 @@ class VecStore:
             "JOIN repo_sources ON repo_sources.id = repo_chunks.repo_id "
             "WHERE embedding MATCH ? AND k = ? "
         )
-        params: list[Any] = [json.dumps(embedding), candidate_k]
+        params: list[Any] = [serialize_float32(embedding), candidate_k]
         if repo_id:
             sql += "AND repo_chunks.repo_id = ? "
             params.append(repo_id)
@@ -1427,7 +1446,7 @@ class VecStore:
             self._conn.execute(
                 "INSERT INTO source_feedback_vec (feedback_id, query_emb) "
                 "VALUES (?, ?)",
-                (fid, json.dumps(query_emb)),
+                (fid, serialize_float32(query_emb)),
             )
         return fid
 
@@ -1456,7 +1475,7 @@ class VecStore:
             "  AND fv.query_emb MATCH ? "
             "  AND k = ? "
             "ORDER BY fv.distance ASC",
-            (source_id, json.dumps(query_emb), int(limit)),
+            (source_id, serialize_float32(query_emb), int(limit)),
         ).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
