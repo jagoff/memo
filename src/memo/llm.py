@@ -30,6 +30,7 @@ monkeypatch `MLXChat.chat` directly to skip the load.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -38,6 +39,20 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 _MAX_LOADED_MODELS = 2
+
+
+def _prompt_cache_enabled() -> bool:
+    """Prefix/KV cache is opt-in (default OFF).
+
+    It only pays off in a long-lived process (the `memo-mcp` HTTP daemon) where
+    the byte-identical system-prompt prefix can be reused across requests
+    instead of re-prefilled. In one-shot CLI invocations it is inert, so we
+    keep it off unless `MEMO_PROMPT_CACHE` is set — the daemon turns it on.
+    Output is byte-identical either way (greedy/temp=0).
+    """
+    return os.environ.get("MEMO_PROMPT_CACHE", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
 
 
 class MLXChat:
@@ -62,8 +77,69 @@ class MLXChat:
         self._loaded: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._load_lock = threading.Lock()
         self._last_use: dict[str, float] = {}
+        # Prefix prompt-cache (opt-in via MEMO_PROMPT_CACHE). Per-model:
+        # (cache_obj, token_ids_held, model_obj_id). model_obj_id auto-
+        # invalidates when _ensure_model returns a freshly reloaded model.
+        # Guarded by _gen_lock — generations that share the cache must be
+        # serialized (the cache mutates in place during decode).
+        self._prompt_cache: dict[str, tuple[Any, list[int], int]] = {}
+        self._gen_lock = threading.Lock()
 
     # -- internal -----------------------------------------------------------
+
+    def _prompt_cache_prepare(
+        self, model: str, m: Any, prompt_tokens: list[int]
+    ) -> tuple[list[int], Any]:
+        """Return (feed_tokens, cache) reusing the longest common prefix.
+
+        Call under `_gen_lock`. Reuses the KV state held for `model` up to the
+        divergence point with `prompt_tokens`, trims the cache there, and
+        returns only the new suffix to prefill. Fresh cache on model reload
+        (id mismatch) or a non-trimmable cache. Does NOT persist the entry —
+        `_prompt_cache_commit` does that on clean completion.
+        """
+        from mlx_lm.models.cache import (  # type: ignore[import-not-found]
+            can_trim_prompt_cache,
+            make_prompt_cache,
+            trim_prompt_cache,
+        )
+
+        model_key = id(m)
+        entry = self._prompt_cache.get(model)
+        cache = None
+        held: list[int] = []
+        if entry is not None:
+            cache, held, held_key = entry
+            if held_key != model_key or not can_trim_prompt_cache(cache):
+                cache, held = None, []
+        if cache is None:
+            cache = make_prompt_cache(m)
+            held = []
+
+        common = 0
+        for a, b in zip(held, prompt_tokens):
+            if a != b:
+                break
+            common += 1
+        if common >= len(prompt_tokens):  # never feed an empty suffix
+            common = len(prompt_tokens) - 1
+
+        n_trim = len(held) - common
+        if n_trim > 0:
+            trimmed = trim_prompt_cache(cache, n_trim)
+            if trimmed != n_trim:  # couldn't trim exactly → rebuild
+                cache = make_prompt_cache(m)
+                common = 0
+        return prompt_tokens[common:], cache
+
+    def _prompt_cache_commit(
+        self, model: str, m: Any, full_tokens: list[int], cache: Any
+    ) -> None:
+        """Persist cache + the token sequence it now holds (prompt + decoded).
+
+        Call under `_gen_lock`, after a clean generation.
+        """
+        self._prompt_cache[model] = (cache, full_tokens, id(m))
 
     def _ensure_model(self, model: str) -> tuple[Any, Any]:
         if model in self._loaded:
@@ -81,6 +157,7 @@ class MLXChat:
             while len(self._loaded) >= _MAX_LOADED_MODELS:
                 evicted_key, _ = self._loaded.popitem(last=False)
                 self._last_use.pop(evicted_key, None)
+                self._prompt_cache.pop(evicted_key, None)
                 _log.debug(
                     "LLM cache evicted: %s (loading %s, now have %d models)",
                     evicted_key,
@@ -128,10 +205,46 @@ class MLXChat:
         max_tokens = int(opts.get("num_predict") or opts.get("max_tokens") or 512)
 
         m, tok = self._ensure_model(model)
+        sampler = make_sampler(temp=temperature, top_p=top_p)
+
+        if _prompt_cache_enabled():
+            # Prefix-cache path: drive stream_generate so we can capture the
+            # decoded token ids (needed to extend the cache); accumulate text.
+            # Byte-identical to the non-cached greedy result.
+            from mlx_lm import stream_generate as _mlx_stream
+            prompt_tokens = list(
+                tok.apply_chat_template(
+                    messages, tokenize=True, add_generation_prompt=True,
+                )
+            )
+            with self._gen_lock:
+                feed, cache = self._prompt_cache_prepare(model, m, prompt_tokens)
+                parts: list[str] = []
+                gen_tokens: list[int] = []
+                committed = False
+                try:
+                    for resp in _mlx_stream(
+                        m, tok, feed, max_tokens=max_tokens,
+                        sampler=sampler, prompt_cache=cache,
+                    ):
+                        if getattr(resp, "finish_reason", None) is None:
+                            tk = getattr(resp, "token", None)
+                            if tk is not None:
+                                gen_tokens.append(int(tk))
+                        parts.append(getattr(resp, "text", "") or "")
+                    self._prompt_cache_commit(
+                        model, m, prompt_tokens + gen_tokens, cache,
+                    )
+                    committed = True
+                finally:
+                    if not committed:
+                        self._prompt_cache.pop(model, None)
+                    self._last_use[model] = time.time()
+            return {"message": {"content": ("".join(parts) or "").strip()}}
+
         prompt = tok.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True,
         )
-        sampler = make_sampler(temp=temperature, top_p=top_p)
         text = _mlx_generate(
             m, tok, prompt, max_tokens=max_tokens, sampler=sampler, verbose=False,
         )
@@ -172,10 +285,47 @@ class MLXChat:
         max_tokens = int(opts.get("num_predict") or opts.get("max_tokens") or 512)
 
         m, tok = self._ensure_model(model)
+        sampler = make_sampler(temp=temperature, top_p=top_p)
+
+        if _prompt_cache_enabled():
+            # Prefix-cache path: feed only the suffix beyond the cached
+            # system-prompt prefix. Output is byte-identical (greedy/temp=0).
+            prompt_tokens = list(
+                tok.apply_chat_template(
+                    messages, tokenize=True, add_generation_prompt=True,
+                )
+            )
+            with self._gen_lock:
+                feed, cache = self._prompt_cache_prepare(model, m, prompt_tokens)
+                gen_tokens: list[int] = []
+                committed = False
+                try:
+                    for resp in _mlx_stream(
+                        m, tok, feed, max_tokens=max_tokens,
+                        sampler=sampler, prompt_cache=cache,
+                    ):
+                        if getattr(resp, "finish_reason", None) is None:
+                            tk = getattr(resp, "token", None)
+                            if tk is not None:
+                                gen_tokens.append(int(tk))
+                        delta = getattr(resp, "text", "") or ""
+                        if delta:
+                            yield delta
+                    self._prompt_cache_commit(
+                        model, m, prompt_tokens + gen_tokens, cache,
+                    )
+                    committed = True
+                finally:
+                    if not committed:
+                        # Interrupted/errored: cache offset no longer maps to a
+                        # known token sequence — drop it so the next call rebuilds.
+                        self._prompt_cache.pop(model, None)
+                    self._last_use[model] = time.time()
+            return
+
         prompt = tok.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True,
         )
-        sampler = make_sampler(temp=temperature, top_p=top_p)
         try:
             for resp in _mlx_stream(
                 m, tok, prompt, max_tokens=max_tokens, sampler=sampler,
@@ -200,11 +350,13 @@ class MLXChat:
                     return False
                 self._loaded.clear()
                 self._last_use.clear()
+                self._prompt_cache.clear()
             else:
                 if model not in self._loaded:
                     return False
                 self._loaded.pop(model, None)
                 self._last_use.pop(model, None)
+                self._prompt_cache.pop(model, None)
             try:
                 import mlx.core as mx
 

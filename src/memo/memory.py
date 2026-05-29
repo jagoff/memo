@@ -1193,6 +1193,58 @@ class Memory:
             out.append(h)
         return out
 
+    def rerank_hits(
+        self,
+        query: str,
+        hits: list[dict[str, Any]],
+        *,
+        top_n: int | None = None,
+        body_chars: int = 1200,
+    ) -> list[dict[str, Any]]:
+        """Score externally-supplied hit dicts with the cross-encoder.
+
+        Mirrors the ``memo rerank`` CLI but reuses THIS instance's cached
+        reranker (`self._reranker`), so a long-lived server (memo-mcp HTTP
+        daemon) pays the Qwen3-Reranker load only once. This is the warm
+        equivalent of the per-process CLI used by Synapse's `memo_ce` rerank.
+
+        Each hit is scored on ``"{title}\\n\\n{snippet|body}"`` (truncated to
+        ``body_chars``); returns the list reordered with a ``rerank_score``
+        field added per hit, original fields preserved. Pass-through (input
+        order, no scores) when reranking is disabled in this install.
+        """
+        if not query or not hits:
+            return list(hits or [])
+        if not self.cfg.reranker_enabled:
+            return list(hits)
+        reranker = self._reranker
+        if reranker is None:
+            from memo.reranker import MLXReranker
+            reranker = MLXReranker(
+                model_path=self.cfg.reranker_model,
+                revision=self.cfg.reranker_revision,
+            )
+            self._reranker = reranker
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for h in hits:
+            if not isinstance(h, dict):
+                continue
+            title = str(h.get("title") or "")
+            body_src = str(h.get("snippet") or h.get("body") or "")[: max(0, body_chars)]
+            doc = f"{title}\n\n{body_src}" if body_src else title
+            try:
+                p = float(reranker.score(query, doc))
+            except Exception:
+                p = 0.0
+            new = dict(h)
+            new["rerank_score"] = p
+            scored.append((p, new))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        out = [h for _p, h in scored]
+        if top_n is not None and top_n > 0:
+            out = out[:top_n]
+        return out
+
     def _rerank(
         self, query: str, hits: list[MemoryRecord], *, top_n: int,
     ) -> list[MemoryRecord]:

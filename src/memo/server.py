@@ -23,6 +23,7 @@ Or programmatically:
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastmcp import FastMCP
@@ -232,6 +233,23 @@ def build_server(memory: Memory | None = None) -> FastMCP:
                 d["body_truncated"] = True
             out.append(d)
         return out
+
+    @server.tool()
+    def memory_rerank(
+        query: str,
+        hits: list[dict[str, Any]],
+        top_n: int | None = None,
+        body_chars: int = 1200,
+    ) -> list[dict[str, Any]]:
+        """Rerank externally-supplied hits with memo's warm cross-encoder.
+
+        Scores each ``{title, snippet|body, ...}`` hit against `query` using
+        this server's already-loaded Qwen3-Reranker and returns the list
+        reordered with a `rerank_score` per hit (original fields preserved).
+        The warm-daemon equivalent of the `memo rerank` CLI — lets an external
+        caller (Synapse `memo_ce`) avoid cold-loading the reranker per request.
+        """
+        return memory.rerank_hits(query, hits, top_n=top_n, body_chars=body_chars)
 
     @server.tool()
     def memory_embed_query(text: str) -> dict[str, Any]:
@@ -2248,13 +2266,74 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             f"---\n\n{rec.body or ''}"
         )
 
+    @server.custom_route("/chat/stream", methods=["POST"])
+    async def chat_stream_route(request):  # type: ignore[no-untyped-def]
+        """Real token streaming for chat synthesis (SSE).
+
+        MCP `tools/call` can only return a single result, so the warm-daemon
+        chat path otherwise has to buffer the whole answer before the client
+        sees anything. This route exposes `Memory.chat_ask_stream` directly:
+        emits one SSE `data:` line per event (context → token* → done), so the
+        first token reaches the caller right after prefill instead of after the
+        full decode. Output is identical to the non-streaming tool; only the
+        delivery is incremental. Consumed by Synapse's MemoBackend.
+        """
+        import json as _json
+
+        from starlette.responses import StreamingResponse
+
+        try:
+            body = await request.json()
+        except Exception:
+            from starlette.responses import JSONResponse
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+        question = str(body.get("question") or "")
+        if not question.strip():
+            from starlette.responses import JSONResponse
+            return JSONResponse({"error": "empty question"}, status_code=400)
+        k = int(body.get("k") or 7)
+        type_ = body.get("type") or None
+        history = body.get("history") or None
+        context = body.get("context") or None
+
+        def _gen():
+            try:
+                for ev in memory.chat_ask_stream(
+                    question, k=k, type_=type_, history=history, context=context,
+                ):
+                    yield f"data: {_json.dumps(ev, ensure_ascii=False)}\n\n"
+            except Exception as exc:  # never hang the client mid-stream
+                err = {"event": "error", "message": f"{type(exc).__name__}: {exc}"}
+                yield f"data: {_json.dumps(err, ensure_ascii=False)}\n\n"
+
+        # Starlette drives the sync generator in a worker thread; the MLX
+        # forward is GIL/Metal-bound and already serialized, so one stream at
+        # a time is fine for the single-user daemon.
+        return StreamingResponse(_gen(), media_type="text/event-stream")
+
     return server
 
 
 def main() -> None:
-    """Entry point for `memo-mcp` console script."""
+    """Entry point for `memo-mcp` console script.
+
+    Default transport is stdio (one client per process — Claude Code, Codex,
+    etc.). Set ``MEMO_MCP_TRANSPORT=http`` (or ``streamable-http``/``sse``) to
+    run as a long-lived HTTP daemon instead, so an external service can call
+    the warm tools (e.g. ``memory_chat_ask``) without paying the ~per-process
+    MLX cold-load. ``MEMO_MCP_HOST``/``MEMO_MCP_PORT`` pick the bind (default
+    127.0.0.1:18768). One ``Memory`` instance is built here and reused across
+    every request, so the embedder / reranker / synthesis LLM stay resident.
+    """
     server = build_server()
-    server.run()
+    transport = os.environ.get("MEMO_MCP_TRANSPORT", "stdio").strip().lower()
+    if transport in ("http", "streamable-http", "sse"):
+        host = os.environ.get("MEMO_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        port = int(os.environ.get("MEMO_MCP_PORT", "18768").strip() or "18768")
+        server.run(transport=transport, host=host, port=port)
+    else:
+        server.run()
 
 
 if __name__ == "__main__":
