@@ -27,6 +27,7 @@ from memo.ingest_helpers import enrich_with_ocr
 from memo.ocr import ocr_enabled_via_env
 from memo.retrieval_boost import boost_for as _retrieval_boost_for
 from memo.store import VecStore
+from memo.util import sha256_short as _short_hash
 
 DEFAULT_EXCLUDE_DIRS = frozenset({
     ".git", ".hg", ".svn",
@@ -923,10 +924,6 @@ def _stable_id(*parts: str) -> str:
         h.update(part.encode("utf-8", errors="replace"))
         h.update(b"\0")
     return h.hexdigest()[:32]
-
-
-def _short_hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
 def _now_iso() -> str:
