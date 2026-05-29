@@ -78,3 +78,44 @@ def test_store_never_imports_memory() -> None:
 def test_util_is_pure_stdlib_leaf() -> None:
     """memo.util is the bottom of the stack — it depends on nothing in memo."""
     assert _memo_imports(SRC / "util.py") == set()
+
+
+# Optional Memory subsystems that MUST stay behind lazy @property accessors —
+# constructing Memory() must not eagerly build any of them (cold-start cost +
+# import-cycle risk). Guards the god-object's 3b decomposition contract.
+LAZY_SUBSYSTEMS = [
+    "temporal", "consolidator", "contradict_store", "contradict_scanner",
+    "navigator", "contextual", "crossref", "link_suggester", "lifecycle",
+    "proactive", "versioning", "query_composer", "federation", "backup",
+    "sync", "encryption", "sharing", "analytics", "dashboard",
+    "import_export", "multimodal", "collaborative",
+]
+
+
+@pytest.mark.parametrize("name", LAZY_SUBSYSTEMS)
+def test_subsystem_is_a_property_not_eager_attr(name: str) -> None:
+    """Each optional subsystem is a property descriptor on Memory — so it is
+    only built on access, never as a plain __init__ attribute."""
+    from memo.memory import Memory
+
+    attr = getattr(Memory, name, None)
+    assert isinstance(attr, property), f"Memory.{name} must stay a lazy @property"
+
+
+def test_constructing_memory_builds_no_subsystem(mock_memory) -> None:
+    """A freshly built Memory has every cached subsystem backing field unset —
+    construction is cheap and triggers no subsystem cold-start."""
+    for name in LAZY_SUBSYSTEMS:
+        backing = f"_{name}"
+        if hasattr(mock_memory, backing):
+            assert getattr(mock_memory, backing) is None, (
+                f"Memory.__init__ eagerly built {name} (backing {backing} not None)"
+            )
+
+
+def test_lazy_property_caches_after_access(mock_memory) -> None:
+    """Accessing a cached lazy property builds it once and memoizes."""
+    assert mock_memory._temporal is None
+    first = mock_memory.temporal
+    assert mock_memory._temporal is first
+    assert mock_memory.temporal is first
