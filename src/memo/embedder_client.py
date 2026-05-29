@@ -192,6 +192,31 @@ def embed(
     return _inproc().embed(items)
 
 
+class SocketEmbedder:
+    """Drop-in for `MLXEmbedder` backed by the recall-daemon socket.
+
+    Implements the `embed` / `embed_query` / `expected_dims` surface that
+    `Memory` uses. Lets a long-lived process (the `memo-mcp` chat daemon)
+    reuse the recall daemon's ALREADY-WARM embedder over the socket instead
+    of loading its own copy in-process — keeping the chat daemon's resident
+    footprint to just the synthesis model (+ reranker). Falls back in-process
+    automatically (the module-level `embed`/`embed_query` do this), so it is
+    never less available than `MLXEmbedder`.
+
+    Gated in `Memory.__init__` by `MEMO_EMBEDDER_VIA_DAEMON=1`.
+    """
+
+    def __init__(self, expected_dims: int, *, state_dir: Path | None = None) -> None:
+        self.expected_dims = expected_dims
+        self._state_dir = state_dir
+
+    def embed(self, inputs: Sequence[str]) -> list[list[float]]:
+        return embed(inputs, state_dir=self._state_dir)
+
+    def embed_query(self, query: str) -> list[float]:
+        return embed_query(query, state_dir=self._state_dir)
+
+
 def ping(*, state_dir: Path | None = None) -> dict[str, Any] | None:
     """Cheap warm-state probe. Returns `None` if the daemon is unreachable."""
     resolved = _resolve_state_dir(state_dir)

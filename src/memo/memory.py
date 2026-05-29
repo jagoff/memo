@@ -382,10 +382,23 @@ class Memory:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         cfg.ensure_dirs()
-        self.embedder = MLXEmbedder(
-            model_path=cfg.embedder_model,
-            expected_dims=cfg.embedder_dims,
-        )
+        # MEMO_EMBEDDER_VIA_DAEMON=1: embed via the recall daemon socket
+        # instead of loading a second in-process copy of the embedder. Used by
+        # the warm memo-mcp chat daemon so its resident footprint is just the
+        # synthesis model — the recall daemon already holds the embedder warm.
+        # Falls back in-process automatically if the socket is down.
+        if os.environ.get("MEMO_EMBEDDER_VIA_DAEMON", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        ):
+            from memo.embedder_client import SocketEmbedder
+            self.embedder: Any = SocketEmbedder(
+                cfg.embedder_dims, state_dir=cfg.state_dir,
+            )
+        else:
+            self.embedder = MLXEmbedder(
+                model_path=cfg.embedder_model,
+                expected_dims=cfg.embedder_dims,
+            )
         self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
         # Lazy: opened on first log call. Audit failures must never
         # propagate to the caller, so HistoryStore swallows its own
