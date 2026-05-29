@@ -51,6 +51,7 @@ from memo.cli_contradict import contradict_group
 from memo.cli_diag import _db_health_report, _doctor_report, _recall_daemon_health
 from memo.cli_embed_daemon import embed_daemon_group
 from memo.cli_encrypt import encrypt_group
+from memo.cli_eval import eval_group
 from memo.cli_export import export_group
 from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
@@ -118,6 +119,7 @@ def cli(ctx: click.Context) -> None:
 
 # Command groups extracted from this module live in cli_*.py and register here.
 cli.add_command(graph_group)
+cli.add_command(eval_group)
 cli.add_command(init_cmd)
 cli.add_command(migrate_vault)
 cli.add_command(mcp_command)
