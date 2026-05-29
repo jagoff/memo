@@ -431,6 +431,11 @@ def get(id_: str, as_json: bool) -> None:
     if rec is None:
         console.print(f"[red]not found:[/red] {id_}")
         sys.exit(1)
+    # Feedback loop: a fetch is a "useful" signal → feeds recall preferences.
+    try:
+        mem.contextual.record_click(rec.id)
+    except Exception:
+        pass
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return

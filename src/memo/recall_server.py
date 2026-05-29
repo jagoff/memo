@@ -199,6 +199,28 @@ def _apply_project_boost(hits: list[Any], project_tag: str | None, project_boost
     return boosted
 
 
+def _apply_preference_boost(hits: list[Any], prefs: Any) -> list[Any]:
+    """Gently re-rank by learned type preferences (the feedback loop).
+
+    `prefs.preferred_types` accumulates as the user fetches memorias
+    (`contextual.record_click`). A type the user keeps opening gets a small
+    additive nudge so future recall surfaces that kind first. Neutral until
+    the user has actually clicked something (empty prefs → no change).
+    """
+    pref_types = getattr(prefs, "preferred_types", None) or {}
+    if not pref_types:
+        return list(hits)
+    boosted: list[Any] = []
+    for h in hits:
+        bump = pref_types.get(getattr(h, "type", ""), 0.0) * 0.05
+        if h.score is not None and bump:
+            boosted.append(replace(h, score=h.score + bump))
+        else:
+            boosted.append(h)
+    boosted.sort(key=lambda h: (h.score or 0.0), reverse=True)
+    return boosted
+
+
 # Recall block framing. The header + directive tell the model to treat the
 # injected memorias as the user's own established facts (source of truth),
 # not optional trivia — the single highest-leverage nudge for "always look
@@ -271,7 +293,10 @@ def _recall_logic(
         except Exception:
             project_tag = None
 
-    search_k = top_k * 3 if project_tag else top_k
+    # Feedback loop: when on (default), widen the pool so learned type
+    # preferences can re-rank, and record what surfaced afterwards.
+    contextual = _os.environ.get("MEMO_RECALL_CONTEXTUAL", "1") != "0"
+    search_k = top_k * 3 if (project_tag or contextual) else top_k
 
     try:
         hits = mem.search(prompt, limit=search_k, mode=mode, recency=True)
@@ -283,6 +308,12 @@ def _recall_logic(
     # Project boost
     if project_tag:
         hits = _apply_project_boost(hits, project_tag, project_boost)
+    # Preference boost (learned from past `memory_get` clicks)
+    if contextual:
+        try:
+            hits = _apply_preference_boost(hits, mem.contextual.context.get_preferences())
+        except Exception:
+            pass
     hits = hits[:top_k]
 
     # Similarity floor
@@ -297,6 +328,15 @@ def _recall_logic(
 
     if not relevant:
         return "{}"
+
+    # Feedback loop: record what surfaced so the contextual re-ranker has
+    # history + so `memo eval` can later correlate surfaced vs used. Best
+    # effort — must never slow or break recall.
+    if contextual:
+        try:
+            mem.contextual.record_search(prompt, [h.id for h in relevant])
+        except Exception:
+            pass
 
     # Format markdown additionalContext
     lines = [RECALL_HEADER, RECALL_DIRECTIVE, ""]

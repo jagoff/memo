@@ -369,7 +369,15 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             rec = memory.get(id)
         except AmbiguousIdError as exc:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
-        return rec.to_dict() if rec else None
+        if not rec:
+            return None
+        # Feedback loop: a full fetch is the strongest "this was useful" signal
+        # we get. Feeds learned type/entity preferences back into recall ranking.
+        try:
+            memory.contextual.record_click(rec.id)
+        except Exception:
+            pass
+        return rec.to_dict()
 
     @server.tool()
     def memory_update(
