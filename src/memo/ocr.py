@@ -11,6 +11,7 @@ Cache key = SHA256 de los bytes de la imagen, persistido en
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -77,18 +78,13 @@ def extract_text(
             cg_image, None,
         )
         request = Vision.VNRecognizeTextRequest.alloc().init()
-        try:
+        # Methods may be unavailable on older macOS versions.
+        with contextlib.suppress(AttributeError):
             request.setRecognitionLevel_(1)  # VNRequestTextRecognitionLevelAccurate
-        except AttributeError:
-            pass  # Method not available in this macOS version
-        try:
+        with contextlib.suppress(AttributeError):
             request.setUsesLanguageCorrection_(True)
-        except AttributeError:
-            pass  # Method not available in this macOS version
-        try:
+        with contextlib.suppress(AttributeError, TypeError):
             request.setRecognitionLanguages_(list(languages))
-        except (AttributeError, TypeError):
-            pass  # Method not available or invalid language list
 
         ok, err = handler.performRequests_error_([request], None)
         if not ok:
@@ -149,10 +145,8 @@ def extract_text_cached(
         except Exception:
             pass
     text = extract_text(p, languages=languages)
-    try:
+    with contextlib.suppress(Exception):
         cache_path.write_text(text, encoding="utf-8")
-    except Exception:
-        pass
     return text
 
 

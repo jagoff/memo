@@ -123,6 +123,28 @@ def test_repo_index_indexes_lines_chunks_and_gets_ranges(tmp_path: Path, monkeyp
     assert unchanged["semantic_status"] == "semantic_ready"
 
 
+def test_noise_filter_drops_md_fragments_but_keeps_short_code(tmp_path: Path, monkeypatch):
+    _patch_embedder(monkeypatch)
+    repo = _make_text_repo(
+        tmp_path,
+        "noise-repo",
+        {
+            # Near-empty markdown, no heading/link/url → dropped as ingest noise.
+            "stray.md": "ok.\n",
+            # Short source file → real signal, must stay indexed.
+            "tiny.py": "def beta():\n    return 1\n",
+            # Markdown with a heading → kept despite being short.
+            "doc.md": "# Title\n\nbody\n",
+        },
+    )
+    mem = Memory(_cfg(tmp_path))
+
+    out = mem.repo_index(str(repo), name="noise")
+
+    # tiny.py (1) + doc.md (1) kept; stray.md dropped.
+    assert out["indexed_chunks"] == 2
+
+
 def test_repo_chunker_splits_single_huge_line():
     chunks = _chunk_lines(["x" * 10_500], target_chars=3500)
 

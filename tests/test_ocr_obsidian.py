@@ -18,7 +18,6 @@ from memo.obsidian_links import (
 )
 from memo.ocr import extract_text, extract_text_cached, vision_available
 
-
 # ---------- find_image_embeds ----------
 
 

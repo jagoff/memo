@@ -23,6 +23,7 @@ Or programmatically:
 
 from __future__ import annotations
 
+import contextlib
 import os
 from typing import Any
 
@@ -656,10 +657,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     def memory_stats() -> dict[str, Any]:
         """Summary stats — total records, recent counts. No body load."""
         history_errors = 0
-        try:
+        with contextlib.suppress(Exception):
             history_errors = int(getattr(memory.history, "error_count", 0))
-        except Exception:
-            pass
         return {
             "total": memory.store.count(),
             "data_dir": str(memory.cfg.data_dir),

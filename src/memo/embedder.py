@@ -30,7 +30,6 @@ by `_load_lock` so concurrent first calls don't race-load the weights.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import threading
 import time

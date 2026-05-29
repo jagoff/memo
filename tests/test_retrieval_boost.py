@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
 from memo.retrieval_boost import boost_for, query_terms
-
 
 # ---------- query_terms ----------
 

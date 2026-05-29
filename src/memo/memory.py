@@ -259,7 +259,7 @@ def _norm_dedup_path(path: str | None) -> str:
     return normalised
 
 
-def _vault_dedup_keys(rec: "MemoryRecord") -> set[str]:
+def _vault_dedup_keys(rec: MemoryRecord) -> set[str]:
     """Signals used to detect that a repo hit covers the same file as a
     vault memoria. Vault ingestion may slugify the on-disk path, so we
     cross-reference title, `extra.abs_path`, and basename.
@@ -1589,7 +1589,7 @@ class Memory:
     def _build_ask_context(
         self, question: str, *, k: int, type_: str | None,
         snippet_chars: int, include_repos: bool, disable_reranker: bool = True,
-    ) -> tuple[str, list[dict[str, Any]], str, list["MemoryRecord"]]:
+    ) -> tuple[str, list[dict[str, Any]], str, list[MemoryRecord]]:
         """Retrieval half of ask()/ask_stream().
 
         Returns (normalized_question, sources, user_msg, hits). When no
@@ -1624,10 +1624,12 @@ class Memory:
         if not hits and not repo_hits:
             return question, [], "", []
 
-        # Load bodies only for the final hits that will be used
-        for h in hits:
-            if not h.body:
-                h.body = self._read_body(h.path)
+        # Load bodies only for the final hits that will be used.
+        # MemoryRecord is frozen, so rebuild rather than mutate in place.
+        hits = [
+            h if h.body else replace(h, body=self._read_body(h.path))
+            for h in hits
+        ]
 
         snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
@@ -1696,7 +1698,7 @@ class Memory:
         return question, sources, user_msg, hits
 
     def _verbatim_short_circuit(
-        self, question: str, hits: list["MemoryRecord"],
+        self, question: str, hits: list[MemoryRecord],
     ) -> str | None:
         """If the query is a literal phrase lookup (short, no `?`) and the
         text appears inside the top hit's body, return that body verbatim

@@ -22,6 +22,7 @@ See src/memo/cli_commands.py for structure plan.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -2708,10 +2709,8 @@ def stats() -> None:
 
     mem = Memory(Config.from_env())
     history_errors = 0
-    try:
+    with contextlib.suppress(Exception):
         history_errors = int(getattr(mem.history, "error_count", 0))
-    except Exception:
-        pass
     info: dict[str, Any] = {
         "total": mem.store.count(),
         "data_dir": str(mem.cfg.data_dir),
@@ -2910,7 +2909,7 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
         )
     elif daemon.get("socket_exists") and not daemon.get("pid_alive"):
         console.print(
-            f"[yellow]![/yellow] recall-daemon: stale socket without process — "
+            "[yellow]![/yellow] recall-daemon: stale socket without process — "
             "run `memo recall-daemon stop` to clean up"
         )
     else:
@@ -4132,7 +4131,7 @@ def logs(source: str, tail: int, paths: bool) -> None:
 
     Use --paths if you'd rather pipe to your own `tail -f` / `less +F`.
     """
-    from memo.dashboard import recall_log_path, read_recall_log
+    from memo.dashboard import read_recall_log, recall_log_path
 
     cfg = Config.from_env()
     state_dir = cfg.state_dir
@@ -4746,7 +4745,7 @@ def ingest(
                 extra.update(extra_meta)
             store.upsert(
                 id_=id_, path=chunk_path, title=chunk_title[:200], type_="note",
-                tags=tags + ["chunk"], created=existing["created"] if existing else now,
+                tags=[*tags, "chunk"], created=existing["created"] if existing else now,
                 updated=now, body_hash=chunk_body_hash, embedding=emb,
                 extra=extra, body_text=chunk_body,
             )
@@ -4909,10 +4908,8 @@ def ingest(
     # probe can't resolve them; setting user_version=1 marks "this DB
     # is post-init, the legacy fallback is no longer relevant").
     if added or updated or pdf_added or orphan_added:
-        try:
+        with contextlib.suppress(Exception):
             store.set_user_version(1)
-        except Exception:
-            pass
 
     console.print(
         f"\n[green]done[/] "
