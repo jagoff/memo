@@ -942,7 +942,7 @@ class Memory:
 
     def search(
         self, query: str, *, limit: int | None = None, type_: str | None = None,
-        mode: str = "hybrid",
+        mode: str = "hybrid", load_bodies: bool = True, disable_reranker: bool = False,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
 
@@ -957,6 +957,14 @@ class Memory:
         Each result has `.score` populated. For hybrid, `.score` is the
         fused RRF score (not directly comparable to single-mode scores
         but monotonic for ranking).
+
+        Args:
+            load_bodies: If False, bodies are not loaded from disk (lazy).
+                Useful for reranking/filtering before final formatting.
+                Caller must call `_load_body(record.path)` when needed.
+            disable_reranker: If True, skip cross-encoder reranking even
+                when enabled in config. Useful for chat synthesis where
+                RRF is sufficient and reranker adds latency.
         """
         if not query or not query.strip():
             return []
@@ -985,7 +993,7 @@ class Memory:
             rows = _rrf_fuse(vec_hits, bm_hits, limit=input_k)
         out: list[MemoryRecord] = []
         for r in rows:
-            body = self._read_body(r["path"])
+            body = self._read_body(r["path"]) if load_bodies else ""
             out.append(
                 MemoryRecord(
                     id=r["id"], path=r["path"], title=r["title"], type=r["type"],
@@ -1012,7 +1020,8 @@ class Memory:
         # since those callers explicitly opted out of fusion entirely;
         # adding rerank to single-mode searches would surprise users
         # benchmarking the raw bi-encoder or BM25 surfaces.
-        if mode == "hybrid" and self.cfg.reranker_enabled and out:
+        # Also skipped when disable_reranker=True (e.g., chat synthesis).
+        if mode == "hybrid" and self.cfg.reranker_enabled and not disable_reranker and out:
             out = self._rerank(query, out, top_n=limit)
         # Optional recency decay: blend a freshness bonus into the score so
         # older memories don't crowd out recent ones. Disabled by default
@@ -1579,7 +1588,7 @@ class Memory:
 
     def _build_ask_context(
         self, question: str, *, k: int, type_: str | None,
-        snippet_chars: int, include_repos: bool,
+        snippet_chars: int, include_repos: bool, disable_reranker: bool = True,
     ) -> tuple[str, list[dict[str, Any]], str, list["MemoryRecord"]]:
         """Retrieval half of ask()/ask_stream().
 
@@ -1588,6 +1597,11 @@ class Memory:
         short-circuit. `hits` is the raw `MemoryRecord` list (with `body`
         populated) so callers can run cheap heuristics like verbatim
         short-circuit without re-running search.
+
+        Args:
+            disable_reranker: If True (default for chat), skip cross-encoder
+                reranking. RRF is sufficient for synthesis and reranker adds
+                ~150ms latency.
         """
         if not question or not question.strip():
             return question, [], "", []
@@ -1598,13 +1612,22 @@ class Memory:
                 len(question), _MAX_QUESTION_CHARS,
             )
             question = question[:_MAX_QUESTION_CHARS]
-        hits: list[MemoryRecord] = self.search(question, limit=k, type_=type_, mode="hybrid")
+        # Lazy-load bodies: defer disk I/O until after reranking
+        hits: list[MemoryRecord] = self.search(
+            question, limit=k, type_=type_, mode="hybrid", load_bodies=False,
+            disable_reranker=disable_reranker,
+        )
         repo_hits = []
         if include_repos and self.store.list_repo_sources(limit=1):
             with contextlib.suppress(Exception):
                 repo_hits = self.repo_search(question, limit=k, mode="hybrid")
         if not hits and not repo_hits:
             return question, [], "", []
+
+        # Load bodies only for the final hits that will be used
+        for h in hits:
+            if not h.body:
+                h.body = self._read_body(h.path)
 
         snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
