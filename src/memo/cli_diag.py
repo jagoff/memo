@@ -414,7 +414,7 @@ def _doctor_report(
         finally:
             conn.close()
 
-    from memo.cli import _runtime_install_report
+    from memo.cli_runtime import _runtime_install_report
 
     runtime = _runtime_install_report()
     data_dir = {"path": str(cfg.data_dir), "ok": cfg.data_dir.is_dir()}

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-import memo.cli as cli_mod
+import memo.cli_runtime as cli_mod
 from memo.cli import cli
 
 
