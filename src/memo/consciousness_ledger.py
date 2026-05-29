@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 import os
 import secrets
-from datetime import UTC, datetime
 from typing import Any
+
+from memo.util import utc_now_iso as _utc_now_iso
 
 _log = logging.getLogger(__name__)
 
@@ -47,8 +48,6 @@ def _get_writer() -> Any:
     return _writer
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def emit_event(

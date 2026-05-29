@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import builtins
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -83,6 +82,9 @@ from memo.sharing import ShareManager, ShareStore
 from memo.store import VecStore
 from memo.sync import BackupManager, SyncManager
 from memo.temporal import TemporalAnalyzer
+from memo.util import sha256_short as _sha256_short
+from memo.util import stable_hash as _stable_content_hash
+from memo.util import utc_now_iso as _utc_now_iso
 from memo.versioning import VersionManager
 
 _log = logging.getLogger(__name__)
@@ -238,10 +240,6 @@ def _extract_provenance(extra: dict[str, Any] | None) -> dict[str, Any]:
     return {k: extra[k] for k in _PROVENANCE_KEYS if k in extra}
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
 def _norm_dedup_path(path: str | None) -> str:
     """Normalise a vault/repo path for cross-source dedup in ask context.
 
@@ -277,18 +275,14 @@ def _vault_dedup_keys(rec: MemoryRecord) -> set[str]:
     return keys
 
 
-def _stable_content_hash(value: Any) -> str:
-    raw = json.dumps(
-        value,
-        ensure_ascii=True,
-        sort_keys=True,
-        default=str,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+class MemoError(Exception):
+    """Base for all memo-domain errors. Lets callers catch everything memo
+    raises with one `except MemoError` while specific subclasses keep their
+    legacy base (ValueError/RuntimeError) for existing handlers. Named
+    MemoError (not MemoryError) to avoid shadowing the builtin OOM error."""
 
 
-class AmbiguousIdError(ValueError):
+class AmbiguousIdError(MemoError, ValueError):
     """Raised when an id prefix matches more than one record. Carries
     the candidate matches so the caller can surface them in an error."""
 
@@ -301,7 +295,7 @@ class AmbiguousIdError(ValueError):
         self.matches = matches
 
 
-class WriteRefused(RuntimeError):
+class WriteRefused(MemoError, RuntimeError):
     """Raised by `Memory.save()` when a synapse RealityConflict with
     `freeze_write=true` overlaps the topic of the pending write.
 
@@ -2834,10 +2828,6 @@ def _now_iso() -> str:
     # save/update/delete pairs that happen rapidly. Tooling that
     # parsed second-truncated strings still parses these.
     return datetime.now(tz=UTC).astimezone().isoformat(timespec="milliseconds")
-
-
-def _sha256_short(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
 _SLUG_NON_WORD = re.compile(r"[^\w\s-]+")

@@ -48,7 +48,6 @@ Example wiring on the synapse side::
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from consciousness_contracts import EvidenceRef, WriteReceipt
@@ -59,6 +58,7 @@ from memo.memory import (
     Memory,
     _extract_provenance,
 )
+from memo.util import utc_now_iso as _utc_now_iso
 
 _log = logging.getLogger(__name__)
 
@@ -84,8 +84,6 @@ _TYPE_ALIASES = {
 }
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _coerce_memo_type(kind: str) -> tuple[str, str | None]:

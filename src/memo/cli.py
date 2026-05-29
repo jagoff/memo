@@ -48,6 +48,7 @@ from memo.config import MODEL_PROFILES, Config
 # Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
 # `run_picker` itself defers the heavy `questionary` import until called.
 from memo.setup import run_picker, write_config_file
+from memo.util import stable_hash as _stable_json_hash
 
 console = Console()
 
@@ -56,17 +57,6 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _stable_json_hash(value: Any) -> str:
-    import hashlib
-
-    raw = json.dumps(
-        value,
-        ensure_ascii=True,
-        sort_keys=True,
-        default=str,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _repo_index_operational_receipt(out: dict[str, Any]) -> dict[str, Any]:
