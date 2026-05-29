@@ -816,8 +816,9 @@ class Memory:
             tags=norm_tags,
             created=now_iso,
             updated=now_iso,
-            **({"extra": extra_for_store} if extra_for_store else {}),
         )
+        if extra_for_store:
+            post["extra"] = extra_for_store
         abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
         if defer_embed:
@@ -1162,9 +1163,7 @@ class Memory:
         if not matches:
             raise ValueError(f"no memoria matches source_id prefix {sid!r}")
         if len(matches) > 1:
-            raise AmbiguousIdError(
-                f"source_id prefix {sid!r} matched multiple ids; use a longer prefix"
-            )
+            raise AmbiguousIdError(sid, matches)
         return matches[0]
 
     def _apply_source_feedback(
@@ -2115,8 +2114,9 @@ class Memory:
             tags=new_tags,
             created=r["created"],
             updated=now_iso,
-            **({"extra": new_extra} if new_extra else {}),
         )
+        if new_extra:
+            post["extra"] = new_extra
         abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
         # Re-embed when the body OR title changed — both are part of the
@@ -2245,7 +2245,7 @@ class Memory:
         *,
         title: str | None,
         content: str,
-        tags: list[str] | None,
+        tags: builtins.list[str] | None,
         trace_id: str,
     ) -> None:
         """Query synapse for blocking RealityConflicts; raise on hit.
@@ -2353,7 +2353,8 @@ class Memory:
                 _log.warning("reindex: skipping %s (parse error): %s", md_path.name, exc)
                 skipped += 1
                 continue
-            md_id = post.get("id")
+            meta: dict[str, Any] = post.metadata
+            md_id = meta.get("id")
             if not md_id or not isinstance(md_id, str):
                 skipped += 1
                 continue
@@ -2364,15 +2365,15 @@ class Memory:
             # carry the legacy `<vault>/<memory_subdir>/...` prefix.
             rel = str(md_path.relative_to(self.cfg.memory_dir))
 
-            title = (post.get("title") or _derive_title(body) or "untitled").strip()
-            type_ = post.get("type") or "note"
+            title = (meta.get("title") or _derive_title(body) or "untitled").strip()
+            type_ = meta.get("type") or "note"
             if type_ not in _VALID_TYPES:
                 _log.warning("reindex: invalid type %r in %s, coercing to 'note'", type_, md_path.name)
                 type_ = "note"
-            tags = _normalise_tags(list(post.get("tags") or []))
-            created = post.get("created") or _now_iso()
-            updated = post.get("updated") or created
-            extra = post.get("extra") or {}
+            tags = _normalise_tags(list(meta.get("tags") or []))
+            created = meta.get("created") or _now_iso()
+            updated = meta.get("updated") or created
+            extra = meta.get("extra") or {}
 
             if existing is None:
                 # Path-collision guard: an .md may have its frontmatter id

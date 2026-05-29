@@ -4697,7 +4697,7 @@ def ingest(
             now = datetime.now(UTC).isoformat()
             id_, existing = _resolve_ingest_row(store, store_path)
             body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
-            extra = {"source": source, "vault": label, "abs_path": str(abs_path)}
+            extra: dict[str, Any] = {"source": source, "vault": label, "abs_path": str(abs_path)}
             if extra_meta:
                 extra.update(extra_meta)
             store.upsert(
@@ -4803,7 +4803,7 @@ def ingest(
                 title = str(title).strip() or path.stem
 
                 tags: list[str] = []
-                fm_tags = fm.metadata.get("tags") or []
+                fm_tags: Any = fm.metadata.get("tags") or []
                 if isinstance(fm_tags, str):
                     fm_tags = [t.strip() for t in fm_tags.split(",")]
                 for t in fm_tags:
@@ -6189,9 +6189,9 @@ def consolidate_list_archived(as_json: bool) -> None:
         post = frontmatter.loads(f.read_text(encoding="utf-8"))
         table.add_row(
             f.stem[:8],
-            post.get("title", "")[:40],
-            post.get("archived_for", "")[:8],
-            post.get("archived_at", "")[:10],
+            str(post.get("title") or "")[:40],
+            str(post.get("archived_for") or "")[:8],
+            str(post.get("archived_at") or "")[:10],
         )
 
     console.print(table)

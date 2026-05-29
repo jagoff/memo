@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import FastMCP
 
@@ -2336,7 +2336,8 @@ def main() -> None:
             port = int(os.environ.get("MEMO_MCP_PORT", "18768").strip() or "18768")
         except ValueError:
             port = 18768  # malformed env → default rather than crash the daemon
-        server.run(transport=transport, host=host, port=port)
+        # transport is validated against the allowed set just above.
+        server.run(transport=cast(Any, transport), host=host, port=port)
     else:
         server.run()
 
