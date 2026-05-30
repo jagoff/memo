@@ -29,7 +29,7 @@ import pytest
 
 import memo.receipts as receipts
 import memo.synapse_client as synapse_client
-from memo.synapse_backend import MemoSynapseBackend
+from memo.synapse_backend import _CONTRACTS_AVAILABLE, MemoSynapseBackend
 
 # -- fake memflow binary ---------------------------------------------------
 
@@ -83,9 +83,12 @@ def test_emit_receipt_disabled_kwarg_wins(monkeypatch, fake_memflow):
     assert _read_calls(fake_memflow) == []  # binary never invoked
 
 
-def test_emit_receipt_skipped_when_binary_missing(monkeypatch):
+def test_emit_receipt_skipped_when_binary_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("MEMO_EMIT_RECEIPTS", "1")
     monkeypatch.delenv("MEMO_MEMFLOW_BIN", raising=False)
+    # Keep the project-root check passing (CI has no memflow checkout) so the
+    # binary-missing branch is the one that fires, not project-root-missing.
+    monkeypatch.setattr(receipts, "_project_root", lambda: tmp_path)
     # Point shutil.which away from any real memflow on PATH.
     monkeypatch.setattr(receipts, "_binary", lambda: None)
     out = receipts.emit_receipt("save", text="x", meta={"id": "abc"})
@@ -181,6 +184,10 @@ def test_delete_no_op_does_not_emit(monkeypatch, mock_memory, fake_memflow):
 # -- synapse adapter opts out ----------------------------------------------
 
 
+@pytest.mark.skipif(
+    not _CONTRACTS_AVAILABLE,
+    reason="MemoSynapseBackend needs the optional consciousness-contracts package",
+)
 def test_synapse_backend_remember_skips_receipt(monkeypatch, mock_memory, fake_memflow):
     """Synapse-originated writes must NOT emit memflow receipts."""
     monkeypatch.setenv("MEMO_EMIT_RECEIPTS", "1")
