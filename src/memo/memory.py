@@ -660,6 +660,7 @@ class Memory:
         auto_derive: bool = False,
         auto_project: bool = True,
         cwd: str | None = None,
+        created: str | None = None,
         defer_embed: bool = False,
         respect_synapse_freeze: bool | None = None,
         skip_memflow_receipt: bool = False,
@@ -673,6 +674,11 @@ class Memory:
           compatibility alias. `note` is the default neutral value.
         - `tags`: optional list. Lower-cased + de-duplicated.
         - `extra`: arbitrary JSON-serialisable metadata bag.
+        - `created`: optional ISO8601 override for the `created` field
+          (frontmatter + index). When None, defaults to NOW. `updated`
+          always reflects this write. Use to back-date imported records
+          (e.g. historical WhatsApp messages) so temporal queries see the
+          original event time, not ingest time.
         - `auto_derive`: when True, calls the helper LLM
           (`Qwen2.5-3B-Instruct-4bit`) to fill any missing field
           (title is None, type_ is "note" with no tags). Adds ~1-2s
@@ -760,6 +766,7 @@ class Memory:
                 _log.warning("auto-project tag failed (cwd=%s): %s", cwd, exc)
 
         now_iso = _now_iso()
+        created_iso = created or now_iso
         # Truncate content for embedding (vec store doesn't truncate;
         # disk file keeps full content). 64KB is the default cap.
         if len(content) > self.cfg.max_content_chars:
@@ -789,7 +796,7 @@ class Memory:
             title=title,
             type=type_,
             tags=norm_tags,
-            created=now_iso,
+            created=created_iso,
             updated=now_iso,
         )
         if extra_for_store:
@@ -803,7 +810,7 @@ class Memory:
                 title=title,
                 type_=type_,
                 tags=norm_tags,
-                created=now_iso,
+                created=created_iso,
                 updated=now_iso,
                 body_hash=body_hash,
                 extra=extra_for_store,
@@ -815,7 +822,7 @@ class Memory:
             )
             deferred_rec = MemoryRecord(
                 id=record_id, path=rel_path, title=title, type=type_, tags=norm_tags,
-                created=now_iso, updated=now_iso, body=content, extra=extra_for_store,
+                created=created_iso, updated=now_iso, body=content, extra=extra_for_store,
             )
             self._emit_save_receipt(
                 deferred_rec, deferred=True, disabled=skip_memflow_receipt,
@@ -839,7 +846,7 @@ class Memory:
             title=title,
             type_=type_,
             tags=norm_tags,
-            created=now_iso,
+            created=created_iso,
             updated=now_iso,
             body_hash=body_hash,
             embedding=embedding,
@@ -854,7 +861,7 @@ class Memory:
 
         rec = MemoryRecord(
             id=record_id, path=rel_path, title=title, type=type_, tags=norm_tags,
-            created=now_iso, updated=now_iso, body=content, extra=extra or {},
+            created=created_iso, updated=now_iso, body=content, extra=extra or {},
         )
         self._emit_save_receipt(rec, deferred=False, disabled=skip_memflow_receipt)
         return rec
@@ -2827,7 +2834,20 @@ class Memory:
         date = now_iso.split("T", 1)[0]
         slug = _slugify(title)[:80] or "untitled"
         # POSIX path joins. Path is relative to `cfg.memory_dir`.
-        return f"{date}-{slug}.md"
+        base = f"{date}-{slug}"
+        candidate = f"{base}.md"
+        # `meta.path` is UNIQUE. Two saves with the same title on the same day
+        # (e.g. several WhatsApp chunks from one chat on one date) would collide.
+        # Append a numeric suffix until the path is free — checking both the
+        # index and the on-disk file so a deferred/unindexed write still counts.
+        n = 2
+        while (
+            self.store.get_by_path(candidate) is not None
+            or (self.cfg.memory_dir / candidate).exists()
+        ):
+            candidate = f"{base}-{n}.md"
+            n += 1
+        return candidate
 
     def _resolve_existing(self, rel_path: str) -> Path:
         """Resolve a DB-stored path to an absolute `Path`.
