@@ -118,6 +118,11 @@ Contract for any layer above memo (synapse, memflow, agents):
    session inherits them.
 3. **Respect freshness** — memo's contradiction/freshness state is authoritative
    for durable knowledge; don't reintroduce a fact memo has superseded.
+4. **Identify yourself** — pass `source="<layer>"` (e.g. `synapse`, `memflow`) on
+   the read tools (`memory_search` / `memory_ask` / `memory_chat_ask` /
+   `memory_unified_briefing`). Every consult lands in the shared ring buffer
+   (`recall.log`) tagged with that consumer, so `memo usefulness` proves who
+   actually reads memo — a layer that never appears is flagged as a silent gap.
 
 memo deliberately keeps cognition OFF its MCP surface
 (`test_brain_like_mcp_tools_are_not_registered`): no `suggest`/`agent`/

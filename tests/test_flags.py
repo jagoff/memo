@@ -16,7 +16,7 @@ def test_every_spec_has_a_group_and_help() -> None:
 def test_flag_returns_default_when_unset() -> None:
     env: dict[str, str] = {}
     assert flags.flag("MEMO_RECALL_TOP_K", env=env) == 3
-    assert flags.flag("MEMO_RECALL_MIN_SIM", env=env) == 0.6
+    assert flags.flag("MEMO_RECALL_MIN_SIM", env=env) == 0.5
     assert flags.flag("MEMO_RECALL_MODE", env=env) == "vec"
     assert flags.flag("MEMO_RECALL_DISABLE", env=env) is False
     # opt-out default-on bool
