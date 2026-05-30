@@ -387,6 +387,10 @@ class Memory:
         # Knowledge-graph store. Cheap to open (just sqlite); creating
         # eagerly so graph queries never lazy-stall a CLI command.
         self.graph = GraphStore(cfg.graph_db)
+        # Cache-tier manager (opt-in via MEMO_CACHE_MODE) — lazy @property
+        # `cache`, memoized here. Construction triggers no cold-start and the
+        # backend is built lazily on first use (see CacheManager.ensure_backend).
+        self._cache: Any | None = None
         # Reranker is lazy — first hybrid `search()` triggers the load
         # if `cfg.reranker_enabled`. Cold load of Qwen3-Reranker-0.6B
         # is ~1-2s; users who disable it (CI, vec-only mode) pay zero.
@@ -482,6 +486,19 @@ class Memory:
     def lifecycle(self) -> LifecycleManager:
         """Lazy accessor for LifecycleManager."""
         return LifecycleManager(self)
+
+    @property
+    def cache(self):
+        """Lazy, memoized accessor for the cache-tier manager (CacheManager).
+
+        Opt-in via MEMO_CACHE_MODE; no-ops entirely when off so memo stays a
+        durable store. Memoized so the resolved backing-store client persists
+        across save/search calls within one Memory instance.
+        """
+        if self._cache is None:
+            from memo.cache import CacheManager
+            self._cache = CacheManager(self)
+        return self._cache
 
     @property
     def proactive(self) -> ProactiveSuggester:
@@ -864,6 +881,15 @@ class Memory:
             created=created_iso, updated=now_iso, body=content, extra=extra or {},
         )
         self._emit_save_receipt(rec, deferred=False, disabled=skip_memflow_receipt)
+        # Cache-tier: write policy (push/dirty) then capacity bound. Both
+        # no-op unless MEMO_CACHE_MODE is on. Guarded so a backend hiccup
+        # never fails the save itself.
+        self._apply_write_policy(rec)
+        if self.cache.policy.enabled and self.cache.policy.max_entries > 0:
+            try:
+                self.cache.evict_if_needed()
+            except Exception as exc:
+                _log.warning("cache eviction skipped after save: %s", exc)
         return rec
 
     def _emit_save_receipt(
@@ -927,7 +953,7 @@ class Memory:
         self, query: str, *, limit: int | None = None, type_: str | None = None,
         mode: str = "hybrid", load_bodies: bool = True, disable_reranker: bool = False,
         recency: bool = False, exclude_types: set[str] | None = None,
-        include_forgotten: bool = False,
+        include_forgotten: bool = False, read_through: bool = False,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
 
@@ -1036,7 +1062,125 @@ class Memory:
         if halflife_days > 0 and out:
             alpha = min(max(float(os.environ.get("MEMO_SEARCH_DECAY_ALPHA", "0.15")), 0.0), 1.0)
             out = _apply_decay(out, halflife_days=halflife_days, alpha=alpha)
+        # Cache-tier read-through: on a local miss/under-fill, pull from the
+        # backing store and materialize locally. OPT-IN per call — only the
+        # consumer paths (ask/chat) pass read_through=True. The recall hook
+        # never does: a backend subprocess (≤5s) would blow its 5s budget.
+        if read_through and self.cache.policy.read_through and len(out) < limit:
+            out = self._cache_read_through(query, out, limit)
+        self._record_access([r.id for r in out])
         return out
+
+    def _record_access(self, ids: list[str]) -> None:
+        """Record read/hits for the surfaced memorias (powers LRU/LFU + the
+        promotion/demotion lifecycle).
+
+        Done synchronously on the calling thread so it reuses that thread's
+        existing thread-local sqlite connection — spawning a worker thread
+        would open (and leak) a fresh connection per recall in the daemon.
+        The write is a single batched upsert of ≤limit rows under WAL, so it
+        is sub-millisecond and never threatens the recall hook's 5s budget.
+        Fully guarded: a lock timeout or any failure just skips tracking
+        rather than breaking the read path.
+        """
+        if not ids:
+            return
+        try:
+            self.store.touch(ids)
+        except Exception as exc:  # never let access tracking break a read
+            _log.debug("access tracking skipped: %s", exc)
+
+    # -- cache tier (opt-in backing-store front) ---------------------------
+
+    def _cache_backend(self):
+        """The configured cache backend (or None when cache mode is off).
+        Delegates to the manager's lazy, memoized builder."""
+        return self.cache.ensure_backend()
+
+    def _mark_dirty(self, id_: str) -> None:
+        """Flag a memoria as written-locally-but-not-yet-on-backing-store
+        (write-back). Metadata-only update — no re-embed."""
+        from memo.cache import CACHE_DIRTY_KEY
+        r = self.store.get(id_)
+        if r is None:
+            return
+        merged = dict(r.get("extra") or {})
+        merged[CACHE_DIRTY_KEY] = True
+        with contextlib.suppress(Exception):
+            self.update(id_, extra=merged)
+
+    def _apply_write_policy(self, rec: MemoryRecord) -> None:
+        """Honor MEMO_CACHE_MODE on a fresh save:
+
+        - write_through: push to the backing store now; if the push fails,
+          mark the entry dirty so a later flush retries (no lost write).
+        - write_back: mark dirty; the push happens on flush / before eviction.
+        - read_through / off: nothing (the local store is authoritative).
+        Guarded — a backend failure never fails the save.
+        """
+        policy = self.cache.policy
+        if not policy.enabled:
+            return
+        # A read-through fill already mirrors the backing store — pushing it
+        # back (write_through) or marking it dirty (write_back) would be a
+        # redundant round-trip, so skip the write policy for those saves.
+        if (rec.extra or {}).get("source") == "memo-cache-fill":
+            return
+        try:
+            if policy.write_through:
+                backend = self._cache_backend()
+                if backend is None or not backend.push(rec):
+                    self._mark_dirty(rec.id)
+            elif policy.write_back:
+                self._mark_dirty(rec.id)
+        except Exception as exc:
+            _log.warning("cache write policy skipped for %s: %s", rec.id[:8], exc)
+
+    def _cache_read_through(
+        self, query: str, existing: builtins.list[MemoryRecord], limit: int,
+    ) -> builtins.list[MemoryRecord]:
+        """On a local miss/under-fill, pull candidates from the backing store,
+        materialize them locally (so the next read is a hit), and merge.
+
+        Materialized entries come FROM the backing store, so they are clean
+        (not dirty) — `save()` would mark them dirty under write-back, so we
+        clear that flag after. Dedups against `existing` by id. Best-effort:
+        any failure returns `existing` unchanged.
+        """
+        backend = self._cache_backend()
+        if backend is None:
+            return existing
+        try:
+            fetched = backend.fetch(query, limit=limit)
+        except Exception as exc:
+            _log.debug("cache read-through fetch failed: %s", exc)
+            return existing
+        if not fetched:
+            return existing
+        have = {r.id for r in existing}
+        added: builtins.list[MemoryRecord] = []
+        for cand in fetched:
+            body = cand.get("body") or ""
+            if not body.strip() or cand.get("id") in have:
+                continue
+            try:
+                # `source=memo-cache-fill` makes save() skip the write policy
+                # (this entry already mirrors the backing store — see
+                # `_apply_write_policy`), so the fill stays clean.
+                saved = self.save(
+                    content=body,
+                    title=cand.get("title") or "",
+                    type_=cand.get("type") or "note",
+                    tags=cand.get("tags") or [],
+                    extra={"source": "memo-cache-fill"},
+                    auto_derive=False,
+                )
+            except Exception as exc:
+                _log.debug("cache read-through materialize failed: %s", exc)
+                continue
+            added.append(replace(saved, score=cand.get("score")))
+            have.add(saved.id)
+        return (existing + added)[:limit] if added else existing
 
     # -- repo corpus -------------------------------------------------------
 
@@ -1619,7 +1763,7 @@ class Memory:
         # Lazy-load bodies: defer disk I/O until after reranking
         hits: list[MemoryRecord] = self.search(
             question, limit=k, type_=type_, mode="hybrid", load_bodies=False,
-            disable_reranker=disable_reranker,
+            disable_reranker=disable_reranker, read_through=True,
         )
         repo_hits = []
         if include_repos and self.store.list_repo_sources(limit=1):

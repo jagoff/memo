@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 from memo.dashboard import recall_log_path
 from memo.memory import MemoryRecord
-from memo.recall_server import _RecallHandler, _recall_logic
+from memo.recall_server import _recall_logic, _RecallHandler
 
 
 def _rec(id_: str, title: str, score: float) -> MemoryRecord:

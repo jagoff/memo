@@ -124,6 +124,12 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_MEMFLOW_BIN", "str", "", "synapse", "Override path to the memflow binary."),
     _spec("MEMO_EMIT_RECEIPTS", "bool", False, "synapse", "Emit operational receipts for Synapse."),
     _spec("MEMO_EMIT_LEDGER", "bool", True, "synapse", "Emit consciousness-ledger entries.", opt_out=True),
+    # cache tier (opt-in: memo as a bounded cache fronting an authoritative backing store)
+    _spec("MEMO_CACHE_MODE", "str", "off", "cache", "Cache tier mode: off | read_through | write_through | write_back. `off` (default) keeps memo a durable source-of-truth store with no eviction. Any other value treats the local vault as a derived cache in front of MEMO_CACHE_BACKEND."),
+    _spec("MEMO_CACHE_MAX_ENTRIES", "int", 0, "cache", "Capacity bound for the local cache (0 = unbounded, i.e. durable behavior). When exceeded after a save, the eviction policy reclaims down to this count."),
+    _spec("MEMO_CACHE_EVICTION", "str", "lru", "cache", "Replacement policy when over capacity: lru (least-recently-accessed) | lfu (least-frequently-accessed) | ttl (oldest-access beyond MEMO_CACHE_TTL_DAYS first). Requires hit tracking."),
+    _spec("MEMO_CACHE_TTL_DAYS", "int", 0, "cache", "Freshness window in days before a cached memoria is revalidated against the backing store / eligible for ttl eviction (0 = off)."),
+    _spec("MEMO_CACHE_BACKEND", "str", "memflow", "cache", "Authoritative backing store the cache fronts: memflow (flow_* shared consciousness) | vault (remote vault path) | none. Only consulted when MEMO_CACHE_MODE != off."),
     # misc behavior
     _spec("MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True),
     _spec("MEMO_PROMPT_CACHE", "bool", False, "misc", "Enable LLM prompt caching."),

@@ -5,7 +5,8 @@
       "command": "memo-mcp",
       "args": [],
       "env": {
-        "MEMO_NONINTERACTIVE": "1"
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": "/Users/USER/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes/Obsidian/AI/memory"
       }
     },
     "sqlite-explorer": {

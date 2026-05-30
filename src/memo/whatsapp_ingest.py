@@ -221,21 +221,29 @@ def render_chat_note(chat_jid: str, chat_name: str, msgs: list[WAMessage]) -> st
 # ── Orquestación ──────────────────────────────────────────────────────────────
 
 def resolve_notes_dir(mem: Any) -> Path:
-    """`Obsidian/Whatsapp` en la raíz del vault. Override: MEMO_WHATSAPP_NOTES_DIR.
+    """`<SYSTEM_DIR>/Whatsapp` en la raíz del vault. Override: MEMO_WHATSAPP_NOTES_DIR.
 
-    La raíz del vault se deriva de `data_dir` (…/<vault>/Obsidian/AI/memory
-    → <vault>). Si la estructura difiere, usar el env var.
+    El vault root se deriva de `data_dir` buscando el ancestro `<SYSTEM_DIR>`
+    (ej. `Obsidian`) y tomando su parent — robusto a la profundidad del
+    subdir de memorias (`<SYSTEM_DIR>/Memory`, `<SYSTEM_DIR>/AI/memory`, …).
+    Si la estructura no contiene `<SYSTEM_DIR>`, usar el env var.
     """
+    from memo.config import SYSTEM_DIR
+
     env = os.environ.get("MEMO_WHATSAPP_NOTES_DIR")
     if env:
         return Path(env).expanduser()
     data_dir = Path(mem.cfg.data_dir)
-    # …/Notes/Obsidian/AI/memory  → parents[2] = …/Notes
-    try:
-        vault_root = data_dir.parents[2]
-    except IndexError:
-        vault_root = data_dir
-    return vault_root / "Obsidian" / "Whatsapp"
+    # …/Notes/<SYSTEM_DIR>/Memory  → vault_root = …/Notes (parent del SYSTEM_DIR).
+    vault_root = data_dir
+    for anc in data_dir.parents:
+        if anc.name == SYSTEM_DIR:
+            vault_root = anc.parent
+            break
+    else:
+        # Layout inesperado (sin SYSTEM_DIR en el path): fallback al previo.
+        vault_root = data_dir.parents[2] if len(data_dir.parents) > 2 else data_dir
+    return vault_root / SYSTEM_DIR / "Whatsapp"
 
 
 def run(

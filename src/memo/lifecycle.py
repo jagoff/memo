@@ -107,32 +107,34 @@ class LifecycleManager:
         self._actions_log: list[LifecycleAction] = []
 
     def get_access_count(self, memoria_id: str) -> int:
-        """Get the number of times a memoria has been accessed.
+        """Get the number of times a memoria has been read/hit.
 
-        Uses the history store to count non-save operations.
+        Reads the `access` table (populated by `store.touch()` on every
+        search/ask hit). Falls back to counting non-save history events when
+        the store doesn't expose access tracking (older stores / test doubles).
         """
-        events = self.memory.history.list_recent(
-            record_id=memoria_id,
-            limit=1000,
-        )
-        # Count only non-save events (get, search hits)
+        store = getattr(self.memory, "store", None)
+        if store is not None and hasattr(store, "get_access"):
+            return int(store.get_access(memoria_id).get("access_count", 0))
+        events = self.memory.history.list_recent(record_id=memoria_id, limit=1000)
         return sum(1 for e in events if e.get("op") != "save")
 
     def get_days_since_access(self, memoria_id: str) -> int | None:
-        """Get days since last access, or None if never accessed."""
-        events = self.memory.history.list_recent(
-            record_id=memoria_id,
-            limit=1000,
-        )
-        access_events = [e for e in events if e.get("op") != "save"]
-        if not access_events:
+        """Get days since last read/hit, or None if never accessed."""
+        last_ts_raw: str | None = None
+        store = getattr(self.memory, "store", None)
+        if store is not None and hasattr(store, "get_access"):
+            last_ts_raw = store.get_access(memoria_id).get("last_accessed")
+        else:
+            events = self.memory.history.list_recent(record_id=memoria_id, limit=1000)
+            access_events = [e for e in events if e.get("op") != "save"]
+            if access_events:
+                last_ts_raw = access_events[0].get("ts")
+        if not last_ts_raw:
             return None
-
-        last_event = access_events[0]
         try:
-            last_ts = datetime.fromisoformat(last_event["ts"].replace("Z", "+00:00"))
-            days = (datetime.now(UTC) - last_ts).days
-            return days
+            last_ts = datetime.fromisoformat(last_ts_raw.replace("Z", "+00:00"))
+            return (datetime.now(UTC) - last_ts).days
         except Exception:
             return None
 

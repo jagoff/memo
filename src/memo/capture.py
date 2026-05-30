@@ -360,9 +360,8 @@ def run_capture(
     """
     import time
 
-    from memo.flags import flag_int
-
     from memo.config import Config
+    from memo.flags import flag_int
     from memo.memory import Memory
 
     cfg = Config.from_env()

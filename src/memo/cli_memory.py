@@ -9,6 +9,7 @@ provenance, extract-entities, entities, entity, lint, restore.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -432,10 +433,8 @@ def get(id_: str, as_json: bool) -> None:
         console.print(f"[red]not found:[/red] {id_}")
         sys.exit(1)
     # Feedback loop: a fetch is a "useful" signal → feeds recall preferences.
-    try:
+    with contextlib.suppress(Exception):
         mem.contextual.record_click(rec.id)
-    except Exception:
-        pass
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return

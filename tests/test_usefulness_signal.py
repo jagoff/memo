@@ -112,7 +112,7 @@ def test_consult_breakdown_exposes_strong_hit_rate(tmp_path) -> None:
     append_recall_log(tmp_path, prompt="alpha distinct prompt", hits=[{"id": "a1", "score": 0.9, "title": "A"}], via="daemon")
     append_recall_log(tmp_path, prompt="beta distinct prompt", hits=[{"id": "b2", "score": 0.5, "title": "B"}], via="subprocess")
     bd = consult_breakdown(tmp_path, limit=500)
-    cc = [c for c in bd["consumers"] if c["consumer"] == "claude-code"][0]
+    cc = next(c for c in bd["consumers"] if c["consumer"] == "claude-code")
     assert cc["fired"] == 2
     assert cc["hit_rate"] == 1.0
     assert cc["strong_hit_rate"] == 0.5

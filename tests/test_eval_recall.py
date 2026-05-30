@@ -12,7 +12,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from click.testing import CliRunner
 
 from memo import eval_recall

@@ -141,7 +141,7 @@ def import_whatsapp(
                 check=True,
             )
             summary["indexed"] = True
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             summary["index_error"] = str(exc)
 
     if as_json:

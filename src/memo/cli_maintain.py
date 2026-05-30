@@ -128,7 +128,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
     try:
         for item in mem.lifecycle.enforce_forget_ttl(dry_run=dry_run):
             receipt["forgotten"].append(item)
-    except Exception as exc:  # noqa: BLE001 — never let one pass abort the rest
+    except Exception as exc:
         receipt["errors"].append(f"forget: {type(exc).__name__}: {exc}")
 
     # 1. Contradictions ------------------------------------------------------
@@ -159,7 +159,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
                 receipt["superseded"].append(
                     {"pair_id": pair.pair_id, "older": older, "action": action,
                      "confidence": pair.confidence})
-        except Exception as exc:  # noqa: BLE001 — never let one pass abort the rest
+        except Exception as exc:
             receipt["errors"].append(f"contradict: {type(exc).__name__}: {exc}")
 
     # 2. Duplicates ----------------------------------------------------------
@@ -176,7 +176,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
                 # dry_run path: proposals exist but nothing applied
                 receipt["merged"] = [{"would_merge": p.get("memoria_ids")}
                                      for p in res.get("proposals", [])]
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             receipt["errors"].append(f"consolidate: {type(exc).__name__}: {exc}")
 
     # 3. Staleness -----------------------------------------------------------
@@ -192,7 +192,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
                     mem.lifecycle.archive_memoria(mid)
                 receipt["archived_stale"].append(
                     {"id": mid, "days": item.get("days_since_update")})
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
 
     # Persist receipt + timestamp (the daily guard reads the timestamp). Even
@@ -206,7 +206,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
                 json.dumps({"ts": time.time(), **receipt}, ensure_ascii=False, indent=2),
                 encoding="utf-8")
             (d / ".last_run_ts").write_text(str(time.time()), encoding="utf-8")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             receipt["errors"].append(f"receipt: {type(exc).__name__}: {exc}")
 
     if as_json:
