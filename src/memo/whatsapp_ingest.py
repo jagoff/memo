@@ -223,14 +223,14 @@ def render_chat_note(chat_jid: str, chat_name: str, msgs: list[WAMessage]) -> st
 def resolve_notes_dir(mem: Any) -> Path:
     """`Obsidian/Whatsapp` en la raíz del vault. Override: MEMO_WHATSAPP_NOTES_DIR.
 
-    La raíz del vault se deriva de `data_dir` (…/<vault>/99-obsidian/99-AI/memory
+    La raíz del vault se deriva de `data_dir` (…/<vault>/Obsidian/AI/memory
     → <vault>). Si la estructura difiere, usar el env var.
     """
     env = os.environ.get("MEMO_WHATSAPP_NOTES_DIR")
     if env:
         return Path(env).expanduser()
     data_dir = Path(mem.cfg.data_dir)
-    # …/Notes/99-obsidian/99-AI/memory  → parents[2] = …/Notes
+    # …/Notes/Obsidian/AI/memory  → parents[2] = …/Notes
     try:
         vault_root = data_dir.parents[2]
     except IndexError:

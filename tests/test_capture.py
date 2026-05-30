@@ -231,7 +231,7 @@ def test_run_capture_skips_duplicate_turn(tmp_path: Path, monkeypatch):
     Claude Code re-invoke must not produce duplicate memorias."""
     state_dir = tmp_path / "state"
     vault = tmp_path / "vault"
-    (vault / "99-obsidian" / "99-AI" / "memory").mkdir(parents=True)
+    (vault / "Obsidian" / "AI" / "memory").mkdir(parents=True)
     state_dir.mkdir()
     monkeypatch.setenv("MEMO_VAULT_PATH", str(vault))
     monkeypatch.setenv("MEMO_STATE_DIR", str(state_dir))

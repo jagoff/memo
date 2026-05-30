@@ -46,7 +46,7 @@ def test_init_writes_vault_path_when_obsidian_branch(tmp_path: Path, runner_env)
     runner = CliRunner()
     vault = tmp_path / "Notes"
     vault.mkdir()
-    data_dir = vault / "99-AI" / "memory"
+    data_dir = vault / "AI" / "memory"
     fake = PickerResult(data_dir=data_dir, vault_path=vault)
     with patch("memo.cli.run_picker", return_value=fake):
         result = runner.invoke(cli, ["init", "--force"], env=runner_env)

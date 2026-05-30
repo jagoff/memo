@@ -23,7 +23,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from memo.cli_common import console
-from memo.config import Config
+from memo.config import AI_SUBDIR, Config
 
 
 @click.command(name="mine-history")
@@ -143,7 +143,7 @@ def _resolve_ingest_row(store, path_str):
 @click.option("--name", default=None, help="Vault label (default: dirname). Used as path prefix in store.")
 @click.option("--force", is_flag=True, help="Re-embed even if body unchanged.")
 @click.option("--dry-run", is_flag=True, help="Walk + report counts, don't embed/write.")
-@click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/99-obsidian/99-AI/")
+@click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/Obsidian/AI/")
 @click.option("--ocr/--no-ocr", default=True, help="Run OCR on ![[image]] embeds inside notes (Apple Vision). Default on.")
 @click.option("--chunk/--no-chunk", default=True, help="Semantically chunk markdown/PDF bodies for better retrieval precision. Default on.")
 @click.option("--chunk-chars", default=1500, show_default=True, type=int, help="Target chunk size in characters.")
@@ -169,10 +169,10 @@ def ingest(
     embedder model swap).
 
     Default exclusions skip Obsidian system dirs (.obsidian/, .trash/,
-    etc.) and memo's own memory subtree (`99-obsidian/99-AI/`) so we
+    etc.) and memo's own memory subtree (`<SYSTEM_DIR>/AI/`) so we
     don't double-index curated memorias. Note: sibling user content
-    under `99-obsidian/` — `99-Contacts/`, `99-Forms/`, `99-Templates/`
-    — IS indexed (e.g. `99-obsidian/99-Contacts/Grecia.md`).
+    under `<SYSTEM_DIR>/` — `Contacts/`, `99-Forms/`, `99-Templates/`
+    — IS indexed (e.g. `<SYSTEM_DIR>/Contacts/Grecia.md`).
     """
     import os as _os_min
     from pathlib import Path
@@ -204,7 +204,7 @@ def ingest(
 
     default_excludes = (
         ".obsidian", ".git", ".trash", ".makemd", ".smart-env", ".space",
-        ".claude", ".devin", "99-obsidian/99-AI",
+        ".claude", ".devin", AI_SUBDIR,
     )
     exclude_patterns = list(exclude) + list(default_excludes)
 

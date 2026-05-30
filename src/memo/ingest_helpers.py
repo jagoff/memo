@@ -115,7 +115,7 @@ def find_orphan_images(
     """Walk `vault_root` for image files not present in `referenced`.
 
     `excluded_dirs` is the same exclusion list used by the markdown
-    walker (`.obsidian`, `.git`, `99-obsidian`, etc.) — we honour it
+    walker (`.obsidian`, `.git`, `Obsidian`, etc.) — we honour it
     so attachments under excluded directories are also skipped.
     """
     referenced_resolved = {p.resolve() for p in referenced}

@@ -319,8 +319,8 @@ distributed-install flow on a clean machine.
   `version_option` defaulted to `package_name="memo"` while the actual
   PyPI/wheel dist is `memo-mcp`. Pinned the lookup explicitly.
 - **`DEFAULT_MEMORY_SUBDIR` pointed at the deprecated archive path**
-  (`04-Archive/99-obsidian-system/99-AI/memory`). Updated to the
-  current `99-obsidian/99-AI/memory` location, matching the user-facing
+  (`04-Archive/99-obsidian-system/AI/memory`). Updated to the
+  current `Obsidian/AI/memory` location, matching the user-facing
   vault reorganization done on 2026-05-08. Existing installs that
   override via `MEMO_MEMORY_SUBDIR` are unaffected.
 

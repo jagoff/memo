@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from memo.config import Config
+from memo.config import AI_SUBDIR, Config
 from memo.embedder import MLXEmbedder, assert_valid_embedding
 from memo.ingest_helpers import enrich_with_ocr
 from memo.ocr import ocr_enabled_via_env
@@ -1058,10 +1058,10 @@ def _boost_and_resort(
 # Paths that should NEVER get a filename boost — these are ingest dumps
 # (e.g. raw Claude/agent transcripts) that mention canonical names many
 # times but are not themselves the canonical source. Boosting them
-# defeats the purpose of preferring `99-Contacts/Grecia.md` over a dump
+# defeats the purpose of preferring `Contacts/Grecia.md` over a dump
 # whose filename happens to also include "Grecia".
 _INGEST_PATH_MARKERS = (
-    "99-obsidian/99-AI/external-ingest/",
+    f"{AI_SUBDIR}/external-ingest/",
     "external-ingest/",
 )
 

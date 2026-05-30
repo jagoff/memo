@@ -42,7 +42,7 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
     (tmp_path / "data").mkdir()
-    (tmp_path / "vault" / "99-obsidian" / "99-AI" / "memory").mkdir(parents=True)
+    (tmp_path / "vault" / "Obsidian" / "AI" / "memory").mkdir(parents=True)
     (tmp_path / "state").mkdir()
 
 
