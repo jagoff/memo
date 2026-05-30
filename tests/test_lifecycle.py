@@ -1,8 +1,13 @@
 """Tests for lifecycle management module."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from memo.lifecycle import (
+    FORGET_AFTER_KEY,
+    FORGET_REASON_KEY,
+    IS_FORGOTTEN_KEY,
     LifecycleAction,
     LifecycleManager,
     LifecyclePolicy,
@@ -254,3 +259,144 @@ def test_custom_policy(lifecycle_manager):
     assert custom_manager.policy.archival_days == 90
     assert custom_manager.policy.promotion_threshold == 10
     assert custom_manager.policy.delete_expired is True
+
+
+# -- forget / TTL (supermemory-style soft-delete) ------------------------------
+
+
+def _past() -> str:
+    return (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+
+
+def _future() -> str:
+    return (datetime.now(UTC) + timedelta(days=30)).date().isoformat()
+
+
+def test_forget_excludes_from_search_and_list(mock_memory):
+    rec = mock_memory.save(content="zephyrine protocol notes", title="Zephyrine")
+
+    assert any(h.id == rec.id for h in mock_memory.search("zephyrine", mode="bm25"))
+    assert any(r.id == rec.id for r in mock_memory.list())
+
+    out = mock_memory.forget(rec.id, reason="obsolete")
+    assert out is not None
+    assert out.extra.get(IS_FORGOTTEN_KEY) is True
+    assert out.extra.get(FORGET_REASON_KEY) == "obsolete"
+
+    # Gone from default surfaces…
+    assert not any(h.id == rec.id for h in mock_memory.search("zephyrine", mode="bm25"))
+    assert not any(r.id == rec.id for r in mock_memory.list())
+    # …but file + index survive (reversible, not a delete).
+    assert mock_memory.get(rec.id) is not None
+    assert (mock_memory.cfg.memory_dir / rec.path).is_file()
+
+
+def test_include_forgotten_surfaces_it(mock_memory):
+    rec = mock_memory.save(content="zephyrine protocol notes", title="Zephyrine")
+    mock_memory.forget(rec.id)
+
+    assert any(
+        h.id == rec.id
+        for h in mock_memory.search("zephyrine", mode="bm25", include_forgotten=True)
+    )
+    assert any(r.id == rec.id for r in mock_memory.list(include_forgotten=True))
+
+
+def test_unforget_restores_and_clears_ttl(mock_memory):
+    rec = mock_memory.save(
+        content="zephyrine protocol notes", title="Zephyrine",
+        extra={FORGET_AFTER_KEY: _past(), FORGET_REASON_KEY: "stale"},
+    )
+    mock_memory.forget(rec.id, reason="stale")
+
+    out = mock_memory.unforget(rec.id)
+    assert out is not None
+    assert IS_FORGOTTEN_KEY not in out.extra
+    assert FORGET_AFTER_KEY not in out.extra  # cleared so it won't re-forget
+    assert FORGET_REASON_KEY not in out.extra
+    assert any(h.id == rec.id for h in mock_memory.search("zephyrine", mode="bm25"))
+
+
+def test_forget_preserves_other_extra_keys(mock_memory):
+    rec = mock_memory.save(
+        content="zephyrine protocol notes", title="Zephyrine",
+        extra={"synapse_trace_id": "trace-123"},
+    )
+    out = mock_memory.forget(rec.id, reason="obsolete")
+    assert out is not None
+    assert out.extra.get("synapse_trace_id") == "trace-123"
+    assert out.extra.get(IS_FORGOTTEN_KEY) is True
+
+
+def test_forget_unknown_id_returns_none(mock_memory):
+    assert mock_memory.forget("deadbeef") is None
+    assert mock_memory.unforget("deadbeef") is None
+
+
+def test_enforce_forget_ttl_forgets_elapsed_only(mock_memory):
+    due = mock_memory.save(
+        content="elapsed alpha", title="Elapsed",
+        extra={FORGET_AFTER_KEY: _past()},
+    )
+    not_due = mock_memory.save(
+        content="future beta", title="Future",
+        extra={FORGET_AFTER_KEY: _future()},
+    )
+    plain = mock_memory.save(content="plain gamma", title="Plain")
+
+    acted_ids = {a["id"] for a in mock_memory.lifecycle.enforce_forget_ttl()}
+
+    assert due.id in acted_ids
+    assert not_due.id not in acted_ids
+    assert plain.id not in acted_ids
+    assert mock_memory.get(due.id).extra.get(IS_FORGOTTEN_KEY) is True
+    assert not mock_memory.get(not_due.id).extra.get(IS_FORGOTTEN_KEY)
+
+
+def test_enforce_forget_ttl_dry_run_changes_nothing(mock_memory):
+    rec = mock_memory.save(
+        content="elapsed alpha", title="Elapsed",
+        extra={FORGET_AFTER_KEY: _past()},
+    )
+    acted = mock_memory.lifecycle.enforce_forget_ttl(dry_run=True)
+    assert any(a["id"] == rec.id for a in acted)
+    assert not mock_memory.get(rec.id).extra.get(IS_FORGOTTEN_KEY)
+
+
+def test_should_forget_skips_already_forgotten(mock_memory):
+    rec = mock_memory.save(
+        content="elapsed alpha", title="Elapsed",
+        extra={FORGET_AFTER_KEY: _past()},
+    )
+    mock_memory.forget(rec.id)
+    should, _reason = mock_memory.lifecycle.should_forget(rec.id)
+    assert should is False
+
+
+def test_lifecycle_report_counts_forget_candidates(mock_memory):
+    mock_memory.save(
+        content="elapsed alpha", title="Elapsed",
+        extra={FORGET_AFTER_KEY: _past()},
+    )
+    mock_memory.save(content="plain gamma", title="Plain")
+    report = mock_memory.lifecycle.get_lifecycle_report()
+    assert report["forget_candidates"] == 1
+
+
+def test_forget_after_accepts_full_datetime(mock_memory):
+    stamp = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    rec = mock_memory.save(
+        content="elapsed alpha", title="Elapsed",
+        extra={FORGET_AFTER_KEY: stamp},
+    )
+    should, _ = mock_memory.lifecycle.should_forget(rec.id)
+    assert should is True
+
+
+def test_forget_after_unparseable_is_ignored(mock_memory):
+    rec = mock_memory.save(
+        content="elapsed alpha", title="Elapsed",
+        extra={FORGET_AFTER_KEY: "not-a-date"},
+    )
+    should, _ = mock_memory.lifecycle.should_forget(rec.id)
+    assert should is False

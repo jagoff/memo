@@ -116,9 +116,20 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
         "superseded": [],   # contradictions acted on
         "evolved": [],      # contradictions marked evolution (both kept)
         "merged": [],       # duplicate clusters consolidated
+        "forgotten": [],    # forget_after TTL elapsed (soft, reversible)
         "archived_stale": [],
         "errors": [],
     }
+
+    # 0. Explicit forget TTLs ------------------------------------------------
+    # Honour user-set `forget_after` dates: soft-forget (reversible) so the
+    # memoria drops out of recall/search without losing the file. Runs even
+    # when other passes are skipped — it's explicit user intent, not heuristics.
+    try:
+        for item in mem.lifecycle.enforce_forget_ttl(dry_run=dry_run):
+            receipt["forgotten"].append(item)
+    except Exception as exc:  # noqa: BLE001 — never let one pass abort the rest
+        receipt["errors"].append(f"forget: {type(exc).__name__}: {exc}")
 
     # 1. Contradictions ------------------------------------------------------
     if not skip_contradict:
@@ -208,6 +219,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
                   f"({'delete' if hard_delete else 'archive'}), "
                   f"evolutions marked: {len(receipt['evolved'])}")
     console.print(f"  duplicate clusters merged: {len(receipt['merged'])}")
+    console.print(f"  forget_after TTLs applied: {len(receipt['forgotten'])}")
     console.print(f"  stale memorias archived: {len(receipt['archived_stale'])}")
     if receipt["errors"]:
         for e in receipt["errors"]:
