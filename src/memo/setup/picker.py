@@ -5,7 +5,7 @@ Three branches:
 1. **Standard macOS path** (default highlight): `~/Documents/memo/`. Visible in
    Finder, iCloud-syncable. Recommended for users who don't use Obsidian.
 2. **An Obsidian vault** (one option per detected vault). Memorias land
-   under `<vault>/<subdir>/`, subdir prompted with default `99-AI/memory`.
+   under `<vault>/<subdir>/`, subdir prompted with default `AI/memory`.
 3. **Custom path…**: free-text absolute path.
 
 Returns a `PickerResult` to the caller (CLI). `vault_path` is set only
@@ -30,10 +30,10 @@ class PickerResult:
     vault_path: Path | None  # set only when an Obsidian vault was chosen
 
 
-# Default subdir name when the user picks an Obsidian vault. `99-AI/`
+# Default subdir name when the user picks an Obsidian vault. `AI/`
 # matches the user's existing system convention; nesting `memory/`
 # under it keeps memo-managed files separate from other AI artefacts.
-DEFAULT_VAULT_SUBDIR = "99-AI/memory"
+DEFAULT_VAULT_SUBDIR = "AI/memory"
 
 
 def run_picker(

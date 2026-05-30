@@ -73,7 +73,7 @@ def tmp_cfg(tmp_path: Path) -> Config:
     vault = tmp_path / "vault"
     state = tmp_path / "state"
     data.mkdir()
-    (vault / "99-obsidian" / "99-AI" / "memory").mkdir(parents=True)
+    (vault / "Obsidian" / "AI" / "memory").mkdir(parents=True)
     state.mkdir()
     # Point the TOML config-file lookup at a non-existent path so
     # `Config.from_env()` doesn't accidentally pick up the developer's

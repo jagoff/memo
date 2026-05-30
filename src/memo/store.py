@@ -185,7 +185,7 @@ _REQUIRED_SCHEMA_OBJECTS = frozenset(
 # `bm25(table, w0, w1, w2, ...)` takes one weight per column (UNINDEXED
 # columns receive a weight but ignore it). Path is boosted because a
 # query term matching the filename or directory is a strong canonical
-# signal (e.g. `99-Contacts/Grecia.md` for "Grecia") that pure body
+# signal (e.g. `Contacts/Grecia.md` for "Grecia") that pure body
 # term-density would otherwise drown in dumps with many repeats of the
 # same keyword.
 _BM25_REPO_NAME_WEIGHT = 0.5

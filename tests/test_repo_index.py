@@ -521,7 +521,7 @@ def test_path_name_boost_skips_ingest_dumps() -> None:
     # Ingest dumps may have the query term in filename but they are not
     # canonical sources — boost must be 0.
     assert _path_name_boost(
-        "99-obsidian/99-AI/external-ingest/Claude/grecia-dump.md", ["grecia"]
+        "Obsidian/AI/external-ingest/Claude/grecia-dump.md", ["grecia"]
     ) == 0.0
 
 
@@ -539,7 +539,7 @@ def _make_grecia_repo(root: Path) -> Path:
     body-dense area note (`Grecia Accesos.md`, many mentions). The
     canonical file must win after path-name boost."""
     files = {
-        "99-obsidian/99-Contacts/Grecia.md": (
+        "Obsidian/Contacts/Grecia.md": (
             "---\ntype: mention\nkinship: family-immediate\n---\n"
             "[[Grecia|@Grecia]]\n\n"
             "- Relación: hija\n- Cumpleaños: 07/06/2010\n- Email: grecia@example.com\n"
@@ -561,7 +561,7 @@ def _make_grecia_repo(root: Path) -> Path:
 def test_repo_search_boosts_filename_match_over_body_density(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Single-term query "Grecia" must surface `99-Contacts/Grecia.md`
+    """Single-term query "Grecia" must surface `Contacts/Grecia.md`
     (exact basename match) ahead of `02-Areas/Grecia/Grecia Accesos.md`
     even though the area file has many more body mentions of `grecia`.
     Regression for the diagnosis that BM25 term-density was beating
@@ -575,7 +575,7 @@ def test_repo_search_boosts_filename_match_over_body_density(
 
     hits = mem.repo_search("Grecia", repo="grecia-vault", limit=3, mode="hybrid")
     assert hits, "expected at least one hit for query 'Grecia'"
-    assert hits[0].path == "99-obsidian/99-Contacts/Grecia.md", (
+    assert hits[0].path == "Obsidian/Contacts/Grecia.md", (
         f"contact note must win — got {[h.path for h in hits]}"
     )
 
@@ -586,10 +586,10 @@ def test_repo_search_ignores_ingest_dump_paths(tmp_path: Path, monkeypatch) -> N
     must still rank above the dump."""
     _patch_embedder(monkeypatch)
     files = {
-        "99-obsidian/99-Contacts/Grecia.md": (
+        "Obsidian/Contacts/Grecia.md": (
             "[[Grecia|@Grecia]]\nGrecia Ferrari hija\n"
         ),
-        "99-obsidian/99-AI/external-ingest/Claude/grecia-session.md": (
+        "Obsidian/AI/external-ingest/Claude/grecia-session.md": (
             "Grecia Grecia Grecia Grecia Grecia Grecia\n" * 20
         ),
     }
@@ -599,6 +599,6 @@ def test_repo_search_ignores_ingest_dump_paths(tmp_path: Path, monkeypatch) -> N
 
     hits = mem.repo_search("Grecia", repo="ingest-vault", limit=2, mode="hybrid")
     assert hits
-    assert hits[0].path == "99-obsidian/99-Contacts/Grecia.md", (
+    assert hits[0].path == "Obsidian/Contacts/Grecia.md", (
         f"contact must outrank ingest dump — got {[h.path for h in hits]}"
     )

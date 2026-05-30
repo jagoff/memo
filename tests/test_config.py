@@ -78,9 +78,9 @@ def test_legacy_env_vars_derive_data_dir(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent.toml"))
     monkeypatch.delenv("MEMO_DATA_DIR", raising=False)
     monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_path / "v"))
-    monkeypatch.setenv("MEMO_MEMORY_SUBDIR", "99-obsidian/99-AI/memory")
+    monkeypatch.setenv("MEMO_MEMORY_SUBDIR", "Obsidian/AI/memory")
     cfg = Config.from_env()
-    expected = (tmp_path / "v" / "99-obsidian/99-AI/memory").resolve()
+    expected = (tmp_path / "v" / "Obsidian/AI/memory").resolve()
     assert cfg.data_dir == expected
     assert cfg.vault_path == (tmp_path / "v").resolve()
 

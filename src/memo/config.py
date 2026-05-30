@@ -32,6 +32,14 @@ from pydantic import BaseModel, Field, field_validator
 # custom path) on first run.
 _DEFAULT_DATA_DIR = Path.home() / "Documents" / "memo"
 
+# Vault system-folder layout — single source of truth. memo's own memory
+# subtree and the contacts notes live under `<SYSTEM_DIR>/...` inside an
+# Obsidian vault. Rename the whole subtree via MEMO_VAULT_SYSTEM_DIR or by
+# editing the one default below — don't scatter the folder name as literals.
+SYSTEM_DIR = os.environ.get("MEMO_VAULT_SYSTEM_DIR", "Obsidian")
+AI_SUBDIR = f"{SYSTEM_DIR}/AI"
+CONTACTS_SUBDIR = f"{SYSTEM_DIR}/Contacts"
+
 # Default state dir — sqlite indexes + transient state. Separate from
 # `data_dir` because: (a) state is rebuildable from `.md` files via
 # `memo reindex`; (b) XDG-style location signals "managed cache" so
