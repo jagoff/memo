@@ -622,11 +622,17 @@ def recall_hook() -> None:
     _t0 = time.time()
     try:
         from memo.recall_server import connect_and_recall
+        from memo.flags import flag_int
+        # Wait for the warm-but-slow daemon (the 3-6s tail) instead of
+        # abandoning it at 1s and ALSO running the subprocess path — that
+        # double-fired and logged the same prompt twice. Budget sits under the
+        # 12s hooks.json timeout, leaving room for subprocess as last resort.
+        _daemon_timeout = max(0.2, (flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS") or 3500) / 1000.0)
         _daemon_result = connect_and_recall(
             Config.from_env().state_dir,
             prompt=prompt,
             cwd=payload.get("cwd"),
-            timeout=1.0,
+            timeout=_daemon_timeout,
         )
         if _daemon_result is not None:
             _latency_ms = int((time.time() - _t0) * 1000)

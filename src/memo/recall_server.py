@@ -59,6 +59,7 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -302,8 +303,13 @@ def _recall_logic(
     cfg: Any,
     debug: bool = False,
     t0: float | None = None,
-) -> str:
-    """Run recall search and return a JSON string to write back on the socket.
+) -> tuple[str, Callable[[], None] | None]:
+    """Run recall search; return (json_response, log_thunk).
+
+    The JSON string is written back on the socket. `log_thunk`, when not None,
+    appends the recall.log row — the caller invokes it ONLY after the response
+    is delivered, so an abandoned recall doesn't double-count against the
+    subprocess fallback row. Empty/failed recalls return (json, None).
 
     Mirrors the logic in cli.py:recall_hook but operates on a pre-loaded
     Memory instance (the daemon's persistent one).
@@ -365,7 +371,7 @@ def _recall_logic(
     except Exception as exc:
         if debug:
             print(f"# recall-daemon: search failed: {exc}", file=sys.stderr)
-        return "{}"
+        return "{}", None
 
     # Query-expansion fallback: bare continuity prompts ("que queda pendiente",
     # "seguimos", "en qué estábamos") embed far from any single memoria and
@@ -394,7 +400,7 @@ def _recall_logic(
     nudge = qualifying[top_k:top_k + 2]
 
     if not relevant:
-        return "{}"
+        return "{}", None
 
     # Feedback loop: record what surfaced so the contextual re-ranker has
     # history + so `memo eval` can later correlate surfaced vs used. Best
@@ -441,22 +447,25 @@ def _recall_logic(
         lines.append(f"_También en tu memoria (relacionado): {also} — `/memo get <id>`._")
     lines.append(footer)
 
-    # Log to recall.log
-    latency_ms: int | None = None
-    if t0 is not None:
-        latency_ms = int((time.time() - t0) * 1000)
-    try:
-        from memo.dashboard import append_recall_log
-        append_recall_log(
-            cfg.state_dir,
-            prompt=prompt,
-            hits=[{"id": h.id, "score": h.score, "title": h.title} for h in relevant],
-            mode=mode,
-            latency_ms=latency_ms,
-            via="daemon",
-        )
-    except Exception:
-        pass
+    # Defer the recall.log write to the caller — it fires only once the
+    # response is delivered (see _RecallHandler.handle). Capture the hit
+    # snapshot now; measure latency at log time so it reflects end-to-end.
+    hits_snapshot = [{"id": h.id, "score": h.score, "title": h.title} for h in relevant]
+
+    def _log() -> None:
+        latency_ms: int | None = int((time.time() - t0) * 1000) if t0 is not None else None
+        try:
+            from memo.dashboard import append_recall_log
+            append_recall_log(
+                cfg.state_dir,
+                prompt=prompt,
+                hits=hits_snapshot,
+                mode=mode,
+                latency_ms=latency_ms,
+                via="daemon",
+            )
+        except Exception:
+            pass
 
     output = {
         "hookSpecificOutput": {
@@ -464,7 +473,7 @@ def _recall_logic(
             "additionalContext": "\n".join(lines),
         }
     }
-    return json.dumps(output, ensure_ascii=False)
+    return json.dumps(output, ensure_ascii=False), _log
 
 
 class _RecallHandler(socketserver.StreamRequestHandler):
@@ -472,12 +481,20 @@ class _RecallHandler(socketserver.StreamRequestHandler):
 
     server: _RecallServer  # type: ignore[assignment]
 
-    def _write_response(self, result: str, *, debug: bool) -> None:
+    def _write_response(self, result: str, *, debug: bool) -> bool:
+        """Write the response line. Return True iff it reached the client.
+
+        A False return means the client already gave up (timed out and fell
+        back to subprocess) — callers must NOT log the recall then, or it
+        double-counts against the subprocess row.
+        """
         try:
             self.wfile.write((result + "\n").encode("utf-8"))
+            return True
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
             if debug:
                 print(f"# recall-daemon: client disconnected before response: {exc}", file=sys.stderr)
+            return False
 
     def _embed_query(self, req: dict[str, Any]) -> str:
         text = str(req.get("text") or "")
@@ -503,8 +520,16 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             })
         if not all(isinstance(t, str) for t in texts):
             return json.dumps({"error": "embed_batch: every element of `texts` must be a string"})
-        with self.server._lock:
-            vectors = self.server._mem.embedder.embed(texts)
+        # Embed in chunks, releasing the shared lock between chunks so a pending
+        # recall query-embed can interleave instead of waiting for the whole
+        # (cold) batch. Without this, a reindex/capture batch holds the lock for
+        # tens of seconds and starves recall (the 53s tail in recall.log).
+        from memo.flags import flag_int
+        chunk = max(1, flag_int("MEMO_EMBED_BATCH_CHUNK") or 32)
+        vectors: list[Any] = []
+        for i in range(0, len(texts), chunk):
+            with self.server._lock:
+                vectors.extend(self.server._mem.embedder.embed(texts[i:i + chunk]))
         dim = len(vectors[0]) if vectors else 0
         return json.dumps({
             "vectors": vectors,
@@ -561,6 +586,11 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             # the original prompt/cwd contract working.
             op = str(req.get("op") or "recall").strip()
 
+            # For recall, the actual recall.log write is deferred until we know
+            # the response reached the client (see _write_response) — so an
+            # abandoned recall (client timed out, ran subprocess) doesn't add a
+            # duplicate row. _recall_logic hands back the log thunk.
+            log_fn: Callable[[], None] | None = None
             try:
                 if op == "recall":
                     prompt = (req.get("prompt") or "").strip()
@@ -568,10 +598,23 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     if not prompt:
                         self._write_response("{}", debug=debug)
                         return
-                    with self.server._lock:
-                        result = _recall_logic(
+                    # Bound the wait for the shared embedder/Memory lock. A cold
+                    # embed_batch can hold it for tens of seconds; rather than
+                    # hang past the hook budget, bail empty fast.
+                    from memo.flags import flag_int
+                    timeout_s = max(0.1, (flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS") or 2500) / 1000.0)
+                    if not self.server._lock.acquire(timeout=timeout_s):
+                        if debug:
+                            print(f"# recall-daemon: lock busy >{timeout_s:.1f}s, bailing empty",
+                                  file=sys.stderr)
+                        self._write_response("{}", debug=debug)
+                        return
+                    try:
+                        result, log_fn = _recall_logic(
                             prompt, cwd, self.server._mem, self.server._cfg, debug, t0=t0,
                         )
+                    finally:
+                        self.server._lock.release()
                 elif op == "embed_query":
                     result = self._embed_query(req)
                 elif op == "embed_batch":
@@ -589,7 +632,9 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     print(f"# recall-daemon: handler error (op={op}): {exc}", file=sys.stderr)
                 result = json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
-            self._write_response(result, debug=debug)
+            delivered = self._write_response(result, debug=debug)
+            if delivered and log_fn is not None:
+                log_fn()
         finally:
             latency_ms = (time.time() - t0) * 1000.0
             stats = getattr(self.server, "_stats", None)
@@ -620,6 +665,44 @@ class _RecallServer(socketserver.ThreadingUnixStreamServer):
 def _cleanup(state_dir: Path) -> None:
     _socket_path(state_dir).unlink(missing_ok=True)
     _pid_file(state_dir).unlink(missing_ok=True)
+
+
+def _serve_until_shutdown(
+    server: Any,
+    shutdown_event: threading.Event,
+    *,
+    on_shutdown: Callable[[], None] | None = None,
+    poll_interval: float = 1.0,
+    join_timeout: float = 5.0,
+) -> None:
+    """Run ``server.serve_forever()`` on a worker thread and block until
+    ``shutdown_event`` is set, then shut down in order.
+
+    Extracted from :func:`run_server` so the daemon lifecycle is unit-testable
+    without loading MLX. Calling ``server.shutdown()`` here is safe because it
+    runs on a *different* thread than ``serve_forever()`` — the signal handler
+    only sets the event, avoiding the join-self deadlock that previously forced
+    an ungraceful ``os._exit(0)``.
+    """
+    server_thread = threading.Thread(
+        target=server.serve_forever,
+        name="recall-daemon-serve",
+        daemon=True,
+    )
+    server_thread.start()
+    try:
+        # Poll so a signal delivered to the main thread is observed promptly
+        # even where Event.wait() is not interrupted by the handler.
+        while not shutdown_event.wait(timeout=poll_interval):
+            pass
+    finally:
+        with contextlib.suppress(Exception):
+            server.shutdown()
+        with contextlib.suppress(Exception):
+            server.server_close()
+        server_thread.join(timeout=join_timeout)
+        if on_shutdown is not None:
+            on_shutdown()
 
 
 def run_server(state_dir: Path | None = None) -> None:
@@ -695,25 +778,11 @@ def run_server(state_dir: Path | None = None) -> None:
         )
         persister.start()
 
-    server_thread = threading.Thread(
-        target=server.serve_forever,
-        name="recall-daemon-serve",
-        daemon=True,
+    _serve_until_shutdown(
+        server,
+        shutdown_event,
+        on_shutdown=lambda: _cleanup(state_dir),
     )
-    server_thread.start()
-    try:
-        # Block until SIGTERM/SIGINT. Poll so a signal delivered to the main
-        # thread is observed promptly even on platforms where Event.wait() is
-        # not interrupted by the handler.
-        while not shutdown_event.wait(timeout=1.0):
-            pass
-    finally:
-        with contextlib.suppress(Exception):
-            server.shutdown()  # safe: called from a thread != serve_forever()
-        with contextlib.suppress(Exception):
-            server.server_close()
-        server_thread.join(timeout=5.0)
-        _cleanup(state_dir)
 
 
 def _send_request(state_dir: Path, payload: dict[str, Any], timeout: float) -> str | None:

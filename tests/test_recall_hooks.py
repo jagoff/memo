@@ -53,7 +53,7 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
-    result = _recall_logic(
+    result, _log = _recall_logic(
         "project-specific query",
         cwd=str(tmp_path),
         mem=StubMemory(),
@@ -90,7 +90,7 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
-    result = _recall_logic(
+    result, _log = _recall_logic(
         "anything", cwd=None, mem=StubMemory(),
         cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
     )
@@ -167,7 +167,7 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
     monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")  # isolate from prefs
 
-    result = _recall_logic("q", cwd=None, mem=StubMemory(),
+    result, _log = _recall_logic("q", cwd=None, mem=StubMemory(),
                            cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
     # top-3 in the main block, next 2 in the related nudge
