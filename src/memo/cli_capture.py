@@ -299,7 +299,7 @@ def ingest(
             if extra_meta:
                 extra.update(extra_meta)
             store.upsert(
-                id_=id_, path=store_path, title=title[:200], type_="note",
+                id_=id_, path=store_path, title=title[:200], type_="reference",
                 tags=tags, created=existing["created"] if existing else now,
                 updated=now, body_hash=body_hash, embedding=emb,
                 extra=extra, body_text=body,
@@ -342,7 +342,7 @@ def ingest(
             if extra_meta:
                 extra.update(extra_meta)
             store.upsert(
-                id_=id_, path=chunk_path, title=chunk_title[:200], type_="note",
+                id_=id_, path=chunk_path, title=chunk_title[:200], type_="reference",
                 tags=[*tags, "chunk"], created=existing["created"] if existing else now,
                 updated=now, body_hash=chunk_body_hash, embedding=emb,
                 extra=extra, body_text=chunk_body,

@@ -33,6 +33,40 @@ from memo.config import Config
 from memo.memory import AmbiguousIdError, Memory
 
 
+def _now_ms() -> int:
+    import time
+
+    return int(time.time() * 1000)
+
+
+def _log_consult(
+    memory: Memory,
+    *,
+    tool: str,
+    query: str,
+    hits: list[dict[str, Any]],
+    t0_ms: int,
+    source: str = "",
+) -> None:
+    """Record an MCP consult into the shared recall ring buffer so memo's
+    usefulness is observable for EVERY consumer, not just the Claude Code
+    recall-hook (see `memo usefulness`). Best-effort — telemetry must never
+    break a tool call."""
+    try:
+        from memo.dashboard import append_recall_log
+
+        append_recall_log(
+            memory.cfg.state_dir,
+            prompt=query or "",
+            hits=hits or [],
+            via=f"mcp:{tool}",
+            source=(source or "").strip().lower() or None,
+            latency_ms=_now_ms() - t0_ms,
+        )
+    except Exception:
+        pass
+
+
 def build_server(memory: Memory | None = None) -> FastMCP:
     """Build the MCP server. Accepts an explicit `Memory` for tests.
 
@@ -172,7 +206,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             }
 
     @server.tool()
-    def memory_unified_briefing(cwd: str | None = None) -> dict[str, Any]:
+    def memory_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
         """Return a synapse-aware briefing for the current focus.
 
         Pulls `synapse packet` (present_state + reality_conflicts) and
@@ -192,7 +226,10 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         """
         from memo.briefing import synapse_briefing_lines
 
+        t0 = _now_ms()
         lines = synapse_briefing_lines(cwd)
+        _log_consult(memory, tool="unified_briefing", query=cwd or "briefing",
+                     hits=[], t0_ms=t0, source=source)
         return {
             "available": bool(lines),
             "markdown": "\n".join(lines),
@@ -206,6 +243,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         type: str | None = None,
         body_chars: int = 280,
         mode: str = "hybrid",
+        source: str = "",
     ) -> list[dict[str, Any]]:
         """Top-k search — hybrid (semantic + keyword) by default.
 
@@ -225,6 +263,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
                 `bm25` when looking up exact tag/path/code-snippet
                 matches; the small embedder is unreliable on those.
         """
+        t0 = _now_ms()
         out: list[dict[str, Any]] = []
         for r in memory.search(query, limit=limit, type_=type, mode=mode):
             d = r.to_dict()
@@ -233,6 +272,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
                 d["body"] = body[:body_chars].rstrip() + "…"
                 d["body_truncated"] = True
             out.append(d)
+        _log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
         return out
 
     @server.tool()
@@ -292,6 +332,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         type: str | None = None,
         snippet_chars: int = 800,
         include_repos: bool = True,
+        source: str = "",
     ) -> dict[str, Any]:
         """RAG over the memory archive.
 
@@ -308,13 +349,19 @@ def build_server(memory: Memory | None = None) -> FastMCP:
                 (default 800). Lower = cheaper + smaller context window
                 used; higher = more grounding for long bodies.
         """
-        return memory.ask(
+        t0 = _now_ms()
+        res = memory.ask(
             question,
             k=k,
             type_=type,
             snippet_chars=snippet_chars,
             include_repos=include_repos,
         )
+        out = res if isinstance(res, dict) else {"answer": str(res)}
+        cites = out.get("citations") or out.get("sources") or []
+        hit_dicts = [c for c in cites if isinstance(c, dict)]
+        _log_consult(memory, tool="ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
+        return out
 
     @server.tool()
     def memory_chat_ask(
@@ -323,6 +370,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         type: str | None = None,
         history: list[dict[str, Any]] | None = None,
         context: dict[str, Any] | None = None,
+        source: str = "",
     ) -> dict[str, Any]:
         """Chat-shaped RAG over the memory archive.
 
@@ -340,14 +388,22 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             history: Optional chat history as `{role, text}` or
                 `{role, content}` turns. Only user/assistant turns are used.
             context: Optional caller context included in retrieval question.
+            source: Calling layer name for memo's usefulness telemetry.
         """
-        return memory.chat_ask(
+        t0 = _now_ms()
+        res = memory.chat_ask(
             question,
             k=k,
             type_=type,
             history=history,
             context=context,
         )
+        out = res if isinstance(res, dict) else {"answer": str(res)}
+        cites = out.get("citations") or out.get("sources") or []
+        hit_dicts = [c for c in cites if isinstance(c, dict)]
+        _log_consult(memory, tool="chat_ask", query=question, hits=hit_dicts,
+                     t0_ms=t0, source=source)
+        return out
 
     @server.tool()
     def memory_list(
@@ -509,6 +565,53 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
 
     @server.tool()
+    def memory_forget(id: str, reason: str | None = None) -> dict[str, Any]:
+        """Soft-forget one memory by id (full or unique prefix).
+
+        Unlike `memory_delete`, this keeps the `.md` file and the index entry
+        but excludes the memoria from search / recall / list by default. It is
+        reversible with `memory_unforget`. Use this when a fact is obsolete or
+        no longer wanted in context but you don't want to destroy it.
+
+        Args:
+            id: Memoria id (full UUID hex or unique prefix).
+            reason: Optional free-text note on why it was forgotten.
+
+        Returns `{"forgotten": true, "id": ...}` on success,
+        `{"forgotten": false}` if the id is unknown, or
+        `{"error": "ambiguous", "matches": [...]}` for an ambiguous prefix.
+        """
+        try:
+            rec = memory.forget(id, reason=reason)
+        except AmbiguousIdError as exc:
+            return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        if rec is None:
+            return {"forgotten": False}
+        return {"forgotten": True, "id": rec.id}
+
+    @server.tool()
+    def memory_unforget(id: str) -> dict[str, Any]:
+        """Reverse a `memory_forget`: make the memoria searchable again.
+
+        Clears the `is_forgotten` flag (and any `forget_after` TTL) so the
+        memoria reappears in search / recall / list.
+
+        Args:
+            id: Memoria id (full UUID hex or unique prefix).
+
+        Returns `{"unforgotten": true, "id": ...}` on success,
+        `{"unforgotten": false}` if the id is unknown, or
+        `{"error": "ambiguous", "matches": [...]}` for an ambiguous prefix.
+        """
+        try:
+            rec = memory.unforget(id)
+        except AmbiguousIdError as exc:
+            return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        if rec is None:
+            return {"unforgotten": False}
+        return {"unforgotten": True, "id": rec.id}
+
+    @server.tool()
     def memory_extract_entities(
         ids: list[str] | None = None, all_: bool = False, force: bool = False,
     ) -> dict[str, int]:
@@ -667,7 +770,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         history_errors = 0
         with contextlib.suppress(Exception):
             history_errors = int(getattr(memory.history, "error_count", 0))
-        return {
+        stats: dict[str, Any] = {
             "total": memory.store.count(),
             "data_dir": str(memory.cfg.data_dir),
             "vault_path": (
@@ -677,6 +780,12 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             "embedder_model": memory.cfg.embedder_model,
             "history_errors": history_errors,
         }
+        # Recall health (surfaced/used proxy) so the "is memo useful?" signal
+        # is visible over MCP too. Best-effort; never breaks stats.
+        with contextlib.suppress(Exception):
+            from memo.dashboard import recall_health
+            stats["recall_health"] = recall_health(memory.cfg.state_dir)
+        return stats
 
     # -- temporal reasoning tools ----------------------------------------------
 

@@ -153,13 +153,20 @@ class ContextStore:
 
     def record_feedback(self, memoria_id: str, memoria_type: str, entities: list[str]) -> None:
         """Record user feedback (e.g., they clicked/viewed a memoria)."""
-        # Boost the type
-        self._preferences.preferred_types[memoria_type] = (
-            self._preferences.preferred_types.get(memoria_type, 0.5) + 0.1
-        )
-        # Cap at 1.0
-        if self._preferences.preferred_types[memoria_type] > 1.0:
-            self._preferences.preferred_types[memoria_type] = 1.0
+        # Don't let the bulk `reference` tier teach a type preference. It
+        # dominates the corpus, so learning "prefer reference" would amplify
+        # the very noise the recall tiering exists to suppress (this is the
+        # bug that produced `preferred_types: {note: 0.6}` pre-tiering). See
+        # `memo.tiers`.
+        from memo.tiers import REFERENCE_TYPES
+        if memoria_type not in REFERENCE_TYPES:
+            # Boost the type
+            self._preferences.preferred_types[memoria_type] = (
+                self._preferences.preferred_types.get(memoria_type, 0.5) + 0.1
+            )
+            # Cap at 1.0
+            if self._preferences.preferred_types[memoria_type] > 1.0:
+                self._preferences.preferred_types[memoria_type] = 1.0
 
         # Boost the entities
         for entity in entities:

@@ -57,6 +57,8 @@ from memo.cli_history import diff_cmd, historia_cmd
 from memo.cli_import import import_group
 from memo.cli_links import links_group
 from memo.cli_maintain import maintain_cmd
+from memo.cli_retier import retier_cmd
+from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_memory import (
     ask,
     chat_ask,
@@ -123,6 +125,8 @@ def cli(ctx: click.Context) -> None:
 cli.add_command(graph_group)
 cli.add_command(eval_group)
 cli.add_command(maintain_cmd)
+cli.add_command(retier_cmd)
+cli.add_command(usefulness_cmd)
 cli.add_command(mapa_cmd)
 cli.add_command(tui)
 cli.add_command(hook_log)
@@ -301,6 +305,17 @@ def stats() -> None:
     }
     for k, v in info.items():
         console.print(f"[dim]{k:14s}[/dim] {v}")
+    # Recall health — is memo actually consulted + returning confident hits,
+    # or a write-only store? Best-effort summary of the recall ring buffer.
+    with contextlib.suppress(Exception):
+        from memo.dashboard import recall_health
+        h = recall_health(mem.cfg.state_dir)
+        if h.get("sampled"):
+            console.print(
+                f"[dim]recall_health [/dim] fired={h['fired']} bailed={h['bailed']} "
+                f"hit_rate={h['hit_rate']} top_score={h['median_top_score']} "
+                f"p50={h['p50_latency_ms']}ms [dim](last {h['sampled']})[/dim]"
+            )
 
 
 
@@ -525,16 +540,20 @@ def recall_hook() -> None:
 
       MEMO_RECALL_DISABLE          — set to "1" to make this a no-op.
       MEMO_RECALL_TOP_K            — default 3
-      MEMO_RECALL_MIN_SIM          — default 0.6. Note: the floor is
-        absolute over `score`. For mode=vec, `score` is cosine ∈ [0, 1].
-        For mode=hybrid+rerank, `score` is fused (typically [0.2, 0.95])
-        — drop the floor to ~0.4 there or hits get over-filtered.
+      MEMO_RECALL_MIN_SIM          — default 0.5. Floor over the
+        recency-decayed `score` (decay compresses raw cosine by ~0.15,
+        so 0.6 on the decayed score ≈ 0.75 raw — too aggressive, a major
+        bail cause). 0.5 recovers borderline hits; reference-tier
+        exclusion (on by default) is the bigger noise lever. For pure
+        mode=vec without recency, 0.6 is a tighter choice.
       MEMO_RECALL_MIN_PROMPT_CHARS — default 12 (skip very short prompts)
       MEMO_RECALL_BODY_CHARS       — default 240 (snippet length per result)
       MEMO_RECALL_SKIP_SLASH       — default "1" (skip if prompt starts with /)
-      MEMO_RECALL_MODE             — default "vec". "hybrid" enables
-        cross-encoder rerank on top of RRF fusion. Higher precision,
-        higher latency (≤5s warm with the auto-capped pool).
+      MEMO_RECALL_MODE             — default "vec" (pure cosine, fast:
+        ~120ms p50). "hybrid" (RRF + cross-encoder rerank) is markedly
+        more precise but `memo eval recall` measured its p50 at ~10s on
+        this corpus — over the 5s hook budget — so it's reserved for
+        `memo ask`/chat, not the hook. "bm25" is keyword-only.
       MEMO_RECALL_RERANK_INPUT_K   — default 10 (only used when MODE=hybrid).
         How many fused candidates to feed the reranker; lower for tighter
         latency, higher for better recall on diffuse queries.
@@ -634,7 +653,7 @@ def recall_hook() -> None:
             pass
 
     top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
-    min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.6"))
+    min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.5"))
     body_chars = int(os.environ.get("MEMO_RECALL_BODY_CHARS", "240"))
     token_budget = int(os.environ.get("MEMO_RECALL_TOKEN_BUDGET", "0") or 0)
     project_boost = float(os.environ.get("MEMO_RECALL_PROJECT_BOOST", "0.15"))
@@ -653,13 +672,12 @@ def recall_hook() -> None:
     # Defer the heavy import — only paid if we get past the early-exits.
     #
     # Mode selection:
-    # - `vec` (default): pure cosine similarity. `score` is in [0, 1]
-    #   and the `MEMO_RECALL_MIN_SIM` floor (0.6) cuts noise reliably.
-    # - `hybrid`: reciprocal rank fusion + cross-encoder rerank when
-    #   the reranker is enabled in config. Higher precision but spends
-    #   the full hook budget on inference. Auto-shrinks the rerank
-    #   input pool (`MEMO_RECALL_RERANK_INPUT_K`, default 10) so the
-    #   warm latency stays under the 5s hook timeout.
+    # - `vec` (default): pure cosine similarity, fast (~120ms p50). The
+    #   MIN_SIM floor (0.5, on the recency-decayed score) cuts noise.
+    # - `hybrid`: RRF fusion + cross-encoder rerank. Far more precise
+    #   (eval: prec@3 0.87 vs 0.67, noise 0) BUT `memo eval recall`
+    #   measured p50 ~10s here — over the hook budget — so it's reserved
+    #   for `memo ask`/chat, not auto-recall.
     # - `bm25`: keyword-only, useful for queries with literal tag
     #   names or filenames where the embedder under-recalls.
     mode = os.environ.get("MEMO_RECALL_MODE", "vec")
@@ -702,10 +720,15 @@ def recall_hook() -> None:
         except Exception:
             project_tag = None
     search_k = top_k * 3 if project_tag else top_k
+    # Tier gate: keep the bulk `reference` tier out of the prompt (mirror of
+    # the daemon path in recall_server.py). See `memo.tiers`.
+    from memo.flags import flag_bool
+    from memo.tiers import REFERENCE_TYPES
+    exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
     try:
         from memo.memory import Memory
         mem = Memory(Config.from_env())
-        hits = mem.search(prompt, limit=search_k, mode=mode, recency=True)
+        hits = mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
     except Exception as exc:
         _bail(f"search failed: {exc}")
         return
@@ -717,13 +740,11 @@ def recall_hook() -> None:
     # Trim back to top_k after boost-aware re-sort.
     hits = hits[:top_k]
 
-    # Filter by similarity floor. With mode="vec", `score` is cosine
-    # similarity ∈ [-1, 1] (typically [0, 1] for L2-normalised embeddings).
-    # 0.6 is the empirical confidence floor on the 223-doc corpus:
-    #   - "qué decidí sobre MLX vs Ollama" → 3 hits @ 0.71-0.74 (all relevant)
-    #   - "how to bake apple pie" → 3 hits @ 0.51-0.56 (literal-word noise,
-    #     "apple-mcp" memoria matched). Threshold 0.6 cuts these out.
-    # Tune via MEMO_RECALL_MIN_SIM if your corpus has different density.
+    # Filter by similarity floor. The hook searches with recency=True,
+    # which compresses raw cosine by ~0.15, so the floor applies to the
+    # decayed score: 0.5 here ≈ 0.65 raw cosine. The old 0.6 (≈0.75 raw)
+    # over-filtered and was a major bail cause; reference-tier exclusion
+    # (on by default) is the bigger noise lever. Tune via MEMO_RECALL_MIN_SIM.
     relevant = [h for h in hits if h.score is None or h.score >= min_sim]
 
     # Stub filter: skip memorias with tiny bodies — they're usually fragments

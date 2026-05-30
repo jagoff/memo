@@ -635,34 +635,49 @@ class VecStore:
         ).fetchone()
         return _row_to_dict(row) if row else None
 
-    def list_recent(self, limit: int = 20, type_: str | None = None) -> list[dict[str, Any]]:
+    def list_recent(
+        self, limit: int = 20, type_: str | None = None,
+        exclude_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         sql = (
             "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
             "FROM meta "
         )
-        params: tuple = ()
+        clauses: list[str] = []
+        params: list[Any] = []
         if type_:
-            sql += "WHERE type = ? "
-            params = (type_,)
+            clauses.append("type = ?")
+            params.append(type_)
+        if exclude_types:
+            placeholders = ",".join("?" for _ in exclude_types)
+            clauses.append(f"type NOT IN ({placeholders})")
+            params.extend(sorted(exclude_types))
+        if clauses:
+            sql += "WHERE " + " AND ".join(clauses) + " "
         sql += "ORDER BY updated DESC LIMIT ?"
         rows = self._conn.execute(sql, (*params, limit)).fetchall()
         return [_row_to_dict(r) for r in rows]
 
     def search(
         self, embedding: list[float], limit: int = 10,
-        type_: str | None = None,
+        type_: str | None = None, exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Top-k by cosine. Returns metadata dicts with a `score` field
-        added (1 - distance, so higher = more similar)."""
+        added (1 - distance, so higher = more similar).
+
+        `exclude_types` drops rows whose `type` is in the set (pushed into
+        SQL, not post-filtered, so the candidate pool isn't wasted on rows
+        the caller will throw away — e.g. the recall hook excluding the
+        bulk `reference` tier)."""
         if len(embedding) != self.dims:
             raise ValueError(
                 f"Query embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
             )
-        # Pull a wider candidate set when filtering by type so the
-        # final top-k still returns `limit` results after the join
+        # Pull a wider candidate set when filtering by type (in or out) so
+        # the final top-k still returns `limit` results after the join
         # filters out off-type rows. 5x is generous for sane type
         # distributions; degenerates gracefully when type is uncommon.
-        candidate_k = limit * 5 if type_ else limit
+        candidate_k = limit * 5 if (type_ or exclude_types) else limit
         sql = (
             "SELECT vec.id AS id, vec.distance AS distance, "
             "       meta.path, meta.title, meta.type, meta.tags, "
@@ -675,6 +690,9 @@ class VecStore:
         if type_:
             sql += "AND meta.type = ? "
             params.append(type_)
+        if exclude_types:
+            sql += f"AND meta.type NOT IN ({','.join('?' for _ in exclude_types)}) "
+            params.extend(sorted(exclude_types))
         sql += "ORDER BY distance ASC LIMIT ?"
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
@@ -693,8 +711,25 @@ class VecStore:
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
         return existed
 
+    def bulk_update_type(self, ids: list[str], new_type: str) -> int:
+        """Reclassify the `type` of many memorias in one transaction.
+
+        Only the `meta.type` column changes — the vec embedding and fts
+        index are untouched (bodies are unchanged), so this is cheap and
+        needs no re-embed. Used by `memo retier`.
+        """
+        if not ids:
+            return 0
+        with self._tx() as cx:
+            cx.executemany(
+                "UPDATE meta SET type = ? WHERE id = ?",
+                [(new_type, i) for i in ids],
+            )
+        return len(ids)
+
     def search_bm25(
         self, query: str, limit: int = 10, type_: str | None = None,
+        exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 keyword search over title + tags + body via FTS5.
 
@@ -729,7 +764,7 @@ class VecStore:
 
         def _run(tokens: list[str], joiner: str) -> list[Any]:
             expr = joiner.join(f'"{t}"' for t in tokens)
-            candidate_k = limit * 5 if type_ else limit
+            candidate_k = limit * 5 if (type_ or exclude_types) else limit
             sql = (
                 "SELECT fts.id AS id, "
                 "       bm25(fts, ?, ?, ?, ?) AS bm25_score, "
@@ -748,6 +783,9 @@ class VecStore:
             if type_:
                 sql += "AND meta.type = ? "
                 params.append(type_)
+            if exclude_types:
+                sql += f"AND meta.type NOT IN ({','.join('?' for _ in exclude_types)}) "
+                params.extend(sorted(exclude_types))
             sql += "ORDER BY bm25_score ASC LIMIT ?"
             params.append(candidate_k)
             try:
