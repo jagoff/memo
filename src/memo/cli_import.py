@@ -64,6 +64,103 @@ def import_csv(input_path: str) -> None:
         console.print(f"[yellow]Errors: {len(result.errors)}[/yellow]")
 
 
+@import_group.command(name="whatsapp")
+@click.option("--include-chat", "include_chats", multiple=True,
+              help="Chat JID to ingest (repeatable). Opt-in allowlist.")
+@click.option("--exclude-chat", "exclude_chats", multiple=True,
+              help="Chat JID to skip (repeatable).")
+@click.option("--all-chats", is_flag=True,
+              help="Ingest every chat (minus exclusions). Required if no --include-chat.")
+@click.option("--retention-days", type=int, default=180, show_default=True,
+              help="Only ingest messages newer than N days.")
+@click.option("--since", help="Floor date YYYY-MM-DD (in addition to retention).")
+@click.option("--min-chars", type=int, default=1, show_default=True,
+              help="Drop chunks whose rendered body is shorter than this.")
+@click.option("--max-chats", type=int, default=None, help="Cap chats (testing).")
+@click.option("--max-messages", type=int, default=None, help="Cap messages (testing).")
+@click.option("--reset", is_flag=True, help="Wipe the incremental cursor (full re-scan).")
+@click.option("--dry-run", is_flag=True, help="Count chunks, write nothing.")
+@click.option("--preserve-timestamps", is_flag=True,
+              help="Back-date `created` to the original message time (reshapes "
+                   "time-bucketed analytics).")
+@click.option("--reindex/--no-reindex", default=True, show_default=True,
+              help="Embed pending chunks after ingest.")
+@click.option("--db", "db_path", type=click.Path(),
+              help="Override bridge messages.db path.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the summary as JSON.")
+def import_whatsapp(
+    include_chats: tuple[str, ...],
+    exclude_chats: tuple[str, ...],
+    all_chats: bool,
+    retention_days: int,
+    since: str | None,
+    min_chars: int,
+    max_chats: int | None,
+    max_messages: int | None,
+    reset: bool,
+    dry_run: bool,
+    preserve_timestamps: bool,
+    reindex: bool,
+    db_path: str | None,
+    as_json: bool,
+) -> None:
+    """Ingest WhatsApp conversations from the whatsapp-mcp bridge into memo.
+
+    Chunks are saved as `type=reference` (searchable by the :8765 chat and
+    `memo search`, but kept out of the every-prompt recall hook when
+    `MEMO_RECALL_EXCLUDE_REFERENCE=1`). Re-runs are incremental.
+
+    Examples:
+
+      memo import whatsapp --include-chat 549XXX@s.whatsapp.net --dry-run
+      memo import whatsapp --include-chat 549XXX@s.whatsapp.net
+      memo import whatsapp --all-chats --retention-days 90
+    """
+    import json as _json
+    from pathlib import Path
+
+    from memo import whatsapp_ingest
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    try:
+        summary = whatsapp_ingest.run(
+            mem,
+            bridge_db=Path(db_path) if db_path else None,
+            since=since,
+            reset=reset,
+            retention_days=retention_days,
+            include_chats=include_chats,
+            exclude_chats=exclude_chats,
+            all_chats=all_chats,
+            min_chars=min_chars,
+            max_chats=max_chats,
+            max_messages=max_messages,
+            dry_run=dry_run,
+            preserve_timestamps=preserve_timestamps,
+            reindex=reindex,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if as_json:
+        console.print_json(_json.dumps(summary))
+        return
+
+    console.print("[green]WhatsApp ingest complete[/green]")
+    console.print(f"Messages read:   {summary['messages_read']}")
+    console.print(f"After filter:    {summary['messages_after_filter']}")
+    console.print(f"Chunks built:    {summary['chunks_built']}")
+    if summary["dry_run"]:
+        console.print("[yellow]dry-run — nothing written[/yellow]")
+    else:
+        console.print(f"Chunks saved:    {summary['chunks_saved']}")
+        console.print(f"Re-embedded:     {summary['reindexed']}")
+    if summary.get("reindex_error"):
+        console.print(f"[yellow]reindex error: {summary['reindex_error']}[/yellow]")
+
+
 @import_group.command(name="markdown-bundle")
 @click.argument("input_path", type=click.Path())
 def import_markdown_bundle(input_path: str) -> None:
