@@ -248,6 +248,25 @@ RECALL_DIRECTIVE = (
 RECALL_FOOTER = "_Use `/memo get <id>` for full content._\n</memo-recall>"
 
 
+def _session_context(mem: Any, exclude_types: set[str] | None, *, max_titles: int = 5) -> str:
+    """Cheap continuity context for query expansion: titles of the most
+    recent durable memorias (the user's open loops). Metadata-only read —
+    no embeddings, no body load — so it stays inside the recall budget.
+
+    Used to re-anchor bare continuity prompts ("seguimos", "qué queda
+    pendiente") that would otherwise embed far from any memoria and bail.
+    Reference-tier rows are excluded (same gate as recall) so bulk vault
+    material doesn't pollute the expansion. Returns "" on any error.
+    """
+    try:
+        rows = mem.store.list_recent(limit=max_titles * 2, exclude_types=exclude_types)
+        titles = [str(r.get("title") or "").strip() for r in rows]
+        titles = [t for t in titles if t][:max_titles]
+        return " ; ".join(titles)
+    except Exception:
+        return ""
+
+
 def _dedup_key(hit: Any) -> str:
     """Identity for near-duplicate collapse: normalised title + body head.
     Catches the same fact surfaced twice (e.g. an evolved copy) without
@@ -319,26 +338,6 @@ def _recall_logic(
     from memo.tiers import REFERENCE_TYPES
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
 
-    try:
-        hits = mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
-    except Exception as exc:
-        if debug:
-            print(f"# recall-daemon: search failed: {exc}", file=sys.stderr)
-        return "{}"
-
-    # Project boost
-    if project_tag:
-        hits = _apply_project_boost(hits, project_tag, project_boost)
-    # Preference boost (learned from past `memory_get` clicks)
-    if contextual:
-        try:
-            hits = _apply_preference_boost(hits, mem.contextual.context.get_preferences())
-        except Exception:
-            pass
-    # Collapse near-duplicates across the whole widened pool so neither the
-    # main block nor the "also related" nudge repeats a fact.
-    hits = dedup_hits(hits)
-
     def _passes(h: Any) -> bool:
         if h.score is not None and h.score < min_sim:
             return False
@@ -346,7 +345,47 @@ def _recall_logic(
             return False
         return True
 
-    qualifying = [h for h in hits if _passes(h)]
+    def _rank(raw: list[Any]) -> list[Any]:
+        # Project boost
+        if project_tag:
+            raw = _apply_project_boost(raw, project_tag, project_boost)
+        # Preference boost (learned from past `memory_get` clicks)
+        if contextual:
+            try:
+                raw = _apply_preference_boost(raw, mem.contextual.context.get_preferences())
+            except Exception:
+                pass
+        # Collapse near-duplicates across the whole widened pool so neither the
+        # main block nor the "also related" nudge repeats a fact.
+        return [h for h in dedup_hits(raw) if _passes(h)]
+
+    try:
+        qualifying = _rank(mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types))
+    except Exception as exc:
+        if debug:
+            print(f"# recall-daemon: search failed: {exc}", file=sys.stderr)
+        return "{}"
+
+    # Query-expansion fallback: bare continuity prompts ("que queda pendiente",
+    # "seguimos", "en qué estábamos") embed far from any single memoria and
+    # bail. Prepending recent open-loop titles re-anchors the query in the
+    # user's active work. Fires ONLY on a zero-hit result, so queries that
+    # already recall are untouched and the extra search is paid only on a miss
+    # (experiment: 4 bare prompts went 0 → 5 hits, top ~0.62). See
+    # `_session_context`.
+    if not qualifying and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
+        ctx = _session_context(mem, exclude_types)
+        if ctx:
+            try:
+                expanded = mem.search(f"{ctx}\n{prompt}", limit=search_k, mode=mode,
+                                      recency=True, exclude_types=exclude_types)
+                qualifying = _rank(expanded)
+                if debug and qualifying:
+                    print(f"# recall-daemon: query expansion recovered {len(qualifying)} hits",
+                          file=sys.stderr)
+            except Exception:
+                pass
+
     relevant = qualifying[:top_k]
     # Proactive nudge: the next best matches that just missed the cut. Surfaced
     # as a terse footnote so the model knows more exists without drowning the

@@ -728,65 +728,82 @@ def recall_hook() -> None:
     try:
         from memo.memory import Memory
         mem = Memory(Config.from_env())
-        hits = mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
     except Exception as exc:
         _bail(f"search failed: {exc}")
         return
 
-    # Apply project boost — additive on the raw score, then re-sort.
-    if project_tag:
-        from memo.recall_server import _apply_project_boost
-        hits = _apply_project_boost(hits, project_tag, project_boost)
-    # Trim back to top_k after boost-aware re-sort.
-    hits = hits[:top_k]
-
-    # Filter by similarity floor. The hook searches with recency=True,
-    # which compresses raw cosine by ~0.15, so the floor applies to the
-    # decayed score: 0.5 here ≈ 0.65 raw cosine. The old 0.6 (≈0.75 raw)
-    # over-filtered and was a major bail cause; reference-tier exclusion
-    # (on by default) is the bigger noise lever. Tune via MEMO_RECALL_MIN_SIM.
-    relevant = [h for h in hits if h.score is None or h.score >= min_sim]
-
-    # Stub filter: skip memorias with tiny bodies — they're usually fragments
-    # that got auto-saved without content and don't add value as context.
     min_body_chars = int(os.environ.get("MEMO_RECALL_MIN_BODY_CHARS", "40"))
-    if min_body_chars > 0:
-        relevant = [h for h in relevant if len((h.body or "").strip()) >= min_body_chars]
-
-    # Staleness suppression: memories older than MEMO_RECALL_STALENESS_DAYS
-    # only pass if they score well above min_sim (1.5x). This prevents
-    # the corpus from being dominated by old entries on generic queries
-    # while still surfacing them for strong topic-specific matches.
     staleness_days = float(os.environ.get("MEMO_RECALL_STALENESS_DAYS", "0") or 0)
-    if staleness_days > 0:
-        from datetime import UTC as _UTC
-        from datetime import datetime as _dt
-        _now = _dt.now(_UTC)
-        stale_threshold = min_sim * 1.5
-        filtered: list = []
-        for h in relevant:
-            try:
-                updated = _dt.fromisoformat(h.updated)
-                if updated.tzinfo is None:
-                    updated = updated.replace(tzinfo=_UTC)
-                days = (_now - updated).total_seconds() / 86400
-                if days > staleness_days and (h.score or 0.0) < stale_threshold:
-                    if os.environ.get("MEMO_RECALL_DEBUG") == "1":
-                        import sys as _sys2
-                        print(
-                            f"# memo recall-hook: staleness filter — {h.id[:8]} "
-                            f"({days:.0f}d old, score {h.score:.2f} < {stale_threshold:.2f})",
-                            file=_sys2.stderr,
-                        )
-                    continue
-            except Exception:
-                pass
-            filtered.append(h)
-        relevant = filtered
 
-    # Collapse near-duplicates so the same fact isn't injected twice.
-    from memo.recall_server import dedup_hits
-    relevant = dedup_hits(relevant)
+    def _search_filter(query_text: str) -> list:
+        """Search + project-boost + floor + stub/staleness filters + dedup.
+
+        Factored out of the inline pipeline so the query-expansion fallback
+        can reuse the exact same chain on the expanded query (mirror of the
+        daemon's `_rank` in recall_server.py)."""
+        try:
+            hits = mem.search(query_text, limit=search_k, mode=mode,
+                              recency=True, exclude_types=exclude_types)
+        except Exception as exc:
+            if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+                print(f"# memo recall-hook: search failed: {exc}", file=_sys.stderr)
+            return []
+        # Apply project boost — additive on the raw score, then re-sort.
+        if project_tag:
+            from memo.recall_server import _apply_project_boost
+            hits = _apply_project_boost(hits, project_tag, project_boost)
+        # Trim back to top_k after boost-aware re-sort.
+        hits = hits[:top_k]
+        # Filter by similarity floor. The hook searches with recency=True,
+        # which compresses raw cosine by ~0.15, so the floor applies to the
+        # decayed score: 0.5 ≈ 0.65 raw cosine. The old 0.6 (≈0.75 raw)
+        # over-filtered and was a major bail cause; reference-tier exclusion
+        # (on by default) is the bigger noise lever. Tune via MEMO_RECALL_MIN_SIM.
+        rel = [h for h in hits if h.score is None or h.score >= min_sim]
+        # Stub filter: skip tiny-body fragments (auto-saved without content).
+        if min_body_chars > 0:
+            rel = [h for h in rel if len((h.body or "").strip()) >= min_body_chars]
+        # Staleness suppression: memorias older than MEMO_RECALL_STALENESS_DAYS
+        # only pass if they score well above min_sim (1.5x), so generic
+        # queries aren't dominated by old entries.
+        if staleness_days > 0:
+            from datetime import UTC as _UTC
+            from datetime import datetime as _dt
+            _now = _dt.now(_UTC)
+            stale_threshold = min_sim * 1.5
+            filtered: list = []
+            for h in rel:
+                try:
+                    updated = _dt.fromisoformat(h.updated)
+                    if updated.tzinfo is None:
+                        updated = updated.replace(tzinfo=_UTC)
+                    days = (_now - updated).total_seconds() / 86400
+                    if days > staleness_days and (h.score or 0.0) < stale_threshold:
+                        continue
+                except Exception:
+                    pass
+                filtered.append(h)
+            rel = filtered
+        # Collapse near-duplicates so the same fact isn't injected twice.
+        from memo.recall_server import dedup_hits
+        return dedup_hits(rel)
+
+    relevant = _search_filter(prompt)
+
+    # Query-expansion fallback: bare continuity prompts ("que queda pendiente",
+    # "seguimos") embed far from any single memoria and bail. Prepending recent
+    # open-loop titles re-anchors them in the user's active work. Fires ONLY on
+    # a zero-hit result, so queries that already recall are untouched and the
+    # extra search is paid only on a miss (experiment: 4 bare prompts went
+    # 0 → 5 hits, top ~0.62). Mirror of the daemon path.
+    if not relevant and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
+        from memo.recall_server import _session_context
+        _ctx = _session_context(mem, exclude_types)
+        if _ctx:
+            relevant = _search_filter(f"{_ctx}\n{prompt}")
+            if relevant and os.environ.get("MEMO_RECALL_DEBUG") == "1":
+                print(f"# memo recall-hook: query expansion recovered "
+                      f"{len(relevant)} hits", file=_sys.stderr)
 
     # Telemetry: append every recall (with or without hits) to the
     # JSONL ring buffer consumed by `memo tui`. Best-effort; failures
