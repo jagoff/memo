@@ -262,7 +262,7 @@ def test_concurrent_writes_and_reads_do_not_collide(store: VecStore):
                 store.search(_emb(1, 0, 0, 0), limit=5)
             with conn_ids_lock:
                 conn_ids.add(id(store._conn))
-        except Exception as exc:  # noqa: BLE001 — capture to fail in main thread
+        except Exception as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]

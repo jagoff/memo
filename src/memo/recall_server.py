@@ -303,6 +303,9 @@ def _recall_logic(
     cfg: Any,
     debug: bool = False,
     t0: float | None = None,
+    session_id: str | None = None,
+    turn: int | None = None,
+    client: str | None = None,
 ) -> tuple[str, Callable[[], None] | None]:
     """Run recall search; return (json_response, log_thunk).
 
@@ -348,9 +351,7 @@ def _recall_logic(
     def _passes(h: Any) -> bool:
         if h.score is not None and h.score < min_sim:
             return False
-        if min_body_chars > 0 and len((h.body or "").strip()) < min_body_chars:
-            return False
-        return True
+        return not (min_body_chars > 0 and len((h.body or "").strip()) < min_body_chars)
 
     def _rank(raw: list[Any]) -> list[Any]:
         # Project boost
@@ -358,10 +359,8 @@ def _recall_logic(
             raw = _apply_project_boost(raw, project_tag, project_boost)
         # Preference boost (learned from past `memory_get` clicks)
         if contextual:
-            try:
+            with contextlib.suppress(Exception):
                 raw = _apply_preference_boost(raw, mem.contextual.context.get_preferences())
-            except Exception:
-                pass
         # Collapse near-duplicates across the whole widened pool so neither the
         # main block nor the "also related" nudge repeats a fact.
         return [h for h in dedup_hits(raw) if _passes(h)]
@@ -406,10 +405,8 @@ def _recall_logic(
     # history + so `memo eval` can later correlate surfaced vs used. Best
     # effort — must never slow or break recall.
     if contextual:
-        try:
+        with contextlib.suppress(Exception):
             mem.contextual.record_search(prompt, [h.id for h in relevant])
-        except Exception:
-            pass
 
     # Format markdown additionalContext
     lines = [RECALL_HEADER, RECALL_DIRECTIVE, ""]
@@ -450,7 +447,10 @@ def _recall_logic(
     # Defer the recall.log write to the caller — it fires only once the
     # response is delivered (see _RecallHandler.handle). Capture the hit
     # snapshot now; measure latency at log time so it reflects end-to-end.
-    hits_snapshot = [{"id": h.id, "score": h.score, "title": h.title} for h in relevant]
+    hits_snapshot = [
+        {"id": h.id, "score": h.score, "title": h.title, "snippet": (h.body or "")[:240]}
+        for h in relevant
+    ]
 
     def _log() -> None:
         latency_ms: int | None = int((time.time() - t0) * 1000) if t0 is not None else None
@@ -463,6 +463,9 @@ def _recall_logic(
                 mode=mode,
                 latency_ms=latency_ms,
                 via="daemon",
+                session_id=session_id,
+                turn=turn,
+                client=client,
             )
         except Exception:
             pass
@@ -595,6 +598,10 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                 if op == "recall":
                     prompt = (req.get("prompt") or "").strip()
                     cwd = req.get("cwd") or None
+                    _sid = req.get("session_id") or None
+                    _turn = req.get("turn")
+                    _turn = int(_turn) if isinstance(_turn, (int, float)) else None
+                    _client = req.get("client") or None
                     if not prompt:
                         self._write_response("{}", debug=debug)
                         return
@@ -612,6 +619,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     try:
                         result, log_fn = _recall_logic(
                             prompt, cwd, self.server._mem, self.server._cfg, debug, t0=t0,
+                            session_id=_sid, turn=_turn, client=_client,
                         )
                     finally:
                         self.server._lock.release()
@@ -819,13 +827,31 @@ def _send_request(state_dir: Path, payload: dict[str, Any], timeout: float) -> s
         return None
 
 
-def connect_and_recall(state_dir: Path, prompt: str, cwd: str | None, timeout: float = 1.0) -> str | None:
+def connect_and_recall(
+    state_dir: Path,
+    prompt: str,
+    cwd: str | None,
+    timeout: float = 1.0,
+    *,
+    session_id: str | None = None,
+    turn: int | None = None,
+    client: str | None = None,
+) -> str | None:
     """Try to get a recall result from a running daemon.
 
     Returns the JSON response string on success, None if the daemon is not
-    reachable (caller should fall back to subprocess logic).
+    reachable (caller should fall back to subprocess logic). `session_id`/`turn`/
+    `client` are the correlation keys threaded into the daemon's recall.log write
+    so daemon-path rows carry the same keys as subprocess-path rows.
     """
-    return _send_request(state_dir, {"prompt": prompt, "cwd": cwd or ""}, timeout)
+    req: dict[str, Any] = {"prompt": prompt, "cwd": cwd or ""}
+    if session_id is not None:
+        req["session_id"] = session_id
+    if turn is not None:
+        req["turn"] = turn
+    if client is not None:
+        req["client"] = client
+    return _send_request(state_dir, req, timeout)
 
 
 def connect_and_send(state_dir: Path, payload: dict[str, Any], timeout: float = 5.0) -> str | None:

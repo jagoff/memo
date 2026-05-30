@@ -19,7 +19,7 @@ import json as _json
 import click
 
 from .config import Config
-from .dashboard import consult_breakdown, recall_health
+from .dashboard import consult_breakdown, reask_stats, recall_health
 
 
 def _age(ts: str | None) -> str:
@@ -54,14 +54,17 @@ def usefulness(*, limit: int = 500, as_json: bool = False) -> None:
 
     click.echo(f"memo usefulness — {breakdown['sampled']} consults sampled\n")
     click.echo(f"  {'consumer':<16} {'consults':>8} {'fired':>6} {'bail':>5} "
-               f"{'hit%':>6} {'strong%':>8} {'top':>6}  last")
-    click.echo("  " + "-" * 72)
+               f"{'hit%':>6} {'strong%':>8} {'grnd%':>6} {'top':>6}  last")
+    click.echo("  " + "-" * 80)
     for c in consumers:
         hit = f"{c['hit_rate']*100:.0f}" if c["hit_rate"] is not None else "—"
         strong = f"{c['strong_hit_rate']*100:.0f}" if c.get("strong_hit_rate") is not None else "—"
+        # grounded% = outcome-based "actually used in the answer" (— until the
+        # Stop-hook grounding detector has correlatable data for this consumer).
+        grnd = f"{c['grounded_rate']*100:.0f}" if c.get("grounded_rate") is not None else "—"
         top = f"{c['median_top_score']:.2f}" if c["median_top_score"] is not None else "—"
         click.echo(f"  {c['consumer']:<16} {c['consults']:>8} {c['fired']:>6} "
-                   f"{c['bailed']:>5} {hit:>6} {strong:>8} {top:>6}  {_age(c['last_seen'])}")
+                   f"{c['bailed']:>5} {hit:>6} {strong:>8} {grnd:>6} {top:>6}  {_age(c['last_seen'])}")
 
     if silent:
         click.echo(f"\n⚠ Expected consumers with ZERO consults: {', '.join(silent)}")
@@ -76,9 +79,24 @@ def usefulness(*, limit: int = 500, as_json: bool = False) -> None:
                    f"({health.get('referenced')}/{health.get('surfaced')} surfaced memorias "
                    f"later fetched — lower bound on 'used').")
 
+    # Outcome-based successor: the answer actually USED the surfaced memoria
+    # (Stop-hook grounding detector, lexical+embedding). Only correlatable rows
+    # (session_id+turn) count, so it's null until new sessions accrue.
+    g_rate = health.get("grounded_rate")
+    if g_rate is not None:
+        click.echo(f"grounded_rate={g_rate} "
+                   f"({health.get('grounded')}/{health.get('grounded_surfaced')} surfaced memorias "
+                   f"used in the answer — outcome-based, not just shown).")
+
+    # Re-derivations memo prevented (a grounded recall not re-asked next turns).
+    reask = reask_stats(state_dir, limit=limit)
+    if reask.get("considered"):
+        click.echo(f"reask_avoided={reask['reask_avoided']}/{reask['considered']} "
+                   f"(grounded recalls the user did NOT have to ask again — see `memo roi`).")
+
     # One-line verdict. hit% = fired that returned anything; strong% = fired
     # that returned a high-confidence (>0.85) match — the honest relevance number.
     total = breakdown["sampled"]
     n = len(consumers)
-    click.echo(f"\nmemo consulted {total}× across {n} consumer(s); recall-hook "
+    click.echo(f"\nmemo consulted {total}× across {n} consumer(s); recall-hook "  # noqa: RUF001
                f"hit_rate={health.get('hit_rate')} strong_hit_rate={health.get('strong_hit_rate')}.")

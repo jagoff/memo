@@ -160,6 +160,15 @@ CREATE TABLE IF NOT EXISTS source_feedback (
 
 CREATE INDEX IF NOT EXISTS idx_source_feedback_source ON source_feedback(source_id);
 CREATE INDEX IF NOT EXISTS idx_source_feedback_rating ON source_feedback(rating);
+
+CREATE TABLE IF NOT EXISTS access (
+    id            TEXT PRIMARY KEY,        -- references meta.id
+    access_count  INTEGER NOT NULL DEFAULT 0,
+    last_accessed TEXT                     -- ISO8601 of last read/hit; NULL until first touch
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_last  ON access(last_accessed);
+CREATE INDEX IF NOT EXISTS idx_access_count ON access(access_count);
 """
 
 
@@ -178,6 +187,7 @@ _REQUIRED_SCHEMA_OBJECTS = frozenset(
         "repo_embedding_cache",
         "source_feedback",
         "source_feedback_vec",
+        "access",
     }
 )
 
@@ -752,7 +762,80 @@ class VecStore:
             existed = cur.rowcount > 0
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+            cx.execute("DELETE FROM access WHERE id = ?", (id_,))
         return existed
+
+    # -- access tracking (cache tier hit counting) -------------------------
+    #
+    # The history log only records save/update/delete, never reads — so it
+    # can't drive LRU/LFU. The `access` table fills that gap: `touch()` bumps
+    # a per-memoria hit count + last-access timestamp on every search/ask
+    # hit. Cheap, write-light, and decoupled from the hot `meta`/`vec` path.
+
+    def touch(self, ids: list[str], *, ts: str | None = None) -> None:
+        """Record a read/hit for each id: ++access_count, set last_accessed.
+
+        Batch upsert in one tx. No-op on empty input. Safe to call for ids
+        with no `meta` row (the access row is harmless and cleaned on delete).
+        Callers should invoke this fire-and-forget off the hot path — the
+        recall hook's 5s budget must not wait on it.
+        """
+        if not ids:
+            return
+        now = ts or datetime.now(UTC).isoformat()
+        with self._tx() as cx:
+            cx.executemany(
+                "INSERT INTO access (id, access_count, last_accessed) VALUES (?, 1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "access_count = access_count + 1, last_accessed = excluded.last_accessed",
+                [(i, now) for i in ids],
+            )
+
+    def get_access(self, id_: str) -> dict[str, Any]:
+        """Return {access_count, last_accessed} for a memoria.
+
+        Defaults to count 0 / last_accessed None when never touched.
+        """
+        row = self._conn.execute(
+            "SELECT access_count, last_accessed FROM access WHERE id = ?", (id_,),
+        ).fetchone()
+        if not row:
+            return {"access_count": 0, "last_accessed": None}
+        return {"access_count": int(row["access_count"]), "last_accessed": row["last_accessed"]}
+
+    def eviction_candidates(
+        self, policy: str, limit: int, *, exclude_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return up to `limit` memorias coldest-first under the given policy.
+
+        Joins `meta` LEFT against `access` so never-accessed rows participate,
+        falling back to `meta.updated` as their effective last-access time
+        (a row written long ago and never read is genuinely cold).
+
+          - lru: order by effective last-access ASC (coldest first).
+          - lfu: order by access_count ASC, then effective last-access ASC.
+          - ttl: same ordering as lru; the age cutoff is applied by the caller.
+
+        Returns dicts: {id, type, access_count, last_accessed, updated}.
+        """
+        eff = "COALESCE(a.last_accessed, m.updated)"
+        # lru and ttl share coldest-first-by-recency ordering
+        order = f"COALESCE(a.access_count, 0) ASC, {eff} ASC" if policy == "lfu" else f"{eff} ASC"
+        sql = (
+            "SELECT m.id AS id, m.type AS type, "
+            "COALESCE(a.access_count, 0) AS access_count, "
+            "a.last_accessed AS last_accessed, m.updated AS updated "
+            "FROM meta m LEFT JOIN access a ON a.id = m.id "
+        )
+        params: list[Any] = []
+        if exclude_types:
+            placeholders = ",".join("?" for _ in exclude_types)
+            sql += f"WHERE m.type NOT IN ({placeholders}) "
+            params.extend(sorted(exclude_types))
+        sql += f"ORDER BY {order} LIMIT ?"
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
     def bulk_update_type(self, ids: list[str], new_type: str) -> int:
         """Reclassify the `type` of many memorias in one transaction.

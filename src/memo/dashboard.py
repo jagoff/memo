@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -94,6 +95,7 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
         return xs[len(xs) // 2] if xs else None
 
     ref = referenced_rate(state_dir, rows)
+    grounded = grounded_rate(state_dir, rows)
 
     return {
         "sampled": len(rows),
@@ -104,6 +106,11 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
         "referenced_rate": ref["referenced_rate"],
         "referenced": ref["referenced"],
         "surfaced": ref["surfaced"],
+        # Outcome-based: was the surfaced memoria actually used in the answer?
+        # Only correlatable rows (session_id+turn) count toward this denominator.
+        "grounded_rate": grounded["grounded_rate"],
+        "grounded": grounded["grounded"],
+        "grounded_surfaced": grounded["surfaced"],
         "median_top_score": round(_median(top_scores), 3) if top_scores else None,
         "p50_latency_ms": _median(lats),
     }
@@ -113,7 +120,7 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
 # that never appears in the consult log is a silent gap, not "no data" —
 # surface it explicitly so "nobody reads memo" can't hide behind an empty
 # table. (See CLAUDE.md "Source of truth — role & contract".)
-EXPECTED_CONSUMERS = ("claude-code", "synapse", "memflow")
+EXPECTED_CONSUMERS = ("claude-code", "synapse", "memflow", "codex", "devin", "windsurf")
 
 
 def consumer_label(row: dict[str, Any]) -> str:
@@ -124,6 +131,12 @@ def consumer_label(row: dict[str, Any]) -> str:
     (synapse/memflow/agent). We collapse to a stable consumer name so the
     usefulness report answers "who actually reads memo".
     """
+    # Explicit client tag (set by the recall-hook / installers) wins — it names
+    # the actual front-end (claude-code/codex/devin/windsurf) rather than the
+    # transport. Fall back to source (synapse/memflow) then via.
+    client = (row.get("client") or "").strip().lower()
+    if client:
+        return client
     source = (row.get("source") or "").strip().lower()
     if source:
         return source
@@ -146,12 +159,31 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
     hot-path cost.
     """
     rows = dedup_double_fire(read_recall_log(state_dir, limit=limit))
+    # Grounded keys (session_id, turn, recall_id) from the grounding ledger, so
+    # each consumer gets an outcome-based "did calling memo help" number, not
+    # just a hit rate.
+    grounded_keys: set[tuple[str, int, str]] = set()
+    for g in read_grounding_log(state_dir):
+        sid = g.get("session_id")
+        turn = g.get("turn")
+        rid = g.get("recall_id")
+        score = g.get("used_score")
+        if (
+            sid and isinstance(turn, int) and rid
+            and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE
+        ):
+            grounded_keys.add((sid, turn, rid))
+
     by: dict[str, dict[str, Any]] = {}
     for r in rows:
         name = consumer_label(r)
         agg = by.setdefault(
             name,
-            {"consults": 0, "fired": 0, "with_hits": 0, "strong": 0, "top_scores": [], "last_seen": None},
+            {
+                "consults": 0, "fired": 0, "with_hits": 0, "strong": 0,
+                "top_scores": [], "last_seen": None,
+                "surfaced": set(), "grounded": set(),
+            },
         )
         agg["consults"] += 1
         is_bail = (r.get("via") or "") == "bail"
@@ -165,6 +197,18 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
                     agg["top_scores"].append(float(score))
                     if float(score) > STRONG_SCORE:
                         agg["strong"] += 1
+            # Per-consumer grounded join (only correlatable rows).
+            sid = r.get("session_id")
+            turn = r.get("turn")
+            if sid and isinstance(turn, int):
+                for h in hits:
+                    hid = h.get("id")
+                    if not hid:
+                        continue
+                    key = (sid, turn, hid)
+                    agg["surfaced"].add(key)
+                    if key in grounded_keys:
+                        agg["grounded"].add(key)
         ts = r.get("ts")
         if ts and (agg["last_seen"] is None or ts > agg["last_seen"]):
             agg["last_seen"] = ts
@@ -173,6 +217,7 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
     for name, agg in by.items():
         scores = sorted(agg["top_scores"])
         fired = agg["fired"]
+        n_surfaced = len(agg["surfaced"])
         consumers.append({
             "consumer": name,
             "consults": agg["consults"],
@@ -180,6 +225,8 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
             "bailed": agg["consults"] - fired,
             "hit_rate": round(agg["with_hits"] / fired, 3) if fired else None,
             "strong_hit_rate": round(agg["strong"] / fired, 3) if fired else None,
+            "grounded_rate": round(len(agg["grounded"]) / n_surfaced, 3) if n_surfaced else None,
+            "grounded_surfaced": n_surfaced,
             "median_top_score": round(scores[len(scores) // 2], 3) if scores else None,
             "last_seen": agg["last_seen"],
         })
@@ -200,17 +247,33 @@ def append_recall_log(
     source: str | None = None,
     reason: str | None = None,
     error: str | None = None,
+    session_id: str | None = None,
+    turn: int | None = None,
+    client: str | None = None,
 ) -> None:
     """Append a recall event to the JSONL ring buffer. Rotates by
     keeping only the most recent `cap` lines after writing. Errors are
-    swallowed — the recall hook must never fail because of telemetry."""
+    swallowed — the recall hook must never fail because of telemetry.
+
+    `session_id` + `turn` are the correlation keys that let the Stop-hook
+    grounding detector match this recall to the answer of the same exchange
+    (see `grounding.py`). `hits[].snippet` caches the recall-block text so
+    grounding needs no store read. All three are optional and additive:
+    pre-correlation rows stay valid (counted in access stats, excluded from
+    utility denominators).
+    """
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
         entry: dict[str, Any] = {
             "ts": datetime.now(UTC).isoformat(timespec="seconds"),
             "prompt": prompt[:200],
             "hits": [
-                {"id": h.get("id", "")[:8], "score": h.get("score"), "title": h.get("title", "")[:80]}
+                {
+                    "id": h.get("id", "")[:8],
+                    "score": h.get("score"),
+                    "title": h.get("title", "")[:80],
+                    **({"snippet": h["snippet"][:240]} if h.get("snippet") else {}),
+                }
                 for h in hits[:5]
             ],
         }
@@ -226,6 +289,12 @@ def append_recall_log(
             entry["reason"] = reason[:200]
         if error is not None:
             entry["error"] = error[:200]
+        if session_id is not None:
+            entry["session_id"] = session_id
+        if turn is not None:
+            entry["turn"] = turn
+        if client is not None:
+            entry["client"] = client
         path = recall_log_path(state_dir)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -396,6 +465,211 @@ def referenced_rate(state_dir: Path, rows: list[dict[str, Any]]) -> dict[str, An
         "referenced_rate": round(referenced / len(surfaced), 3),
         "surfaced": len(surfaced),
         "referenced": referenced,
+    }
+
+
+# -------------------- grounding log (outcome-based "used in answer") --------------------
+# referenced_rate counts explicit fetches (a floor). grounding.log closes the
+# loop: at Stop the grounding detector (see grounding.py) compares the generated
+# answer against the memorias recalled that turn and writes a per-memoria
+# `used_score`. grounded_rate is the outcome-based successor — "was this actually
+# used", not just "was it shown". Keyed by (session_id, turn, recall_id), it joins
+# recall.log on the same key.
+
+# used_score floor above which a recalled memoria counts as grounded-in-answer.
+GROUNDED_SCORE = 0.5
+
+
+def grounding_log_path(state_dir: Path) -> Path:
+    return state_dir / "grounding.log"
+
+
+def append_grounding_log(
+    state_dir: Path,
+    *,
+    session_id: str,
+    turn: int,
+    recall_id: str,
+    used_score: float,
+    method: str,
+    client: str | None = None,
+    answer_len: int | None = None,
+    recall_top_score: float | None = None,
+    downstream_action: str | None = None,
+    action_evidence: str | None = None,
+    cap: int = 1000,
+) -> None:
+    """Append one grounding event (recall→use) to the JSONL ring buffer.
+    Best-effort, never raises — Stop-hook telemetry must not fail the turn."""
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        entry: dict[str, Any] = {
+            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+            "session_id": session_id,
+            "turn": int(turn),
+            "recall_id": (recall_id or "")[:8],
+            "used_score": round(float(used_score), 4),
+            "method": method,
+        }
+        if client is not None:
+            entry["client"] = client
+        if answer_len is not None:
+            entry["answer_len"] = int(answer_len)
+        if recall_top_score is not None:
+            entry["recall_top_score"] = round(float(recall_top_score), 4)
+        if downstream_action is not None:
+            entry["downstream_action"] = downstream_action
+        if action_evidence is not None:
+            entry["action_evidence"] = action_evidence[:200]
+        path = grounding_log_path(state_dir)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if path.stat().st_size > 1024 * 200:  # ~200 KB
+            lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def read_grounding_log(state_dir: Path, *, limit: int = 4000) -> list[dict[str, Any]]:
+    path = grounding_log_path(state_dir)
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines[-limit:]:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def grounded_rate(state_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Fraction of CORRELATABLE surfaced memorias that were grounded in the
+    answer (used_score >= GROUNDED_SCORE). Outcome-based successor to
+    referenced_rate.
+
+    Denominator = distinct (session_id, turn, id) surfacings among `rows` that
+    carry a session_id (old rows without correlation keys are excluded so they
+    don't dilute the rate). A surfacing is grounded if grounding.log has an event
+    for that exact (session_id, turn, recall_id) with used_score >= GROUNDED_SCORE.
+    """
+    surfaced: set[tuple[str, int, str]] = set()
+    for r in rows:
+        sid = r.get("session_id")
+        turn = r.get("turn")
+        if not sid or not isinstance(turn, int):
+            continue
+        for h in r.get("hits") or []:
+            hid = h.get("id")
+            if hid:
+                surfaced.add((sid, turn, hid))
+    if not surfaced:
+        return {"grounded_rate": None, "surfaced": 0, "grounded": 0}
+    grounded_keys: set[tuple[str, int, str]] = set()
+    for g in read_grounding_log(state_dir):
+        sid = g.get("session_id")
+        turn = g.get("turn")
+        rid = g.get("recall_id")
+        score = g.get("used_score")
+        if (
+            sid and isinstance(turn, int) and rid
+            and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE
+        ):
+            grounded_keys.add((sid, turn, rid))
+    grounded = sum(1 for k in surfaced if k in grounded_keys)
+    return {
+        "grounded_rate": round(grounded / len(surfaced), 3),
+        "surfaced": len(surfaced),
+        "grounded": grounded,
+    }
+
+
+# -------------------- re-ask avoidance (P1, signal b) --------------------
+# A grounded recall that the user did NOT have to re-ask = a derivation memo
+# saved. We measure it lexically (no MLX in the report path): for each recall
+# that grounded ≥1 memoria, look at the same session's LATER prompts within a
+# turn window; a near-duplicate follow-up = a re-ask (memo did NOT save it),
+# its absence = a saved re-derivation. Pure read over recall.log + grounding.log.
+
+_REASK_TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
+_REASK_STOP = frozenset(
+    ["the", "and", "for", "that", "with", "this", "from", "have", "are", "was", "were", "has", "not", "but", "you", "your", "una", "los", "las", "del", "por", "con", "para", "como", "que", "esta", "este", "más"]
+)
+
+
+def _reask_tokens(text: str) -> set[str]:
+    return {t for t in _REASK_TOKEN_RE.findall((text or "").lower()) if t not in _REASK_STOP}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
+
+
+def reask_stats(
+    state_dir: Path,
+    *,
+    window_turns: int = 4,
+    sim_threshold: float = 0.6,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Re-derivations memo prevented. For each grounded recall, check whether a
+    near-duplicate prompt recurs in the same session within `window_turns`:
+      - recurs (lexical Jaccard ≥ sim_threshold) → re-ask (NOT avoided)
+      - no recurrence → reask_avoided (memo saved the re-derivation)
+    Only correlatable rows (session_id+turn) are considered.
+    """
+    rows = dedup_double_fire(read_recall_log(state_dir, limit=limit))
+    # Which (session, turn) recalls grounded at least one memoria?
+    grounded_turns: set[tuple[str, int]] = set()
+    for g in read_grounding_log(state_dir):
+        sid = g.get("session_id")
+        turn = g.get("turn")
+        score = g.get("used_score")
+        if sid and isinstance(turn, int) and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+            grounded_turns.add((sid, turn))
+
+    # Per-session prompt timeline keyed by turn.
+    by_session: dict[str, list[tuple[int, str]]] = {}
+    for r in rows:
+        sid = r.get("session_id")
+        turn = r.get("turn")
+        prompt = (r.get("prompt") or "").strip()
+        if sid and isinstance(turn, int) and prompt:
+            by_session.setdefault(sid, []).append((turn, prompt))
+    for lst in by_session.values():
+        lst.sort(key=lambda x: x[0])
+
+    considered = 0
+    reask = 0
+    for sid, turn in grounded_turns:
+        timeline = by_session.get(sid) or []
+        this = next((p for t, p in timeline if t == turn), None)
+        if not this:
+            continue
+        considered += 1
+        this_tok = _reask_tokens(this)
+        recurred = any(
+            t > turn and (t - turn) <= window_turns
+            and _jaccard(this_tok, _reask_tokens(p)) >= sim_threshold
+            for t, p in timeline
+        )
+        if recurred:
+            reask += 1
+    reask_avoided = considered - reask
+    return {
+        "considered": considered,
+        "reask": reask,
+        "reask_avoided": reask_avoided,
+        "reask_rate": round(reask / considered, 3) if considered else None,
     }
 
 

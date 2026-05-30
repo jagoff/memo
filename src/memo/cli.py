@@ -57,8 +57,7 @@ from memo.cli_history import diff_cmd, historia_cmd
 from memo.cli_import import import_group
 from memo.cli_links import links_group
 from memo.cli_maintain import maintain_cmd
-from memo.cli_retier import retier_cmd
-from memo.cli_usefulness import usefulness as usefulness_cmd
+from memo.cli_mandate import mandate as mandate_cmd
 from memo.cli_memory import (
     ask,
     chat_ask,
@@ -85,6 +84,8 @@ from memo.cli_profile import profile_group
 from memo.cli_query import query_group
 from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_repo import repo_group
+from memo.cli_retier import retier_cmd
+from memo.cli_roi import roi as roi_cmd
 from memo.cli_runtime import (
     _print_runtime_install_report,
     _runtime_install_report,
@@ -104,6 +105,7 @@ from memo.cli_share import share_group
 from memo.cli_sync import sync_group
 from memo.cli_temporal import temporal_group
 from memo.cli_tui import hook_log, logs, tui
+from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_version import version_group
 from memo.cli_viz import mapa_cmd
 from memo.config import Config
@@ -127,6 +129,8 @@ cli.add_command(eval_group)
 cli.add_command(maintain_cmd)
 cli.add_command(retier_cmd)
 cli.add_command(usefulness_cmd)
+cli.add_command(roi_cmd)
+cli.add_command(mandate_cmd)
 cli.add_command(mapa_cmd)
 cli.add_command(tui)
 cli.add_command(hook_log)
@@ -615,14 +619,29 @@ def recall_hook() -> None:
         _bail("slash command, skip recall")
         return
 
+    # Correlation keys (P0): tag this recall with the session + turn so the
+    # Stop-hook grounding detector can match the answer back to it. Stamp the
+    # SAME turn label into the session snapshot (last_recall_turn) so Stop reads
+    # it back race-free. client names the front-end for per-client value.
+    _sid = (payload.get("session_id") or "").strip() or None
+    _client = os.environ.get("MEMO_RECALL_CLIENT", "claude-code")
+    _turn: int | None = None
+    if _sid:
+        try:
+            from memo import session as _session_mod
+            _turn = _session_mod.next_turn(Config.from_env().state_dir, _sid)
+            _session_mod.stamp_recall_turn(Config.from_env().state_dir, _sid, _turn)
+        except Exception:
+            _turn = None
+
     # Fast path: try the recall daemon socket first (<200 ms when running).
     # If the socket is not there or the connection fails, fall through to
     # the regular in-process search below. The daemon returns the same JSON
     # format as the subprocess path, so we can print-and-exit immediately.
     _t0 = time.time()
     try:
-        from memo.recall_server import connect_and_recall
         from memo.flags import flag_int
+        from memo.recall_server import connect_and_recall
         # Wait for the warm-but-slow daemon (the 3-6s tail) instead of
         # abandoning it at 1s and ALSO running the subprocess path — that
         # double-fired and logged the same prompt twice. Budget sits under the
@@ -633,6 +652,9 @@ def recall_hook() -> None:
             prompt=prompt,
             cwd=payload.get("cwd"),
             timeout=_daemon_timeout,
+            session_id=_sid,
+            turn=_turn,
+            client=_client,
         )
         if _daemon_result is not None:
             _latency_ms = int((time.time() - _t0) * 1000)
@@ -820,10 +842,17 @@ def recall_hook() -> None:
         append_recall_log(
             Config.from_env().state_dir,
             prompt=prompt,
-            hits=[{"id": h.id, "score": h.score, "title": h.title} for h in relevant],
+            hits=[
+                {"id": h.id, "score": h.score, "title": h.title,
+                 "snippet": (h.body or "")[:240]}
+                for h in relevant
+            ],
             mode=mode,
             latency_ms=_latency_ms_subprocess,
             via="subprocess",
+            session_id=_sid,
+            turn=_turn,
+            client=_client,
         )
     except Exception:
         pass

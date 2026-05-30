@@ -313,11 +313,46 @@ def checkpoint(
         "created": existing.get("created") or now,
         "updated": now,
         "turn_count": int(existing.get("turn_count") or 0) + 1,
+        # Correlation stamp written by the recall-hook (next_turn/stamp_recall_turn).
+        # Preserved across checkpoints so the Stop-hook grounding detector can read
+        # back the turn label the recall used. See grounding.score_turn.
+        "last_recall_turn": existing.get("last_recall_turn"),
     }
 
     _write(state_dir, session_id, snapshot)
     prune_lru(state_dir, cap=lru_cap)
     return snapshot
+
+
+def next_turn(state_dir: Path, session_id: str) -> int:
+    """The in-flight turn label for an exchange: (existing turn_count) + 1.
+
+    The recall-hook computes this at UserPromptSubmit and writes the SAME value
+    into both recall.log (as `turn`) and the session snapshot (`last_recall_turn`
+    via stamp_recall_turn), so the Stop-hook grounding detector can join the
+    answer back to its recall with zero race — the label is whatever the
+    recall-hook stamped, regardless of how turn_count later evolves.
+    """
+    if not session_id:
+        return 1
+    existing = _load(state_dir, session_id) or {}
+    return int(existing.get("turn_count") or 0) + 1
+
+
+def stamp_recall_turn(state_dir: Path, session_id: str, turn: int) -> None:
+    """Merge-write `last_recall_turn` into the session snapshot. Best-effort,
+    never raises — telemetry must not break the recall hook. Creates a minimal
+    snapshot if the session file doesn't exist yet (recall can fire before the
+    autosave checkpoint)."""
+    if not session_id:
+        return
+    try:
+        existing = _load(state_dir, session_id) or {}
+        existing["session_id"] = session_id
+        existing["last_recall_turn"] = int(turn)
+        _write(state_dir, session_id, existing)
+    except Exception:
+        pass
 
 
 def list_sessions(

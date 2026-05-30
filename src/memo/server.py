@@ -429,10 +429,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             return None
         # Feedback loop: a full fetch is the strongest "this was useful" signal
         # we get. Feeds learned type/entity preferences back into recall ranking.
-        try:
+        with contextlib.suppress(Exception):
             memory.contextual.record_click(rec.id)
-        except Exception:
-            pass
         return rec.to_dict()
 
     @server.tool()
@@ -1729,6 +1727,40 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)
         diff = sync_mgr.sync(direction="both")
         return diff.__dict__
+
+    # -- cache-tier tools ----------------------------------------------------------
+    # Opt-in (MEMO_CACHE_MODE != off): memo as a bounded cache fronting an
+    # authoritative backing store. These are store-management verbs (not the
+    # "brain-like" cognition verbs blocked by test_architecture_boundaries),
+    # so they belong on memo's MCP surface.
+
+    @server.tool()
+    def memory_cache_stats() -> dict[str, Any]:
+        """Cache-tier status: mode, backend, entry count, capacity, overflow.
+
+        When MEMO_CACHE_MODE=off (the default) `enabled` is False and memo is
+        behaving as a durable store with no eviction.
+        """
+        return memory.cache.stats()
+
+    @server.tool()
+    def memory_cache_evict() -> dict[str, Any]:
+        """Force a capacity-bound eviction pass now (coldest-first, per
+        MEMO_CACHE_EVICTION). Dirty entries are flushed to the backing store
+        before removal. Returns the evicted memoria ids.
+
+        No-op unless MEMO_CACHE_MODE != off and MEMO_CACHE_MAX_ENTRIES > 0.
+        """
+        evicted = memory.cache.evict_if_needed()
+        return {"evicted": evicted, "count": len(evicted)}
+
+    @server.tool()
+    def memory_cache_flush() -> dict[str, Any]:
+        """Push all dirty (write-back, un-persisted) memorias to the backing
+        store and clear their dirty flags. Returns {flushed, failed,
+        dirty_remaining}. No-op when cache mode is off or no backend exists.
+        """
+        return memory.cache.flush_all()
 
     # -- encryption tools ----------------------------------------------------------
 

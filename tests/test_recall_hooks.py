@@ -123,7 +123,7 @@ def test_apply_preference_boost_reorders_by_learned_type() -> None:
     out = _apply_preference_boost([note, decision], prefs)
 
     # decision was behind on raw score but the learned type pref lifts it
-    assert [h.id for h in out][0] == "d0000001"
+    assert next(h.id for h in out) == "d0000001"
     # empty prefs → unchanged order
     same = _apply_preference_boost([note, decision], SimpleNamespace(preferred_types={}))
     assert [h.id for h in same] == ["n0000001", "d0000001"]

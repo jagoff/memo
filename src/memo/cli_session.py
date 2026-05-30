@@ -214,7 +214,6 @@ def session_refresh_summary() -> None:
     skips if fewer than 3 new turns since the last summary. Always exits 0.
     """
     import json as _json
-    import os as _os
     import sys as _sys
 
     if flag_bool("MEMO_SESSION_DISABLE"):

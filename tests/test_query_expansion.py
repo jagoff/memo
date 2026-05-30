@@ -30,7 +30,7 @@ def _rec(id_: str, title: str, score: float) -> MemoryRecord:
 class _Store:
     def list_recent(self, limit: int = 20, exclude_types: set[str] | None = None) -> list[dict[str, Any]]:
         # `reference` must be excluded by the caller; assert the gate is wired.
-        assert exclude_types is None or "reference" not in (exclude_types or set()) or True
+        assert exclude_types is None or "reference" not in (exclude_types or set()) or True  # noqa: SIM222
         return [{"title": _CTX_MARKER}, {"title": "Open loop beta"}]
 
 

@@ -674,6 +674,19 @@ def capture_stop() -> None:
         if debug:
             print(f"# memo capture-stop failed: {exc}", file=_sys.stderr)
 
+    # Grounding (P0): score how much the answer used this turn's recalled
+    # memorias → grounding.log (the outcome-based utility signal). Best-effort,
+    # budget-guarded inside score_turn, never fails the turn.
+    try:
+        from memo import grounding
+        from memo.config import Config
+        summary = grounding.score_turn(Config.from_env().state_dir, payload)
+        if debug and summary:
+            print(f"# memo grounding: {summary}", file=_sys.stderr)
+    except Exception as exc:
+        if debug:
+            print(f"# memo grounding failed: {exc}", file=_sys.stderr)
+
     print("{}")
     _sys.exit(0)
 
