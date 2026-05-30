@@ -50,6 +50,7 @@ The daemon is started automatically by the SessionStart hook in hooks.json.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -660,12 +661,16 @@ def run_server(state_dir: Path | None = None) -> None:
         pid_file.unlink(missing_ok=True)
         sys.exit(0)
 
+    # serve_forever() runs on a worker thread so the signal handler can request
+    # an orderly shutdown from the main thread. Calling server.shutdown() from
+    # the signal handler itself deadlocks (it joins serve_forever(), which is
+    # blocked in the same thread); the previous workaround was os._exit(0),
+    # which skipped finally/WAL cleanup. With serve_forever() off the main
+    # thread, shutdown() is called from a *different* thread and is safe.
+    shutdown_event = threading.Event()
+
     def _sigterm(signum: int, frame: Any) -> None:
-        # server.shutdown() deadlocks when called from a signal handler because
-        # it waits for serve_forever() to exit, which is blocked in the same
-        # thread. Use os._exit() after cleanup instead.
-        _cleanup(state_dir)
-        os._exit(0)
+        shutdown_event.set()
 
     signal.signal(signal.SIGTERM, _sigterm)
     signal.signal(signal.SIGINT, _sigterm)
@@ -690,9 +695,24 @@ def run_server(state_dir: Path | None = None) -> None:
         )
         persister.start()
 
+    server_thread = threading.Thread(
+        target=server.serve_forever,
+        name="recall-daemon-serve",
+        daemon=True,
+    )
+    server_thread.start()
     try:
-        server.serve_forever()
+        # Block until SIGTERM/SIGINT. Poll so a signal delivered to the main
+        # thread is observed promptly even on platforms where Event.wait() is
+        # not interrupted by the handler.
+        while not shutdown_event.wait(timeout=1.0):
+            pass
     finally:
+        with contextlib.suppress(Exception):
+            server.shutdown()  # safe: called from a thread != serve_forever()
+        with contextlib.suppress(Exception):
+            server.server_close()
+        server_thread.join(timeout=5.0)
         _cleanup(state_dir)
 
 
