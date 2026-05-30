@@ -635,6 +635,49 @@ class VecStore:
         ).fetchone()
         return _row_to_dict(row) if row else None
 
+    def vault_ingest_rows(self, label: str) -> list[dict[str, Any]]:
+        """Rows produced by `memo ingest` under a given vault `label`.
+
+        Used by `ingest --prune` to find stale chunks (abs_path gone). Filters
+        on `source LIKE 'vault-ingest%'` so curated memorias (source NULL) are
+        never returned — they're managed by `memo reindex` / `doctor --gc`.
+        Returns the minimal fields the prune needs: id, path, abs_path,
+        parent_path, chunk_seq.
+        """
+        rows = self._conn.execute(
+            "SELECT id, path, "
+            "json_extract(extra_json, '$.abs_path') AS abs_path, "
+            "json_extract(extra_json, '$.parent_path') AS parent_path, "
+            "json_extract(extra_json, '$.chunk_seq') AS chunk_seq "
+            "FROM meta "
+            "WHERE json_extract(extra_json, '$.vault') = ? "
+            "AND json_extract(extra_json, '$.source') LIKE 'vault-ingest%'",
+            (label,),
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "path": r["path"],
+                "abs_path": r["abs_path"],
+                "parent_path": r["parent_path"],
+                "chunk_seq": r["chunk_seq"],
+            }
+            for r in rows
+        ]
+
+    def file_rows(self, store_path: str) -> list[dict[str, Any]]:
+        """All rows belonging to one ingested file: the single-chunk row
+        (path == store_path) plus any multi-chunk rows (parent_path ==
+        store_path). Used by per-file reconciliation to drop stale chunks
+        (e.g. a multi-chunk note edited down to fewer chunks)."""
+        rows = self._conn.execute(
+            "SELECT id, path FROM meta "
+            "WHERE path = ? "
+            "OR json_extract(extra_json, '$.parent_path') = ?",
+            (store_path, store_path),
+        ).fetchall()
+        return [{"id": r["id"], "path": r["path"]} for r in rows]
+
     def list_recent(
         self, limit: int = 20, type_: str | None = None,
         exclude_types: set[str] | None = None,

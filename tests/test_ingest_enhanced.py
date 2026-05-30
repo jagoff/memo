@@ -200,6 +200,84 @@ def test_ingest_pdf_chunked(tmp_path: Path, runner_env):
     assert len(pdf_rows) >= 2, f"expected PDF chunked into multiple rows, got: {[r['path'] for r in rows]}"
 
 
+def test_prune_removes_orphan_when_file_deleted(tmp_path: Path, runner_env):
+    """A file removed from disk → its row is pruned on re-ingest --prune,
+    while surviving files stay."""
+    vault = _build_vault(
+        tmp_path / "vault",
+        {"a.md": "# A\n\nNote about cats.", "b.md": "# B\n\nNote about dogs."},
+    )
+    base = ["ingest", str(vault), "--name", "v", "--no-include-pdf",
+            "--no-include-orphan-images", "--no-ocr"]
+    assert CliRunner().invoke(cli, base, env=runner_env).exit_code == 0
+
+    (vault / "a.md").unlink()  # file gone from disk
+    result = CliRunner().invoke(cli, [*base, "--prune"], env=runner_env)
+    assert result.exit_code == 0, result.output
+    assert "pruned=1" in result.output
+
+    paths = {r["path"] for r in _all_rows(_open_store(runner_env))}
+    assert "v/a.md" not in paths
+    assert "v/b.md" in paths
+
+
+def test_prune_removes_stale_tail_chunks_when_note_shrinks(tmp_path: Path, runner_env):
+    """A multi-chunk note edited down to a single short doc leaves no stale
+    `#chunk-N` rows once re-ingested with --prune."""
+    long_body = (
+        "# Big\n\n" + "\n\n".join(f"## S{i}\n\n" + ("filler " * 200) for i in range(4))
+    )
+    vault = _build_vault(tmp_path / "vault", {"n.md": long_body})
+    base = ["ingest", str(vault), "--name", "v", "--chunk", "--chunk-chars", "1500",
+            "--no-include-pdf", "--no-include-orphan-images", "--no-ocr"]
+    assert CliRunner().invoke(cli, base, env=runner_env).exit_code == 0
+    rows = _all_rows(_open_store(runner_env))
+    assert len([r for r in rows if "#chunk-" in r["path"]]) >= 2
+
+    (vault / "n.md").write_text("# Small\n\nNow just a tiny note.", encoding="utf-8")
+    result = CliRunner().invoke(cli, [*base, "--prune"], env=runner_env)
+    assert result.exit_code == 0, result.output
+
+    paths = {r["path"] for r in _all_rows(_open_store(runner_env))}
+    assert "v/n.md" in paths
+    assert not any("#chunk-" in p for p in paths), f"stale tail chunks remain: {paths}"
+
+
+def test_prune_never_touches_curated_memorias(tmp_path: Path, runner_env):
+    """--prune only deletes vault-ingest rows; curated memorias (source NULL,
+    no vault) under the same store are left intact even if 'orphaned'."""
+    store = _open_store(runner_env)
+    store.upsert(
+        id_="cur123", path="curated/keep.md", title="Keep", type_="note",
+        tags=[], created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00", body_hash="x", embedding=[1.0, 0, 0, 0],
+        extra={}, body_text="curated memory",
+    )
+    vault = _build_vault(tmp_path / "vault", {"a.md": "# A\n\nNote about cats."})
+    base = ["ingest", str(vault), "--name", "v", "--no-include-pdf",
+            "--no-include-orphan-images", "--no-ocr"]
+    assert CliRunner().invoke(cli, base, env=runner_env).exit_code == 0
+    (vault / "a.md").unlink()
+    assert CliRunner().invoke(cli, [*base, "--prune"], env=runner_env).exit_code == 0
+
+    paths = {r["path"] for r in _all_rows(_open_store(runner_env))}
+    assert "curated/keep.md" in paths  # never pruned
+    assert "v/a.md" not in paths
+
+
+def test_no_prune_keeps_orphans(tmp_path: Path, runner_env):
+    """Default (--no-prune) is purely additive — a deleted file's row stays."""
+    vault = _build_vault(tmp_path / "vault", {"a.md": "# A\n\nNote about cats."})
+    base = ["ingest", str(vault), "--name", "v", "--no-include-pdf",
+            "--no-include-orphan-images", "--no-ocr"]
+    assert CliRunner().invoke(cli, base, env=runner_env).exit_code == 0
+    (vault / "a.md").unlink()
+    result = CliRunner().invoke(cli, base, env=runner_env)  # no --prune
+    assert result.exit_code == 0
+    assert "pruned=0" in result.output
+    assert "v/a.md" in {r["path"] for r in _all_rows(_open_store(runner_env))}
+
+
 def test_dedup_strips_chunk_suffix(mock_memory):
     """`_norm_dedup_path` collapses `path#chunk-N` to `path` so multi-chunk
     memorias dedup against repo hits / each other in ask context."""

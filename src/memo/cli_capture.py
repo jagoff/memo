@@ -150,10 +150,11 @@ def _resolve_ingest_row(store, path_str):
 @click.option("--chunk-overlap", default=250, show_default=True, type=int, help="Overlap between consecutive chunks.")
 @click.option("--include-pdf/--no-include-pdf", default=True, help="Extract text from .pdf via pdftotext + chunk + embed.")
 @click.option("--include-orphan-images/--no-include-orphan-images", default=True, help="OCR images not referenced by any note and ingest them as standalone memorias.")
+@click.option("--prune/--no-prune", default=False, help="Delete stale vault-ingest chunks under this label: files moved/renamed/deleted (abs_path gone) and leftover chunks of notes edited down to fewer chunks. Default off (ingest is purely additive); the synapse vault-ingest agent passes --prune so the index self-heals.")
 def ingest(
     vault_path: str, name: str | None, force: bool, dry_run: bool, exclude: tuple[str, ...],
     ocr: bool, chunk: bool, chunk_chars: int, chunk_overlap: int,
-    include_pdf: bool, include_orphan_images: bool,
+    include_pdf: bool, include_orphan_images: bool, prune: bool,
 ) -> None:
     """Bulk-ingest all .md from a vault into the memo index.
 
@@ -253,8 +254,21 @@ def ingest(
 
     skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0
     skipped_pdf_empty = pdf_added = orphan_added = orphan_skipped = 0
-    chunks_emitted = 0
+    chunks_emitted = pruned = 0
     referenced_images: set[Path] = set()
+    # Abs-paths of every file seen on disk this walk (md + pdf + orphan imgs),
+    # added BEFORE any skip so existing-but-skipped files are kept. The --prune
+    # sweep deletes label rows whose abs_path is NOT here (file gone from disk).
+    seen_abs: set[str] = set()
+
+    def _reconcile_file(store_path: str, valid_paths: set[str]) -> None:
+        """Drop rows of one just-emitted file whose path is no longer valid —
+        e.g. a multi-chunk note edited down to fewer chunks leaves stale
+        `#chunk-N` rows, or a single↔multi flip leaves the other shape."""
+        nonlocal pruned
+        for row in store.file_rows(store_path):
+            if row["path"] not in valid_paths and store.delete(row["id"]):
+                pruned += 1
 
     min_chars = int(_os_min.environ.get("MEMO_INGEST_MIN_CHARS", "200"))
     strict_mode = _os_min.environ.get("MEMO_INGEST_STRICT") == "1"
@@ -305,6 +319,8 @@ def ingest(
                 extra=extra, body_text=body,
             )
             chunks_emitted += 1
+            if prune:
+                _reconcile_file(store_path, {store_path})
             return "updated" if existing else "added"
 
         # Multi-chunk path. Each chunk = own meta row; parent_path lets
@@ -352,6 +368,11 @@ def ingest(
                 any_updated = True
             else:
                 any_added = True
+        if prune:
+            _reconcile_file(
+                store_path,
+                {f"{store_path}#chunk-{p['seq']}" for p in pieces},
+            )
         if any_added:
             return "added"
         if any_updated:
@@ -371,6 +392,7 @@ def ingest(
             try:
                 rel = path.relative_to(vault)
                 store_path = f"{label}/{rel}" if label else str(rel)
+                seen_abs.add(str(path))
 
                 raw = path.read_text(encoding="utf-8", errors="replace")
 
@@ -448,6 +470,7 @@ def ingest(
             for pdf_path in pdf_files:
                 try:
                     rel = pdf_path.relative_to(vault)
+                    seen_abs.add(str(pdf_path))
                     text = extract_pdf_text(pdf_path).strip()
                     if not text:
                         skipped_pdf_empty += 1
@@ -478,6 +501,7 @@ def ingest(
                 cache_dir = cfg.state_dir / "ocr_cache"
                 for img_path in orphans:
                     try:
+                        seen_abs.add(str(img_path))
                         ocr_text = (extract_text_cached(img_path, cache_dir=cache_dir) or "").strip()
                         if not ocr_text:
                             orphan_skipped += 1
@@ -500,6 +524,16 @@ def ingest(
                     finally:
                         progress.advance(orphan_task)
 
+    # Prune: drop vault-ingest rows under this label whose source file is
+    # gone from disk (moved/renamed/deleted). Per-file chunk reconciliation
+    # already ran in _emit_record for re-emitted files; this catches whole
+    # files that disappeared. source-filtered, so curated memorias are safe.
+    if prune:
+        for row in store.vault_ingest_rows(label):
+            abs_path = row.get("abs_path")
+            if abs_path and abs_path not in seen_abs and store.delete(row["id"]):
+                pruned += 1
+
     # Bump on-disk schema version so the legacy-paths probe in
     # `Memory._maybe_warn_legacy_paths` doesn't fire for ingest-only
     # vaults (vault-ingest rows live outside `cfg.data_dir` and the
@@ -516,7 +550,7 @@ def ingest(
         f"skipped_id={skipped_id} skipped_empty={skipped_empty} "
         f"pdf_added={pdf_added} pdf_empty={skipped_pdf_empty} "
         f"orphan_added={orphan_added} orphan_skipped={orphan_skipped} "
-        f"chunks_emitted={chunks_emitted} "
+        f"chunks_emitted={chunks_emitted} pruned={pruned} "
         f"errors={errors}"
     )
 
