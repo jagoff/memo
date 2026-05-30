@@ -60,20 +60,30 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
       - sampled:          events considered (newest `limit`)
       - fired / bailed:   recall ran vs. skipped (short/slash/empty prompt)
       - hit_rate:         share of *fired* recalls that surfaced ≥1 memoria
+      - strong_hit_rate:  share of *fired* recalls with a top score > 0.85
+                          (high-confidence match — the honest relevance number)
+      - referenced_rate:  share of surfaced memorias later fetched/clicked
+                          (lower bound on "used" — see referenced_rate())
       - median_top_score: median best-hit score on hit events (confidence)
       - p50_latency_ms:   median end-to-end recall latency
+
+    Double-fire pairs (same prompt logged subprocess+daemon) are collapsed
+    first so totals and rates aren't inflated.
     """
-    rows = read_recall_log(state_dir, limit=limit)
+    rows = dedup_double_fire(read_recall_log(state_dir, limit=limit))
     fired = [r for r in rows if r.get("via") in ("daemon", "subprocess")]
     bailed = sum(1 for r in rows if r.get("via") == "bail")
     with_hits = [r for r in fired if r.get("hits")]
 
     top_scores: list[float] = []
+    strong = 0
     for r in with_hits:
         hits = r.get("hits") or []
         score = hits[0].get("score") if hits else None
         if isinstance(score, (int, float)):
             top_scores.append(float(score))
+            if float(score) > STRONG_SCORE:
+                strong += 1
     top_scores.sort()
     lats = sorted(
         int(r["latency_ms"]) for r in fired
@@ -83,11 +93,17 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
     def _median(xs: list[Any]) -> Any:
         return xs[len(xs) // 2] if xs else None
 
+    ref = referenced_rate(state_dir, rows)
+
     return {
         "sampled": len(rows),
         "fired": len(fired),
         "bailed": bailed,
         "hit_rate": round(len(with_hits) / len(fired), 3) if fired else None,
+        "strong_hit_rate": round(strong / len(fired), 3) if fired else None,
+        "referenced_rate": ref["referenced_rate"],
+        "referenced": ref["referenced"],
+        "surfaced": ref["surfaced"],
         "median_top_score": round(_median(top_scores), 3) if top_scores else None,
         "p50_latency_ms": _median(lats),
     }
@@ -129,12 +145,13 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
     consumers are silent. Pure read over the existing recall.log; no
     hot-path cost.
     """
-    rows = read_recall_log(state_dir, limit=limit)
+    rows = dedup_double_fire(read_recall_log(state_dir, limit=limit))
     by: dict[str, dict[str, Any]] = {}
     for r in rows:
         name = consumer_label(r)
         agg = by.setdefault(
-            name, {"consults": 0, "fired": 0, "with_hits": 0, "top_scores": [], "last_seen": None}
+            name,
+            {"consults": 0, "fired": 0, "with_hits": 0, "strong": 0, "top_scores": [], "last_seen": None},
         )
         agg["consults"] += 1
         is_bail = (r.get("via") or "") == "bail"
@@ -146,6 +163,8 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
                 score = hits[0].get("score")
                 if isinstance(score, (int, float)):
                     agg["top_scores"].append(float(score))
+                    if float(score) > STRONG_SCORE:
+                        agg["strong"] += 1
         ts = r.get("ts")
         if ts and (agg["last_seen"] is None or ts > agg["last_seen"]):
             agg["last_seen"] = ts
@@ -160,6 +179,7 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
             "fired": fired,
             "bailed": agg["consults"] - fired,
             "hit_rate": round(agg["with_hits"] / fired, 3) if fired else None,
+            "strong_hit_rate": round(agg["strong"] / fired, 3) if fired else None,
             "median_top_score": round(scores[len(scores) // 2], 3) if scores else None,
             "last_seen": agg["last_seen"],
         })
@@ -234,6 +254,149 @@ def read_recall_log(state_dir: Path, *, limit: int = 10) -> list[dict[str, Any]]
             continue
     out.reverse()  # newest first
     return out
+
+
+# Confidence floor above which a hit counts as a STRONG match (high-cosine,
+# genuinely on-topic) rather than a weak grasp. median_top_score in the wild
+# sits ~0.84, so ~half of "hits" are weak — strong_hit_rate is the honest
+# "when memo fires, is it actually relevant" number.
+STRONG_SCORE = 0.85
+
+
+def _parse_ts(value: Any) -> Any:
+    from datetime import datetime
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _row_quality(row: dict[str, Any]) -> tuple[int, float]:
+    hits = row.get("hits") or []
+    top = hits[0].get("score") if hits else None
+    return (len(hits), float(top) if isinstance(top, (int, float)) else 0.0)
+
+
+def dedup_double_fire(rows: list[dict[str, Any]], *, window_s: float = 15.0) -> list[dict[str, Any]]:
+    """Collapse double-fire pairs into one logical consult.
+
+    The same prompt logged twice seconds apart (subprocess fallback + the
+    daemon that finished late) is ONE consult, not two — counting both inflates
+    consult totals and skews hit_rate. Merge rows with an identical non-empty
+    prompt within `window_s`, keeping the higher-quality row (more hits, then
+    higher top score). Empty-prompt bails (distinct slash-command skips) are
+    never merged. Pre-`feat/recall-productive` logs contain these pairs; the
+    fix stops new ones, this keeps historical reports honest.
+    """
+    kept: list[dict[str, Any]] = []
+    anchor: dict[str, tuple[int, Any]] = {}  # prompt -> (kept index, ts)
+    for r in rows:
+        prompt = (r.get("prompt") or "").strip()
+        if not prompt:
+            kept.append(r)
+            continue
+        ts = _parse_ts(r.get("ts"))
+        prev = anchor.get(prompt)
+        if (
+            prev is not None
+            and ts is not None
+            and prev[1] is not None
+            and abs((ts - prev[1]).total_seconds()) <= window_s
+        ):
+            idx = prev[0]
+            if _row_quality(r) > _row_quality(kept[idx]):
+                kept[idx] = r
+            anchor[prompt] = (idx, ts)
+            continue
+        kept.append(r)
+        anchor[prompt] = (len(kept) - 1, ts)
+    return kept
+
+
+# -------------------- usage log (closed-loop "used" signal) --------------------
+# recall.log proves a memoria was SHOWN. This proves one was acted on: every
+# `memory_get` / `memo get` / contextual click appends {ts, id} here. Cross-
+# referenced against recall.log, it yields referenced_rate — a LOWER BOUND on
+# usefulness (explicit fetch-through only; the model usually consumes the
+# injected recall text inline without a fetch, so true "used" is higher).
+
+def usage_log_path(state_dir: Path) -> Path:
+    return state_dir / "usage.log"
+
+
+def append_usage_log(state_dir: Path, memoria_id: str, *, cap: int = 500) -> None:
+    """Record that a memoria was fetched/clicked. Best-effort, never raises."""
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+            "id": (memoria_id or "")[:8],
+        }
+        path = usage_log_path(state_dir)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if path.stat().st_size > 1024 * 100:  # ~100 KB
+            lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def read_usage_log(state_dir: Path, *, limit: int = 2000) -> list[dict[str, Any]]:
+    path = usage_log_path(state_dir)
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines[-limit:]:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def referenced_rate(state_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Fraction of surfaced memorias later fetched/clicked (lower bound on use).
+
+    For each distinct memoria id surfaced in `rows`, record its earliest
+    surfacing time; count it referenced if usage.log has a fetch of that id at
+    or after that time. Returns the rate plus raw counts so the caller can
+    label it as the floor it is.
+    """
+    surfaced: dict[str, Any] = {}
+    for r in rows:
+        ts = _parse_ts(r.get("ts"))
+        for h in r.get("hits") or []:
+            hid = h.get("id")
+            if not hid:
+                continue
+            cur = surfaced.get(hid)
+            if cur is None or (ts is not None and (cur is None or ts < cur)):
+                surfaced[hid] = ts
+    if not surfaced:
+        return {"referenced_rate": None, "surfaced": 0, "referenced": 0}
+    uses: dict[str, list[Any]] = {}
+    for u in read_usage_log(state_dir):
+        uid = u.get("id")
+        if uid:
+            uses.setdefault(uid, []).append(_parse_ts(u.get("ts")))
+    referenced = 0
+    for hid, sts in surfaced.items():
+        for uts in uses.get(hid, []):
+            if sts is None or uts is None or uts >= sts:
+                referenced += 1
+                break
+    return {
+        "referenced_rate": round(referenced / len(surfaced), 3),
+        "surfaced": len(surfaced),
+        "referenced": referenced,
+    }
 
 
 # -------------------- helpers --------------------

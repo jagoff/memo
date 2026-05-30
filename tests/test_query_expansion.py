@@ -64,8 +64,8 @@ def test_expansion_recovers_a_bailing_prompt(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MEMO_RECALL_EXPAND_CONTEXT", "1")
     monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")
 
-    result = _recall_logic("que queda pendiente", cwd=None, mem=mem,
-                           cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
+    result, _log = _recall_logic("que queda pendiente", cwd=None, mem=mem,
+                                 cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
     ctx = json.loads(result)["hookSpecificOutput"]["additionalContext"]
     assert "Recovered memoria" in ctx
     # Bare query ran first and bailed; expanded query (with marker) ran second.
@@ -80,8 +80,9 @@ def test_expansion_disabled_leaves_bail(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MEMO_RECALL_EXPAND_CONTEXT", "0")
     monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")
 
-    result = _recall_logic("que queda pendiente", cwd=None, mem=mem,
-                           cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
+    result, log_fn = _recall_logic("que queda pendiente", cwd=None, mem=mem,
+                                   cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
     assert result == "{}"
+    assert log_fn is None
     # No expansion attempted — only the bare query ran.
     assert all(_CTX_MARKER not in q for q in mem.queries)

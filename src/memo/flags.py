@@ -70,6 +70,9 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_CONTEXTUAL", "bool", True, "recall", "Re-rank recall by learned type preferences + record what surfaces.", opt_out=True),
     _spec("MEMO_RECALL_EXCLUDE_REFERENCE", "bool", True, "recall", "Exclude the bulk `reference` tier (ingested vault) from auto-recall so durable knowledge isn't drowned.", opt_out=True),
     _spec("MEMO_RECALL_EXPAND_CONTEXT", "bool", True, "recall", "On a zero-hit recall, retry once with recent open-loop titles prepended so bare continuity prompts ('seguimos', 'qué queda pendiente') re-anchor instead of bailing. Fallback-only: queries that already recall are untouched.", opt_out=True),
+    _spec("MEMO_RECALL_LOCK_TIMEOUT_MS", "int", 2500, "recall", "Daemon: max ms a recall waits for the shared embedder/Memory lock before returning empty. Bounds the latency tail when a cold embed_batch holds the lock — recall bails fast instead of hanging tens of seconds and blowing the 5s hook budget."),
+    _spec("MEMO_RECALL_DAEMON_TIMEOUT_MS", "int", 3500, "recall", "Client (recall-hook): ms to wait for the daemon socket before falling back to in-process subprocess search. Must sit under the hooks.json budget (12s) yet above the warm-but-slow daemon tail (~3-6s) so a slow daemon is waited on, not double-fired via subprocess."),
+    _spec("MEMO_EMBED_BATCH_CHUNK", "int", 32, "recall", "Daemon: texts per embed chunk in embed_batch. The shared lock is released between chunks so a pending recall query-embed interleaves instead of waiting for the whole (cold) batch."),
     # search ranking
     _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking."),
     _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),

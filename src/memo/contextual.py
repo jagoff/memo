@@ -301,6 +301,14 @@ class ContextualRecall:
                 if isinstance(e, dict) and e.get("name")
             ]
             self.context.record_feedback(memoria_id, rec.type, entities)
+            # Closed-loop "used" signal: a fetched memoria is one acted on, not
+            # just shown. Cross-referenced against recall.log by
+            # `memo usefulness` → referenced_rate. Best-effort, off hot path.
+            try:
+                from memo.dashboard import append_usage_log
+                append_usage_log(self.context.context_file.parent, memoria_id)
+            except Exception:
+                pass
 
 
 __all__ = [
