@@ -1,30 +1,40 @@
-"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+"""Memory lifecycle management — forgetting, archival, expiration.
 
-Memory lifecycle management — archival, promotion, expiration.
+Internal maintenance layer driven by `memo maintain` (NOT exposed on the
+public CLI or MCP surface — see tests/test_architecture_boundaries.py;
+memo is the memory store, orchestration lives in Synapse). The user-facing
+primitives are `Memory.forget()` / `Memory.unforget()` (CRUD-like, exposed
+as the `memory_forget` / `memory_unforget` MCP tools).
 
 Manages the lifecycle of memories over time:
+- Explicit forget with a TTL (`forget_after`) — soft, reversible
 - Automatic archival of inactive memories
-- Promotion/demotion based on access frequency
 - Expiration of temporary/debug memories
-- Lifecycle policies and rules
+- Promotion/demotion reporting based on access frequency
+
+## Forgetting (soft, reversible) — `forget_after` TTL
+
+A memoria can carry `forget_after` (ISO date) and `forget_reason` in its
+`extra` bag / frontmatter. Once the date passes, `apply_lifecycle_rules`
+soft-forgets it: sets `extra.is_forgotten = True` so it drops out of
+`search` / recall / `list` by default, WITHOUT moving or deleting the file.
+Fully reversible via `Memory.unforget()`. This is the supermemory-style
+`isForgotten` model — distinct from the harder archival below.
 
 ## Archival
 
-Memories that haven't been accessed in N days are automatically archived
-to an `inactive/` subdirectory. They remain searchable but are deprioritized
-in results.
+Memories that haven't been accessed in N days are archived to an
+`inactive/` subdirectory and removed from the index (recoverable from disk).
 
 ## Promotion/Demotion
 
-Frequently-accessed memories get promoted (higher priority in search).
-Rarely-accessed memories get demoted (lower priority). Access count is
-tracked via the history store.
+Access counts (from the history store) drive a report of promotion/demotion
+candidates. Advisory only — no priority flag is written today.
 
 ## Expiration
 
-Temporary memories (type=temp, or tagged with `temp:...`) can have an
-expiration date. After expiration, they are either archived or deleted
-based on policy.
+Temporary memories (type=temp, or tagged with `temp:...`) expire after a
+window and are archived or deleted based on policy.
 """
 
 from __future__ import annotations
@@ -32,6 +42,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+# Keys carried in a memoria's `extra` bag (persisted to meta.extra_json and to
+# the on-disk frontmatter `extra:` block, so they survive a reindex for free).
+FORGET_AFTER_KEY = "forget_after"   # ISO date/datetime; soft-forget once passed
+FORGET_REASON_KEY = "forget_reason"  # free-text why
+IS_FORGOTTEN_KEY = "is_forgotten"   # bool; excluded from search/recall/list
+
+
+def _parse_iso_date(value: Any) -> datetime | None:
+    """Best-effort parse of a forget_after value to an aware datetime.
+
+    Accepts full ISO datetimes and bare `YYYY-MM-DD` dates (interpreted as
+    end-of-day UTC so a same-day `forget_after` doesn't fire prematurely).
+    Returns None on anything unparseable.
+    """
+    if not value:
+        return None
+    s = str(value).strip()
+    try:
+        if len(s) == 10:  # YYYY-MM-DD
+            dt = datetime.fromisoformat(s).replace(
+                hour=23, minute=59, second=59, tzinfo=UTC,
+            )
+        else:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+        return dt
+    except (ValueError, TypeError):
+        return None
 
 
 @dataclass
@@ -184,6 +224,45 @@ class LifecycleManager:
 
         return False, "Not a temporary memoria"
 
+    def should_forget(self, memoria_id: str) -> tuple[bool, str]:
+        """Determine if a memoria's `forget_after` TTL has elapsed.
+
+        Returns (should_forget, reason). False for memorias already forgotten
+        or without a parseable `forget_after`.
+        """
+        rec = self.memory.get(memoria_id)
+        if rec is None:
+            return False, "Memoria not found"
+        extra = rec.extra or {}
+        if extra.get(IS_FORGOTTEN_KEY):
+            return False, "Already forgotten"
+        due = _parse_iso_date(extra.get(FORGET_AFTER_KEY))
+        if due is None:
+            return False, "No forget_after set"
+        if datetime.now(UTC) >= due:
+            return True, f"forget_after {due.date().isoformat()} elapsed"
+        return False, f"forget_after {due.date().isoformat()} not yet reached"
+
+    def enforce_forget_ttl(
+        self, *, dry_run: bool = False, limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Soft-forget every memoria whose `forget_after` TTL has elapsed.
+
+        Narrow counterpart to `apply_lifecycle_rules` — does ONLY the explicit
+        forget pass (no inactivity-archival, no temp-expiration), so callers
+        like `memo maintain` can enforce user-set TTLs without triggering the
+        broader archival policy. Returns the list of `{id, reason}` acted on.
+        """
+        acted: list[dict[str, Any]] = []
+        for rec in self.memory.list(limit=limit):
+            should_forget, reason = self.should_forget(rec.id)
+            if not should_forget:
+                continue
+            if not dry_run:
+                self.memory.forget(rec.id, reason=reason)
+            acted.append({"id": rec.id, "reason": reason})
+        return acted
+
     def archive_memoria(self, memoria_id: str) -> bool:
         """Archive a memoria by moving it to the inactive/ subdirectory.
 
@@ -241,6 +320,7 @@ class LifecycleManager:
         all_records = self.memory.list(limit=limit)
 
         actions = {
+            "forgotten": 0,
             "archived": 0,
             "promoted": 0,
             "demoted": 0,
@@ -250,7 +330,15 @@ class LifecycleManager:
         }
 
         for rec in all_records:
-            # Check expiration first
+            # Explicit forget TTL first — soft, reversible, keeps the file.
+            should_forget, forget_reason = self.should_forget(rec.id)
+            if should_forget:
+                if not dry_run:
+                    self.memory.forget(rec.id, reason=forget_reason)
+                actions["forgotten"] += 1
+                continue
+
+            # Check expiration next
             should_expire, _expire_reason = self.should_expire(rec.id)
             if should_expire:
                 if self.policy.delete_expired:
@@ -296,6 +384,7 @@ class LifecycleManager:
 
         stats = {
             "total": len(all_records),
+            "forget_candidates": 0,
             "archive_candidates": 0,
             "promotion_candidates": 0,
             "demotion_candidates": 0,
@@ -311,6 +400,10 @@ class LifecycleManager:
 
             if access_count == 0:
                 stats["never_accessed"] += 1
+
+            should_forget, _ = self.should_forget(rec.id)
+            if should_forget:
+                stats["forget_candidates"] += 1
 
             should_archive, _ = self.should_archive(rec.id)
             if should_archive:
