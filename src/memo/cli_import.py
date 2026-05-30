@@ -72,19 +72,13 @@ def import_csv(input_path: str) -> None:
 @click.option("--all-chats", is_flag=True,
               help="Ingest every chat (minus exclusions). Required if no --include-chat.")
 @click.option("--retention-days", type=int, default=180, show_default=True,
-              help="Only ingest messages newer than N days.")
+              help="Only include messages newer than N days.")
 @click.option("--since", help="Floor date YYYY-MM-DD (in addition to retention).")
-@click.option("--min-chars", type=int, default=1, show_default=True,
-              help="Drop chunks whose rendered body is shorter than this.")
-@click.option("--max-chats", type=int, default=None, help="Cap chats (testing).")
-@click.option("--max-messages", type=int, default=None, help="Cap messages (testing).")
-@click.option("--reset", is_flag=True, help="Wipe the incremental cursor (full re-scan).")
-@click.option("--dry-run", is_flag=True, help="Count chunks, write nothing.")
-@click.option("--preserve-timestamps", is_flag=True,
-              help="Back-date `created` to the original message time (reshapes "
-                   "time-bucketed analytics).")
-@click.option("--reindex/--no-reindex", default=True, show_default=True,
-              help="Embed pending chunks after ingest.")
+@click.option("--notes-dir", "notes_dir", type=click.Path(), default=None,
+              help="Override output folder (default: <vault>/Obsidian/Whatsapp).")
+@click.option("--dry-run", is_flag=True, help="Report counts, write nothing.")
+@click.option("--index/--no-index", default=True, show_default=True,
+              help="Run `memo ingest` on the notes folder so the chat can find them.")
 @click.option("--db", "db_path", type=click.Path(),
               help="Override bridge messages.db path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit the summary as JSON.")
@@ -94,21 +88,19 @@ def import_whatsapp(
     all_chats: bool,
     retention_days: int,
     since: str | None,
-    min_chars: int,
-    max_chats: int | None,
-    max_messages: int | None,
-    reset: bool,
+    notes_dir: str | None,
     dry_run: bool,
-    preserve_timestamps: bool,
-    reindex: bool,
+    index: bool,
     db_path: str | None,
     as_json: bool,
 ) -> None:
-    """Ingest WhatsApp conversations from the whatsapp-mcp bridge into memo.
+    """Ingest WhatsApp conversations as readable per-contact notes.
 
-    Chunks are saved as `type=reference` (searchable by the :8765 chat and
-    `memo search`, but kept out of the every-prompt recall hook when
-    `MEMO_RECALL_EXCLUDE_REFERENCE=1`). Re-runs are incremental.
+    Writes one Markdown note per chat to `<vault>/Obsidian/Whatsapp/<contacto>.md`
+    (transcript grouped by date) and — unless --no-index — runs `memo ingest` on
+    that folder so the notes are searchable by `memo search`/`ask` and the
+    synapse :8765 chat (source=vault-ingest). Notes are regenerated in full each
+    run (idempotent). Scope is opt-in.
 
     Examples:
 
@@ -117,6 +109,7 @@ def import_whatsapp(
       memo import whatsapp --all-chats --retention-days 90
     """
     import json as _json
+    import subprocess
     from pathlib import Path
 
     from memo import whatsapp_ingest
@@ -129,20 +122,27 @@ def import_whatsapp(
             mem,
             bridge_db=Path(db_path) if db_path else None,
             since=since,
-            reset=reset,
             retention_days=retention_days,
             include_chats=include_chats,
             exclude_chats=exclude_chats,
             all_chats=all_chats,
-            min_chars=min_chars,
-            max_chats=max_chats,
-            max_messages=max_messages,
+            notes_dir=Path(notes_dir) if notes_dir else None,
             dry_run=dry_run,
-            preserve_timestamps=preserve_timestamps,
-            reindex=reindex,
         )
     except (ValueError, FileNotFoundError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+    # Index the notes folder so the :8765 chat can retrieve them.
+    summary["indexed"] = False
+    if index and not dry_run and summary["notes_written"]:
+        try:
+            subprocess.run(
+                ["memo", "ingest", summary["notes_dir"], "--name", "whatsapp"],
+                check=True,
+            )
+            summary["indexed"] = True
+        except Exception as exc:  # noqa: BLE001
+            summary["index_error"] = str(exc)
 
     if as_json:
         console.print_json(_json.dumps(summary))
@@ -150,15 +150,14 @@ def import_whatsapp(
 
     console.print("[green]WhatsApp ingest complete[/green]")
     console.print(f"Messages read:   {summary['messages_read']}")
-    console.print(f"After filter:    {summary['messages_after_filter']}")
-    console.print(f"Chunks built:    {summary['chunks_built']}")
+    console.print(f"Chats:           {len(summary['chats'])}")
     if summary["dry_run"]:
         console.print("[yellow]dry-run — nothing written[/yellow]")
     else:
-        console.print(f"Chunks saved:    {summary['chunks_saved']}")
-        console.print(f"Re-embedded:     {summary['reindexed']}")
-    if summary.get("reindex_error"):
-        console.print(f"[yellow]reindex error: {summary['reindex_error']}[/yellow]")
+        console.print(f"Notes written:   {summary['notes_written']}  → {summary['notes_dir']}")
+        console.print(f"Indexed:         {summary['indexed']}")
+    if summary.get("index_error"):
+        console.print(f"[yellow]index error: {summary['index_error']}[/yellow]")
 
 
 @import_group.command(name="markdown-bundle")
