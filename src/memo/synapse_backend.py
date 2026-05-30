@@ -50,7 +50,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal, cast
 
-from consciousness_contracts import EvidenceRef, WriteReceipt
+try:
+    from consciousness_contracts import EvidenceRef, WriteReceipt
+    _CONTRACTS_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dep, absent in CI/clean installs
+    EvidenceRef = None  # type: ignore[assignment,misc]
+    WriteReceipt = None  # type: ignore[assignment,misc]
+    _CONTRACTS_AVAILABLE = False
 
 from memo.memory import (
     _PROVENANCE_KEYS,
@@ -111,6 +117,11 @@ class MemoSynapseBackend:
     backend_name = MEMO_BACKEND_NAME
 
     def __init__(self, memory: Memory) -> None:
+        if not _CONTRACTS_AVAILABLE:
+            raise RuntimeError(
+                "MemoSynapseBackend requires the optional `consciousness-contracts` "
+                "package. Install it with: uv pip install -e ../consciousness-contracts"
+            )
         self.memory = memory
 
     # -- contract methods --------------------------------------------------
