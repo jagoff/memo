@@ -30,9 +30,9 @@ class PickerResult:
     vault_path: Path | None  # set only when an Obsidian vault was chosen
 
 
-# Default subdir name when the user picks an Obsidian vault. `AI/`
-# matches the user's existing system convention; nesting `memory/`
-# under it keeps memo-managed files separate from other AI artefacts.
+# Default subdir name when the user picks an Obsidian vault. memo's curated
+# memorias live in `<SYSTEM_DIR>/AI/memory/` (matching the real corpus location
+# under the system root). Relative to the picked system-folder root → `AI/memory`.
 DEFAULT_VAULT_SUBDIR = "AI/memory"
 
 
