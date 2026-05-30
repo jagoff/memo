@@ -69,6 +69,7 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_SKIP_SLASH", "bool", True, "recall", "Skip recall when the prompt starts with '/'."),
     _spec("MEMO_RECALL_CONTEXTUAL", "bool", True, "recall", "Re-rank recall by learned type preferences + record what surfaces.", opt_out=True),
     _spec("MEMO_RECALL_EXCLUDE_REFERENCE", "bool", True, "recall", "Exclude the bulk `reference` tier (ingested vault) from auto-recall so durable knowledge isn't drowned.", opt_out=True),
+    _spec("MEMO_RECALL_EXPAND_CONTEXT", "bool", True, "recall", "On a zero-hit recall, retry once with recent open-loop titles prepended so bare continuity prompts ('seguimos', 'qué queda pendiente') re-anchor instead of bailing. Fallback-only: queries that already recall are untouched.", opt_out=True),
     # search ranking
     _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking."),
     _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),
