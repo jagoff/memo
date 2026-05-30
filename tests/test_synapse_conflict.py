@@ -25,6 +25,9 @@ from typing import Any
 
 import pytest
 
+# Requires the optional, non-PyPI `consciousness-contracts` (absent in CI).
+pytest.importorskip("consciousness_contracts")
+
 import memo.synapse_client as synapse_client
 from memo.memory import WriteRefused
 from memo.synapse_backend import MemoSynapseBackend

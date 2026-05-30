@@ -24,6 +24,12 @@ import json
 import os
 
 import pytest
+
+# The synapse backend requires the optional, non-PyPI `consciousness-contracts`
+# package (absent in CI / clean installs). Skip the whole module when it's not
+# importable — same guard as test_consciousness_ledger / test_embedder_profile.
+pytest.importorskip("consciousness_contracts")
+
 from click.testing import CliRunner
 
 from memo.cli import cli

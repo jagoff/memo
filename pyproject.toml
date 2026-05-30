@@ -36,9 +36,6 @@ dependencies = [
     # MLX runtime — Apple Silicon only.
     "mlx>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    # Shared schemas across memo + memflow + synapse.
-    # Local editable install during dev; switch to versioned dep when published.
-    "consciousness-contracts>=0.1.0",
 ]
 
 [project.urls]
@@ -61,6 +58,14 @@ dev = [
 ocr = [
     "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+]
+# Shared trinity schemas (memo + memflow + synapse). NOT on PyPI and not a git
+# repo — a local editable dep on dev machines, absent in CI/clean installs. The
+# synapse backend + consciousness ledger guard their imports and degrade to a
+# no-op when it's missing, so it stays optional. Install with:
+#   uv pip install -e . && uv pip install -e ../consciousness-contracts
+contracts = [
+    "consciousness-contracts>=0.1.0",
 ]
 
 [project.scripts]
@@ -95,7 +100,10 @@ python_version = "3.13"
 
 [[tool.mypy.overrides]]
 # pyobjc (Quartz/Vision/Foundation) ship no py.typed marker.
-module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation"]
+# consciousness_contracts is an optional, non-PyPI dep absent in CI — its
+# importers guard the import, so missing-stub there is expected, not a bug.
+module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
+          "consciousness_contracts"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

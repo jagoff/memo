@@ -40,3 +40,6 @@ integrations/**/.paperclip-sdk/
 
 # Generated dashboard HTML (rebuild with `python web/build.py`)
 web/health.html
+
+# Local synapse runtime state (federation ledger, capture state)
+.synapse/
