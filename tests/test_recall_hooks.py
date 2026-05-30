@@ -46,7 +46,7 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
     project_hit = _rec("project1", "Project", 0.60, ["project:memo"])
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
             return [global_hit, project_hit]
 
     monkeypatch.setenv("MEMO_PROJECT_TAG", "memo")
@@ -84,7 +84,7 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
     hit = _rec("auth0001", "Some fact", 0.80)
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -103,7 +103,7 @@ def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:
     seen = {}
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
             seen["recency"] = recency
             return [_rec("r0000001", "Fresh", 0.9)]
 
@@ -144,7 +144,7 @@ def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
 
     class StubMemory:
         contextual = FakeContextual()
-        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
             return [_rec("surf0001", "surfaced", 0.9)]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -159,7 +159,7 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     hits = [_rec(f"id{i:07d}", f"hit {i}", 0.9 - i * 0.05) for i in range(5)]
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str, recency: bool = False) -> list[MemoryRecord]:
+        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
             return hits
 
     monkeypatch.setenv("MEMO_RECALL_TOP_K", "3")

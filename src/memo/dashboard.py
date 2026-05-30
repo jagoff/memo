@@ -52,6 +52,122 @@ def recall_log_path(state_dir: Path) -> Path:
     return state_dir / "recall.log"
 
 
+def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
+    """Summarise the recall ring buffer — is memo actually consulted and
+    returning confident hits, or a write-only store nobody reads?
+
+    Computed purely from the existing recall.log (no hot-path cost):
+      - sampled:          events considered (newest `limit`)
+      - fired / bailed:   recall ran vs. skipped (short/slash/empty prompt)
+      - hit_rate:         share of *fired* recalls that surfaced ≥1 memoria
+      - median_top_score: median best-hit score on hit events (confidence)
+      - p50_latency_ms:   median end-to-end recall latency
+    """
+    rows = read_recall_log(state_dir, limit=limit)
+    fired = [r for r in rows if r.get("via") in ("daemon", "subprocess")]
+    bailed = sum(1 for r in rows if r.get("via") == "bail")
+    with_hits = [r for r in fired if r.get("hits")]
+
+    top_scores: list[float] = []
+    for r in with_hits:
+        hits = r.get("hits") or []
+        score = hits[0].get("score") if hits else None
+        if isinstance(score, (int, float)):
+            top_scores.append(float(score))
+    top_scores.sort()
+    lats = sorted(
+        int(r["latency_ms"]) for r in fired
+        if isinstance(r.get("latency_ms"), (int, float))
+    )
+
+    def _median(xs: list[Any]) -> Any:
+        return xs[len(xs) // 2] if xs else None
+
+    return {
+        "sampled": len(rows),
+        "fired": len(fired),
+        "bailed": bailed,
+        "hit_rate": round(len(with_hits) / len(fired), 3) if fired else None,
+        "median_top_score": round(_median(top_scores), 3) if top_scores else None,
+        "p50_latency_ms": _median(lats),
+    }
+
+
+# Consumers the source-of-truth contract expects to read memo. A consumer
+# that never appears in the consult log is a silent gap, not "no data" —
+# surface it explicitly so "nobody reads memo" can't hide behind an empty
+# table. (See CLAUDE.md "Source of truth — role & contract".)
+EXPECTED_CONSUMERS = ("claude-code", "synapse", "memflow")
+
+
+def consumer_label(row: dict[str, Any]) -> str:
+    """Classify a recall-log row by the consumer that issued the consult.
+
+    The recall-hook (Claude Code) tags rows with `via` in daemon/subprocess;
+    MCP tools tag `via=mcp:<tool>` and an optional `source` naming the caller
+    (synapse/memflow/agent). We collapse to a stable consumer name so the
+    usefulness report answers "who actually reads memo".
+    """
+    source = (row.get("source") or "").strip().lower()
+    if source:
+        return source
+    via = (row.get("via") or "").strip().lower()
+    if via in ("daemon", "subprocess", "daemon_error"):
+        return "claude-code"
+    if via.startswith("mcp:"):
+        return "mcp:unknown"
+    if via == "bail":
+        return "claude-code"  # bails are recall-hook skips
+    return "unknown"
+
+
+def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
+    """Per-consumer usefulness summary over the consult ring buffer.
+
+    Answers the question `memo usefulness` exists for: who consults memo,
+    how often, with what hit rate, and — critically — which expected
+    consumers are silent. Pure read over the existing recall.log; no
+    hot-path cost.
+    """
+    rows = read_recall_log(state_dir, limit=limit)
+    by: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        name = consumer_label(r)
+        agg = by.setdefault(
+            name, {"consults": 0, "fired": 0, "with_hits": 0, "top_scores": [], "last_seen": None}
+        )
+        agg["consults"] += 1
+        is_bail = (r.get("via") or "") == "bail"
+        if not is_bail:
+            agg["fired"] += 1
+            hits = r.get("hits") or []
+            if hits:
+                agg["with_hits"] += 1
+                score = hits[0].get("score")
+                if isinstance(score, (int, float)):
+                    agg["top_scores"].append(float(score))
+        ts = r.get("ts")
+        if ts and (agg["last_seen"] is None or ts > agg["last_seen"]):
+            agg["last_seen"] = ts
+
+    consumers: list[dict[str, Any]] = []
+    for name, agg in by.items():
+        scores = sorted(agg["top_scores"])
+        fired = agg["fired"]
+        consumers.append({
+            "consumer": name,
+            "consults": agg["consults"],
+            "fired": fired,
+            "bailed": agg["consults"] - fired,
+            "hit_rate": round(agg["with_hits"] / fired, 3) if fired else None,
+            "median_top_score": round(scores[len(scores) // 2], 3) if scores else None,
+            "last_seen": agg["last_seen"],
+        })
+    consumers.sort(key=lambda c: c["consults"], reverse=True)
+    silent = [c for c in EXPECTED_CONSUMERS if c not in by]
+    return {"sampled": len(rows), "consumers": consumers, "silent": silent}
+
+
 def append_recall_log(
     state_dir: Path,
     *,
@@ -61,6 +177,7 @@ def append_recall_log(
     mode: str | None = None,
     latency_ms: int | None = None,
     via: str | None = None,
+    source: str | None = None,
     reason: str | None = None,
     error: str | None = None,
 ) -> None:
@@ -83,6 +200,8 @@ def append_recall_log(
             entry["latency_ms"] = latency_ms
         if via is not None:
             entry["via"] = via
+        if source is not None:
+            entry["source"] = source
         if reason is not None:
             entry["reason"] = reason[:200]
         if error is not None:

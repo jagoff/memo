@@ -72,7 +72,12 @@ from memo.encryption import EncryptionManager, Encryptor, KeyManager
 from memo.federation import FederationConfig, FederationSearcher
 from memo.graph import GraphStore
 from memo.import_export import ImportExportManager
-from memo.lifecycle import LifecycleManager
+from memo.lifecycle import (
+    FORGET_AFTER_KEY,
+    FORGET_REASON_KEY,
+    IS_FORGOTTEN_KEY,
+    LifecycleManager,
+)
 from memo.llm import MLXChat
 from memo.multimodal import CrossModalSearch, MultiModalManager, MultiModalStore, UniversalEmbedder
 from memo.navigation import GraphNavigator
@@ -82,6 +87,7 @@ from memo.sharing import ShareManager, ShareStore
 from memo.store import VecStore
 from memo.sync import BackupManager, SyncManager
 from memo.temporal import TemporalAnalyzer
+from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES
 from memo.util import sha256_short as _sha256_short
 from memo.util import stable_hash as _stable_content_hash
 from memo.util import utc_now_iso as _utc_now_iso
@@ -209,9 +215,10 @@ Type rules:
 
 Output ONLY the JSON, no markdown fences, no commentary, no preamble."""
 
-_VALID_TYPES = frozenset(
-    {"decision", "fact", "bug", "feedback", "preference", "note", "manual"}
-)
+# Durable tiers + the bulk `reference` tier. The split (which types the recall
+# hook / briefing surface automatically vs. on-demand-only) lives in
+# `memo.tiers`; this set is just "every type a memoria may legally carry".
+_VALID_TYPES = DURABLE_TYPES | REFERENCE_TYPES
 
 SYNAPSE_BACKEND_NATIVE_SCHEMA = "synapse.backend_native.v1"
 NATIVE_BACKEND_PROTOCOL_VERSION = "backend_native.v1"
@@ -912,7 +919,8 @@ class Memory:
     def search(
         self, query: str, *, limit: int | None = None, type_: str | None = None,
         mode: str = "hybrid", load_bodies: bool = True, disable_reranker: bool = False,
-        recency: bool = False,
+        recency: bool = False, exclude_types: set[str] | None = None,
+        include_forgotten: bool = False,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
 
@@ -940,20 +948,25 @@ class Memory:
                 is unset. The consumer-facing paths (recall hook, ask/chat) pass
                 this so stale facts don't crowd out recent ones; the eval
                 harness leaves it False to keep a raw, comparable baseline.
+            exclude_types: Drop hits whose `type` is in this set, pushed into
+                SQL so the candidate pool isn't spent on rows the caller will
+                discard. The recall hook + briefing pass `REFERENCE_TYPES`
+                (see `memo.tiers`) so bulk vault material stays searchable on
+                demand but never drowns durable knowledge in the prompt.
         """
         if not query or not query.strip():
             return []
         limit = limit or self.cfg.search_default_limit
 
         if mode == "bm25":
-            rows = self.store.search_bm25(query, limit=limit, type_=type_)
+            rows = self.store.search_bm25(query, limit=limit, type_=type_, exclude_types=exclude_types)
         elif mode == "vec":
             # Asymmetric retrieval: queries are embedded WITH the
             # instruction prefix; documents are embedded RAW (in
             # `save()` / `update()`). See `_QUERY_INSTRUCTION_PREFIX`
             # in `embedder.py` for the why.
             emb = self.embedder.embed_query(query)
-            rows = self.store.search(emb, limit=limit, type_=type_)
+            rows = self.store.search(emb, limit=limit, type_=type_, exclude_types=exclude_types)
         else:
             # hybrid — fetch a wider candidate set from each side and
             # fuse with reciprocal rank fusion (RRF). When the reranker
@@ -963,8 +976,8 @@ class Memory:
             input_k = self.cfg.rerank_input_k if self.cfg.reranker_enabled else limit
             k_each = max(input_k * 2, 30)
             emb = self.embedder.embed_query(query)
-            vec_hits = self.store.search(emb, limit=k_each, type_=type_)
-            bm_hits = self.store.search_bm25(query, limit=k_each, type_=type_)
+            vec_hits = self.store.search(emb, limit=k_each, type_=type_, exclude_types=exclude_types)
+            bm_hits = self.store.search_bm25(query, limit=k_each, type_=type_, exclude_types=exclude_types)
             rows = _rrf_fuse(vec_hits, bm_hits, limit=input_k)
         out: list[MemoryRecord] = []
         for r in rows:
@@ -976,6 +989,12 @@ class Memory:
                     body=body, extra=r.get("extra") or {}, score=r.get("score"),
                 ),
             )
+        # Drop soft-forgotten memorias (forget_after TTL elapsed, see
+        # lifecycle.py) before feedback/rerank so they never reach the
+        # consumer — recall, ask, chat all route through here. Reversible
+        # via `unforget`; pass include_forgotten=True to surface them.
+        if out and not include_forgotten:
+            out = [r for r in out if not (r.extra or {}).get(IS_FORGOTTEN_KEY)]
         # Source-level feedback (👍 / 👎) — applied AFTER RRF/vec retrieval
         # but BEFORE cross-encoder rerank so the reranker doesn't waste
         # cycles on hits the user already vetoed. Embeds the query once
@@ -1849,9 +1868,16 @@ class Memory:
 
     def list(
         self, *, limit: int = 20, type_: str | None = None,
+        include_forgotten: bool = False,
     ) -> list[MemoryRecord]:
-        """Recent entries by `updated` desc. Body included for each."""
+        """Recent entries by `updated` desc. Body included for each.
+
+        Soft-forgotten memorias (see `forget`) are excluded unless
+        `include_forgotten=True`.
+        """
         rows = self.store.list_recent(limit=limit, type_=type_)
+        if not include_forgotten:
+            rows = [r for r in rows if not (r.get("extra") or {}).get(IS_FORGOTTEN_KEY)]
         return [
             MemoryRecord(
                 id=r["id"], path=r["path"], title=r["title"], type=r["type"],
@@ -2160,6 +2186,47 @@ class Memory:
             self._emit_ledger("update", updated_rec, new_prov)
         return updated_rec
 
+    # -- forget (soft, reversible) ------------------------------------------
+
+    def forget(self, id_: str, *, reason: str | None = None) -> MemoryRecord | None:
+        """Soft-forget a memoria: keep the file + index, but exclude it from
+        `search` / recall / `list` by default.
+
+        Distinct from `delete` (which removes file + index) — `forget` is
+        reversible via `unforget`. Sets `is_forgotten` (and an optional
+        `forget_reason`) in the `extra` bag, merging onto existing metadata so
+        provenance and other keys survive. Returns the updated record, or None
+        if the id is unknown.
+        """
+        resolved = self.resolve_id(id_)
+        if resolved is None:
+            return None
+        r = self.store.get(resolved)
+        if r is None:
+            return None
+        merged = dict(r.get("extra") or {})
+        merged[IS_FORGOTTEN_KEY] = True
+        if reason:
+            merged[FORGET_REASON_KEY] = reason
+        return self.update(resolved, extra=merged)
+
+    def unforget(self, id_: str) -> MemoryRecord | None:
+        """Reverse a `forget`: clear `is_forgotten` so the memoria is searchable
+        again. Also clears `forget_after` / `forget_reason` so the next
+        maintenance pass doesn't immediately re-forget it. No-op (returns the
+        record) if it wasn't forgotten.
+        """
+        resolved = self.resolve_id(id_)
+        if resolved is None:
+            return None
+        r = self.store.get(resolved)
+        if r is None:
+            return None
+        merged = dict(r.get("extra") or {})
+        for key in (IS_FORGOTTEN_KEY, FORGET_AFTER_KEY, FORGET_REASON_KEY):
+            merged.pop(key, None)
+        return self.update(resolved, extra=merged)
+
     # -- delete -------------------------------------------------------------
 
     def delete(self, id_: str) -> bool:
@@ -2353,6 +2420,13 @@ class Memory:
             created = meta.get("created") or _now_iso()
             updated = meta.get("updated") or created
             extra = meta.get("extra") or {}
+            # Obsidian-friendly: accept `forget_after` / `forget_reason` as
+            # TOP-LEVEL frontmatter keys (what a user naturally types in their
+            # editor), folding them into the extra bag the lifecycle layer
+            # reads. The nested `extra:` form still works and takes precedence.
+            for _fk in (FORGET_AFTER_KEY, FORGET_REASON_KEY):
+                if _fk in meta and _fk not in extra:
+                    extra = {**extra, _fk: meta[_fk]}
 
             if existing is None:
                 # Path-collision guard: an .md may have its frontmatter id

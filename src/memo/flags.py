@@ -58,7 +58,7 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_MODE", "str", "vec", "recall", "Retrieval mode: vec | hybrid | bm25."),
     _spec("MEMO_RECALL_FORCE_MODE", "bool", True, "recall", "Honor MEMO_RECALL_MODE even when risky.", opt_out=True),
     _spec("MEMO_RECALL_TOP_K", "int", 3, "recall", "Number of memorias injected per prompt."),
-    _spec("MEMO_RECALL_MIN_SIM", "float", 0.6, "recall", "Cosine similarity floor for a hit."),
+    _spec("MEMO_RECALL_MIN_SIM", "float", 0.5, "recall", "Similarity floor for a hit, applied to the recency-decayed score (decay compresses raw cosine ~0.15, so 0.5 ≈ 0.65 raw; 0.6 over-filtered and caused bails). The bigger relevance lever is reference-tier exclusion."),
     _spec("MEMO_RECALL_BODY_CHARS", "int", 240, "recall", "Max body chars per injected memoria."),
     _spec("MEMO_RECALL_MIN_BODY_CHARS", "int", 40, "recall", "Skip memorias with bodies shorter than this."),
     _spec("MEMO_RECALL_MIN_PROMPT_CHARS", "int", 12, "recall", "Skip recall for prompts shorter than this."),
@@ -68,6 +68,7 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_STALENESS_DAYS", "int", 0, "recall", "Down-rank memorias older than N days (0 = off)."),
     _spec("MEMO_RECALL_SKIP_SLASH", "bool", True, "recall", "Skip recall when the prompt starts with '/'."),
     _spec("MEMO_RECALL_CONTEXTUAL", "bool", True, "recall", "Re-rank recall by learned type preferences + record what surfaces.", opt_out=True),
+    _spec("MEMO_RECALL_EXCLUDE_REFERENCE", "bool", True, "recall", "Exclude the bulk `reference` tier (ingested vault) from auto-recall so durable knowledge isn't drowned.", opt_out=True),
     # search ranking
     _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking."),
     _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),
