@@ -36,6 +36,27 @@ os.environ.setdefault(
     str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-config.toml"),
 )
 
+# Hermetic recall-daemon isolation. A developer machine usually has memo's warm
+# recall daemon listening at the *default* state dir
+# (`~/.local/share/memo/recall.sock`). Two code paths would otherwise consume it
+# mid-test and silently break hermeticity:
+#   1. `MEMO_EMBEDDER_VIA_DAEMON=1` makes `Memory` route embeds over the socket;
+#   2. `embedder_client`'s socket-first helpers resolve a `None` state_dir to
+#      `Config.from_env().state_dir` (and cache it) — without a pinned
+#      `MEMO_STATE_DIR` that is exactly the real default dir.
+# Either way the live daemon returns real nearest-neighbour vectors at the
+# production model's dims, corrupting assertions that assume the stub embedder
+# (semantic search always returns *some* neighbour, so "unrelated → empty"
+# negative tests start failing). Force the flag off (hard-set: overrides a
+# developer's exported `=1`) and point the default state dir away from the real
+# socket. Tests that exercise daemon routing opt back in via `monkeypatch.setenv`
+# / `CliRunner(...).invoke(env=...)`.
+os.environ["MEMO_EMBEDDER_VIA_DAEMON"] = "0"
+os.environ.setdefault(
+    "MEMO_STATE_DIR",
+    str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-state"),
+)
+
 from memo.config import Config
 
 
