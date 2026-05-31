@@ -168,6 +168,15 @@ question is in Spanish). Rules:
   quoting.
 - If the question is open-ended ("what did we decide", "why X"), then
   synthesise concisely (2-5 sentences) instead of quoting.
+- RECENCY / CONVERSATION questions ("qué fue lo último que dijo X", "what did
+  X last say", "su último mensaje", "mostrame el chat con X", "qué me escribió
+  X"): the answer is the message(s) in the snippets — the most recent for a
+  recency ask, the relevant exchange for a conversation ask — not a description
+  of the person. Quote the message(s) verbatim with their date/time as shown in
+  the transcript. If a transcript snippet is present, NEVER answer with a
+  profile/biography of the person (age, city, email) — that is not what was
+  asked. Only fall back to a profile when no message/transcript snippet was
+  retrieved at all.
 - Cite sources INLINE with `[id-prefix]` after each claim or block, e.g.
   "Decidí migrar a MLX [d61fe730] para reducir dependencias [4e0b2e6]".
   For repo evidence, cite the full repo label you received.
@@ -280,6 +289,81 @@ def _vault_dedup_keys(rec: MemoryRecord) -> set[str]:
             if base:
                 keys.add(base)
     return keys
+
+
+# Recency-intent handling for ask()/chat_ask(). "Qué fue lo último que dijo X",
+# "last message", "more recent" are temporal questions: the user wants the most
+# recent content, not the highest semantic match. Pure cosine ranks a same-named
+# contact/profile card (title == the person's name) above the dated transcript.
+# We detect the intent cheaply and, when present, re-order the retrieved hits by
+# the most recent calendar date they mention (WhatsApp transcripts carry
+# `## YYYY-MM-DD` day headers + dated chunk titles), floating conversation
+# sources up when the question itself names the channel ("por whatsapp").
+_RECENCY_TOKENS = (
+    "ultimo", "ultima", "ultimos", "ultimas",
+    "último", "última", "últimos", "últimas",
+    "reciente", "recientes", "recientemente",
+    "last", "latest", "most recent", "more recent", "recent",
+    "qué dijo", "que dijo", "qué escribió", "que escribio",
+    "lo que dijo", "what did", "said last",
+)
+_ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+
+
+def _is_recency_query(q: str) -> bool:
+    """True when the question asks for the *most recent* content (ES/EN)."""
+    ql = (q or "").lower()
+    return any(tok in ql for tok in _RECENCY_TOKENS)
+
+
+# Conversation intent ("mostrame el chat con X", "qué me escribió X") is the
+# same failure class as recency without the recency word: a person-scoped
+# message query whose dated transcript loses to the same-named contact card on
+# pure cosine. We float WhatsApp transcripts for these too — see _build_ask_context.
+_CONVERSATION_TOKENS = (
+    "mensaje", "mensajes", "chat", "conversación", "conversacion",
+    "escribió", "escribio", "escribiste", "hablé", "hable", "hablamos",
+    "whatsapp", "wpp", "message", "messages", "texted", "wrote",
+    "conversation", "chatted", "talked",
+)
+
+
+def _is_conversation_query(q: str) -> bool:
+    """True when the user asks about a conversation/messages (channel-scoped),
+    even without an explicit recency word. Used to float WhatsApp transcripts
+    above a same-named contact/profile card."""
+    ql = (q or "").lower()
+    return any(tok in ql for tok in _CONVERSATION_TOKENS)
+
+
+def _is_whatsapp_hit(rec: MemoryRecord) -> bool:
+    """True when a hit is an actual WhatsApp *transcript* — keyed on the
+    `WhatsApp · …` title prefix or `source: whatsapp` frontmatter, NOT the
+    generic `whatsapp` tag (meta-notes *about* whatsapp carry that tag too and
+    must not be mistaken for transcripts)."""
+    if (rec.title or "").startswith("WhatsApp ·"):
+        return True
+    return (rec.extra or {}).get("source") == "whatsapp"
+
+
+def _is_group_chat(rec: MemoryRecord) -> bool:
+    """True when a WhatsApp transcript hit is a *group* chat (vs a 1:1).
+    Group transcript titles carry a `group`/`grupo` marker; a question about a
+    person ("lo último que dijo Grecia") wants her 1:1 chat, not a same-named
+    group she belongs to."""
+    tl = (rec.title or "").lower()
+    return "group" in tl or "grupo" in tl
+
+
+def _recency_key(rec: MemoryRecord) -> str:
+    """Sortable recency signal: the most recent ISO date the hit mentions in
+    its title or body, falling back to the record's updated/created stamp.
+    ISO `YYYY-MM-DD` strings sort lexicographically, so `max()` == newest."""
+    dates = _ISO_DATE_RE.findall(rec.title or "")
+    dates += _ISO_DATE_RE.findall(rec.body or "")
+    if dates:
+        return max(dates)
+    return (rec.updated or rec.created or "")[:10]
 
 
 # Domain error hierarchy lives in memo.errors; re-exported here so existing
@@ -1760,10 +1844,19 @@ class Memory:
                 len(question), _MAX_QUESTION_CHARS,
             )
             question = question[:_MAX_QUESTION_CHARS]
+        # Recency intent ("lo último que dijo X", "last message") and the wider
+        # conversation intent ("mostrame el chat con X", "qué me escribió X")
+        # both widen the pool so the dated transcript isn't crowded out by a
+        # same-named contact/profile card. Only recency biases retrieval toward
+        # *recent* material (freshness decay) — a conversation ask shouldn't
+        # down-weight by age.
+        recency_intent = _is_recency_query(question)
+        convo_intent = recency_intent or _is_conversation_query(question)
+        search_limit = max(k, 12) if convo_intent else k
         # Lazy-load bodies: defer disk I/O until after reranking
         hits: list[MemoryRecord] = self.search(
-            question, limit=k, type_=type_, mode="hybrid", load_bodies=False,
-            disable_reranker=disable_reranker, read_through=True,
+            question, limit=search_limit, type_=type_, mode="hybrid", load_bodies=False,
+            disable_reranker=disable_reranker, read_through=True, recency=recency_intent,
         )
         repo_hits = []
         if include_repos and self.store.list_repo_sources(limit=1):
@@ -1778,6 +1871,31 @@ class Memory:
             h if h.body else replace(h, body=self._read_body(h.path))
             for h in hits
         ]
+
+        # Recency/conversation re-ranking: float WhatsApp transcripts above a
+        # same-named contact/profile card, preferring a 1:1 chat over a same-
+        # named group. For a recency ask, the dated content the hit carries is
+        # the tiebreaker (newest first); for a conversation-only ask the date
+        # is left out so semantic relevance is preserved among ties (the sort is
+        # stable). Gated on `has_wa` for conversation intent so a non-WhatsApp
+        # conversational query isn't destructively re-sorted. Bodies are loaded
+        # above, so _recency_key can read in-transcript dates.
+        has_wa = any(_is_whatsapp_hit(h) for h in hits)
+        if recency_intent or (convo_intent and has_wa):
+            ql = question.lower()
+            wa_query = "whatsapp" in ql
+            # Prefer a 1:1 chat over a same-named group unless the question is
+            # explicitly about a group.
+            prefer_direct = "group" not in ql and "grupo" not in ql
+
+            def _recency_sort_key(h: MemoryRecord) -> tuple[int, int, str]:
+                wa = _is_whatsapp_hit(h)
+                wa_floated = 1 if (wa_query and wa) else 0
+                direct = 1 if (prefer_direct and wa and not _is_group_chat(h)) else 0
+                date = _recency_key(h) if recency_intent else ""
+                return (wa_floated, direct, date)
+
+            hits = sorted(hits, key=_recency_sort_key, reverse=True)[:k]
 
         snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []

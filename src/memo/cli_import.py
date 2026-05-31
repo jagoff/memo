@@ -75,10 +75,16 @@ def import_csv(input_path: str) -> None:
               help="Only include messages newer than N days.")
 @click.option("--since", help="Floor date YYYY-MM-DD (in addition to retention).")
 @click.option("--notes-dir", "notes_dir", type=click.Path(), default=None,
-              help="Override output folder (default: <vault>/Obsidian/Whatsapp).")
+              help="Override output folder (default: <vault>/<SYSTEM_DIR>/Whatsapp, "
+                   "or $MEMO_WHATSAPP_NOTES_DIR). If under <SYSTEM_DIR>/AI/ — excluded "
+                   "from generic vault ingest — the --index step still indexes it "
+                   "directly as `--name whatsapp`.")
 @click.option("--dry-run", is_flag=True, help="Report counts, write nothing.")
 @click.option("--index/--no-index", default=True, show_default=True,
               help="Run `memo ingest` on the notes folder so the chat can find them.")
+@click.option("--reindex", is_flag=True,
+              help="Skip the bridge; just re-run `memo ingest` over the existing "
+                   "notes folder. Repairs 'notes exist on disk but aren't searchable'.")
 @click.option("--db", "db_path", type=click.Path(),
               help="Override bridge messages.db path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit the summary as JSON.")
@@ -91,22 +97,30 @@ def import_whatsapp(
     notes_dir: str | None,
     dry_run: bool,
     index: bool,
+    reindex: bool,
     db_path: str | None,
     as_json: bool,
 ) -> None:
     """Ingest WhatsApp conversations as readable per-contact notes.
 
-    Writes one Markdown note per chat to `<vault>/Obsidian/Whatsapp/<contacto>.md`
-    (transcript grouped by date) and — unless --no-index — runs `memo ingest` on
-    that folder so the notes are searchable by `memo search`/`ask` and the
-    synapse :8765 chat (source=vault-ingest). Notes are regenerated in full each
-    run (idempotent). Scope is opt-in.
+    Writes one Markdown note per chat to the notes dir (default
+    `<vault>/<SYSTEM_DIR>/Whatsapp`, override via --notes-dir or
+    $MEMO_WHATSAPP_NOTES_DIR), transcript grouped by date, and — unless
+    --no-index — runs `memo ingest <notes_dir> --name whatsapp` so the notes
+    are searchable by `memo search`/`ask` and the synapse :8765 chat. Indexing
+    targets the notes dir directly, so it works even when the dir lives under
+    `<SYSTEM_DIR>/AI/` (which the generic vault ingest excludes). Notes are
+    regenerated in full each run (idempotent). Scope is opt-in.
+
+    Use --reindex to (re)index an existing notes folder without touching the
+    bridge — repairs "notes exist on disk but aren't searchable".
 
     Examples:
 
       memo import whatsapp --include-chat 549XXX@s.whatsapp.net --dry-run
       memo import whatsapp --include-chat 549XXX@s.whatsapp.net
       memo import whatsapp --all-chats --retention-days 90
+      memo import whatsapp --reindex
     """
     import json as _json
     import subprocess
@@ -116,6 +130,26 @@ def import_whatsapp(
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
+
+    # --reindex: don't touch the bridge; just (re)index the notes folder so
+    # existing transcripts that never made it into the index become searchable.
+    if reindex:
+        target = Path(notes_dir) if notes_dir else whatsapp_ingest.resolve_notes_dir(mem)
+        if not target.is_dir():
+            raise click.ClickException(f"notes dir not found: {target}")
+        try:
+            subprocess.run(
+                ["memo", "ingest", str(target), "--name", "whatsapp"],
+                check=True,
+            )
+        except Exception as exc:
+            raise click.ClickException(f"reindex failed: {exc}") from exc
+        out = {"reindexed": True, "notes_dir": str(target)}
+        if as_json:
+            console.print_json(_json.dumps(out))
+        else:
+            console.print(f"[green]Reindexed[/green] {target}")
+        return
 
     try:
         summary = whatsapp_ingest.run(
