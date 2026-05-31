@@ -174,6 +174,10 @@ def ingest(
     don't double-index curated memorias. Note: sibling user content
     under `<SYSTEM_DIR>/` — `Contacts/`, `99-Forms/`, `99-Templates/`
     — IS indexed (e.g. `<SYSTEM_DIR>/Contacts/Grecia.md`).
+
+    A `.memoignore` file in the vault root adds further exclusions (one
+    pattern per line, `#` comments allowed) — the durable way to drop a
+    folder like `04-Archive/` without editing the launchd ingest command.
     """
     import os as _os_min
     from pathlib import Path
@@ -207,7 +211,18 @@ def ingest(
         ".obsidian", ".git", ".trash", ".makemd", ".smart-env", ".space",
         ".claude", ".devin", AI_SUBDIR,
     )
-    exclude_patterns = list(exclude) + list(default_excludes)
+    # `.memoignore` in the vault root lets the user exclude folders durably,
+    # without touching the (auto-regenerated) launchd ingest invocation. One
+    # pattern per line; `#` comments and blank lines ignored. Patterns match
+    # like --exclude: a path prefix or a `/segment/` anywhere in the rel path.
+    memoignore_patterns: list[str] = []
+    memoignore = vault / ".memoignore"
+    if memoignore.is_file():
+        for line in memoignore.read_text(encoding="utf-8").splitlines():
+            pat = line.split("#", 1)[0].strip().strip("/")
+            if pat:
+                memoignore_patterns.append(pat)
+    exclude_patterns = list(exclude) + memoignore_patterns + list(default_excludes)
 
     def _excluded(rel: Path) -> bool:
         s = str(rel)
