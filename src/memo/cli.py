@@ -82,6 +82,7 @@ from memo.cli_memory import (
 from memo.cli_multimodal import multimodal_group
 from memo.cli_profile import profile_group
 from memo.cli_query import query_group
+from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_repo import repo_group
 from memo.cli_retier import retier_cmd
@@ -177,6 +178,7 @@ cli.add_command(backend_native_group)
 cli.add_command(feedback_group)
 cli.add_command(repo_group)
 cli.add_command(recall_daemon_group)
+cli.add_command(ingest_daemon_group)
 cli.add_command(embed_daemon_group)
 cli.add_command(as_of_group)
 cli.add_command(session_group)

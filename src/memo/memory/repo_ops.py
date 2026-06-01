@@ -33,8 +33,7 @@ class _RepoOpsMixin(_MemoryBase):
         max_file_bytes: int | None = None,
         progress=None,
     ) -> dict[str, Any]:
-        return self._repo_corpus().index(
-            url,
+        index_kwargs: dict[str, Any] = dict(
             name=name,
             ref=ref,
             force=force,
@@ -42,8 +41,23 @@ class _RepoOpsMixin(_MemoryBase):
             include=include,
             exclude=exclude,
             max_file_bytes=max_file_bytes,
-            progress=progress,
         )
+        # Optional off-request path: when MEMO_INGEST_VIA_DAEMON=1 and the
+        # ingest daemon is reachable, hand the batch index to its serialized
+        # writer (returns a job_id; poll via `memo ingest-daemon status`).
+        # `progress` callbacks can't cross the socket, so daemon routing is
+        # only used when no progress sink is requested. Any miss (flag off,
+        # daemon down, progress requested) runs in-process exactly as before.
+        from memo.flags import flag_bool
+
+        if progress is None and flag_bool("MEMO_INGEST_VIA_DAEMON"):
+            from memo import ingest_client
+
+            job_id = ingest_client.enqueue("repo", {"url": url, **index_kwargs})
+            if job_id is not None:
+                return {"queued": True, "job_id": job_id, "via": "ingest-daemon"}
+            # daemon unreachable → fall through to in-process (graceful)
+        return self._repo_corpus().index(url, progress=progress, **index_kwargs)
 
     def repo_embed(self, repo: str, *, force: bool = False, progress=None) -> dict[str, Any]:
         return self._repo_corpus().embed(repo, force=force, progress=progress)
