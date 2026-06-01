@@ -36,6 +36,22 @@ def _memo_imports(module_file: Path) -> set[str]:
     return found
 
 
+def _module_imports(module: str) -> set[str]:
+    """memo submodules imported by `module`, whether it's a single-file
+    module (`SRC / f"{module}.py"`) or a package directory (`SRC / module`).
+    For a package, unions `_memo_imports` over every `*.py` inside it."""
+    single = SRC / f"{module}.py"
+    if single.exists():
+        return _memo_imports(single)
+    pkg = SRC / module
+    if pkg.is_dir():
+        found: set[str] = set()
+        for py in sorted(pkg.glob("*.py")):
+            found |= _memo_imports(py)
+        return found
+    return _memo_imports(single)
+
+
 def test_brain_like_cli_groups_are_not_public() -> None:
     """Memo exposes corpus primitives; Synapse owns orchestration surfaces."""
     forbidden = {"agent", "cognitive", "federation", "lifecycle", "suggest"}
@@ -63,7 +79,7 @@ def test_repo_index_does_not_write_memflow_receipts() -> None:
 @pytest.mark.parametrize("module", FOUNDATION_MODULES)
 def test_foundation_modules_import_no_other_memo_module(module: str) -> None:
     """Foundation modules stay leaf-level — no memo->memo imports, no cycles."""
-    imports = _memo_imports(SRC / f"{module}.py")
+    imports = _module_imports(module)
     imports.discard(module)
     assert imports == set(), (
         f"{module}.py must not import other memo modules, found: {sorted(imports)}"
@@ -72,7 +88,7 @@ def test_foundation_modules_import_no_other_memo_module(module: str) -> None:
 
 def test_store_never_imports_memory() -> None:
     """The store is below the Memory API; importing it back would be a cycle."""
-    assert "memory" not in _memo_imports(SRC / "store.py")
+    assert "memory" not in _module_imports("store")
 
 
 def test_util_is_pure_stdlib_leaf() -> None:
