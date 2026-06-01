@@ -13,6 +13,7 @@ from fastmcp import FastMCP
 
 from memo.memory import Memory
 
+
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memory_analytics_summary() -> dict[str, Any]:

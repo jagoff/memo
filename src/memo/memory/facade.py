@@ -29,6 +29,13 @@ from memo.graph import GraphStore
 from memo.import_export import ImportExportManager
 from memo.lifecycle import LifecycleManager
 from memo.llm import MLXChat
+from memo.memory.ask_ops import _AskOpsMixin
+from memo.memory.maintain_ops import _MaintainOpsMixin
+from memo.memory.record import _compose_for_embed, _log
+from memo.memory.repo_ops import _RepoOpsMixin
+from memo.memory.rerank_ops import _RerankOpsMixin
+from memo.memory.search_ops import _SearchOpsMixin
+from memo.memory.write_ops import _WriteOpsMixin
 from memo.multimodal import CrossModalSearch, MultiModalManager, MultiModalStore, UniversalEmbedder
 from memo.navigation import GraphNavigator
 from memo.proactive import ProactiveSuggester
@@ -38,14 +45,6 @@ from memo.store import VecStore
 from memo.sync import BackupManager, SyncManager
 from memo.temporal import TemporalAnalyzer
 from memo.versioning import VersionManager
-
-from memo.memory.ask_ops import _AskOpsMixin
-from memo.memory.maintain_ops import _MaintainOpsMixin
-from memo.memory.record import _compose_for_embed, _log
-from memo.memory.repo_ops import _RepoOpsMixin
-from memo.memory.rerank_ops import _RerankOpsMixin
-from memo.memory.search_ops import _SearchOpsMixin
-from memo.memory.write_ops import _WriteOpsMixin
 
 
 class Memory(

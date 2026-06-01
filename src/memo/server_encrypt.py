@@ -11,7 +11,17 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from memo.flags import flag_bool
 from memo.memory import Memory
+
+# Returned when the encryption vertical is gated off (default). Mirrors the CLI
+# disabled message in cli_encrypt.py.
+_DISABLED_MSG = "Encryption disabled (set MEMO_ENCRYPTION_ENABLED=1 to enable)."
+
+
+def _disabled() -> dict[str, Any]:
+    return {"ok": False, "status": "disabled", "error": _DISABLED_MSG}
+
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
@@ -26,16 +36,20 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             password: User password for key derivation.
         """
+        if not flag_bool("MEMO_ENCRYPTION_ENABLED"):
+            return _disabled()
         success = memory.encryption.unlock(password)
         return {"success": success, "status": "unlocked" if success else "failed"}
 
     @server.tool()
-    def memory_encrypt_lock() -> dict[str, str]:
+    def memory_encrypt_lock() -> dict[str, Any]:
         """Lock the vault (clear master key from memory).
 
         Clears the master encryption key from memory, preventing
         further encryption/decryption operations until unlock() is called.
         """
+        if not flag_bool("MEMO_ENCRYPTION_ENABLED"):
+            return _disabled()
         memory.encryption.lock()
         return {"status": "locked"}
 
@@ -46,6 +60,8 @@ def register(server: FastMCP, memory: Memory) -> None:
         Returns the current lock status of the vault and whether
         encryption operations can be performed.
         """
+        if not flag_bool("MEMO_ENCRYPTION_ENABLED"):
+            return _disabled()
         return {
             "is_unlocked": memory.encryption.is_unlocked(),
             "status": "unlocked" if memory.encryption.is_unlocked() else "locked",

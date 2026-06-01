@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from memo import embed_protocol
 from memo.ingest_server import _socket_path
@@ -29,7 +29,7 @@ def _resolve_state_dir(state_dir: Path | None) -> Path:
     return Config.from_env().state_dir
 
 
-def ping(*, state_dir: Path | None = None) -> Optional[dict[str, Any]]:
+def ping(*, state_dir: Path | None = None) -> dict[str, Any] | None:
     """Probe the daemon. Returns its status dict, or None if unreachable."""
     sock = _socket_path(_resolve_state_dir(state_dir))
     return embed_protocol.send_request(sock, {"op": "ping"}, timeout=_PING_TIMEOUT_S)
@@ -41,7 +41,7 @@ def enqueue(
     *,
     state_dir: Path | None = None,
     timeout: float = _DEFAULT_TIMEOUT_S,
-) -> Optional[str]:
+) -> str | None:
     """Enqueue a batch job. Returns its job_id, or None if the daemon is
     unreachable (caller should run the op in-process)."""
     sock = _socket_path(_resolve_state_dir(state_dir))
@@ -56,11 +56,11 @@ def enqueue(
     return str(job_id) if job_id else None
 
 
-def status(job_id: str, *, state_dir: Path | None = None, timeout: float = _DEFAULT_TIMEOUT_S) -> Optional[dict[str, Any]]:
+def status(job_id: str, *, state_dir: Path | None = None, timeout: float = _DEFAULT_TIMEOUT_S) -> dict[str, Any] | None:
     """Poll a job's state. Returns its status dict, or None if unreachable."""
     sock = _socket_path(_resolve_state_dir(state_dir))
     resp = embed_protocol.send_request(sock, {"op": "status", "job_id": job_id}, timeout=timeout)
     return resp
 
 
-__all__ = ["ping", "enqueue", "status"]
+__all__ = ["enqueue", "ping", "status"]

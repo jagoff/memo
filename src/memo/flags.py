@@ -133,6 +133,7 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_CACHE_TTL_DAYS", "int", 0, "cache", "Freshness window in days before a cached memoria is revalidated against the backing store / eligible for ttl eviction (0 = off)."),
     _spec("MEMO_CACHE_BACKEND", "str", "memflow", "cache", "Authoritative backing store the cache fronts: memflow (flow_* shared consciousness) | vault (remote vault path) | none. Only consulted when MEMO_CACHE_MODE != off."),
     # misc behavior
+    _spec("MEMO_ENCRYPTION_ENABLED", "bool", False, "misc", "Enable the at-rest encryption vertical (EXPERIMENTAL). When off (default) the `memo encrypt` CLI group and `memory_encrypt_*` MCP tools refuse with a disabled message instead of touching the key manager; the EncryptionManager is still constructed so the facade/store wiring is unchanged."),
     _spec("MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True),
     _spec("MEMO_PROMPT_CACHE", "bool", False, "misc", "Enable LLM prompt caching."),
     _spec("MEMO_CONTEXTUAL_RETRIEVAL", "bool", False, "misc", "Enable contextual-retrieval re-ranking."),

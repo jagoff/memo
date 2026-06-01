@@ -11,6 +11,19 @@ import click
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.flags import flag_bool
+
+# Shown when the encryption vertical is gated off (default). Mirrors the MCP
+# disabled payload in server_encrypt.py.
+_DISABLED_MSG = "Encryption disabled (set MEMO_ENCRYPTION_ENABLED=1 to enable)."
+
+
+def _require_enabled() -> None:
+    """Refuse with a clear message + non-zero exit unless the flag is on."""
+    if not flag_bool("MEMO_ENCRYPTION_ENABLED"):
+        console.print(f"[yellow]{_DISABLED_MSG}[/yellow]")
+        raise click.exceptions.Exit(1)
+
 
 # -- encryption commands ----------------------------------------------------------
 
@@ -30,6 +43,7 @@ def encrypt_unlock(password: str) -> None:
 
     Example: memo encrypt unlock mypassword
     """
+    _require_enabled()
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
@@ -47,6 +61,7 @@ def encrypt_lock() -> None:
 
     Example: memo encrypt lock
     """
+    _require_enabled()
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
@@ -60,6 +75,7 @@ def encrypt_status() -> None:
 
     Example: memo encrypt status
     """
+    _require_enabled()
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 

@@ -52,7 +52,7 @@ from __future__ import annotations
 import json
 import socket as _socket
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # -- frozen op names -------------------------------------------------------
 OP_PING = "ping"
@@ -118,7 +118,7 @@ def send_request_line(
     *,
     timeout: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = MAX_LINE_BYTES,
-) -> Optional[str]:
+) -> str | None:
     """Send one JSON-line request; return the raw response line (no trailing
     newline) or ``None`` on any failure.
 
@@ -152,7 +152,7 @@ def send_request(
     *,
     timeout: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = MAX_LINE_BYTES,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Send one JSON-line request; return the parsed response ``dict`` or
     ``None`` on any failure (including non-JSON or non-object responses)."""
     line = send_request_line(sock_path, payload, timeout=timeout, max_bytes=max_bytes)
@@ -166,22 +166,22 @@ def send_request(
 
 
 __all__ = [
-    "OP_PING",
-    "OP_EMBED_QUERY",
-    "OP_EMBED_BATCH",
-    "FIELD_VECTOR",
-    "FIELD_VECTORS",
+    "DEFAULT_TIMEOUT_S",
     "FIELD_DIM",
     "FIELD_DIMS",
+    "FIELD_ERROR",
     "FIELD_MODEL",
     "FIELD_OK",
-    "FIELD_ERROR",
+    "FIELD_VECTOR",
+    "FIELD_VECTORS",
     "MAX_LINE_BYTES",
-    "DEFAULT_TIMEOUT_S",
+    "OP_EMBED_BATCH",
+    "OP_EMBED_QUERY",
+    "OP_PING",
     "PING_TIMEOUT_S",
     "default_socket_path",
-    "encode_request",
     "encode_payload",
-    "send_request_line",
+    "encode_request",
     "send_request",
+    "send_request_line",
 ]

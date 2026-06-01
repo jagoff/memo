@@ -10,18 +10,16 @@ from __future__ import annotations
 import builtins
 import os
 from dataclasses import replace
-from typing import Any
 
 from memo.lifecycle import IS_FORGOTTEN_KEY
-
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _RECALL_DECAY_HALFLIFE_DEFAULT,
+    AmbiguousIdError,
+    MemoryRecord,
     _apply_decay,
     _log,
     _rrf_fuse,
-    AmbiguousIdError,
-    MemoryRecord,
 )
 
 
