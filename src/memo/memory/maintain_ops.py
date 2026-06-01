@@ -542,6 +542,35 @@ class _MaintainOpsMixin(_MemoryBase):
         self, *, threshold: float = 0.85, max_clusters: int = 50,
         type_: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
+        """Propose near-duplicate merges (LLM synthesis step).
+
+        Optional off-resident-set path: when ``MEMO_MAINT_VIA_DAEMON=1`` and the
+        maintenance daemon is reachable, the heavy synthesis LLM runs in that
+        daemon's process (keeping it out of memo-mcp's resident set) and returns
+        the proposals here. Any miss (flag off, daemon down) runs in-process
+        exactly as before — see :meth:`_consolidate_in_process`. The daemon
+        itself calls ``_consolidate_in_process`` directly, so it never re-routes
+        to itself.
+        """
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_MAINT_VIA_DAEMON"):
+            from memo import maint_client
+
+            proposals = maint_client.consolidate(
+                threshold=threshold, max_clusters=max_clusters, type_=type_,
+            )
+            if proposals is not None:
+                return proposals
+            # daemon unreachable → fall through to in-process (graceful)
+        return self._consolidate_in_process(
+            threshold=threshold, max_clusters=max_clusters, type_=type_,
+        )
+
+    def _consolidate_in_process(
+        self, *, threshold: float = 0.85, max_clusters: int = 50,
+        type_: str | None = None,
+    ) -> builtins.list[dict[str, Any]]:
         """Find clusters of near-duplicate memorias and propose actions.
 
         Algorithm:
