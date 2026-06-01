@@ -106,6 +106,31 @@ def test_ingest_chunks_long_markdown(tmp_path: Path, runner_env):
     assert parent_paths, "chunks must carry extra_json with parent_path"
 
 
+def test_ingest_honors_memoignore(tmp_path: Path, runner_env):
+    """A `.memoignore` in the vault root excludes matching folders, the
+    durable way to drop e.g. `04-Archive/` without editing the launchd
+    ingest command. `#` comments and blank lines are ignored."""
+    vault = _build_vault(tmp_path / "vault", {
+        "01-Projects/active.md": "# Active\n\nA note that should be indexed.",
+        "04-Archive/old.md": "# Old\n\nAn archived note that must be skipped.",
+        "04-Archive/Companies/dead.md": "# Dead\n\nNested archive note, also skipped.",
+    })
+    (vault / ".memoignore").write_text(
+        "# archived notes — keep out of the index\n\n04-Archive\n", encoding="utf-8"
+    )
+
+    result = CliRunner().invoke(
+        cli, ["ingest", str(vault), "--name", "v", "--no-chunk", "--no-include-pdf", "--no-include-orphan-images", "--no-ocr"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+
+    store = _open_store(runner_env)
+    paths = [r["path"] for r in _all_rows(store)]
+    assert any("active.md" in p for p in paths), f"active note missing: {paths}"
+    assert not any("04-Archive" in p for p in paths), f"archive leaked in: {paths}"
+
+
 def test_ingest_skips_chunking_for_short_doc(tmp_path: Path, runner_env):
     """Short doc (< chunk_chars) stores a single row, no chunk suffix."""
     vault = _build_vault(tmp_path / "vault", {"short.md": "# Short\n\nA tiny note about cats and dogs."})

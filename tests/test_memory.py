@@ -692,6 +692,150 @@ def test_ask_returns_no_answer_when_no_hits(mem_with_stub: Memory):
     assert out["sources"] == []
 
 
+def test_recency_helpers():
+    """Recency intent detection + whatsapp + dated-content sort key."""
+    from memo.memory import (
+        MemoryRecord,
+        _is_conversation_query,
+        _is_recency_query,
+        _is_whatsapp_hit,
+        _recency_key,
+    )
+
+    assert _is_recency_query("qué fue lo último que dijo Grecia por whatsapp")
+    assert _is_recency_query("what did Maria last say")
+    assert _is_recency_query("su mensaje más reciente")
+    assert not _is_recency_query("quién es Grecia")
+    assert not _is_recency_query("resumen del proyecto memo")
+
+    # Conversation intent: person-scoped message queries WITHOUT a recency word
+    # still float transcripts. A profile lookup ("quién es X") must not.
+    assert _is_conversation_query("mostrame el chat con Grecia")
+    assert _is_conversation_query("qué me escribió Grecia")
+    assert _is_conversation_query("show me my messages with Maria")
+    assert not _is_conversation_query("quién es Grecia")
+    assert not _is_conversation_query("cuándo es el cumple de Grecia")
+    assert not _is_conversation_query("resumen del proyecto memo")
+
+    wa = MemoryRecord(
+        id="b" * 32, path="x/WhatsApp · Grecia.md", title="WhatsApp · Grecia 🩷",
+        type="reference", tags=["whatsapp", "chat"],
+        created="2026-05-18T00:00:00", updated="2026-05-18T00:00:00",
+        body="## 2026-05-17\n- **Grecia 🩷** (16:26): Jajaja está linda",
+    )
+    contact = MemoryRecord(
+        id="a" * 32, path="Contacts/Grecia.md", title="Grecia",
+        type="reference", tags=["Obsidian", "Contacts"],
+        created="2026-05-30T00:00:00", updated="2026-05-30T00:00:00",
+        body="Grecia Ferrari, 15 años, Santa Fe.",
+    )
+    # A meta-note *about* whatsapp carries the `whatsapp` tag but is NOT a
+    # transcript — must not be mistaken for one.
+    meta = MemoryRecord(
+        id="c" * 32, path="AI/memory/whatsapp-note.md", title="Maria y Grecia completados",
+        type="fact", tags=["whatsapp", "contacts", "vault"],
+        created="2026-05-30T00:00:00", updated="2026-05-30T00:00:00",
+        body="Se completaron los JID de Maria y Grecia.",
+    )
+    assert _is_whatsapp_hit(wa)
+    assert not _is_whatsapp_hit(contact)
+    assert not _is_whatsapp_hit(meta)
+    # Transcript's most-recent in-body date beats the contact's update stamp
+    # only via the whatsapp flag; the key itself reflects dated content.
+    assert _recency_key(wa) == "2026-05-17"
+    assert _recency_key(contact) == "2026-05-30"  # falls back to updated[:10]
+
+
+def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
+    mem_with_stub: Memory, monkeypatch,
+):
+    """Recency/conversation whatsapp questions must surface a dated transcript,
+    not the same-named contact/profile card. For a RECENCY ask the *newest*
+    conversation wins (a group active today beats an older 1:1); a 1:1 is
+    preferred only as a same-date tiebreaker / for non-recency asks."""
+    from memo.memory import MemoryRecord
+
+    contact = MemoryRecord(
+        id="a" * 32, path="Contacts/Grecia.md", title="Grecia",
+        type="reference", tags=["Obsidian", "Contacts"],
+        created="2026-05-30T00:00:00", updated="2026-05-30T00:00:00",
+        body="Grecia Ferrari, 15 años, Santa Fe.", score=0.92,
+    )
+    transcript = MemoryRecord(
+        id="b" * 32, path="AI/Whatsapp/Grecia.md", title="WhatsApp · Grecia 🩷",
+        type="reference", tags=["whatsapp", "chat"],
+        created="2026-05-18T00:00:00", updated="2026-05-18T00:00:00",
+        body="## 2026-05-17\n- **Grecia 🩷** (16:26): Jajaja está linda", score=0.90,
+    )
+    # A same-named GROUP chat with a *more recent* message — for a recency ask
+    # this IS the latest conversation and must lead.
+    group = MemoryRecord(
+        id="d" * 32, path="AI/Whatsapp/Grecia's group.md", title="WhatsApp · Grecia's group",
+        type="reference", tags=["whatsapp", "chat"],
+        created="2026-05-19T00:00:00", updated="2026-05-19T00:00:00",
+        body="## 2026-05-19\n- **alguien** (10:00): Jajajajaj", score=0.91,
+    )
+    monkeypatch.setattr(Memory, "search", lambda self, q, **kw: [contact, group, transcript])
+
+    # Recency intent → newest transcript leads (group 05-19 > 1:1 05-17), and
+    # both float above the contact card despite its fresher `updated` stamp.
+    _, sources, _, _ = mem_with_stub._build_ask_context(
+        "qué fue lo último que dijo Grecia por whatsapp", k=5, type_=None,
+        snippet_chars=200, include_repos=False,
+    )
+    assert sources[0]["title"] == "WhatsApp · Grecia's group"
+    assert sources[1]["title"] == "WhatsApp · Grecia 🩷"
+    assert sources[2]["title"] == "Grecia"
+
+    # Conversation intent WITHOUT a recency word → no date sort; the 1:1 is
+    # preferred over the group, both above the contact card.
+    _, sources_c, _, _ = mem_with_stub._build_ask_context(
+        "mostrame el chat con Grecia", k=5, type_=None,
+        snippet_chars=200, include_repos=False,
+    )
+    assert sources_c[0]["title"] == "WhatsApp · Grecia 🩷"
+
+    # Profile lookup (no conversation/recency intent) → original search order
+    # preserved (contact first).
+    _, sources2, _, _ = mem_with_stub._build_ask_context(
+        "quién es Grecia", k=5, type_=None,
+        snippet_chars=200, include_repos=False,
+    )
+    assert sources2[0]["title"] == "Grecia"
+
+
+def test_ask_conversation_intent_without_whatsapp_preserves_order(
+    mem_with_stub: Memory, monkeypatch,
+):
+    """A conversational query with NO WhatsApp hit must not be re-sorted: the
+    `has_wa` guard keeps the relevance-ranked order intact (no destructive
+    date sort of plain memorias)."""
+    from memo.memory import MemoryRecord
+
+    top = MemoryRecord(
+        id="a" * 32, path="AI/memory/decision.md", title="Decisión arquitectura",
+        type="fact", tags=["memo"],
+        created="2026-05-10T00:00:00", updated="2026-05-10T00:00:00",
+        body="Migramos a MLX.", score=0.80,
+    )
+    older_but_newer_date = MemoryRecord(
+        id="b" * 32, path="AI/memory/note.md", title="Nota suelta",
+        type="note", tags=["memo"],
+        created="2026-05-25T00:00:00", updated="2026-05-25T00:00:00",
+        body="## 2026-05-25\nalgo", score=0.40,
+    )
+    monkeypatch.setattr(
+        Memory, "search", lambda self, q, **kw: [top, older_but_newer_date],
+    )
+
+    # "conversación" triggers convo intent, but no WhatsApp hit → no reorder.
+    _, sources, _, _ = mem_with_stub._build_ask_context(
+        "resumen de la conversación sobre arquitectura", k=5, type_=None,
+        snippet_chars=200, include_repos=False,
+    )
+    assert sources[0]["title"] == "Decisión arquitectura"
+
+
 def test_chat_ask_v2_uses_history_and_context(mem_with_stub: Memory, monkeypatch):
     rec = mem_with_stub.save(content="alpha architectural decision", title="Alpha")
     captured: dict = {}

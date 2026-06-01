@@ -88,10 +88,12 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_CAPTURE_COOLDOWN_MIN", "int", 0, "capture", "Minutes between captures (0 = no cooldown)."),
     # corpus maintenance (memo maintain)
     _spec("MEMO_MAINTAIN_DISABLE", "bool", False, "maintain", "Disable the daily `memo maintain --if-due` auto-run."),
+    _spec("MEMO_MAINT_VIA_DAEMON", "bool", False, "maintain", "Route consolidation's synthesis LLM through the maintenance daemon (keeps the multi-GB model out of memo-mcp's resident set). Falls back in-process when the daemon is unreachable."),
     # transcript ingest
     _spec("MEMO_INGEST_MIN_CHARS", "int", 200, "ingest", "Minimum chars for an ingested transcript turn."),
     _spec("MEMO_INGEST_STRICT", "bool", False, "ingest", "Strict ingest filtering."),
     _spec("MEMO_INGEST_DEBUG", "bool", False, "ingest", "Verbose ingest diagnostics."),
+    _spec("MEMO_INGEST_VIA_DAEMON", "bool", False, "ingest", "Route batch repo indexing through the ingest worker daemon (async, returns a job_id). Falls back to in-process when the daemon is unreachable."),
     # briefing (SessionStart panel)
     _spec("MEMO_BRIEFING_DISABLE", "bool", False, "briefing", "Disable the SessionStart briefing panel."),
     _spec("MEMO_BRIEFING_DEBUG", "bool", False, "briefing", "Verbose briefing diagnostics."),
