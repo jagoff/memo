@@ -75,7 +75,7 @@ def _cleanup(state_dir: Path) -> None:
 
 
 class _MaintHandler(socketserver.StreamRequestHandler):
-    server: "_MaintServer"  # type: ignore[assignment]
+    server: _MaintServer  # type: ignore[assignment]
 
     def handle(self) -> None:
         try:
@@ -103,7 +103,7 @@ class _MaintHandler(socketserver.StreamRequestHandler):
                 with self.server.lock:
                     try:
                         result = self.server.runner(op, params)
-                    except Exception as exc:  # noqa: BLE001 — report, never crash the daemon
+                    except Exception as exc:
                         self._write({"error": f"{type(exc).__name__}: {exc}"})
                         return
                 self._write({"ok": True, **result})

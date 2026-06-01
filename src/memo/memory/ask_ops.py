@@ -15,10 +15,10 @@ from dataclasses import replace
 from typing import Any
 
 from memo.llm import MLXChat
-
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _ASK_SYSTEM_PROMPT,
+    MemoryRecord,
     _is_conversation_query,
     _is_group_chat,
     _is_recency_query,
@@ -27,7 +27,6 @@ from memo.memory.record import (
     _norm_dedup_path,
     _recency_key,
     _vault_dedup_keys,
-    MemoryRecord,
 )
 
 

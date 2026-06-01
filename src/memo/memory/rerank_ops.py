@@ -13,9 +13,9 @@ from typing import Any
 
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
-    _log,
     AmbiguousIdError,
     MemoryRecord,
+    _log,
 )
 
 

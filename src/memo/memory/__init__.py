@@ -20,7 +20,7 @@ Layout:
                    managers + `__init__`.
 """
 
-from __future__ import annotations  # noqa: F401
+from __future__ import annotations
 
 # -- stdlib names that were re-exportable from the old module ----------------
 import uuid  # noqa: F401  (tests monkeypatch `memo.memory.uuid.uuid4`)
@@ -67,6 +67,44 @@ from memo.lifecycle import (  # noqa: F401
     LifecycleManager,
 )
 from memo.llm import MLXChat  # noqa: F401
+
+# -- the facade + the full record surface (constants, prompts, helpers) ------
+from memo.memory.facade import Memory
+from memo.memory.record import (  # noqa: F401
+    _ASK_SYSTEM_PROMPT,
+    _CONSOLIDATE_SYSTEM_PROMPT,
+    _CONVERSATION_TOKENS,
+    _DERIVE_SYSTEM_PROMPT,
+    _EXTRACT_ENTITIES_SYSTEM_PROMPT,
+    _ISO_DATE_RE,
+    _PROVENANCE_KEYS,
+    _RECALL_DECAY_HALFLIFE_DEFAULT,
+    _RECENCY_TOKENS,
+    _SLUG_NON_WORD,
+    _SLUG_WS,
+    _VALID_TYPES,
+    MEMO_BACKEND_NAME,
+    NATIVE_BACKEND_PROTOCOL_VERSION,
+    SYNAPSE_BACKEND_NATIVE_SCHEMA,
+    MemoryRecord,
+    _apply_decay,
+    _build_freeze_query,
+    _compose_for_embed,
+    _derive_title,
+    _extract_provenance,
+    _is_conversation_query,
+    _is_group_chat,
+    _is_recency_query,
+    _is_whatsapp_hit,
+    _log,
+    _norm_dedup_path,
+    _normalise_tags,
+    _now_iso,
+    _recency_key,
+    _rrf_fuse,
+    _slugify,
+    _vault_dedup_keys,
+)
 from memo.multimodal import (  # noqa: F401
     CrossModalSearch,
     MultiModalManager,
@@ -85,43 +123,5 @@ from memo.util import sha256_short as _sha256_short  # noqa: F401
 from memo.util import stable_hash as _stable_content_hash  # noqa: F401
 from memo.util import utc_now_iso as _utc_now_iso  # noqa: F401
 from memo.versioning import VersionManager  # noqa: F401
-
-# -- the facade + the full record surface (constants, prompts, helpers) ------
-from memo.memory.facade import Memory  # noqa: F401
-from memo.memory.record import (  # noqa: F401
-    MEMO_BACKEND_NAME,
-    MemoryRecord,
-    NATIVE_BACKEND_PROTOCOL_VERSION,
-    SYNAPSE_BACKEND_NATIVE_SCHEMA,
-    _apply_decay,
-    _ASK_SYSTEM_PROMPT,
-    _build_freeze_query,
-    _compose_for_embed,
-    _CONSOLIDATE_SYSTEM_PROMPT,
-    _CONVERSATION_TOKENS,
-    _derive_title,
-    _DERIVE_SYSTEM_PROMPT,
-    _EXTRACT_ENTITIES_SYSTEM_PROMPT,
-    _extract_provenance,
-    _is_conversation_query,
-    _is_group_chat,
-    _is_recency_query,
-    _is_whatsapp_hit,
-    _ISO_DATE_RE,
-    _log,
-    _norm_dedup_path,
-    _normalise_tags,
-    _now_iso,
-    _PROVENANCE_KEYS,
-    _RECALL_DECAY_HALFLIFE_DEFAULT,
-    _recency_key,
-    _RECENCY_TOKENS,
-    _rrf_fuse,
-    _slugify,
-    _SLUG_NON_WORD,
-    _SLUG_WS,
-    _vault_dedup_keys,
-    _VALID_TYPES,
-)
 
 __all__ = ["AmbiguousIdError", "Memory", "MemoryRecord", "WriteRefused"]

@@ -96,7 +96,7 @@ class _JobBook:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._order: deque[str] = deque()
         self._retain = retain
-        self._queue: "deque[str]" = deque()
+        self._queue: deque[str] = deque()
         self._wakeup = threading.Condition(self._lock)
         self._worker = threading.Thread(target=self._drain, name="ingest-worker", daemon=True)
         self._stop = False
@@ -168,7 +168,7 @@ class _JobBook:
                     rec["state"] = "done"
                     rec["result"] = result
                     rec["finished_at"] = time.time()
-            except Exception as exc:  # noqa: BLE001 — surface as job error, never crash worker
+            except Exception as exc:
                 with self._lock:
                     rec["state"] = "error"
                     rec["error"] = f"{type(exc).__name__}: {exc}"
@@ -176,7 +176,7 @@ class _JobBook:
 
 
 class _IngestHandler(socketserver.StreamRequestHandler):
-    server: "_IngestServer"  # type: ignore[assignment]
+    server: _IngestServer  # type: ignore[assignment]
 
     def handle(self) -> None:
         try:

@@ -55,7 +55,9 @@ from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
 from memo.cli_history import diff_cmd, historia_cmd
 from memo.cli_import import import_group
+from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_links import links_group
+from memo.cli_maint_daemon import maint_daemon_group
 from memo.cli_maintain import maintain_cmd
 from memo.cli_mandate import mandate as mandate_cmd
 from memo.cli_memory import (
@@ -82,8 +84,6 @@ from memo.cli_memory import (
 from memo.cli_multimodal import multimodal_group
 from memo.cli_profile import profile_group
 from memo.cli_query import query_group
-from memo.cli_ingest_daemon import ingest_daemon_group
-from memo.cli_maint_daemon import maint_daemon_group
 from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_repo import repo_group
 from memo.cli_retier import retier_cmd

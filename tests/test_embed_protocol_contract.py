@@ -9,7 +9,6 @@ of this test fails. Keep this file identical across repos alongside the module.
 from __future__ import annotations
 
 import json
-import socket
 import socketserver
 import threading
 from collections.abc import Iterator
@@ -18,7 +17,6 @@ from pathlib import Path
 import pytest
 
 from memo import embed_protocol as ep
-
 
 # -- frozen constants ------------------------------------------------------
 

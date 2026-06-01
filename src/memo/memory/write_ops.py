@@ -26,21 +26,19 @@ from memo.lifecycle import (
     IS_FORGOTTEN_KEY,
 )
 from memo.llm import MLXChat
-from memo.util import sha256_short as _sha256_short
-
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _DERIVE_SYSTEM_PROMPT,
     _VALID_TYPES,
+    MemoryRecord,
     _derive_title,
     _extract_provenance,
     _log,
     _normalise_tags,
     _now_iso,
     _slugify,
-    MemoryRecord,
-    WriteRefused,
 )
+from memo.util import sha256_short as _sha256_short
 
 
 class _WriteOpsMixin(_MemoryBase):

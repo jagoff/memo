@@ -18,27 +18,26 @@ import frontmatter
 from memo.embedder import assert_valid_embedding
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
 from memo.llm import MLXChat
-from memo.util import sha256_short as _sha256_short
-from memo.util import stable_hash as _stable_content_hash
-from memo.util import utc_now_iso as _utc_now_iso
-
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _CONSOLIDATE_SYSTEM_PROMPT,
     _EXTRACT_ENTITIES_SYSTEM_PROMPT,
     _VALID_TYPES,
+    MEMO_BACKEND_NAME,
+    NATIVE_BACKEND_PROTOCOL_VERSION,
+    SYNAPSE_BACKEND_NATIVE_SCHEMA,
+    AmbiguousIdError,
+    WriteRefused,
     _build_freeze_query,
     _derive_title,
     _extract_provenance,
     _log,
     _normalise_tags,
     _now_iso,
-    AmbiguousIdError,
-    MEMO_BACKEND_NAME,
-    NATIVE_BACKEND_PROTOCOL_VERSION,
-    SYNAPSE_BACKEND_NATIVE_SCHEMA,
-    WriteRefused,
 )
+from memo.util import sha256_short as _sha256_short
+from memo.util import stable_hash as _stable_content_hash
+from memo.util import utc_now_iso as _utc_now_iso
 
 
 class _MaintainOpsMixin(_MemoryBase):

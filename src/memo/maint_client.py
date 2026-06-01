@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from memo import embed_protocol
 from memo.maint_server import _socket_path
@@ -29,7 +29,7 @@ def _resolve_state_dir(state_dir: Path | None) -> Path:
     return Config.from_env().state_dir
 
 
-def ping(*, state_dir: Path | None = None) -> Optional[dict[str, Any]]:
+def ping(*, state_dir: Path | None = None) -> dict[str, Any] | None:
     sock = _socket_path(_resolve_state_dir(state_dir))
     return embed_protocol.send_request(sock, {"op": "ping"}, timeout=_PING_TIMEOUT_S)
 
@@ -41,7 +41,7 @@ def consolidate(
     type_: str | None = None,
     state_dir: Path | None = None,
     timeout: float = _DEFAULT_TIMEOUT_S,
-) -> Optional[list[dict[str, Any]]]:
+) -> list[dict[str, Any]] | None:
     """Run consolidation propose on the daemon. Returns the proposal list,
     or None if the daemon is unreachable (caller runs it in-process)."""
     sock = _socket_path(_resolve_state_dir(state_dir))
@@ -58,4 +58,4 @@ def consolidate(
     return proposals if isinstance(proposals, list) else None
 
 
-__all__ = ["ping", "consolidate"]
+__all__ = ["consolidate", "ping"]

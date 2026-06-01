@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import click
-from rich.panel import Panel
 
 from memo.cli_common import console
 from memo.config import Config
