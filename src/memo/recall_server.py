@@ -64,6 +64,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from memo import embed_protocol
+
 _STATS_SAMPLE_CAP = 1024
 _STATS_DEFAULT_PERSIST_INTERVAL_S = 60.0
 # Cap a single request/response line so a client that never sends a newline
@@ -505,9 +507,11 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             return json.dumps({"error": "embed_query: empty text"})
         with self.server._lock:
             vec = self.server._mem.embedder.embed_query(text)
+        # Emit both `dim` and `dims` per embed_protocol — clients may read either.
         return json.dumps({
             "vector": vec,
             "dim": len(vec),
+            "dims": len(vec),
             "model": self.server._cfg.embedder_model,
         }, ensure_ascii=False)
 
@@ -519,6 +523,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             return json.dumps({
                 "vectors": [],
                 "dim": 0,
+                "dims": 0,
                 "model": self.server._cfg.embedder_model,
             })
         if not all(isinstance(t, str) for t in texts):
@@ -537,6 +542,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         return json.dumps({
             "vectors": vectors,
             "dim": dim,
+            "dims": dim,
             "model": self.server._cfg.embedder_model,
         }, ensure_ascii=False)
 
@@ -796,35 +802,14 @@ def run_server(state_dir: Path | None = None) -> None:
 def _send_request(state_dir: Path, payload: dict[str, Any], timeout: float) -> str | None:
     """Send one JSON-line request to the daemon, return the JSON-line response.
 
-    Returns `None` if the daemon socket is missing, refused, or times out so
-    callers can transparently fall back to in-process execution.
+    Framing is delegated to the shared `embed_protocol` so client and server
+    speak one normative wire format. Returns the raw response line (the recall
+    path injects it verbatim), or `None` if the daemon socket is missing,
+    refused, or times out — so callers transparently fall back to in-process.
     """
-    import socket
-
-    sock_path = _socket_path(state_dir)
-    if not sock_path.exists():
-        return None
-
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect(str(sock_path))
-            req = json.dumps(payload, ensure_ascii=False)
-            sock.sendall((req + "\n").encode("utf-8"))
-            buf = b""
-            while b"\n" not in buf:
-                chunk = sock.recv(65536)
-                if not chunk:
-                    break
-                buf += chunk
-                if len(buf) >= _MAX_LINE_BYTES:
-                    break  # runaway response — stop buffering
-        line = buf.decode("utf-8", errors="replace").strip()
-        return line if line else None
-    except (FileNotFoundError, ConnectionRefusedError, OSError, TimeoutError):
-        return None
-    except Exception:
-        return None
+    return embed_protocol.send_request_line(
+        _socket_path(state_dir), payload, timeout=timeout
+    )
 
 
 def connect_and_recall(

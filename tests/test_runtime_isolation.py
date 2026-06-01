@@ -7,6 +7,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 import memo.cli_runtime as cli_mod
+import memo.runtime.install as install_mod
 from memo.cli import cli
 
 
@@ -95,7 +96,7 @@ def test_resolved_memo_mcp_prefers_invoked_memo_sibling(monkeypatch, tmp_path):
 def test_mcp_command_pins_resolved_memo_mcp(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -119,7 +120,7 @@ def test_backup_group_keeps_portable_out_option():
 def test_mcp_command_json(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -135,7 +136,7 @@ def test_mcp_command_json(monkeypatch):
 def test_mcp_command_codex(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -152,7 +153,7 @@ def test_mcp_command_codex(monkeypatch):
 def test_mcp_command_devin(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -169,7 +170,7 @@ def test_mcp_command_devin(monkeypatch):
 def test_mcp_command_windsurf(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -188,7 +189,7 @@ def test_mcp_command_forwards_model_env(monkeypatch):
     monkeypatch.setenv("MEMO_EMBEDDER_MODEL", "mlx-community/Qwen3-Embedding-4B-4bit-DWQ")
     monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -203,7 +204,7 @@ def test_mcp_command_forwards_model_env(monkeypatch):
 def test_install_slash_dry_run(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -222,7 +223,7 @@ def test_install_slash_codex_installs_plugin_and_mcp(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setenv("CODEX_HOME", "/tmp/codex-home")
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -244,7 +245,7 @@ def test_install_slash_codex_installs_plugin_and_mcp(monkeypatch):
 def test_install_slash_claude_uses_add_json(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
@@ -270,7 +271,7 @@ def test_install_slash_windsurf_writes_mcp_config(monkeypatch, tmp_path):
     monkeypatch.setenv("WINDSURF_MCP_CONFIG", str(cfg_path))
     monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
     monkeypatch.setattr(
-        cli_mod,
+        install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
