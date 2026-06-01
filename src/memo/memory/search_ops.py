@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import builtins
 import os
+import sqlite3
 from dataclasses import replace
 
 from memo.lifecycle import IS_FORGOTTEN_KEY
@@ -164,7 +165,7 @@ class _SearchOpsMixin(_MemoryBase):
             return
         try:
             self.store.touch(ids)
-        except Exception as exc:  # never let access tracking break a read
+        except sqlite3.Error as exc:  # never let access tracking break a read
             _log.debug("access tracking skipped: %s", exc)
 
     def _cache_read_through(

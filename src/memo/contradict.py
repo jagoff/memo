@@ -470,7 +470,7 @@ def _enough_days_apart(a: str, b: str, min_days: int) -> bool:
     try:
         da = datetime.fromisoformat(a.replace("Z", "+00:00"))
         db = datetime.fromisoformat(b.replace("Z", "+00:00"))
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return True
     return abs((da - db).days) >= min_days
 
@@ -487,7 +487,7 @@ def is_stale(updated_iso: str, days_threshold: int) -> bool:
     """Helper: is this timestamp older than `days_threshold` days?"""
     try:
         dt = datetime.fromisoformat(updated_iso.replace("Z", "+00:00"))
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return False
     return (datetime.now(UTC) - dt) > timedelta(days=days_threshold)
 

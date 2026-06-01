@@ -12,12 +12,12 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     if "tags" in d and isinstance(d["tags"], str):
         try:
             d["tags"] = json.loads(d["tags"])
-        except Exception:
+        except (ValueError, TypeError):
             d["tags"] = []
     if d.get("extra_json"):
         try:
             d["extra"] = json.loads(d["extra_json"])
-        except Exception:
+        except (ValueError, TypeError):
             d["extra"] = {}
         d.pop("extra_json", None)
     elif "extra_json" in d:

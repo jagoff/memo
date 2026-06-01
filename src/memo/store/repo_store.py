@@ -125,7 +125,7 @@ class _RepoStoreMixin(_StoreBase):
             for row in rows:
                 try:
                     emb = json.loads(row["embedding"])
-                except Exception:
+                except (ValueError, TypeError):
                     continue
                 if isinstance(emb, list) and len(emb) == dims:
                     out[row["input_hash"]] = [float(x) for x in emb]

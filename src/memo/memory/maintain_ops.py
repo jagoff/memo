@@ -514,7 +514,7 @@ class _MaintainOpsMixin(_MemoryBase):
                 text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
             try:
                 data = json.loads(text) if text else {}
-            except Exception:
+            except (ValueError, TypeError):
                 counts["errors"] += 1
                 continue
             ents = data.get("entities") if isinstance(data, dict) else None
@@ -694,7 +694,7 @@ class _MaintainOpsMixin(_MemoryBase):
                 text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
             try:
                 data = json.loads(text) if text else {}
-            except Exception:
+            except (ValueError, TypeError):
                 data = {}
             out.append({
                 "cluster_id": ci,

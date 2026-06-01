@@ -158,7 +158,7 @@ class TemporalAnalyzer:
                     d2 = datetime.fromisoformat(r2.updated.replace("Z", "+00:00"))
                     if abs((d2 - d1).days) < 1:
                         continue
-                except Exception:
+                except (ValueError, TypeError, AttributeError):
                     pass
 
                 contr = self._classify_pair(r1, r2)
@@ -205,7 +205,7 @@ Analyze the temporal relationship between these two notes."""
             import json
 
             data = json.loads(raw)
-        except Exception:
+        except (ValueError, TypeError):
             return None
 
         if not isinstance(data, dict):
@@ -353,7 +353,7 @@ Analyze the temporal relationship between these two notes."""
                 dt = datetime.fromisoformat(rec.created.replace("Z", "+00:00"))
                 key = f"{dt.year}-{dt.month:02d}"
                 monthly[key] += 1
-            except Exception:
+            except (ValueError, TypeError, AttributeError):
                 pass
 
         # Type distribution over time
@@ -365,7 +365,7 @@ Analyze the temporal relationship between these two notes."""
                 dt = datetime.fromisoformat(rec.created.replace("Z", "+00:00"))
                 key = f"{dt.year}-{dt.month:02d}"
                 type_over_time[key][rec.type] += 1
-            except Exception:
+            except (ValueError, TypeError, AttributeError):
                 pass
 
         # Most active entities (by number of memorias)

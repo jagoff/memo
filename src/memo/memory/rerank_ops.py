@@ -8,6 +8,7 @@ verbatim from the former `memory.py` god-file.
 from __future__ import annotations
 
 import os
+import sqlite3
 from dataclasses import replace
 from typing import Any
 
@@ -119,7 +120,7 @@ class _RerankOpsMixin(_MemoryBase):
                 fb = self.store.find_feedback_for_source(
                     h.id, query_emb, threshold=sim_threshold,
                 )
-            except Exception:
+            except sqlite3.Error:
                 fb = []
             if not fb:
                 out.append(h)
