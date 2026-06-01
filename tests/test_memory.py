@@ -749,9 +749,10 @@ def test_recency_helpers():
 def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
     mem_with_stub: Memory, monkeypatch,
 ):
-    """A recency whatsapp question must surface the dated transcript first,
-    not the same-named contact/profile card (regression: 'qué dijo Grecia por
-    whatsapp' answered with her profile)."""
+    """Recency/conversation whatsapp questions must surface a dated transcript,
+    not the same-named contact/profile card. For a RECENCY ask the *newest*
+    conversation wins (a group active today beats an older 1:1); a 1:1 is
+    preferred only as a same-date tiebreaker / for non-recency asks."""
     from memo.memory import MemoryRecord
 
     contact = MemoryRecord(
@@ -766,8 +767,8 @@ def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
         created="2026-05-18T00:00:00", updated="2026-05-18T00:00:00",
         body="## 2026-05-17\n- **Grecia 🩷** (16:26): Jajaja está linda", score=0.90,
     )
-    # A same-named GROUP chat with a *more recent* message — must not outrank
-    # the 1:1 for a person question despite being newer.
+    # A same-named GROUP chat with a *more recent* message — for a recency ask
+    # this IS the latest conversation and must lead.
     group = MemoryRecord(
         id="d" * 32, path="AI/Whatsapp/Grecia's group.md", title="WhatsApp · Grecia's group",
         type="reference", tags=["whatsapp", "chat"],
@@ -776,16 +777,18 @@ def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
     )
     monkeypatch.setattr(Memory, "search", lambda self, q, **kw: [contact, group, transcript])
 
-    # Recency intent → 1:1 transcript leads (over both profile card and group).
+    # Recency intent → newest transcript leads (group 05-19 > 1:1 05-17), and
+    # both float above the contact card despite its fresher `updated` stamp.
     _, sources, _, _ = mem_with_stub._build_ask_context(
         "qué fue lo último que dijo Grecia por whatsapp", k=5, type_=None,
         snippet_chars=200, include_repos=False,
     )
-    assert sources[0]["title"] == "WhatsApp · Grecia 🩷"
+    assert sources[0]["title"] == "WhatsApp · Grecia's group"
+    assert sources[1]["title"] == "WhatsApp · Grecia 🩷"
+    assert sources[2]["title"] == "Grecia"
 
-    # Conversation intent WITHOUT a recency word → 1:1 transcript still leads
-    # over the contact card (the hardening; regression: "mostrame el chat con
-    # Grecia" answered with her profile).
+    # Conversation intent WITHOUT a recency word → no date sort; the 1:1 is
+    # preferred over the group, both above the contact card.
     _, sources_c, _, _ = mem_with_stub._build_ask_context(
         "mostrame el chat con Grecia", k=5, type_=None,
         snippet_chars=200, include_repos=False,

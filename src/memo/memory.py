@@ -1883,17 +1883,21 @@ class Memory:
         has_wa = any(_is_whatsapp_hit(h) for h in hits)
         if recency_intent or (convo_intent and has_wa):
             ql = question.lower()
-            wa_query = "whatsapp" in ql
-            # Prefer a 1:1 chat over a same-named group unless the question is
-            # explicitly about a group.
+            # Prefer a 1:1 chat over a same-named group ONLY as a same-date
+            # tiebreaker (below), never over a genuinely newer conversation.
             prefer_direct = "group" not in ql and "grupo" not in ql
 
-            def _recency_sort_key(h: MemoryRecord) -> tuple[int, int, str]:
+            def _recency_sort_key(h: MemoryRecord) -> tuple[int, str, int]:
                 wa = _is_whatsapp_hit(h)
-                wa_floated = 1 if (wa_query and wa) else 0
                 direct = 1 if (prefer_direct and wa and not _is_group_chat(h)) else 0
+                # 1) float ALL transcripts above non-transcripts (a same-named
+                #    contact card sinks regardless of its fresh `updated` stamp);
+                # 2) for a recency ask, newest dated content wins — so a group
+                #    active today beats an older 1:1; 3) prefer a 1:1 only to
+                #    break a date tie. Conversation-only asks leave date="" so
+                #    the 1:1 preference leads.
                 date = _recency_key(h) if recency_intent else ""
-                return (wa_floated, direct, date)
+                return (1 if wa else 0, date, direct)
 
             hits = sorted(hits, key=_recency_sort_key, reverse=True)[:k]
 
