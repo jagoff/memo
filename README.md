@@ -1127,7 +1127,7 @@ tools directly.
 | `multimodal` | Cross-modal semantic search over images, audio, and text |
 | `collaborative` | Shared knowledge graph across multiple users |
 | `sharing` | Per-memoria sharing links and permission grants |
-| `encryption` | AES-256-GCM at-rest encryption for sensitive memories |
+| `encryption` | AES-256-GCM at-rest encryption for sensitive memories (EXPERIMENTAL — gated OFF; set `MEMO_ENCRYPTION_ENABLED=1` to enable the `memo encrypt` CLI group + `memory_encrypt_*` MCP tools) |
 | `contradict` | Contradiction and staleness radar with triage workflow |
 | `chunker` | Heading-aware sub-document chunking for long memories |
 | `crossref` | Obsidian `[[wikilink]]` backlink index and multi-hop traversal |
