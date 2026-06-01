@@ -84,7 +84,7 @@ def read_last_assistant_text(transcript_path: str | Path, *, max_chars: int = 80
         if not p.is_file():
             return ""
         lines = p.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return ""
     for line in reversed(lines):
         line = line.strip()
@@ -127,7 +127,7 @@ def collect_recent_tool_targets(transcript_path: str | Path, *, scan_lines: int 
         if not p.is_file():
             return out
         lines = p.read_text(encoding="utf-8").splitlines()[-scan_lines:]
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return out
     for line in lines:
         line = line.strip()

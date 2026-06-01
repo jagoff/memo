@@ -106,7 +106,7 @@ class HistoryStore:
                 delta_json = json.dumps(
                     {"_provenance": provenance}, default=str, ensure_ascii=False,
                 )
-            except Exception as exc:  # pragma: no cover - defensive
+            except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
                 _log.warning(
                     "history log_save provenance encode failed (id=%s): %s",
                     record_id[:8], exc,
@@ -118,7 +118,7 @@ class HistoryStore:
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     (ts, "save", record_id, title, type_, delta_json),
                 )
-        except Exception as exc:
+        except sqlite3.Error as exc:
             self._error_count += 1
             _log.warning("history log_save failed (id=%s): %s", record_id[:8], exc)
 
@@ -139,7 +139,7 @@ class HistoryStore:
                     (ts, "update", record_id, title, type_,
                      json.dumps(payload, default=str, ensure_ascii=False)),
                 )
-        except Exception as exc:
+        except (sqlite3.Error, TypeError, ValueError) as exc:
             self._error_count += 1
             _log.warning("history log_update failed (id=%s): %s", record_id[:8], exc)
 
@@ -150,7 +150,7 @@ class HistoryStore:
                     "INSERT INTO events (ts, op, record_id, title, type) VALUES (?, ?, ?, ?, ?)",
                     (ts, "delete", record_id, title, type_),
                 )
-        except Exception as exc:
+        except sqlite3.Error as exc:
             self._error_count += 1
             _log.warning("history log_delete failed (id=%s): %s", record_id[:8], exc)
 
@@ -177,7 +177,7 @@ class HistoryStore:
             if d.get("delta_json"):
                 try:
                     d["delta"] = json.loads(d["delta_json"])
-                except Exception:
+                except (ValueError, TypeError):
                     d["delta"] = None
             else:
                 d["delta"] = None

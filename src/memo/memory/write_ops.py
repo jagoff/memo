@@ -13,6 +13,7 @@ import contextlib
 import json
 import os
 import re
+import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any
@@ -78,7 +79,7 @@ class _WriteOpsMixin(_MemoryBase):
             text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
         try:
             data = json.loads(text)
-        except Exception as exc:
+        except (ValueError, TypeError) as exc:
             _log.warning("_derive_metadata JSON parse failed (%r…): %s", text[:80], exc)
             return {}
         if not isinstance(data, dict):
@@ -689,7 +690,7 @@ class _WriteOpsMixin(_MemoryBase):
             ).fetchone()
             if row and row["body"]:
                 return str(row["body"])
-        except Exception:
+        except sqlite3.Error:
             pass
         return ""
 
