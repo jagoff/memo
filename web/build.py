@@ -32,11 +32,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from memo.cli import (  # noqa: E402
+from memo.cli_diag import (  # noqa: E402
     _db_health_report,
     _profile_status_report,
-    _runtime_install_report,
 )
+from memo.cli_runtime import _runtime_install_report  # noqa: E402
 from memo.config import Config  # noqa: E402
 from memo.dashboard import read_recall_log  # noqa: E402
 
