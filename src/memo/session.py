@@ -620,6 +620,19 @@ def refresh_summary(
     return True
 
 
+def mark_reflected(state_dir: Path, session_id: str) -> bool:
+    """Stamp `reflected_at` in the session JSON so `memo reflect --if-due`
+    can skip already-processed sessions. Best-effort, never raises."""
+    existing = _load(state_dir, session_id)
+    if existing is None:
+        return False
+    existing["reflected_at"] = _now_iso()
+    with contextlib.suppress(OSError):
+        _write(state_dir, session_id, existing)
+        return True
+    return False
+
+
 def update_summary(
     state_dir: Path, session_id: str, summary: str,
 ) -> bool:

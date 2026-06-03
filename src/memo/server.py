@@ -48,6 +48,7 @@ from memo import server_query as _srv_query
 from memo import server_repo as _srv_repo
 from memo import server_share as _srv_share
 from memo import server_sync as _srv_sync
+from memo import server_reflect as _srv_reflect
 from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
 from memo import server_version as _srv_version
@@ -108,6 +109,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     _srv_contradict.register(server, memory)
     _srv_consolidate.register(server, memory)
     _srv_synthesis.register(server, memory)
+    _srv_reflect.register(server, memory)
     _srv_graph.register(server, memory)
     _srv_contextual.register(server, memory)
     _srv_links.register(server, memory)
