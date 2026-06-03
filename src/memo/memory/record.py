@@ -67,6 +67,32 @@ Definitions:
 Output ONLY the JSON, no markdown fences, no commentary."""
 
 
+_SYNTHESIS_SYSTEM_PROMPT = """You analyze a cluster of related memory notes from a personal archive.
+
+Your task is DIFFERENT from deduplication. These memories may not be duplicates.
+Instead, find what they collectively IMPLY that no single one states alone.
+
+Output a single JSON object:
+
+{
+  "title": "short title for the inferred insight (null if nothing non-obvious found)",
+  "body": "2-4 sentences articulating the emergent insight",
+  "confidence": "low" | "medium" | "high",
+  "rationale": "1 sentence explaining what pattern across the cluster led to this"
+}
+
+Rules:
+- The insight must be NON-OBVIOUS. It must not be a restatement or summary of any single memory.
+- Identify tensions, patterns, root causes, or implications that only emerge from the GROUP.
+- If the cluster has no interesting cross-cutting implication, set "title" to null.
+- "confidence": "high" when the pattern is clear and well-supported; "medium" when plausible
+  but could have other explanations; "low" when speculative.
+- The body should be actionable or explanatory — prefer "this suggests X" or "the pattern
+  indicates Y" over vague summaries.
+
+Output ONLY the JSON, no markdown fences, no commentary."""
+
+
 _ASK_SYSTEM_PROMPT = """You answer questions over the user's personal memory archive and indexed repositories.
 
 You receive a list of relevant memory snippets and repo snippets (each with a

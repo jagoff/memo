@@ -504,9 +504,10 @@ class _AskOpsMixin(_MemoryBase):
             snippet_chars=snippet_chars, include_repos=include_repos,
         )
         if not sources:
+            from memo.flags import flag_str
             return {
                 "question": norm_question,
-                "answer": "no encuentro la respuesta en las memorias guardadas",
+                "answer": flag_str("MEMO_ASK_FALLBACK_MSG"),
                 "sources": [],
             }
 

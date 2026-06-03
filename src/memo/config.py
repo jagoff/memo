@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -225,7 +226,7 @@ class Config(BaseModel):
 
     @field_validator("data_dir", "state_dir", "vault_path", mode="before")
     @classmethod
-    def _expand(cls, v):
+    def _expand(cls, v: str | Path | None) -> Path | None:
         if v is None:
             return v
         return Path(os.path.expandvars(str(v))).expanduser().resolve()
@@ -279,7 +280,7 @@ class Config(BaseModel):
     # ── Construction ─────────────────────────────────────────────────────
 
     @classmethod
-    def from_env(cls, **overrides) -> Config:
+    def from_env(cls, **overrides: Any) -> Config:
         """Build a `Config` from env vars + config file, with optional kwargs.
 
         Resolution order (highest first):
@@ -295,7 +296,7 @@ class Config(BaseModel):
         file_data = load_config_file() or {}
         storage = file_data.get("storage") or {} if isinstance(file_data, dict) else {}
 
-        kwargs: dict = {}
+        kwargs: dict[str, Any] = {}
         # File-level fields. Only keys we recognise; ignore unknown for forward-compat.
         for fkey in ("data_dir", "vault_path", "memory_subdir", "state_dir"):
             if storage.get(fkey):

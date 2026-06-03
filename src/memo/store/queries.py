@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from sqlite_vec import serialize_float32
 
@@ -472,10 +475,11 @@ class _QueriesMixin(_StoreBase):
             params.append(candidate_k)
             try:
                 return list(self._conn.execute(sql, params).fetchall())
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as _bm25_err:
                 # Malformed FTS expression (e.g. unbalanced quotes after
                 # escape). Fall back to no results — Memory.search_hybrid
                 # treats this as "no BM25 signal" and uses pure vec.
+                _log.warning("BM25 search failed (falling back to vec-only): %s", _bm25_err)
                 return []
 
         rows = _run(_tokens, " ")

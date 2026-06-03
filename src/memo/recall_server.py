@@ -151,7 +151,7 @@ def _stats_persister(state_dir: Path, stats: _DaemonStats, interval_s: float) ->
             tmp = target.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(snap, indent=2))
             tmp.replace(target)
-        except Exception as exc:
+        except (OSError, ValueError, TypeError) as exc:
             if os.environ.get("MEMO_RECALL_DEBUG") == "1":
                 print(f"# recall-daemon: stats persist failed: {exc}", file=sys.stderr)
 
@@ -267,7 +267,9 @@ def _session_context(mem: Any, exclude_types: set[str] | None, *, max_titles: in
         titles = [str(r.get("title") or "").strip() for r in rows]
         titles = [t for t in titles if t][:max_titles]
         return " ; ".join(titles)
-    except Exception:
+    except Exception as exc:
+        if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+            print(f"# recall-daemon: session_context failed: {exc}", file=sys.stderr)
         return ""
 
 
@@ -370,8 +372,7 @@ def _recall_logic(
     try:
         qualifying = _rank(mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types))
     except Exception as exc:
-        if debug:
-            print(f"# recall-daemon: search failed: {exc}", file=sys.stderr)
+        print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return "{}", None
 
     # Query-expansion fallback: bare continuity prompts ("que queda pendiente",
@@ -391,8 +392,26 @@ def _recall_logic(
                 if debug and qualifying:
                     print(f"# recall-daemon: query expansion recovered {len(qualifying)} hits",
                           file=sys.stderr)
-            except Exception:
-                pass
+            except Exception as _exc:
+                print(f"# recall-daemon: context expansion failed: {type(_exc).__name__}: {_exc}",
+                      file=sys.stderr)
+
+    # Precision filters: skip_below drops low-confidence recall entirely;
+    # gap_threshold reduces to top-1 when the leader is significantly better
+    # than the runner-up (avoids dragging in weak tail hits). Both default off.
+    skip_below = float(_os.environ.get("MEMO_RECALL_SKIP_BELOW", "0.0") or 0.0)
+    if skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below:
+        return "{}", None
+
+    gap_threshold = float(_os.environ.get("MEMO_RECALL_GAP_THRESHOLD", "0.0") or 0.0)
+    if (
+        gap_threshold > 0
+        and len(qualifying) > 1
+        and qualifying[0].score is not None
+        and qualifying[1].score is not None
+        and (qualifying[0].score - qualifying[1].score) > gap_threshold
+    ):
+        qualifying = qualifying[:1]
 
     relevant = qualifying[:top_k]
     # Proactive nudge: the next best matches that just missed the cut. Surfaced
@@ -444,6 +463,15 @@ def _recall_logic(
     if nudge:
         also = "; ".join(f"[{h.id[:8]}] {h.title}" for h in nudge)
         lines.append(f"_También en tu memoria (relacionado): {also} — `/memo get <id>`._")
+    # Feedback hint: invisible HTML comment carrying the recalled IDs so the
+    # AI layer can call memory_feedback_record when the user signals
+    # satisfaction or frustration. Opt-out via MEMO_RECALL_FEEDBACK_HINT=0.
+    if flag_bool("MEMO_RECALL_FEEDBACK_HINT"):
+        ids_csv = ",".join(h.id[:8] for h in relevant)
+        lines.append(
+            f"<!-- recall:feedback ids=[{ids_csv}] — "
+            "`memory_feedback_record(id, signal='up')` / `signal='down'` to tune recall -->"
+        )
     lines.append(footer)
 
     # Defer the recall.log write to the caller — it fires only once the
@@ -470,7 +498,7 @@ def _recall_logic(
                 client=client,
             )
         except Exception:
-            pass
+            pass  # intentionally broad: telemetry must never break recall
 
     output = {
         "hookSpecificOutput": {
@@ -579,10 +607,9 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     self._write_response("{}", debug=debug)
                     return
                 req = json.loads(line.decode("utf-8", errors="replace").strip())
-            except Exception as exc:
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
                 error = True
-                if debug:
-                    print(f"# recall-daemon: parse error: {exc}", file=sys.stderr)
+                print(f"# recall-daemon: parse error: {type(exc).__name__}: {exc}", file=sys.stderr)
                 self._write_response("{}", debug=debug)
                 return
 
@@ -642,8 +669,8 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     result = json.dumps({"error": f"unknown op: {op!r}"})
             except Exception as exc:
                 error = True
-                if debug:
-                    print(f"# recall-daemon: handler error (op={op}): {exc}", file=sys.stderr)
+                print(f"# recall-daemon: handler error (op={op}): {type(exc).__name__}: {exc}",
+                      file=sys.stderr)
                 result = json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
             delivered = self._write_response(result, debug=debug)

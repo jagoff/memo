@@ -43,10 +43,16 @@ class FlagSpec:
     # Some bools are checked with inverted polarity (`!= "1"` → default-on,
     # opt-out). Recorded so `config flags` can show the real default.
     opt_out: bool = False
+    # Optional inclusive bounds for numeric flags. Enforced in _coerce().
+    min_val: float | None = None
+    max_val: float | None = None
 
 
-def _spec(name, kind, default, group, help, opt_out=False) -> FlagSpec:
-    return FlagSpec(name, kind, default, group, help, opt_out)
+def _spec(
+    name: str, kind: FlagKind, default: Any, group: str, help: str,
+    opt_out: bool = False, min_val: float | None = None, max_val: float | None = None,
+) -> FlagSpec:
+    return FlagSpec(name, kind, default, group, help, opt_out, min_val, max_val)
 
 
 # ── Registry ────────────────────────────────────────────────────────────────
@@ -58,12 +64,12 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_MODE", "str", "vec", "recall", "Retrieval mode: vec | hybrid | bm25."),
     _spec("MEMO_RECALL_FORCE_MODE", "bool", True, "recall", "Honor MEMO_RECALL_MODE even when risky.", opt_out=True),
     _spec("MEMO_RECALL_TOP_K", "int", 3, "recall", "Number of memorias injected per prompt."),
-    _spec("MEMO_RECALL_MIN_SIM", "float", 0.5, "recall", "Similarity floor for a hit, applied to the recency-decayed score (decay compresses raw cosine ~0.15, so 0.5 ≈ 0.65 raw; 0.6 over-filtered and caused bails). The bigger relevance lever is reference-tier exclusion."),
+    _spec("MEMO_RECALL_MIN_SIM", "float", 0.5, "recall", "Similarity floor for a hit, applied to the recency-decayed score (decay compresses raw cosine ~0.15, so 0.5 ≈ 0.65 raw; 0.6 over-filtered and caused bails). The bigger relevance lever is reference-tier exclusion.", min_val=0.0, max_val=1.0),
     _spec("MEMO_RECALL_BODY_CHARS", "int", 240, "recall", "Max body chars per injected memoria."),
     _spec("MEMO_RECALL_MIN_BODY_CHARS", "int", 40, "recall", "Skip memorias with bodies shorter than this."),
     _spec("MEMO_RECALL_MIN_PROMPT_CHARS", "int", 12, "recall", "Skip recall for prompts shorter than this."),
     _spec("MEMO_RECALL_TOKEN_BUDGET", "int", 0, "recall", "Token budget for injected context (0 = off)."),
-    _spec("MEMO_RECALL_PROJECT_BOOST", "float", 0.15, "recall", "Score boost for memorias tagged to the cwd project."),
+    _spec("MEMO_RECALL_PROJECT_BOOST", "float", 0.15, "recall", "Score boost for memorias tagged to the cwd project.", min_val=0.0, max_val=1.0),
     _spec("MEMO_RECALL_RERANK_INPUT_K", "int", 10, "recall", "Candidates fed to the reranker."),
     _spec("MEMO_RECALL_STALENESS_DAYS", "int", 0, "recall", "Down-rank memorias older than N days (0 = off)."),
     _spec("MEMO_RECALL_SKIP_SLASH", "bool", True, "recall", "Skip recall when the prompt starts with '/'."),
@@ -73,10 +79,13 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_LOCK_TIMEOUT_MS", "int", 2500, "recall", "Daemon: max ms a recall waits for the shared embedder/Memory lock before returning empty. Bounds the latency tail when a cold embed_batch holds the lock — recall bails fast instead of hanging tens of seconds and blowing the 5s hook budget."),
     _spec("MEMO_RECALL_DAEMON_TIMEOUT_MS", "int", 3500, "recall", "Client (recall-hook): ms to wait for the daemon socket before falling back to in-process subprocess search. Must sit under the hooks.json budget (12s) yet above the warm-but-slow daemon tail (~3-6s) so a slow daemon is waited on, not double-fired via subprocess."),
     _spec("MEMO_EMBED_BATCH_CHUNK", "int", 32, "recall", "Daemon: texts per embed chunk in embed_batch. The shared lock is released between chunks so a pending recall query-embed interleaves instead of waiting for the whole (cold) batch."),
+    _spec("MEMO_RECALL_GAP_THRESHOLD", "float", 0.0, "recall", "If >0, reduce injected memorias to the top-1 when the score gap between rank-1 and rank-2 exceeds this value. Prevents a strong top hit from dragging in 2 weak tail hits. 0 = disabled.", min_val=0.0, max_val=1.0),
+    _spec("MEMO_RECALL_SKIP_BELOW", "float", 0.0, "recall", "If >0, skip recall entirely when the best candidate's score is below this floor. Prevents low-confidence recall from injecting marginally relevant context. 0 = disabled.", min_val=0.0, max_val=1.0),
+    _spec("MEMO_RECALL_FEEDBACK_HINT", "bool", True, "recall", "Append a feedback hint comment to the recall block so the AI layer can surface memory_feedback_record to the user.", opt_out=True),
     # search ranking
-    _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking."),
+    _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking.", min_val=0.0, max_val=1.0),
     _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),
-    _spec("MEMO_QUERY_CACHE_SIZE", "int", 0, "search", "LRU size for query embeddings (0 = off)."),
+    _spec("MEMO_QUERY_CACHE_SIZE", "int", 256, "search", "LRU size for query embeddings (0 = off). Default 256 covers typical session query diversity with negligible RAM overhead (~few KB per cached vector)."),
     # session checkpoints / resume
     _spec("MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."),
     _spec("MEMO_SESSION_DEBUG", "bool", False, "session", "Verbose session-hook diagnostics."),
@@ -89,6 +98,12 @@ _SPECS: tuple[FlagSpec, ...] = (
     # corpus maintenance (memo maintain)
     _spec("MEMO_MAINTAIN_DISABLE", "bool", False, "maintain", "Disable the daily `memo maintain --if-due` auto-run."),
     _spec("MEMO_MAINT_VIA_DAEMON", "bool", False, "maintain", "Route consolidation's synthesis LLM through the maintenance daemon (keeps the multi-GB model out of memo-mcp's resident set). Falls back in-process when the daemon is unreachable."),
+    # emergent synthesis (memo synthesize)
+    _spec("MEMO_SYNTHESIS_ENABLED", "bool", False, "maintain", "Enable autonomous cross-memory synthesis pass in `memo maintain`. Off by default until stable."),
+    _spec("MEMO_SYNTHESIS_MIN_CONFIDENCE", "str", "medium", "maintain", "Minimum LLM confidence to persist a synthesis: low | medium | high."),
+    _spec("MEMO_SYNTHESIS_MIN_CLUSTER", "int", 3, "maintain", "Minimum cluster size for synthesis (memories per cluster).", min_val=2, max_val=50),
+    _spec("MEMO_SYNTHESIS_MAX_CLUSTERS", "int", 20, "maintain", "Max clusters processed per synthesis pass.", min_val=1, max_val=200),
+    _spec("MEMO_SYNTHESIS_THRESHOLD", "float", 0.78, "maintain", "Cosine similarity threshold for synthesis clustering (looser than consolidation's 0.85).", min_val=0.0, max_val=1.0),
     # transcript ingest
     _spec("MEMO_INGEST_MIN_CHARS", "int", 200, "ingest", "Minimum chars for an ingested transcript turn."),
     _spec("MEMO_INGEST_STRICT", "bool", False, "ingest", "Strict ingest filtering."),
@@ -137,11 +152,14 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True),
     _spec("MEMO_PROMPT_CACHE", "bool", False, "misc", "Enable LLM prompt caching."),
     _spec("MEMO_CONTEXTUAL_RETRIEVAL", "bool", False, "misc", "Enable contextual-retrieval re-ranking."),
+    _spec("MEMO_SAVE_DEDUP_CHECK", "bool", True, "misc", "Before saving, run a quick vec search for near-duplicates. In interactive mode, prompts to update an existing memoria instead. In non-interactive mode, logs a warning.", opt_out=True),
+    _spec("MEMO_SAVE_DEDUP_THRESHOLD", "float", 0.88, "misc", "Cosine similarity floor for near-duplicate detection on save (requires MEMO_SAVE_DEDUP_CHECK=1).", min_val=0.0, max_val=1.0),
     _spec("MEMO_AUTO_PROJECT_TAG", "bool", True, "misc", "Auto-tag saved memorias with the cwd project.", opt_out=True),
     _spec("MEMO_PROJECT_TAG", "str", "", "misc", "Pin a project tag (overrides cwd detection)."),
     _spec("MEMO_MODEL_PROFILE", "str", "", "misc", "Model profile: light | balanced | quality."),
     _spec("MEMO_NONINTERACTIVE", "bool", False, "misc", "Suppress interactive prompts (hooks/CI)."),
     _spec("MEMO_SUPPRESS_LEGACY_WARN", "bool", False, "misc", "Silence legacy-config deprecation warnings."),
+    _spec("MEMO_ASK_FALLBACK_MSG", "str", "no encuentro la respuesta en las memorias guardadas", "misc", "Message returned by memory_ask when no relevant sources are found."),
 )
 
 REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}
@@ -157,9 +175,19 @@ def _coerce(spec: FlagSpec, raw: str) -> Any:
             return False
         raise ValueError(f"expected a boolean (1/0/true/false), got {raw!r}")
     if spec.kind == "int":
-        return int(raw.strip())
+        vi = int(raw.strip())
+        if spec.min_val is not None and vi < spec.min_val:
+            raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {vi}")
+        if spec.max_val is not None and vi > spec.max_val:
+            raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {vi}")
+        return vi
     if spec.kind == "float":
-        return float(raw.strip())
+        vf = float(raw.strip())
+        if spec.min_val is not None and vf < spec.min_val:
+            raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {vf}")
+        if spec.max_val is not None and vf > spec.max_val:
+            raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {vf}")
+        return vf
     return raw  # str
 
 

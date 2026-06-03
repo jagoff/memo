@@ -65,6 +65,7 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
 @click.option("--skip-contradict", is_flag=True, help="Skip the contradiction pass.")
 @click.option("--skip-consolidate", is_flag=True, help="Skip the duplicate-merge pass.")
 @click.option("--skip-stale", is_flag=True, help="Skip the staleness pass.")
+@click.option("--skip-synthesize", is_flag=True, help="Skip the emergent-synthesis pass (requires MEMO_SYNTHESIS_ENABLED=1).")
 @click.option("--json", "as_json", is_flag=True, help="Emit the receipt as JSON.")
 @click.option("--if-due", is_flag=True,
               help="No-op unless >24h since the last run; then spawn maintain "
@@ -73,7 +74,7 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
 def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
                  stale_days: int, dup_threshold: float, max_pairs: int,
                  skip_contradict: bool, skip_consolidate: bool, skip_stale: bool,
-                 as_json: bool, if_due: bool) -> None:
+                 skip_synthesize: bool, as_json: bool, if_due: bool) -> None:
     """Supersede contradictions, merge duplicates, archive stale memorias.
 
     Reversible by default (archives to inactive/). Example:
@@ -118,6 +119,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
         "merged": [],       # duplicate clusters consolidated
         "forgotten": [],    # forget_after TTL elapsed (soft, reversible)
         "archived_stale": [],
+        "synthesized": [],  # emergent cross-memory insights generated
         "errors": [],
     }
 
@@ -195,6 +197,21 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
         except Exception as exc:
             receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
 
+    # 4. Emergent synthesis (opt-in: MEMO_SYNTHESIS_ENABLED=1) -----------------
+    if not skip_synthesize and flag_bool("MEMO_SYNTHESIS_ENABLED"):
+        try:
+            results = mem.synthesize_cross_cluster(dry_run=dry_run)
+            for r in results:
+                receipt["synthesized"].append({
+                    "title": r.get("title"),
+                    "confidence": r.get("confidence"),
+                    "sources": r.get("sources", []),
+                    "saved": r.get("saved", False),
+                    "id": r.get("id"),
+                })
+        except Exception as exc:
+            receipt["errors"].append(f"synthesize: {type(exc).__name__}: {exc}")
+
     # Persist receipt + timestamp (the daily guard reads the timestamp). Even
     # a dry-run stamps so a preview doesn't immediately re-trigger; the guard
     # cares only about "ran recently".
@@ -221,6 +238,9 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
     console.print(f"  duplicate clusters merged: {len(receipt['merged'])}")
     console.print(f"  forget_after TTLs applied: {len(receipt['forgotten'])}")
     console.print(f"  stale memorias archived: {len(receipt['archived_stale'])}")
+    if receipt["synthesized"]:
+        saved = sum(1 for s in receipt["synthesized"] if s.get("saved"))
+        console.print(f"  emergent syntheses: {saved} saved, {len(receipt['synthesized'])} proposed")
     if receipt["errors"]:
         for e in receipt["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")
