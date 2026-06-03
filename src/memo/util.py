@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any
 
 
@@ -20,6 +21,7 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+@lru_cache(maxsize=8192)
 def sha256_short(text: str) -> str:
     """First 16 hex chars of the SHA-256 of ``text`` (utf-8, lossy decode)."""
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]

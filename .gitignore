@@ -43,3 +43,6 @@ web/health.html
 
 # Local synapse runtime state (federation ledger, capture state)
 .synapse/
+
+# Local memflow runtime state (events, sync state)
+.memflow/

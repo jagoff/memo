@@ -523,10 +523,9 @@ class _AskOpsMixin(_MemoryBase):
             }
 
         # Lazy-construct the chat client (same instance used by auto_derive).
-        if self._chat is None:
-            self._chat = MLXChat()
+        chat = self._ensure_chat()
         try:
-            out = self._chat.chat(
+            out = chat.chat(
                 model=self.cfg.llm_model,
                 messages=[
                     {"role": "system", "content": _ASK_SYSTEM_PROMPT},
@@ -587,11 +586,10 @@ class _AskOpsMixin(_MemoryBase):
             yield {"event": "done", "answer": verbatim, "sources": sources}
             return
 
-        if self._chat is None:
-            self._chat = MLXChat()
+        chat = self._ensure_chat()
         accum_parts: list[str] = []
         try:
-            for delta in self._chat.chat_stream(
+            for delta in chat.chat_stream(
                 model=self.cfg.llm_model,
                 messages=[
                     {"role": "system", "content": _ASK_SYSTEM_PROMPT},

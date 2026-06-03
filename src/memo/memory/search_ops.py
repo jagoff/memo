@@ -12,6 +12,8 @@ import os
 import sqlite3
 from dataclasses import replace
 
+from memo.perf import timer
+
 from memo.lifecycle import IS_FORGOTTEN_KEY
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -27,6 +29,7 @@ from memo.memory.record import (
 class _SearchOpsMixin(_MemoryBase):
     # -- search -------------------------------------------------------------
 
+    @timer(log_threshold_ms=50.0)
     def search(
         self, query: str, *, limit: int | None = None, type_: str | None = None,
         mode: str = "hybrid", load_bodies: bool = True, disable_reranker: bool = False,

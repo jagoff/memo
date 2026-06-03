@@ -56,10 +56,9 @@ class _WriteOpsMixin(_MemoryBase):
         an LLM error up to a save() call — the save must succeed even
         if the helper is broken.
         """
-        if self._chat is None:
-            self._chat = MLXChat()
+        chat = self._ensure_chat()
         try:
-            out = self._chat.chat(
+            out = chat.chat(
                 model=self.cfg.helper_model,
                 messages=[
                     {"role": "system", "content": _DERIVE_SYSTEM_PROMPT},
