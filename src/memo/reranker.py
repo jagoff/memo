@@ -126,7 +126,10 @@ class MLXReranker:
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        with self._load_lock:
+        # Timeout after 30s to avoid indefinite hang if load stalls
+        if not self._load_lock.acquire(timeout=30.0):
+            raise RuntimeError("Reranker model load timed out after 30s")
+        try:
             if self._model is not None:
                 return
             from mlx_lm import load  # deferred — Apple-Silicon-only import
@@ -152,6 +155,8 @@ class MLXReranker:
                 )
             self._loaded_at = time.time() - t0
             _log.debug("Reranker loaded in %.2fs", self._loaded_at)
+        finally:
+            self._load_lock.release()
 
     def _format(self, query: str, doc: str) -> str:
         return (

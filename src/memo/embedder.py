@@ -33,9 +33,14 @@ from __future__ import annotations
 import os
 import threading
 import time
-from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any
+
+try:
+    from consciousness_contracts.cache import get_default_cache
+    _HAS_SHARED_CACHE = True
+except ImportError:
+    _HAS_SHARED_CACHE = False
 
 # EmbedderBase (memo.embed_base) is the shared interface; MLXEmbedder implements
 # it by duck typing. No import here — embedder.py is a foundation module and
@@ -93,21 +98,22 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         self._load_lock = threading.Lock()
         self._last_use: float = 0.0
         # Query embedding cache (LRU, opt-in via MEMO_QUERY_CACHE_SIZE)
+        # Uses shared cache from consciousness-contracts if available
         cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
-        self._query_cache: OrderedDict[str, list[float]] | None = (
-            OrderedDict() if cache_size > 0 else None
-        )
-        self._query_cache_size = cache_size
-        # Always present so `with self._cache_lock` is unconditionally valid;
-        # the cache itself is what's gated on MEMO_QUERY_CACHE_SIZE.
-        self._cache_lock = threading.Lock()
+        if cache_size > 0 and _HAS_SHARED_CACHE:
+            self._query_cache = get_default_cache()
+        else:
+            self._query_cache = None
 
     # -- internal -----------------------------------------------------------
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        with self._load_lock:
+        # Timeout after 30s to avoid indefinite hang if load stalls
+        if not self._load_lock.acquire(timeout=30.0):
+            raise RuntimeError("Embedder model load timed out after 30s")
+        try:
             if self._model is not None:
                 return
             from mlx_lm import load as _mlx_load
@@ -115,6 +121,8 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
             loaded = _mlx_load(self.model_path)
             self._model = loaded[0]
             self._tokenizer = loaded[1]
+        finally:
+            self._load_lock.release()
 
     # -- public -------------------------------------------------------------
 
@@ -227,26 +235,20 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
 
         Query embeddings are cached (LRU) when MEMO_QUERY_CACHE_SIZE > 0.
         """
+        cache_key = query.strip()
+        
         # Check cache first (if enabled)
         if self._query_cache is not None:
-            cache_key = query.strip()
-            with self._cache_lock:
-                if cache_key in self._query_cache:
-                    # Move to end (most-recently-used)
-                    self._query_cache.move_to_end(cache_key)
-                    return list(self._query_cache[cache_key])
+            cached = self._query_cache.get(cache_key)
+            if cached is not None:
+                return cached
         
         # Compute embedding
         result = self.embed([_QUERY_INSTRUCTION_PREFIX + (query or "")])[0]
         
         # Store in cache (if enabled)
         if self._query_cache is not None:
-            cache_key = query.strip()
-            with self._cache_lock:
-                self._query_cache[cache_key] = result
-                # Evict oldest if over capacity
-                if len(self._query_cache) > self._query_cache_size:
-                    self._query_cache.popitem(last=False)
+            self._query_cache.put(cache_key, result)
         
         return result
 

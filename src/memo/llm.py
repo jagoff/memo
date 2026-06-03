@@ -144,7 +144,10 @@ class MLXChat:
     def _ensure_model(self, model: str) -> tuple[Any, Any]:
         if model in self._loaded:
             return self._loaded[model]
-        with self._load_lock:
+        # Timeout after 30s to avoid indefinite hang if load stalls
+        if not self._load_lock.acquire(timeout=30.0):
+            raise RuntimeError(f"LLM model load timed out after 30s for {model}")
+        try:
             if model in self._loaded:
                 self._loaded.move_to_end(model)
                 return self._loaded[model]
@@ -179,6 +182,8 @@ class MLXChat:
 
             loaded = _mlx_load(model)
             self._loaded[model] = (loaded[0], loaded[1])
+        finally:
+            self._load_lock.release()
         return self._loaded[model]
 
     # -- public -------------------------------------------------------------
