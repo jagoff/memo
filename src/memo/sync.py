@@ -20,6 +20,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+try:
+    from consciousness_contracts import (
+        SyncCoordinator,
+        SyncPhase,
+        default_state_path,
+    )
+    _HAS_SYNC_COORDINATOR = True
+except ImportError:
+    _HAS_SYNC_COORDINATOR = False
+
 
 @dataclass
 class SyncDiff:
@@ -291,6 +301,14 @@ class SyncManager:
         self.remote_path = remote_path
         self._last_sync_file = local_memory.cfg.state_dir / "last_sync.json"
 
+        # Initialize SyncCoordinator if available
+        if _HAS_SYNC_COORDINATOR:
+            self._sync_coordinator = SyncCoordinator(
+                state_path=default_state_path(local_memory.cfg.data_dir),
+            )
+        else:
+            self._sync_coordinator = None
+
     def compute_diff(self) -> SyncDiff:
         """Compute diff between local and remote vaults.
 
@@ -339,6 +357,14 @@ class SyncManager:
         Returns:
             SyncDiff with applied changes.
         """
+        import time
+
+        sync_started = time.monotonic()
+
+        # Start MEMO_VAULT_SYNC phase
+        if self._sync_coordinator:
+            self._sync_coordinator.start_phase(SyncPhase.MEMO_VAULT_SYNC)
+
         diff = self.compute_diff()
 
         # Apply sync based on direction
@@ -353,6 +379,15 @@ class SyncManager:
 
         # Update last sync timestamp
         self._update_last_sync()
+
+        # Complete MEMO_VAULT_SYNC phase
+        if self._sync_coordinator:
+            duration_ms = (time.monotonic() - sync_started) * 1000
+            self._sync_coordinator.complete_phase(
+                SyncPhase.MEMO_VAULT_SYNC,
+                duration_ms=duration_ms,
+                error=None,
+            )
 
         return diff
 
