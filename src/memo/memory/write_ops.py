@@ -224,6 +224,32 @@ class _WriteOpsMixin(_MemoryBase):
             )
         content = content[: self.cfg.max_content_chars]
 
+        # Near-duplicate check: quick vec search before committing. Best-effort
+        # — never blocks the save. Gated on MEMO_SAVE_DEDUP_CHECK (default on).
+        # Skipped on an empty corpus (no embed cost, no duplicates possible).
+        from memo.flags import flag_bool, flag_float
+        if flag_bool("MEMO_SAVE_DEDUP_CHECK") and not defer_embed:
+            try:
+                _existing_sample = self.store.list_recent(limit=1)
+                if _existing_sample:
+                    _dedup_threshold = flag_float("MEMO_SAVE_DEDUP_THRESHOLD") or 0.88
+                    _dedup_q = f"{title}\n{content[:300]}"
+                    _dedup_emb = self.embedder.embed_query(_dedup_q)
+                    _dedup_hits = self.store.search(_dedup_emb, limit=3)
+                    for _dh in _dedup_hits:
+                        if (_dh.get("score") or 0.0) >= _dedup_threshold:
+                            _dup_title = _dh.get("title") or (_dh.get("id") or "")[:8]
+                            _dup_score = _dh.get("score", 0.0)
+                            _dup_id = (_dh.get("id") or "")[:8]
+                            _log.warning(
+                                "save: near-duplicate detected — '%s' (sim=%.2f, id=%s). "
+                                "Consider `memo update %s` instead of creating a new memoria.",
+                                _dup_title, _dup_score, _dup_id, _dup_id,
+                            )
+                            break
+            except Exception as _exc:
+                _log.debug("save: dedup check skipped: %s", _exc)
+
         record_id = uuid.uuid4().hex
         rel_path = self._build_rel_path(title, now_iso)
         body_hash = _sha256_short(content)
@@ -237,6 +263,20 @@ class _WriteOpsMixin(_MemoryBase):
         extra_for_store = dict(extra or {})
         if defer_embed:
             extra_for_store["_memo_embed_pending"] = True
+        # Entity extraction for entity-aware retrieval (opt-in).
+        # Stores entity mentions in extra_for_store["entities"] so the search
+        # pipeline can boost scores for entity-matching results.
+        # Gated by MEMO_ENTITY_RETRIEVAL_ENABLED to avoid overhead on ingest
+        # when the feature is not in use.
+        if not extra_for_store.get("entities"):
+            try:
+                from memo.entity_extractor import entity_retrieval_enabled, extract_entities
+                if entity_retrieval_enabled():
+                    ents = extract_entities(f"{title} {content}"[:3000])
+                    if ents:
+                        extra_for_store["entities"] = ents
+            except Exception:
+                pass
 
         post = frontmatter.Post(
             content,
@@ -623,7 +663,7 @@ class _WriteOpsMixin(_MemoryBase):
                     "path": r["path"],
                 },
             )
-        return existed
+        return bool(existed)
 
     # -- internals ----------------------------------------------------------
 
@@ -658,11 +698,11 @@ class _WriteOpsMixin(_MemoryBase):
         either branch — callers that need to CREATE a file always write
         to the new layout.
         """
-        new_path = self.cfg.memory_dir / rel_path
+        new_path: Path = self.cfg.memory_dir / rel_path
         if new_path.is_file():
             return new_path
         if self.cfg.vault_path is not None:
-            legacy = self.cfg.vault_path / rel_path
+            legacy: Path = self.cfg.vault_path / rel_path
             if legacy.is_file():
                 return legacy
         return new_path
@@ -675,8 +715,8 @@ class _WriteOpsMixin(_MemoryBase):
                 text = abs_path.read_text(encoding="utf-8")
                 post = frontmatter.loads(text)
                 return post.content
-            except Exception:
-                pass
+            except (OSError, UnicodeDecodeError) as exc:
+                _log.debug("_read_body: disk read failed for %s: %s", rel_path, exc)
         # Fallback: vault-ingest rows (e.g. `notes/01-Projects/Foo.md`,
         # `work/.../bar.md#chunk-3`) don't resolve to disk via `memory_dir`
         # because the label-prefixed path lives outside `data_dir`. The

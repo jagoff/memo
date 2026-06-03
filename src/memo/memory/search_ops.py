@@ -146,6 +146,13 @@ class _SearchOpsMixin(_MemoryBase):
         # never does: a backend subprocess (≤5s) would blow its 5s budget.
         if read_through and self.cache.policy.read_through and len(out) < limit:
             out = self._cache_read_through(query, out, limit)
+        # Entity-aware score boost: if query mentions known entities (persons,
+        # technologies, projects), boost chunks whose extra["entities"] overlaps.
+        # Gated by MEMO_ENTITY_RETRIEVAL_ENABLED. Best-effort: any failure is
+        # silent so entity extraction never breaks the search path.
+        if out and os.environ.get("MEMO_ENTITY_RETRIEVAL_ENABLED") == "1":
+            out = self._apply_entity_boost(query, out)
+
         # Contradiction penalty: penalise the older side of open contradiction
         # pairs among the retrieved results so stale/superseded memories don't
         # surface at the top. Gated by MEMO_CONTRADICT_PENALTY_ENABLED (default
@@ -201,6 +208,30 @@ class _SearchOpsMixin(_MemoryBase):
             reverse=True,
         )
         return penalised
+
+    def _apply_entity_boost(
+        self, query: str, results: list[MemoryRecord],
+    ) -> list[MemoryRecord]:
+        """Boost chunks whose stored entities overlap with query entities."""
+        try:
+            from memo.entity_extractor import entity_match_score, extract_entities
+            query_entities = extract_entities(query)
+            if not query_entities:
+                return results
+            boosted: list[MemoryRecord] = []
+            changed = False
+            for r in results:
+                doc_entities: list[str] = (r.extra or {}).get("entities") or []
+                boost = entity_match_score(query_entities, doc_entities)
+                if boost > 0.0:
+                    r = replace(r, score=round((r.score or 0.0) + boost, 6))
+                    changed = True
+                boosted.append(r)
+            if changed:
+                boosted.sort(key=lambda r: (r.score or 0.0), reverse=True)
+            return boosted
+        except Exception:
+            return results
 
     def _record_access(self, ids: list[str]) -> None:
         """Record read/hits for the surfaced memorias (powers LRU/LFU + the
