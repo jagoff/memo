@@ -38,7 +38,7 @@ from memo.cli_diag import (  # noqa: E402
 )
 from memo.cli_runtime import _runtime_install_report  # noqa: E402
 from memo.config import Config  # noqa: E402
-from memo.dashboard import read_recall_log  # noqa: E402
+from memo.dashboard import read_recall_log, recall_health  # noqa: E402
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -480,6 +480,7 @@ def build(
 
     drift = _body_hash_drift(cfg)
     recall_log = read_recall_log(cfg.state_dir, limit=200)
+    recall_health_data = recall_health(cfg.state_dir, limit=500)
     history = _history_recent(cfg, limit=50)
     contradictions = _contradictions_stats(cfg)
 
@@ -513,6 +514,14 @@ def build(
         "growth": growth,
         "history": history[:20],
         "recall_log": recall_log[:20],
+        "recall_util": {
+            "hit_rate": recall_health_data["hit_rate"],
+            "fired": recall_health_data["fired"],
+            "bailed": recall_health_data["bailed"],
+            "sampled": recall_health_data["sampled"],
+            "strong_hit_rate": recall_health_data["strong_hit_rate"],
+            "median_top_score": recall_health_data["median_top_score"],
+        },
         "doctor_raw": doctor,
         "contradictions": contradictions or {},
     }
@@ -665,6 +674,28 @@ _HTML_TEMPLATE = r"""<!doctype html>
     </div>
   </div>
 
+  <div class="row2" style="grid-template-columns:1fr;">
+    <div class="panel">
+      <h2>Utilización de consultas</h2>
+      <div style="display:flex;align-items:center;gap:2.5rem;padding:1.2rem 0 0.6rem;">
+        <div id="util-pct" style="font-size:6rem;font-weight:800;line-height:1;color:var(--fg);min-width:8rem;letter-spacing:-2px;">—</div>
+        <div style="flex:1;">
+          <div id="util-sub" style="margin-bottom:1rem;color:var(--fg-mute);font-size:0.9rem;line-height:1.6;">—</div>
+          <div style="background:var(--border);border-radius:6px;height:18px;overflow:hidden;display:flex;">
+            <div id="util-seg-hits"  style="height:100%;background:var(--green);width:0%;transition:width 0.4s;" title="con hits"></div>
+            <div id="util-seg-miss"  style="height:100%;background:#f8717166;width:0%;transition:width 0.4s;" title="sin hits"></div>
+            <div id="util-seg-bail"  style="height:100%;background:#94a3b833;width:0%;transition:width 0.4s;" title="omitidas"></div>
+          </div>
+          <div style="display:flex;gap:1.2rem;margin-top:0.5rem;font-size:0.78rem;color:var(--fg-mute);">
+            <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px;vertical-align:middle;"></span><span id="util-leg-hits">—</span> con hits</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#f8717166;border-radius:2px;margin-right:4px;vertical-align:middle;"></span><span id="util-leg-miss">—</span> sin hits</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#94a3b833;border-radius:2px;margin-right:4px;vertical-align:middle;"></span><span id="util-leg-bail">—</span> omitidas</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="row2">
     <div class="panel">
       <h2>Recent history</h2>
@@ -774,6 +805,32 @@ _HTML_TEMPLATE = r"""<!doctype html>
     xaxis: { tickangle: -45, automargin: true, color: "#94a3b8" },
     yaxis: { gridcolor: "#243049", color: "#94a3b8" },
   }, { displaylogo: false, responsive: true });
+
+  // -- recall utilization -----------------------------------------------
+  const ru = DATA.recall_util;
+  if (ru && ru.fired > 0) {
+    const hits   = Math.round((ru.hit_rate || 0) * ru.fired);
+    const misses = ru.fired - hits;
+    const total  = ru.fired + ru.bailed;
+    const pct    = Math.round((ru.hit_rate || 0) * 100);
+    const color  = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--yellow)' : 'var(--red)';
+    document.getElementById('util-pct').style.color = color;
+    document.getElementById('util-pct').textContent = pct + '%';
+    document.getElementById('util-seg-hits').style.width = (hits   / total * 100).toFixed(1) + '%';
+    document.getElementById('util-seg-miss').style.width = (misses / total * 100).toFixed(1) + '%';
+    document.getElementById('util-seg-bail').style.width = (ru.bailed / total * 100).toFixed(1) + '%';
+    document.getElementById('util-leg-hits').textContent = hits;
+    document.getElementById('util-leg-miss').textContent = misses;
+    document.getElementById('util-leg-bail').textContent = ru.bailed;
+    const strong = ru.strong_hit_rate != null ? Math.round(ru.strong_hit_rate * 100) + '% strong' : '';
+    const score  = ru.median_top_score != null ? 'score mediano ' + ru.median_top_score : '';
+    document.getElementById('util-sub').textContent = [strong, score, total + ' totales'].filter(Boolean).join(' · ');
+  } else {
+    document.getElementById('util-pct').textContent = 'sin datos';
+    document.getElementById('util-sub').textContent = ru && ru.bailed > 0
+      ? ru.bailed + ' omitidas (prompts cortos / slash commands)'
+      : 'recall.log vacío';
+  }
 
   // -- tables ------------------------------------------------------------
   const histBody = document.querySelector("#history-table tbody");
