@@ -36,6 +36,7 @@ from memo import server_cache as _srv_cache
 from memo import server_collaborative as _srv_collaborative
 from memo import server_consolidate as _srv_consolidate
 from memo import server_contextual as _srv_contextual
+from memo import server_synthesis as _srv_synthesis
 from memo import server_contradict as _srv_contradict
 from memo import server_encrypt as _srv_encrypt
 from memo import server_entities as _srv_entities
@@ -106,6 +107,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     _srv_temporal.register(server, memory)
     _srv_contradict.register(server, memory)
     _srv_consolidate.register(server, memory)
+    _srv_synthesis.register(server, memory)
     _srv_graph.register(server, memory)
     _srv_contextual.register(server, memory)
     _srv_links.register(server, memory)
@@ -122,6 +124,9 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     _srv_multimodal.register(server, memory)
     _srv_collaborative.register(server, memory)
     _srv_asof.register(server, memory)
+    # ToolSpec-registry tools (new pattern — see mcp_tools.py)
+    from memo.mcp_tools import register_all as _register_mcp_tools
+    _register_mcp_tools(server, memory)
 
     @server.tool()
     def memory_save(
