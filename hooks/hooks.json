@@ -7,6 +7,13 @@
         "hooks": [
           {
             "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo reflect --last --if-due --quiet",
+            "timeout": 90000,
+            "async": true,
+            "comment": "Synthesize the previous session into durable memorias before briefing. --if-due skips if already done. Runs async so startup isn't blocked."
+          },
+          {
+            "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo prewarm",
             "timeout": 30,
             "async": true,

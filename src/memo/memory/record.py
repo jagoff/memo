@@ -14,6 +14,7 @@ import logging
 import re
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any
 
 from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES
@@ -91,6 +92,34 @@ Rules:
   indicates Y" over vague summaries.
 
 Output ONLY the JSON, no markdown fences, no commentary."""
+
+
+_REFLECT_SYSTEM_PROMPT = """You analyze a software development session transcript.
+Extract durable knowledge worth saving.
+
+Output ONLY this JSON (no markdown fences, no other text):
+{
+  "session_title": "<project> — <3-6 word summary>",
+  "summary": "<2-3 sentence arc: what was built/fixed/decided>",
+  "decisions": [{"title": "...", "body": "...", "tags": ["project:X"]}],
+  "facts":     [{"title": "...", "body": "...", "tags": ["project:X"]}],
+  "bugs":      [{"title": "...", "body": "...", "tags": ["project:X"]}],
+  "followups": [{"title": "...", "body": "...", "tags": ["project:X"]}]
+}
+
+Rules:
+- decisions: explicit choices made WITH rationale ("decided X because Y")
+- facts: discovered constraints, gotchas, non-obvious behaviors
+- bugs: problems found + root cause + fix (even if just diagnosed, not fixed)
+- followups: things mentioned as TODO, left open, or explicitly deferred
+- Skip anything generic or derivable from the code itself
+- Skip turns that are only clarifications, file reads, or routine commands
+- Each item title must be standalone (readable without session context)
+- Maximum 8 total items across all categories
+- body max 300 chars
+- At least 1 tag per item; prefer "project:<basename>" from the cwd
+- Empty arrays ok; skip categories with nothing worth saving
+- Output ONLY the JSON, no commentary"""
 
 
 _ASK_SYSTEM_PROMPT = """You answer questions over the user's personal memory archive and indexed repositories.
@@ -378,6 +407,7 @@ _SLUG_NON_WORD = re.compile(r"[^\w\s-]+")
 _SLUG_WS = re.compile(r"[\s_-]+")
 
 
+@lru_cache(maxsize=4096)
 def _slugify(s: str) -> str:
     s = s.lower().strip()
     s = _SLUG_NON_WORD.sub("", s)
