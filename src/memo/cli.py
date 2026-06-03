@@ -38,12 +38,13 @@ from memo.cli_as_of import as_of_group
 from memo.cli_backend_native import backend_native_group
 from memo.cli_backup import backup_group
 from memo.cli_briefing import briefing
-from memo.cli_capture import capture_stop, ingest, mine_history, resume
+from memo.cli_capture import capture_stop, ingest, mine_history, reflect, resume
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import _short, console
 from memo.cli_common import get_memory as _get_memory
 from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
+from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
 from memo.cli_diag import _db_health_report, _doctor_report, _recall_daemon_health
@@ -142,6 +143,7 @@ cli.add_command(logs)
 cli.add_command(mine_history)
 cli.add_command(ingest)
 cli.add_command(capture_stop)
+cli.add_command(reflect)
 cli.add_command(resume)
 cli.add_command(diff_cmd)
 cli.add_command(historia_cmd)
@@ -188,6 +190,7 @@ cli.add_command(as_of_group)
 cli.add_command(session_group)
 cli.add_command(temporal_group)
 cli.add_command(consolidate_group)
+cli.add_command(cross_dedup_cmd)
 cli.add_command(contextual_group)
 cli.add_command(links_group)
 cli.add_command(version_group)
