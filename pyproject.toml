@@ -59,6 +59,12 @@ ocr = [
     "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
+# Tantivy-backed FTS: replaces FTS5 BM25 when installed.
+# Adds fuzzy/typo-tolerant search (mode="fuzzy") and configurable BM25.
+# ARM wheels available on Apple Silicon: pip install -e ".[tantivy]"
+tantivy = [
+    "tantivy>=0.22; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 # Shared trinity schemas (memo + memflow + synapse). NOT on PyPI and not a git
 # repo — a local editable dep on dev machines, absent in CI/clean installs. The
 # synapse backend + consciousness ledger guard their imports and degrade to a
@@ -106,7 +112,8 @@ python_version = "3.13"
 # platform-gated imports never installed on the Linux CI runner.
 module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
           "consciousness_contracts",
-          "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "huggingface_hub"]
+          "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "huggingface_hub",
+          "tantivy"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

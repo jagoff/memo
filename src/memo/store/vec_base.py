@@ -51,8 +51,19 @@ class VecStoreBase:
         type_: str | None = None,
         exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Keyword search (FTS5 or equivalent). Same row dict shape as search()."""
+        """Keyword search (FTS5 or tantivy). Same row dict shape as search()."""
         raise NotImplementedError
+
+    def search_fuzzy(
+        self,
+        query: str,
+        *,
+        limit: int,
+        type_: str | None = None,
+        exclude_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fuzzy/typo-tolerant search via tantivy. Falls back to BM25 when unavailable."""
+        return self.search_bm25(query, limit=limit, type_=type_, exclude_types=exclude_types)
 
     def upsert(
         self,

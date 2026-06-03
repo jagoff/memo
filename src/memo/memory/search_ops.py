@@ -71,6 +71,8 @@ class _SearchOpsMixin(_MemoryBase):
 
         if mode == "bm25":
             rows = self.store.search_bm25(query, limit=limit, type_=type_, exclude_types=exclude_types)
+        elif mode == "fuzzy":
+            rows = self.store.search_fuzzy(query, limit=limit, type_=type_, exclude_types=exclude_types)
         elif mode == "vec":
             # Asymmetric retrieval: queries are embedded WITH the
             # instruction prefix; documents are embedded RAW (in
