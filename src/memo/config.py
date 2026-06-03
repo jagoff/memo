@@ -52,7 +52,7 @@ MODEL_PROFILES: dict[str, dict[str, object]] = {
     # search skips the cross-encoder so recall-hook latency stays predictable.
     "light": {
         "llm_model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
-        "helper_model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+        "helper_model": "mlx-community/Qwen3-4B-4bit",
         "embedder_model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
         "embedder_dims": 1024,
         "reranker_enabled": False,
@@ -61,7 +61,7 @@ MODEL_PROFILES: dict[str, dict[str, object]] = {
     # local MCP memory store whose hooks may run on every prompt.
     "balanced": {
         "llm_model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
-        "helper_model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+        "helper_model": "mlx-community/Qwen3-4B-4bit",
         "embedder_model": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
         "embedder_dims": 1024,
         "reranker_enabled": True,
@@ -71,7 +71,7 @@ MODEL_PROFILES: dict[str, dict[str, object]] = {
     # embedder emits 2560-dim vectors instead of 1024.
     "quality": {
         "llm_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510",
-        "helper_model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+        "helper_model": "mlx-community/Qwen3-4B-4bit",
         "embedder_model": "mlx-community/Qwen3-Embedding-4B-4bit-DWQ",
         "embedder_dims": 2560,
         "reranker_enabled": True,

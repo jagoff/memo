@@ -53,6 +53,26 @@ def recall_log_path(state_dir: Path) -> Path:
     return state_dir / "recall.log"
 
 
+def _bail_breakdown(bail_rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Classify bail rows by cause so 'bailed=40%' isn't opaque.
+
+    Intentional bails (slash_command, short_prompt) are expected noise.
+    Lossy bails (min_sim) indicate the score floor is too aggressive.
+    """
+    counts: dict[str, int] = {"slash_command": 0, "short_prompt": 0, "min_sim": 0, "other": 0}
+    for row in bail_rows:
+        reason = row.get("reason", "")
+        if "slash command" in reason:
+            counts["slash_command"] += 1
+        elif "too short" in reason:
+            counts["short_prompt"] += 1
+        elif "min_sim" in reason or "no hits above" in reason:
+            counts["min_sim"] += 1
+        else:
+            counts["other"] += 1
+    return counts
+
+
 def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
     """Summarise the recall ring buffer — is memo actually consulted and
     returning confident hits, or a write-only store nobody reads?
@@ -60,11 +80,18 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
     Computed purely from the existing recall.log (no hot-path cost):
       - sampled:          events considered (newest `limit`)
       - fired / bailed:   recall ran vs. skipped (short/slash/empty prompt)
+      - bail_breakdown:   bailed counts by cause (slash_command, short_prompt,
+                          min_sim — lossy, other). min_sim > 0 means hits exist
+                          but all fell below the floor; the others are intentional.
       - hit_rate:         share of *fired* recalls that surfaced ≥1 memoria
       - strong_hit_rate:  share of *fired* recalls with a top score > 0.85
                           (high-confidence match — the honest relevance number)
-      - referenced_rate:  share of surfaced memorias later fetched/clicked
-                          (lower bound on "used" — see referenced_rate())
+      - grounded_rate:    PRIMARY usefulness metric. Share of surfaced memorias
+                          that the Stop-hook grounding detector found in the answer.
+                          90%+ is excellent. Requires correlatable session_id+turn rows.
+      - referenced_rate:  lower bound on "used" — requires an explicit MCP fetch or
+                          click event after recall, which almost never happens in normal
+                          flow. Expect 0; grounded_rate is the real signal.
       - median_top_score: median best-hit score on hit events (confidence)
       - p50_latency_ms:   median end-to-end recall latency
 
@@ -73,7 +100,8 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
     """
     rows = dedup_double_fire(read_recall_log(state_dir, limit=limit))
     fired = [r for r in rows if r.get("via") in ("daemon", "subprocess")]
-    bailed = sum(1 for r in rows if r.get("via") == "bail")
+    bail_rows = [r for r in rows if r.get("via") == "bail"]
+    bailed = len(bail_rows)
     with_hits = [r for r in fired if r.get("hits")]
 
     top_scores: list[float] = []
@@ -101,16 +129,17 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
         "sampled": len(rows),
         "fired": len(fired),
         "bailed": bailed,
+        "bail_breakdown": _bail_breakdown(bail_rows),
         "hit_rate": round(len(with_hits) / len(fired), 3) if fired else None,
         "strong_hit_rate": round(strong / len(fired), 3) if fired else None,
-        "referenced_rate": ref["referenced_rate"],
-        "referenced": ref["referenced"],
-        "surfaced": ref["surfaced"],
-        # Outcome-based: was the surfaced memoria actually used in the answer?
-        # Only correlatable rows (session_id+turn) count toward this denominator.
+        # grounded_rate is the primary usefulness signal. referenced_rate is a
+        # lower bound (almost always 0 — requires explicit MCP fetch events).
         "grounded_rate": grounded["grounded_rate"],
         "grounded": grounded["grounded"],
         "grounded_surfaced": grounded["surfaced"],
+        "referenced_rate": ref["referenced_rate"],
+        "referenced": ref["referenced"],
+        "surfaced": ref["surfaced"],
         "median_top_score": round(_median(top_scores), 3) if top_scores else None,
         "p50_latency_ms": _median(lats),
     }

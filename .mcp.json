@@ -16,7 +16,7 @@
         "run",
         "--no-project",
         "--with",
-        "fastmcp==0.4.1",
+        "fastmcp==3.4.0",
         "fastmcp",
         "run",
         "/Users/USER/repos/sqlite-explorer-fastmcp/sqlite_explorer.py"

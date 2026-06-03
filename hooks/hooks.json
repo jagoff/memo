@@ -33,7 +33,7 @@
           },
           {
             "type": "command",
-            "command": "MEMO_NONINTERACTIVE=1 memo maintain --if-due",
+            "command": "MEMO_NONINTERACTIVE=1 MEMO_SYNTHESIS_ENABLED=1 memo maintain --if-due",
             "timeout": 5,
             "async": true,
             "comment": "Daily corpus freshness (archive-only, reversible). No-op unless >24h since last run; spawns detached so it never blocks startup. Disable with MEMO_MAINTAIN_DISABLE=1."
@@ -56,7 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "MEMO_NONINTERACTIVE=1 memo recall-hook",
+            "command": "MEMO_NONINTERACTIVE=1 MEMO_CONTEXTUAL_RETRIEVAL=1 memo recall-hook",
             "timeout": 12,
             "comment": "Increased from 8s: daemon cold-start ~2s + inference ~3s + margin"
           },
