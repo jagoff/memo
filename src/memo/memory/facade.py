@@ -98,9 +98,9 @@ class Memory(
                 expected_dims=cfg.embedder_dims,
             )
         self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
-        # Lazy: opened on first log call. Audit failures must never
-        # propagate to the caller, so HistoryStore swallows its own
-        # exceptions internally.
+        # History store — cheap to open (just sqlite); creating eagerly.
+        # Audit failures never propagate to the caller — HistoryStore
+        # swallows its own exceptions internally.
         from memo.history import HistoryStore as _HS
         self.history = _HS(cfg.history_db)
         # Helper LLM is lazy — only constructed when `auto_derive=True`
@@ -110,6 +110,9 @@ class Memory(
         # Knowledge-graph store. Cheap to open (just sqlite); creating
         # eagerly so graph queries never lazy-stall a CLI command.
         self.graph = GraphStore(cfg.graph_db)
+        # Persistent contradiction sidecar — opened lazily so callers
+        # that never scan don't pay for the extra sqlite handle.
+        self._contradict_store: ContradictionStore | None = None
         # Cache-tier manager (opt-in via MEMO_CACHE_MODE) — lazy @property
         # `cache`, memoized here. Construction triggers no cold-start and the
         # backend is built lazily on first use (see CacheManager.ensure_backend).
@@ -125,9 +128,6 @@ class Memory(
         self._maybe_warn_legacy_paths()
         # Temporal analyzer for contradiction detection and timeline analysis
         self._temporal: TemporalAnalyzer | None = None
-        # Persistent contradiction sidecar — opened lazily so callers
-        # that never scan don't pay for the extra sqlite handle.
-        self._contradict_store: ContradictionStore | None = None
 
     def _ensure_chat(self) -> MLXChat:
         """Construct the chat wrapper without loading model weights yet."""
@@ -171,12 +171,7 @@ class Memory(
     def contradict_store(self) -> ContradictionStore:
         """Lazy accessor for the persistent contradictions sidecar."""
         if self._contradict_store is None:
-            try:
-                self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
-            except Exception as exc:
-                _log.warning("contradict_store init failed: %s", exc)
-                # Return a fresh instance that will fail gracefully on use
-                self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
+            self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
         return self._contradict_store
 
     @property
