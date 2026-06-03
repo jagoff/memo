@@ -23,6 +23,7 @@ def _tantivy_available() -> bool:
         return False
 
 
+@lru_cache(maxsize=4096)
 def _fold_diacritics(text: str) -> str:
     """Strip combining diacritical marks so 'decisión' matches 'decision'."""
     return "".join(
