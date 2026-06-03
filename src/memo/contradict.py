@@ -105,6 +105,12 @@ class PairRecord:
     resolution_note: str | None
 
 
+_PAIR_COLS = (
+    "pair_id, memoria_id_a, memoria_id_b, relationship, confidence,"
+    " rationale, status, detected_at, resolved_at, resolution_note"
+)
+
+
 class ContradictionStore:
     """Sidecar sqlite store for contradiction pairs.
 
@@ -199,7 +205,7 @@ class ContradictionStore:
         relationship: str | None = None,
     ) -> list[PairRecord]:
         sql = (
-            "SELECT * FROM pairs WHERE status='open' AND confidence >= ? "
+            f"SELECT {_PAIR_COLS} FROM pairs WHERE status='open' AND confidence >= ? "
         )
         params: list[Any] = [min_confidence]
         if relationship:
@@ -215,7 +221,7 @@ class ContradictionStore:
         status: str | None = None,
         limit: int = 200,
     ) -> list[PairRecord]:
-        sql = "SELECT * FROM pairs "
+        sql = f"SELECT {_PAIR_COLS} FROM pairs "
         params: list[Any] = []
         if status:
             sql += "WHERE status = ? "
@@ -227,7 +233,7 @@ class ContradictionStore:
 
     def get(self, pair_id: int) -> PairRecord | None:
         row = self._conn.execute(
-            "SELECT * FROM pairs WHERE pair_id=?", (pair_id,),
+            f"SELECT {_PAIR_COLS} FROM pairs WHERE pair_id=?", (pair_id,),
         ).fetchone()
         return self._row_to_record(row) if row else None
 
@@ -266,6 +272,27 @@ class ContradictionStore:
                 (memoria_id, memoria_id),
             )
             return int(cur.rowcount or 0)
+
+    def pairs_for_ids(
+        self,
+        ids: list[str],
+        *,
+        status: str = "open",
+    ) -> list[PairRecord]:
+        """Return pairs where either side is one of ``ids``.
+
+        Used by the search pipeline to apply contradiction penalties to
+        retrieved results without scanning the full pairs table.
+        """
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        sql = (
+            f"SELECT {_PAIR_COLS} FROM pairs WHERE status=? "
+            f"AND (memoria_id_a IN ({placeholders}) OR memoria_id_b IN ({placeholders}))"
+        )
+        rows = self._conn.execute(sql, [status, *ids, *ids]).fetchall()
+        return [self._row_to_record(r) for r in rows]
 
     def stats(self) -> dict[str, int]:
         rows = self._conn.execute(
