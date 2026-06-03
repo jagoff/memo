@@ -37,6 +37,10 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any
 
+# EmbedderBase (memo.embed_base) is the shared interface; MLXEmbedder implements
+# it by duck typing. No import here — embedder.py is a foundation module and
+# must not import other memo modules (architecture boundary test).
+
 # `mlx_lm` is Apple-Silicon-only. Importing at module level on Linux/x86
 # would raise; we defer the import until `_ensure_loaded()`.
 
@@ -59,7 +63,7 @@ _QUERY_INSTRUCTION_PREFIX = (
 )
 
 
-class MLXEmbedder:
+class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
     """In-process MLX embedder. Drop-in for any code that needs a
     `embed(list[str]) -> list[list[float]]` callable.
 
@@ -258,6 +262,11 @@ class MLXEmbedder:
             except Exception:
                 # mlx not importable on non-Apple-Silicon → nothing to clear.
                 pass
+
+    @property
+    def dims(self) -> int:
+        """EmbedderBase contract: returns expected_dims."""
+        return self.expected_dims
 
     @property
     def last_use(self) -> float:

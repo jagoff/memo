@@ -52,6 +52,7 @@ from .migrations import _MigrationsMixin
 from .queries import _QueriesMixin
 from .repo_store import _RepoStoreMixin
 from .schema import _SchemaMixin
+from .vec_base import VecStoreBase
 
 
 class VecStore(
@@ -61,6 +62,7 @@ class VecStore(
     _QueriesMixin,
     _RepoStoreMixin,
     _FeedbackMixin,
+    VecStoreBase,  # last: concrete mixins shadow the template methods
 ):
     """sqlite-vec store for memory metadata + embeddings.
 

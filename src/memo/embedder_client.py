@@ -192,7 +192,7 @@ def embed(
     return _inproc().embed(items)
 
 
-class SocketEmbedder:
+class SocketEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
     """Drop-in for `MLXEmbedder` backed by the recall-daemon socket.
 
     Implements the `embed` / `embed_query` / `expected_dims` surface that
@@ -209,6 +209,10 @@ class SocketEmbedder:
     def __init__(self, expected_dims: int, *, state_dir: Path | None = None) -> None:
         self.expected_dims = expected_dims
         self._state_dir = state_dir
+
+    @property
+    def dims(self) -> int:
+        return self.expected_dims
 
     def embed(self, inputs: Sequence[str]) -> list[list[float]]:
         return embed(inputs, state_dir=self._state_dir)
