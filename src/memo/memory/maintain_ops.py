@@ -15,6 +15,12 @@ from typing import Any
 
 import frontmatter
 
+try:
+    from consciousness_contracts.uri import extract_resource_id, is_memo_uri, parse_uri
+    _HAS_URI_HELPERS = True
+except ImportError:
+    _HAS_URI_HELPERS = False
+
 from memo.embedder import assert_valid_embedding
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
 from memo.llm import MLXChat
@@ -75,81 +81,167 @@ class _MaintainOpsMixin(_MemoryBase):
                 out["target"] = target
             return out
 
-        memoria_prefix = "memo://memoria/"
-        repo_index_prefix = "memo://repo-index/"
-        repo_prefix = "memo://repo/"
-
-        if uri.startswith(memoria_prefix):
-            memoria_id = uri[len(memoria_prefix):].strip()
-            if not memoria_id:
-                return payload("missing", "memo://memoria URI did not include an id.")
-            try:
-                rec = self.get(memoria_id)
-            except AmbiguousIdError as exc:
+        # Use shared URI helpers if available
+        if _HAS_URI_HELPERS:
+            if not is_memo_uri(uri):
                 return payload(
-                    "error",
-                    f"ambiguous memoria id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+                    "unsupported",
+                    "Memo backend-native only replays memo://memoria/<id>, "
+                    "memo://repo/<id|name|url>, and memo://repo-index/<name>/<commit> evidence.",
                 )
-            if rec is None:
-                return payload("missing", "Memo memoria was not found.")
-            return payload(
-                "found",
-                f"resolved memoria: {rec.id}",
-                content_hash=_stable_content_hash(rec.to_dict()),
-                target={"kind": "memoria", "id": rec.id, "path": rec.path},
-            )
-
-        if uri.startswith(repo_index_prefix):
-            rest = uri[len(repo_index_prefix):].strip("/")
-            if not rest or "/" not in rest:
+            parts = parse_uri(uri)
+            if parts is None:
+                return payload("missing", "Invalid URI format.")
+            
+            resource_type = parts.resource_type
+            resource_id = parts.resource_id or ""
+            subpath = parts.subpath or ""
+            
+            if resource_type == "memoria":
+                if not resource_id:
+                    return payload("missing", "memo://memoria URI did not include an id.")
+                try:
+                    rec = self.get(resource_id)
+                except AmbiguousIdError as exc:
+                    return payload(
+                        "error",
+                        f"ambiguous memoria id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+                    )
+                if rec is None:
+                    return payload("missing", "Memo memoria was not found.")
                 return payload(
-                    "missing",
-                    "memo://repo-index URI must include <repo-name>/<commit-prefix>.",
+                    "found",
+                    f"resolved memoria: {rec.id}",
+                    content_hash=_stable_content_hash(rec.to_dict()),
+                    target={"kind": "memoria", "id": rec.id, "path": rec.path},
                 )
-            repo_name, commit_prefix = rest.split("/", 1)
-            source = self.store.get_repo_source(repo_name)
-            if source is None:
-                return payload("missing", "Memo repo source was not found.")
-            commit = str(source.get("commit_sha") or "")
-            if commit_prefix and commit_prefix != "unknown" and not commit.startswith(commit_prefix):
+            
+            elif resource_type == "repo-index":
+                # parse_uri splits memo://repo-index/<name>/<commit> as:
+                # resource_id=<name>, subpath=<commit>
+                repo_name = resource_id or (subpath.split("/", 1)[0] if subpath and "/" in subpath else "")
+                commit_prefix = subpath if resource_id else (subpath.split("/", 1)[1] if subpath and "/" in subpath else "")
+                if not repo_name:
+                    return payload("missing", "memo://repo-index URI must include <repo-name>/<commit-prefix>.")
+                source = self.store.get_repo_source(repo_name)
+                if source is None:
+                    return payload("missing", "Memo repo source was not found.")
+                commit = str(source.get("commit_sha") or "")
+                if commit_prefix and commit_prefix != "unknown" and not commit.startswith(commit_prefix):
+                    return payload(
+                        "missing",
+                        "Memo repo source exists but commit did not match the receipt URI.",
+                        target={
+                            "kind": "repo_index",
+                            "repo_id": source.get("id") or "",
+                            "name": source.get("name") or repo_name,
+                            "commit_sha": commit,
+                        },
+                    )
+                resolved = self._repo_replay_payload(source)
                 return payload(
-                    "missing",
-                    "Memo repo source exists but commit did not match the receipt URI.",
-                    target={
-                        "kind": "repo_index",
-                        "repo_id": source.get("id") or "",
-                        "name": source.get("name") or repo_name,
-                        "commit_sha": commit,
-                    },
+                    "found",
+                    f"resolved repo index: {source.get('name')}@{commit[:12]}",
+                    content_hash=_stable_content_hash(resolved),
+                    target=resolved,
                 )
-            resolved = self._repo_replay_payload(source)
-            return payload(
-                "found",
-                f"resolved repo index: {source.get('name')}@{commit[:12]}",
-                content_hash=_stable_content_hash(resolved),
-                target=resolved,
-            )
+            
+            elif resource_type == "repo":
+                if not resource_id:
+                    return payload("missing", "memo://repo URI did not include a repo id/name/url.")
+                source = self.store.get_repo_source(resource_id)
+                if source is None:
+                    return payload("missing", "Memo repo source was not found.")
+                resolved = self._repo_replay_payload(source)
+                return payload(
+                    "found",
+                    f"resolved repo: {source.get('name')}",
+                    content_hash=_stable_content_hash(resolved),
+                    target=resolved,
+                )
+            
+            else:
+                return payload(
+                    "unsupported",
+                    f"Unsupported memo:// resource type: {resource_type}",
+                )
+        else:
+            # Fallback to manual parsing
+            memoria_prefix = "memo://memoria/"
+            repo_index_prefix = "memo://repo-index/"
+            repo_prefix = "memo://repo/"
 
-        if uri.startswith(repo_prefix):
-            repo_key = uri[len(repo_prefix):].strip()
-            if not repo_key:
-                return payload("missing", "memo://repo URI did not include a repo id/name/url.")
-            source = self.store.get_repo_source(repo_key)
-            if source is None:
-                return payload("missing", "Memo repo source was not found.")
-            resolved = self._repo_replay_payload(source)
-            return payload(
-                "found",
-                f"resolved repo: {source.get('name')}",
-                content_hash=_stable_content_hash(resolved),
-                target=resolved,
-            )
+            if uri.startswith(memoria_prefix):
+                memoria_id = uri[len(memoria_prefix):].strip()
+                if not memoria_id:
+                    return payload("missing", "memo://memoria URI did not include an id.")
+                try:
+                    rec = self.get(memoria_id)
+                except AmbiguousIdError as exc:
+                    return payload(
+                        "error",
+                        f"ambiguous memoria id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+                    )
+                if rec is None:
+                    return payload("missing", "Memo memoria was not found.")
+                return payload(
+                    "found",
+                    f"resolved memoria: {rec.id}",
+                    content_hash=_stable_content_hash(rec.to_dict()),
+                    target={"kind": "memoria", "id": rec.id, "path": rec.path},
+                )
 
-        return payload(
-            "unsupported",
-            "Memo backend-native only replays memo://memoria/<id>, "
-            "memo://repo/<id|name|url>, and memo://repo-index/<name>/<commit> evidence.",
-        )
+            if uri.startswith(repo_index_prefix):
+                rest = uri[len(repo_index_prefix):].strip("/")
+                if not rest or "/" not in rest:
+                    return payload(
+                        "missing",
+                        "memo://repo-index URI must include <repo-name>/<commit-prefix>.",
+                    )
+                repo_name, commit_prefix = rest.split("/", 1)
+                source = self.store.get_repo_source(repo_name)
+                if source is None:
+                    return payload("missing", "Memo repo source was not found.")
+                commit = str(source.get("commit_sha") or "")
+                if commit_prefix and commit_prefix != "unknown" and not commit.startswith(commit_prefix):
+                    return payload(
+                        "missing",
+                        "Memo repo source exists but commit did not match the receipt URI.",
+                        target={
+                            "kind": "repo_index",
+                            "repo_id": source.get("id") or "",
+                            "name": source.get("name") or repo_name,
+                            "commit_sha": commit,
+                        },
+                    )
+                resolved = self._repo_replay_payload(source)
+                return payload(
+                    "found",
+                    f"resolved repo index: {source.get('name')}@{commit[:12]}",
+                    content_hash=_stable_content_hash(resolved),
+                    target=resolved,
+                )
+
+            if uri.startswith(repo_prefix):
+                repo_key = uri[len(repo_prefix):].strip()
+                if not repo_key:
+                    return payload("missing", "memo://repo URI did not include a repo id/name/url.")
+                source = self.store.get_repo_source(repo_key)
+                if source is None:
+                    return payload("missing", "Memo repo source was not found.")
+                resolved = self._repo_replay_payload(source)
+                return payload(
+                    "found",
+                    f"resolved repo: {source.get('name')}",
+                    content_hash=_stable_content_hash(resolved),
+                    target=resolved,
+                )
+
+            return payload(
+                "unsupported",
+                "Memo backend-native only replays memo://memoria/<id>, "
+                "memo://repo/<id|name|url>, and memo://repo-index/<name>/<commit> evidence.",
+            )
 
     def _repo_replay_payload(self, source: dict[str, Any]) -> dict[str, Any]:
         repo_id = str(source.get("id") or "")
@@ -478,8 +570,7 @@ class _MaintainOpsMixin(_MemoryBase):
         if not target:
             return counts
 
-        if self._chat is None:
-            self._chat = MLXChat()
+        chat = self._ensure_chat()
 
         for tid in target:
             r = self.store.get(tid)
@@ -499,7 +590,7 @@ class _MaintainOpsMixin(_MemoryBase):
                 f"{body[:3000]}"
             )
             try:
-                out = self._chat.chat(
+                out = chat.chat(
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _EXTRACT_ENTITIES_SYSTEM_PROMPT},
@@ -541,7 +632,7 @@ class _MaintainOpsMixin(_MemoryBase):
 
     def consolidate(
         self, *, threshold: float = 0.85, max_clusters: int = 50,
-        type_: str | None = None,
+        type_: str | None = None, skip_llm: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """Propose near-duplicate merges (LLM synthesis step).
 
@@ -552,10 +643,17 @@ class _MaintainOpsMixin(_MemoryBase):
         exactly as before — see :meth:`_consolidate_in_process`. The daemon
         itself calls ``_consolidate_in_process`` directly, so it never re-routes
         to itself.
+
+        When ``skip_llm=True`` the LLM classification step is skipped and all
+        clusters are returned with ``relationship="duplicate"`` assumed. Used by
+        the high-confidence fast lane in ``AdvancedConsolidator`` where cosine
+        ≥ auto_threshold makes LLM classification unnecessary. Always runs
+        in-process (daemon path is bypassed) since the O(N²) clustering is cheap
+        without the LLM.
         """
         from memo.flags import flag_bool
 
-        if flag_bool("MEMO_MAINT_VIA_DAEMON"):
+        if not skip_llm and flag_bool("MEMO_MAINT_VIA_DAEMON"):
             from memo import maint_client
 
             proposals = maint_client.consolidate(
@@ -566,11 +664,12 @@ class _MaintainOpsMixin(_MemoryBase):
             # daemon unreachable → fall through to in-process (graceful)
         return self._consolidate_in_process(
             threshold=threshold, max_clusters=max_clusters, type_=type_,
+            skip_llm=skip_llm,
         )
 
     def _consolidate_in_process(
         self, *, threshold: float = 0.85, max_clusters: int = 50,
-        type_: str | None = None,
+        type_: str | None = None, skip_llm: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """Find clusters of near-duplicate memorias and propose actions.
 
@@ -656,9 +755,7 @@ class _MaintainOpsMixin(_MemoryBase):
             return []
 
         # 4) For each cluster, ask MLXChat to summarise + classify.
-        if self._chat is None:
-            self._chat = MLXChat()
-
+        #    Skipped when skip_llm=True (fast lane at very high cosine threshold).
         out: list[dict[str, Any]] = []
         for ci, cluster in enumerate(candidate_clusters):
             members = []
@@ -674,6 +771,18 @@ class _MaintainOpsMixin(_MemoryBase):
                     "updated": it["updated"],
                     "body_preview": (body[:600] + ("…" if len(body) > 600 else "")),
                 })
+
+            if skip_llm:
+                out.append({
+                    "cluster_id": ci,
+                    "size": len(members),
+                    "members": members,
+                    "summary": "",
+                    "relationship": "duplicate",
+                    "rationale": f"High-confidence cluster (cosine ≥ {threshold:.2f}); LLM skipped.",
+                })
+                continue
+
             # Build LLM prompt with all members, capped to avoid blowing the
             # context window on large clusters (50+ items × 600 chars each).
             _MAX_CONSOLIDATION_PROMPT_CHARS = 24_000
@@ -691,7 +800,8 @@ class _MaintainOpsMixin(_MemoryBase):
                 _chars += len(_line) + 5  # 5 for "\n---\n" separator
             prompt = "Cluster:\n\n" + "\n---\n".join(_included)
             try:
-                chat_out = self._chat.chat(
+                chat = self._ensure_chat()
+                chat_out = chat.chat(
                     model=self.cfg.llm_model,
                     messages=[
                         {"role": "system", "content": _CONSOLIDATE_SYSTEM_PROMPT},
@@ -835,8 +945,7 @@ class _MaintainOpsMixin(_MemoryBase):
                         pass
 
         # 4) LLM synthesis pass.
-        if self._chat is None:
-            self._chat = MLXChat()
+        chat = self._ensure_chat()
 
         out: list[dict[str, Any]] = []
         saved = 0
@@ -878,7 +987,7 @@ class _MaintainOpsMixin(_MemoryBase):
             prompt = "Cluster:\n\n" + "\n---\n".join(_included)
 
             try:
-                chat_out = self._chat.chat(
+                chat_out = chat.chat(
                     model=self.cfg.llm_model,
                     messages=[
                         {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},

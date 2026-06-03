@@ -77,7 +77,9 @@ def consolidate_propose(
 
 @consolidate_group.command(name="apply")
 @click.option("--threshold", type=float, default=0.85,
-              help="Cosine similarity threshold (default: 0.85)")
+              help="Cosine similarity threshold for the LLM pass (default: 0.85)")
+@click.option("--auto-threshold", "auto_threshold", type=float, default=None,
+              help="Cosine floor for the LLM-free fast lane (default: MEMO_CONSOLIDATE_AUTO_THRESHOLD=0.95)")
 @click.option("--max-clusters", type=int, default=20,
               help="Maximum clusters to process (default: 20)")
 @click.option("--type", "type_", help="Filter by memoria type")
@@ -86,10 +88,13 @@ def consolidate_propose(
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 @click.confirmation_option(prompt="This will merge memorias and archive old ones. Continue?")
 def consolidate_apply(
-    threshold: float, max_clusters: int, type_: str | None,
-    dry_run: bool, as_json: bool,
+    threshold: float, auto_threshold: float | None, max_clusters: int,
+    type_: str | None, dry_run: bool, as_json: bool,
 ) -> None:
     """Apply merge proposals to consolidate the corpus.
+
+    Runs a two-pass pipeline: fast lane (cosine ≥ auto_threshold, no LLM) then
+    LLM pass (cosine ≥ threshold). Use --dry-run to preview first.
 
     Example: memo consolidate apply --dry-run
     """
@@ -102,6 +107,7 @@ def consolidate_apply(
         type_=type_,
         auto_apply=True,
         dry_run=dry_run,
+        auto_threshold=auto_threshold,
     )
 
     if as_json:
