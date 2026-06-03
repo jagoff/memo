@@ -91,7 +91,7 @@ class _FeedbackMixin(_StoreBase):
             return []
         rows = self._conn.execute(
             "SELECT fb.id, fb.rating, fb.query_text, fb.created_at, "
-            "       fv.distance "
+            "       fb.extra_json, fv.distance "
             "FROM source_feedback fb "
             "JOIN source_feedback_vec fv ON fb.id = fv.feedback_id "
             "WHERE fb.source_id = ? "
@@ -111,6 +111,7 @@ class _FeedbackMixin(_StoreBase):
                 "rating": int(r["rating"]),
                 "query_text": r["query_text"],
                 "created_at": r["created_at"],
+                "extra_json": r["extra_json"],
                 "similarity": sim,
             })
         return out
