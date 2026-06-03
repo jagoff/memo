@@ -43,6 +43,7 @@ for clarity even though `vec_distance_l2` would rank identically.
 
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
 
@@ -52,7 +53,10 @@ from .migrations import _MigrationsMixin
 from .queries import _QueriesMixin
 from .repo_store import _RepoStoreMixin
 from .schema import _SchemaMixin
+from .tantivy_index import TantivyFTSIndex, _tantivy_available
 from .vec_base import VecStoreBase
+
+_log = logging.getLogger(__name__)
 
 
 class VecStore(
@@ -99,6 +103,75 @@ class VecStore(
         self._local = threading.local()
         self._connect()
         self._init_schema()
+        # Tantivy FTS index — optional, lives next to the sqlite DB.
+        self.tantivy_index_dir: Path = db_path.parent / "tantivy"
+        self._tantivy_inst: TantivyFTSIndex | None = None
+        self._tantivy_init_lock: threading.Lock = threading.Lock()
+        self._maybe_rebuild_tantivy()
+
+    # -- tantivy wiring --------------------------------------------------------
+
+    def _get_tantivy(self) -> TantivyFTSIndex | None:
+        """Return the live TantivyFTSIndex, or None to fall back to FTS5.
+
+        Respects `MEMO_FTS_BACKEND`: 'fts5' forces FTS5; 'tantivy' requires
+        tantivy (raises if absent); 'auto' (default) uses tantivy when installed.
+        Lazy-opens the index on first call; thread-safe.
+        """
+        from ..flags import flag_str
+
+        backend = flag_str("MEMO_FTS_BACKEND")
+        if backend == "fts5":
+            return None
+        if not _tantivy_available():
+            if backend == "tantivy":
+                raise RuntimeError(
+                    "MEMO_FTS_BACKEND=tantivy but the `tantivy` package is not installed. "
+                    "Run: pip install tantivy"
+                )
+            return None
+        with self._tantivy_init_lock:
+            if self._tantivy_inst is None:
+                try:
+                    self._tantivy_inst = TantivyFTSIndex.open_or_create(
+                        self.tantivy_index_dir
+                    )
+                except Exception as exc:
+                    _log.warning("tantivy open failed, falling back to FTS5: %s", exc)
+                    return None
+        return self._tantivy_inst
+
+    def _maybe_rebuild_tantivy(self) -> None:
+        """Build the tantivy index from the FTS5 table on first startup."""
+        from ..flags import flag_str
+
+        if not _tantivy_available() or flag_str("MEMO_FTS_BACKEND") == "fts5":
+            return
+        if TantivyFTSIndex.exists(self.tantivy_index_dir):
+            return
+        try:
+            self._rebuild_tantivy_from_sqlite()
+        except Exception as exc:
+            _log.warning("tantivy initial rebuild failed, FTS5 stays primary: %s", exc)
+
+    def _rebuild_tantivy_from_sqlite(self) -> None:
+        """Bulk-rebuild the tantivy index from the current FTS5 table.
+
+        Uses tantivy's delete_all_documents so a single writer commit produces
+        a clean, consistent snapshot of the FTS5 ground truth without touching
+        the index directory.
+        """
+        rows = self._conn.execute(
+            "SELECT id, title, tags, body FROM fts"
+        ).fetchall()
+        records = [
+            {"id": r["id"], "title": r["title"], "tags": r["tags"], "body": r["body"]}
+            for r in rows
+        ]
+        t = self._get_tantivy()
+        if t is None:
+            return
+        t.rebuild(records)
 
 
 __all__ = ["VecStore"]

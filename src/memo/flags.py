@@ -83,6 +83,8 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_SKIP_BELOW", "float", 0.0, "recall", "If >0, skip recall entirely when the best candidate's score is below this floor. Prevents low-confidence recall from injecting marginally relevant context. 0 = disabled.", min_val=0.0, max_val=1.0),
     _spec("MEMO_RECALL_FEEDBACK_HINT", "bool", True, "recall", "Append a feedback hint comment to the recall block so the AI layer can surface memory_feedback_record to the user.", opt_out=True),
     # search ranking
+    _spec("MEMO_FTS_BACKEND", "str", "auto", "search",
+          "FTS backend: 'auto' (tantivy if installed, else fts5) | 'tantivy' | 'fts5'."),
     _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking.", min_val=0.0, max_val=1.0),
     _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),
     _spec("MEMO_QUERY_CACHE_SIZE", "int", 256, "search", "LRU size for query embeddings (0 = off). Default 256 covers typical session query diversity with negligible RAM overhead (~few KB per cached vector)."),

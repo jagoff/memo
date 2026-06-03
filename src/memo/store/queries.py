@@ -80,6 +80,15 @@ class _QueriesMixin(_StoreBase):
                 "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
                 (id_, title, " ".join(tags), body_text),
             )
+        # Dual-write to tantivy (outside the sqlite tx — separate index).
+        tantivy = self._get_tantivy()
+        if tantivy is not None:
+            try:
+                tantivy.delete_document(id_)
+                tantivy.add_document(id_, title, " ".join(tags), body_text)
+                tantivy.commit()
+            except Exception as exc:
+                _log.warning("tantivy upsert failed (FTS5 still current): %s", exc)
 
     def upsert_text_only(
         self,
@@ -118,6 +127,15 @@ class _QueriesMixin(_StoreBase):
                 "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
                 (id_, title, " ".join(tags), body_text),
             )
+        # Dual-write to tantivy.
+        tantivy = self._get_tantivy()
+        if tantivy is not None:
+            try:
+                tantivy.delete_document(id_)
+                tantivy.add_document(id_, title, " ".join(tags), body_text)
+                tantivy.commit()
+            except Exception as exc:
+                _log.warning("tantivy upsert_text_only failed: %s", exc)
 
     def has_vector(self, id_: str) -> bool:
         row = self._conn.execute("SELECT 1 FROM vec WHERE id = ? LIMIT 1", (id_,)).fetchone()
@@ -158,7 +176,18 @@ class _QueriesMixin(_StoreBase):
                 "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
                 (id_, title, " ".join(tags), body_text),
             )
-            return cur.rowcount > 0
+            updated = cur.rowcount > 0
+        # Dual-write to tantivy (preserve existing body, just update title/tags).
+        if updated:
+            tantivy = self._get_tantivy()
+            if tantivy is not None:
+                try:
+                    tantivy.delete_document(id_)
+                    tantivy.add_document(id_, title, " ".join(tags), body_text)
+                    tantivy.commit()
+                except Exception as exc:
+                    _log.warning("tantivy update_meta failed: %s", exc)
+        return updated
 
     def get(self, id_: str) -> dict[str, Any] | None:
         row = self._conn.execute(
@@ -322,6 +351,14 @@ class _QueriesMixin(_StoreBase):
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
             cx.execute("DELETE FROM access WHERE id = ?", (id_,))
+        if existed:
+            tantivy = self._get_tantivy()
+            if tantivy is not None:
+                try:
+                    tantivy.delete_document(id_)
+                    tantivy.commit()
+                except Exception as exc:
+                    _log.warning("tantivy delete failed: %s", exc)
         return existed
 
     # -- access tracking (cache tier hit counting) -------------------------
@@ -416,14 +453,62 @@ class _QueriesMixin(_StoreBase):
         self, query: str, limit: int = 10, type_: str | None = None,
         exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """BM25 keyword search over title + tags + body via FTS5.
+        """BM25 keyword search. Dispatches to tantivy when available, FTS5 otherwise.
 
-        Returns rows shaped like `search()` (vec) but with `score` set
-        to `bm25_inverted` (a normalised `1 / (1 + bm25)` so higher =
-        better, mirroring the cosine score convention).
+        Returns rows shaped like `search()` (vec) — metadata dict with `score`
+        in [0,1] where higher = more relevant.
         """
         if not query or not query.strip():
             return []
+        t = self._get_tantivy()
+        if t is not None:
+            return self._search_bm25_tantivy(query, limit, type_, exclude_types, t)
+        return self._search_bm25_fts5(query, limit, type_, exclude_types)
+
+    def _search_bm25_tantivy(
+        self,
+        query: str,
+        limit: int,
+        type_: str | None,
+        exclude_types: set[str] | None,
+        t: Any,
+    ) -> list[dict[str, Any]]:
+        # Fetch more candidates when filtering by type so we can honour `limit`
+        # after post-filtering against the meta table.
+        candidate_k = limit * 5 if (type_ or exclude_types) else limit
+        hits = t.search_bm25(query, candidate_k)
+        if not hits:
+            return []
+        # Resolve metadata from sqlite in one batched query.
+        id_score = {h["id"]: h["score"] for h in hits}
+        placeholders = ",".join("?" for _ in id_score)
+        sql = (
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            f"FROM meta WHERE id IN ({placeholders})"
+        )
+        params: list[Any] = list(id_score.keys())
+        if type_:
+            sql += " AND type = ?"
+            params.append(type_)
+        if exclude_types:
+            sql += f" AND type NOT IN ({','.join('?' for _ in exclude_types)})"
+            params.extend(sorted(exclude_types))
+        rows = self._conn.execute(sql, params).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = _row_to_dict(r)
+            d["score"] = id_score.get(d["id"], 0.0)
+            out.append(d)
+        out.sort(key=lambda x: x["score"], reverse=True)
+        return out[:limit]
+
+    def _search_bm25_fts5(
+        self,
+        query: str,
+        limit: int,
+        type_: str | None,
+        exclude_types: set[str] | None,
+    ) -> list[dict[str, Any]]:
         # FTS5 needs an explicit MATCH expression. Pre-2026-05-07 we wrapped
         # the whole query in `"..."` (phrase match) to dodge FTS5 syntax
         # collisions on hyphens/colons. Side-effect: multi-word queries
@@ -500,6 +585,47 @@ class _QueriesMixin(_StoreBase):
             bm = float(r["bm25_score"])
             d["score"] = 1.0 / (1.0 + abs(bm)) if bm < 0 else 0.0
             out.append(d)
+        return out[:limit]
+
+    def search_fuzzy(
+        self, query: str, limit: int = 10, type_: str | None = None,
+        exclude_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fuzzy (typo-tolerant) BM25 search via tantivy.
+
+        Falls back to `_search_bm25_fts5` when tantivy is not available
+        (no true fuzzy without tantivy, but better than nothing).
+        Returns rows shaped like `search()`.
+        """
+        if not query or not query.strip():
+            return []
+        t = self._get_tantivy()
+        if t is None:
+            return self._search_bm25_fts5(query, limit, type_, exclude_types)
+        candidate_k = limit * 5 if (type_ or exclude_types) else limit
+        hits = t.search_fuzzy(query, candidate_k)
+        if not hits:
+            return []
+        id_score = {h["id"]: h["score"] for h in hits}
+        placeholders = ",".join("?" for _ in id_score)
+        sql = (
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            f"FROM meta WHERE id IN ({placeholders})"
+        )
+        params: list[Any] = list(id_score.keys())
+        if type_:
+            sql += " AND type = ?"
+            params.append(type_)
+        if exclude_types:
+            sql += f" AND type NOT IN ({','.join('?' for _ in exclude_types)})"
+            params.extend(sorted(exclude_types))
+        rows = self._conn.execute(sql, params).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = _row_to_dict(r)
+            d["score"] = id_score.get(d["id"], 0.0)
+            out.append(d)
+        out.sort(key=lambda x: x["score"], reverse=True)
         return out[:limit]
 
     def count(self) -> int:

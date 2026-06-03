@@ -4,6 +4,10 @@ import sqlite3
 import threading
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .tantivy_index import TantivyFTSIndex
 
 
 class _StoreBase:
@@ -14,9 +18,14 @@ class _StoreBase:
     db_path: Path
     dims: int
     _local: threading.local
+    tantivy_index_dir: Path
+    _tantivy_inst: "TantivyFTSIndex | None"
+    _tantivy_init_lock: threading.Lock
 
     @property
     def _conn(self) -> sqlite3.Connection: ...  # type: ignore[empty-body]
     def _tx(self) -> AbstractContextManager[sqlite3.Connection]: ...  # type: ignore[empty-body]
     def _checkpoint(self) -> None: ...
     def _delete_repo_file_rows(self, cx: sqlite3.Connection, file_ids: list[str]) -> None: ...
+    def _get_tantivy(self) -> "TantivyFTSIndex | None": ...  # type: ignore[empty-body]
+    def _rebuild_tantivy_from_sqlite(self) -> None: ...
