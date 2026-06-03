@@ -8,6 +8,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
+[![SafeSkill 86/100](https://img.shields.io/badge/SafeSkill-86%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/jagoff-memo)
 
 </div>
 
