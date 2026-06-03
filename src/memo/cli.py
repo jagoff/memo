@@ -704,6 +704,22 @@ def recall_hook() -> None:
     token_budget = int(os.environ.get("MEMO_RECALL_TOKEN_BUDGET", "0") or 0)
     project_boost = float(os.environ.get("MEMO_RECALL_PROJECT_BOOST", "0.15"))
 
+    # T11 — session mode adjusts recall aggressiveness via MEMFLOW_SESSION_MODE.
+    # focus: tight (fewer, higher-confidence hits only)
+    # explore: broad (more hits, lower bar)
+    # maintenance: minimal (1 hit max)
+    # review: default unchanged
+    _session_mode = os.environ.get("MEMFLOW_SESSION_MODE", "").strip().lower()
+    if _session_mode == "focus":
+        top_k = min(top_k, 2)
+        min_sim = max(min_sim, 0.65)
+    elif _session_mode == "explore":
+        top_k = max(top_k, 5)
+        min_sim = min(min_sim, 0.4)
+    elif _session_mode == "maintenance":
+        top_k = 1
+        min_sim = max(min_sim, 0.70)
+
     # Read cwd from the hook payload (Claude Code passes it) so we can
     # derive the project tag the user is currently working under.
     payload_cwd = payload.get("cwd")
