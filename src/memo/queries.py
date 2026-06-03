@@ -148,40 +148,39 @@ class QueryComposer:
         Returns:
             QueryResult with hits and metadata.
         """
-        # Execute the base search
+        # Push type_filter to SQL so vector candidates aren't wasted on
+        # off-type rows. When tag/date filters are also active, widen the
+        # search limit so post-filtering still yields enough results.
+        has_post_filters = bool(query.tags_filter or query.date_from or query.date_to)
+        search_limit = query.limit * 5 if has_post_filters else query.limit
         hits = self.memory.search(
             query.query_text,
-            limit=query.limit,
+            limit=search_limit,
             mode=query.search_mode,
+            type_=query.type_filter,  # pushed to SQL
         )
 
-        # Apply filters
+        # Pre-parse date bounds once (not per-hit).
+        from_dt = datetime.fromisoformat(query.date_from) if query.date_from else None
+        to_dt = datetime.fromisoformat(query.date_to) if query.date_to else None
+
+        # Apply remaining post-filters (tags, date range).
         filtered = []
         for hit in hits:
-            # Type filter
-            if query.type_filter and hit.type != query.type_filter:
-                continue
-
-            # Tag filter
             if query.tags_filter and not any(tag in hit.tags for tag in query.tags_filter):
                 continue
-
-            # Date filter
-            if query.date_from or query.date_to:
+            if from_dt is not None or to_dt is not None:
                 try:
                     hit_date = datetime.fromisoformat(hit.updated.replace("Z", "+00:00"))
-                    if query.date_from:
-                        from_date = datetime.fromisoformat(query.date_from)
-                        if hit_date < from_date:
-                            continue
-                    if query.date_to:
-                        to_date = datetime.fromisoformat(query.date_to)
-                        if hit_date > to_date:
-                            continue
-                except Exception:
+                    if from_dt is not None and hit_date < from_dt:
+                        continue
+                    if to_dt is not None and hit_date > to_dt:
+                        continue
+                except (ValueError, AttributeError):
                     pass
-
             filtered.append(hit)
+            if len(filtered) >= query.limit:
+                break
 
         return QueryResult(
             query_name=query.name,

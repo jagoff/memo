@@ -109,6 +109,22 @@ module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
           "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "huggingface_hub"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# Phase-1 strict: leaf modules with no intra-memo coupling. Ratchet upward
+# as more modules are cleaned. See plan: memo-health-roadmap.
+module = ["memo.config", "memo.flags", "memo.util"]
+disallow_untyped_defs = true
+disallow_any_generics = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+# Phase-2 strict: recall hot path + core memory ops. Adding untyped-defs
+# coverage here catches off-by-one and None-escape bugs before they hit
+# the 5s hook budget. Fix all reported errors before expanding this list.
+module = ["memo.recall_server", "memo.memory.search_ops", "memo.memory.write_ops"]
+disallow_untyped_defs = true
+warn_return_any = true
+
 [tool.coverage.run]
 source = ["memo"]
 omit = ["*/tests/*"]

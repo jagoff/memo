@@ -108,7 +108,8 @@ class VersionStore:
         """Get all versions of a memoria, most recent first."""
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT * FROM versions WHERE memoria_id = ? ORDER BY version_id DESC LIMIT ?",
+            "SELECT version_id, memoria_id, timestamp, title, type, tags, body, reason"
+            " FROM versions WHERE memoria_id = ? ORDER BY version_id DESC LIMIT ?",
             (memoria_id, limit),
         ).fetchall()
 
@@ -132,7 +133,8 @@ class VersionStore:
         """Get a specific version of a memoria."""
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT * FROM versions WHERE memoria_id = ? AND version_id = ?",
+            "SELECT version_id, memoria_id, timestamp, title, type, tags, body, reason"
+            " FROM versions WHERE memoria_id = ? AND version_id = ?",
             (memoria_id, version_id),
         ).fetchone()
 

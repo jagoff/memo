@@ -22,6 +22,7 @@ from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _CONSOLIDATE_SYSTEM_PROMPT,
     _EXTRACT_ENTITIES_SYSTEM_PROMPT,
+    _SYNTHESIS_SYSTEM_PROMPT,
     _VALID_TYPES,
     MEMO_BACKEND_NAME,
     NATIVE_BACKEND_PROTOCOL_VERSION,
@@ -507,7 +508,8 @@ class _MaintainOpsMixin(_MemoryBase):
                     options={"temperature": 0.0, "max_tokens": 384},
                 )
                 text = ((out.get("message") or {}).get("content") or "").strip()
-            except Exception:
+            except Exception as exc:
+                _log.warning("extract_entities: LLM call failed for %s: %s", tid[:8], exc)
                 counts["errors"] += 1
                 continue
             if text.startswith("```"):
@@ -672,12 +674,22 @@ class _MaintainOpsMixin(_MemoryBase):
                     "updated": it["updated"],
                     "body_preview": (body[:600] + ("…" if len(body) > 600 else "")),
                 })
-            # Build LLM prompt with all members.
-            prompt = "Cluster:\n\n" + "\n---\n".join(
+            # Build LLM prompt with all members, capped to avoid blowing the
+            # context window on large clusters (50+ items × 600 chars each).
+            _MAX_CONSOLIDATION_PROMPT_CHARS = 24_000
+            member_lines = [
                 f"[{m['id_short']}] title: {m['title']}  |  updated: {m['updated']}\n"
                 f"{m['body_preview']}"
                 for m in members
-            )
+            ]
+            _chars = 0
+            _included = []
+            for _line in member_lines:
+                if _chars + len(_line) > _MAX_CONSOLIDATION_PROMPT_CHARS:
+                    break
+                _included.append(_line)
+                _chars += len(_line) + 5  # 5 for "\n---\n" separator
+            prompt = "Cluster:\n\n" + "\n---\n".join(_included)
             try:
                 chat_out = self._chat.chat(
                     model=self.cfg.llm_model,
@@ -688,7 +700,8 @@ class _MaintainOpsMixin(_MemoryBase):
                     options={"temperature": 0.0, "max_tokens": 384},
                 )
                 text = ((chat_out.get("message") or {}).get("content") or "").strip()
-            except Exception:
+            except Exception as exc:
+                _log.warning("consolidate: LLM call failed for cluster %d: %s", ci, exc)
                 text = ""
             if text.startswith("```"):
                 text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
@@ -705,6 +718,230 @@ class _MaintainOpsMixin(_MemoryBase):
                     ("duplicate", "evolution", "facets", "unrelated") else "unrelated",
                 "rationale": (data.get("rationale") or "").strip(),
             })
+        return out
+
+    def synthesize_cross_cluster(
+        self,
+        *,
+        threshold: float | None = None,
+        min_cluster_size: int | None = None,
+        max_clusters: int | None = None,
+        min_confidence: str | None = None,
+        dry_run: bool = False,
+    ) -> builtins.list[dict[str, Any]]:
+        """Generate emergent insights from semantically related memory clusters.
+
+        Unlike consolidation (which asks "are these the same thing?"), synthesis
+        asks "what do these memories collectively IMPLY that none states alone?"
+        Results are saved as ``type=synthesis`` memories with provenance links.
+
+        Algorithm:
+        1. Cluster all durable (non-reference, non-synthesis) memories at a
+           looser cosine threshold than consolidation (default 0.78 vs 0.85).
+        2. Drop clusters smaller than ``min_cluster_size`` (default 3).
+        3. For each cluster, check if an up-to-date synthesis already exists
+           (provenance hash match) — skip if so.
+        4. Call MLXChat with ``_SYNTHESIS_SYSTEM_PROMPT``. If confidence meets
+           the floor and title is non-null, save a new ``type=synthesis`` record.
+        5. Return the list of results (proposed or saved).
+
+        With ``dry_run=True``, returns proposals without saving anything.
+        """
+        import hashlib
+        import struct
+
+        from memo.flags import flag_float, flag_int, flag_str
+
+        threshold = threshold if threshold is not None else (
+            flag_float("MEMO_SYNTHESIS_THRESHOLD") or 0.78
+        )
+        min_cluster_size = min_cluster_size if min_cluster_size is not None else (
+            flag_int("MEMO_SYNTHESIS_MIN_CLUSTER") or 3
+        )
+        max_clusters = max_clusters if max_clusters is not None else (
+            flag_int("MEMO_SYNTHESIS_MAX_CLUSTERS") or 20
+        )
+        min_confidence = min_confidence or flag_str("MEMO_SYNTHESIS_MIN_CONFIDENCE") or "medium"
+        _conf_rank = {"low": 0, "medium": 1, "high": 2}
+        min_conf_rank = _conf_rank.get(min_confidence, 1)
+
+        store_conn = self.store._conn
+
+        # 1) Pull all non-synthesis, non-reference embeddings.
+        rows = store_conn.execute(
+            "SELECT vec.id AS id, vec.embedding AS emb, "
+            "       meta.title, meta.type, meta.tags, meta.path, meta.updated "
+            "FROM vec JOIN meta ON meta.id = vec.id "
+            "WHERE meta.type NOT IN ('reference', 'synthesis') "
+            "ORDER BY meta.updated DESC",
+        ).fetchall()
+
+        items: list[dict[str, Any]] = []
+        for r in rows:
+            blob = r["emb"]
+            v = list(struct.unpack(f"{len(blob)//4}f", blob))
+            items.append({
+                "id": r["id"],
+                "title": r["title"],
+                "type": r["type"],
+                "path": r["path"],
+                "updated": r["updated"],
+                "emb": v,
+            })
+
+        if not items:
+            return []
+
+        # 2) Greedy single-link clustering (same algorithm as consolidation).
+        def _dot(a: list[float], b: list[float]) -> float:
+            return sum(x * y for x, y in zip(a, b, strict=True))
+
+        clusters: list[list[int]] = []
+        for i in range(len(items)):
+            joined = False
+            for cluster in clusters:
+                rep = items[cluster[0]]
+                if _dot(items[i]["emb"], rep["emb"]) >= threshold:
+                    cluster.append(i)
+                    joined = True
+                    break
+            if not joined:
+                clusters.append([i])
+
+        candidate_clusters = [c for c in clusters if len(c) >= min_cluster_size]
+        candidate_clusters.sort(key=lambda c: (-len(c), items[c[0]]["updated"]))
+        candidate_clusters = candidate_clusters[:max_clusters]
+
+        if not candidate_clusters:
+            return []
+
+        # 3) Load existing synthesis provenance hashes to skip duplicates.
+        existing_hashes: set[str] = set()
+        existing_rows = store_conn.execute(
+            "SELECT meta.path FROM meta WHERE meta.type = 'synthesis'",
+        ).fetchall()
+        for er in existing_rows:
+            p = er["path"]
+            if p:
+                ep = self._resolve_existing(p)
+                if ep.is_file():
+                    try:
+                        ep_post = frontmatter.loads(ep.read_text(encoding="utf-8"))
+                        _ep_extra: dict = ep_post.get("extra") or {}  # type: ignore[assignment]
+                        h = str(_ep_extra.get("synthesis_sources_hash") or "").strip()
+                        if h:
+                            existing_hashes.add(h)
+                    except Exception:
+                        pass
+
+        # 4) LLM synthesis pass.
+        if self._chat is None:
+            self._chat = MLXChat()
+
+        out: list[dict[str, Any]] = []
+        saved = 0
+
+        for cluster in candidate_clusters:
+            source_ids = [items[idx]["id"] for idx in cluster]
+            sources_hash = hashlib.sha256(
+                ",".join(sorted(source_ids)).encode()
+            ).hexdigest()[:16]
+
+            if sources_hash in existing_hashes:
+                continue  # up-to-date synthesis already exists
+
+            members = []
+            for idx in cluster:
+                it = items[idx]
+                body = self._read_body(it["path"])
+                members.append({
+                    "id": it["id"],
+                    "id_short": it["id"][:8],
+                    "title": it["title"],
+                    "type": it["type"],
+                    "body_preview": (body[:500] + ("…" if len(body) > 500 else "")),
+                })
+
+            _MAX_CHARS = 20_000
+            lines = [
+                f"[{m['id_short']}] ({m['type']}) {m['title']}\n{m['body_preview']}"
+                for m in members
+            ]
+            _chars = 0
+            _included: list[str] = []
+            for line in lines:
+                if _chars + len(line) > _MAX_CHARS:
+                    break
+                _included.append(line)
+                _chars += len(line) + 5
+
+            prompt = "Cluster:\n\n" + "\n---\n".join(_included)
+
+            try:
+                chat_out = self._chat.chat(
+                    model=self.cfg.llm_model,
+                    messages=[
+                        {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    options={"temperature": 0.0, "max_tokens": 512},
+                )
+                text = ((chat_out.get("message") or {}).get("content") or "").strip()
+            except Exception as exc:
+                _log.warning("synthesize: LLM call failed for cluster: %s", exc)
+                continue
+
+            if text.startswith("```"):
+                text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
+            try:
+                data = json.loads(text) if text else {}
+            except (ValueError, TypeError):
+                data = {}
+
+            title = (data.get("title") or "").strip()
+            body = (data.get("body") or "").strip()
+            confidence = data.get("confidence") if data.get("confidence") in _conf_rank else "low"
+            rationale = (data.get("rationale") or "").strip()
+
+            result: dict[str, Any] = {
+                "sources": source_ids,
+                "sources_hash": sources_hash,
+                "title": title,
+                "body": body,
+                "confidence": confidence,
+                "rationale": rationale,
+                "saved": False,
+            }
+
+            if (
+                title
+                and body
+                and _conf_rank.get(str(confidence), 0) >= min_conf_rank
+                and not dry_run
+            ):
+                try:
+                    rec = self.save(
+                        content=body,
+                        title=title,
+                        type_="synthesis",
+                        tags=["synthesis"],
+                        extra={
+                            "synthesis_sources": source_ids,
+                            "synthesis_sources_hash": sources_hash,
+                            "synthesis_rationale": rationale,
+                            "synthesis_confidence": confidence,
+                        },
+                    )
+                    result["saved"] = True
+                    result["id"] = rec.id
+                    existing_hashes.add(sources_hash)
+                    saved += 1
+                except Exception as exc:
+                    _log.warning("synthesize: save failed: %s", exc)
+
+            out.append(result)
+
+        _log.info("synthesize: processed %d clusters → %d saved", len(out), saved)
         return out
 
     def gc(self, *, fix: bool = False) -> dict[str, builtins.list[str]]:
@@ -735,7 +972,8 @@ class _MaintainOpsMixin(_MemoryBase):
             for md_path in self.cfg.memory_dir.rglob("*.md"):
                 try:
                     post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
-                except Exception:
+                except Exception as exc:
+                    _log.debug("gc: skipping %s (parse error): %s", md_path.name, exc)
                     continue
                 md_id = post.get("id")
                 if not md_id or not isinstance(md_id, str):
@@ -743,5 +981,38 @@ class _MaintainOpsMixin(_MemoryBase):
                 if self.store.get(md_id) is None:
                     orphan_disk.append(str(md_path.relative_to(self.cfg.memory_dir)))
 
-        return {"orphan_store": orphan_store, "orphan_disk": orphan_disk}
+        # Stale synthesis: type=synthesis memories where ≥1 source no longer
+        # exists in the store. The synthesis is derived knowledge — if its
+        # sources are gone the insight is unverifiable and should be archived.
+        stale_synthesis: list[str] = []
+        synth_rows = self.store._conn.execute(
+            "SELECT meta.id, meta.path FROM meta WHERE meta.type = 'synthesis'",
+        ).fetchall()
+        for sr in synth_rows:
+            p = sr["path"]
+            if not p:
+                continue
+            sp = self._resolve_existing(p)
+            if not sp.is_file():
+                continue  # already caught above by orphan_store walk
+            try:
+                post = frontmatter.loads(sp.read_text(encoding="utf-8"))
+                _extra: dict = post.get("extra") or {}  # type: ignore[assignment]
+                source_ids = _extra.get("synthesis_sources") or []
+                if not source_ids:
+                    continue
+                for sid in source_ids:
+                    if self.store.get(sid) is None:
+                        stale_synthesis.append(sr["id"])
+                        if fix:
+                            self.lifecycle.archive_memoria(sr["id"])
+                        break
+            except Exception as exc:
+                _log.debug("gc: stale-synthesis check failed for %s: %s", sr["id"][:8], exc)
+
+        return {
+            "orphan_store": orphan_store,
+            "orphan_disk": orphan_disk,
+            "stale_synthesis": stale_synthesis,
+        }
 

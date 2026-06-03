@@ -36,7 +36,6 @@ from memo import server_cache as _srv_cache
 from memo import server_collaborative as _srv_collaborative
 from memo import server_consolidate as _srv_consolidate
 from memo import server_contextual as _srv_contextual
-from memo import server_synthesis as _srv_synthesis
 from memo import server_contradict as _srv_contradict
 from memo import server_encrypt as _srv_encrypt
 from memo import server_entities as _srv_entities
@@ -49,6 +48,7 @@ from memo import server_query as _srv_query
 from memo import server_repo as _srv_repo
 from memo import server_share as _srv_share
 from memo import server_sync as _srv_sync
+from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
 from memo import server_version as _srv_version
 from memo.config import Config

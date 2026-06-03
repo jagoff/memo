@@ -1,0 +1,28 @@
+name: slow-tests
+
+on:
+  schedule:
+    # Nightly at 03:00 UTC — runs the slow marker suite skipped in PR CI
+    - cron: "0 3 * * *"
+  workflow_dispatch:  # manual trigger
+
+jobs:
+  slow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: pip install uv
+      - name: Install package + dev deps
+        run: |
+          uv venv .venv
+          uv pip install -e '.[dev]'
+      - name: Run slow tests
+        # Full suite including the slow-marked tests skipped in PR CI.
+        # No -n auto: some slow tests (socket servers, daemon lifecycle)
+        # are sensitive to parallel teardown races.
+        run: .venv/bin/python -m pytest -m "slow" --timeout=300 -v

@@ -105,6 +105,7 @@ from memo.cli_runtime import (
 from memo.cli_session import session_group
 from memo.cli_share import share_group
 from memo.cli_sync import sync_group
+from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd
@@ -129,6 +130,7 @@ def cli(ctx: click.Context) -> None:
 cli.add_command(graph_group)
 cli.add_command(eval_group)
 cli.add_command(maintain_cmd)
+cli.add_command(synthesize_cmd)
 cli.add_command(retier_cmd)
 cli.add_command(usefulness_cmd)
 cli.add_command(roi_cmd)
@@ -491,7 +493,8 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
         report = mem.gc(fix=fix)
         n_store = len(report["orphan_store"])
         n_disk = len(report["orphan_disk"])
-        if n_store == 0 and n_disk == 0:
+        n_stale_synth = len(report.get("stale_synthesis", []))
+        if n_store == 0 and n_disk == 0 and n_stale_synth == 0:
             console.print("[green]✓[/green] no orphans")
         else:
             if n_store:
@@ -513,6 +516,14 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
                     console.print(f"  · {p}")
                 if n_disk > 20:
                     console.print(f"  · …and {n_disk - 20} more")
+            if n_stale_synth:
+                verb = "archived" if fix else "found"
+                console.print(
+                    f"[yellow]{verb} {n_stale_synth} stale synthesis memori{'a' if n_stale_synth == 1 else 'as'}[/yellow] "
+                    f"(synthesis sources deleted — use `memo gc --fix` to archive)",
+                )
+                for sid in report.get("stale_synthesis", [])[:20]:
+                    console.print(f"  · {sid[:8]}")
 
     sys.exit(0 if ok else 1)
 
