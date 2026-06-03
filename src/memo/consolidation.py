@@ -209,7 +209,32 @@ class AdvancedConsolidator:
                 summary=f"Dry run: would merge {len(proposal.memoria_ids)} memorias",
             )
 
-        # Create the new merged memoria
+        # keep_latest: the surviving ID already exists — just archive the older ones.
+        # This avoids creating a redundant copy of the latest record.
+        surviving_ids = [mid for mid in proposal.memoria_ids
+                         if mid not in set(proposal.archived_ids)]
+        if proposal.merge_strategy == "keep_latest" and surviving_ids:
+            surviving_id = surviving_ids[0]
+            try:
+                archived = []
+                for mid in proposal.archived_ids:
+                    if self._archive_memoria(mid, surviving_id):
+                        archived.append(mid)
+                return ConsolidationResult(
+                    merged_id=surviving_id,
+                    archived_ids=archived,
+                    skipped_ids=[],
+                    summary=f"Kept {surviving_id[:8]}, archived {len(archived)} superseded memorias",
+                )
+            except Exception as e:
+                return ConsolidationResult(
+                    merged_id=None,
+                    archived_ids=[],
+                    skipped_ids=proposal.memoria_ids,
+                    summary=f"keep_latest failed: {e}",
+                )
+
+        # synthesis / concat_with_headers: create a new merged record.
         try:
             # Combine tags from all sources
             all_tags = set()
@@ -288,6 +313,26 @@ class AdvancedConsolidator:
 
         return True
 
+    def _fast_lane_proposal(self, cluster: dict[str, Any]) -> MergeProposal | None:
+        """Build a keep_latest MergeProposal without calling the LLM.
+
+        Used by the high-confidence fast lane (cosine ≥ auto_threshold) where
+        the similarity is high enough that LLM classification is unnecessary.
+        """
+        members = cluster.get("members", [])
+        if not members or len(members) < 2:
+            return None
+        latest = max(members, key=lambda m: m.get("updated", ""))
+        return MergeProposal(
+            cluster_id=cluster.get("cluster_id", 0),
+            memoria_ids=[m["id"] for m in members],
+            merged_title=latest.get("title", ""),
+            merged_body=self._read_body(latest["id"]),
+            merge_strategy="keep_latest",
+            rationale=f"High-confidence duplicate; keeping latest ({latest['id'][:8]})",
+            archived_ids=[m["id"] for m in members if m["id"] != latest["id"]],
+        )
+
     def consolidate_all(
         self,
         threshold: float = 0.85,
@@ -295,48 +340,78 @@ class AdvancedConsolidator:
         type_: str | None = None,
         auto_apply: bool = False,
         dry_run: bool = False,
+        auto_threshold: float | None = None,
     ) -> dict[str, Any]:
         """Run full consolidation pipeline: detect clusters, propose merges, apply.
 
+        Two-pass strategy:
+        1. Fast lane (cosine ≥ auto_threshold, default 0.95): skip LLM, merge as
+           keep_latest. No model cost for obviously identical memorias.
+        2. Normal pass (cosine ≥ threshold, default 0.85): LLM classifies the
+           relationship (duplicate / evolution / facets / unrelated). Skips any
+           cluster whose members were already handled by the fast lane.
+
         Args:
-            threshold: Cosine similarity threshold for clustering.
-            max_clusters: Maximum number of clusters to process.
+            threshold: Cosine similarity threshold for the LLM pass.
+            max_clusters: Maximum clusters per pass.
             type_: Optional filter by memoria type.
             auto_apply: If True, automatically apply all merge proposals.
-                If False, only return proposals for review.
             dry_run: If True, don't actually modify anything.
+            auto_threshold: Override for the fast-lane threshold. If None, reads
+                MEMO_CONSOLIDATE_AUTO_THRESHOLD (default 0.95).
 
         Returns:
-            Dict with:
-            - clusters: list of detected clusters
-            - proposals: list of merge proposals
-            - results: list of ConsolidationResult (if auto_apply)
+            Dict with clusters, proposals, and results lists.
         """
-        # Step 1: Detect clusters
+        from memo.flags import flag_float
+
+        if auto_threshold is None:
+            auto_threshold = flag_float("MEMO_CONSOLIDATE_AUTO_THRESHOLD")
+
+        already_merged: set[str] = set()
+        all_clusters: list[dict[str, Any]] = []
+        all_proposals: list[MergeProposal] = []
+        all_results: list[ConsolidationResult] = []
+
+        # Pass 1 — fast lane: high-confidence, no LLM.
+        if auto_threshold is not None and auto_threshold > threshold:
+            fast_clusters = self.memory.consolidate(
+                threshold=auto_threshold,
+                max_clusters=max_clusters,
+                type_=type_,
+                skip_llm=True,
+            )
+            all_clusters.extend(fast_clusters)
+            for cluster in fast_clusters:
+                proposal = self._fast_lane_proposal(cluster)
+                if proposal:
+                    all_proposals.append(proposal)
+                    already_merged.update(proposal.memoria_ids)
+                    if auto_apply:
+                        all_results.append(self.apply_merge(proposal, dry_run=dry_run))
+
+        # Pass 2 — normal pass: LLM classification for uncertain cases.
         clusters = self.memory.consolidate(
             threshold=threshold,
             max_clusters=max_clusters,
             type_=type_,
         )
-
-        # Step 2: Generate merge proposals
-        proposals = []
+        all_clusters.extend(clusters)
         for cluster in clusters:
+            members = cluster.get("members", [])
+            # Skip clusters already handled by the fast lane.
+            if any(m["id"] in already_merged for m in members):
+                continue
             proposal = self.propose_merge(cluster)
             if proposal:
-                proposals.append(proposal)
-
-        # Step 3: Apply merges if requested
-        results = []
-        if auto_apply:
-            for proposal in proposals:
-                result = self.apply_merge(proposal, dry_run=dry_run)
-                results.append(result)
+                all_proposals.append(proposal)
+                if auto_apply:
+                    all_results.append(self.apply_merge(proposal, dry_run=dry_run))
 
         return {
-            "clusters": clusters,
-            "proposals": [p.__dict__ for p in proposals],
-            "results": [r.__dict__ for r in results],
+            "clusters": all_clusters,
+            "proposals": [p.__dict__ for p in all_proposals],
+            "results": [r.__dict__ for r in all_results],
         }
 
 

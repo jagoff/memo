@@ -106,6 +106,7 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_SYNTHESIS_MIN_CLUSTER", "int", 3, "maintain", "Minimum cluster size for synthesis (memories per cluster).", min_val=2, max_val=50),
     _spec("MEMO_SYNTHESIS_MAX_CLUSTERS", "int", 20, "maintain", "Max clusters processed per synthesis pass.", min_val=1, max_val=200),
     _spec("MEMO_SYNTHESIS_THRESHOLD", "float", 0.78, "maintain", "Cosine similarity threshold for synthesis clustering (looser than consolidation's 0.85).", min_val=0.0, max_val=1.0),
+    _spec("MEMO_CONSOLIDATE_AUTO_THRESHOLD", "float", 0.95, "maintain", "Cosine floor for the LLM-free fast lane in consolidation. Clusters at this threshold or above are merged as keep_latest without calling the LLM.", min_val=0.0, max_val=1.0),
     # transcript ingest
     _spec("MEMO_INGEST_MIN_CHARS", "int", 200, "ingest", "Minimum chars for an ingested transcript turn."),
     _spec("MEMO_INGEST_STRICT", "bool", False, "ingest", "Strict ingest filtering."),
