@@ -119,7 +119,7 @@ class _SearchOpsMixin(_MemoryBase):
                     fb_emb = self.embedder.embed_query(query)
                 out = self._apply_source_feedback(out, fb_emb)
             except Exception as exc:
-                _log.debug("source feedback skipped: %s", exc)
+                _log.warning("source_feedback failed: %s", exc, exc_info=True)
 
         # Cross-encoder rerank on hybrid mode only. Skipped for vec/bm25
         # since those callers explicitly opted out of fusion entirely;
@@ -146,8 +146,61 @@ class _SearchOpsMixin(_MemoryBase):
         # never does: a backend subprocess (≤5s) would blow its 5s budget.
         if read_through and self.cache.policy.read_through and len(out) < limit:
             out = self._cache_read_through(query, out, limit)
+        # Contradiction penalty: penalise the older side of open contradiction
+        # pairs among the retrieved results so stale/superseded memories don't
+        # surface at the top. Gated by MEMO_CONTRADICT_PENALTY_ENABLED (default
+        # off — the sidecar DB is empty until `memo contradict scan` runs at
+        # least once). Only the recall/ask/chat consumer paths benefit; the eval
+        # harness and recall-hook budget make this opt-in.
+        if out and os.environ.get("MEMO_CONTRADICT_PENALTY_ENABLED") == "1":
+            out = self._apply_contradict_penalty(out)
         self._record_access([r.id for r in out])
         return out
+
+    def _apply_contradict_penalty(
+        self, results: list[MemoryRecord],
+    ) -> list[MemoryRecord]:
+        """Apply score penalty to the older side of open contradiction pairs."""
+        raw_penalty = os.environ.get("MEMO_CONTRADICT_PENALTY", "0.4")
+        try:
+            penalty = max(0.0, min(1.0, float(raw_penalty)))
+        except ValueError:
+            penalty = 0.4
+        ids = [r.id for r in results]
+        try:
+            pairs = self.contradict_store.pairs_for_ids(ids)
+        except Exception as exc:
+            _log.debug("contradict_penalty pairs_for_ids failed: %s", exc)
+            return results
+        if not pairs:
+            return results
+        # Build a set of IDs to penalise (older side of each contradiction pair).
+        penalise: set[str] = set()
+        id_to_updated: dict[str, str] = {r.id: r.updated for r in results}
+        for pair in pairs:
+            if pair.relationship != "contradiction":
+                continue
+            a_ts = id_to_updated.get(pair.memoria_id_a, "")
+            b_ts = id_to_updated.get(pair.memoria_id_b, "")
+            if a_ts and b_ts:
+                # Both sides in results: penalise the older one.
+                penalise.add(pair.memoria_id_a if a_ts < b_ts else pair.memoria_id_b)
+            elif a_ts:
+                penalise.add(pair.memoria_id_a)
+            elif b_ts:
+                penalise.add(pair.memoria_id_b)
+        if not penalise:
+            return results
+        penalised = [
+            replace(r, score=(r.score or 0.0) * penalty) if r.id in penalise else r
+            for r in results
+        ]
+        # Re-sort by score descending so penalised entries sink naturally.
+        penalised.sort(
+            key=lambda r: (r.score or 0.0),
+            reverse=True,
+        )
+        return penalised
 
     def _record_access(self, ids: list[str]) -> None:
         """Record read/hits for the surfaced memorias (powers LRU/LFU + the
@@ -258,7 +311,7 @@ class _SearchOpsMixin(_MemoryBase):
             return id_or_prefix
         matches = self.store.find_by_prefix(id_or_prefix.lower())
         if len(matches) == 1:
-            return matches[0]
+            return str(matches[0])
         if len(matches) > 1:
             raise AmbiguousIdError(id_or_prefix, matches)
         return None
