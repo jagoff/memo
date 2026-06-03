@@ -55,6 +55,19 @@ from typing import Any
 
 from memo.temporal import TemporalAnalyzer
 
+try:
+    from consciousness_contracts import (
+        Anomaly,
+        AnomalyKind,
+        ConflictState,
+        generate_anomaly_id,
+        memo_status_to_conflict_state,
+        memo_status_to_resolution_kind,
+    )
+    _HAS_CONFLICT_CONTRACTS = True
+except ImportError:
+    _HAS_CONFLICT_CONTRACTS = False
+
 VALID_STATUSES = {
     "open",          # pending triage
     "fused",         # merged into a new memoria
@@ -510,6 +523,44 @@ def _is_open(store: ContradictionStore, a: str, b: str) -> bool:
     return bool(row and row["status"] == "open")
 
 
+def emit_anomaly(
+    memoria_id_a: str,
+    memoria_id_b: str,
+    relationship: str,
+    confidence: float,
+    status: str,
+) -> str | None:
+    """Emit an Anomaly to Memflow for cross-system visibility.
+
+    This is a stub for now - future implementation will write the anomaly
+    to Memflow via its MCP or CLI interface. For now, it returns the anomaly_id
+    that would be emitted.
+
+    Args:
+        memoria_id_a: First memoria in the contradiction pair.
+        memoria_id_b: Second memoria in the contradiction pair.
+        relationship: Relationship type (contradiction, evolution, etc).
+        confidence: Confidence score (0-1).
+        status: Current status (open, fused, kept_newer, etc.).
+
+    Returns:
+        The anomaly_id that was/would be emitted, or None if consciousness-contracts unavailable.
+    """
+    if not _HAS_CONFLICT_CONTRACTS:
+        return None
+
+    # Map Memo status to conflict state
+    state = memo_status_to_conflict_state(status)
+    resolution = memo_status_to_resolution_kind(status)
+
+    # Generate anomaly ID
+    anomaly_id = generate_anomaly_id(AnomalyKind.semantic_contradiction, f"memo:{memoria_id_a}:{memoria_id_b}")
+
+    # TODO: Write anomaly to Memflow via MCP/CLI
+    # For now, this is a stub that returns the ID for future use
+    return anomaly_id
+
+
 def is_stale(updated_iso: str, days_threshold: int) -> bool:
     """Helper: is this timestamp older than `days_threshold` days?"""
     try:
@@ -525,5 +576,6 @@ __all__ = [
     "ContradictionStore",
     "PairRecord",
     "ScanResult",
+    "emit_anomaly",
     "is_stale",
 ]
