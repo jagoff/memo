@@ -28,13 +28,18 @@ class _RerankOpsMixin(_MemoryBase):
     ) -> dict[str, Any]:
         """Public wrapper around store.record_source_feedback.
 
-        Accepts `rating` as "up"/"down" or "+1"/"-1". Resolves a short
-        `source_id` prefix to a full meta.id when possible (errors on
-        ambiguity). Embeds `query_text` with the asymmetric retrieval
-        prefix so future queries — which use the same prefix — can be
-        compared on equal footing.
+        Accepts `rating` as "up"/"down"/"click"/"ignore" or "+1"/"-1".
+        Resolves a short `source_id` prefix to a full meta.id when possible
+        (errors on ambiguity). Embeds `query_text` with the asymmetric
+        retrieval prefix so future queries compare on equal footing.
+
+        Signal semantics:
+          "click"      — implicit positive (user used this result); soft boost.
+          "thumbs_up"  — explicit positive; stronger boost.
+          "ignore"     — implicit negative (user skipped); soft score penalty.
+          "thumbs_down"— explicit rejection; hard exclude from future results.
         """
-        rating_norm = self._normalize_rating(rating)
+        rating_norm, signal = self._normalize_rating(rating)
         resolved = self._resolve_source_id(source_id)
         if not query_text or not query_text.strip():
             raise ValueError("query_text is required")
@@ -44,12 +49,14 @@ class _RerankOpsMixin(_MemoryBase):
             query_text=query_text,
             query_emb=list(emb),
             rating=rating_norm,
+            extra={"signal": signal},
         )
         return {
             "feedback_id": fid,
             "source_id": resolved,
             "query_text": query_text,
             "rating": "up" if rating_norm > 0 else "down",
+            "signal": signal,
         }
 
     def feedback_list(
@@ -64,13 +71,25 @@ class _RerankOpsMixin(_MemoryBase):
         return self.store.clear_source_feedback(resolved)
 
     @staticmethod
-    def _normalize_rating(rating: str | int) -> int:
+    def _normalize_rating(rating: str | int) -> tuple[int, str]:
+        """Return (db_rating, canonical_signal).
+
+        Canonical signals and their semantics:
+          thumbs_up  (rating=1)  — explicit positive vote; 0.15 score boost.
+          click      (rating=1)  — implicit positive (user viewed/used); 0.08 boost.
+          thumbs_down (rating=-1) — explicit rejection; hard-exclude from results.
+          ignore     (rating=-1) — implicit negative (user skipped); soft 0.7× penalty.
+        """
         raw = str(rating).strip().lower()
         if raw in {"up", "+1", "1", "thumbs_up", "positive", "pos"}:
-            return 1
+            return 1, "thumbs_up"
         if raw in {"down", "-1", "thumbs_down", "negative", "neg"}:
-            return -1
-        raise ValueError(f"unknown rating {rating!r}; expected up/down")
+            return -1, "thumbs_down"
+        if raw == "click":
+            return 1, "click"
+        if raw == "ignore":
+            return -1, "ignore"
+        raise ValueError(f"unknown rating {rating!r}; expected up/down/click/ignore")
 
     def _resolve_source_id(self, source_id: str) -> str:
         sid = (source_id or "").strip()
@@ -87,33 +106,37 @@ class _RerankOpsMixin(_MemoryBase):
             raise AmbiguousIdError(sid, matches)
         return matches[0]
 
+    # Signal strengths: how much each feedback type affects the score.
+    # thumbs_up → full boost; click → half boost (implicit positive signal).
+    # thumbs_down → hard exclude; ignore → soft penalty (score × 0.7).
+    _SIGNAL_BOOST = {"thumbs_up": 0.15, "click": 0.08}
+    _SIGNAL_IGNORE_FACTOR = 0.7  # multiplied into score for "ignore" signals
+
     def _apply_source_feedback(
         self, hits: list[MemoryRecord], query_emb: list[float],
         *, sim_threshold: float = 0.85, boost_per_vote: float = 0.15,
         boost_cap: float = 0.6,
     ) -> list[MemoryRecord]:
-        """Filter/boost hits using prior 👍/👎 votes for the user query.
+        """Filter/boost hits using prior votes for the user query.
 
-        For each hit, look up `source_feedback` rows on `hit.id` whose
-        query embedding is cosine-similar to `query_emb` at >=
-        `sim_threshold`. Then:
+        Signal semantics (stored in extra_json.signal):
+          thumbs_up  → score += 0.15 per vote, capped at boost_cap.
+          click      → score += 0.08 per vote (implicit positive, softer).
+          thumbs_down→ hard exclude (user explicitly rejected this source).
+          ignore     → score *= 0.7 (user skipped — soft penalty, no hard exclude).
 
-        - Any negative match → drop the hit (hard exclude). User said
-          this source is wrong for this kind of query; trust them.
-        - Positive matches → score += `boost_per_vote * n`, capped at
-          `boost_cap`. Doesn't replace ranking entirely — just lifts
-          well-reviewed sources up the list.
-        - No relevant feedback → hit passes through unchanged.
+        Legacy rows without a signal field are treated as thumbs_up / thumbs_down
+        based on their integer rating so backward compatibility is preserved.
 
         Tunables (env, optional):
-        - `MEMO_FEEDBACK_SIM_THRESHOLD` (default 0.85)
-        - `MEMO_FEEDBACK_BOOST_PER_VOTE` (default 0.15)
-        - `MEMO_FEEDBACK_BOOST_CAP` (default 0.6)
+          MEMO_FEEDBACK_SIM_THRESHOLD (default 0.85)
+          MEMO_FEEDBACK_BOOST_PER_VOTE (default 0.15)
+          MEMO_FEEDBACK_BOOST_CAP (default 0.6)
         """
+        import json
         sim_threshold = float(os.environ.get("MEMO_FEEDBACK_SIM_THRESHOLD") or sim_threshold)
         boost_per_vote = float(os.environ.get("MEMO_FEEDBACK_BOOST_PER_VOTE") or boost_per_vote)
         boost_cap = float(os.environ.get("MEMO_FEEDBACK_BOOST_CAP") or boost_cap)
-        from dataclasses import replace
         out: list[MemoryRecord] = []
         for h in hits:
             try:
@@ -125,13 +148,34 @@ class _RerankOpsMixin(_MemoryBase):
             if not fb:
                 out.append(h)
                 continue
-            if any(r["rating"] < 0 for r in fb):
-                # Hard exclude — user vetoed this source for similar queries.
+            score = h.score or 0.0
+            hard_exclude = False
+            total_boost = 0.0
+            ignore_factor = 1.0
+            for r in fb:
+                extra_raw = r.get("extra_json") or ""
+                try:
+                    extra = json.loads(extra_raw) if extra_raw else {}
+                except (json.JSONDecodeError, TypeError):
+                    extra = {}
+                signal = str(extra.get("signal") or "")
+                # Determine canonical signal from stored value or fall back to rating.
+                if not signal:
+                    signal = "thumbs_up" if r["rating"] > 0 else "thumbs_down"
+                if signal == "thumbs_down":
+                    hard_exclude = True
+                    break
+                if signal == "ignore":
+                    ignore_factor = min(ignore_factor, self._SIGNAL_IGNORE_FACTOR)
+                else:
+                    per = self._SIGNAL_BOOST.get(signal, boost_per_vote)
+                    total_boost += per
+            if hard_exclude:
                 continue
-            pos = sum(1 for r in fb if r["rating"] > 0)
-            if pos > 0:
-                boost = min(boost_cap, boost_per_vote * pos)
-                h = replace(h, score=(h.score or 0.0) + boost)
+            score = score * ignore_factor
+            if total_boost > 0:
+                score = score + min(boost_cap, total_boost)
+            h = replace(h, score=round(score, 6))
             out.append(h)
         return out
 

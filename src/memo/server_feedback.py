@@ -21,20 +21,21 @@ def register(server: FastMCP, memory: Memory) -> None:
         query: str,
         rating: str,
     ) -> dict[str, Any]:
-        """Record a 👍 / 👎 vote on a memoria for a given query text.
+        """Record a feedback signal on a memoria for a given query text.
 
-        Negative votes (rating="down") exclude the source for any future
-        query whose embedding cosine-similarity with `query` is >= 0.85.
-        Positive votes boost score by ~0.15 per vote (capped). Idempotent
-        on (source_id, query, rating). Recording the opposite rating for
-        the same (source, query) pair replaces the prior vote.
+        Supported signal values for `rating`:
+          "thumbs_up" / "up"  — explicit positive vote; boosts score ~0.15 per vote.
+          "click"              — implicit positive (user used/viewed this result); ~0.08 boost.
+          "thumbs_down" / "down" — explicit rejection; hard-excludes from future similar queries.
+          "ignore"             — implicit negative (user skipped); soft 0.7× score penalty.
+
+        Idempotent on (source_id, query, rating). Recording a different signal
+        for the same (source, query) pair replaces the prior vote.
 
         Args:
             source_id: meta.id (full or unique prefix >= 4 chars).
-            query: query text the feedback applies to. Embedded with the
-                asymmetric retrieval prefix so future queries compare
-                fairly.
-            rating: "up" or "down".
+            query: query text the feedback applies to.
+            rating: "thumbs_up", "click", "thumbs_down", "ignore", "up", or "down".
         """
         return memory.feedback_record(source_id, query_text=query, rating=rating)
 
