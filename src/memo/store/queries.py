@@ -440,9 +440,9 @@ class _QueriesMixin(_StoreBase):
                 "INSERT INTO memory_health(id, confidence, roi_score, updated_at) "
                 "VALUES(?, 1.0, min(?, 1.0 + ?), datetime('now')) "
                 "ON CONFLICT(id) DO UPDATE SET "
-                "roi_score = min(excluded.roi_score, roi_score + ?), "
+                "roi_score = min(?, roi_score + ?), "
                 "updated_at = datetime('now')",
-                [(i, cap, delta, delta) for i in ids],
+                [(i, cap, delta, cap, delta) for i in ids],
             )
 
     def penalize_confidence_batch(
@@ -469,14 +469,14 @@ class _QueriesMixin(_StoreBase):
         Returns the count of rows updated. Used by Dream mode nightly pipeline.
         """
         with self._tx() as cx:
-            cx.execute(
+            cur = cx.execute(
                 "UPDATE memory_health SET roi_score = max(0.1, roi_score * ?), "
                 "updated_at = datetime('now') "
                 "WHERE updated_at < datetime('now', ? || ' days') "
                 "OR updated_at IS NULL",
                 (factor, f"-{older_than_days}"),
             )
-            return cx.rowcount
+            return cur.rowcount
 
     def eviction_candidates(
         self, policy: str, limit: int, *, exclude_types: set[str] | None = None,
