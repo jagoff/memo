@@ -41,6 +41,7 @@ from memo import server_encrypt as _srv_encrypt
 from memo import server_entities as _srv_entities
 from memo import server_feedback as _srv_feedback
 from memo import server_graph as _srv_graph
+from memo import server_health as _srv_health
 from memo import server_import_export as _srv_import_export
 from memo import server_links as _srv_links
 from memo import server_multimodal as _srv_multimodal
@@ -111,6 +112,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     _srv_synthesis.register(server, memory)
     _srv_reflect.register(server, memory)
     _srv_graph.register(server, memory)
+    _srv_health.register(server, memory)
     _srv_contextual.register(server, memory)
     _srv_links.register(server, memory)
     _srv_version.register(server, memory)
