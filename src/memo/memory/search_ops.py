@@ -166,8 +166,79 @@ class _SearchOpsMixin(_MemoryBase):
         # harness and recall-hook budget make this opt-in.
         if out and os.environ.get("MEMO_CONTRADICT_PENALTY_ENABLED") == "1":
             out = self._apply_contradict_penalty(out)
+        if out and os.environ.get("MEMO_GRAPH_EXPANSION_ENABLED") == "1":
+            out = self._apply_graph_expansion(
+                out, load_bodies=load_bodies, exclude_types=exclude_types,
+            )
+        if out and os.environ.get("MEMO_HEALTH_SCORES_DISABLED") != "1":
+            out = self._apply_health_scores(out)
         self._record_access([r.id for r in out])
         return out
+
+    def _apply_graph_expansion(
+        self, results: list[MemoryRecord], *, load_bodies: bool = True,
+        exclude_types: set[str] | None = None,
+    ) -> list[MemoryRecord]:
+        """Append graph-adjacent memorias not in the primary result set.
+
+        Walks entity edges from the top-3 results (1-hop) via the knowledge
+        graph and appends up to 3 connected memorias scored at 0.6× the
+        minimum primary score. Requires entities to have been extracted first
+        (`memo extract-entities`). Best-effort: any failure returns `results`
+        unchanged so graph availability never breaks the search path.
+        """
+        try:
+            existing_ids = {r.id for r in results}
+            min_score = min((r.score or 0.0) for r in results)
+            expansion_score = round(min_score * 0.6, 6)
+
+            # Collect entity names from top-3 primary results.
+            entity_names: list[str] = []
+            seen_entity_keys: set[str] = set()
+            for r in results[:3]:
+                for ent in self.graph.memoria_entities(r.id):
+                    key = f"{ent['name']}:{ent['type']}"
+                    if key not in seen_entity_keys:
+                        seen_entity_keys.add(key)
+                        entity_names.append(ent["name"])
+            if not entity_names:
+                return results
+
+            # Collect connected memoria IDs (1-hop via shared entity membership).
+            candidate_ids: list[str] = []
+            seen_candidates: set[str] = set(existing_ids)
+            for entity_name in entity_names[:5]:
+                for mem_id in self.graph.entity_memorias(entity_name):
+                    if mem_id not in seen_candidates:
+                        seen_candidates.add(mem_id)
+                        candidate_ids.append(mem_id)
+            if not candidate_ids:
+                return results
+
+            rows = self.store.get_batch(candidate_ids[:10])
+            if not rows:
+                return results
+
+            expanded: list[MemoryRecord] = []
+            for r in rows:
+                if len(expanded) >= 3:
+                    break
+                if exclude_types and r.get("type") in exclude_types:
+                    continue
+                body = self._read_body(r["path"]) if load_bodies else ""
+                expanded.append(
+                    MemoryRecord(
+                        id=r["id"], path=r["path"], title=r["title"], type=r["type"],
+                        tags=r["tags"], created=r["created"], updated=r["updated"],
+                        body=body,
+                        extra={**(r.get("extra") or {}), "graph_expanded": True},
+                        score=expansion_score,
+                    ),
+                )
+            return results + expanded
+        except Exception as exc:
+            _log.debug("graph_expansion failed: %s", exc)
+            return results
 
     def _apply_contradict_penalty(
         self, results: list[MemoryRecord],
@@ -238,6 +309,41 @@ class _SearchOpsMixin(_MemoryBase):
         except Exception:
             return results
 
+    def _apply_health_scores(
+        self, results: list[MemoryRecord],
+    ) -> list[MemoryRecord]:
+        """Multiply each result's score by its confidence × roi_score.
+
+        Memories with open contradictions (low confidence) rank lower; frequently
+        recalled memories (high roi_score) rank higher. No-op for memorias not yet
+        in the health table (missing rows default to 1.0 × 1.0 = neutral).
+        Best-effort: any failure returns results unchanged.
+        """
+        try:
+            ids = [r.id for r in results]
+            health = self.store.get_health_batch(ids)
+            if not health:
+                return results
+            changed = False
+            out = []
+            for r in results:
+                h = health.get(r.id)
+                if h is None:
+                    out.append(r)
+                    continue
+                mult = h["confidence"] * h["roi_score"]
+                if abs(mult - 1.0) < 1e-6:
+                    out.append(r)
+                    continue
+                out.append(replace(r, score=round((r.score or 0.0) * mult, 6)))
+                changed = True
+            if changed:
+                out.sort(key=lambda r: (r.score or 0.0), reverse=True)
+            return out
+        except Exception as exc:
+            _log.debug("health_scores failed: %s", exc)
+            return results
+
     def _record_access(self, ids: list[str]) -> None:
         """Record read/hits for the surfaced memorias (powers LRU/LFU + the
         promotion/demotion lifecycle).
@@ -254,6 +360,8 @@ class _SearchOpsMixin(_MemoryBase):
             return
         try:
             self.store.touch(ids)
+            if os.environ.get("MEMO_HEALTH_SCORES_DISABLED") != "1":
+                self.store.boost_roi_batch(ids)
         except sqlite3.Error as exc:  # never let access tracking break a read
             _log.debug("access tracking skipped: %s", exc)
 

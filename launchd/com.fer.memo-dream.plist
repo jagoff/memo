@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.memo.dream</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USER/.local/bin/memo</string>
+    <string>dream</string>
+    <string>run</string>
+  </array>
+  <!-- Daily at 03:00 — after midnight maintenance window, before morning sessions -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/USER/Library/Logs/memo/dream.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/USER/Library/Logs/memo/dream.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MEMO_NONINTERACTIVE</key>
+    <string>1</string>
+    <key>HF_HUB_OFFLINE</key>
+    <string>1</string>
+    <key>TRANSFORMERS_OFFLINE</key>
+    <string>1</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>PATH</key>
+    <string>/Users/USER/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

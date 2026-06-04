@@ -197,6 +197,18 @@ class _QueriesMixin(_StoreBase):
         ).fetchone()
         return _row_to_dict(row) if row else None
 
+    def get_batch(self, ids: list[str]) -> list[dict[str, Any]]:
+        """Fetch multiple memorias by ID in a single query."""
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._conn.execute(
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            f"FROM meta WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
     def find_by_prefix(self, prefix: str, limit: int = 10) -> list[str]:
         """Return ids whose hex starts with `prefix`. Used by the CLI/MCP
         to let callers reference memories by the first ~7 chars (git-style)
@@ -398,6 +410,73 @@ class _QueriesMixin(_StoreBase):
         if not row:
             return {"access_count": 0, "last_accessed": None}
         return {"access_count": int(row["access_count"]), "last_accessed": row["last_accessed"]}
+
+    # -- memory health (confidence + roi_score) ----------------------------
+
+    def get_health_batch(self, ids: list[str]) -> dict[str, dict[str, float]]:
+        """Return {id: {confidence, roi_score}} for the given IDs.
+
+        IDs not in the table are absent from the result (callers treat missing
+        as defaults: confidence=1.0, roi_score=1.0).
+        """
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._conn.execute(
+            f"SELECT id, confidence, roi_score FROM memory_health WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return {r["id"]: {"confidence": float(r["confidence"]),
+                          "roi_score": float(r["roi_score"])} for r in rows}
+
+    def boost_roi_batch(
+        self, ids: list[str], delta: float = 0.05, cap: float = 1.5,
+    ) -> None:
+        """Increment roi_score for each id, capped at `cap`. Upserts new rows."""
+        if not ids:
+            return
+        with self._tx() as cx:
+            cx.executemany(
+                "INSERT INTO memory_health(id, confidence, roi_score, updated_at) "
+                "VALUES(?, 1.0, min(?, 1.0 + ?), datetime('now')) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "roi_score = min(excluded.roi_score, roi_score + ?), "
+                "updated_at = datetime('now')",
+                [(i, cap, delta, delta) for i in ids],
+            )
+
+    def penalize_confidence_batch(
+        self, ids: list[str], delta: float = 0.15, floor: float = 0.1,
+    ) -> None:
+        """Decrement confidence for each id (e.g. open contradiction). Floor at `floor`."""
+        if not ids:
+            return
+        with self._tx() as cx:
+            cx.executemany(
+                "INSERT INTO memory_health(id, confidence, roi_score, updated_at) "
+                "VALUES(?, max(?, 1.0 - ?), 1.0, datetime('now')) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "confidence = max(excluded.confidence, confidence - ?), "
+                "updated_at = datetime('now')",
+                [(i, floor, delta, delta) for i in ids],
+            )
+
+    def decay_roi(
+        self, factor: float = 0.98, older_than_days: int = 30,
+    ) -> int:
+        """Multiply roi_score by `factor` for memorias not accessed in `older_than_days`.
+
+        Returns the count of rows updated. Used by Dream mode nightly pipeline.
+        """
+        with self._tx() as cx:
+            cx.execute(
+                "UPDATE memory_health SET roi_score = max(0.1, roi_score * ?), "
+                "updated_at = datetime('now') "
+                "WHERE updated_at < datetime('now', ? || ' days') "
+                "OR updated_at IS NULL",
+                (factor, f"-{older_than_days}"),
+            )
+            return cx.rowcount
 
     def eviction_candidates(
         self, policy: str, limit: int, *, exclude_types: set[str] | None = None,

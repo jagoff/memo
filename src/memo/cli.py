@@ -59,6 +59,7 @@ from memo.cli_import import import_group
 from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_links import links_group
 from memo.cli_maint_daemon import maint_daemon_group
+from memo.cli_dream import dream_cmd
 from memo.cli_maintain import maintain_cmd
 from memo.cli_mandate import mandate as mandate_cmd
 from memo.cli_memory import (
@@ -130,6 +131,7 @@ def cli(ctx: click.Context) -> None:
 # Command groups extracted from this module live in cli_*.py and register here.
 cli.add_command(graph_group)
 cli.add_command(eval_group)
+cli.add_command(dream_cmd)
 cli.add_command(maintain_cmd)
 cli.add_command(synthesize_cmd)
 cli.add_command(retier_cmd)
@@ -866,6 +868,35 @@ def recall_hook() -> None:
             if relevant and os.environ.get("MEMO_RECALL_DEBUG") == "1":
                 print(f"# memo recall-hook: query expansion recovered "
                       f"{len(relevant)} hits", file=_sys.stderr)
+
+    # Adaptive context: re-weight results by detected prompt intent.
+    # Zero extra search cost — pure score boost on returned hits so
+    # decision queries surface decision/fact types, code queries surface
+    # bug/preference types, etc. Gated by MEMO_RECALL_ADAPTIVE_CONTEXT.
+    if relevant and flag_bool("MEMO_RECALL_ADAPTIVE_CONTEXT"):
+        import re as _re
+        _RECALL_CONTEXTS = [
+            ("code",     _re.compile(r"\b(implement|fix|debug|test|refactor|deploy|build|install)\b", _re.I),
+             {"decision", "bug", "preference"}),
+            ("decision", _re.compile(r"\b(should i|which|choose|decide|recommend|tradeoff|vs\.?|versus)\b", _re.I),
+             {"decision", "fact"}),
+            ("write",    _re.compile(r"\b(write|document|explain|describe|summarize|draft)\b", _re.I),
+             {"note", "fact", "reference"}),
+        ]
+        _boost_types: set[str] = set()
+        for _ctx_name, _ctx_pat, _ctx_types in _RECALL_CONTEXTS:
+            if _ctx_pat.search(prompt):
+                _boost_types |= _ctx_types
+                break  # first match wins
+        if _boost_types:
+            from dataclasses import replace as _dc_replace
+            _boosted = [
+                _dc_replace(h, score=round((h.score or 0.0) * 1.25, 6))
+                if h.type in _boost_types else h
+                for h in relevant
+            ]
+            _boosted.sort(key=lambda h: (h.score or 0.0), reverse=True)
+            relevant = _boosted
 
     # Telemetry: append every recall (with or without hits) to the
     # JSONL ring buffer consumed by `memo tui`. Best-effort; failures
