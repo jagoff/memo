@@ -82,17 +82,26 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_GAP_THRESHOLD", "float", 0.10, "recall", "If >0, reduce injected memorias to the top-1 when the score gap between rank-1 and rank-2 exceeds this value. Prevents a strong top hit from dragging in 2 weak tail hits. 0 = disabled.", min_val=0.0, max_val=1.0),
     _spec("MEMO_RECALL_SKIP_BELOW", "float", 0.45, "recall", "If >0, skip recall entirely when the best candidate's score is below this floor. Prevents low-confidence recall from injecting marginally relevant context. 0 = disabled.", min_val=0.0, max_val=1.0),
     _spec("MEMO_RECALL_FEEDBACK_HINT", "bool", True, "recall", "Append a feedback hint comment to the recall block so the AI layer can surface memory_feedback_record to the user.", opt_out=True),
+    _spec("MEMO_RECALL_ADAPTIVE_CONTEXT", "bool", True, "recall", "Re-weight recall results by detected prompt intent (code/decision/write → boost matching memory types). Zero extra search cost — pure score boost on returned hits.", opt_out=True),
     # search ranking
     _spec("MEMO_FTS_BACKEND", "str", "auto", "search",
           "FTS backend: 'auto' (tantivy if installed, else fts5) | 'tantivy' | 'fts5'."),
     _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking.", min_val=0.0, max_val=1.0),
     _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),
+    _spec("MEMO_HEALTH_SCORES_DISABLED", "bool", False, "search",
+          "Disable health-score (confidence × roi_score) multiplier in search ranking. "
+          "Defaults off — health scoring is neutral (1.0×) until Dream mode or contradiction scan have run.", opt_out=False),
+    _spec("MEMO_GRAPH_EXPANSION_ENABLED", "bool", False, "search",
+          "After primary search + rerank, follow knowledge-graph entity edges from the top-3 hits (1-hop) and append up to 3 adjacent memorias scored at 0.6× the minimum primary score. Requires entities to have been extracted first (`memo extract-entities`)."),
     _spec("MEMO_QUERY_CACHE_SIZE", "int", 256, "search", "LRU size for query embeddings (0 = off). Default 256 covers typical session query diversity with negligible RAM overhead (~few KB per cached vector)."),
     # session checkpoints / resume
     _spec("MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."),
     _spec("MEMO_SESSION_DEBUG", "bool", False, "session", "Verbose session-hook diagnostics."),
     # turn capture
     _spec("MEMO_CAPTURE_DISABLE", "bool", False, "capture", "Disable Stop-hook turn capture."),
+    _spec("MEMO_CAPTURE_PATTERN_TYPES", "bool", True, "capture",
+          "Zero-cost regex pre-pass in save(auto_derive=True): detect decision/preference/bug/fact type "
+          "before calling the helper LLM. Set to 0 to always use the LLM for type inference.", opt_out=True),
     _spec("MEMO_CAPTURE_DEBUG", "bool", False, "capture", "Verbose capture diagnostics."),
     _spec("MEMO_CAPTURE_MIN_WORDS", "int", 15, "capture", "Minimum words for a turn to be captured."),
     _spec("MEMO_CAPTURE_CONTEXT_TURNS", "int", 3, "capture", "Prior turns included as capture context."),
@@ -101,10 +110,10 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_MAINTAIN_DISABLE", "bool", False, "maintain", "Disable the daily `memo maintain --if-due` auto-run."),
     _spec("MEMO_MAINT_VIA_DAEMON", "bool", False, "maintain", "Route consolidation's synthesis LLM through the maintenance daemon (keeps the multi-GB model out of memo-mcp's resident set). Falls back in-process when the daemon is unreachable."),
     # emergent synthesis (memo synthesize)
-    _spec("MEMO_SYNTHESIS_ENABLED", "bool", False, "maintain", "Enable autonomous cross-memory synthesis pass in `memo maintain`. Off by default until stable."),
+    _spec("MEMO_SYNTHESIS_ENABLED", "bool", True, "maintain", "Enable autonomous cross-memory synthesis pass in `memo maintain`. Set to 0 to disable.", opt_out=True),
     _spec("MEMO_SYNTHESIS_MIN_CONFIDENCE", "str", "medium", "maintain", "Minimum LLM confidence to persist a synthesis: low | medium | high."),
-    _spec("MEMO_SYNTHESIS_MIN_CLUSTER", "int", 3, "maintain", "Minimum cluster size for synthesis (memories per cluster).", min_val=2, max_val=50),
-    _spec("MEMO_SYNTHESIS_MAX_CLUSTERS", "int", 20, "maintain", "Max clusters processed per synthesis pass.", min_val=1, max_val=200),
+    _spec("MEMO_SYNTHESIS_MIN_CLUSTER", "int", 5, "maintain", "Minimum cluster size for synthesis (memories per cluster). Conservative default of 5 avoids noisy low-data insights.", min_val=2, max_val=50),
+    _spec("MEMO_SYNTHESIS_MAX_CLUSTERS", "int", 10, "maintain", "Max clusters processed per synthesis pass.", min_val=1, max_val=200),
     _spec("MEMO_SYNTHESIS_THRESHOLD", "float", 0.78, "maintain", "Cosine similarity threshold for synthesis clustering (looser than consolidation's 0.85).", min_val=0.0, max_val=1.0),
     _spec("MEMO_CONSOLIDATE_AUTO_THRESHOLD", "float", 0.95, "maintain", "Cosine floor for the LLM-free fast lane in consolidation. Clusters at this threshold or above are merged as keep_latest without calling the LLM.", min_val=0.0, max_val=1.0),
     # transcript ingest

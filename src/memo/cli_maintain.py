@@ -197,7 +197,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
         except Exception as exc:
             receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
 
-    # 4. Emergent synthesis (opt-in: MEMO_SYNTHESIS_ENABLED=1) -----------------
+    # 4. Emergent synthesis (opt-out: MEMO_SYNTHESIS_ENABLED=0 to disable) -----
     if not skip_synthesize and flag_bool("MEMO_SYNTHESIS_ENABLED"):
         try:
             results = mem.synthesize_cross_cluster(dry_run=dry_run)

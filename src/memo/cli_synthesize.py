@@ -6,7 +6,7 @@ memory states alone. Results are saved as ``type=synthesis`` memorias with
 provenance links to the contributing sources.
 
 Requires a local LLM (Qwen2.5-7B or equivalent). Same LLM as consolidation.
-Enable in `memo maintain` with ``MEMO_SYNTHESIS_ENABLED=1``.
+Runs automatically in `memo maintain` (opt-out with ``MEMO_SYNTHESIS_ENABLED=0``).
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def synthesize_cmd(
 
     Example:
       memo synthesize --dry-run
-      MEMO_SYNTHESIS_ENABLED=1 memo maintain
+      memo maintain   # synthesis runs by default
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)

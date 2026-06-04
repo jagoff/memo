@@ -42,6 +42,33 @@ from memo.memory.record import (
 from memo.util import sha256_short as _sha256_short
 
 
+_TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("decision",   re.compile(
+        r"\b(decided?\s+to|we\s+will\s+use|going\s+with|chosen?\s+to|from\s+now\s+on|"
+        r"the\s+decision\s+is|decidimos)\b", re.I)),
+    ("preference", re.compile(
+        r"\b(i\s+prefer|prefer\s+to|always\s+use|i\s+like\s+to|"
+        r"i\s+don'?t\s+want|prefiero|siempre\s+usar)\b", re.I)),
+    ("bug",        re.compile(
+        r"\b(bug:|issue:|found\s+that|the\s+problem\s+was|root\s+cause|"
+        r"error\s+was|causa\s+ra[ií]z|el\s+problema\s+era)\b", re.I)),
+    ("fact",       re.compile(
+        r"\b(turns?\s+out|discovered\s+that|learned\s+that|actually\s+the|"
+        r"resulta\s+que|descubr[íi]\s+que)\b", re.I)),
+]
+
+
+def _infer_type_from_content(content: str) -> str | None:
+    """Zero-cost regex-based type inference. Returns a type string or None."""
+    if os.environ.get("MEMO_CAPTURE_PATTERN_TYPES", "1") == "0":
+        return None
+    snippet = content[:600]
+    for type_name, pattern in _TYPE_PATTERNS:
+        if pattern.search(snippet):
+            return type_name
+    return None
+
+
 class _WriteOpsMixin(_MemoryBase):
     # -- save ---------------------------------------------------------------
 
@@ -183,6 +210,13 @@ class _WriteOpsMixin(_MemoryBase):
             wants_title = title is None
             wants_type = type_ == "note"
             wants_tags = not tags
+            # Zero-cost regex pre-pass: detect type before calling the LLM.
+            # Avoids the helper-model latency (~1-2s) for clearly typed content.
+            if wants_type:
+                inferred = _infer_type_from_content(content)
+                if inferred:
+                    type_ = inferred
+                    wants_type = False
             if wants_title or wants_type or wants_tags:
                 derived = self._derive_metadata(content)
                 if wants_title and derived.get("title"):

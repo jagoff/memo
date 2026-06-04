@@ -109,6 +109,16 @@ CREATE TABLE IF NOT EXISTS access (
 
 CREATE INDEX IF NOT EXISTS idx_access_last  ON access(last_accessed);
 CREATE INDEX IF NOT EXISTS idx_access_count ON access(access_count);
+
+CREATE TABLE IF NOT EXISTS memory_health (
+    id          TEXT PRIMARY KEY,
+    confidence  REAL NOT NULL DEFAULT 1.0,
+    roi_score   REAL NOT NULL DEFAULT 1.0,
+    updated_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_roi  ON memory_health(roi_score);
+CREATE INDEX IF NOT EXISTS idx_health_conf ON memory_health(confidence);
 """
 
 
