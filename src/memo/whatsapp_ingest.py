@@ -110,7 +110,11 @@ def read_messages(
     (exclusivo). Salta vacíos, chats excluidos y output del bot."""
     if not bridge_db.is_file():
         return []
-    conn = sqlite3.connect(f"file:{bridge_db}?mode=ro&immutable=1", uri=True)
+    # mode=ro (NO immutable): el bridge escribe en WAL y mantiene los mensajes
+    # recientes ahí hasta el próximo checkpoint. `immutable=1` le promete a SQLite
+    # que el archivo no cambia y hace que IGNORE el -wal, así que la cola más nueva
+    # de cada chat queda invisible hasta un checkpoint → notas/índice desactualizados.
+    conn = sqlite3.connect(f"file:{bridge_db}?mode=ro", uri=True)
     try:
         conn.row_factory = sqlite3.Row
         q = (

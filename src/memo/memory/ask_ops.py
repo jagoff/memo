@@ -329,7 +329,18 @@ class _AskOpsMixin(_MemoryBase):
         # down-weight by age.
         recency_intent = _is_recency_query(question)
         convo_intent = recency_intent or _is_conversation_query(question)
-        search_limit = max(k, 12) if convo_intent else k
+        # Recency asks re-sort the pool by in-transcript date (below), but the
+        # sort can only float candidates that made it into the pool. The newest
+        # message of a chat is often semantically bland ("cómo te fue hoy?") and
+        # scores low, so a tight pool drops it and the recency sort surfaces a
+        # stale-but-relevant chunk instead. Widen the pool for recency so the
+        # freshest dated chunk reliably enters before the re-sort.
+        if recency_intent:
+            search_limit = max(k, 60)
+        elif convo_intent:
+            search_limit = max(k, 12)
+        else:
+            search_limit = k
         # Lazy-load bodies: defer disk I/O until after reranking
         hits: list[MemoryRecord] = self.search(
             question, limit=search_limit, type_=type_, mode="hybrid", load_bodies=False,
