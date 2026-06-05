@@ -131,6 +131,29 @@ def test_ingest_honors_memoignore(tmp_path: Path, runner_env):
     assert not any("04-Archive" in p for p in paths), f"archive leaked in: {paths}"
 
 
+def test_ingest_exclude_glob_double_star(tmp_path: Path, runner_env):
+    """`--exclude Sub/Dir/**` skips the whole subtree. The launchd ingest
+    invocation passes patterns in this `/**` form; a literal-only matcher
+    silently no-ops them, double-ingesting folders the dedicated importer owns
+    (the WhatsApp double-ingest bug)."""
+    vault = _build_vault(tmp_path / "vault", {
+        "01-Projects/active.md": "# Active\n\nIndexed note.",
+        "Obsidian/Whatsapp/Maria.md": "# Maria\n\nA transcript that must be skipped.",
+    })
+
+    result = CliRunner().invoke(
+        cli, ["ingest", str(vault), "--name", "v", "--exclude", "Obsidian/Whatsapp/**",
+              "--no-chunk", "--no-include-pdf", "--no-include-orphan-images", "--no-ocr"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+
+    store = _open_store(runner_env)
+    paths = [r["path"] for r in _all_rows(store)]
+    assert any("active.md" in p for p in paths), f"active note missing: {paths}"
+    assert not any("Whatsapp" in p for p in paths), f"whatsapp subtree leaked: {paths}"
+
+
 def test_ingest_skips_chunking_for_short_doc(tmp_path: Path, runner_env):
     """Short doc (< chunk_chars) stores a single row, no chunk suffix."""
     vault = _build_vault(tmp_path / "vault", {"short.md": "# Short\n\nA tiny note about cats and dogs."})
