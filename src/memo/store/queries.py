@@ -288,6 +288,24 @@ class _QueriesMixin(_StoreBase):
         ).fetchall()
         return [{"id": r["id"], "path": r["path"]} for r in rows]
 
+    def chunks_by_parent(self, parent_path: str, limit: int = 3) -> list[dict[str, Any]]:
+        """Newest chunks of one ingested note, by title (descending).
+
+        Dated transcript chunk titles end in `— YYYY-MM-DD`, which sorts
+        lexicographically by date, so `ORDER BY title DESC` surfaces the most
+        recent day first. Used by recency asks to guarantee the latest chunk of
+        a retrieved transcript enters the candidate pool even when it scores too
+        low semantically to be retrieved on its own.
+        """
+        rows = self._conn.execute(
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            "FROM meta "
+            "WHERE json_extract(extra_json, '$.parent_path') = ? "
+            "ORDER BY title DESC LIMIT ?",
+            (parent_path, limit),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
     def list_recent(
         self, limit: int = 20, type_: str | None = None,
         exclude_types: set[str] | None = None,

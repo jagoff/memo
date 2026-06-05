@@ -360,6 +360,30 @@ class _AskOpsMixin(_MemoryBase):
             for h in hits
         ]
 
+        # Recency augmentation: the newest chunk of a long transcript is often
+        # semantically bland ("cómo te fue hoy?") and never makes the candidate
+        # pool on cosine, so the recency re-sort below can't surface it. For a
+        # recency ask, pull the latest chunks of every transcript already
+        # retrieved (same parent note) straight from metadata and fold them in,
+        # so the genuine last message can win the sort.
+        if recency_intent:
+            seen_ids = {h.id for h in hits}
+            parents = {
+                p for h in hits
+                if _is_whatsapp_hit(h) and (p := (h.extra or {}).get("parent_path"))
+            }
+            for parent in parents:
+                for row in self.store.chunks_by_parent(parent, limit=3):
+                    if row["id"] in seen_ids:
+                        continue
+                    seen_ids.add(row["id"])
+                    hits.append(MemoryRecord(
+                        id=row["id"], path=row["path"], title=row["title"],
+                        type=row["type"], tags=row["tags"], created=row["created"],
+                        updated=row["updated"], body=self._read_body(row["path"]),
+                        extra=row.get("extra") or {},
+                    ))
+
         # Recency/conversation re-ranking: float WhatsApp transcripts above a
         # same-named contact/profile card, preferring a 1:1 chat over a same-
         # named group. For a recency ask, the dated content the hit carries is

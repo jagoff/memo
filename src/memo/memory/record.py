@@ -113,6 +113,9 @@ _RECENCY_TOKENS = (
     "lo que dijo", "what did", "said last",
 )
 _ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+# WhatsApp transcript lines carry per-message clock times: "**yo** (21:06): …".
+# Used to break same-day ties between sub-chunks of one long day (see _recency_key).
+_CLOCK_TIME_RE = re.compile(r"\((\d{2}:\d{2})\)")
 
 
 def _is_recency_query(q: str) -> bool:
@@ -163,11 +166,20 @@ def _is_group_chat(rec: MemoryRecord) -> bool:
 def _recency_key(rec: MemoryRecord) -> str:
     """Sortable recency signal: the most recent ISO date the hit mentions in
     its title or body, falling back to the record's updated/created stamp.
-    ISO `YYYY-MM-DD` strings sort lexicographically, so `max()` == newest."""
+    ISO `YYYY-MM-DD` strings sort lexicographically, so `max()` == newest.
+
+    For WhatsApp transcripts a long day is split into several sub-chunks that
+    all share the same `## YYYY-MM-DD` header, so a date-only key ties them and
+    the last message of the day (often the answer to "lo último") never floats
+    to the top. Append the latest clock time found in the body so same-day
+    sub-chunks order by their tail message: "2026-06-04 21:06" > "2026-06-04 19:52".
+    """
     dates = _ISO_DATE_RE.findall(rec.title or "")
     dates += _ISO_DATE_RE.findall(rec.body or "")
     if dates:
-        return max(dates)
+        day = max(dates)
+        times = _CLOCK_TIME_RE.findall(rec.body or "")
+        return f"{day} {max(times)}" if times else day
     return (rec.updated or rec.created or "")[:10]
 
 
