@@ -742,8 +742,9 @@ def test_recency_helpers():
     assert not _is_whatsapp_hit(meta)
     # Transcript's most-recent in-body date beats the contact's update stamp
     # only via the whatsapp flag; the key itself reflects dated content.
-    assert _recency_key(wa) == "2026-05-17"
-    assert _recency_key(contact) == "2026-05-30"  # falls back to updated[:10]
+    # Dated transcript: date + latest clock time (breaks same-day sub-chunk ties).
+    assert _recency_key(wa) == "2026-05-17 16:26"
+    assert _recency_key(contact) == "2026-05-30"  # no body date/time → updated[:10]
 
 
 def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
