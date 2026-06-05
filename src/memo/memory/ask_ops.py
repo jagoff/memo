@@ -55,7 +55,7 @@ class _AskOpsMixin(_MemoryBase):
             history=clean_history,
             context=clean_context,
         )
-        rag = self.ask(retrieval_question, k=k, type_=type_)
+        rag = self.ask(retrieval_question, k=k, type_=type_, intent_text=question)
         total_ms = int((time.perf_counter() - started) * 1000)
         answer = str(rag.get("answer") or "").strip()
         sources = [item for item in (rag.get("sources") or []) if isinstance(item, dict)]
@@ -162,7 +162,7 @@ class _AskOpsMixin(_MemoryBase):
             }
             return
 
-        for ev in self.ask_stream(retrieval_question, k=k, type_=type_):
+        for ev in self.ask_stream(retrieval_question, k=k, type_=type_, intent_text=question):
             kind = ev.get("event")
             if kind == "sources":
                 sources = list(ev.get("sources") or [])
@@ -298,6 +298,7 @@ class _AskOpsMixin(_MemoryBase):
     def _build_ask_context(
         self, question: str, *, k: int, type_: str | None,
         snippet_chars: int, include_repos: bool, disable_reranker: bool = True,
+        intent_text: str | None = None,
     ) -> tuple[str, list[dict[str, Any]], str, list[MemoryRecord]]:
         """Retrieval half of ask()/ask_stream().
 
@@ -327,8 +328,14 @@ class _AskOpsMixin(_MemoryBase):
         # same-named contact/profile card. Only recency biases retrieval toward
         # *recent* material (freshness decay) — a conversation ask shouldn't
         # down-weight by age.
-        recency_intent = _is_recency_query(question)
-        convo_intent = recency_intent or _is_conversation_query(question)
+        # Detect intent on the original user question too, not only the
+        # (possibly rewritten / context-wrapped) retrieval text. Synapse sends
+        # memo a cleaned `retrieval_question` that can drop the recency token,
+        # which would silently disable the recency path; `intent_text` carries
+        # the raw question so the signal survives.
+        intent_src = f"{question} {intent_text or ''}"
+        recency_intent = _is_recency_query(intent_src)
+        convo_intent = recency_intent or _is_conversation_query(intent_src)
         # Recency asks re-sort the pool by in-transcript date (below), but the
         # sort can only float candidates that made it into the pool. The newest
         # message of a chat is often semantically bland ("cómo te fue hoy?") and
@@ -513,6 +520,7 @@ class _AskOpsMixin(_MemoryBase):
     def ask(
         self, question: str, *, k: int = 5, type_: str | None = None,
         snippet_chars: int = 2000, include_repos: bool = True,
+        intent_text: str | None = None,
     ) -> dict[str, Any]:
         """Synthesised Q&A over the memory archive (RAG).
 
@@ -537,6 +545,7 @@ class _AskOpsMixin(_MemoryBase):
         norm_question, sources, user_msg, hits = self._build_ask_context(
             question, k=k, type_=type_,
             snippet_chars=snippet_chars, include_repos=include_repos,
+            intent_text=intent_text,
         )
         if not sources:
             from memo.flags import flag_str
@@ -583,6 +592,7 @@ class _AskOpsMixin(_MemoryBase):
     def ask_stream(
         self, question: str, *, k: int = 5, type_: str | None = None,
         snippet_chars: int = 2000, include_repos: bool = True,
+        intent_text: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Streaming variant of `ask()` — yields token-level events.
 
@@ -601,6 +611,7 @@ class _AskOpsMixin(_MemoryBase):
         _, sources, user_msg, hits = self._build_ask_context(
             question, k=k, type_=type_,
             snippet_chars=snippet_chars, include_repos=include_repos,
+            intent_text=intent_text,
         )
         if not sources:
             yield {
