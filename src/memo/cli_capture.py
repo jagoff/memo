@@ -15,6 +15,7 @@ import os
 import re
 import sys
 from datetime import UTC, datetime
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -226,7 +227,25 @@ def ingest(
 
     def _excluded(rel: Path) -> bool:
         s = str(rel)
-        return any(s.startswith(pat) or f"/{pat}/" in f"/{s}/" for pat in exclude_patterns)
+        padded = f"/{s}/"
+        for pat in exclude_patterns:
+            # A trailing `/**` means "this directory and everything under it".
+            # The launchd ingest invocation passes patterns in this form
+            # (`Obsidian/Whatsapp/**`); without this they silently no-op and the
+            # subtree gets double-ingested by both the generic and dedicated
+            # importers.
+            if pat.endswith("/**"):
+                base = pat[:-3]
+                if s.startswith(base) or f"/{base}/" in padded:
+                    return True
+                continue
+            # Literal prefix or `/segment/` anywhere in the rel path.
+            if s.startswith(pat) or f"/{pat}/" in padded:
+                return True
+            # General globs (`*.tmp`, `a/*/b`) match against the full rel path.
+            if ("*" in pat or "?" in pat or "[" in pat) and fnmatch(s, pat):
+                return True
+        return False
 
     md_files: list[Path] = []
     pdf_files: list[Path] = []
