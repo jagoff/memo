@@ -29,7 +29,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             if_due: Skip silently if the session was already reflected.
             dry_run: Preview what would be saved without writing anything.
         """
-        from memo.cli_capture import _reflect_session
+        from memo.cli_transcripts import _reflect_session
         from memo.session import get_session, list_sessions
 
         cfg = memory.cfg

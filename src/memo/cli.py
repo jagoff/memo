@@ -38,7 +38,7 @@ from memo.cli_as_of import as_of_group
 from memo.cli_backend_native import backend_native_group
 from memo.cli_backup import backup_group
 from memo.cli_briefing import briefing
-from memo.cli_capture import capture_stop, ingest, mine_history, reflect, resume
+from memo.cli_capture import capture_stop, resume
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import _short, console
 from memo.cli_common import get_memory as _get_memory
@@ -57,6 +57,7 @@ from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
 from memo.cli_history import diff_cmd, historia_cmd
 from memo.cli_import import import_group
+from memo.cli_ingest import ingest
 from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_links import links_group
 from memo.cli_maint_daemon import maint_daemon_group
@@ -109,6 +110,7 @@ from memo.cli_share import share_group
 from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
+from memo.cli_transcripts import mine_history, reflect
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_version import version_group
@@ -590,6 +592,14 @@ def recall_hook() -> None:
     import json as _json
     import sys as _sys
 
+    # Build Config once (was re-parsed 8x below). Guard it so a broken config
+    # still honors the "always exit 0" hook contract instead of crashing.
+    try:
+        cfg = Config.from_env()
+    except Exception:
+        print("{}")
+        _sys.exit(0)
+
     # Always exit 0 — hooks must not block Claude Code on memo failures.
     def _bail(reason: str = "") -> None:
         if reason and os.environ.get("MEMO_RECALL_DEBUG") == "1":
@@ -600,7 +610,7 @@ def recall_hook() -> None:
             try:
                 from memo.dashboard import append_recall_log
                 append_recall_log(
-                    Config.from_env().state_dir,
+                    cfg.state_dir,
                     prompt="",
                     hits=[],
                     via="bail",
@@ -650,8 +660,8 @@ def recall_hook() -> None:
     if _sid:
         try:
             from memo import session as _session_mod
-            _turn = _session_mod.next_turn(Config.from_env().state_dir, _sid)
-            _session_mod.stamp_recall_turn(Config.from_env().state_dir, _sid, _turn)
+            _turn = _session_mod.next_turn(cfg.state_dir, _sid)
+            _session_mod.stamp_recall_turn(cfg.state_dir, _sid, _turn)
         except Exception:
             _turn = None
 
@@ -669,7 +679,7 @@ def recall_hook() -> None:
         # 12s hooks.json timeout, leaving room for subprocess as last resort.
         _daemon_timeout = max(0.2, (flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS") or 3500) / 1000.0)
         _daemon_result = connect_and_recall(
-            Config.from_env().state_dir,
+            cfg.state_dir,
             prompt=prompt,
             cwd=payload.get("cwd"),
             timeout=_daemon_timeout,
@@ -692,7 +702,7 @@ def recall_hook() -> None:
         try:
             from memo.dashboard import append_recall_log
             append_recall_log(
-                Config.from_env().state_dir,
+                cfg.state_dir,
                 prompt=prompt,
                 hits=[],
                 via="daemon_error",
@@ -767,7 +777,7 @@ def recall_hook() -> None:
     if mode in ("vec", "hybrid") and not flag_bool("MEMO_RECALL_FORCE_MODE"):
         try:
             import time as _time_mod
-            _signal = Config.from_env().state_dir / ".prewarm_ts"
+            _signal = cfg.state_dir / ".prewarm_ts"
             _warm = (
                 _signal.exists()
                 and (_time_mod.time() - float(_signal.read_text().strip())) < 3600
@@ -910,7 +920,7 @@ def recall_hook() -> None:
     try:
         from memo.dashboard import append_recall_log
         append_recall_log(
-            Config.from_env().state_dir,
+            cfg.state_dir,
             prompt=prompt,
             hits=[
                 {"id": h.id, "score": h.score, "title": h.title,
