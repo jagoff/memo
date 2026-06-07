@@ -32,7 +32,7 @@ from memo.lifecycle import LifecycleManager
 from memo.llm import MLXChat
 from memo.memory.ask_ops import _AskOpsMixin
 from memo.memory.maintain_ops import _MaintainOpsMixin
-from memo.memory.record import _compose_for_embed, _log
+from memo.memory.record import _compose_for_embed
 from memo.memory.repo_ops import _RepoOpsMixin
 from memo.memory.rerank_ops import _RerankOpsMixin
 from memo.memory.search_ops import _SearchOpsMixin

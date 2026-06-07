@@ -6,10 +6,11 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
+
     from memo.memory import Memory
 
 
-def register(server: "FastMCP", memory: "Memory") -> None:
+def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memory_reflect(
         session_id: str | None = None,

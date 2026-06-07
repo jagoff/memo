@@ -49,7 +49,7 @@ class _SimpleLRU:
 
     def __init__(self, maxsize: int) -> None:
         from collections import OrderedDict
-        self._d: "OrderedDict[str, Any]" = OrderedDict()
+        self._d: OrderedDict[str, Any] = OrderedDict()
         self._cap = max(1, maxsize)
 
     def get(self, key: str) -> Any:
@@ -124,6 +124,9 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         # Raw env read (no memo.flags import — embedder is a foundation module
         # that must not import other memo modules; see architecture-boundary test).
         cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
+        # Either the shared consciousness-contracts cache or the local _SimpleLRU
+        # fallback — both expose get(str)/put(str, value).
+        self._query_cache: Any
         if cache_size <= 0:
             self._query_cache = None
         elif _HAS_SHARED_CACHE:

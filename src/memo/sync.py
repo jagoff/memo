@@ -314,7 +314,7 @@ class SyncManager:
                 state_path=default_state_path(local_memory.cfg.data_dir),
             )
         else:
-            self._sync_coordinator = None
+            self._sync_coordinator = None  # type: ignore[assignment]  # optional dep absent
 
     def compute_diff(self) -> SyncDiff:
         """Compute diff between local and remote vaults.

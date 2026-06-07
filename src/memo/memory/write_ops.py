@@ -26,7 +26,6 @@ from memo.lifecycle import (
     FORGET_REASON_KEY,
     IS_FORGOTTEN_KEY,
 )
-from memo.llm import MLXChat
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _DERIVE_SYSTEM_PROMPT,
@@ -40,7 +39,6 @@ from memo.memory.record import (
     _slugify,
 )
 from memo.util import sha256_short as _sha256_short
-
 
 _TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("decision",   re.compile(

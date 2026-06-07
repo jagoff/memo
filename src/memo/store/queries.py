@@ -6,8 +6,6 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-_log = logging.getLogger(__name__)
-
 from sqlite_vec import serialize_float32
 
 from ._base import _StoreBase
@@ -19,6 +17,8 @@ from .schema import (
     _BM25_FTS_TITLE_WEIGHT,
     _BM25_UNINDEXED_WEIGHT,
 )
+
+_log = logging.getLogger(__name__)
 
 
 class _QueriesMixin(_StoreBase):

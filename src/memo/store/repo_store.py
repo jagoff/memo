@@ -7,8 +7,6 @@ from typing import Any
 
 from sqlite_vec import serialize_float32
 
-_log = logging.getLogger(__name__)
-
 from ._base import _StoreBase
 from .rows import (
     _batches,
@@ -23,6 +21,8 @@ from .schema import (
     _BM25_REPO_NAME_WEIGHT,
     _BM25_UNINDEXED_WEIGHT,
 )
+
+_log = logging.getLogger(__name__)
 
 
 class _RepoStoreMixin(_StoreBase):

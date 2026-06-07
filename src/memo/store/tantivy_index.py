@@ -11,7 +11,7 @@ import threading
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 
 @lru_cache(maxsize=1)
@@ -58,7 +58,7 @@ class TantivyFTSIndex:
         self._lock = threading.Lock()
 
     @classmethod
-    def open_or_create(cls, index_dir: Path) -> "TantivyFTSIndex":
+    def open_or_create(cls, index_dir: Path) -> TantivyFTSIndex:
         return cls(index_dir)
 
     @staticmethod
@@ -107,8 +107,8 @@ class TantivyFTSIndex:
 
     # -- search ----------------------------------------------------------------
 
-    _FIELD_BOOSTS = {"title": 5.0, "tags": 3.0, "body": 1.0}
-    _FUZZY_FIELDS = {
+    _FIELD_BOOSTS: ClassVar[dict[str, float]] = {"title": 5.0, "tags": 3.0, "body": 1.0}
+    _FUZZY_FIELDS: ClassVar[dict[str, tuple[bool, int, bool]]] = {
         "title": (False, 1, True),  # (prefix, distance, transpose_cost_one)
         "tags": (False, 1, True),
         "body": (False, 1, True),
@@ -130,7 +130,7 @@ class TantivyFTSIndex:
         self,
         query: str,
         limit: int = 10,
-        edit_distance: int = 1,  # noqa: ARG002 (reserved for future tuning)
+        edit_distance: int = 1,
     ) -> list[dict[str, Any]]:
         """Fuzzy BM25 (typo-tolerant). Returns [{id, score}]."""
         return self._run_query(
@@ -165,7 +165,7 @@ class TantivyFTSIndex:
         # (list of (score, DocAddress) tuples). Older versions returned a bare
         # list. Handle both by checking for the .hits attribute.
         hits = getattr(results, "hits", results)
-        for score, addr in hits:
+        for score, addr in hits:  # type: ignore[union-attr]  # tantivy Hits is iterable at runtime
             try:
                 doc = searcher.doc(addr)
                 id_val = doc.get_first("id")

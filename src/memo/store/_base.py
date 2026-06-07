@@ -19,7 +19,7 @@ class _StoreBase:
     dims: int
     _local: threading.local
     tantivy_index_dir: Path
-    _tantivy_inst: "TantivyFTSIndex | None"
+    _tantivy_inst: TantivyFTSIndex | None
     _tantivy_init_lock: threading.Lock
 
     @property
@@ -27,5 +27,5 @@ class _StoreBase:
     def _tx(self) -> AbstractContextManager[sqlite3.Connection]: ...  # type: ignore[empty-body]
     def _checkpoint(self) -> None: ...
     def _delete_repo_file_rows(self, cx: sqlite3.Connection, file_ids: list[str]) -> None: ...
-    def _get_tantivy(self) -> "TantivyFTSIndex | None": ...  # type: ignore[empty-body]
+    def _get_tantivy(self) -> TantivyFTSIndex | None: ...  # type: ignore[empty-body]
     def _rebuild_tantivy_from_sqlite(self) -> None: ...

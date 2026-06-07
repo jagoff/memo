@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import replace
-from typing import Any
+from typing import Any, ClassVar
 
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -109,7 +109,7 @@ class _RerankOpsMixin(_MemoryBase):
     # Signal strengths: how much each feedback type affects the score.
     # thumbs_up → full boost; click → half boost (implicit positive signal).
     # thumbs_down → hard exclude; ignore → soft penalty (score × 0.7).
-    _SIGNAL_BOOST = {"thumbs_up": 0.15, "click": 0.08}
+    _SIGNAL_BOOST: ClassVar[dict[str, float]] = {"thumbs_up": 0.15, "click": 0.08}
     _SIGNAL_IGNORE_FACTOR = 0.7  # multiplied into score for "ignore" signals
 
     def _apply_source_feedback(

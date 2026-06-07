@@ -44,10 +44,11 @@ from memo.cli_common import _short, console
 from memo.cli_common import get_memory as _get_memory
 from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
-from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
+from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_diag import _db_health_report, _doctor_report, _recall_daemon_health
+from memo.cli_dream import dream_cmd
 from memo.cli_embed_daemon import embed_daemon_group
 from memo.cli_encrypt import encrypt_group
 from memo.cli_eval import eval_group
@@ -59,7 +60,6 @@ from memo.cli_import import import_group
 from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_links import links_group
 from memo.cli_maint_daemon import maint_daemon_group
-from memo.cli_dream import dream_cmd
 from memo.cli_maintain import maintain_cmd
 from memo.cli_mandate import mandate as mandate_cmd
 from memo.cli_memory import (
@@ -701,7 +701,8 @@ def recall_hook() -> None:
         except Exception:
             pass
 
-    from memo.flags import flag_bool, flag_int as _flag_int
+    from memo.flags import flag_bool
+    from memo.flags import flag_int as _flag_int
 
     top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
     min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.5"))
