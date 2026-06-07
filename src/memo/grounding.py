@@ -41,7 +41,7 @@ _TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
 # Tiny stop set — these tokens carry no grounding signal and would inflate
 # containment for any prose answer.
 _STOP = frozenset(
-    ["the", "and", "for", "that", "with", "this", "from", "have", "are", "was", "were", "has", "not", "but", "you", "your", "una", "los", "las", "del", "por", "con", "para", "como", "que", "una", "está", "este", "esta", "como", "más"]
+    ["the", "and", "for", "that", "with", "this", "from", "have", "are", "was", "were", "has", "not", "but", "you", "your", "una", "los", "las", "del", "por", "con", "para", "como", "que", "está", "este", "esta", "más"]
 )
 
 
