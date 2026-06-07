@@ -9,6 +9,7 @@ from the former `memory.py` god-file.
 from __future__ import annotations
 
 import builtins
+import concurrent.futures
 import json
 import re
 from typing import Any
@@ -534,6 +535,7 @@ class _MaintainOpsMixin(_MemoryBase):
     def extract_entities(
         self, *, ids: builtins.list[str] | None = None, all_: bool = False,
         skip_already_indexed: bool = True,
+        max_batch: int | None = None,
     ) -> dict[str, int]:
         """Extract named entities from memorias and write to the graph.
 
@@ -564,6 +566,9 @@ class _MaintainOpsMixin(_MemoryBase):
                 if not self.graph.memoria_entities(tid)
             ]
 
+        if max_batch is not None:
+            target = target[:max_batch]
+
         counts = {"processed": 0, "entities_extracted": 0,
                   "links_written": 0, "skipped": 0, "errors": 0}
 
@@ -590,19 +595,30 @@ class _MaintainOpsMixin(_MemoryBase):
                 f"{body[:3000]}"
             )
             try:
-                out = chat.chat(
+                _ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                _fut = _ex.submit(
+                    chat.chat,
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _EXTRACT_ENTITIES_SYSTEM_PROMPT},
                         {"role": "user", "content": user_msg},
                     ],
-                    options={"temperature": 0.0, "max_tokens": 384},
+                    options={"temperature": 0.0, "max_tokens": 384, "thinking": False},
                 )
+                try:
+                    out = _fut.result(timeout=30)
+                except concurrent.futures.TimeoutError:
+                    _ex.shutdown(wait=False)
+                    _log.warning("extract_entities: LLM timeout for %s", tid[:8])
+                    counts["errors"] += 1
+                    continue
+                _ex.shutdown(wait=False)
                 text = ((out.get("message") or {}).get("content") or "").strip()
             except Exception as exc:
                 _log.warning("extract_entities: LLM call failed for %s: %s", tid[:8], exc)
                 counts["errors"] += 1
                 continue
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
             if text.startswith("```"):
                 text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
             try:
@@ -722,27 +738,45 @@ class _MaintainOpsMixin(_MemoryBase):
                 "emb": v,
             })
 
-        # 2) Greedy single-link clustering. O(N²) dot product over L2-normalised
-        #    vectors (dot == cosine when vectors are unit-length). Fine for
-        #    corpora up to ~5K. For larger, swap to a HNSW pass.
-        def _dot(a, b):
-            return sum(x * y for x, y in zip(a, b, strict=True))
+        if not items:
+            return []
 
-        clusters: list[list[int]] = []  # list of items[] indices
-        for i in range(len(items)):
-            joined = False
-            for cluster in clusters:
-                # Check similarity vs the cluster representative (first
-                # member). Single-link → if any member is similar enough,
-                # add. We use the first member as representative for
-                # speed; full single-link would scan all members.
-                rep = items[cluster[0]]
-                if _dot(items[i]["emb"], rep["emb"]) >= threshold:
-                    cluster.append(i)
-                    joined = True
-                    break
-            if not joined:
-                clusters.append([i])
+        # 2) Greedy single-link clustering. Use numpy for O(N²) dot products
+        #    when available (1024-dim × 2000 items in Python = ~400s; numpy = <1s).
+        try:
+            import numpy as _np
+            _mat = _np.array([it["emb"] for it in items], dtype=_np.float32)  # (N, D)
+            # L2-normalise rows so dot == cosine.
+            _norms = _np.linalg.norm(_mat, axis=1, keepdims=True)
+            _norms[_norms == 0] = 1.0
+            _mat = _mat / _norms
+            _reps: list[int] = []  # index of each cluster's representative
+            _cluster_map: list[int] = [-1] * len(items)
+            for i in range(len(items)):
+                if _reps:
+                    sims = _mat[_reps] @ _mat[i]  # (K,)
+                    best = int(_np.argmax(sims))
+                    if float(sims[best]) >= threshold:
+                        _cluster_map[i] = _reps[best]
+                        continue
+                _reps.append(i)
+                _cluster_map[i] = i
+            _cluster_dict: dict[int, list[int]] = {}
+            for i, rep in enumerate(_cluster_map):
+                _cluster_dict.setdefault(rep, []).append(i)
+            clusters = list(_cluster_dict.values())
+        except ImportError:
+            clusters = []
+            for i in range(len(items)):
+                joined = False
+                for cluster in clusters:
+                    rep = items[cluster[0]]
+                    if sum(x * y for x, y in zip(items[i]["emb"], rep["emb"], strict=True)) >= threshold:
+                        cluster.append(i)
+                        joined = True
+                        break
+                if not joined:
+                    clusters.append([i])
 
         # 3) Drop singletons; rank by size (then by most-recent updated).
         candidate_clusters = [c for c in clusters if len(c) >= 2]
@@ -801,18 +835,28 @@ class _MaintainOpsMixin(_MemoryBase):
             prompt = "Cluster:\n\n" + "\n---\n".join(_included)
             try:
                 chat = self._ensure_chat()
-                chat_out = chat.chat(
-                    model=self.cfg.llm_model,
+                _ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                _fut = _ex.submit(
+                    chat.chat,
+                    model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _CONSOLIDATE_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
-                    options={"temperature": 0.0, "max_tokens": 384},
+                    options={"temperature": 0.0, "max_tokens": 384, "thinking": False},
                 )
+                try:
+                    chat_out = _fut.result(timeout=60)
+                except concurrent.futures.TimeoutError:
+                    _ex.shutdown(wait=False)
+                    _log.warning("consolidate: LLM timeout for cluster %d", ci)
+                    continue
+                _ex.shutdown(wait=False)
                 text = ((chat_out.get("message") or {}).get("content") or "").strip()
             except Exception as exc:
                 _log.warning("consolidate: LLM call failed for cluster %d: %s", ci, exc)
                 text = ""
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
             if text.startswith("```"):
                 text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
             try:
@@ -987,19 +1031,29 @@ class _MaintainOpsMixin(_MemoryBase):
             prompt = "Cluster:\n\n" + "\n---\n".join(_included)
 
             try:
-                chat_out = chat.chat(
-                    model=self.cfg.llm_model,
+                _ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                _fut = _ex.submit(
+                    chat.chat,
+                    model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
-                    options={"temperature": 0.0, "max_tokens": 512},
+                    options={"temperature": 0.0, "max_tokens": 512, "thinking": False},
                 )
+                try:
+                    chat_out = _fut.result(timeout=60)
+                except concurrent.futures.TimeoutError:
+                    _ex.shutdown(wait=False)
+                    _log.warning("synthesize: LLM timeout for cluster")
+                    continue
+                _ex.shutdown(wait=False)
                 text = ((chat_out.get("message") or {}).get("content") or "").strip()
             except Exception as exc:
                 _log.warning("synthesize: LLM call failed for cluster: %s", exc)
                 continue
 
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
             if text.startswith("```"):
                 text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
             try:

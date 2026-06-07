@@ -138,6 +138,7 @@ _REQUIRED_SCHEMA_OBJECTS = frozenset(
         "source_feedback",
         "source_feedback_vec",
         "access",
+        "memory_health",
     }
 )
 
