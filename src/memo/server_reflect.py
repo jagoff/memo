@@ -28,8 +28,6 @@ def register(server: "FastMCP", memory: "Memory") -> None:
             if_due: Skip silently if the session was already reflected.
             dry_run: Preview what would be saved without writing anything.
         """
-        from pathlib import Path
-
         from memo.cli_capture import _reflect_session
         from memo.session import get_session, list_sessions
 
@@ -54,8 +52,7 @@ def register(server: "FastMCP", memory: "Memory") -> None:
                     "reflected_at": snap["reflected_at"],
                 }
 
-        if memory._chat is None:  # type: ignore[attr-defined]
-            from memo.llm import MLXChat
-            memory._chat = MLXChat()  # type: ignore[attr-defined]
+        # Thread-safe lazy init — concurrent reflect calls share one wrapper.
+        memory._ensure_chat()  # type: ignore[attr-defined]
 
         return _reflect_session(target_id, memory, cfg, dry_run=dry_run)

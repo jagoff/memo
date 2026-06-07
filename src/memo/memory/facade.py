@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import threading
 from typing import Any
 
 from memo.analytics import AnalyticsEngine, Dashboard
@@ -107,6 +108,10 @@ class Memory(
         # is requested. Cold load of Qwen2.5-3B is ~2-3s; users who
         # don't opt in pay nothing.
         self._chat: MLXChat | None = None
+        # Guards lazy `_chat` construction — the FastMCP HTTP transport
+        # dispatches tool calls on a worker threadpool, so two concurrent
+        # requests could otherwise both build a (multi-GB) MLXChat.
+        self._chat_lock = threading.Lock()
         # Knowledge-graph store. Cheap to open (just sqlite); creating
         # eagerly so graph queries never lazy-stall a CLI command.
         self.graph = GraphStore(cfg.graph_db)
@@ -130,9 +135,15 @@ class Memory(
         self._temporal: TemporalAnalyzer | None = None
 
     def _ensure_chat(self) -> MLXChat:
-        """Construct the chat wrapper without loading model weights yet."""
+        """Construct the chat wrapper without loading model weights yet.
+
+        Thread-safe (double-checked lock) so concurrent MCP requests share one
+        wrapper instead of racing two constructions.
+        """
         if self._chat is None:
-            self._chat = MLXChat()
+            with self._chat_lock:
+                if self._chat is None:
+                    self._chat = MLXChat()
         return self._chat
 
     def _generate_contextual_summary(self, prompt: str) -> str:

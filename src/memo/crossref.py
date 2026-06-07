@@ -83,8 +83,15 @@ class CrossReferenceIndex:
         import sqlite3
 
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+            # check_same_thread=False + WAL so the shared handle survives the
+            # FastMCP worker threadpool (default would raise on the 2nd thread).
+            self._conn = sqlite3.connect(
+                str(self.db_path), timeout=10.0, check_same_thread=False,
+            )
             self._conn.row_factory = sqlite3.Row
+            from contextlib import suppress
+            with suppress(sqlite3.Error):
+                self._conn.execute("PRAGMA journal_mode=WAL")
         return self._conn
 
     def _init_schema(self) -> None:

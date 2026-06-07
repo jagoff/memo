@@ -19,7 +19,6 @@ can be imported in tests without the MCP runtime.
 from __future__ import annotations
 
 import inspect
-import os
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -187,13 +186,9 @@ def _handle_entity_search(memory: Memory, args: dict[str, Any]) -> dict[str, Any
     mode = str(args.get("mode") or "hybrid")
     if not query:
         return {"error": "query is required", "results": []}
-    # Temporarily enable entity retrieval for this call.
-    prev = os.environ.get("MEMO_ENTITY_RETRIEVAL_ENABLED", "0")
-    os.environ["MEMO_ENTITY_RETRIEVAL_ENABLED"] = "1"
-    try:
-        results = memory.search(query, limit=limit, mode=mode, recency=True)
-    finally:
-        os.environ["MEMO_ENTITY_RETRIEVAL_ENABLED"] = prev
+    # Enable entity retrieval for just this call via a kwarg — never mutate the
+    # global env (concurrent FastMCP threads would clobber each other's flag).
+    results = memory.search(query, limit=limit, mode=mode, recency=True, entity_boost=True)
     return {
         "query": query,
         "results": [r.to_dict() for r in results],

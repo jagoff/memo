@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -65,6 +66,13 @@ class HistoryStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # WAL = concurrent readers + a writer; one shared connection across the
+        # FastMCP threadpool, so serialise `_tx()` — two threads issuing
+        # BEGIN IMMEDIATE on the same connection raise "transaction within a
+        # transaction" and silently drop the audit row.
+        with suppress(sqlite3.Error):
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        self._tx_lock = threading.Lock()
         with self._conn:
             self._conn.executescript(_SCHEMA_DDL)
         # Count of swallowed log failures. Surfaced via `error_count` and
@@ -78,13 +86,14 @@ class HistoryStore:
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield self._conn
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        with self._tx_lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def log_save(
         self,
