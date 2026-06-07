@@ -371,18 +371,18 @@ class _WriteOpsMixin(_MemoryBase):
             updated=now_iso,
             body_hash=body_hash,
             embedding=embedding,
-            extra=extra,
+            extra=extra_for_store,
             body_text=content,
         )
 
         self.history.log_save(
             ts=now_iso, record_id=record_id, title=title, type_=type_,
-            provenance=_extract_provenance(extra),
+            provenance=_extract_provenance(extra_for_store),
         )
 
         rec = MemoryRecord(
             id=record_id, path=rel_path, title=title, type=type_, tags=norm_tags,
-            created=created_iso, updated=now_iso, body=content, extra=extra or {},
+            created=created_iso, updated=now_iso, body=content, extra=extra_for_store,
         )
         self._emit_save_receipt(rec, deferred=False, disabled=skip_memflow_receipt)
         # Cache-tier: write policy (push/dirty) then capacity bound. Both

@@ -323,9 +323,12 @@ def _recall_logic(
     """
     import os as _os
 
+    from memo.flags import flag_int as _flag_int
+
     top_k = int(_os.environ.get("MEMO_RECALL_TOP_K", "3"))
     min_sim = float(_os.environ.get("MEMO_RECALL_MIN_SIM", "0.5"))
-    body_chars = int(_os.environ.get("MEMO_RECALL_BODY_CHARS", "240"))
+    # Source of truth is the flags registry (default 400).
+    body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
     token_budget = int(_os.environ.get("MEMO_RECALL_TOKEN_BUDGET", "0") or 0)
     project_boost = float(_os.environ.get("MEMO_RECALL_PROJECT_BOOST", "0.15"))
     mode = _os.environ.get("MEMO_RECALL_MODE", "vec")
