@@ -264,21 +264,21 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
 
         Query embeddings are cached (LRU) when MEMO_QUERY_CACHE_SIZE > 0.
         """
-        cache_key = query.strip()
-        
-        # Check cache first (if enabled)
+        # Cache key must match the text actually embedded — strip once and use
+        # the same value for both, else "foo " and "foo" share a key but embed
+        # different strings.
+        q = (query or "").strip()
+
         if self._query_cache is not None:
-            cached = self._query_cache.get(cache_key)
+            cached = self._query_cache.get(q)
             if cached is not None:
                 return cached
-        
-        # Compute embedding
-        result = self.embed([_QUERY_INSTRUCTION_PREFIX + (query or "")])[0]
-        
-        # Store in cache (if enabled)
+
+        result = self.embed([_QUERY_INSTRUCTION_PREFIX + q])[0]
+
         if self._query_cache is not None:
-            self._query_cache.put(cache_key, result)
-        
+            self._query_cache.put(q, result)
+
         return result
 
     def unload(self) -> None:

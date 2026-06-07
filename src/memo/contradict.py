@@ -46,6 +46,7 @@ the loop is already closed.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -140,21 +141,31 @@ class ContradictionStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path, isolation_level=None)
+        # check_same_thread=False so the one shared connection survives the
+        # FastMCP worker threadpool; _tx() is serialised by _tx_lock (a single
+        # connection can't hold two concurrent BEGIN IMMEDIATE transactions).
+        self._conn = sqlite3.connect(
+            self.db_path, isolation_level=None, check_same_thread=False,
+        )
         self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(_SCHEMA_DDL)
+        # WAL + synchronous BEFORE the schema DDL — executescript commits in the
+        # current journal mode, so setting WAL afterwards leaves the cold-open
+        # schema in rollback-journal mode.
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.executescript(_SCHEMA_DDL)
+        self._tx_lock = threading.Lock()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield self._conn
-            self._conn.execute("COMMIT")
-        except Exception:
-            self._conn.execute("ROLLBACK")
-            raise
+        with self._tx_lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
 
     def close(self) -> None:
         with suppress(Exception):

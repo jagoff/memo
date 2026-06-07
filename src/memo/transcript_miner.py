@@ -171,8 +171,9 @@ def mine_transcripts(
         key = str(f)
         prev_count = state.get(key, {}).get("lines_processed", 0)
         try:
-            line_count = sum(1 for _ in f.open(encoding="utf-8"))
-        except Exception:
+            with f.open(encoding="utf-8") as fh:
+                line_count = sum(1 for _ in fh)
+        except OSError:
             line_count = 0
         if line_count <= prev_count:
             files_skipped += 1

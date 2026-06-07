@@ -25,6 +25,7 @@ class _MemoryBase:
     _reranker: Any
     _temporal: Any
     _contradict_store: Any
+    _save_path_lock: Any
 
     # -- lazy @property managers (defined on the facade) -------------------
     temporal: Any

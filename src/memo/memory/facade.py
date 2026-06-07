@@ -137,6 +137,9 @@ class Memory(
         self._temporal: TemporalAnalyzer | None = None
         # Memoized ContextualRecall (its ContextStore reads disk on init).
         self._contextual: ContextualRecall | None = None
+        # Serialises unique-path allocation + .md creation in save() so two
+        # concurrent same-title saves can't race the path probe (see write_ops).
+        self._save_path_lock = threading.Lock()
 
     def _ensure_chat(self) -> MLXChat:
         """Construct the chat wrapper without loading model weights yet.

@@ -719,7 +719,7 @@ class _MaintainOpsMixin(_MemoryBase):
         items: list[dict[str, Any]] = []
         for r in rows:
             blob = r["emb"]
-            v = list(struct.unpack(f"{len(blob)//4}f", blob))
+            v = list(struct.unpack(f"<{len(blob)//4}f", blob))
             items.append({
                 "id": r["id"],
                 "title": r["title"],
@@ -918,7 +918,7 @@ class _MaintainOpsMixin(_MemoryBase):
         items: list[dict[str, Any]] = []
         for r in rows:
             blob = r["emb"]
-            v = list(struct.unpack(f"{len(blob)//4}f", blob))
+            v = list(struct.unpack(f"<{len(blob)//4}f", blob))
             items.append({
                 "id": r["id"],
                 "title": r["title"],

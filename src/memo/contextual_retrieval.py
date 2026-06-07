@@ -9,9 +9,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
+
+# Serialises the cache read-modify-write so concurrent generations don't drop
+# each other's entries (last-writer-wins). The slow LLM generate() runs OUTSIDE
+# this lock — only the fast re-read+write is guarded.
+_CACHE_LOCK = threading.Lock()
 
 PROMPT_VERSION = "memo-contextual-v1-2026-05-26"
 MIN_BODY_CHARS = 300
@@ -64,7 +70,12 @@ def _read_cache(path: Path) -> dict[str, str]:
 
 def _write_cache(path: Path, data: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=True, sort_keys=True, indent=2), encoding="utf-8")
+    # Atomic write: serialise to a temp file in the same dir, then rename, so a
+    # crash/concurrent reader never sees a half-written cache.
+    payload = json.dumps(data, ensure_ascii=True, sort_keys=True, indent=2)
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def get_or_generate_context(
@@ -94,9 +105,12 @@ def get_or_generate_context(
         return ""
     if not generated:
         return ""
-    cache[key] = generated
-    with suppress(OSError):
-        _write_cache(path, cache)
+    # Re-read under the lock so a concurrent generation's key isn't clobbered
+    # (the read above was a pre-LLM fast-path; the merge must be fresh).
+    with _CACHE_LOCK, suppress(OSError):
+        fresh = _read_cache(path)
+        fresh[key] = generated
+        _write_cache(path, fresh)
     return generated
 
 
