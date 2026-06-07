@@ -32,7 +32,7 @@ def _portable_backup(out_path: str | None) -> None:
 
     cfg = Config.from_env()
     cfg.ensure_dirs()
-    out = out_path or f"memo-backup-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    out = out_path or f"memo-backup-{_dt.datetime.now(_dt.UTC).strftime('%Y%m%d-%H%M%S')}.zip"
     out_p = __import__("pathlib").Path(out).resolve()
 
     n_md = 0
@@ -49,7 +49,7 @@ def _portable_backup(out_path: str | None) -> None:
                 zf.write(db, arcname=f"state/{db.name}")
         # 3) Manifest with paths so restore can sanity-check.
         manifest = {
-            "created": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "created": _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds"),
             "data_dir": str(cfg.data_dir),
             "vault_path": str(cfg.vault_path) if cfg.vault_path else None,
             "embedder_model": cfg.embedder_model,
