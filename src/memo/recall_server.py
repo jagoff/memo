@@ -312,6 +312,7 @@ def _recall_logic(
     """
     import os as _os
 
+    from memo.flags import flag_float as _flag_float
     from memo.flags import flag_int as _flag_int
 
     top_k = int(_os.environ.get("MEMO_RECALL_TOP_K", "3"))
@@ -404,12 +405,13 @@ def _recall_logic(
 
     # Precision filters: skip_below drops low-confidence recall entirely;
     # gap_threshold reduces to top-1 when the leader is significantly better
-    # than the runner-up (avoids dragging in weak tail hits). Both default off.
-    skip_below = float(_os.environ.get("MEMO_RECALL_SKIP_BELOW", "0.0") or 0.0)
+    # than the runner-up (avoids dragging in weak tail hits). Defaults come
+    # from the flags registry (on: 0.45 / 0.10); set the flag to 0 to disable.
+    skip_below = _flag_float("MEMO_RECALL_SKIP_BELOW") or 0.0
     if skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below:
         return "{}", None
 
-    gap_threshold = float(_os.environ.get("MEMO_RECALL_GAP_THRESHOLD", "0.0") or 0.0)
+    gap_threshold = _flag_float("MEMO_RECALL_GAP_THRESHOLD") or 0.0
     if (
         gap_threshold > 0
         and len(qualifying) > 1
