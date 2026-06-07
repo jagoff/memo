@@ -26,8 +26,9 @@ def graph_group() -> None:
 @graph_group.command(name="path")
 @click.argument("source")
 @click.argument("target")
-@click.option("--max-length", type=int, default=5,
-              help="Maximum path length to search (default: 5)")
+@click.option(
+    "--max-length", type=int, default=5, help="Maximum path length to search (default: 5)"
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def graph_path(source: str, target: str, max_length: int, as_json: bool) -> None:
     """Find shortest path between two entities.
@@ -57,8 +58,9 @@ def graph_path(source: str, target: str, max_length: int, as_json: bool) -> None
 
 @graph_group.command(name="neighbors")
 @click.argument("entity")
-@click.option("--max", "max_neighbors", type=int, default=50,
-              help="Maximum neighbors to show (default: 50)")
+@click.option(
+    "--max", "max_neighbors", type=int, default=50, help="Maximum neighbors to show (default: 50)"
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def graph_neighbors(entity: str, max_neighbors: int, as_json: bool) -> None:
     """Show direct neighbors of an entity.
@@ -96,8 +98,7 @@ def graph_neighbors(entity: str, max_neighbors: int, as_json: bool) -> None:
 
 
 @graph_group.command(name="communities")
-@click.option("--min-size", type=int, default=2,
-              help="Minimum community size (default: 2)")
+@click.option("--min-size", type=int, default=2, help="Minimum community size (default: 2)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def graph_communities(min_size: int, as_json: bool) -> None:
     """Detect communities (connected components) in the entity graph.
@@ -129,8 +130,7 @@ def graph_communities(min_size: int, as_json: bool) -> None:
 
 
 @graph_group.command(name="centrality")
-@click.option("--top", type=int, default=20,
-              help="Top N entities by centrality (default: 20)")
+@click.option("--top", type=int, default=20, help="Top N entities by centrality (default: 20)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def graph_centrality(top: int, as_json: bool) -> None:
     """Compute centrality metrics for all entities.
@@ -143,10 +143,15 @@ def graph_centrality(top: int, as_json: bool) -> None:
     scores = mem.navigator.compute_centrality()
 
     if as_json:
-        click.echo(json.dumps({
-            "degree": scores.degree,
-            "betweenness": scores.betweenness,
-        }, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "degree": scores.degree,
+                    "betweenness": scores.betweenness,
+                },
+                indent=2,
+            )
+        )
         return
 
     console.print("[bold]Top entities by degree centrality[/bold]")
@@ -166,10 +171,14 @@ def graph_centrality(top: int, as_json: bool) -> None:
 
 
 @graph_group.command(name="export")
-@click.option("--format", "format_type", type=click.Choice(["dot", "json"]), default="dot",
-              help="Output format (default: dot)")
-@click.option("--output", "-o", "output_path",
-              help="Output file path (default: stdout)")
+@click.option(
+    "--format",
+    "format_type",
+    type=click.Choice(["dot", "json"]),
+    default="dot",
+    help="Output format (default: dot)",
+)
+@click.option("--output", "-o", "output_path", help="Output file path (default: stdout)")
 def graph_export(format_type: str, output_path: str | None) -> None:
     """Export the entity graph for visualization.
 

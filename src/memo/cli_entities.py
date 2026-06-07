@@ -19,10 +19,18 @@ from memo.config import Config
 
 @click.command(name="extract-entities")
 @click.option("--all", "all_", is_flag=True, help="Process every memoria in the store.")
-@click.option("--id", "id_", default=None, multiple=True,
-              help="Repeatable. Process specific memoria id(s) (full or prefix).")
-@click.option("--force", is_flag=True,
-              help="Re-extract even if memoria already has entity links (default skips).")
+@click.option(
+    "--id",
+    "id_",
+    default=None,
+    multiple=True,
+    help="Repeatable. Process specific memoria id(s) (full or prefix).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-extract even if memoria already has entity links (default skips).",
+)
 @click.option("--json", "as_json", is_flag=True)
 def extract_entities(all_: bool, id_: tuple[str, ...], force: bool, as_json: bool) -> None:
     """Extract named entities (person/project/technology/file/org/concept)
@@ -47,7 +55,9 @@ def extract_entities(all_: bool, id_: tuple[str, ...], force: bool, as_json: boo
             resolved_ids.append(r)
 
     counts = mem.extract_entities(
-        ids=resolved_ids, all_=all_, skip_already_indexed=not force,
+        ids=resolved_ids,
+        all_=all_,
+        skip_already_indexed=not force,
     )
     if as_json:
         click.echo(json.dumps(counts, indent=2))
@@ -60,11 +70,16 @@ def extract_entities(all_: bool, id_: tuple[str, ...], force: bool, as_json: boo
         f"errors: [red]{counts['errors']}[/red]",
     )
 
+
 @click.command()
 @click.option("--limit", default=30, type=int, show_default=True)
-@click.option("--type", "type_", default=None,
-              type=click.Choice(["person", "project", "technology", "file", "org", "concept"]),
-              help="Filter by entity type.")
+@click.option(
+    "--type",
+    "type_",
+    default=None,
+    type=click.Choice(["person", "project", "technology", "file", "org", "concept"]),
+    help="Filter by entity type.",
+)
 @click.option("--json", "as_json", is_flag=True)
 def entities(limit: int, type_: str | None, as_json: bool) -> None:
     """Top entities by mention count."""
@@ -85,15 +100,23 @@ def entities(limit: int, type_: str | None, as_json: bool) -> None:
     tbl.add_column("last_seen", width=10)
     for r in rows:
         tbl.add_row(
-            str(r["mention_count"]), r["type"], r["name"],
-            (r["first_seen"] or "")[:10], (r["last_seen"] or "")[:10],
+            str(r["mention_count"]),
+            r["type"],
+            r["name"],
+            (r["first_seen"] or "")[:10],
+            (r["last_seen"] or "")[:10],
         )
     console.print(tbl)
 
+
 @click.command()
 @click.argument("name")
-@click.option("--type", "type_", default=None,
-              type=click.Choice(["person", "project", "technology", "file", "org", "concept"]))
+@click.option(
+    "--type",
+    "type_",
+    default=None,
+    type=click.Choice(["person", "project", "technology", "file", "org", "concept"]),
+)
 @click.option("--json", "as_json", is_flag=True)
 def entity(name: str, type_: str | None, as_json: bool) -> None:
     """Memorias that mention an entity."""

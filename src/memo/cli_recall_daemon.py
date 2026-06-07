@@ -111,6 +111,7 @@ def recall_daemon_status() -> None:
 def recall_daemon_serve() -> None:
     """Internal: run the daemon in the foreground (called by 'start')."""
     from memo.recall_server import run_server
+
     run_server()
 
 

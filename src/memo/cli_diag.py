@@ -75,16 +75,17 @@ def _sqlite_db_health(label: str, path: Path, cfg: Config) -> dict[str, Any]:
     if not path.exists():
         return report
 
-
     try:
         stat = path.stat()
-        report.update({
-            "status": "checked",
-            "size_bytes": int(stat.st_size),
-            "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC)
-            .isoformat()
-            .replace("+00:00", "Z"),
-        })
+        report.update(
+            {
+                "status": "checked",
+                "size_bytes": int(stat.st_size),
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC)
+                .isoformat()
+                .replace("+00:00", "Z"),
+            }
+        )
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
             conn.execute("PRAGMA query_only=ON")
@@ -95,24 +96,28 @@ def _sqlite_db_health(label: str, path: Path, cfg: Config) -> dict[str, Any]:
                     "SELECT count(*) FROM sqlite_master WHERE type IN ('table', 'view')"
                 ).fetchone()[0]
             )
-            report.update({
-                "integrity_check": integrity,
-                "user_version": user_version,
-                "table_count": table_count,
-            })
+            report.update(
+                {
+                    "integrity_check": integrity,
+                    "user_version": user_version,
+                    "table_count": table_count,
+                }
+            )
             if label == "memvec":
                 vec_dims = _sqlite_vec_dims(conn, "vec")
                 repo_vec_dims = _sqlite_vec_dims(conn, "repo_vec")
-                report.update({
-                    "records": _sqlite_table_count(conn, "meta"),
-                    "repo_sources": _sqlite_table_count(conn, "repo_sources"),
-                    "repo_chunks": _sqlite_table_count(conn, "repo_chunks"),
-                    "vec_dims": vec_dims,
-                    "repo_vec_dims": repo_vec_dims,
-                    "expected_dims": cfg.embedder_dims,
-                    "latest_memory_update": _sqlite_max_text(conn, "meta", "updated"),
-                    "latest_repo_index": _sqlite_max_text(conn, "repo_sources", "indexed_at"),
-                })
+                report.update(
+                    {
+                        "records": _sqlite_table_count(conn, "meta"),
+                        "repo_sources": _sqlite_table_count(conn, "repo_sources"),
+                        "repo_chunks": _sqlite_table_count(conn, "repo_chunks"),
+                        "vec_dims": vec_dims,
+                        "repo_vec_dims": repo_vec_dims,
+                        "expected_dims": cfg.embedder_dims,
+                        "latest_memory_update": _sqlite_max_text(conn, "meta", "updated"),
+                        "latest_repo_index": _sqlite_max_text(conn, "repo_sources", "indexed_at"),
+                    }
+                )
                 if vec_dims is not None and vec_dims != cfg.embedder_dims:
                     report["ok"] = False
                     report["status"] = "dimension_mismatch"
@@ -120,16 +125,20 @@ def _sqlite_db_health(label: str, path: Path, cfg: Config) -> dict[str, Any]:
                     report["ok"] = False
                     report["status"] = "dimension_mismatch"
             elif label == "history":
-                report.update({
-                    "events": _sqlite_table_count(conn, "events"),
-                    "latest_event": _sqlite_max_text(conn, "events", "ts"),
-                })
+                report.update(
+                    {
+                        "events": _sqlite_table_count(conn, "events"),
+                        "latest_event": _sqlite_max_text(conn, "events", "ts"),
+                    }
+                )
             elif label == "graph":
-                report.update({
-                    "entities": _sqlite_table_count(conn, "entities"),
-                    "links": _sqlite_table_count(conn, "entity_memoria"),
-                    "latest_seen": _sqlite_max_text(conn, "entities", "last_seen"),
-                })
+                report.update(
+                    {
+                        "entities": _sqlite_table_count(conn, "entities"),
+                        "links": _sqlite_table_count(conn, "entity_memoria"),
+                        "latest_seen": _sqlite_max_text(conn, "entities", "last_seen"),
+                    }
+                )
             if integrity.lower() != "ok":
                 report["ok"] = False
                 report["status"] = "integrity_failed"
@@ -184,11 +193,13 @@ def _profile_overrides(cfg: Config) -> list[dict[str, Any]]:
     for field, expected_value in expected.items():
         actual_value = active.get(field)
         if actual_value != expected_value:
-            overrides.append({
-                "field": field,
-                "expected": expected_value,
-                "actual": actual_value,
-            })
+            overrides.append(
+                {
+                    "field": field,
+                    "expected": expected_value,
+                    "actual": actual_value,
+                }
+            )
     return overrides
 
 
@@ -209,12 +220,14 @@ def _model_cache_report(cfg: Config) -> list[dict[str, Any]]:
             continue
         seen.add(key)
         cache_dir = hf_cache / f"models--{model.replace('/', '--')}"
-        out.append({
-            "role": role,
-            "model": model,
-            "cached": cache_dir.is_dir(),
-            "cache_path": str(cache_dir),
-        })
+        out.append(
+            {
+                "role": role,
+                "model": model,
+                "cached": cache_dir.is_dir(),
+                "cache_path": str(cache_dir),
+            }
+        )
     return out
 
 
@@ -304,65 +317,75 @@ def _profile_repair_plan(cfg: Config, *, include_db: bool = True) -> dict[str, A
     repo_vec_dims = db.get("repo_vec_dims")
     expected_dims = db.get("expected_dims")
     if vec_dims is not None and vec_dims != expected_dims:
-        actions.append({
-            "severity": "high",
-            "kind": "memory_index_rebuild",
-            "reason": f"memvec vec table is FLOAT[{vec_dims}] but active config expects FLOAT[{expected_dims}]",
-            "commands": [
-                "memo backup --out memo-pre-profile-repair.zip",
-                f"rm {shlex.quote(str(cfg.db_path))}",
-                "memo reindex",
-            ],
-            "destructive": True,
-            "review_required": True,
-        })
+        actions.append(
+            {
+                "severity": "high",
+                "kind": "memory_index_rebuild",
+                "reason": f"memvec vec table is FLOAT[{vec_dims}] but active config expects FLOAT[{expected_dims}]",
+                "commands": [
+                    "memo backup --out memo-pre-profile-repair.zip",
+                    f"rm {shlex.quote(str(cfg.db_path))}",
+                    "memo reindex",
+                ],
+                "destructive": True,
+                "review_required": True,
+            }
+        )
     if repo_vec_dims is not None and repo_vec_dims != expected_dims:
-        actions.append({
-            "severity": "high",
-            "kind": "repo_index_rebuild",
-            "reason": (
-                f"memvec repo_vec table is FLOAT[{repo_vec_dims}] but active config "
-                f"expects FLOAT[{expected_dims}]"
-            ),
-            "commands": [
-                "memo backup --out memo-pre-profile-repair.zip",
-                f"rm {shlex.quote(str(cfg.db_path))}",
-                "memo reindex",
-                "memo repo index <repo> --force",
-            ],
-            "destructive": True,
-            "review_required": True,
-        })
+        actions.append(
+            {
+                "severity": "high",
+                "kind": "repo_index_rebuild",
+                "reason": (
+                    f"memvec repo_vec table is FLOAT[{repo_vec_dims}] but active config "
+                    f"expects FLOAT[{expected_dims}]"
+                ),
+                "commands": [
+                    "memo backup --out memo-pre-profile-repair.zip",
+                    f"rm {shlex.quote(str(cfg.db_path))}",
+                    "memo reindex",
+                    "memo repo index <repo> --force",
+                ],
+                "destructive": True,
+                "review_required": True,
+            }
+        )
     if db.get("status") == "missing":
-        actions.append({
-            "severity": "medium",
-            "kind": "memory_index_create",
-            "reason": "memvec.db is missing; semantic search will need a rebuild",
-            "commands": ["memo reindex"],
-            "destructive": False,
-            "review_required": False,
-        })
+        actions.append(
+            {
+                "severity": "medium",
+                "kind": "memory_index_create",
+                "reason": "memvec.db is missing; semantic search will need a rebuild",
+                "commands": ["memo reindex"],
+                "destructive": False,
+                "review_required": False,
+            }
+        )
     if status.get("overrides"):
-        actions.append({
-            "severity": "info",
-            "kind": "profile_override_review",
-            "reason": "active MEMO_* values override the named model profile",
-            "commands": [
-                "memo profile status --json",
-                "memo install-slash --client all",
-            ],
-            "destructive": False,
-            "review_required": False,
-        })
+        actions.append(
+            {
+                "severity": "info",
+                "kind": "profile_override_review",
+                "reason": "active MEMO_* values override the named model profile",
+                "commands": [
+                    "memo profile status --json",
+                    "memo install-slash --client all",
+                ],
+                "destructive": False,
+                "review_required": False,
+            }
+        )
     if not actions:
-        actions.append({
-            "severity": "info",
-            "kind": "no_repair_required",
-            "reason": "active model profile, configured dims, and checked DB dims are aligned",
-            "commands": [],
-            "destructive": False,
-            "review_required": False,
-        })
+        actions.append(
+            {
+                "severity": "info",
+                "kind": "no_repair_required",
+                "reason": "active model profile, configured dims, and checked DB dims are aligned",
+                "commands": [],
+                "destructive": False,
+                "review_required": False,
+            }
+        )
     return {
         "schema": "memo.profile_repair_plan.v1",
         "ok": status.get("ok", True),
@@ -476,9 +499,14 @@ def _recall_daemon_health(cfg: Config) -> dict[str, Any]:
 
     if pid is None and not sock_exists:
         return {
-            "running": False, "pid": None, "socket": str(sock),
-            "pid_file": str(pid_path), "socket_exists": False,
-            "pid_alive": False, "ping_ok": False, "note": "not started",
+            "running": False,
+            "pid": None,
+            "socket": str(sock),
+            "pid_file": str(pid_path),
+            "socket_exists": False,
+            "pid_alive": False,
+            "ping_ok": False,
+            "note": "not started",
             "error": "",
         }
 

@@ -113,12 +113,15 @@ class HistoryStore:
         if provenance:
             try:
                 delta_json = json.dumps(
-                    {"_provenance": provenance}, default=str, ensure_ascii=False,
+                    {"_provenance": provenance},
+                    default=str,
+                    ensure_ascii=False,
                 )
             except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
                 _log.warning(
                     "history log_save provenance encode failed (id=%s): %s",
-                    record_id[:8], exc,
+                    record_id[:8],
+                    exc,
                 )
         try:
             with self._tx() as cx:
@@ -132,7 +135,12 @@ class HistoryStore:
             _log.warning("history log_save failed (id=%s): %s", record_id[:8], exc)
 
     def log_update(
-        self, *, ts: str, record_id: str, title: str, type_: str,
+        self,
+        *,
+        ts: str,
+        record_id: str,
+        title: str,
+        type_: str,
         delta: dict[str, tuple[Any, Any]],
     ) -> None:
         try:
@@ -145,8 +153,14 @@ class HistoryStore:
                 cx.execute(
                     "INSERT INTO events (ts, op, record_id, title, type, delta_json) "
                     "VALUES (?, ?, ?, ?, ?, ?)",
-                    (ts, "update", record_id, title, type_,
-                     json.dumps(payload, default=str, ensure_ascii=False)),
+                    (
+                        ts,
+                        "update",
+                        record_id,
+                        title,
+                        type_,
+                        json.dumps(payload, default=str, ensure_ascii=False),
+                    ),
                 )
         except (sqlite3.Error, TypeError, ValueError) as exc:
             self._error_count += 1
@@ -164,7 +178,11 @@ class HistoryStore:
             _log.warning("history log_delete failed (id=%s): %s", record_id[:8], exc)
 
     def list_recent(
-        self, *, limit: int = 50, op: str | None = None, record_id: str | None = None,
+        self,
+        *,
+        limit: int = 50,
+        op: str | None = None,
+        record_id: str | None = None,
     ) -> list[dict[str, Any]]:
         sql = "SELECT id, ts, op, record_id, title, type, delta_json FROM events"
         clauses: list[str] = []

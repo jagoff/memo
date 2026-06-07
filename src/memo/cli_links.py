@@ -94,10 +94,11 @@ def links_outlinks(memoria_id: str, as_json: bool) -> None:
 @click.argument("content")
 @click.option("--title", help="Title of the memoria being saved")
 @click.option("--tags", multiple=True, help="Tags of the memoria being saved")
-@click.option("--limit", type=int, default=5,
-              help="Max suggestions (default: 5)")
+@click.option("--limit", type=int, default=5, help="Max suggestions (default: 5)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def links_suggest(content: str, title: str | None, tags: tuple[str, ...], limit: int, as_json: bool) -> None:
+def links_suggest(
+    content: str, title: str | None, tags: tuple[str, ...], limit: int, as_json: bool
+) -> None:
     """Suggest links to existing memorias based on content.
 
     Example: memo links suggest "MLX performance optimization" --title "MLX"

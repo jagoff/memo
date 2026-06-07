@@ -29,14 +29,23 @@ def session_group() -> None:
 
 
 @session_group.command(name="checkpoint")
-@click.option("--session-id", default=None, help="Override session_id (default: read from stdin payload).")
-@click.option("--cwd", default=None, help="Override cwd (default: read from stdin payload, fallback os.getcwd).")
+@click.option(
+    "--session-id", default=None, help="Override session_id (default: read from stdin payload)."
+)
+@click.option(
+    "--cwd",
+    default=None,
+    help="Override cwd (default: read from stdin payload, fallback os.getcwd).",
+)
 @click.option("--transcript-path", default=None, help="Override transcript path.")
 @click.option("--lru-cap", default=50, type=int, show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Print the persisted snapshot as JSON.")
 def session_checkpoint(
-    session_id: str | None, cwd: str | None,
-    transcript_path: str | None, lru_cap: int, as_json: bool,
+    session_id: str | None,
+    cwd: str | None,
+    transcript_path: str | None,
+    lru_cap: int,
+    as_json: bool,
 ) -> None:
     """Stop hook entrypoint — upsert a session snapshot from stdin JSON.
 
@@ -103,10 +112,20 @@ def session_checkpoint(
 
 
 @session_group.command(name="autosave")
-@click.option("--threshold-kb", default=1024, type=int, show_default=True,
-              help="Transcript size (KB) that triggers an autosave.")
-@click.option("--cooldown", default=300, type=int, show_default=True,
-              help="Minimum seconds between autosaves for the same session.")
+@click.option(
+    "--threshold-kb",
+    default=1024,
+    type=int,
+    show_default=True,
+    help="Transcript size (KB) that triggers an autosave.",
+)
+@click.option(
+    "--cooldown",
+    default=300,
+    type=int,
+    show_default=True,
+    help="Minimum seconds between autosaves for the same session.",
+)
 def session_autosave(threshold_kb: int, cooldown: int) -> None:
     """UserPromptSubmit hook — proactive save when context approaches limits.
 
@@ -144,6 +163,7 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
 
     try:
         from memo.session import check_autosave, mark_autosaved
+
         cfg = Config.from_env()
         should_save, size_kb = check_autosave(
             cfg.state_dir,
@@ -165,11 +185,13 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
     # Spawn capture-stop detached, passing the hook payload via stdin.
     try:
         env = {**_os.environ, "MEMO_NONINTERACTIVE": "1"}
-        capture_payload = _json.dumps({
-            "session_id": sid,
-            "transcript_path": transcript,
-            "cwd": cwd,
-        }).encode()
+        capture_payload = _json.dumps(
+            {
+                "session_id": sid,
+                "transcript_path": transcript,
+                "cwd": cwd,
+            }
+        ).encode()
         proc = _sp.Popen(
             ["memo", "capture-stop"],
             stdin=_sp.PIPE,
@@ -234,6 +256,7 @@ def session_refresh_summary() -> None:
 
     try:
         from memo.session import refresh_summary as _refresh_summary
+
         cfg = Config.from_env()
         cfg.ensure_dirs()
         _refresh_summary(cfg.state_dir, sid)
@@ -258,6 +281,7 @@ def session_recent(limit: int) -> None:
 
     try:
         from memo.session import format_relative, list_sessions
+
         cfg = Config.from_env()
         rows = list_sessions(cfg.state_dir, limit=limit)
     except Exception as exc:
@@ -271,6 +295,7 @@ def session_recent(limit: int) -> None:
         _sys.exit(0)
 
     from pathlib import Path as _Path
+
     cur_cwd = str(_Path(_os.getcwd()).resolve())
     same_cwd = [r for r in rows if (r.get("cwd") or "") == cur_cwd]
     top = same_cwd[0] if same_cwd else None
@@ -284,25 +309,27 @@ def session_recent(limit: int) -> None:
         turns = top.get("turn_count") or 0
         # Prefer running_summary (LLM-generated arc) over plain last_user_msg.
         running_summary = top.get("running_summary")
-        summary = (
-            top.get("summary") or top.get("last_user_msg") or "—"
-        ).replace("\n", " ")[:120]
-        lines.extend([
-            "## Sesión anterior detectada — ¿continuar?",
-            "",
-            f"Había una sesión activa en este directorio ({when}):",
-            f"- **Resumen**: {summary}",
-            f"- **Branch**: `{branch}`  |  **Turnos**: {turns}",
-            f"- **Para retomar** (en una nueva terminal): `claude --resume {sid}`",
-            "",
-        ])
+        summary = (top.get("summary") or top.get("last_user_msg") or "—").replace("\n", " ")[:120]
+        lines.extend(
+            [
+                "## Sesión anterior detectada — ¿continuar?",
+                "",
+                f"Había una sesión activa en este directorio ({when}):",
+                f"- **Resumen**: {summary}",
+                f"- **Branch**: `{branch}`  |  **Turnos**: {turns}",
+                f"- **Para retomar** (en una nueva terminal): `claude --resume {sid}`",
+                "",
+            ]
+        )
         if running_summary:
-            lines.extend([
-                "### El Briefing",
-                "",
-                running_summary.strip(),
-                "",
-            ])
+            lines.extend(
+                [
+                    "### El Briefing",
+                    "",
+                    running_summary.strip(),
+                    "",
+                ]
+            )
         prompt_trail = top.get("prompt_trail") or []
         if prompt_trail:
             lines.append("### Loops abiertos (últimos 7 días)")
@@ -310,23 +337,31 @@ def session_recent(limit: int) -> None:
             for i, p in enumerate(reversed(prompt_trail[-3:]), 1):
                 lines.append(f"{i}. {p.strip()}")
             lines.append("")
-        lines.extend([
-            "> **Acción**: Al iniciar esta conversación, pregunta al usuario si quiere "
-            "retomar la sesión anterior (ejecutando el comando de arriba en la terminal) "
-            "o continuar con esta sesión nueva.",
-            "",
-        ])
+        lines.extend(
+            [
+                "> **Acción**: Al iniciar esta conversación, pregunta al usuario si quiere "
+                "retomar la sesión anterior (ejecutando el comando de arriba en la terminal) "
+                "o continuar con esta sesión nueva.",
+                "",
+            ]
+        )
 
     if len(rows) > (1 if top else 0):
         others = [r for r in rows if r is not top][:5]
-        lines.extend([
-            "### Otras sesiones recientes",
-            "",
-            "| cuándo | proyecto | branch | resumen | id |",
-            "|--------|----------|--------|---------|----|",
-        ])
+        lines.extend(
+            [
+                "### Otras sesiones recientes",
+                "",
+                "| cuándo | proyecto | branch | resumen | id |",
+                "|--------|----------|--------|---------|----|",
+            ]
+        )
         for r in others:
-            s = (r.get("summary") or r.get("last_user_msg") or "—").replace("|", "·").replace("\n", " ")
+            s = (
+                (r.get("summary") or r.get("last_user_msg") or "—")
+                .replace("|", "·")
+                .replace("\n", " ")
+            )
             lines.append(
                 f"| {format_relative(r.get('updated'))} | "
                 f"{(r.get('project') or '—')[:18]} | "

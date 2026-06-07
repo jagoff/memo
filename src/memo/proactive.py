@@ -73,6 +73,7 @@ Rules:
 @dataclass
 class Suggestion:
     """A proactive memory suggestion."""
+
     title: str
     type: str
     tags: list[str]
@@ -85,6 +86,7 @@ class Suggestion:
 @dataclass
 class SuggestionFeedback:
     """Feedback on a suggestion."""
+
     suggestion_id: str
     accepted: bool
     timestamp: str
@@ -249,4 +251,3 @@ __all__ = [
     "Suggestion",
     "SuggestionFeedback",
 ]
-

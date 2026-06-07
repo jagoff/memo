@@ -134,7 +134,7 @@ def gather_git_state(cwd: Path) -> dict[str, Any]:
     status = _git(cwd, ["status", "--porcelain"], strip=False)
     modified: list[str] = []
     if status:
-        for line in status.splitlines()[: _MODIFIED_FILES_CAP]:
+        for line in status.splitlines()[:_MODIFIED_FILES_CAP]:
             # Porcelain v1 line shape: `XY filename` — 2 status chars
             # then a single space then the path. Slice past the 3-char
             # header; renames (`R  old -> new`) are kept as-is to surface
@@ -302,7 +302,9 @@ def checkpoint(
         "branch": git_state["branch"],
         "head_commit": git_state["head_commit"],
         "modified_files": git_state["modified_files"],
-        "transcript_path": str(transcript_path) if transcript_path else existing.get("transcript_path"),
+        "transcript_path": str(transcript_path)
+        if transcript_path
+        else existing.get("transcript_path"),
         "last_user_msg": last_user_msg or existing.get("last_user_msg"),
         "last_assistant_tail": last_assistant_tail or existing.get("last_assistant_tail"),
         "prompt_trail": trail,
@@ -310,9 +312,8 @@ def checkpoint(
         "summary_turn": int(existing.get("summary_turn") or 0),
         # Default summary to last user msg head; an external enricher
         # (e.g. capture-stop with MLX warm) may overwrite later.
-        "summary": existing.get("summary") or (
-            (last_user_msg or "")[:_SUMMARY_FALLBACK_CHARS] or None
-        ),
+        "summary": existing.get("summary")
+        or ((last_user_msg or "")[:_SUMMARY_FALLBACK_CHARS] or None),
         "created": existing.get("created") or now,
         "updated": now,
         "turn_count": int(existing.get("turn_count") or 0) + 1,
@@ -359,8 +360,11 @@ def stamp_recall_turn(state_dir: Path, session_id: str, turn: int) -> None:
 
 
 def list_sessions(
-    state_dir: Path, *, limit: int = 10,
-    project: str | None = None, cwd: str | None = None,
+    state_dir: Path,
+    *,
+    limit: int = 10,
+    project: str | None = None,
+    cwd: str | None = None,
 ) -> list[dict[str, Any]]:
     """Recent sessions sorted by `updated` desc.
 
@@ -483,7 +487,7 @@ def format_relative(updated_iso: str | None, now: datetime | None = None) -> str
 
 
 _AUTOSAVE_THRESHOLD_KB_DEFAULT = 1024  # ~1MB -> roughly 50-200 turns
-_AUTOSAVE_COOLDOWN_DEFAULT = 300       # 5 min between consecutive autosaves
+_AUTOSAVE_COOLDOWN_DEFAULT = 300  # 5 min between consecutive autosaves
 
 
 def check_autosave(
@@ -603,6 +607,7 @@ def refresh_summary(
 
     try:
         from memo.llm import MLXChat
+
         chat = MLXChat()
         result = chat.chat(
             helper_model,
@@ -638,7 +643,9 @@ def mark_reflected(state_dir: Path, session_id: str) -> bool:
 
 
 def update_summary(
-    state_dir: Path, session_id: str, summary: str,
+    state_dir: Path,
+    session_id: str,
+    summary: str,
 ) -> bool:
     """Patch the `summary` field of an existing session. Used by the
     capture-stop pipeline (which already has MLXChat warm) to enrich

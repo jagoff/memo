@@ -70,6 +70,7 @@ def _parse_ts(s: str | datetime) -> datetime:
 @dataclass
 class SnapshotRecord:
     """A reconstructed memoria record at a past point in time."""
+
     id: str
     title: str
     type: str
@@ -84,6 +85,7 @@ class SnapshotRecord:
 @dataclass
 class CorpusSnapshot:
     """Read-only view of the corpus at a past timestamp."""
+
     as_of: datetime
     records: dict[str, SnapshotRecord]
     # Hooks back to the live Memory so search/ask can reuse the live
@@ -119,9 +121,15 @@ class CorpusSnapshot:
         view is historical (and shouldn't pretend to know later facts).
         """
         from memo.memory import _ASK_SYSTEM_PROMPT
+
         if self._memory is None:
-            return {"question": question, "answer": "", "sources": [],
-                    "as_of": self.as_of.isoformat(), "snapshot_size": 0}
+            return {
+                "question": question,
+                "answer": "",
+                "sources": [],
+                "as_of": self.as_of.isoformat(),
+                "snapshot_size": 0,
+            }
         hits = self.search(question, limit=k)
         if not hits:
             return {
@@ -141,13 +149,18 @@ class CorpusSnapshot:
                 snippet = snippet.rstrip() + "…"
             tags = ", ".join(h.tags) or "—"
             snippet_lines.append(
-                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}\n"
-                f"{snippet}\n",
+                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}\n{snippet}\n",
             )
-            sources.append({
-                "id": h.id, "id_short": id_short, "title": h.title,
-                "type": h.type, "score": h.score, "snippet": snippet,
-            })
+            sources.append(
+                {
+                    "id": h.id,
+                    "id_short": id_short,
+                    "title": h.title,
+                    "type": h.type,
+                    "score": h.score,
+                    "snippet": snippet,
+                }
+            )
 
         as_of_iso = self.as_of.date().isoformat()
         user_msg = (
@@ -158,12 +171,13 @@ class CorpusSnapshot:
         system_msg = (
             _ASK_SYSTEM_PROMPT
             + f"\n\nIMPORTANTE: estás respondiendo desde una vista histórica de la memoria al {as_of_iso}. "
-              "NO menciones hechos que sólo se conocieron después de esa fecha aunque los sepas."
+            "NO menciones hechos que sólo se conocieron después de esa fecha aunque los sepas."
         )
 
         mem = self._memory
         if mem._chat is None:  # type: ignore[attr-defined]
             from memo.llm import MLXChat
+
             mem._chat = MLXChat()  # type: ignore[attr-defined]
         try:
             out = mem._chat.chat(  # type: ignore[attr-defined]
@@ -202,9 +216,12 @@ def reconstruct(memory: Any, *, as_of: str | datetime) -> CorpusSnapshot:
     snap: dict[str, SnapshotRecord] = {}
     for r in current_rows:
         snap[r["id"]] = SnapshotRecord(
-            id=r["id"], title=r["title"], type=r["type"],
+            id=r["id"],
+            title=r["title"],
+            type=r["type"],
             tags=list(r["tags"] or []),
-            created=r.get("created"), updated=r.get("updated"),
+            created=r.get("created"),
+            updated=r.get("updated"),
             body=None,
         )
 
@@ -283,20 +300,20 @@ def reconstruct(memory: Any, *, as_of: str | datetime) -> CorpusSnapshot:
 
 # -------------------- diff --------------------
 
+
 @dataclass
 class CorpusDiff:
     """Result of comparing two snapshots: from → to."""
+
     from_ts: datetime
     to_ts: datetime
-    added: list[SnapshotRecord]       # exist at `to`, not at `from`
-    removed: list[SnapshotRecord]     # exist at `from`, not at `to`
-    updated: list[dict[str, Any]]     # {id, title, changed_fields}
+    added: list[SnapshotRecord]  # exist at `to`, not at `from`
+    removed: list[SnapshotRecord]  # exist at `from`, not at `to`
+    updated: list[dict[str, Any]]  # {id, title, changed_fields}
 
     def summary(self) -> str:
         return (
-            f"{len(self.added)} added · "
-            f"{len(self.removed)} removed · "
-            f"{len(self.updated)} updated"
+            f"{len(self.added)} added · {len(self.removed)} removed · {len(self.updated)} updated"
         )
 
 
@@ -325,13 +342,15 @@ def diff(memory: Any, *, from_ts: str | datetime, to_ts: str | datetime) -> Corp
         if sorted(fr.tags) != sorted(tr.tags):
             diffs.append("tags")
         if diffs:
-            updated.append({
-                "id": i,
-                "title": tr.title,
-                "changed_fields": diffs,
-                "before": {"title": fr.title, "type": fr.type, "tags": fr.tags},
-                "after": {"title": tr.title, "type": tr.type, "tags": tr.tags},
-            })
+            updated.append(
+                {
+                    "id": i,
+                    "title": tr.title,
+                    "changed_fields": diffs,
+                    "before": {"title": fr.title, "type": fr.type, "tags": fr.tags},
+                    "after": {"title": tr.title, "type": tr.type, "tags": tr.tags},
+                }
+            )
 
     return CorpusDiff(
         from_ts=_parse_ts(from_ts),

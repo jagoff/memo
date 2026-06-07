@@ -51,7 +51,10 @@ def _prompt_cache_enabled() -> bool:
     Output is byte-identical either way (greedy/temp=0).
     """
     return os.environ.get("MEMO_PROMPT_CACHE", "").strip().lower() in (
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     )
 
 
@@ -142,9 +145,7 @@ class MLXChat:
                 common = 0
         return prompt_tokens[common:], cache
 
-    def _prompt_cache_commit(
-        self, model: str, m: Any, full_tokens: list[int], cache: Any
-    ) -> None:
+    def _prompt_cache_commit(self, model: str, m: Any, full_tokens: list[int], cache: Any) -> None:
         """Persist cache + the token sequence it now holds (prompt + decoded).
 
         Call under `_gen_lock`, after a clean generation.
@@ -179,6 +180,7 @@ class MLXChat:
                 )
                 try:
                     import mlx.core as mx
+
                     mx.clear_cache()
                 except Exception as exc:
                     # Don't swallow: a failed cache flush means the evicted
@@ -187,7 +189,8 @@ class MLXChat:
                     # helper+chat+reranker. Surface it so it's diagnosable.
                     _log.warning(
                         "LLM cache: mx.clear_cache() failed after evicting %s: %s",
-                        evicted_key, exc,
+                        evicted_key,
+                        exc,
                     )
 
             loaded = _mlx_load(model)
@@ -237,10 +240,14 @@ class MLXChat:
             # decoded token ids (needed to extend the cache); accumulate text.
             # Byte-identical to the non-cached greedy result.
             from mlx_lm import stream_generate as _mlx_stream
+
             prompt_tokens = list(
                 _apply_chat_template(
-                    tok, conversation=messages, tokenize=True,
-                    add_generation_prompt=True, enable_thinking=thinking,
+                    tok,
+                    conversation=messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    enable_thinking=thinking,
                 )
             )
             with self._gen_lock:
@@ -250,8 +257,12 @@ class MLXChat:
                 committed = False
                 try:
                     for resp in _mlx_stream(
-                        m, tok, feed, max_tokens=max_tokens,
-                        sampler=sampler, prompt_cache=cache,
+                        m,
+                        tok,
+                        feed,
+                        max_tokens=max_tokens,
+                        sampler=sampler,
+                        prompt_cache=cache,
                     ):
                         if getattr(resp, "finish_reason", None) is None:
                             tk = getattr(resp, "token", None)
@@ -259,7 +270,10 @@ class MLXChat:
                                 gen_tokens.append(int(tk))
                         parts.append(getattr(resp, "text", "") or "")
                     self._prompt_cache_commit(
-                        model, m, prompt_tokens + gen_tokens, cache,
+                        model,
+                        m,
+                        prompt_tokens + gen_tokens,
+                        cache,
                     )
                     committed = True
                 finally:
@@ -269,11 +283,19 @@ class MLXChat:
             return {"message": {"content": ("".join(parts) or "").strip()}}
 
         prompt = _apply_chat_template(
-            tok, conversation=messages, tokenize=False,
-            add_generation_prompt=True, enable_thinking=thinking,
+            tok,
+            conversation=messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=thinking,
         )
         text = _mlx_generate(
-            m, tok, prompt, max_tokens=max_tokens, sampler=sampler, verbose=False,
+            m,
+            tok,
+            prompt,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            verbose=False,
         )
         # `mlx_lm.generate` returns either a bare str (newer versions)
         # or an object with `.text`. Normalise both.
@@ -322,8 +344,11 @@ class MLXChat:
             # system-prompt prefix. Output is byte-identical (greedy/temp=0).
             prompt_tokens = list(
                 _apply_chat_template(
-                    tok, conversation=messages, tokenize=True,
-                    add_generation_prompt=True, enable_thinking=thinking,
+                    tok,
+                    conversation=messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    enable_thinking=thinking,
                 )
             )
             with self._gen_lock:
@@ -332,8 +357,12 @@ class MLXChat:
                 committed = False
                 try:
                     for resp in _mlx_stream(
-                        m, tok, feed, max_tokens=max_tokens,
-                        sampler=sampler, prompt_cache=cache,
+                        m,
+                        tok,
+                        feed,
+                        max_tokens=max_tokens,
+                        sampler=sampler,
+                        prompt_cache=cache,
                     ):
                         if getattr(resp, "finish_reason", None) is None:
                             tk = getattr(resp, "token", None)
@@ -343,7 +372,10 @@ class MLXChat:
                         if delta:
                             yield delta
                     self._prompt_cache_commit(
-                        model, m, prompt_tokens + gen_tokens, cache,
+                        model,
+                        m,
+                        prompt_tokens + gen_tokens,
+                        cache,
                     )
                     committed = True
                 finally:
@@ -355,12 +387,19 @@ class MLXChat:
             return
 
         prompt = _apply_chat_template(
-            tok, conversation=messages, tokenize=False,
-            add_generation_prompt=True, enable_thinking=thinking,
+            tok,
+            conversation=messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=thinking,
         )
         try:
             for resp in _mlx_stream(
-                m, tok, prompt, max_tokens=max_tokens, sampler=sampler,
+                m,
+                tok,
+                prompt,
+                max_tokens=max_tokens,
+                sampler=sampler,
             ):
                 delta = getattr(resp, "text", "") or ""
                 if delta:

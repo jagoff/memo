@@ -41,12 +41,43 @@ _TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
 # Tiny stop set — these tokens carry no grounding signal and would inflate
 # containment for any prose answer.
 _STOP = frozenset(
-    ["the", "and", "for", "that", "with", "this", "from", "have", "are", "was", "were", "has", "not", "but", "you", "your", "una", "los", "las", "del", "por", "con", "para", "como", "que", "está", "este", "esta", "más"]
+    [
+        "the",
+        "and",
+        "for",
+        "that",
+        "with",
+        "this",
+        "from",
+        "have",
+        "are",
+        "was",
+        "were",
+        "has",
+        "not",
+        "but",
+        "you",
+        "your",
+        "una",
+        "los",
+        "las",
+        "del",
+        "por",
+        "con",
+        "para",
+        "como",
+        "que",
+        "está",
+        "este",
+        "esta",
+        "más",
+    ]
 )
 
 
 def _budget_ms() -> int:
     from memo.flags import flag_int
+
     return flag_int("MEMO_GROUNDING_BUDGET_MS") or 8000
 
 
@@ -112,7 +143,9 @@ def read_last_assistant_text(transcript_path: str | Path, *, max_chars: int = 80
     return ""
 
 
-def collect_recent_tool_targets(transcript_path: str | Path, *, scan_lines: int = 40) -> list[dict[str, str]]:
+def collect_recent_tool_targets(
+    transcript_path: str | Path, *, scan_lines: int = 40
+) -> list[dict[str, str]]:
     """Extract the tool actions of the last turn from a Claude Code transcript:
     file paths (Read/Edit/Write/MultiEdit) and bash commands (Bash). Returns a
     list of {action, target} where action is opened_file|ran_command. Best-effort,
@@ -157,7 +190,7 @@ def _action_for_snippet(snippet: str, targets: list[dict[str, str]]) -> dict[str
     """If a recalled snippet names a path/command the turn acted on, return the
     matching action. A memoria that mentions `foo/bar.py` and the turn Read
     `foo/bar.py` is a strong downstream-action signal."""
-    snip = (snippet or "")
+    snip = snippet or ""
     if not snip:
         return None
     snip_low = snip.lower()
@@ -256,9 +289,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                     for j, i in enumerate(ambiguous):
                         cos = _cosine(avec, vectors[j + 1])
                         scored[i]["embed"] = cos
-                        scored[i]["method"] = (
-                            "both" if scored[i]["lexical"] > 0 else "embed"
-                        )
+                        scored[i]["method"] = "both" if scored[i]["lexical"] > 0 else "embed"
             except Exception:
                 pass  # lexical-only fallback; never fail the turn
 

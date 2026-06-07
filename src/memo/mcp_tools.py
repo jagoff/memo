@@ -38,6 +38,7 @@ __all__ = [
 # Infrastructure (adapted from memflow/mcp_tools.py)
 # ---------------------------------------------------------------------------
 
+
 class _Missing:
     _instance: _Missing | None = None
 
@@ -161,8 +162,10 @@ def _signature_from_spec(spec: ToolSpec) -> tuple[inspect.Signature, dict[str, A
     ordered = sorted(spec.params, key=lambda p: not p.required)
     for param in ordered:
         annotations[param.name] = param.annotation()
-        default = inspect.Parameter.empty if param.required else (
-            None if param.default is None else param.default
+        default = (
+            inspect.Parameter.empty
+            if param.required
+            else (None if param.default is None else param.default)
         )
         parameters.append(
             inspect.Parameter(
@@ -179,6 +182,7 @@ def _signature_from_spec(spec: ToolSpec) -> tuple[inspect.Signature, dict[str, A
 # ---------------------------------------------------------------------------
 # Tool handlers
 # ---------------------------------------------------------------------------
+
 
 def _handle_entity_search(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
     """Entity-aware search: extracts entities from query, boosts matching results."""
@@ -226,8 +230,9 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
         params=(
             Param("query", "string", description="Search query text"),
             Param("limit", "integer", default=8, description="Max results"),
-            Param("mode", "string", default="hybrid",
-                  description="Search mode: hybrid, vec, or bm25"),
+            Param(
+                "mode", "string", default="hybrid", description="Search mode: hybrid, vec, or bm25"
+            ),
         ),
         handler=_handle_entity_search,
     ),
@@ -242,8 +247,12 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
         params=(
             Param("source_id", "string", description="Memoria id or unique prefix"),
             Param("query", "string", description="Query text this feedback applies to"),
-            Param("signal", "string", default="click",
-                  description="'click' (implicit positive) or 'ignore' (implicit negative)"),
+            Param(
+                "signal",
+                "string",
+                default="click",
+                description="'click' (implicit positive) or 'ignore' (implicit negative)",
+            ),
         ),
         handler=_handle_feedback_implicit,
     ),
@@ -260,10 +269,13 @@ def register_all(server: Any, memory: Memory) -> None:
         sig, annotations = _signature_from_spec(spec)
 
         def _make_wrapper(
-            s: ToolSpec, sig: Any, annotations: dict[str, Any],
+            s: ToolSpec,
+            sig: Any,
+            annotations: dict[str, Any],
         ) -> Callable[..., Any]:
             def _wrapper(**kwargs: Any) -> Any:
                 return s.handler(memory, kwargs)
+
             _wrapper.__name__ = s.name
             _wrapper.__doc__ = s.description
             _wrapper.__signature__ = sig  # type: ignore[attr-defined]

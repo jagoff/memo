@@ -52,6 +52,7 @@ _WATCH_LABEL = "com.fer.memo.watch"
 
 # -------------------- recall log (write side) --------------------
 
+
 def recall_log_path(state_dir: Path) -> Path:
     return state_dir / "recall.log"
 
@@ -118,8 +119,7 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
                 strong += 1
     top_scores.sort()
     lats = sorted(
-        int(r["latency_ms"]) for r in fired
-        if isinstance(r.get("latency_ms"), (int, float))
+        int(r["latency_ms"]) for r in fired if isinstance(r.get("latency_ms"), (int, float))
     )
 
     def _median(xs: list[Any]) -> Any:
@@ -201,8 +201,11 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
         rid = g.get("recall_id")
         score = g.get("used_score")
         if (
-            sid and isinstance(turn, int) and rid
-            and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE
+            sid
+            and isinstance(turn, int)
+            and rid
+            and isinstance(score, (int, float))
+            and float(score) >= GROUNDED_SCORE
         ):
             grounded_keys.add((sid, turn, rid))
 
@@ -212,9 +215,14 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
         agg = by.setdefault(
             name,
             {
-                "consults": 0, "fired": 0, "with_hits": 0, "strong": 0,
-                "top_scores": [], "last_seen": None,
-                "surfaced": set(), "grounded": set(),
+                "consults": 0,
+                "fired": 0,
+                "with_hits": 0,
+                "strong": 0,
+                "top_scores": [],
+                "last_seen": None,
+                "surfaced": set(),
+                "grounded": set(),
             },
         )
         agg["consults"] += 1
@@ -250,25 +258,33 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
         scores = sorted(agg["top_scores"])
         fired = agg["fired"]
         n_surfaced = len(agg["surfaced"])
-        consumers.append({
-            "consumer": name,
-            "consults": agg["consults"],
-            "fired": fired,
-            "bailed": agg["consults"] - fired,
-            "hit_rate": round(agg["with_hits"] / fired, 3) if fired else None,
-            "strong_hit_rate": round(agg["strong"] / fired, 3) if fired else None,
-            "grounded_rate": round(len(agg["grounded"]) / n_surfaced, 3) if n_surfaced else None,
-            "grounded_surfaced": n_surfaced,
-            "median_top_score": round(scores[len(scores) // 2], 3) if scores else None,
-            "last_seen": agg["last_seen"],
-        })
+        consumers.append(
+            {
+                "consumer": name,
+                "consults": agg["consults"],
+                "fired": fired,
+                "bailed": agg["consults"] - fired,
+                "hit_rate": round(agg["with_hits"] / fired, 3) if fired else None,
+                "strong_hit_rate": round(agg["strong"] / fired, 3) if fired else None,
+                "grounded_rate": round(len(agg["grounded"]) / n_surfaced, 3)
+                if n_surfaced
+                else None,
+                "grounded_surfaced": n_surfaced,
+                "median_top_score": round(scores[len(scores) // 2], 3) if scores else None,
+                "last_seen": agg["last_seen"],
+            }
+        )
     consumers.sort(key=lambda c: c["consults"], reverse=True)
     silent = [c for c in EXPECTED_CONSUMERS if c not in by]
     return {"sampled": len(rows), "consumers": consumers, "silent": silent}
 
 
 def _write_jsonl_entry(
-    path: Path, entry: dict[str, Any], *, cap: int, size_limit: int,
+    path: Path,
+    entry: dict[str, Any],
+    *,
+    cap: int,
+    size_limit: int,
 ) -> None:
     """Append one JSON line to a ring-buffer log, trimming to the most recent
     `cap` lines once the file exceeds `size_limit` bytes. Best-effort — these
@@ -285,7 +301,10 @@ def _write_jsonl_entry(
 
 
 def _read_jsonl(
-    path: Path, *, limit: int, newest_first: bool = False,
+    path: Path,
+    *,
+    limit: int,
+    newest_first: bool = False,
 ) -> list[dict[str, Any]]:
     """Read up to the last `limit` JSON lines from a ring-buffer log, skipping
     malformed lines. `newest_first` reverses so the most recent comes first."""
@@ -381,6 +400,7 @@ STRONG_SCORE = 0.85
 
 def _parse_ts(value: Any) -> Any:
     from datetime import datetime
+
     if not isinstance(value, str):
         return None
     try:
@@ -395,7 +415,9 @@ def _row_quality(row: dict[str, Any]) -> tuple[int, float]:
     return (len(hits), float(top) if isinstance(top, (int, float)) else 0.0)
 
 
-def dedup_double_fire(rows: list[dict[str, Any]], *, window_s: float = 15.0) -> list[dict[str, Any]]:
+def dedup_double_fire(
+    rows: list[dict[str, Any]], *, window_s: float = 15.0
+) -> list[dict[str, Any]]:
     """Collapse double-fire pairs into one logical consult.
 
     The same prompt logged twice seconds apart (subprocess fallback + the
@@ -437,6 +459,7 @@ def dedup_double_fire(rows: list[dict[str, Any]], *, window_s: float = 15.0) -> 
 # referenced against recall.log, it yields referenced_rate — a LOWER BOUND on
 # usefulness (explicit fetch-through only; the model usually consumes the
 # injected recall text inline without a fetch, so true "used" is higher).
+
 
 def usage_log_path(state_dir: Path) -> Path:
     return state_dir / "usage.log"
@@ -580,8 +603,11 @@ def grounded_rate(state_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any]
         rid = g.get("recall_id")
         score = g.get("used_score")
         if (
-            sid and isinstance(turn, int) and rid
-            and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE
+            sid
+            and isinstance(turn, int)
+            and rid
+            and isinstance(score, (int, float))
+            and float(score) >= GROUNDED_SCORE
         ):
             grounded_keys.add((sid, turn, rid))
     grounded = sum(1 for k in surfaced if k in grounded_keys)
@@ -601,7 +627,36 @@ def grounded_rate(state_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any]
 
 _REASK_TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
 _REASK_STOP = frozenset(
-    ["the", "and", "for", "that", "with", "this", "from", "have", "are", "was", "were", "has", "not", "but", "you", "your", "una", "los", "las", "del", "por", "con", "para", "como", "que", "esta", "este", "más"]
+    [
+        "the",
+        "and",
+        "for",
+        "that",
+        "with",
+        "this",
+        "from",
+        "have",
+        "are",
+        "was",
+        "were",
+        "has",
+        "not",
+        "but",
+        "you",
+        "your",
+        "una",
+        "los",
+        "las",
+        "del",
+        "por",
+        "con",
+        "para",
+        "como",
+        "que",
+        "esta",
+        "este",
+        "más",
+    ]
 )
 
 
@@ -637,7 +692,12 @@ def reask_stats(
         sid = g.get("session_id")
         turn = g.get("turn")
         score = g.get("used_score")
-        if sid and isinstance(turn, int) and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+        if (
+            sid
+            and isinstance(turn, int)
+            and isinstance(score, (int, float))
+            and float(score) >= GROUNDED_SCORE
+        ):
             grounded_turns.add((sid, turn))
 
     # Per-session prompt timeline keyed by turn.
@@ -661,7 +721,8 @@ def reask_stats(
         considered += 1
         this_tok = _reask_tokens(this)
         recurred = any(
-            t > turn and (t - turn) <= window_turns
+            t > turn
+            and (t - turn) <= window_turns
             and _jaccard(this_tok, _reask_tokens(p)) >= sim_threshold
             for t, p in timeline
         )
@@ -677,6 +738,7 @@ def reask_stats(
 
 
 # -------------------- helpers --------------------
+
 
 def sparkline(values: list[int], width: int = 12) -> str:
     """Render `values` as a unicode-block sparkline of `width` chars.
@@ -738,11 +800,11 @@ def _human_age(ts: str | None) -> str:
 def _human_bytes(n: int) -> str:
     if n < 1024:
         return f"{n} B"
-    if n < 1024 ** 2:
+    if n < 1024**2:
         return f"{n / 1024:.1f} KB"
-    if n < 1024 ** 3:
-        return f"{n / (1024 ** 2):.1f} MB"
-    return f"{n / (1024 ** 3):.2f} GB"
+    if n < 1024**3:
+        return f"{n / (1024**2):.1f} MB"
+    return f"{n / (1024**3):.2f} GB"
 
 
 def _dir_size(p: Path) -> int:
@@ -765,7 +827,8 @@ def _watcher_status() -> tuple[bool, str]:
     target = f"gui/{uid}/{_WATCH_LABEL}"
     res = subprocess.run(
         ["launchctl", "print", target],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if res.returncode != 0:
         return False, "not installed (memo install-watcher)"
@@ -780,6 +843,7 @@ def _watcher_status() -> tuple[bool, str]:
 
 
 # -------------------- panel builders --------------------
+
 
 def _panel_corpus(memory: Any) -> Panel:
     types_counter: Counter[str] = Counter()
@@ -800,8 +864,9 @@ def _panel_corpus(memory: Any) -> Panel:
         f"[bold cyan]{total}[/bold cyan] memorias  ·  "
         f"[bold cyan]{len(projects)}[/bold cyan] proj  ·  {types_line}",
     )
-    return Panel(body, title="[bold magenta]corpus[/bold magenta]",
-                 border_style="magenta", padding=(0, 1))
+    return Panel(
+        body, title="[bold magenta]corpus[/bold magenta]", border_style="magenta", padding=(0, 1)
+    )
 
 
 def _panel_runtime(memory: Any) -> Panel:
@@ -820,27 +885,24 @@ def _panel_runtime(memory: Any) -> Panel:
     watcher_loaded, watcher_state = _watcher_status()
 
     def _dot(ok: bool, label: str) -> str:
-        return (
-            f"[bold green]●[/bold green] {label}"
-            if ok else f"[dim]○ {label}[/dim]"
-        )
+        return f"[bold green]●[/bold green] {label}" if ok else f"[dim]○ {label}[/dim]"
 
-    mlx_line = "  ".join([
-        _dot(embedder_warm, "emb"),
-        _dot(rerank_warm, "rrk"),
-        _dot(chat_warm, "chat"),
-    ])
+    mlx_line = "  ".join(
+        [
+            _dot(embedder_warm, "emb"),
+            _dot(rerank_warm, "rrk"),
+            _dot(chat_warm, "chat"),
+        ]
+    )
     watcher_line = (
         f"[green]✓ {watcher_state}[/green]"
         if watcher_loaded
         else f"[yellow]{watcher_state}[/yellow]"
     )
     body = Text.from_markup(
-        f"{mlx_line}  ·  [cyan]{_human_bytes(vault_size)}[/cyan]  ·  "
-        f"{watcher_line}",
+        f"{mlx_line}  ·  [cyan]{_human_bytes(vault_size)}[/cyan]  ·  {watcher_line}",
     )
-    return Panel(body, title="[bold blue]runtime[/bold blue]",
-                 border_style="blue", padding=(0, 1))
+    return Panel(body, title="[bold blue]runtime[/bold blue]", border_style="blue", padding=(0, 1))
 
 
 def _panel_recent_saves(memory: Any, limit: int = 10) -> Panel:
@@ -859,14 +921,14 @@ def _panel_recent_saves(memory: Any, limit: int = 10) -> Panel:
             (ev.get("title") or "")[:60],
             ev.get("type") or "",
         )
-    return Panel(tbl, title="[bold yellow]recent saves[/bold yellow]",
-                 border_style="yellow")
+    return Panel(tbl, title="[bold yellow]recent saves[/bold yellow]", border_style="yellow")
 
 
 def _daemon_status(state_dir: Path) -> str:
     """Return a one-line daemon status string for the TUI panels."""
     try:
         from memo.recall_server import _is_pid_alive, _read_pid
+
         pid = _read_pid(state_dir)
         running = pid is not None and _is_pid_alive(pid)
     except (OSError, ValueError):
@@ -875,8 +937,7 @@ def _daemon_status(state_dir: Path) -> str:
     try:
         warm_signal = state_dir / ".prewarm_ts"
         warm = (
-            warm_signal.exists()
-            and (time.time() - float(warm_signal.read_text().strip())) < 3600
+            warm_signal.exists() and (time.time() - float(warm_signal.read_text().strip())) < 3600
         )
     except (OSError, ValueError):
         warm = False
@@ -890,7 +951,7 @@ def _panel_recent_recalls(state_dir: Path, limit: int = 8) -> Panel:
     entries = read_recall_log(state_dir, limit=limit)
     tbl = Table.grid(padding=(0, 1))
     tbl.add_column(style="dim", width=8)
-    tbl.add_column(style="cyan", width=6)   # mode column
+    tbl.add_column(style="cyan", width=6)  # mode column
     tbl.add_column()
     if not entries:
         tbl.add_row("—", "—", Text("(no recalls logged yet)", style="dim italic"))
@@ -898,12 +959,10 @@ def _panel_recent_recalls(state_dir: Path, limit: int = 8) -> Panel:
         prompt = (e.get("prompt") or "").replace("\n", " ")[:60]
         hits = e.get("hits") or []
         mode_val = e.get("mode") or "—"
-        scores = ", ".join(
-            f"{h.get('score', 0):.2f}" for h in hits if h.get("score") is not None
-        )
+        scores = ", ".join(f"{h.get('score', 0):.2f}" for h in hits if h.get("score") is not None)
         if scores:
             line = Text.assemble(
-                ("\"" + prompt + "\"", "white"),
+                ('"' + prompt + '"', "white"),
                 ("  → ", "dim"),
                 (f"{len(hits)} hits", "bold cyan"),
                 ("  @ ", "dim"),
@@ -911,7 +970,7 @@ def _panel_recent_recalls(state_dir: Path, limit: int = 8) -> Panel:
             )
         else:
             line = Text.assemble(
-                ("\"" + prompt + "\"", "white"),
+                ('"' + prompt + '"', "white"),
                 ("  → no hits", "dim"),
             )
         tbl.add_row(_human_age(e.get("ts")), mode_val, line)
@@ -935,8 +994,7 @@ def _panel_top_tags(memory: Any, limit: int = 8) -> Panel:
     for tag, n in counter.most_common(limit):
         style = "bold magenta" if tag.startswith("project:") else "cyan"
         tbl.add_row(Text(tag, style=style), str(n))
-    return Panel(tbl, title="[bold cyan]top tags[/bold cyan]",
-                 border_style="cyan")
+    return Panel(tbl, title="[bold cyan]top tags[/bold cyan]", border_style="cyan")
 
 
 def _panel_activity(memory: Any, state_dir: Path) -> Panel:
@@ -987,9 +1045,8 @@ def _panel_activity(memory: Any, state_dir: Path) -> Panel:
     return Panel(body, title="[bold]activity[/bold]", border_style="bright_black")
 
 
-
-
 # -------------------- main loop --------------------
+
 
 def render(memory: Any, state_dir: Path) -> Layout:
     layout = Layout()

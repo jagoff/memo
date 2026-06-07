@@ -68,7 +68,9 @@ def serve_until_shutdown(
     The ``on_shutdown`` callback (e.g. daemon-specific cleanup) runs last.
     """
     server_thread = threading.Thread(
-        target=server.serve_forever, name=name, daemon=True,
+        target=server.serve_forever,
+        name=name,
+        daemon=True,
     )
     server_thread.start()
     try:

@@ -38,6 +38,7 @@ from typing import Any
 
 try:
     from consciousness_contracts.cache import get_default_cache
+
     _HAS_SHARED_CACHE = True
 except ImportError:
     _HAS_SHARED_CACHE = False
@@ -49,6 +50,7 @@ class _SimpleLRU:
 
     def __init__(self, maxsize: int) -> None:
         from collections import OrderedDict
+
         self._d: OrderedDict[str, Any] = OrderedDict()
         self._cap = max(1, maxsize)
 
@@ -63,6 +65,7 @@ class _SimpleLRU:
         self._d.move_to_end(key)
         while len(self._d) > self._cap:
             self._d.popitem(last=False)
+
 
 # EmbedderBase (memo.embed_base) is the shared interface; MLXEmbedder implements
 # it by duck typing. No import here — embedder.py is a foundation module and
@@ -306,7 +309,10 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
 
 
 def assert_valid_embedding(
-    embedding: list[float], expected_dims: int, *, context: str = "",
+    embedding: list[float],
+    expected_dims: int,
+    *,
+    context: str = "",
 ) -> None:
     """Validate one vector's shape + norm. Raises with a context-aware
     message on violation. Use at every embed boundary that writes to

@@ -70,7 +70,11 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [
             hit.to_dict()
             for hit in memory.repo_search(
-                query, limit=limit, repo=repo, path=path, mode=mode,
+                query,
+                limit=limit,
+                repo=repo,
+                path=path,
+                mode=mode,
             )
         ]
 

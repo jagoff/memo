@@ -47,7 +47,10 @@ def consolidate(
     sock = _socket_path(_resolve_state_dir(state_dir))
     resp = embed_protocol.send_request(
         sock,
-        {"op": "consolidate", "params": {"threshold": threshold, "max_clusters": max_clusters, "type_": type_}},
+        {
+            "op": "consolidate",
+            "params": {"threshold": threshold, "max_clusters": max_clusters, "type_": type_},
+        },
         timeout=timeout,
     )
     if not resp or "error" in resp:

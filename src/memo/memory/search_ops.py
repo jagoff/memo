@@ -31,10 +31,18 @@ class _SearchOpsMixin(_MemoryBase):
 
     @timer(log_threshold_ms=50.0)
     def search(
-        self, query: str, *, limit: int | None = None, type_: str | None = None,
-        mode: str = "hybrid", load_bodies: bool = True, disable_reranker: bool = False,
-        recency: bool = False, exclude_types: set[str] | None = None,
-        include_forgotten: bool = False, read_through: bool = False,
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        type_: str | None = None,
+        mode: str = "hybrid",
+        load_bodies: bool = True,
+        disable_reranker: bool = False,
+        recency: bool = False,
+        exclude_types: set[str] | None = None,
+        include_forgotten: bool = False,
+        read_through: bool = False,
         entity_boost: bool | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
@@ -74,9 +82,13 @@ class _SearchOpsMixin(_MemoryBase):
         limit = limit or self.cfg.search_default_limit
 
         if mode == "bm25":
-            rows = self.store.search_bm25(query, limit=limit, type_=type_, exclude_types=exclude_types)
+            rows = self.store.search_bm25(
+                query, limit=limit, type_=type_, exclude_types=exclude_types
+            )
         elif mode == "fuzzy":
-            rows = self.store.search_fuzzy(query, limit=limit, type_=type_, exclude_types=exclude_types)
+            rows = self.store.search_fuzzy(
+                query, limit=limit, type_=type_, exclude_types=exclude_types
+            )
         elif mode == "vec":
             # Asymmetric retrieval: queries are embedded WITH the
             # instruction prefix; documents are embedded RAW (in
@@ -93,17 +105,28 @@ class _SearchOpsMixin(_MemoryBase):
             input_k = self.cfg.rerank_input_k if self.cfg.reranker_enabled else limit
             k_each = max(input_k * 2, 30)
             emb = self.embedder.embed_query(query)
-            vec_hits = self.store.search(emb, limit=k_each, type_=type_, exclude_types=exclude_types)
-            bm_hits = self.store.search_bm25(query, limit=k_each, type_=type_, exclude_types=exclude_types)
+            vec_hits = self.store.search(
+                emb, limit=k_each, type_=type_, exclude_types=exclude_types
+            )
+            bm_hits = self.store.search_bm25(
+                query, limit=k_each, type_=type_, exclude_types=exclude_types
+            )
             rows = _rrf_fuse(vec_hits, bm_hits, limit=input_k)
         out: list[MemoryRecord] = []
         for r in rows:
             body = self._read_body(r["path"]) if load_bodies else ""
             out.append(
                 MemoryRecord(
-                    id=r["id"], path=r["path"], title=r["title"], type=r["type"],
-                    tags=r["tags"], created=r["created"], updated=r["updated"],
-                    body=body, extra=r.get("extra") or {}, score=r.get("score"),
+                    id=r["id"],
+                    path=r["path"],
+                    title=r["title"],
+                    type=r["type"],
+                    tags=r["tags"],
+                    created=r["created"],
+                    updated=r["updated"],
+                    body=body,
+                    extra=r.get("extra") or {},
+                    score=r.get("score"),
                 ),
             )
         # Drop soft-forgotten memorias (forget_after TTL elapsed, see
@@ -159,8 +182,7 @@ class _SearchOpsMixin(_MemoryBase):
         # Per-call `entity_boost` overrides the env flag (thread-safe — callers
         # like the MCP entity-search tool no longer mutate global os.environ).
         _entity_on = (
-            entity_boost if entity_boost is not None
-            else flag_bool("MEMO_ENTITY_RETRIEVAL_ENABLED")
+            entity_boost if entity_boost is not None else flag_bool("MEMO_ENTITY_RETRIEVAL_ENABLED")
         )
         if out and _entity_on:
             out = self._apply_entity_boost(query, out)
@@ -175,7 +197,9 @@ class _SearchOpsMixin(_MemoryBase):
             out = self._apply_contradict_penalty(out)
         if out and flag_bool("MEMO_GRAPH_EXPANSION_ENABLED"):
             out = self._apply_graph_expansion(
-                out, load_bodies=load_bodies, exclude_types=exclude_types,
+                out,
+                load_bodies=load_bodies,
+                exclude_types=exclude_types,
             )
         if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
             out = self._apply_health_scores(out)
@@ -183,7 +207,10 @@ class _SearchOpsMixin(_MemoryBase):
         return out
 
     def _apply_graph_expansion(
-        self, results: list[MemoryRecord], *, load_bodies: bool = True,
+        self,
+        results: list[MemoryRecord],
+        *,
+        load_bodies: bool = True,
         exclude_types: set[str] | None = None,
     ) -> list[MemoryRecord]:
         """Append graph-adjacent memorias not in the primary result set.
@@ -235,8 +262,13 @@ class _SearchOpsMixin(_MemoryBase):
                 body = self._read_body(r["path"]) if load_bodies else ""
                 expanded.append(
                     MemoryRecord(
-                        id=r["id"], path=r["path"], title=r["title"], type=r["type"],
-                        tags=r["tags"], created=r["created"], updated=r["updated"],
+                        id=r["id"],
+                        path=r["path"],
+                        title=r["title"],
+                        type=r["type"],
+                        tags=r["tags"],
+                        created=r["created"],
+                        updated=r["updated"],
                         body=body,
                         extra={**(r.get("extra") or {}), "graph_expanded": True},
                         score=expansion_score,
@@ -248,7 +280,8 @@ class _SearchOpsMixin(_MemoryBase):
             return results
 
     def _apply_contradict_penalty(
-        self, results: list[MemoryRecord],
+        self,
+        results: list[MemoryRecord],
     ) -> list[MemoryRecord]:
         """Apply score penalty to the older side of open contradiction pairs."""
         penalty = max(0.0, min(1.0, flag_float("MEMO_CONTRADICT_PENALTY") or 0.4))
@@ -278,22 +311,24 @@ class _SearchOpsMixin(_MemoryBase):
         if not penalise:
             return results
         penalised = [
-            replace(r, score=(r.score or 0.0) * penalty) if r.id in penalise else r
-            for r in results
+            replace(r, score=(r.score or 0.0) * penalty) if r.id in penalise else r for r in results
         ]
         # Re-sort by score descending so penalised entries sink naturally.
         penalised.sort(
-            key=lambda r: (r.score or 0.0),
+            key=lambda r: r.score or 0.0,
             reverse=True,
         )
         return penalised
 
     def _apply_entity_boost(
-        self, query: str, results: list[MemoryRecord],
+        self,
+        query: str,
+        results: list[MemoryRecord],
     ) -> list[MemoryRecord]:
         """Boost chunks whose stored entities overlap with query entities."""
         try:
             from memo.entity_extractor import entity_match_score, extract_entities
+
             query_entities = extract_entities(query)
             if not query_entities:
                 return results
@@ -307,13 +342,14 @@ class _SearchOpsMixin(_MemoryBase):
                     changed = True
                 boosted.append(r)
             if changed:
-                boosted.sort(key=lambda r: (r.score or 0.0), reverse=True)
+                boosted.sort(key=lambda r: r.score or 0.0, reverse=True)
             return boosted
         except Exception:
             return results
 
     def _apply_health_scores(
-        self, results: list[MemoryRecord],
+        self,
+        results: list[MemoryRecord],
     ) -> list[MemoryRecord]:
         """Multiply each result's score by its confidence × roi_score.
 
@@ -341,7 +377,7 @@ class _SearchOpsMixin(_MemoryBase):
                 out.append(replace(r, score=round((r.score or 0.0) * mult, 6)))
                 changed = True
             if changed:
-                out.sort(key=lambda r: (r.score or 0.0), reverse=True)
+                out.sort(key=lambda r: r.score or 0.0, reverse=True)
             return out
         except Exception as exc:
             _log.debug("health_scores failed: %s", exc)
@@ -369,7 +405,10 @@ class _SearchOpsMixin(_MemoryBase):
             _log.debug("access tracking skipped: %s", exc)
 
     def _cache_read_through(
-        self, query: str, existing: builtins.list[MemoryRecord], limit: int,
+        self,
+        query: str,
+        existing: builtins.list[MemoryRecord],
+        limit: int,
     ) -> builtins.list[MemoryRecord]:
         """On a local miss/under-fill, pull candidates from the backing store,
         materialize them locally (so the next read is a hit), and merge.
@@ -417,7 +456,10 @@ class _SearchOpsMixin(_MemoryBase):
     # -- list ---------------------------------------------------------------
 
     def list(
-        self, *, limit: int = 20, type_: str | None = None,
+        self,
+        *,
+        limit: int = 20,
+        type_: str | None = None,
         include_forgotten: bool = False,
     ) -> list[MemoryRecord]:
         """Recent entries by `updated` desc. Body included for each.
@@ -430,9 +472,15 @@ class _SearchOpsMixin(_MemoryBase):
             rows = [r for r in rows if not (r.get("extra") or {}).get(IS_FORGOTTEN_KEY)]
         return [
             MemoryRecord(
-                id=r["id"], path=r["path"], title=r["title"], type=r["type"],
-                tags=r["tags"], created=r["created"], updated=r["updated"],
-                body=self._read_body(r["path"]), extra=r.get("extra") or {},
+                id=r["id"],
+                path=r["path"],
+                title=r["title"],
+                type=r["type"],
+                tags=r["tags"],
+                created=r["created"],
+                updated=r["updated"],
+                body=self._read_body(r["path"]),
+                extra=r.get("extra") or {},
             )
             for r in rows
         ]
@@ -471,8 +519,13 @@ class _SearchOpsMixin(_MemoryBase):
         if not r:
             return None
         return MemoryRecord(
-            id=r["id"], path=r["path"], title=r["title"], type=r["type"],
-            tags=r["tags"], created=r["created"], updated=r["updated"],
-            body=self._read_body(r["path"]), extra=r.get("extra") or {},
+            id=r["id"],
+            path=r["path"],
+            title=r["title"],
+            type=r["type"],
+            tags=r["tags"],
+            created=r["created"],
+            updated=r["updated"],
+            body=self._read_body(r["path"]),
+            extra=r.get("extra") or {},
         )
-

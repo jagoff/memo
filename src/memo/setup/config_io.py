@@ -53,6 +53,7 @@ def load_config_file(path: Path | None = None) -> dict[str, Any] | None:
         return tomllib.loads(p.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         import sys
+
         print(f"[memo] warning: failed to parse {p}: {exc}", file=sys.stderr)
         return None
 

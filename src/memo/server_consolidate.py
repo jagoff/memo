@@ -82,10 +82,12 @@ def register(server: FastMCP, memory: Memory) -> None:
         archived = []
         for f in archival_dir.glob("*.md"):
             post = frontmatter.loads(f.read_text(encoding="utf-8"))
-            archived.append({
-                "id": f.stem,
-                "title": post.get("title", ""),
-                "archived_for": post.get("archived_for", ""),
-                "archived_at": post.get("archived_at", ""),
-            })
+            archived.append(
+                {
+                    "id": f.stem,
+                    "title": post.get("title", ""),
+                    "archived_for": post.get("archived_for", ""),
+                    "archived_at": post.get("archived_at", ""),
+                }
+            )
         return archived

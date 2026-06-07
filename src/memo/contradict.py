@@ -61,17 +61,18 @@ try:
         AnomalyKind,
         generate_anomaly_id,
     )
+
     _HAS_CONFLICT_CONTRACTS = True
 except ImportError:
     _HAS_CONFLICT_CONTRACTS = False
 
 VALID_STATUSES = {
-    "open",          # pending triage
-    "fused",         # merged into a new memoria
-    "kept_newer",    # newer side won, older deleted/archived
-    "kept_older",    # older side won (rare; explicit user choice)
-    "evolved",       # both kept, marked as legitimate evolution
-    "dismissed",     # false positive
+    "open",  # pending triage
+    "fused",  # merged into a new memoria
+    "kept_newer",  # newer side won, older deleted/archived
+    "kept_older",  # older side won (rare; explicit user choice)
+    "evolved",  # both kept, marked as legitimate evolution
+    "dismissed",  # false positive
 }
 
 
@@ -103,6 +104,7 @@ def _canonical_pair(a: str, b: str) -> tuple[str, str]:
 @dataclass(frozen=True)
 class PairRecord:
     """A persisted contradiction pair."""
+
     pair_id: int
     memoria_id_a: str
     memoria_id_b: str
@@ -145,7 +147,9 @@ class ContradictionStore:
         # FastMCP worker threadpool; _tx() is serialised by _tx_lock (a single
         # connection can't hold two concurrent BEGIN IMMEDIATE transactions).
         self._conn = sqlite3.connect(
-            self.db_path, isolation_level=None, check_same_thread=False,
+            self.db_path,
+            isolation_level=None,
+            check_same_thread=False,
         )
         self._conn.row_factory = sqlite3.Row
         # WAL + synchronous BEFORE the schema DDL — executescript commits in the
@@ -224,9 +228,7 @@ class ContradictionStore:
         min_confidence: float = 0.0,
         relationship: str | None = None,
     ) -> list[PairRecord]:
-        sql = (
-            f"SELECT {_PAIR_COLS} FROM pairs WHERE status='open' AND confidence >= ? "
-        )
+        sql = f"SELECT {_PAIR_COLS} FROM pairs WHERE status='open' AND confidence >= ? "
         params: list[Any] = [min_confidence]
         if relationship:
             sql += "AND relationship = ? "
@@ -253,7 +255,8 @@ class ContradictionStore:
 
     def get(self, pair_id: int) -> PairRecord | None:
         row = self._conn.execute(
-            f"SELECT {_PAIR_COLS} FROM pairs WHERE pair_id=?", (pair_id,),
+            f"SELECT {_PAIR_COLS} FROM pairs WHERE pair_id=?",
+            (pair_id,),
         ).fetchone()
         return self._row_to_record(row) if row else None
 
@@ -268,8 +271,7 @@ class ContradictionStore:
         now = datetime.now(UTC).isoformat()
         with self._tx() as cx:
             cur = cx.execute(
-                "UPDATE pairs SET status=?, resolved_at=?, resolution_note=? "
-                "WHERE pair_id=?",
+                "UPDATE pairs SET status=?, resolved_at=?, resolution_note=? WHERE pair_id=?",
                 (status, now, note, pair_id),
             )
             return cur.rowcount > 0
@@ -480,9 +482,7 @@ class ContradictionScanner:
                 if contr.relationship not in ("contradiction", "evolution"):
                     continue
 
-                existed = self.store.already_resolved(*pair_key) or _is_open(
-                    self.store, *pair_key
-                )
+                existed = self.store.already_resolved(*pair_key) or _is_open(self.store, *pair_key)
                 self.store.upsert_open(
                     memoria_id_a=contr.memoria_id_a,
                     memoria_id_b=contr.memoria_id_b,
@@ -558,7 +558,10 @@ def emit_anomaly(
 
     # NB: status→ConflictState/ResolutionKind mapping will be needed once the
     # anomaly is actually written to Memflow (TODO below); not computed yet.
-    anomaly_id = generate_anomaly_id(AnomalyKind.semantic_contradiction, f"memo:{memoria_id_a}:{memoria_id_b}")  # type: ignore[attr-defined]  # guarded optional dep
+    anomaly_id = generate_anomaly_id(
+        AnomalyKind.semantic_contradiction,  # type: ignore[attr-defined]  # guarded optional dep
+        f"memo:{memoria_id_a}:{memoria_id_b}",
+    )
 
     # TODO: Write anomaly to Memflow via MCP/CLI
     # For now, this is a stub that returns the ID for future use

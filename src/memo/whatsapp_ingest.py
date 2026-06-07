@@ -15,6 +15,7 @@ re-embebe sólo lo que cambió (body_hash).
 Exclusiones fijas: `status@broadcast`, bot JID (`WHATSAPP_BOT_JID`), notes-inbox
 (`WA_LISTENER_NOTES_CHAT_JID`) y mensajes con prefijo U+200B (output del bot).
 """
+
 from __future__ import annotations
 
 import os
@@ -39,13 +40,16 @@ DEFAULT_RETENTION_DAYS = 180
 
 _BOT_JID = os.environ.get("WHATSAPP_BOT_JID", "120363426178035051@g.us")
 _LISTENER_NOTES_CHAT_JID = os.environ.get(
-    "WA_LISTENER_NOTES_CHAT_JID", "5493425153999-1539438783@g.us",
+    "WA_LISTENER_NOTES_CHAT_JID",
+    "5493425153999-1539438783@g.us",
 )
-HARDCODED_EXCLUDE_JIDS = frozenset({
-    "status@broadcast",
-    _BOT_JID,
-    _LISTENER_NOTES_CHAT_JID,
-})
+HARDCODED_EXCLUDE_JIDS = frozenset(
+    {
+        "status@broadcast",
+        _BOT_JID,
+        _LISTENER_NOTES_CHAT_JID,
+    }
+)
 
 _ANTILOOP_MARKER = "​"  # U+200B
 _PHONE_DIGITS = re.compile(r"\d+")
@@ -59,12 +63,13 @@ class WAMessage:
     chat_name: str
     sender: str
     content: str
-    timestamp: float              # epoch seconds
+    timestamp: float  # epoch seconds
     is_from_me: bool
     media_type: str | None
 
 
 # ── Reader ───────────────────────────────────────────────────────────────────
+
 
 def _parse_bridge_ts(raw: object) -> float | None:
     """Parsea el `timestamp` del bridge (RFC3339 string o numérico) a epoch."""
@@ -144,20 +149,23 @@ def read_messages(
         if ts is None or ts <= since_ts:
             continue
         chat_name = str(r["chat_name"] or "")
-        out.append(WAMessage(
-            id=str(r["id"]),
-            chat_jid=jid,
-            chat_name=chat_name or jid,
-            sender=str(r["sender"] or ""),
-            content=content,
-            timestamp=ts,
-            is_from_me=bool(r["is_from_me"]),
-            media_type=r["media_type"],
-        ))
+        out.append(
+            WAMessage(
+                id=str(r["id"]),
+                chat_jid=jid,
+                chat_name=chat_name or jid,
+                sender=str(r["sender"] or ""),
+                content=content,
+                timestamp=ts,
+                is_from_me=bool(r["is_from_me"]),
+                media_type=r["media_type"],
+            )
+        )
     return out
 
 
 # ── Render de notas ───────────────────────────────────────────────────────────
+
 
 def _mask_phone(sender: str) -> str:
     digits = "".join(_PHONE_DIGITS.findall(sender))
@@ -224,6 +232,7 @@ def render_chat_note(chat_jid: str, chat_name: str, msgs: list[WAMessage]) -> st
 
 # ── Orquestación ──────────────────────────────────────────────────────────────
 
+
 def resolve_notes_dir(mem: Any) -> Path:
     """`<SYSTEM_DIR>/Whatsapp` en la raíz del vault. Override: MEMO_WHATSAPP_NOTES_DIR.
 
@@ -283,7 +292,9 @@ def run(
         except ValueError as exc:
             raise ValueError(f"--since debe ser YYYY-MM-DD, got {since!r}") from exc
 
-    messages = read_messages(db, since_ts=since_ts, exclude_jids=HARDCODED_EXCLUDE_JIDS | set(exclude_chats))
+    messages = read_messages(
+        db, since_ts=since_ts, exclude_jids=HARDCODED_EXCLUDE_JIDS | set(exclude_chats)
+    )
 
     include = set(include_chats)
     by_chat: dict[str, list[WAMessage]] = {}

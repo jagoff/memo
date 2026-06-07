@@ -24,7 +24,12 @@ def feedback_group() -> None:
 @feedback_group.command(name="record")
 @click.argument("source_id")
 @click.option("--query", "query_text", required=True, help="Query text the feedback applies to.")
-@click.option("--rating", required=True, type=click.Choice(["up", "down"]), help="up = boost, down = exclude for similar queries.")
+@click.option(
+    "--rating",
+    required=True,
+    type=click.Choice(["up", "down"]),
+    help="up = boost, down = exclude for similar queries.",
+)
 @click.option("--as-json", is_flag=True)
 def feedback_record_cmd(source_id: str, query_text: str, rating: str, as_json: bool) -> None:
     """Record a 👍/👎 vote on SOURCE_ID for QUERY. Embeds QUERY so future
@@ -32,6 +37,7 @@ def feedback_record_cmd(source_id: str, query_text: str, rating: str, as_json: b
 
     SOURCE_ID may be a full meta.id or a unique prefix (>= 4 chars)."""
     from memo.memory import Memory
+
     cfg = Config.from_env()
     mem = Memory(cfg)
     rid = mem.feedback_record(source_id, query_text=query_text, rating=rating)
@@ -51,6 +57,7 @@ def feedback_record_cmd(source_id: str, query_text: str, rating: str, as_json: b
 def feedback_list_cmd(source_id: str | None, limit: int, as_json: bool) -> None:
     """List recorded feedback rows, newest first."""
     from memo.memory import Memory
+
     cfg = Config.from_env()
     mem = Memory(cfg)
     rows = mem.feedback_list(source_id=source_id, limit=limit)
@@ -76,6 +83,7 @@ def feedback_clear_cmd(source_id: str, yes: bool) -> None:
     if not yes and not click.confirm(f"Drop all feedback for {source_id}?"):
         return
     from memo.memory import Memory
+
     cfg = Config.from_env()
     mem = Memory(cfg)
     n = mem.feedback_clear(source_id)

@@ -133,9 +133,7 @@ class VecStore(
         with self._tantivy_init_lock:
             if self._tantivy_inst is None:
                 try:
-                    self._tantivy_inst = TantivyFTSIndex.open_or_create(
-                        self.tantivy_index_dir
-                    )
+                    self._tantivy_inst = TantivyFTSIndex.open_or_create(self.tantivy_index_dir)
                 except Exception as exc:
                     _log.warning("tantivy open failed, falling back to FTS5: %s", exc)
                     return None
@@ -161,12 +159,9 @@ class VecStore(
         a clean, consistent snapshot of the FTS5 ground truth without touching
         the index directory.
         """
-        rows = self._conn.execute(
-            "SELECT id, title, tags, body FROM fts"
-        ).fetchall()
+        rows = self._conn.execute("SELECT id, title, tags, body FROM fts").fetchall()
         records = [
-            {"id": r["id"], "title": r["title"], "tags": r["tags"], "body": r["body"]}
-            for r in rows
+            {"id": r["id"], "title": r["title"], "tags": r["tags"], "body": r["body"]} for r in rows
         ]
         t = self._get_tantivy()
         if t is None:

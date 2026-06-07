@@ -22,10 +22,15 @@ from memo.tiers import is_reference_candidate
 
 
 @click.command(name="retier")
-@click.option("--apply", "apply_changes", is_flag=True,
-              help="Commit the reclassification (default: dry-run preview).")
-@click.option("--limit", default=20, show_default=True, type=int,
-              help="Sample rows to print in the preview.")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    help="Commit the reclassification (default: dry-run preview).",
+)
+@click.option(
+    "--limit", default=20, show_default=True, type=int, help="Sample rows to print in the preview."
+)
 def retier_cmd(apply_changes: bool, limit: int) -> None:
     """Move vault-sourced `note` memorias into the `reference` tier."""
     from memo.memory import Memory
@@ -36,16 +41,15 @@ def retier_cmd(apply_changes: bool, limit: int) -> None:
     # `note` rows that look like bulk vault ingest.
     rows = mem.store.list_recent(limit=10_000_000)
     candidates = [
-        r for r in rows
+        r
+        for r in rows
         if r.get("type") == "note"
         and is_reference_candidate(r.get("path"), r.get("tags"), r.get("title"))
     ]
     total_notes = sum(1 for r in rows if r.get("type") == "note")
 
     console.print(f"corpus: {len(rows)} memorias, {total_notes} of type 'note'")
-    console.print(
-        f"vault-sourced notes to retier → reference: [bold]{len(candidates)}[/bold]"
-    )
+    console.print(f"vault-sourced notes to retier → reference: [bold]{len(candidates)}[/bold]")
     for r in candidates[:limit]:
         console.print(
             f"  [{(r.get('id') or '')[:8]}] {(r.get('title') or '')[:70]}"

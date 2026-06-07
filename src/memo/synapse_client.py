@@ -185,7 +185,8 @@ def get_packet(
     if proc.returncode != 0:
         _log.debug(
             "synapse_client.get_packet: exit=%s stderr=%r",
-            proc.returncode, proc.stderr[:200],
+            proc.returncode,
+            proc.stderr[:200],
         )
         return None
     try:

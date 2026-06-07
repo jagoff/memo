@@ -17,10 +17,10 @@ from memo.config import Config
 
 
 @click.command(name="diff")
-@click.option("--from", "from_date", required=True,
-              help="Start date — YYYY-MM-DD or full ISO 8601.")
-@click.option("--to", "to_date", required=False, default=None,
-              help="End date (default: now).")
+@click.option(
+    "--from", "from_date", required=True, help="Start date — YYYY-MM-DD or full ISO 8601."
+)
+@click.option("--to", "to_date", required=False, default=None, help="End date (default: now).")
 @click.option("--json", "as_json", is_flag=True)
 def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
     """Diff the corpus between two snapshots.
@@ -41,21 +41,29 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
     d = _diff(mem, from_ts=from_iso, to_ts=to_iso)
 
     if as_json:
-        click.echo(json.dumps({
-            "from_ts": d.from_ts.isoformat(),
-            "to_ts": d.to_ts.isoformat(),
-            "added": [{"id": r.id, "title": r.title, "type": r.type} for r in d.added],
-            "removed": [{"id": r.id, "title": r.title, "type": r.type} for r in d.removed],
-            "updated": d.updated,
-        }, ensure_ascii=False, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "from_ts": d.from_ts.isoformat(),
+                    "to_ts": d.to_ts.isoformat(),
+                    "added": [{"id": r.id, "title": r.title, "type": r.type} for r in d.added],
+                    "removed": [{"id": r.id, "title": r.title, "type": r.type} for r in d.removed],
+                    "updated": d.updated,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
 
-    console.print(Panel.fit(
-        f"{d.from_ts.date().isoformat()}  →  {d.to_ts.date().isoformat()}\n"
-        f"[bold]{d.summary()}[/bold]",
-        title="corpus diff",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            f"{d.from_ts.date().isoformat()}  →  {d.to_ts.date().isoformat()}\n"
+            f"[bold]{d.summary()}[/bold]",
+            title="corpus diff",
+            border_style="cyan",
+        )
+    )
     if d.added:
         console.print(f"\n[green]+ added ({len(d.added)})[/green]")
         for r in d.added[:20]:
@@ -75,8 +83,7 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
 
 @click.command(name="historia")
 @click.argument("id_or_prefix")
-@click.option("--limit", default=50, type=int, show_default=True,
-              help="Max events to show.")
+@click.option("--limit", default=50, type=int, show_default=True, help="Max events to show.")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def historia_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
     """Show the full edit history for one memoria.
@@ -112,11 +119,13 @@ def historia_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
 
     r = mem.get(resolved)
     title_str = f"{r.title}" if r else resolved[:8]
-    console.print(Panel.fit(
-        f"[bold]{title_str}[/bold]  [dim]{resolved[:8]}[/dim]",
-        title="historia",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]{title_str}[/bold]  [dim]{resolved[:8]}[/dim]",
+            title="historia",
+            border_style="cyan",
+        )
+    )
 
     if not events:
         console.print("  [dim](no events in audit log)[/dim]")
@@ -146,10 +155,8 @@ def historia_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
             else:
                 old_s, new_s = str(old_v), str(new_v)
             console.print(
-                f"           [dim]{field}:[/dim]  "
-                f"[red]{old_s}[/red]  →  [green]{new_s}[/green]"
+                f"           [dim]{field}:[/dim]  [red]{old_s}[/red]  →  [green]{new_s}[/green]"
             )
 
     last_ts = events[-1].get("ts", "")
     console.print(f"\n  [dim]{len(events)} event(s) · last: {last_ts[:16].replace('T', ' ')}[/dim]")
-

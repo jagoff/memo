@@ -52,6 +52,7 @@ from typing import Any, Literal, cast
 
 try:
     from consciousness_contracts import EvidenceRef, WriteReceipt
+
     _CONTRACTS_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dep, absent in CI/clean installs
     EvidenceRef = None  # type: ignore[assignment,misc]
@@ -88,8 +89,6 @@ _TYPE_ALIASES = {
     "retraction": "note",
     "supersede": "note",
 }
-
-
 
 
 def _coerce_memo_type(kind: str) -> tuple[str, str | None]:
@@ -256,9 +255,7 @@ class MemoSynapseBackend:
             type_=memo_type,
             tags=tags,
             extra=extra,
-            respect_synapse_freeze=(
-                True if respect_freeze is None else bool(respect_freeze)
-            ),
+            respect_synapse_freeze=(True if respect_freeze is None else bool(respect_freeze)),
             # Synapse keeps its own ledger; suppress the memflow receipt
             # so the same write isn't double-counted in memflow events.
             skip_memflow_receipt=True,

@@ -31,9 +31,18 @@ from memo.ocr import extract_text_cached
 
 _log = logging.getLogger(__name__)
 
-IMAGE_EXTENSIONS = frozenset({
-    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".bmp", ".tiff",
-})
+IMAGE_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".heic",
+        ".bmp",
+        ".tiff",
+    }
+)
 
 _PDFTOTEXT = shutil.which("pdftotext")
 
@@ -96,7 +105,10 @@ def extract_pdf_text(pdf_path: Path) -> str:
     try:
         result = subprocess.run(
             [_PDFTOTEXT, "-layout", "-enc", "UTF-8", "-nopgbrk", str(pdf_path), "-"],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         _log.debug("pdftotext failed for %s: %s", pdf_path, exc)

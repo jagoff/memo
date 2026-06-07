@@ -72,14 +72,22 @@ CREATE INDEX IF NOT EXISTS idx_e_mc       ON entities(mention_count);
 """
 
 
-VALID_ENTITY_TYPES = frozenset({
-    "person", "project", "technology", "file", "org", "concept",
-})
+VALID_ENTITY_TYPES = frozenset(
+    {
+        "person",
+        "project",
+        "technology",
+        "file",
+        "org",
+        "concept",
+    }
+)
 
 
 @dataclass(frozen=True)
 class EntityMention:
     """Entity linked to a memoria."""
+
     name: str
     type: str
     mention_count: int
@@ -121,8 +129,12 @@ class GraphStore:
                 raise
 
     def record_extraction(
-        self, *, memoria_id: str, memoria_date: str,
-        entities: list[dict[str, str]], extracted_at: str,
+        self,
+        *,
+        memoria_id: str,
+        memoria_date: str,
+        entities: list[dict[str, str]],
+        extracted_at: str,
     ) -> int:
         """Idempotently link a memoria to its extracted entities.
 
@@ -141,7 +153,8 @@ class GraphStore:
             # Get current entity_ids for this memoria so we can
             # decrement mention_count if any are removed.
             old_eids = [
-                r["entity_id"] for r in cx.execute(
+                r["entity_id"]
+                for r in cx.execute(
                     "SELECT entity_id FROM entity_memoria WHERE memoria_id = ?",
                     (memoria_id,),
                 ).fetchall()
@@ -154,8 +167,8 @@ class GraphStore:
             # re-incremented if they're still present).
             for eid in old_eids:
                 cx.execute(
-                    "UPDATE entities SET mention_count = MAX(0, mention_count - 1) "
-                    "WHERE id = ?", (eid,),
+                    "UPDATE entities SET mention_count = MAX(0, mention_count - 1) WHERE id = ?",
+                    (eid,),
                 )
 
             for ent in entities:
@@ -198,23 +211,28 @@ class GraphStore:
         entity. Returns the number of edges removed."""
         with self._tx() as cx:
             old = [
-                r["entity_id"] for r in cx.execute(
+                r["entity_id"]
+                for r in cx.execute(
                     "SELECT entity_id FROM entity_memoria WHERE memoria_id = ?",
                     (memoria_id,),
                 ).fetchall()
             ]
             cx.execute(
-                "DELETE FROM entity_memoria WHERE memoria_id = ?", (memoria_id,),
+                "DELETE FROM entity_memoria WHERE memoria_id = ?",
+                (memoria_id,),
             )
             for eid in old:
                 cx.execute(
-                    "UPDATE entities SET mention_count = MAX(0, mention_count - 1) "
-                    "WHERE id = ?", (eid,),
+                    "UPDATE entities SET mention_count = MAX(0, mention_count - 1) WHERE id = ?",
+                    (eid,),
                 )
         return len(old)
 
     def top_entities(
-        self, *, limit: int = 50, type_: str | None = None,
+        self,
+        *,
+        limit: int = 50,
+        type_: str | None = None,
     ) -> list[dict[str, Any]]:
         sql = "SELECT name, type, mention_count, first_seen, last_seen FROM entities"
         params: list[Any] = []

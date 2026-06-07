@@ -26,8 +26,7 @@ def version_group() -> None:
 
 @version_group.command(name="history")
 @click.argument("memoria_id")
-@click.option("--limit", type=int, default=10,
-              help="Max versions to show (default: 10)")
+@click.option("--limit", type=int, default=10, help="Max versions to show (default: 10)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
     """Show version history for a memoria.
@@ -76,7 +75,9 @@ def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
 @click.option("--version-a", type=int, help="First version ID (default: latest)")
 @click.option("--version-b", type=int, help="Second version ID (default: latest-1)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def version_diff(memoria_id: str, version_a: int | None, version_b: int | None, as_json: bool) -> None:
+def version_diff(
+    memoria_id: str, version_a: int | None, version_b: int | None, as_json: bool
+) -> None:
     """Show diff between two versions of a memoria.
 
     Example: memo version diff abc123 --version-a 1 --version-b 2
@@ -104,7 +105,9 @@ def version_diff(memoria_id: str, version_a: int | None, version_b: int | None, 
 @click.argument("memoria_id")
 @click.argument("version_id", type=int)
 @click.option("--reason", help="Reason for the rollback")
-@click.confirmation_option(prompt="This will restore the memoria to the specified version. Continue?")
+@click.confirmation_option(
+    prompt="This will restore the memoria to the specified version. Continue?"
+)
 def version_rollback(memoria_id: str, version_id: int, reason: str | None) -> None:
     """Rollback a memoria to a previous version.
 

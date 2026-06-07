@@ -22,6 +22,7 @@ _log = logging.getLogger(__name__)
 @dataclass
 class VaultConfig:
     """Configuration for a single vault in federation."""
+
     name: str
     path: str
     weight: float = 1.0
@@ -31,6 +32,7 @@ class VaultConfig:
 @dataclass
 class FederatedResult:
     """A search result from federation."""
+
     memoria_id: str
     vault_name: str
     title: str

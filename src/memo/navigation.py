@@ -35,6 +35,7 @@ from typing import Any
 @dataclass(frozen=True)
 class EntityPath:
     """A path between two entities in the graph."""
+
     source: str
     target: str
     path: list[str]  # List of entity names including source and target
@@ -45,6 +46,7 @@ class EntityPath:
 @dataclass(frozen=True)
 class EntityNeighbors:
     """Neighbors of an entity in the graph."""
+
     entity: str
     direct_neighbors: list[str]  # Entities directly connected
     neighbor_memorias: dict[str, list[str]]  # entity -> memoria IDs that connect
@@ -54,6 +56,7 @@ class EntityNeighbors:
 @dataclass(frozen=True)
 class Community:
     """A community (cluster) of connected entities."""
+
     id: int
     entities: list[str]
     size: int
@@ -63,6 +66,7 @@ class Community:
 @dataclass(frozen=True)
 class CentralityScores:
     """Centrality metrics for entities."""
+
     degree: dict[str, int]  # Number of connections
     betweenness: dict[str, float]  # How often entity lies on shortest paths
 
@@ -293,9 +297,7 @@ class GraphNavigator:
 
         # Normalize
         max_betweenness = max(betweenness.values()) if betweenness else 1.0
-        normalized_betweenness = {
-            e: b / max_betweenness for e, b in betweenness.items()
-        }
+        normalized_betweenness = {e: b / max_betweenness for e, b in betweenness.items()}
 
         return CentralityScores(
             degree=degree,

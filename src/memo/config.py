@@ -293,6 +293,7 @@ class Config(BaseModel):
         # Step 1: gather TOML config file values (lowest priority of the
         # three explicit sources).
         from memo.setup.config_io import load_config_file
+
         file_data = load_config_file() or {}
         storage = file_data.get("storage") or {} if isinstance(file_data, dict) else {}
 
@@ -304,12 +305,16 @@ class Config(BaseModel):
 
         # Step 2: model profile defaults. Individual env vars below
         # intentionally override profile choices.
-        profile = str(
-            overrides.get("model_profile")
-            or os.environ.get("MEMO_MODEL_PROFILE")
-            or kwargs.get("model_profile")
-            or "balanced"
-        ).strip().lower()
+        profile = (
+            str(
+                overrides.get("model_profile")
+                or os.environ.get("MEMO_MODEL_PROFILE")
+                or kwargs.get("model_profile")
+                or "balanced"
+            )
+            .strip()
+            .lower()
+        )
         if profile not in MODEL_PROFILES:
             raise ValueError(
                 f"Unknown MEMO_MODEL_PROFILE={profile!r}; valid: {sorted(MODEL_PROFILES)}",

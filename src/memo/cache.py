@@ -152,6 +152,7 @@ class CacheManager:
             return None
         if not self._backend_loaded:
             from memo.cache_backend import make_backend
+
             self.backend = make_backend(self.policy.backend)
             self._backend_loaded = True
         return self.backend
@@ -171,7 +172,8 @@ class CacheManager:
             # Dirty but nowhere to flush: refuse to evict, never lose a write.
             _log.warning(
                 "cache: memoria %s is dirty but no backend configured; "
-                "skipping eviction to avoid data loss", memoria_id[:8],
+                "skipping eviction to avoid data loss",
+                memoria_id[:8],
             )
             return False
         try:
@@ -203,7 +205,9 @@ class CacheManager:
         # (un-flushable dirty / ttl-too-fresh), so over-fetch to still reach
         # `overflow` removals when possible.
         pool = store.eviction_candidates(
-            self.policy.eviction, overflow * 3 + 10, exclude_types=exclude_types,
+            self.policy.eviction,
+            overflow * 3 + 10,
+            exclude_types=exclude_types,
         )
         evicted: list[str] = []
         for cand in pool:
@@ -219,8 +223,12 @@ class CacheManager:
             if self.memory.delete(cand["id"]):
                 evicted.append(cand["id"])
         if evicted:
-            _log.info("cache: evicted %d entr%s (policy=%s)",
-                      len(evicted), "y" if len(evicted) == 1 else "ies", self.policy.eviction)
+            _log.info(
+                "cache: evicted %d entr%s (policy=%s)",
+                len(evicted),
+                "y" if len(evicted) == 1 else "ies",
+                self.policy.eviction,
+            )
         return evicted
 
     # -- flush -------------------------------------------------------------

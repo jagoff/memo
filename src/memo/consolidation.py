@@ -62,6 +62,7 @@ Rules:
 @dataclass(frozen=True)
 class MergeProposal:
     """A proposal for merging a cluster of memorias."""
+
     cluster_id: int
     memoria_ids: list[str]
     merged_title: str
@@ -74,6 +75,7 @@ class MergeProposal:
 @dataclass(frozen=True)
 class ConsolidationResult:
     """Result of a consolidation operation."""
+
     merged_id: str | None  # ID of the new merged memoria (if any)
     archived_ids: list[str]  # IDs of archived memorias
     skipped_ids: list[str]  # IDs that were skipped (e.g., conflicts)
@@ -216,8 +218,9 @@ class AdvancedConsolidator:
 
         # keep_latest: the surviving ID already exists — just archive the older ones.
         # This avoids creating a redundant copy of the latest record.
-        surviving_ids = [mid for mid in proposal.memoria_ids
-                         if mid not in set(proposal.archived_ids)]
+        surviving_ids = [
+            mid for mid in proposal.memoria_ids if mid not in set(proposal.archived_ids)
+        ]
         if proposal.merge_strategy == "keep_latest" and surviving_ids:
             surviving_id = surviving_ids[0]
             try:

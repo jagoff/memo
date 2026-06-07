@@ -39,6 +39,7 @@ def _parse_as_of_date(s: str) -> str:
     a stable noon-UTC anchor for date-only inputs."""
     from datetime import UTC
     from datetime import datetime as _dt
+
     s = s.strip()
     if len(s) == 10:  # YYYY-MM-DD
         return f"{s}T23:59:59+00:00"  # end-of-day to be inclusive

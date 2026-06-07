@@ -24,7 +24,11 @@ class _RerankOpsMixin(_MemoryBase):
     # -- source feedback (public) ------------------------------------------
 
     def feedback_record(
-        self, source_id: str, *, query_text: str, rating: str,
+        self,
+        source_id: str,
+        *,
+        query_text: str,
+        rating: str,
     ) -> dict[str, Any]:
         """Public wrapper around store.record_source_feedback.
 
@@ -60,7 +64,10 @@ class _RerankOpsMixin(_MemoryBase):
         }
 
     def feedback_list(
-        self, *, source_id: str | None = None, limit: int = 50,
+        self,
+        *,
+        source_id: str | None = None,
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         if source_id:
             source_id = self._resolve_source_id(source_id)
@@ -113,8 +120,12 @@ class _RerankOpsMixin(_MemoryBase):
     _SIGNAL_IGNORE_FACTOR = 0.7  # multiplied into score for "ignore" signals
 
     def _apply_source_feedback(
-        self, hits: list[MemoryRecord], query_emb: list[float],
-        *, sim_threshold: float = 0.85, boost_per_vote: float = 0.15,
+        self,
+        hits: list[MemoryRecord],
+        query_emb: list[float],
+        *,
+        sim_threshold: float = 0.85,
+        boost_per_vote: float = 0.15,
         boost_cap: float = 0.6,
     ) -> list[MemoryRecord]:
         """Filter/boost hits using prior votes for the user query.
@@ -134,6 +145,7 @@ class _RerankOpsMixin(_MemoryBase):
           MEMO_FEEDBACK_BOOST_CAP (default 0.6)
         """
         import json
+
         sim_threshold = float(os.environ.get("MEMO_FEEDBACK_SIM_THRESHOLD") or sim_threshold)
         boost_per_vote = float(os.environ.get("MEMO_FEEDBACK_BOOST_PER_VOTE") or boost_per_vote)
         boost_cap = float(os.environ.get("MEMO_FEEDBACK_BOOST_CAP") or boost_cap)
@@ -141,7 +153,9 @@ class _RerankOpsMixin(_MemoryBase):
         for h in hits:
             try:
                 fb = self.store.find_feedback_for_source(
-                    h.id, query_emb, threshold=sim_threshold,
+                    h.id,
+                    query_emb,
+                    threshold=sim_threshold,
                 )
             except sqlite3.Error:
                 fb = []
@@ -225,7 +239,11 @@ class _RerankOpsMixin(_MemoryBase):
         return out
 
     def _rerank(
-        self, query: str, hits: list[MemoryRecord], *, top_n: int,
+        self,
+        query: str,
+        hits: list[MemoryRecord],
+        *,
+        top_n: int,
     ) -> list[MemoryRecord]:
         """Apply the cross-encoder to `hits`, return top-N reordered.
 
@@ -271,4 +289,3 @@ class _RerankOpsMixin(_MemoryBase):
             fused.append(replace(h, score=final))
         fused.sort(key=lambda h: h.score or 0.0, reverse=True)
         return fused[:top_n]
-

@@ -28,6 +28,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             remote: Path to remote vault (optional).
         """
         from pathlib import Path
+
         remote_path = Path(remote) if remote else None
 
         sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)
@@ -46,6 +47,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             remote: Path to remote vault (optional).
         """
         from pathlib import Path
+
         remote_path = Path(remote) if remote else None
 
         sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)
@@ -64,6 +66,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             remote: Path to remote vault (optional).
         """
         from pathlib import Path
+
         remote_path = Path(remote) if remote else None
 
         sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)
@@ -83,6 +86,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             remote: Path to remote vault (optional).
         """
         from pathlib import Path
+
         remote_path = Path(remote) if remote else None
 
         sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)

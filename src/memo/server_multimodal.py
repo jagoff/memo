@@ -42,7 +42,9 @@ def register(server: FastMCP, memory: Memory) -> None:
             return {"text": "", "cached": False, "error": "file not found"}
         cache_dir = memory.cfg.state_dir / "ocr_cache"
         text = extract_text_cached(path, cache_dir=cache_dir)
-        cached = (cache_dir / f"{__import__('hashlib').sha256(path.read_bytes()).hexdigest()[:32]}.txt").exists()
+        cached = (
+            cache_dir / f"{__import__('hashlib').sha256(path.read_bytes()).hexdigest()[:32]}.txt"
+        ).exists()
         return {"text": text, "cached": cached}
 
     @server.tool()
@@ -57,6 +59,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             memoria_id: Optional associated memoria ID.
         """
         from pathlib import Path
+
         content = memory.multimodal.add_image(Path(image_path), memoria_id)
         return {"content_id": content.id, "modality": content.modality}
 
@@ -72,6 +75,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             memoria_id: Optional associated memoria ID.
         """
         from pathlib import Path
+
         content = memory.multimodal.add_audio(Path(audio_path), memoria_id)
         return {"content_id": content.id, "modality": content.modality}
 

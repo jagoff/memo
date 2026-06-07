@@ -15,19 +15,26 @@ from memo.config import Config
 
 @click.command(name="mapa")
 @click.option(
-    "--output", "-o", default=None,
+    "--output",
+    "-o",
+    default=None,
     help="Output HTML path. Default: ~/.local/share/memo/mapa.html",
 )
 @click.option(
-    "--open/--no-open", "open_browser", default=True,
+    "--open/--no-open",
+    "open_browser",
+    default=True,
     help="Open in default browser after generating.",
 )
 @click.option(
-    "--limit", default=500, show_default=True,
+    "--limit",
+    default=500,
+    show_default=True,
     help="Maximum number of memories to include.",
 )
 @click.option(
-    "--animate/--no-animate", default=True,
+    "--animate/--no-animate",
+    default=True,
     help="Include timeline animation slider.",
 )
 def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -> None:
@@ -144,8 +151,11 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
 
         n_neighbors = min(15, n_pts - 1)
         reducer = umap.UMAP(
-            n_components=2, n_neighbors=n_neighbors,
-            min_dist=0.1, metric="cosine", random_state=42,
+            n_components=2,
+            n_neighbors=n_neighbors,
+            min_dist=0.1,
+            metric="cosine",
+            random_state=42,
         )
         coords = reducer.fit_transform(mat)
         xs = coords[:, 0].tolist()
@@ -169,15 +179,17 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
         frames_data: list[dict] = []
         for d in dates_sorted:
             mask = [c <= d for c in created_list]
-            frames_data.append({
-                "name": d,
-                "x": [xs[i] for i, m in enumerate(mask) if m],
-                "y": [ys[i] for i, m in enumerate(mask) if m],
-                "ids": [ids[i][:8] for i, m in enumerate(mask) if m],
-                "titles": [titles[i] for i, m in enumerate(mask) if m],
-                "types": [types[i] for i, m in enumerate(mask) if m],
-                "tags": [tags_list[i] for i, m in enumerate(mask) if m],
-            })
+            frames_data.append(
+                {
+                    "name": d,
+                    "x": [xs[i] for i, m in enumerate(mask) if m],
+                    "y": [ys[i] for i, m in enumerate(mask) if m],
+                    "ids": [ids[i][:8] for i, m in enumerate(mask) if m],
+                    "titles": [titles[i] for i, m in enumerate(mask) if m],
+                    "types": [types[i] for i, m in enumerate(mask) if m],
+                    "tags": [tags_list[i] for i, m in enumerate(mask) if m],
+                }
+            )
     else:
         frames_data = []
 
@@ -197,20 +209,23 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Encode data as JSON to embed in the HTML script block
-    data_json = _json.dumps({
-        "xs": xs,
-        "ys": ys,
-        "ids": [i[:8] for i in ids],
-        "titles": titles,
-        "types": types,
-        "tags": tags_list,
-        "created": created_list,
-        "updated": updated_list,
-        "frames": frames_data,
-        "method": method_name,
-        "n": n_pts,
-        "type_colors": TYPE_COLORS,
-    }, ensure_ascii=False)
+    data_json = _json.dumps(
+        {
+            "xs": xs,
+            "ys": ys,
+            "ids": [i[:8] for i in ids],
+            "titles": titles,
+            "types": types,
+            "tags": tags_list,
+            "created": created_list,
+            "updated": updated_list,
+            "frames": frames_data,
+            "method": method_name,
+            "n": n_pts,
+            "type_colors": TYPE_COLORS,
+        },
+        ensure_ascii=False,
+    )
 
     html = _MAPA_HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
     out_path.write_text(html, encoding="utf-8")

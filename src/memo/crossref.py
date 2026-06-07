@@ -42,6 +42,7 @@ _WIKILINK_PATTERN = re.compile(r"\[\[([^\]]+)\]\]")
 @dataclass
 class Wikilink:
     """A detected wikilink in memoria content."""
+
     target: str  # The memoria ID or name being linked to
     alias: str | None  # Optional display alias
     position: int  # Character position in content
@@ -50,6 +51,7 @@ class Wikilink:
 @dataclass
 class Backlink:
     """A backlink to a memoria."""
+
     source_id: str
     source_title: str
     target_id: str
@@ -60,6 +62,7 @@ class Backlink:
 @dataclass
 class LinkSuggestion:
     """A suggestion to link to an existing memoria."""
+
     memoria_id: str
     title: str
     similarity: float
@@ -86,10 +89,13 @@ class CrossReferenceIndex:
             # check_same_thread=False + WAL so the shared handle survives the
             # FastMCP worker threadpool (default would raise on the 2nd thread).
             self._conn = sqlite3.connect(
-                str(self.db_path), timeout=10.0, check_same_thread=False,
+                str(self.db_path),
+                timeout=10.0,
+                check_same_thread=False,
             )
             self._conn.row_factory = sqlite3.Row
             from contextlib import suppress
+
             with suppress(sqlite3.Error):
                 self._conn.execute("PRAGMA journal_mode=WAL")
         return self._conn
@@ -149,8 +155,7 @@ class CrossReferenceIndex:
             VALUES (?, ?, 'wikilink', ?, datetime('now'))
             """,
             [
-                (memoria_id, link.target,
-                 content[max(0, link.position - 50):link.position + 50])
+                (memoria_id, link.target, content[max(0, link.position - 50) : link.position + 50])
                 for link in wikilinks
             ],
         )

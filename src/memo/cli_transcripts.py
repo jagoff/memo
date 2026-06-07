@@ -20,19 +20,35 @@ from memo.config import Config
 
 
 @click.command(name="mine-history")
-@click.option("--path", "root_path", default=None,
-              help="Transcripts root (default: ~/.claude/projects).")
-@click.option("--since", "since_days", type=int, default=None,
-              help="Only process transcripts modified in the last N days.")
-@click.option("--limit", "file_limit", type=int, default=None,
-              help="Cap on number of transcripts to process (newest first).")
-@click.option("--dry-run", is_flag=True,
-              help="Walk + extract, don't save. Useful for cost estimation.")
+@click.option(
+    "--path", "root_path", default=None, help="Transcripts root (default: ~/.claude/projects)."
+)
+@click.option(
+    "--since",
+    "since_days",
+    type=int,
+    default=None,
+    help="Only process transcripts modified in the last N days.",
+)
+@click.option(
+    "--limit",
+    "file_limit",
+    type=int,
+    default=None,
+    help="Cap on number of transcripts to process (newest first).",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Walk + extract, don't save. Useful for cost estimation."
+)
 @click.option("--debug", is_flag=True, help="Print per-file/per-candidate info to stderr.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON summary instead of a panel.")
 def mine_history(
-    root_path: str | None, since_days: int | None, file_limit: int | None,
-    dry_run: bool, debug: bool, as_json: bool,
+    root_path: str | None,
+    since_days: int | None,
+    file_limit: int | None,
+    dry_run: bool,
+    debug: bool,
+    as_json: bool,
 ) -> None:
     """Mine past Claude Code conversations for actionable insights.
 
@@ -61,6 +77,7 @@ def mine_history(
             TextColumn,
             TimeElapsedColumn,
         )
+
         progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -74,15 +91,21 @@ def mine_history(
 
         def cb(idx: int, total: int, p: _Path) -> None:
             progress.update(
-                task, total=total, completed=idx, description=f"[{idx + 1}/{total}] {p.name}",
+                task,
+                total=total,
+                completed=idx,
+                description=f"[{idx + 1}/{total}] {p.name}",
             )
 
         console_progress = (progress, task, cb)
 
     try:
         summary = mine_transcripts(
-            root=root, since_days=since_days, file_limit=file_limit,
-            dry_run=dry_run, debug=debug,
+            root=root,
+            since_days=since_days,
+            file_limit=file_limit,
+            dry_run=dry_run,
+            debug=debug,
             progress_cb=console_progress[2] if console_progress else None,
         )
     finally:
@@ -110,7 +133,9 @@ def mine_history(
     )
     console.print(Panel.fit(body, title="✓ mine-history", border_style="green"))
 
+
 _REFLECT_TRANSCRIPT_WORD_BUDGET = 8000
+
 
 def _read_full_transcript(transcript_path: Path) -> list[tuple[str, str]]:
     """Return all (role, text) pairs from a JSONL transcript. role ∈ {"user", "assistant"}.
@@ -156,6 +181,7 @@ def _read_full_transcript(transcript_path: Path) -> list[tuple[str, str]]:
             exchanges.append((role, text))
     return exchanges
 
+
 def _build_reflect_prompt(
     exchanges: list[tuple[str, str]],
     *,
@@ -195,6 +221,7 @@ def _build_reflect_prompt(
     if header:
         return f"Context: {header}\n\nTranscript:\n{transcript}"
     return f"Transcript:\n{transcript}"
+
 
 def _reflect_session(
     session_id: str,
@@ -236,6 +263,7 @@ def _reflect_session(
     # LLM call — use the configured llm_model (7B default).
     try:
         from memo.memory.record import _REFLECT_SYSTEM_PROMPT, strip_llm_output
+
         result = mem._chat.chat(
             cfg.llm_model,
             [
@@ -340,21 +368,33 @@ def _reflect_session(
         "dry_run": dry_run,
     }
 
+
 @click.command(name="reflect")
 @click.argument("session_id", required=False)
-@click.option("--last", is_flag=True, default=False,
-              help="Reflect on the most recent completed session (default if no SESSION_ID).")
-@click.option("--if-due", is_flag=True, default=False,
-              help="Skip if the session was already reflected (idempotent).")
-@click.option("--quiet", is_flag=True, default=False,
-              help="Output JSON only (for hook use).")
-@click.option("--dry-run", is_flag=True, default=False,
-              help="Show what would be saved without saving.")
-@click.option("--debug", is_flag=True, default=False,
-              help="Print extraction progress to stderr.")
+@click.option(
+    "--last",
+    is_flag=True,
+    default=False,
+    help="Reflect on the most recent completed session (default if no SESSION_ID).",
+)
+@click.option(
+    "--if-due",
+    is_flag=True,
+    default=False,
+    help="Skip if the session was already reflected (idempotent).",
+)
+@click.option("--quiet", is_flag=True, default=False, help="Output JSON only (for hook use).")
+@click.option(
+    "--dry-run", is_flag=True, default=False, help="Show what would be saved without saving."
+)
+@click.option("--debug", is_flag=True, default=False, help="Print extraction progress to stderr.")
 def reflect(
-    session_id: str | None, last: bool, if_due: bool,
-    quiet: bool, dry_run: bool, debug: bool,
+    session_id: str | None,
+    last: bool,
+    if_due: bool,
+    quiet: bool,
+    dry_run: bool,
+    debug: bool,
 ) -> None:
     """Synthesize a session transcript into durable memorias.
 
@@ -406,8 +446,11 @@ def reflect(
     if if_due:
         snap = get_session(cfg.state_dir, target_id)
         if snap and snap.get("reflected_at"):
-            result = {"status": "already_reflected", "session_id": target_id,
-                      "reflected_at": snap["reflected_at"]}
+            result = {
+                "status": "already_reflected",
+                "session_id": target_id,
+                "reflected_at": snap["reflected_at"],
+            }
             if quiet:
                 click.echo(json.dumps(result))
             else:
@@ -420,6 +463,7 @@ def reflect(
     mem = Memory(cfg)
     if mem._chat is None:  # type: ignore[attr-defined]
         from memo.llm import MLXChat
+
         mem._chat = MLXChat()  # type: ignore[attr-defined]
 
     result = _reflect_session(target_id, mem, cfg, dry_run=dry_run, debug=debug)

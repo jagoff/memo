@@ -58,7 +58,14 @@ class _QueriesMixin(_StoreBase):
                 "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
                 "extra_json=excluded.extra_json",
                 (
-                    id_, path, title, type_, json.dumps(tags), created, updated, body_hash,
+                    id_,
+                    path,
+                    title,
+                    type_,
+                    json.dumps(tags),
+                    created,
+                    updated,
+                    body_hash,
                     # `default=str` coerces date/datetime/Path objects that
                     # frontmatter parsers leave as native Python types — common
                     # in mem-vault-style files where YAML auto-coerced dates.
@@ -118,7 +125,14 @@ class _QueriesMixin(_StoreBase):
                 "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
                 "extra_json=excluded.extra_json",
                 (
-                    id_, path, title, type_, json.dumps(tags), created, updated, body_hash,
+                    id_,
+                    path,
+                    title,
+                    type_,
+                    json.dumps(tags),
+                    created,
+                    updated,
+                    body_hash,
                     json.dumps(extra, default=str) if extra is not None else None,
                 ),
             )
@@ -160,15 +174,20 @@ class _QueriesMixin(_StoreBase):
                 "UPDATE meta SET title = ?, type = ?, tags = ?, updated = ?, extra_json = ? "
                 "WHERE id = ?",
                 (
-                    title, type_, json.dumps(tags), updated,
-                    json.dumps(extra, default=str) if extra is not None else None, id_,
+                    title,
+                    type_,
+                    json.dumps(tags),
+                    updated,
+                    json.dumps(extra, default=str) if extra is not None else None,
+                    id_,
                 ),
             )
             # Sync FTS title + tags (body unchanged on metadata-only updates).
             # FTS5 doesn't support partial UPDATE cleanly; we delete + reinsert
             # the row preserving the existing body text.
             existing = cx.execute(
-                "SELECT body FROM fts WHERE id = ?", (id_,),
+                "SELECT body FROM fts WHERE id = ?",
+                (id_,),
             ).fetchone()
             body_text = existing["body"] if existing else ""
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
@@ -307,12 +326,13 @@ class _QueriesMixin(_StoreBase):
         return [_row_to_dict(r) for r in rows]
 
     def list_recent(
-        self, limit: int = 20, type_: str | None = None,
+        self,
+        limit: int = 20,
+        type_: str | None = None,
         exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         sql = (
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-            "FROM meta "
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json FROM meta "
         )
         clauses: list[str] = []
         params: list[Any] = []
@@ -330,8 +350,11 @@ class _QueriesMixin(_StoreBase):
         return [_row_to_dict(r) for r in rows]
 
     def search(
-        self, embedding: list[float], limit: int = 10,
-        type_: str | None = None, exclude_types: set[str] | None = None,
+        self,
+        embedding: list[float],
+        limit: int = 10,
+        type_: str | None = None,
+        exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Top-k by cosine. Returns metadata dicts with a `score` field
         added (1 - distance, so higher = more similar).
@@ -423,7 +446,8 @@ class _QueriesMixin(_StoreBase):
         Defaults to count 0 / last_accessed None when never touched.
         """
         row = self._conn.execute(
-            "SELECT access_count, last_accessed FROM access WHERE id = ?", (id_,),
+            "SELECT access_count, last_accessed FROM access WHERE id = ?",
+            (id_,),
         ).fetchone()
         if not row:
             return {"access_count": 0, "last_accessed": None}
@@ -444,11 +468,16 @@ class _QueriesMixin(_StoreBase):
             f"SELECT id, confidence, roi_score FROM memory_health WHERE id IN ({placeholders})",
             ids,
         ).fetchall()
-        return {r["id"]: {"confidence": float(r["confidence"]),
-                          "roi_score": float(r["roi_score"])} for r in rows}
+        return {
+            r["id"]: {"confidence": float(r["confidence"]), "roi_score": float(r["roi_score"])}
+            for r in rows
+        }
 
     def boost_roi_batch(
-        self, ids: list[str], delta: float = 0.05, cap: float = 1.5,
+        self,
+        ids: list[str],
+        delta: float = 0.05,
+        cap: float = 1.5,
     ) -> None:
         """Increment roi_score for each id, capped at `cap`. Upserts new rows."""
         if not ids:
@@ -464,7 +493,10 @@ class _QueriesMixin(_StoreBase):
             )
 
     def penalize_confidence_batch(
-        self, ids: list[str], delta: float = 0.15, floor: float = 0.1,
+        self,
+        ids: list[str],
+        delta: float = 0.15,
+        floor: float = 0.1,
     ) -> None:
         """Decrement confidence for each id (e.g. open contradiction). Floor at `floor`."""
         if not ids:
@@ -480,7 +512,9 @@ class _QueriesMixin(_StoreBase):
             )
 
     def decay_roi(
-        self, factor: float = 0.98, older_than_days: int = 30,
+        self,
+        factor: float = 0.98,
+        older_than_days: int = 30,
     ) -> int:
         """Multiply roi_score by `factor` for memorias not accessed in `older_than_days`.
 
@@ -497,7 +531,11 @@ class _QueriesMixin(_StoreBase):
             return cur.rowcount
 
     def eviction_candidates(
-        self, policy: str, limit: int, *, exclude_types: set[str] | None = None,
+        self,
+        policy: str,
+        limit: int,
+        *,
+        exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return up to `limit` memorias coldest-first under the given policy.
 
@@ -549,7 +587,10 @@ class _QueriesMixin(_StoreBase):
         return len(ids)
 
     def search_bm25(
-        self, query: str, limit: int = 10, type_: str | None = None,
+        self,
+        query: str,
+        limit: int = 10,
+        type_: str | None = None,
         exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 keyword search. Dispatches to tantivy when available, FTS5 otherwise.
@@ -622,6 +663,7 @@ class _QueriesMixin(_StoreBase):
         # `"Astor" "terapia" "ocupacional"` — matches any doc containing
         # all 3 words anywhere, in any order.
         import re as _re
+
         _raw_tokens = [t for t in _re.findall(r"\w+", query, flags=_re.UNICODE) if t]
         if not _raw_tokens:
             return []
@@ -687,7 +729,10 @@ class _QueriesMixin(_StoreBase):
         return out[:limit]
 
     def search_fuzzy(
-        self, query: str, limit: int = 10, type_: str | None = None,
+        self,
+        query: str,
+        limit: int = 10,
+        type_: str | None = None,
         exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Fuzzy (typo-tolerant) BM25 search via tantivy.

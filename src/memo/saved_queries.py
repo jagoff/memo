@@ -22,6 +22,7 @@ _log = logging.getLogger(__name__)
 @dataclass
 class Query:
     """A saved search query."""
+
     name: str
     query_text: str
     type_filter: str | None
@@ -37,6 +38,7 @@ class Query:
 @dataclass
 class QueryResult:
     """Result of executing a saved query."""
+
     query_name: str
     results: list[Any]
     count: int
@@ -64,9 +66,7 @@ class QueryStore:
                 for name, q in data.items():
                     self._queries[name] = Query(**q)
             except Exception as exc:
-                _log.warning(
-                    "saved_queries: file unreadable, starting empty: %s", exc
-                )
+                _log.warning("saved_queries: file unreadable, starting empty: %s", exc)
                 self._queries = {}
 
     def _save(self) -> None:

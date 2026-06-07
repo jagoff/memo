@@ -26,6 +26,7 @@ try:
         SyncPhase,
         default_state_path,
     )
+
     _HAS_SYNC_COORDINATOR = True
 except ImportError:
     _HAS_SYNC_COORDINATOR = False
@@ -38,6 +39,7 @@ _log = logging.getLogger(__name__)
 @dataclass
 class SyncDiff:
     """Result of computing sync diff between vaults."""
+
     new: list[str]  # memoria IDs only in source
     modified: list[str]  # memoria IDs modified in source
     deleted: list[str]  # memoria IDs deleted in source
@@ -47,6 +49,7 @@ class SyncDiff:
 @dataclass
 class BackupMetadata:
     """Metadata for a backup archive."""
+
     timestamp: str
     memoria_count: int
     checksum: str

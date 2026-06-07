@@ -21,6 +21,7 @@ from typing import Any
 @dataclass
 class CorpusMetrics:
     """Metrics about the memory corpus."""
+
     total_memorias: int
     total_entities: int
     type_distribution: dict[str, int]
@@ -33,6 +34,7 @@ class CorpusMetrics:
 @dataclass
 class GrowthData:
     """Growth data over time."""
+
     dates: list[str]
     counts: list[int]
 
@@ -40,6 +42,7 @@ class GrowthData:
 @dataclass
 class AccessPattern:
     """Access pattern data."""
+
     day_of_week: dict[str, int]  # Monday-Sunday
     hour_of_day: dict[int, int]  # 0-23
 
@@ -143,8 +146,15 @@ class AnalyticsEngine:
         # This would analyze history store for access patterns
         # For now, return placeholder data
         return AccessPattern(
-            day_of_week={"Monday": 0, "Tuesday": 0, "Wednesday": 0,
-                       "Thursday": 0, "Friday": 0, "Saturday": 0, "Sunday": 0},
+            day_of_week={
+                "Monday": 0,
+                "Tuesday": 0,
+                "Wednesday": 0,
+                "Thursday": 0,
+                "Friday": 0,
+                "Saturday": 0,
+                "Sunday": 0,
+            },
             hour_of_day={i: 0 for i in range(24)},
         )
 

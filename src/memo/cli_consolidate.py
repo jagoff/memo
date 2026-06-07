@@ -25,14 +25,19 @@ def consolidate_group() -> None:
 
 
 @consolidate_group.command(name="propose")
-@click.option("--threshold", type=float, default=0.85,
-              help="Cosine similarity threshold (default: 0.85)")
-@click.option("--max-clusters", type=int, default=20,
-              help="Maximum clusters to process (default: 20)")
+@click.option(
+    "--threshold", type=float, default=0.85, help="Cosine similarity threshold (default: 0.85)"
+)
+@click.option(
+    "--max-clusters", type=int, default=20, help="Maximum clusters to process (default: 20)"
+)
 @click.option("--type", "type_", help="Filter by memoria type")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def consolidate_propose(
-    threshold: float, max_clusters: int, type_: str | None, as_json: bool,
+    threshold: float,
+    max_clusters: int,
+    type_: str | None,
+    as_json: bool,
 ) -> None:
     """Detect clusters and propose merge strategies (read-only).
 
@@ -76,20 +81,33 @@ def consolidate_propose(
 
 
 @consolidate_group.command(name="apply")
-@click.option("--threshold", type=float, default=0.85,
-              help="Cosine similarity threshold for the LLM pass (default: 0.85)")
-@click.option("--auto-threshold", "auto_threshold", type=float, default=None,
-              help="Cosine floor for the LLM-free fast lane (default: MEMO_CONSOLIDATE_AUTO_THRESHOLD=0.95)")
-@click.option("--max-clusters", type=int, default=20,
-              help="Maximum clusters to process (default: 20)")
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.85,
+    help="Cosine similarity threshold for the LLM pass (default: 0.85)",
+)
+@click.option(
+    "--auto-threshold",
+    "auto_threshold",
+    type=float,
+    default=None,
+    help="Cosine floor for the LLM-free fast lane (default: MEMO_CONSOLIDATE_AUTO_THRESHOLD=0.95)",
+)
+@click.option(
+    "--max-clusters", type=int, default=20, help="Maximum clusters to process (default: 20)"
+)
 @click.option("--type", "type_", help="Filter by memoria type")
-@click.option("--dry-run", is_flag=True,
-              help="Show what would happen without applying changes")
+@click.option("--dry-run", is_flag=True, help="Show what would happen without applying changes")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 @click.confirmation_option(prompt="This will merge memorias and archive old ones. Continue?")
 def consolidate_apply(
-    threshold: float, auto_threshold: float | None, max_clusters: int,
-    type_: str | None, dry_run: bool, as_json: bool,
+    threshold: float,
+    auto_threshold: float | None,
+    max_clusters: int,
+    type_: str | None,
+    dry_run: bool,
+    as_json: bool,
 ) -> None:
     """Apply merge proposals to consolidate the corpus.
 
@@ -159,13 +177,16 @@ def consolidate_list_archived(as_json: bool) -> None:
         archived_data = []
         for f in archived_files:
             import frontmatter
+
             post = frontmatter.loads(f.read_text(encoding="utf-8"))
-            archived_data.append({
-                "id": f.stem,
-                "title": post.get("title", ""),
-                "archived_for": post.get("archived_for", ""),
-                "archived_at": post.get("archived_at", ""),
-            })
+            archived_data.append(
+                {
+                    "id": f.stem,
+                    "title": post.get("title", ""),
+                    "archived_for": post.get("archived_for", ""),
+                    "archived_at": post.get("archived_at", ""),
+                }
+            )
         click.echo(json.dumps(archived_data, indent=2))
         return
 
@@ -177,6 +198,7 @@ def consolidate_list_archived(as_json: bool) -> None:
 
     for f in archived_files[:50]:
         import frontmatter
+
         post = frontmatter.loads(f.read_text(encoding="utf-8"))
         table.add_row(
             f.stem[:8],

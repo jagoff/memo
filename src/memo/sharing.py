@@ -25,6 +25,7 @@ _log = logging.getLogger(__name__)
 
 class Permission(Enum):
     """Permission levels for shared memorias."""
+
     READ = "read"
     COMMENT = "comment"
     EDIT = "edit"
@@ -34,6 +35,7 @@ class Permission(Enum):
 @dataclass
 class Share:
     """A share of a memoria with another user."""
+
     memoria_id: str
     shared_with: str  # Email or username
     permission: str  # Permission value
@@ -45,6 +47,7 @@ class Share:
 @dataclass
 class Comment:
     """A comment on a memoria."""
+
     memoria_id: str
     author: str
     content: str
@@ -55,6 +58,7 @@ class Comment:
 @dataclass
 class ShareLink:
     """A temporary sharing link."""
+
     memoria_id: str
     link_token: str
     permission: str
@@ -175,7 +179,8 @@ class ShareStore:
         """
         original_len = len(self._shares)
         self._shares = [
-            s for s in self._shares
+            s
+            for s in self._shares
             if not (s.memoria_id == memoria_id and s.shared_with == shared_with)
         ]
         if len(self._shares) < original_len:
@@ -292,7 +297,8 @@ class ShareStore:
         """
         original_len = len(self._comments)
         self._comments = [
-            c for c in self._comments
+            c
+            for c in self._comments
             if not (c.memoria_id == memoria_id and c.created_at == comment_id)
         ]
         if len(self._comments) < original_len:

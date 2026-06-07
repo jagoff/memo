@@ -189,6 +189,8 @@ def run_server(state_dir: Path | None = None, *, runner: MaintRunner | None = No
     signal.signal(signal.SIGINT, _sigterm)
 
     serve_until_shutdown(
-        server, shutdown_event, name="maint-daemon-serve",
+        server,
+        shutdown_event,
+        name="maint-daemon-serve",
         on_shutdown=lambda: _cleanup(state_dir),
     )

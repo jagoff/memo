@@ -72,10 +72,15 @@ def _make_progress() -> Progress:
 @click.option("--json", "as_json", is_flag=True, help="Emit receipt as JSON.")
 @click.option("--skip-entities", is_flag=True, help="Skip entity backfill pass.")
 @click.option("--skip-decay", is_flag=True, help="Skip ROI decay pass.")
-@click.option("--skip-maintain", is_flag=True, help="Skip the contradict/consolidate/stale/synthesize passes.")
+@click.option(
+    "--skip-maintain", is_flag=True, help="Skip the contradict/consolidate/stale/synthesize passes."
+)
 def dream_run(
-    dry_run: bool, as_json: bool,
-    skip_entities: bool, skip_decay: bool, skip_maintain: bool,
+    dry_run: bool,
+    as_json: bool,
+    skip_entities: bool,
+    skip_decay: bool,
+    skip_maintain: bool,
 ) -> None:
     """Run the full dream pipeline once.
 
@@ -101,13 +106,15 @@ def dream_run(
     }
 
     total_steps = 6
-    skipped = (4 if skip_maintain else 0) + (1 if skip_entities or dry_run else 0) + (1 if skip_decay or dry_run else 0)
+    skipped = (
+        (4 if skip_maintain else 0)
+        + (1 if skip_entities or dry_run else 0)
+        + (1 if skip_decay or dry_run else 0)
+    )
     active_steps = total_steps - skipped
 
     with _make_progress() as progress:
-        overall = progress.add_task(
-            "[bold cyan]pipeline[/bold cyan]", total=active_steps
-        )
+        overall = progress.add_task("[bold cyan]pipeline[/bold cyan]", total=active_steps)
         step = progress.add_task("cargando memoria...", total=None)
 
         mem = _get_memory(cfg)
@@ -125,6 +132,7 @@ def dream_run(
             # 1. Contradictions ----------------------------------------------
             progress.update(step, description="[1/6] contradicciones — escaneando corpus...")
             try:
+
                 def _contradict_progress(current: int, total: int, _title: str) -> None:
                     progress.update(
                         step,
@@ -143,8 +151,9 @@ def dream_run(
                     rel = (pair.relationship or "").lower()
                     if "evolu" in rel:
                         if not dry_run:
-                            mem.contradict_store.resolve(pair.pair_id, "evolved",
-                                                         note="dream: evolution, both kept")
+                            mem.contradict_store.resolve(
+                                pair.pair_id, "evolved", note="dream: evolution, both kept"
+                            )
                         receipt["evolved"].append(pair.pair_id)
                         continue
                     if "contrad" not in rel:
@@ -155,43 +164,56 @@ def dream_run(
                         ok = mem.lifecycle.archive_memoria(older)
                         if ok:
                             mem.contradict_store.resolve(
-                                pair.pair_id, "kept_newer",
-                                note=f"dream: archived older {older}")
+                                pair.pair_id, "kept_newer", note=f"dream: archived older {older}"
+                            )
                     receipt["superseded"].append({"pair_id": pair.pair_id, "older": older})
                 if contradicted_ids and not dry_run:
                     mem.store.penalize_confidence_batch(contradicted_ids)
                     receipt["confidence_penalized"] = len(set(contradicted_ids))
-                progress.update(step, description=(
-                    f"[1/6] contradicciones [green]✓[/green]  "
-                    f"{len(receipt['superseded'])} superseded, {len(receipt['evolved'])} evolved"
-                ))
+                progress.update(
+                    step,
+                    description=(
+                        f"[1/6] contradicciones [green]✓[/green]  "
+                        f"{len(receipt['superseded'])} superseded, {len(receipt['evolved'])} evolved"
+                    ),
+                )
             except Exception as exc:
                 progress.update(step, description="[1/6] contradicciones [yellow]warn[/yellow]")
                 receipt["errors"].append(f"contradict: {type(exc).__name__}: {exc}")
             progress.advance(overall)
 
             # 2. Duplicates --------------------------------------------------
-            progress.update(step, description="[2/6] duplicados — consolidando clusters...",
-                            total=None, completed=0)
+            progress.update(
+                step,
+                description="[2/6] duplicados — consolidando clusters...",
+                total=None,
+                completed=0,
+            )
             try:
                 res = mem.consolidator.consolidate_all(
-                    threshold=0.9, auto_apply=True, dry_run=dry_run,
+                    threshold=0.9,
+                    auto_apply=True,
+                    dry_run=dry_run,
                 )
                 for r in res.get("results", []):
                     receipt["merged"].append(
-                        {"merged_id": r.get("merged_id"),
-                         "archived_ids": r.get("archived_ids", [])})
-                progress.update(step, description=(
-                    f"[2/6] duplicados [green]✓[/green]  {len(receipt['merged'])} merged"
-                ))
+                        {"merged_id": r.get("merged_id"), "archived_ids": r.get("archived_ids", [])}
+                    )
+                progress.update(
+                    step,
+                    description=(
+                        f"[2/6] duplicados [green]✓[/green]  {len(receipt['merged'])} merged"
+                    ),
+                )
             except Exception as exc:
                 progress.update(step, description="[2/6] duplicados [yellow]warn[/yellow]")
                 receipt["errors"].append(f"consolidate: {type(exc).__name__}: {exc}")
             progress.advance(overall)
 
             # 3. Staleness ---------------------------------------------------
-            progress.update(step, description="[3/6] memorias stale — detectando...",
-                            total=None, completed=0)
+            progress.update(
+                step, description="[3/6] memorias stale — detectando...", total=None, completed=0
+            )
             try:
                 stale = mem.temporal.detect_stale_memorias(days_threshold=365, min_access_count=0)
                 for item in stale:
@@ -201,31 +223,46 @@ def dream_run(
                     if not dry_run:
                         mem.lifecycle.archive_memoria(mid)
                     receipt["archived_stale"].append(
-                        {"id": mid, "days": item.get("days_since_update")})
-                progress.update(step, description=(
-                    f"[3/6] stale [green]✓[/green]  {len(receipt['archived_stale'])} archivadas"
-                ))
+                        {"id": mid, "days": item.get("days_since_update")}
+                    )
+                progress.update(
+                    step,
+                    description=(
+                        f"[3/6] stale [green]✓[/green]  {len(receipt['archived_stale'])} archivadas"
+                    ),
+                )
             except Exception as exc:
                 progress.update(step, description="[3/6] stale [yellow]warn[/yellow]")
                 receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
             progress.advance(overall)
 
             # 4. Emergent synthesis ------------------------------------------
-            progress.update(step, description="[4/6] síntesis emergente — generando insights...",
-                            total=None, completed=0)
+            progress.update(
+                step,
+                description="[4/6] síntesis emergente — generando insights...",
+                total=None,
+                completed=0,
+            )
             try:
-                results = mem.synthesize_cross_cluster(dry_run=dry_run, min_cluster_size=5, max_clusters=8)
+                results = mem.synthesize_cross_cluster(
+                    dry_run=dry_run, min_cluster_size=5, max_clusters=8
+                )
                 for r in results:
-                    receipt["synthesized"].append({
-                        "title": r.get("title"),
-                        "confidence": r.get("confidence"),
-                        "saved": r.get("saved", False),
-                    })
+                    receipt["synthesized"].append(
+                        {
+                            "title": r.get("title"),
+                            "confidence": r.get("confidence"),
+                            "saved": r.get("saved", False),
+                        }
+                    )
                 saved_n = sum(1 for s in receipt["synthesized"] if s.get("saved"))
-                progress.update(step, description=(
-                    f"[4/6] síntesis [green]✓[/green]  "
-                    f"{saved_n} guardadas, {len(receipt['synthesized'])} propuestas"
-                ))
+                progress.update(
+                    step,
+                    description=(
+                        f"[4/6] síntesis [green]✓[/green]  "
+                        f"{saved_n} guardadas, {len(receipt['synthesized'])} propuestas"
+                    ),
+                )
             except Exception as exc:
                 progress.update(step, description="[4/6] síntesis [yellow]warn[/yellow]")
                 receipt["errors"].append(f"synthesize: {type(exc).__name__}: {exc}")
@@ -233,14 +270,21 @@ def dream_run(
 
         # 5. Entity backfill -------------------------------------------------
         if not skip_entities and not dry_run:
-            progress.update(step, description="[5/6] entidades — extrayendo de memorias sin indexar...",
-                            total=None, completed=0)
+            progress.update(
+                step,
+                description="[5/6] entidades — extrayendo de memorias sin indexar...",
+                total=None,
+                completed=0,
+            )
             try:
                 counts = mem.extract_entities(all_=True, skip_already_indexed=True, max_batch=50)
                 receipt["entities_extracted"] = counts.get("entities_extracted", 0)
-                progress.update(step, description=(
-                    f"[5/6] entidades [green]✓[/green]  {receipt['entities_extracted']} extraídas"
-                ))
+                progress.update(
+                    step,
+                    description=(
+                        f"[5/6] entidades [green]✓[/green]  {receipt['entities_extracted']} extraídas"
+                    ),
+                )
             except Exception as exc:
                 progress.update(step, description="[5/6] entidades [yellow]warn[/yellow]")
                 receipt["errors"].append(f"entities: {type(exc).__name__}: {exc}")
@@ -250,14 +294,13 @@ def dream_run(
 
         # 6. ROI decay -------------------------------------------------------
         if not skip_decay and not dry_run:
-            progress.update(step, description="[6/6] ROI decay — ajustando scores...",
-                            total=None, completed=0)
+            progress.update(
+                step, description="[6/6] ROI decay — ajustando scores...", total=None, completed=0
+            )
             try:
                 n = mem.store.decay_roi(factor=0.98, older_than_days=30)
                 receipt["roi_decayed"] = n
-                progress.update(step, description=(
-                    f"[6/6] ROI decay [green]✓[/green]  {n} filas"
-                ))
+                progress.update(step, description=(f"[6/6] ROI decay [green]✓[/green]  {n} filas"))
             except Exception as exc:
                 progress.update(step, description="[6/6] ROI decay [yellow]warn[/yellow]")
                 receipt["errors"].append(f"roi_decay: {type(exc).__name__}: {exc}")
@@ -275,7 +318,8 @@ def dream_run(
             d.mkdir(parents=True, exist_ok=True)
             (d / "last.json").write_text(
                 json.dumps({"ts": time.time(), **receipt}, ensure_ascii=False, indent=2),
-                encoding="utf-8")
+                encoding="utf-8",
+            )
             (d / ".last_run_ts").write_text(str(time.time()), encoding="utf-8")
         except Exception as exc:
             receipt["errors"].append(f"receipt: {type(exc).__name__}: {exc}")
@@ -286,15 +330,18 @@ def dream_run(
 
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
     console.print(f"{tag}[bold]memo dream[/bold]")
-    console.print(f"  contradictions superseded: {len(receipt['superseded'])}, "
-                  f"evolutions: {len(receipt['evolved'])}, "
-                  f"confidence penalized: {receipt['confidence_penalized']}")
+    console.print(
+        f"  contradictions superseded: {len(receipt['superseded'])}, "
+        f"evolutions: {len(receipt['evolved'])}, "
+        f"confidence penalized: {receipt['confidence_penalized']}"
+    )
     console.print(f"  duplicate clusters merged: {len(receipt['merged'])}")
     console.print(f"  stale memorias archived:   {len(receipt['archived_stale'])}")
     if receipt["synthesized"]:
         saved = sum(1 for s in receipt["synthesized"] if s.get("saved"))
-        console.print(f"  emergent syntheses:        {saved} saved, "
-                      f"{len(receipt['synthesized'])} proposed")
+        console.print(
+            f"  emergent syntheses:        {saved} saved, {len(receipt['synthesized'])} proposed"
+        )
     console.print(f"  entities extracted:        {receipt['entities_extracted']}")
     console.print(f"  roi rows decayed:          {receipt['roi_decayed']}")
     if receipt["errors"]:
@@ -317,6 +364,7 @@ def dream_status() -> None:
         return
     ts = data.get("ts")
     import datetime
+
     when = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "?"
     console.print(f"[bold]last dream run:[/bold] {when}")
     console.print(f"  superseded: {len(data.get('superseded', []))}")
@@ -335,6 +383,7 @@ def dream_if_due() -> None:
     """Spawn a background dream run if > 24h since last run (for launchd)."""
     import os as _os
     import subprocess as _sp
+
     cfg = Config.from_env()
     ts_file = _state_path(cfg) / ".last_run_ts"
     try:
@@ -348,7 +397,9 @@ def dream_if_due() -> None:
         ts_file.write_text(str(time.time()), encoding="utf-8")
         _sp.Popen(
             ["memo", "dream", "run"],
-            stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            stdin=_sp.DEVNULL,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
             start_new_session=True,
             env={**_os.environ, "MEMO_NONINTERACTIVE": "1"},
         )

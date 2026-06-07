@@ -27,10 +27,16 @@ def share_group() -> None:
 @share_group.command(name="with-user")
 @click.argument("memoria_id")
 @click.argument("shared_with")
-@click.option("--permission", type=click.Choice(["read", "comment", "edit", "admin"]), default="read",
-              help="Permission level")
+@click.option(
+    "--permission",
+    type=click.Choice(["read", "comment", "edit", "admin"]),
+    default="read",
+    help="Permission level",
+)
 @click.option("--expires-days", type=int, help="Days until expiration")
-def share_with_user(memoria_id: str, shared_with: str, permission: str, expires_days: int | None) -> None:
+def share_with_user(
+    memoria_id: str, shared_with: str, permission: str, expires_days: int | None
+) -> None:
     """Share a memoria with a user.
 
     Example: memo share with-user abc123 user@example.com --permission comment
@@ -72,11 +78,17 @@ def share_unshare(memoria_id: str, shared_with: str) -> None:
 
 @share_group.command(name="create-link")
 @click.argument("memoria_id")
-@click.option("--permission", type=click.Choice(["read", "comment", "edit"]), default="read",
-              help="Permission level")
+@click.option(
+    "--permission",
+    type=click.Choice(["read", "comment", "edit"]),
+    default="read",
+    help="Permission level",
+)
 @click.option("--expires-hours", type=int, default=24, help="Hours until expiration")
 @click.option("--password", help="Optional password protection")
-def share_create_link(memoria_id: str, permission: str, expires_hours: int, password: str | None) -> None:
+def share_create_link(
+    memoria_id: str, permission: str, expires_hours: int, password: str | None
+) -> None:
     """Create a temporary sharing link.
 
     Example: memo share create-link abc123 --permission read --expires-hours 48

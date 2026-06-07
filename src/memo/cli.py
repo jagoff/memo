@@ -212,10 +212,22 @@ cli.add_command(contradict_group)
 # but listing the names here is a belt-and-suspenders defence in case
 # something invokes them from an interactive shell while debugging).
 _FIRST_RUN_GATE_SKIP_COMMANDS = {
-    "init", "doctor", "migrate-vault",
-    "mcp-command", "install-slash", "prewarm", "recall-hook", "recall-daemon",
-    "capture-stop", "session", "ingest", "historia", "briefing", "mapa",
-    "backend-native", "profile",
+    "init",
+    "doctor",
+    "migrate-vault",
+    "mcp-command",
+    "install-slash",
+    "prewarm",
+    "recall-hook",
+    "recall-daemon",
+    "capture-stop",
+    "session",
+    "ingest",
+    "historia",
+    "briefing",
+    "mapa",
+    "backend-native",
+    "profile",
 }
 
 
@@ -244,6 +256,7 @@ def _first_run_gate(ctx: click.Context) -> None:
     # Re-resolve the config file at gate-firing time (env may have
     # changed between import and invocation, e.g. in tests).
     from memo.setup.config_io import _resolve_config_path
+
     if _resolve_config_path().is_file():
         return
     _run_picker_and_save()
@@ -283,18 +296,6 @@ def _run_picker_and_save() -> None:
     console.print(f"[dim]config saved: {cfg_path}[/dim]")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 @cli.command()
 def stats() -> None:
     """Summary stats — total records, vault path, embedder model."""
@@ -320,6 +321,7 @@ def stats() -> None:
     # or a write-only store? Best-effort summary of the recall ring buffer.
     with contextlib.suppress(Exception):
         from memo.dashboard import recall_health
+
         h = recall_health(mem.cfg.state_dir)
         if h.get("sampled"):
             console.print(
@@ -329,12 +331,16 @@ def stats() -> None:
             )
 
 
-
-
 @cli.command()
 @click.option("--gc", "do_gc", is_flag=True, help="Detect orphans between store and disk.")
-@click.option("--fix", is_flag=True, help="With --gc: drop orphan store rows. .md files are never deleted automatically.")
-@click.option("--db", "check_db", is_flag=True, help="Run read-only integrity checks on managed sqlite DBs.")
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="With --gc: drop orphan store rows. .md files are never deleted automatically.",
+)
+@click.option(
+    "--db", "check_db", is_flag=True, help="Run read-only integrity checks on managed sqlite DBs."
+)
 @click.option(
     "--strict-runtime",
     is_flag=True,
@@ -434,17 +440,13 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
             console.print(f"[green]✓[/green] cached: {model}")
         else:
             console.print(
-                f"[yellow]![/yellow] not cached: {model}  "
-                f"[dim](run `hf download {model}`)[/dim]",
+                f"[yellow]![/yellow] not cached: {model}  [dim](run `hf download {model}`)[/dim]",
             )
 
     # 5. Recall daemon health (best-effort, never blocks)
     daemon = _recall_daemon_health(cfg)
     if daemon.get("running"):
-        console.print(
-            f"[green]✓[/green] recall-daemon: running "
-            f"(pid={daemon.get('pid')}, ping ok)"
-        )
+        console.print(f"[green]✓[/green] recall-daemon: running (pid={daemon.get('pid')}, ping ok)")
     elif daemon.get("pid_alive") and not daemon.get("ping_ok"):
         err = daemon.get("error") or "no ping response"
         console.print(
@@ -529,10 +531,6 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
     sys.exit(0 if ok else 1)
 
 
-
-
-
-
 # ── Ambient memory hooks (v0.3.0) ──────────────────────────────────────────
 #
 # `recall-hook` and `prewarm` are designed to be wired into Claude Code's
@@ -603,6 +601,7 @@ def recall_hook() -> None:
         if reason:
             try:
                 from memo.dashboard import append_recall_log
+
                 append_recall_log(
                     cfg.state_dir,
                     prompt="",
@@ -649,11 +648,13 @@ def recall_hook() -> None:
     # it back race-free. client names the front-end for per-client value.
     _sid = (payload.get("session_id") or "").strip() or None
     from memo.flags import flag_str as _flag_str
+
     _client = _flag_str("MEMO_RECALL_CLIENT")
     _turn: int | None = None
     if _sid:
         try:
             from memo import session as _session_mod
+
             _turn = _session_mod.next_turn(cfg.state_dir, _sid)
             _session_mod.stamp_recall_turn(cfg.state_dir, _sid, _turn)
         except Exception:
@@ -667,6 +668,7 @@ def recall_hook() -> None:
     try:
         from memo.flags import flag_int
         from memo.recall_server import connect_and_recall
+
         # Wait for the warm-but-slow daemon (the 3-6s tail) instead of
         # abandoning it at 1s and ALSO running the subprocess path — that
         # double-fired and logged the same prompt twice. Budget sits under the
@@ -695,6 +697,7 @@ def recall_hook() -> None:
         # cold-start cost.
         try:
             from memo.dashboard import append_recall_log
+
             append_recall_log(
                 cfg.state_dir,
                 prompt=prompt,
@@ -771,10 +774,10 @@ def recall_hook() -> None:
     if mode in ("vec", "hybrid") and not flag_bool("MEMO_RECALL_FORCE_MODE"):
         try:
             import time as _time_mod
+
             _signal = cfg.state_dir / ".prewarm_ts"
             _warm = (
-                _signal.exists()
-                and (_time_mod.time() - float(_signal.read_text().strip())) < 3600
+                _signal.exists() and (_time_mod.time() - float(_signal.read_text().strip())) < 3600
             )
             if not _warm:
                 if os.environ.get("MEMO_RECALL_DEBUG") == "1":
@@ -790,6 +793,7 @@ def recall_hook() -> None:
     if project_boost > 0:
         try:
             from memo.project import current_project_tag
+
             project_tag = current_project_tag(payload_cwd)
         except Exception:
             project_tag = None
@@ -797,9 +801,11 @@ def recall_hook() -> None:
     # Tier gate: keep the bulk `reference` tier out of the prompt (mirror of
     # the daemon path in recall_server.py). See `memo.tiers`.
     from memo.tiers import REFERENCE_TYPES
+
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
     try:
         from memo.memory import Memory
+
         mem = Memory(Config.from_env())
     except Exception as exc:
         _bail(f"search failed: {exc}")
@@ -815,8 +821,9 @@ def recall_hook() -> None:
         can reuse the exact same chain on the expanded query (mirror of the
         daemon's `_rank` in recall_server.py)."""
         try:
-            hits = mem.search(query_text, limit=search_k, mode=mode,
-                              recency=True, exclude_types=exclude_types)
+            hits = mem.search(
+                query_text, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
+            )
         except Exception as exc:
             if os.environ.get("MEMO_RECALL_DEBUG") == "1":
                 print(f"# memo recall-hook: search failed: {exc}", file=_sys.stderr)
@@ -824,6 +831,7 @@ def recall_hook() -> None:
         # Apply project boost — additive on the raw score, then re-sort.
         if project_tag:
             from memo.recall_server import _apply_project_boost
+
             hits = _apply_project_boost(hits, project_tag, project_boost)
         # Trim back to top_k after boost-aware re-sort.
         hits = hits[:top_k]
@@ -842,6 +850,7 @@ def recall_hook() -> None:
         if staleness_days > 0:
             from datetime import UTC as _UTC
             from datetime import datetime as _dt
+
             _now = _dt.now(_UTC)
             stale_threshold = min_sim * 1.5
             filtered: list = []
@@ -859,6 +868,7 @@ def recall_hook() -> None:
             rel = filtered
         # Collapse near-duplicates so the same fact isn't injected twice.
         from memo.recall_server import dedup_hits
+
         return dedup_hits(rel)
 
     relevant = _search_filter(prompt)
@@ -871,12 +881,15 @@ def recall_hook() -> None:
     # 0 → 5 hits, top ~0.62). Mirror of the daemon path.
     if not relevant and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
         from memo.recall_server import _session_context
+
         _ctx = _session_context(mem, exclude_types)
         if _ctx:
             relevant = _search_filter(f"{_ctx}\n{prompt}")
             if relevant and os.environ.get("MEMO_RECALL_DEBUG") == "1":
-                print(f"# memo recall-hook: query expansion recovered "
-                      f"{len(relevant)} hits", file=_sys.stderr)
+                print(
+                    f"# memo recall-hook: query expansion recovered {len(relevant)} hits",
+                    file=_sys.stderr,
+                )
 
     # Adaptive context: re-weight results by detected prompt intent.
     # Zero extra search cost — pure score boost on returned hits so
@@ -884,13 +897,25 @@ def recall_hook() -> None:
     # bug/preference types, etc. Gated by MEMO_RECALL_ADAPTIVE_CONTEXT.
     if relevant and flag_bool("MEMO_RECALL_ADAPTIVE_CONTEXT"):
         import re as _re
+
         _RECALL_CONTEXTS = [
-            ("code",     _re.compile(r"\b(implement|fix|debug|test|refactor|deploy|build|install)\b", _re.I),
-             {"decision", "bug", "preference"}),
-            ("decision", _re.compile(r"\b(should i|which|choose|decide|recommend|tradeoff|vs\.?|versus)\b", _re.I),
-             {"decision", "fact"}),
-            ("write",    _re.compile(r"\b(write|document|explain|describe|summarize|draft)\b", _re.I),
-             {"note", "fact", "reference"}),
+            (
+                "code",
+                _re.compile(r"\b(implement|fix|debug|test|refactor|deploy|build|install)\b", _re.I),
+                {"decision", "bug", "preference"},
+            ),
+            (
+                "decision",
+                _re.compile(
+                    r"\b(should i|which|choose|decide|recommend|tradeoff|vs\.?|versus)\b", _re.I
+                ),
+                {"decision", "fact"},
+            ),
+            (
+                "write",
+                _re.compile(r"\b(write|document|explain|describe|summarize|draft)\b", _re.I),
+                {"note", "fact", "reference"},
+            ),
         ]
         _boost_types: set[str] = set()
         for _ctx_name, _ctx_pat, _ctx_types in _RECALL_CONTEXTS:
@@ -899,12 +924,14 @@ def recall_hook() -> None:
                 break  # first match wins
         if _boost_types:
             from dataclasses import replace as _dc_replace
+
             _boosted = [
                 _dc_replace(h, score=round((h.score or 0.0) * 1.25, 6))
-                if h.type in _boost_types else h
+                if h.type in _boost_types
+                else h
                 for h in relevant
             ]
-            _boosted.sort(key=lambda h: (h.score or 0.0), reverse=True)
+            _boosted.sort(key=lambda h: h.score or 0.0, reverse=True)
             relevant = _boosted
 
     # Telemetry: append every recall (with or without hits) to the
@@ -913,12 +940,12 @@ def recall_hook() -> None:
     _latency_ms_subprocess = int((time.time() - _t0) * 1000)
     try:
         from memo.dashboard import append_recall_log
+
         append_recall_log(
             cfg.state_dir,
             prompt=prompt,
             hits=[
-                {"id": h.id, "score": h.score, "title": h.title,
-                 "snippet": (h.body or "")[:240]}
+                {"id": h.id, "score": h.score, "title": h.title, "snippet": (h.body or "")[:240]}
                 for h in relevant
             ],
             mode=mode,
@@ -945,6 +972,7 @@ def recall_hook() -> None:
     # tiktoken dep. Last memoria gets head-truncated to fit instead of
     # being dropped wholesale.
     from memo.recall_server import RECALL_DIRECTIVE, RECALL_FOOTER, RECALL_HEADER
+
     footer = RECALL_FOOTER
     lines = [RECALL_HEADER, RECALL_DIRECTIVE, ""]
     used_chars = 0  # chars of formatted block body, excluding header/footer
@@ -1009,19 +1037,29 @@ def recall_hook() -> None:
 
 
 @cli.command(name="dedupe")
-@click.option("--threshold", type=float, default=0.92,
-              help="Cosine threshold for near-duplicate clustering (default: 0.92)")
-@click.option("--max-clusters", type=int, default=50,
-              help="Max clusters to surface (default: 50)")
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.92,
+    help="Cosine threshold for near-duplicate clustering (default: 0.92)",
+)
+@click.option("--max-clusters", type=int, default=50, help="Max clusters to surface (default: 50)")
 @click.option("--type", "type_", help="Filter by memoria type")
-@click.option("--apply", "do_apply", is_flag=True,
-              help="Interactively merge each cluster (default: list-only)")
-@click.option("--dry-run", is_flag=True,
-              help="With --apply: show merges without writing")
+@click.option(
+    "--apply",
+    "do_apply",
+    is_flag=True,
+    help="Interactively merge each cluster (default: list-only)",
+)
+@click.option("--dry-run", is_flag=True, help="With --apply: show merges without writing")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def dedupe_cmd(
-    threshold: float, max_clusters: int, type_: str | None,
-    do_apply: bool, dry_run: bool, as_json: bool,
+    threshold: float,
+    max_clusters: int,
+    type_: str | None,
+    do_apply: bool,
+    dry_run: bool,
+    as_json: bool,
 ) -> None:
     """Find and (optionally) merge near-duplicate memorias.
 

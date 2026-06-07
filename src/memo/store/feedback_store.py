@@ -33,9 +33,7 @@ class _FeedbackMixin(_StoreBase):
         if rating not in (-1, 1):
             raise ValueError(f"rating must be -1 or 1, got {rating!r}")
         if len(query_emb) != self.dims:
-            raise ValueError(
-                f"query_emb dim mismatch: got {len(query_emb)}, expected {self.dims}"
-            )
+            raise ValueError(f"query_emb dim mismatch: got {len(query_emb)}, expected {self.dims}")
         now = datetime.now(UTC).isoformat()
         # Read + write inside one BEGIN IMMEDIATE so concurrent FastMCP threads
         # serialise — a plain SELECT then `with self._conn` (BEGIN DEFERRED) let
@@ -43,8 +41,7 @@ class _FeedbackMixin(_StoreBase):
         with self._tx() as cx:
             # Find any existing row for this (source, query) regardless of rating.
             existing = cx.execute(
-                "SELECT id, rating FROM source_feedback "
-                "WHERE source_id = ? AND query_text = ?",
+                "SELECT id, rating FROM source_feedback WHERE source_id = ? AND query_text = ?",
                 (source_id, query_text),
             ).fetchone()
             if existing and int(existing["rating"]) == rating:
@@ -65,13 +62,16 @@ class _FeedbackMixin(_StoreBase):
                 "(id, source_id, query_text, rating, created_at, extra_json) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (
-                    fid, source_id, query_text, rating, now,
+                    fid,
+                    source_id,
+                    query_text,
+                    rating,
+                    now,
                     json.dumps(extra) if extra else None,
                 ),
             )
             cx.execute(
-                "INSERT INTO source_feedback_vec (feedback_id, query_emb) "
-                "VALUES (?, ?)",
+                "INSERT INTO source_feedback_vec (feedback_id, query_emb) VALUES (?, ?)",
                 (fid, serialize_float32(query_emb)),
             )
         return fid
@@ -109,14 +109,16 @@ class _FeedbackMixin(_StoreBase):
             sim = 1.0 - dist
             if sim < threshold:
                 continue
-            out.append({
-                "id": r["id"],
-                "rating": int(r["rating"]),
-                "query_text": r["query_text"],
-                "created_at": r["created_at"],
-                "extra_json": r["extra_json"],
-                "similarity": sim,
-            })
+            out.append(
+                {
+                    "id": r["id"],
+                    "rating": int(r["rating"]),
+                    "query_text": r["query_text"],
+                    "created_at": r["created_at"],
+                    "extra_json": r["extra_json"],
+                    "similarity": sim,
+                }
+            )
         return out
 
     def list_source_feedback(
@@ -144,7 +146,8 @@ class _FeedbackMixin(_StoreBase):
         """Drop all feedback rows for a source. Returns count deleted."""
         with self._tx() as cx:
             ids = [
-                r["id"] for r in cx.execute(
+                r["id"]
+                for r in cx.execute(
                     "SELECT id FROM source_feedback WHERE source_id = ?",
                     (source_id,),
                 ).fetchall()

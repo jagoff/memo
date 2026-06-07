@@ -30,6 +30,7 @@ def export_json(output_path: str) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     result = mem.import_export.export_to(Path(output_path), "json")
 
     console.print("[green]Export complete[/green]")
@@ -48,6 +49,7 @@ def export_csv(output_path: str) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     result = mem.import_export.export_to(Path(output_path), "csv")
 
     console.print("[green]Export complete[/green]")
@@ -66,6 +68,7 @@ def export_markdown_bundle(output_path: str) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     result = mem.import_export.export_to(Path(output_path), "markdown_bundle")
 
     console.print("[green]Export complete[/green]")

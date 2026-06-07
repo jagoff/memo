@@ -208,10 +208,14 @@ def _mcp_server_json(memo_mcp: Path, env: dict[str, str], *, include_type: bool)
 
 
 def _agent_asset_root(repo: Path | None = None) -> Path:
-    candidates = [_safe_resolve(repo)] if repo else [
-        _safe_resolve(Path.cwd()),
-        _safe_resolve(Path(__file__).resolve().parents[2]),
-    ]
+    candidates = (
+        [_safe_resolve(repo)]
+        if repo
+        else [
+            _safe_resolve(Path.cwd()),
+            _safe_resolve(Path(__file__).resolve().parents[2]),
+        ]
+    )
     if not repo:
         try:
             packaged_assets = Path(str(package_files("memo") / "agent_assets"))
@@ -273,12 +277,25 @@ def _mcp_add_command(client: str, memo_mcp: Path, env: dict[str, str]) -> list[s
         return ["codex", "mcp", "add", "memo", *_env_flags("codex", env), "--", memo_mcp]
     if client == "devin":
         return [
-            "devin", "mcp", "add", "-s", "user",
-            *_env_flags("devin", env), "memo", "--", memo_mcp,
+            "devin",
+            "mcp",
+            "add",
+            "-s",
+            "user",
+            *_env_flags("devin", env),
+            "memo",
+            "--",
+            memo_mcp,
         ]
     mcp_json = json.dumps(_mcp_server_json(memo_mcp, env, include_type=True), separators=(",", ":"))
     return [
-        "claude", "mcp", "add-json", "-s", "user", "memo", mcp_json,
+        "claude",
+        "mcp",
+        "add-json",
+        "-s",
+        "user",
+        "memo",
+        mcp_json,
     ]
 
 
@@ -417,9 +434,7 @@ def _codex_read_app_server_response(
 def _install_codex_plugin(root: Path, *, dry_run: bool) -> None:
     marketplace = root / ".agents" / "plugins" / "marketplace.json"
     if not marketplace.is_file():
-        raise click.ClickException(
-            f"Codex marketplace manifest not found: {marketplace}"
-        )
+        raise click.ClickException(f"Codex marketplace manifest not found: {marketplace}")
     args = ["codex", "app-server", "--listen", "stdio://", "--enable", "plugins"]
     if dry_run:
         console.print(
@@ -437,9 +452,7 @@ def _install_codex_plugin(root: Path, *, dry_run: bool) -> None:
             text=True,
         )
     except FileNotFoundError as exc:
-        raise click.ClickException(
-            "`codex` not found on PATH; install Codex first."
-        ) from exc
+        raise click.ClickException("`codex` not found on PATH; install Codex first.") from exc
 
     try:
         _codex_send_app_server_request(
@@ -633,9 +646,13 @@ def init_cmd(force: bool) -> None:
     from memo.setup.config_io import _resolve_config_path
 
     cfg_path = _resolve_config_path()
-    if cfg_path.is_file() and not force and not click.confirm(
-        f"Config file exists at {cfg_path}. Overwrite?",
-        default=False,
+    if (
+        cfg_path.is_file()
+        and not force
+        and not click.confirm(
+            f"Config file exists at {cfg_path}. Overwrite?",
+            default=False,
+        )
     ):
         console.print("[yellow]aborted[/yellow]")
         return
@@ -646,13 +663,20 @@ def init_cmd(force: bool) -> None:
 
 @click.command(name="migrate-vault")
 @click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
-@click.option("--from", "from_dir", default=None,
-              type=click.Path(exists=True, file_okay=False, resolve_path=True),
-              help="Source memory_dir. Defaults to current cfg.memory_dir.")
+@click.option(
+    "--from",
+    "from_dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    help="Source memory_dir. Defaults to current cfg.memory_dir.",
+)
 @click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def migrate_vault(
-    new_data_dir: str | None, from_dir: str | None, force: bool, yes: bool,
+    new_data_dir: str | None,
+    from_dir: str | None,
+    force: bool,
+    yes: bool,
 ) -> None:
     """Move memorias to a new data_dir; rewrites config + reindexes.
 
@@ -699,8 +723,7 @@ def migrate_vault(
     md_files = sorted(src.rglob("*.md"))
     if dst.exists() and any(dst.iterdir()) and not force:
         console.print(
-            f"[red]✗[/red] destination is non-empty: {dst}\n"
-            "  Use --force to overwrite.",
+            f"[red]✗[/red] destination is non-empty: {dst}\n  Use --force to overwrite.",
         )
         sys.exit(1)
 
@@ -770,25 +793,43 @@ def mcp_command(client: str) -> None:
         sys.exit(1)
     env = _mcp_server_env()
     if client == "json":
-        click.echo(json.dumps({
-            "mcpServers": {
-                "memo": _mcp_server_json(memo_mcp, env, include_type=True),
-            },
-        }, ensure_ascii=False, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "memo": _mcp_server_json(memo_mcp, env, include_type=True),
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
     if client == "claude-desktop":
-        click.echo(json.dumps({
-            "mcpServers": {
-                "memo": _mcp_server_json(memo_mcp, env, include_type=False),
-            },
-        }, ensure_ascii=False, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "memo": _mcp_server_json(memo_mcp, env, include_type=False),
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
     if client == "windsurf":
-        click.echo(json.dumps({
-            "mcpServers": {
-                "memo": _mcp_server_json(memo_mcp, env, include_type=False),
-            },
-        }, ensure_ascii=False, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "memo": _mcp_server_json(memo_mcp, env, include_type=False),
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
     if client == "codex":
         click.echo(_format_command(_mcp_add_command("codex", memo_mcp, env)))
@@ -937,7 +978,9 @@ def install_slash(
             "memo install-slash --client claude-code --client codex --client windsurf[/dim]"
         )
     else:
-        console.print("[green]✓[/green] agent-client install complete. Open a new agent session to reload.")
+        console.print(
+            "[green]✓[/green] agent-client install complete. Open a new agent session to reload."
+        )
 
 
 @click.command(name="self-update")
@@ -992,7 +1035,9 @@ def self_update(check: bool) -> None:
     try:
         res = subprocess.run(
             ["pipx", "list", "--short"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if "mlx-memo" in res.stdout:
             installed_via = "pipx"
@@ -1004,7 +1049,9 @@ def self_update(check: bool) -> None:
         try:
             res = subprocess.run(
                 ["uv", "tool", "list"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if "mlx-memo" in res.stdout:
                 installed_via = "uv"
@@ -1034,6 +1081,7 @@ def self_update(check: bool) -> None:
 
     console.print("[green]✓[/green] upgrade complete. Pre-warming MLX models…")
     import shutil as _shutil
+
     memo_bin = _shutil.which("memo") or sys.executable
     _prewarm_cmd = (
         [memo_bin, "prewarm", "--download-all"]
@@ -1044,21 +1092,38 @@ def self_update(check: bool) -> None:
 
 
 @click.command(name="install-shell-wrapper")
-@click.option("--print", "do_print", is_flag=True,
-              help="Print the wrapper snippet to stdout. Default mode "
-                   "when neither --print nor --write is set.")
-@click.option("--write", "do_write", is_flag=True,
-              help="Write ~/.zsh/memo-wrapper.zsh and append the matching "
-                   "`source` line to ~/.zshrc (idempotent).")
-@click.option("--shell", "shell_kind",
-              type=click.Choice(["zsh", "bash"]), default="zsh",
-              show_default=True,
-              help="Target shell. zsh is the macOS default.")
-@click.option("--force", is_flag=True,
-              help="Overwrite ~/.zsh/memo-wrapper.zsh even if its content "
-                   "differs from what we would write.")
+@click.option(
+    "--print",
+    "do_print",
+    is_flag=True,
+    help="Print the wrapper snippet to stdout. Default mode "
+    "when neither --print nor --write is set.",
+)
+@click.option(
+    "--write",
+    "do_write",
+    is_flag=True,
+    help="Write ~/.zsh/memo-wrapper.zsh and append the matching "
+    "`source` line to ~/.zshrc (idempotent).",
+)
+@click.option(
+    "--shell",
+    "shell_kind",
+    type=click.Choice(["zsh", "bash"]),
+    default="zsh",
+    show_default=True,
+    help="Target shell. zsh is the macOS default.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite ~/.zsh/memo-wrapper.zsh even if its content differs from what we would write.",
+)
 def install_shell_wrapper(
-    do_print: bool, do_write: bool, shell_kind: str, force: bool,
+    do_print: bool,
+    do_write: bool,
+    shell_kind: str,
+    force: bool,
 ) -> None:
     """Install or print the `claude` shell wrapper for crash recovery.
 
@@ -1086,8 +1151,7 @@ def install_shell_wrapper(
         click.echo(snippet)
         if not do_print:
             click.echo(
-                "\n(pasale `--write` para instalar en "
-                "~/.zsh/memo-wrapper.zsh + ~/.zshrc.)",
+                "\n(pasale `--write` para instalar en ~/.zsh/memo-wrapper.zsh + ~/.zshrc.)",
                 err=True,
             )
         return

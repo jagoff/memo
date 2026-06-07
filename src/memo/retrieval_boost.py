@@ -22,18 +22,73 @@ from pathlib import PurePosixPath
 __all__ = ["boost_for", "query_terms"]
 
 _TERM_RE = re.compile(r"[\w\-]{3,}", re.UNICODE)
-_STOPWORDS_ES_EN = frozenset({
-    # Spanish
-    "como", "para", "que", "los", "las", "una", "uno", "cual", "cuales",
-    "del", "sobre", "entre", "donde", "cuando", "porque", "porqué",
-    "este", "esta", "estos", "estas", "ese", "esa", "esos", "esas",
-    "con", "sin", "por", "tener", "tiene", "hace", "hacer", "puedes",
-    "puedo", "necesito", "quiero", "favor",
-    # English
-    "how", "what", "which", "where", "when", "why", "the", "and", "for",
-    "with", "from", "that", "this", "these", "those", "your", "their",
-    "have", "need", "want", "please", "into", "onto", "than", "then",
-})
+_STOPWORDS_ES_EN = frozenset(
+    {
+        # Spanish
+        "como",
+        "para",
+        "que",
+        "los",
+        "las",
+        "una",
+        "uno",
+        "cual",
+        "cuales",
+        "del",
+        "sobre",
+        "entre",
+        "donde",
+        "cuando",
+        "porque",
+        "porqué",
+        "este",
+        "esta",
+        "estos",
+        "estas",
+        "ese",
+        "esa",
+        "esos",
+        "esas",
+        "con",
+        "sin",
+        "por",
+        "tener",
+        "tiene",
+        "hace",
+        "hacer",
+        "puedes",
+        "puedo",
+        "necesito",
+        "quiero",
+        "favor",
+        # English
+        "how",
+        "what",
+        "which",
+        "where",
+        "when",
+        "why",
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "these",
+        "those",
+        "your",
+        "their",
+        "have",
+        "need",
+        "want",
+        "please",
+        "into",
+        "onto",
+        "than",
+        "then",
+    }
+)
 
 
 def query_terms(query: str) -> list[str]:
@@ -45,7 +100,8 @@ def query_terms(query: str) -> list[str]:
     if not query:
         return []
     return [
-        t for t in (m.group(0).lower() for m in _TERM_RE.finditer(query))
+        t
+        for t in (m.group(0).lower() for m in _TERM_RE.finditer(query))
         if t not in _STOPWORDS_ES_EN and len(t) >= 3
     ]
 

@@ -21,16 +21,25 @@ from memo.config import Config
 
 
 @click.command(name="synthesize")
-@click.option("--dry-run", is_flag=True,
-              help="Propose syntheses without saving.")
-@click.option("--threshold", type=float, default=None,
-              help="Cosine similarity for clustering (default from MEMO_SYNTHESIS_THRESHOLD or 0.78).")
-@click.option("--min-cluster-size", type=int, default=None,
-              help="Minimum memories per cluster (default 3).")
-@click.option("--max-clusters", type=int, default=None,
-              help="Max clusters to process (default 20).")
-@click.option("--min-confidence", type=click.Choice(["low", "medium", "high"]),
-              default=None, help="Minimum confidence to save a synthesis (default medium).")
+@click.option("--dry-run", is_flag=True, help="Propose syntheses without saving.")
+@click.option(
+    "--threshold",
+    type=float,
+    default=None,
+    help="Cosine similarity for clustering (default from MEMO_SYNTHESIS_THRESHOLD or 0.78).",
+)
+@click.option(
+    "--min-cluster-size", type=int, default=None, help="Minimum memories per cluster (default 3)."
+)
+@click.option(
+    "--max-clusters", type=int, default=None, help="Max clusters to process (default 20)."
+)
+@click.option(
+    "--min-confidence",
+    type=click.Choice(["low", "medium", "high"]),
+    default=None,
+    help="Minimum confidence to save a synthesis (default medium).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit results as JSON.")
 def synthesize_cmd(
     dry_run: bool,
@@ -85,8 +94,10 @@ def synthesize_cmd(
         title = r.get("title") or "(no insight generated)"
         conf = r.get("confidence", "?")
         n_sources = len(r.get("sources", []))
-        status = "[green]saved[/green]" if r.get("saved") else (
-            "[yellow]proposed[/yellow]" if r.get("title") else "[dim]no insight[/dim]"
+        status = (
+            "[green]saved[/green]"
+            if r.get("saved")
+            else ("[yellow]proposed[/yellow]" if r.get("title") else "[dim]no insight[/dim]")
         )
         mid = f"  [{r['id'][:8]}]" if r.get("id") else "          "
         console.print(f"{mid} {status} [{conf}] {title} (from {n_sources} memories)")

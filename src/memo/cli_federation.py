@@ -103,8 +103,12 @@ def federation_remove_vault(name: str) -> None:
 @federation_group.command(name="search")
 @click.argument("query")
 @click.option("--limit", type=int, default=10, help="Result limit")
-@click.option("--mode", type=click.Choice(["vec", "bm25", "hybrid"]), default="hybrid",
-              help="Search mode (default: hybrid)")
+@click.option(
+    "--mode",
+    type=click.Choice(["vec", "bm25", "hybrid"]),
+    default="hybrid",
+    help="Search mode (default: hybrid)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def federation_search(query: str, limit: int, mode: str, as_json: bool) -> None:
     """Search across all federated vaults.

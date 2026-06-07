@@ -144,14 +144,16 @@ class _AskOpsMixin(_MemoryBase):
                 "answer": "",
                 "sources": [],
                 "citations": [],
-                "retrieval_trace": [{
-                    "stage": "memo.chat_ask_stream",
-                    "ms": total_ms,
-                    "source_count": 0,
-                    "history_turns": len(clean_history),
-                    "context_keys": context_keys,
-                    "retrieval_query_chars": len(retrieval_question),
-                }],
+                "retrieval_trace": [
+                    {
+                        "stage": "memo.chat_ask_stream",
+                        "ms": total_ms,
+                        "source_count": 0,
+                        "history_turns": len(clean_history),
+                        "context_keys": context_keys,
+                        "retrieval_query_chars": len(retrieval_question),
+                    }
+                ],
                 "synthesis_status": "unavailable",
                 "synthesis_source": "memo.ask",
                 "synthesis_error": "empty question",
@@ -216,14 +218,16 @@ class _AskOpsMixin(_MemoryBase):
             "answer": answer,
             "sources": sources,
             "citations": self._chat_citations(sources),
-            "retrieval_trace": [{
-                "stage": "memo.chat_ask_stream",
-                "ms": total_ms,
-                "source_count": len(sources),
-                "history_turns": len(clean_history),
-                "context_keys": context_keys,
-                "retrieval_query_chars": len(retrieval_question),
-            }],
+            "retrieval_trace": [
+                {
+                    "stage": "memo.chat_ask_stream",
+                    "ms": total_ms,
+                    "source_count": len(sources),
+                    "history_turns": len(clean_history),
+                    "context_keys": context_keys,
+                    "retrieval_query_chars": len(retrieval_question),
+                }
+            ],
             "synthesis_status": status,
             "synthesis_source": (
                 f"memo.ask_stream:{self.cfg.llm_model}" if sources else "memo.ask_stream"
@@ -254,9 +258,7 @@ class _AskOpsMixin(_MemoryBase):
     ) -> str:
         parts = [question.strip()]
         if history:
-            turns = "\n".join(
-                f"{turn['role']}: {turn['text']}" for turn in history[-6:]
-            )
+            turns = "\n".join(f"{turn['role']}: {turn['text']}" for turn in history[-6:])
             parts.append(f"Conversation history:\n{turns}")
         if context:
             compact = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
@@ -269,10 +271,7 @@ class _AskOpsMixin(_MemoryBase):
         for index, source in enumerate(sources, start=1):
             source_kind = str(source.get("source") or "memo")
             source_id = str(
-                source.get("id_short")
-                or source.get("locator")
-                or source.get("id")
-                or index
+                source.get("id_short") or source.get("locator") or source.get("id") or index
             )
             metadata: dict[str, Any] = {}
             if source.get("id"):
@@ -295,8 +294,14 @@ class _AskOpsMixin(_MemoryBase):
     # -- ask ----------------------------------------------------------------
 
     def _build_ask_context(
-        self, question: str, *, k: int, type_: str | None,
-        snippet_chars: int, include_repos: bool, disable_reranker: bool = True,
+        self,
+        question: str,
+        *,
+        k: int,
+        type_: str | None,
+        snippet_chars: int,
+        include_repos: bool,
+        disable_reranker: bool = True,
         intent_text: str | None = None,
     ) -> tuple[str, list[dict[str, Any]], str, list[MemoryRecord]]:
         """Retrieval half of ask()/ask_stream().
@@ -318,7 +323,8 @@ class _AskOpsMixin(_MemoryBase):
         if len(question) > _MAX_QUESTION_CHARS:
             _log.warning(
                 "ask: question truncated from %d to %d chars",
-                len(question), _MAX_QUESTION_CHARS,
+                len(question),
+                _MAX_QUESTION_CHARS,
             )
             question = question[:_MAX_QUESTION_CHARS]
         # Recency intent ("lo último que dijo X", "last message") and the wider
@@ -349,8 +355,14 @@ class _AskOpsMixin(_MemoryBase):
             search_limit = k
         # Lazy-load bodies: defer disk I/O until after reranking
         hits: list[MemoryRecord] = self.search(
-            question, limit=search_limit, type_=type_, mode="hybrid", load_bodies=False,
-            disable_reranker=disable_reranker, read_through=True, recency=recency_intent,
+            question,
+            limit=search_limit,
+            type_=type_,
+            mode="hybrid",
+            load_bodies=False,
+            disable_reranker=disable_reranker,
+            read_through=True,
+            recency=recency_intent,
         )
         repo_hits = []
         if include_repos and self.store.list_repo_sources(limit=1):
@@ -361,10 +373,7 @@ class _AskOpsMixin(_MemoryBase):
 
         # Load bodies only for the final hits that will be used.
         # MemoryRecord is frozen, so rebuild rather than mutate in place.
-        hits = [
-            h if h.body else replace(h, body=self._read_body(h.path))
-            for h in hits
-        ]
+        hits = [h if h.body else replace(h, body=self._read_body(h.path)) for h in hits]
 
         # Recency augmentation: the newest chunk of a long transcript is often
         # semantically bland ("cómo te fue hoy?") and never makes the candidate
@@ -375,20 +384,26 @@ class _AskOpsMixin(_MemoryBase):
         if recency_intent:
             seen_ids = {h.id for h in hits}
             parents = {
-                p for h in hits
-                if _is_whatsapp_hit(h) and (p := (h.extra or {}).get("parent_path"))
+                p for h in hits if _is_whatsapp_hit(h) and (p := (h.extra or {}).get("parent_path"))
             }
             for parent in parents:
                 for row in self.store.chunks_by_parent(parent, limit=3):
                     if row["id"] in seen_ids:
                         continue
                     seen_ids.add(row["id"])
-                    hits.append(MemoryRecord(
-                        id=row["id"], path=row["path"], title=row["title"],
-                        type=row["type"], tags=row["tags"], created=row["created"],
-                        updated=row["updated"], body=self._read_body(row["path"]),
-                        extra=row.get("extra") or {},
-                    ))
+                    hits.append(
+                        MemoryRecord(
+                            id=row["id"],
+                            path=row["path"],
+                            title=row["title"],
+                            type=row["type"],
+                            tags=row["tags"],
+                            created=row["created"],
+                            updated=row["updated"],
+                            body=self._read_body(row["path"]),
+                            extra=row.get("extra") or {},
+                        )
+                    )
 
         # Recency/conversation re-ranking: float WhatsApp transcripts above a
         # same-named contact/profile card, preferring a 1:1 chat over a same-
@@ -429,18 +444,19 @@ class _AskOpsMixin(_MemoryBase):
                 snippet = snippet.rstrip() + "…"
             tags = ", ".join(h.tags) or "—"
             snippet_lines.append(
-                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}\n"
-                f"{snippet}\n"
+                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}\n{snippet}\n"
             )
-            sources.append({
-                "source": "memory",
-                "id": h.id,
-                "id_short": id_short,
-                "title": h.title,
-                "type": h.type,
-                "score": h.score,
-                "snippet": snippet,
-            })
+            sources.append(
+                {
+                    "source": "memory",
+                    "id": h.id,
+                    "id_short": id_short,
+                    "title": h.title,
+                    "type": h.type,
+                    "score": h.score,
+                    "snippet": snippet,
+                }
+            )
             seen_paths.update(_vault_dedup_keys(h))
         seen_repo_keys: set[tuple[str, str]] = set()
         for h in repo_hits:
@@ -463,20 +479,22 @@ class _AskOpsMixin(_MemoryBase):
                 f"lines: {h.line_start}-{h.line_end}  |  match: {h.match_type}\n"
                 f"{snippet}\n"
             )
-            sources.append({
-                "source": "repo",
-                "id": h.id,
-                "id_short": label,
-                "title": h.path,
-                "type": "repo",
-                "score": h.score,
-                "snippet": snippet,
-                "repo_name": h.repo_name,
-                "path": h.path,
-                "line_start": h.line_start,
-                "line_end": h.line_end,
-                "locator": label,
-            })
+            sources.append(
+                {
+                    "source": "repo",
+                    "id": h.id,
+                    "id_short": label,
+                    "title": h.path,
+                    "type": "repo",
+                    "score": h.score,
+                    "snippet": snippet,
+                    "repo_name": h.repo_name,
+                    "path": h.path,
+                    "line_start": h.line_start,
+                    "line_end": h.line_end,
+                    "locator": label,
+                }
+            )
 
         user_msg = (
             f"Pregunta del user:\n{question}\n\n"
@@ -486,7 +504,9 @@ class _AskOpsMixin(_MemoryBase):
         return question, sources, user_msg, hits
 
     def _verbatim_short_circuit(
-        self, question: str, hits: list[MemoryRecord],
+        self,
+        question: str,
+        hits: list[MemoryRecord],
     ) -> str | None:
         """If the query is a literal phrase lookup (short, no `?`) and the
         text appears inside the top hit's body, return that body verbatim
@@ -517,8 +537,13 @@ class _AskOpsMixin(_MemoryBase):
         return f"{body}\n\n[{top.id[:8]}]"
 
     def ask(
-        self, question: str, *, k: int = 5, type_: str | None = None,
-        snippet_chars: int = 2000, include_repos: bool = True,
+        self,
+        question: str,
+        *,
+        k: int = 5,
+        type_: str | None = None,
+        snippet_chars: int = 2000,
+        include_repos: bool = True,
         intent_text: str | None = None,
     ) -> dict[str, Any]:
         """Synthesised Q&A over the memory archive (RAG).
@@ -542,12 +567,16 @@ class _AskOpsMixin(_MemoryBase):
         if not question or not question.strip():
             return {"question": question, "answer": "", "sources": []}
         norm_question, sources, user_msg, hits = self._build_ask_context(
-            question, k=k, type_=type_,
-            snippet_chars=snippet_chars, include_repos=include_repos,
+            question,
+            k=k,
+            type_=type_,
+            snippet_chars=snippet_chars,
+            include_repos=include_repos,
             intent_text=intent_text,
         )
         if not sources:
             from memo.flags import flag_str
+
             return {
                 "question": norm_question,
                 "answer": flag_str("MEMO_ASK_FALLBACK_MSG"),
@@ -589,8 +618,13 @@ class _AskOpsMixin(_MemoryBase):
         }
 
     def ask_stream(
-        self, question: str, *, k: int = 5, type_: str | None = None,
-        snippet_chars: int = 2000, include_repos: bool = True,
+        self,
+        question: str,
+        *,
+        k: int = 5,
+        type_: str | None = None,
+        snippet_chars: int = 2000,
+        include_repos: bool = True,
         intent_text: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Streaming variant of `ask()` — yields token-level events.
@@ -608,8 +642,11 @@ class _AskOpsMixin(_MemoryBase):
             yield {"event": "done", "answer": "", "sources": []}
             return
         _, sources, user_msg, hits = self._build_ask_context(
-            question, k=k, type_=type_,
-            snippet_chars=snippet_chars, include_repos=include_repos,
+            question,
+            k=k,
+            type_=type_,
+            snippet_chars=snippet_chars,
+            include_repos=include_repos,
             intent_text=intent_text,
         )
         if not sources:
@@ -657,4 +694,3 @@ class _AskOpsMixin(_MemoryBase):
             "answer": "".join(accum_parts).strip(),
             "sources": sources,
         }
-

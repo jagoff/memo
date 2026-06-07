@@ -56,6 +56,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 @dataclass
 class EncryptionMetadata:
     """Metadata for encrypted content."""
+
     version: str
     nonce: str
     auth_tag: str
@@ -65,6 +66,7 @@ class EncryptionMetadata:
 @dataclass
 class KeyDerivation:
     """Key derivation parameters."""
+
     salt: str
     iterations: int
     hash_algorithm: str

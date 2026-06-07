@@ -86,9 +86,9 @@ def _present_state_section(rows: Any) -> list[str]:
 def _conflicts_section(rows: Any) -> list[str]:
     items = _coerce_rows(rows)
     open_items = [
-        r for r in items
-        if str(r.get("lifecycle_state") or "detected").lower()
-        in ("detected", "acknowledged")
+        r
+        for r in items
+        if str(r.get("lifecycle_state") or "detected").lower() in ("detected", "acknowledged")
     ][:_MAX_ITEMS]
     if not open_items:
         return []
@@ -100,8 +100,7 @@ def _conflicts_section(rows: Any) -> list[str]:
         state = str(c.get("lifecycle_state") or "detected").lower()
         freeze = " ❄️" if c.get("freeze_write") else ""
         out.append(
-            f"{i}. `{cid[:12]}` · {state} · sev={severity}{freeze} — "
-            f"{_clip(summary, limit=140)}"
+            f"{i}. `{cid[:12]}` · {state} · sev={severity}{freeze} — {_clip(summary, limit=140)}"
         )
     out.append("")
     return out

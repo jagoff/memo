@@ -37,6 +37,7 @@ _TIMEOUT_S = 5.0
 
 def _is_enabled() -> bool:
     from memo.flags import flag_bool
+
     return flag_bool("MEMO_EMIT_RECEIPTS")
 
 
@@ -56,6 +57,7 @@ def _project_root() -> Path | None:
 
 def _binary() -> str | None:
     from memo.flags import flag_str
+
     raw = flag_str("MEMO_MEMFLOW_BIN")
     if raw:
         return raw
