@@ -268,3 +268,31 @@ def test_query_result_dataclass():
     assert result.query_name == "test"
     assert result.count == 0
     assert result.results == []
+
+
+def test_query_store_load_corrupt_logs_warning(tmp_cfg, caplog):
+    """A corrupt saved_queries.json is logged (not silently wiped)."""
+    import logging
+
+    (tmp_cfg.state_dir / "saved_queries.json").write_text(
+        "{ not valid json", encoding="utf-8"
+    )
+    with caplog.at_level(logging.WARNING, logger="memo.saved_queries"):
+        store = QueryStore(tmp_cfg.state_dir)
+    assert store._queries == {}
+    assert any("unreadable" in r.message for r in caplog.records)
+
+
+def test_query_store_save_failure_logs_error(tmp_cfg, caplog, monkeypatch):
+    """A failed persist is logged at ERROR instead of silently dropped."""
+    import logging
+
+    store = QueryStore(tmp_cfg.state_dir)
+
+    def _boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(type(store.queries_file), "write_text", _boom)
+    with caplog.at_level(logging.ERROR, logger="memo.saved_queries"):
+        store.save_query(name="q", query_text="MLX")
+    assert any("failed to persist" in r.message for r in caplog.records)

@@ -393,7 +393,8 @@ class MLXChat:
                 import mlx.core as mx
 
                 mx.clear_cache()
-            except Exception:
+            except (ImportError, AttributeError):
+                # mlx not importable on non-Apple-Silicon → nothing to clear.
                 pass
         return True
 
