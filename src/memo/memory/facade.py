@@ -31,8 +31,10 @@ from memo.import_export import ImportExportManager
 from memo.lifecycle import LifecycleManager
 from memo.llm import MLXChat
 from memo.memory.ask_ops import _AskOpsMixin
+from memo.memory.consolidate_ops import _ConsolidateOpsMixin
 from memo.memory.maintain_ops import _MaintainOpsMixin
 from memo.memory.record import _compose_for_embed
+from memo.memory.replay_ops import _ReplayOpsMixin
 from memo.memory.repo_ops import _RepoOpsMixin
 from memo.memory.rerank_ops import _RerankOpsMixin
 from memo.memory.search_ops import _SearchOpsMixin
@@ -55,6 +57,8 @@ class Memory(
     _RerankOpsMixin,
     _RepoOpsMixin,
     _MaintainOpsMixin,
+    _ConsolidateOpsMixin,
+    _ReplayOpsMixin,
 ):
     """High-level memory API. Construct once per process; methods are
     thread-safe (delegate to store/embedder which both serialise their
