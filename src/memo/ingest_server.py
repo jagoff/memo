@@ -42,6 +42,10 @@ from pathlib import Path
 from typing import Any
 
 from memo import embed_protocol
+from memo.daemon_common import cleanup, is_pid_alive, read_pid, serve_until_shutdown
+
+# Back-compat alias for the CLI daemon wrapper.
+_is_pid_alive = is_pid_alive
 
 # Cap a single request line; enqueue payloads are small JSON (index kwargs).
 _MAX_LINE_BYTES = 1 << 20
@@ -59,27 +63,12 @@ def _pid_file(state_dir: Path) -> Path:
     return state_dir / "ingest-daemon.pid"
 
 
-def _is_pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
-
-
 def _read_pid(state_dir: Path) -> int | None:
-    pf = _pid_file(state_dir)
-    if not pf.is_file():
-        return None
-    try:
-        return int(pf.read_text().strip())
-    except (ValueError, OSError):
-        return None
+    return read_pid(_pid_file(state_dir))
 
 
 def _cleanup(state_dir: Path) -> None:
-    _socket_path(state_dir).unlink(missing_ok=True)
-    _pid_file(state_dir).unlink(missing_ok=True)
+    cleanup(_socket_path(state_dir), _pid_file(state_dir))
 
 
 class _JobBook:
@@ -260,7 +249,7 @@ def run_server(state_dir: Path | None = None, *, runner: JobRunner | None = None
     pid_file = _pid_file(state_dir)
 
     existing = _read_pid(state_dir)
-    if existing is not None and _is_pid_alive(existing):
+    if existing is not None and is_pid_alive(existing):
         print("ingest-daemon: already running", file=sys.stderr)
         sys.exit(0)
 
@@ -284,17 +273,10 @@ def run_server(state_dir: Path | None = None, *, runner: JobRunner | None = None
     signal.signal(signal.SIGTERM, _sigterm)
     signal.signal(signal.SIGINT, _sigterm)
 
-    server_thread = threading.Thread(target=server.serve_forever, name="ingest-daemon-serve", daemon=True)
-    server_thread.start()
-    try:
-        while not shutdown_event.wait(timeout=1.0):
-            pass
-    finally:
-        with contextlib.suppress(Exception):
-            server.shutdown()
-        with contextlib.suppress(Exception):
-            server.server_close()
+    def _on_shutdown() -> None:
         book.shutdown()
-        server_thread.join(timeout=5.0)
-        sock_path.unlink(missing_ok=True)
-        pid_file.unlink(missing_ok=True)
+        _cleanup(state_dir)
+
+    serve_until_shutdown(
+        server, shutdown_event, name="ingest-daemon-serve", on_shutdown=_on_shutdown,
+    )
