@@ -26,6 +26,7 @@ all analysis is computed on-the-fly from the corpus + history.
 
 from __future__ import annotations
 
+import concurrent.futures
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -185,14 +186,20 @@ Body: {(r2.body or "")[:1000]}
 Analyze the temporal relationship between these two notes."""
 
         try:
-            out = chat.chat(
-                model=self.memory.cfg.helper_model,
-                messages=[
-                    {"role": "system", "content": _CONTRADICTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                options={"temperature": 0.0, "max_tokens": 256},
-            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+                _fut = _ex.submit(
+                    chat.chat,
+                    model=self.memory.cfg.helper_model,
+                    messages=[
+                        {"role": "system", "content": _CONTRADICTION_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    options={"temperature": 0.0, "max_tokens": 256},
+                )
+                try:
+                    out = _fut.result(timeout=30)
+                except concurrent.futures.TimeoutError:
+                    return None
             raw = (out.get("message") or {}).get("content") or ""
         except Exception:
             return None

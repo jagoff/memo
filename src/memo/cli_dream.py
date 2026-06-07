@@ -23,6 +23,14 @@ import time
 from typing import Any
 
 import click
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
@@ -47,6 +55,18 @@ def dream_cmd() -> None:
     """Autonomous nightly maintenance — synthesise, heal, decay."""
 
 
+def _make_progress() -> Progress:
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=24),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    )
+
+
 @dream_cmd.command(name="run")
 @click.option("--dry-run", is_flag=True, help="Preview actions; change nothing.")
 @click.option("--json", "as_json", is_flag=True, help="Emit receipt as JSON.")
@@ -66,9 +86,7 @@ def dream_run(
     cfg = Config.from_env()
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
     console.print(f"{tag}[bold cyan]memo dream[/bold cyan] — iniciando pipeline...")
-    console.print("  cargando memoria...", end=" ")
-    mem = _get_memory(cfg)
-    console.print("[green]✓[/green]")
+
     receipt: dict[str, Any] = {
         "dry_run": dry_run,
         "superseded": [],
@@ -82,121 +100,173 @@ def dream_run(
         "errors": [],
     }
 
-    # 0. Forget TTLs (always — explicit user intent) -------------------------
-    try:
-        for item in mem.lifecycle.enforce_forget_ttl(dry_run=dry_run):
-            pass
-    except Exception as exc:
-        receipt["errors"].append(f"forget_ttl: {type(exc).__name__}: {exc}")
+    total_steps = 6
+    skipped = (4 if skip_maintain else 0) + (1 if skip_entities or dry_run else 0) + (1 if skip_decay or dry_run else 0)
+    active_steps = total_steps - skipped
 
-    if not skip_maintain:
-        # 1. Contradictions --------------------------------------------------
-        console.print("  [1/6] contradicciones — escaneando corpus...", end=" ")
+    with _make_progress() as progress:
+        overall = progress.add_task(
+            "[bold cyan]pipeline[/bold cyan]", total=active_steps
+        )
+        step = progress.add_task("cargando memoria...", total=None)
+
+        mem = _get_memory(cfg)
+        progress.update(step, description="[green]memoria cargada ✓[/green]")
+
+        # 0. Forget TTLs (always — explicit user intent) ---------------------
+        progress.update(step, description="[dim]TTLs — enforce forget...[/dim]")
         try:
-            mem.contradict_scanner.scan_corpus(confidence_threshold=0.9, max_pairs=300)
-            contradicted_ids: list[str] = []
-            for pair in mem.contradict_store.list_open(min_confidence=0.9):
-                rel = (pair.relationship or "").lower()
-                if "evolu" in rel:
+            for _item in mem.lifecycle.enforce_forget_ttl(dry_run=dry_run):
+                pass
+        except Exception as exc:
+            receipt["errors"].append(f"forget_ttl: {type(exc).__name__}: {exc}")
+
+        if not skip_maintain:
+            # 1. Contradictions ----------------------------------------------
+            progress.update(step, description="[1/6] contradicciones — escaneando corpus...")
+            try:
+                def _contradict_progress(current: int, total: int, _title: str) -> None:
+                    progress.update(
+                        step,
+                        description=f"[1/6] contradicciones — {current}/{total}...",
+                        total=total,
+                        completed=current,
+                    )
+
+                mem.contradict_scanner.scan_corpus(
+                    confidence_threshold=0.9,
+                    max_pairs=50,
+                    progress=_contradict_progress,
+                )
+                contradicted_ids: list[str] = []
+                for pair in mem.contradict_store.list_open(min_confidence=0.9):
+                    rel = (pair.relationship or "").lower()
+                    if "evolu" in rel:
+                        if not dry_run:
+                            mem.contradict_store.resolve(pair.pair_id, "evolved",
+                                                         note="dream: evolution, both kept")
+                        receipt["evolved"].append(pair.pair_id)
+                        continue
+                    if "contrad" not in rel:
+                        continue
+                    older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
+                    contradicted_ids.extend([pair.memoria_id_a, pair.memoria_id_b])
                     if not dry_run:
-                        mem.contradict_store.resolve(pair.pair_id, "evolved",
-                                                     note="dream: evolution, both kept")
-                    receipt["evolved"].append(pair.pair_id)
-                    continue
-                if "contrad" not in rel:
-                    continue
-                older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
-                contradicted_ids.extend([pair.memoria_id_a, pair.memoria_id_b])
-                if not dry_run:
-                    ok = mem.lifecycle.archive_memoria(older)
-                    if ok:
-                        mem.contradict_store.resolve(
-                            pair.pair_id, "kept_newer",
-                            note=f"dream: archived older {older}")
-                receipt["superseded"].append({"pair_id": pair.pair_id, "older": older})
-            if contradicted_ids and not dry_run:
-                mem.store.penalize_confidence_batch(contradicted_ids)
-                receipt["confidence_penalized"] = len(set(contradicted_ids))
-            console.print(
-                f"[green]✓[/green] {len(receipt['superseded'])} superseded, "
-                f"{len(receipt['evolved'])} evolved")
-        except Exception as exc:
-            console.print(f"[yellow]warn[/yellow]")
-            receipt["errors"].append(f"contradict: {type(exc).__name__}: {exc}")
+                        ok = mem.lifecycle.archive_memoria(older)
+                        if ok:
+                            mem.contradict_store.resolve(
+                                pair.pair_id, "kept_newer",
+                                note=f"dream: archived older {older}")
+                    receipt["superseded"].append({"pair_id": pair.pair_id, "older": older})
+                if contradicted_ids and not dry_run:
+                    mem.store.penalize_confidence_batch(contradicted_ids)
+                    receipt["confidence_penalized"] = len(set(contradicted_ids))
+                progress.update(step, description=(
+                    f"[1/6] contradicciones [green]✓[/green]  "
+                    f"{len(receipt['superseded'])} superseded, {len(receipt['evolved'])} evolved"
+                ))
+            except Exception as exc:
+                progress.update(step, description="[1/6] contradicciones [yellow]warn[/yellow]")
+                receipt["errors"].append(f"contradict: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
 
-        # 2. Duplicates ------------------------------------------------------
-        console.print("  [2/6] duplicados — consolidando clusters...", end=" ")
-        try:
-            res = mem.consolidator.consolidate_all(
-                threshold=0.9, auto_apply=True, dry_run=dry_run,
-            )
-            for r in res.get("results", []):
-                receipt["merged"].append(
-                    {"merged_id": r.get("merged_id"),
-                     "archived_ids": r.get("archived_ids", [])})
-            console.print(f"[green]✓[/green] {len(receipt['merged'])} merged")
-        except Exception as exc:
-            console.print(f"[yellow]warn[/yellow]")
-            receipt["errors"].append(f"consolidate: {type(exc).__name__}: {exc}")
+            # 2. Duplicates --------------------------------------------------
+            progress.update(step, description="[2/6] duplicados — consolidando clusters...",
+                            total=None, completed=0)
+            try:
+                res = mem.consolidator.consolidate_all(
+                    threshold=0.9, auto_apply=True, dry_run=dry_run,
+                )
+                for r in res.get("results", []):
+                    receipt["merged"].append(
+                        {"merged_id": r.get("merged_id"),
+                         "archived_ids": r.get("archived_ids", [])})
+                progress.update(step, description=(
+                    f"[2/6] duplicados [green]✓[/green]  {len(receipt['merged'])} merged"
+                ))
+            except Exception as exc:
+                progress.update(step, description="[2/6] duplicados [yellow]warn[/yellow]")
+                receipt["errors"].append(f"consolidate: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
 
-        # 3. Staleness -------------------------------------------------------
-        console.print("  [3/6] memorias stale — detectando...", end=" ")
-        try:
-            stale = mem.temporal.detect_stale_memorias(days_threshold=365, min_access_count=0)
-            for item in stale:
-                mid = item.get("id")
-                if not mid:
-                    continue
-                if not dry_run:
-                    mem.lifecycle.archive_memoria(mid)
-                receipt["archived_stale"].append(
-                    {"id": mid, "days": item.get("days_since_update")})
-            console.print(f"[green]✓[/green] {len(receipt['archived_stale'])} archivadas")
-        except Exception as exc:
-            console.print(f"[yellow]warn[/yellow]")
-            receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
+            # 3. Staleness ---------------------------------------------------
+            progress.update(step, description="[3/6] memorias stale — detectando...",
+                            total=None, completed=0)
+            try:
+                stale = mem.temporal.detect_stale_memorias(days_threshold=365, min_access_count=0)
+                for item in stale:
+                    mid = item.get("id")
+                    if not mid:
+                        continue
+                    if not dry_run:
+                        mem.lifecycle.archive_memoria(mid)
+                    receipt["archived_stale"].append(
+                        {"id": mid, "days": item.get("days_since_update")})
+                progress.update(step, description=(
+                    f"[3/6] stale [green]✓[/green]  {len(receipt['archived_stale'])} archivadas"
+                ))
+            except Exception as exc:
+                progress.update(step, description="[3/6] stale [yellow]warn[/yellow]")
+                receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
 
-        # 4. Emergent synthesis (always on in Dream mode) --------------------
-        console.print("  [4/6] síntesis emergente — generando insights...", end=" ")
-        try:
-            results = mem.synthesize_cross_cluster(dry_run=dry_run, min_cluster_size=5)
-            for r in results:
-                receipt["synthesized"].append({
-                    "title": r.get("title"),
-                    "confidence": r.get("confidence"),
-                    "saved": r.get("saved", False),
-                })
-            saved_n = sum(1 for s in receipt["synthesized"] if s.get("saved"))
-            console.print(f"[green]✓[/green] {saved_n} guardadas, {len(receipt['synthesized'])} propuestas")
-        except Exception as exc:
-            console.print(f"[yellow]warn[/yellow]")
-            receipt["errors"].append(f"synthesize: {type(exc).__name__}: {exc}")
+            # 4. Emergent synthesis ------------------------------------------
+            progress.update(step, description="[4/6] síntesis emergente — generando insights...",
+                            total=None, completed=0)
+            try:
+                results = mem.synthesize_cross_cluster(dry_run=dry_run, min_cluster_size=5, max_clusters=8)
+                for r in results:
+                    receipt["synthesized"].append({
+                        "title": r.get("title"),
+                        "confidence": r.get("confidence"),
+                        "saved": r.get("saved", False),
+                    })
+                saved_n = sum(1 for s in receipt["synthesized"] if s.get("saved"))
+                progress.update(step, description=(
+                    f"[4/6] síntesis [green]✓[/green]  "
+                    f"{saved_n} guardadas, {len(receipt['synthesized'])} propuestas"
+                ))
+            except Exception as exc:
+                progress.update(step, description="[4/6] síntesis [yellow]warn[/yellow]")
+                receipt["errors"].append(f"synthesize: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
 
-    # 5. Entity backfill (memorias not yet in graph) -------------------------
-    if not skip_entities and not dry_run:
-        console.print("  [5/6] entidades — extrayendo de memorias sin indexar...", end=" ")
-        try:
-            counts = mem.extract_entities(all_=True, skip_already_indexed=True)
-            receipt["entities_extracted"] = counts.get("entities_extracted", 0)
-            console.print(f"[green]✓[/green] {receipt['entities_extracted']} extraídas")
-        except Exception as exc:
-            console.print(f"[yellow]warn[/yellow]")
-            receipt["errors"].append(f"entities: {type(exc).__name__}: {exc}")
-    elif skip_entities or dry_run:
-        console.print("  [5/6] entidades — [dim]skip[/dim]")
+        # 5. Entity backfill -------------------------------------------------
+        if not skip_entities and not dry_run:
+            progress.update(step, description="[5/6] entidades — extrayendo de memorias sin indexar...",
+                            total=None, completed=0)
+            try:
+                counts = mem.extract_entities(all_=True, skip_already_indexed=True, max_batch=50)
+                receipt["entities_extracted"] = counts.get("entities_extracted", 0)
+                progress.update(step, description=(
+                    f"[5/6] entidades [green]✓[/green]  {receipt['entities_extracted']} extraídas"
+                ))
+            except Exception as exc:
+                progress.update(step, description="[5/6] entidades [yellow]warn[/yellow]")
+                receipt["errors"].append(f"entities: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[5/6] entidades [dim]skip[/dim]")
 
-    # 6. ROI decay (idle memorias lose score over time) ----------------------
-    if not skip_decay and not dry_run:
-        console.print("  [6/6] ROI decay — ajustando scores...", end=" ")
-        try:
-            n = mem.store.decay_roi(factor=0.98, older_than_days=30)
-            receipt["roi_decayed"] = n
-            console.print(f"[green]✓[/green] {n} filas")
-        except Exception as exc:
-            console.print(f"[yellow]warn[/yellow]")
-            receipt["errors"].append(f"roi_decay: {type(exc).__name__}: {exc}")
-    elif skip_decay or dry_run:
-        console.print("  [6/6] ROI decay — [dim]skip[/dim]")
+        # 6. ROI decay -------------------------------------------------------
+        if not skip_decay and not dry_run:
+            progress.update(step, description="[6/6] ROI decay — ajustando scores...",
+                            total=None, completed=0)
+            try:
+                n = mem.store.decay_roi(factor=0.98, older_than_days=30)
+                receipt["roi_decayed"] = n
+                progress.update(step, description=(
+                    f"[6/6] ROI decay [green]✓[/green]  {n} filas"
+                ))
+            except Exception as exc:
+                progress.update(step, description="[6/6] ROI decay [yellow]warn[/yellow]")
+                receipt["errors"].append(f"roi_decay: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[6/6] ROI decay [dim]skip[/dim]")
+
+        # Mark step task complete so spinner stops
+        progress.update(step, total=1, completed=1)
 
     # Persist receipt + timestamp --------------------------------------------
     if not dry_run:
