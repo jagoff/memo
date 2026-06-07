@@ -36,11 +36,14 @@ Re-ranks search results based on:
 from __future__ import annotations
 
 import json
+import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -131,8 +134,6 @@ class ContextStore:
                 encoding="utf-8",
             )
         except Exception as exc:
-            import logging
-            _log = logging.getLogger(__name__)
             _log.debug("contextual preferences save failed: %s", exc)
 
     def add_prompt(self, prompt: str, recalled_memorias: list[str]) -> None:

@@ -135,6 +135,8 @@ class Memory(
         self._maybe_warn_legacy_paths()
         # Temporal analyzer for contradiction detection and timeline analysis
         self._temporal: TemporalAnalyzer | None = None
+        # Memoized ContextualRecall (its ContextStore reads disk on init).
+        self._contextual: ContextualRecall | None = None
 
     def _ensure_chat(self) -> MLXChat:
         """Construct the chat wrapper without loading model weights yet.
@@ -191,7 +193,9 @@ class Memory(
     @property
     def consolidator(self) -> AdvancedConsolidator:
         """Lazy accessor for AdvancedConsolidator."""
-        return AdvancedConsolidator(self, self._chat)
+        # _ensure_chat() (not raw self._chat, which is None until first use) so
+        # the consolidator never receives a None LLM.
+        return AdvancedConsolidator(self, self._ensure_chat())
 
     @property
     def contradict_store(self) -> ContradictionStore:
@@ -212,9 +216,14 @@ class Memory(
 
     @property
     def contextual(self) -> ContextualRecall:
-        """Lazy accessor for ContextualRecall."""
-        context_store = ContextStore(self.cfg.state_dir)
-        return ContextualRecall(self, context_store)
+        """Lazy, memoized accessor for ContextualRecall.
+
+        Memoized because ContextStore() reads JSON state from disk on init —
+        re-creating it on every access (e.g. twice per recall) is wasted I/O.
+        """
+        if self._contextual is None:
+            self._contextual = ContextualRecall(self, ContextStore(self.cfg.state_dir))
+        return self._contextual
 
     @property
     def crossref(self) -> CrossReferenceIndex:
@@ -247,7 +256,7 @@ class Memory(
     @property
     def proactive(self) -> ProactiveSuggester:
         """Lazy accessor for ProactiveSuggester."""
-        return ProactiveSuggester(self, self._chat)
+        return ProactiveSuggester(self, self._ensure_chat())
 
     @property
     def versioning(self) -> VersionManager:

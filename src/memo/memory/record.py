@@ -71,7 +71,9 @@ def _norm_dedup_path(path: str | None) -> str:
     """
     if not path:
         return ""
-    normalised = path.strip().lstrip("./").lstrip("/").lower()
+    # lstrip("./") already strips any leading '.' and '/' chars, so a second
+    # lstrip("/") would be a no-op.
+    normalised = path.strip().lstrip("./").lower()
     chunk_idx = normalised.find("#chunk-")
     if chunk_idx != -1:
         normalised = normalised[:chunk_idx]

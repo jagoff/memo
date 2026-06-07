@@ -42,6 +42,28 @@ try:
 except ImportError:
     _HAS_SHARED_CACHE = False
 
+
+class _SimpleLRU:
+    """Minimal get/put LRU used when consciousness_contracts is unavailable, so
+    MEMO_QUERY_CACHE_SIZE isn't silently ignored on a clean install."""
+
+    def __init__(self, maxsize: int) -> None:
+        from collections import OrderedDict
+        self._d: "OrderedDict[str, Any]" = OrderedDict()
+        self._cap = max(1, maxsize)
+
+    def get(self, key: str) -> Any:
+        if key not in self._d:
+            return None
+        self._d.move_to_end(key)
+        return self._d[key]
+
+    def put(self, key: str, value: Any) -> None:
+        self._d[key] = value
+        self._d.move_to_end(key)
+        while len(self._d) > self._cap:
+            self._d.popitem(last=False)
+
 # EmbedderBase (memo.embed_base) is the shared interface; MLXEmbedder implements
 # it by duck typing. No import here — embedder.py is a foundation module and
 # must not import other memo modules (architecture boundary test).
@@ -99,11 +121,15 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         self._last_use: float = 0.0
         # Query embedding cache (LRU, opt-in via MEMO_QUERY_CACHE_SIZE)
         # Uses shared cache from consciousness-contracts if available
+        # Raw env read (no memo.flags import — embedder is a foundation module
+        # that must not import other memo modules; see architecture-boundary test).
         cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
-        if cache_size > 0 and _HAS_SHARED_CACHE:
+        if cache_size <= 0:
+            self._query_cache = None
+        elif _HAS_SHARED_CACHE:
             self._query_cache = get_default_cache()
         else:
-            self._query_cache = None
+            self._query_cache = _SimpleLRU(cache_size)
 
     # -- internal -----------------------------------------------------------
 
