@@ -183,6 +183,37 @@ def _recency_key(rec: MemoryRecord) -> str:
     return (rec.updated or rec.created or "")[:10]
 
 
+# -- LLM-call helpers (shared by the maintain/consolidate/synthesize loops) ----
+
+def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, Any] | None:
+    """Run ``chat.chat(**kwargs)`` with a hard wall-clock timeout.
+
+    Returns the result dict, or ``None`` if it exceeds ``timeout``. The worker
+    thread is abandoned (``shutdown(wait=False)``) — an MLX forward pass can't be
+    interrupted mid-flight, so the timeout only bounds how long *we* wait. Errors
+    raised by ``chat.chat`` propagate (caller's try/except handles them).
+    """
+    import concurrent.futures
+
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    fut = ex.submit(chat.chat, **kwargs)
+    try:
+        return fut.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        return None
+    finally:
+        ex.shutdown(wait=False)
+
+
+def strip_llm_output(text: str) -> str:
+    """Strip Qwen3 ``<think>…</think>`` traces and a wrapping markdown code
+    fence from an LLM response, leaving the bare payload (often JSON)."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
+    return text
+
+
 # Domain error hierarchy lives in memo.errors; re-exported here so existing
 # `from memo.memory import AmbiguousIdError / WriteRefused / MemoError` imports
 # keep working. New code may import from either module.
