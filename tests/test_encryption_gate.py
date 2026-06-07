@@ -59,15 +59,20 @@ _CLI_CMDS = (
 
 
 @pytest.mark.parametrize("argv", _CLI_CMDS, ids=lambda a: a[1])
-def test_cli_disabled_by_default(argv, monkeypatch):
+def test_cli_disabled_by_default(argv, monkeypatch, tmp_path):
     """Flag unset → non-zero exit + disabled message, key manager untouched."""
     monkeypatch.delenv("MEMO_ENCRYPTION_ENABLED", raising=False)
-    result = CliRunner().invoke(cli, argv, env={"MEMO_NONINTERACTIVE": "1"})
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    result = CliRunner().invoke(cli, argv, env=env)
     assert result.exit_code != 0, result.output
     assert "MEMO_ENCRYPTION_ENABLED" in result.output
 
 
-def test_cli_enabled_proceeds(monkeypatch):
+def test_cli_enabled_proceeds(monkeypatch, tmp_path):
     """Flag on → guard passes through to the real command body."""
     monkeypatch.setenv("MEMO_ENCRYPTION_ENABLED", "1")
 
@@ -79,7 +84,12 @@ def test_cli_enabled_proceeds(monkeypatch):
         encryption = _FakeEnc()
 
     monkeypatch.setattr("memo.cli_encrypt._get_memory", lambda cfg: _FakeMem())
-    result = CliRunner().invoke(cli, ["encrypt", "status"], env={"MEMO_NONINTERACTIVE": "1"})
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    result = CliRunner().invoke(cli, ["encrypt", "status"], env=env)
     assert result.exit_code == 0, result.output
     assert "locked" in result.output.lower()
 
