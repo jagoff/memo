@@ -971,8 +971,10 @@ class _MaintainOpsMixin(_MemoryBase):
                         h = str(_ep_extra.get("synthesis_sources_hash") or "").strip()
                         if h:
                             existing_hashes.add(h)
-                    except Exception:
-                        pass
+                    except (OSError, ValueError) as exc:
+                        # A bad existing synthesis file silently missed its hash →
+                        # duplicate synthesis on the next run. Log the breadcrumb.
+                        _log.debug("synthesis: could not read hash from %s: %s", p, exc)
 
         # 4) LLM synthesis pass.
         chat = self._ensure_chat()

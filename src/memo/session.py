@@ -58,11 +58,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 _LRU_CAP_DEFAULT = 50
 _LAST_USER_MSG_CHARS = 240
@@ -153,7 +156,7 @@ def read_last_user_msg(transcript_path: Path) -> str | None:
         return None
     try:
         lines = transcript_path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except OSError:
         return None
     for line in reversed(lines):
         line = line.strip()
@@ -183,7 +186,7 @@ def read_last_assistant_tail(transcript_path: Path) -> str | None:
         return None
     try:
         lines = transcript_path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except OSError:
         return None
     for line in reversed(lines):
         line = line.strip()
@@ -351,8 +354,8 @@ def stamp_recall_turn(state_dir: Path, session_id: str, turn: int) -> None:
         existing["session_id"] = session_id
         existing["last_recall_turn"] = int(turn)
         _write(state_dir, session_id, existing)
-    except Exception:
-        pass
+    except (OSError, ValueError, TypeError) as exc:
+        _log.debug("session: failed to checkpoint recall turn: %s", exc)
 
 
 def list_sessions(
@@ -564,7 +567,7 @@ def refresh_summary(
 
     try:
         lines = transcript_path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except OSError:
         return False
 
     # Collect last ~10 user+assistant exchanges for the LLM prompt.
@@ -608,7 +611,8 @@ def refresh_summary(
         )
         summary = (result.get("message") or {}).get("content") or ""
         summary = summary.strip()
-    except Exception:
+    except Exception as exc:
+        _log.debug("session: reflect summary LLM call failed: %s", exc)
         return False
 
     if not summary:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from typing import Any
 
 from sqlite_vec import serialize_float32
+
+_log = logging.getLogger(__name__)
 
 from ._base import _StoreBase
 from .rows import (
@@ -581,7 +584,8 @@ class _RepoStoreMixin(_StoreBase):
         params.append(candidate_k)
         try:
             rows = self._conn.execute(sql, params).fetchall()
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            _log.warning("repo bm25 (chunk) query failed: %s", exc)
             return []
         return [_repo_bm25_row_to_dict(r, "chunk") for r in rows[:limit]]
 
@@ -628,7 +632,8 @@ class _RepoStoreMixin(_StoreBase):
         params.append(candidate_k)
         try:
             rows = self._conn.execute(sql, params).fetchall()
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            _log.warning("repo bm25 (line) query failed: %s", exc)
             return []
         return [_repo_bm25_row_to_dict(r, "line") for r in rows[:limit]]
 
