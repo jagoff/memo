@@ -31,7 +31,7 @@ import subprocess
 import threading
 import time
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -978,7 +978,7 @@ def _panel_activity(memory: Any, state_dir: Path) -> Panel:
     now = datetime.now(UTC)
     days = 14
     for i in range(days):
-        d = (now - _td(i)).date().isoformat()
+        d = (now - timedelta(days=i)).date().isoformat()
         buckets[d] = 0
     for ev in events:
         ts = ev.get("ts") or ""
@@ -1019,9 +1019,6 @@ def _panel_activity(memory: Any, state_dir: Path) -> Panel:
     return Panel(body, title="[bold]activity[/bold]", border_style="bright_black")
 
 
-def _td(days: int):
-    from datetime import timedelta
-    return timedelta(days=days)
 
 
 # -------------------- main loop --------------------

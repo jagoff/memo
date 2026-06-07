@@ -860,7 +860,7 @@ def _reflect_session(
 
     # LLM call — use the configured llm_model (7B default).
     try:
-        from memo.memory.record import _REFLECT_SYSTEM_PROMPT
+        from memo.memory.record import _REFLECT_SYSTEM_PROMPT, strip_llm_output
         result = mem._chat.chat(
             cfg.llm_model,
             [
@@ -875,10 +875,8 @@ def _reflect_session(
             print(f"# memo reflect: LLM failed: {exc}", file=sys.stderr)
         return {"status": "llm_error", "session_id": session_id, "error": str(exc)}
 
-    # Parse JSON — strip markdown fences if present.
-    raw_json = raw_json.strip()
-    if raw_json.startswith("```"):
-        raw_json = re.sub(r"^```[^\n]*\n?", "", raw_json).rstrip("`").strip()
+    # Strip <think> traces + markdown fences (shared helper).
+    raw_json = strip_llm_output(raw_json)
     try:
         parsed = json.loads(raw_json)
     except json.JSONDecodeError:
@@ -1228,56 +1226,4 @@ def resume(
         "[dim]Detalle: `memo resume <id|prefix>`  ·  "
         "Retomar: `claude --resume <session_id>` (copy desde la tabla).[/dim]",
     )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# -- graph navigation commands ------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# -- duplicate detection (exact-ish near-dups, no LLM gate) -------------------
 
