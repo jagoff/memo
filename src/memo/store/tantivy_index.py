@@ -83,9 +83,11 @@ class TantivyFTSIndex:
             self._writer.delete_documents("id", id_)
 
     def commit(self) -> None:
+        # reload() inside the lock so a concurrent search can't read a stale
+        # snapshot in the window between commit() and reload().
         with self._lock:
             self._writer.commit()
-        self._index.reload()
+            self._index.reload()
 
     def rebuild(self, records: list[dict[str, Any]]) -> None:
         """Clear the index and bulk-index all records in one commit."""
@@ -101,7 +103,7 @@ class TantivyFTSIndex:
                 doc.add_text("body", _fold_diacritics(r.get("body") or ""))
                 self._writer.add_document(doc)
             self._writer.commit()
-        self._index.reload()
+            self._index.reload()
 
     # -- search ----------------------------------------------------------------
 

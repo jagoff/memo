@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import re
+import threading
 
 from ._base import _StoreBase
+
+# Serialises first-touch schema creation across threads. VecStore uses
+# thread-local connections, so two FastMCP worker threads can hit a fresh DB
+# at once and race the (non-transactional) vec0 CREATE statements.
+_SCHEMA_INIT_LOCK = threading.Lock()
 
 _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -187,7 +193,12 @@ class _SchemaMixin(_StoreBase):
     def _init_schema(self) -> None:
         # Most CLI commands are reads. If the schema already exists, avoid
         # no-op DDL because it still needs a write/schema lock and can fail
-        # while long repo indexing is writing batches.
+        # while long repo indexing is writing batches. The lock makes the
+        # check-then-create atomic across threads (thread-local connections).
+        with _SCHEMA_INIT_LOCK:
+            self._init_schema_locked()
+
+    def _init_schema_locked(self) -> None:
         if self._schema_ready():
             self._validate_vec_dims()
             return

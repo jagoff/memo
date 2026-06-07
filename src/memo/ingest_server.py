@@ -177,6 +177,9 @@ class _JobBook:
 
 class _IngestHandler(socketserver.StreamRequestHandler):
     server: _IngestServer  # type: ignore[assignment]
+    # Backstop so a stalled client can't park a handler thread forever
+    # (socket.timeout raises in readline → caught by the OSError handler below).
+    timeout = 5.0
 
     def handle(self) -> None:
         try:

@@ -76,6 +76,10 @@ def _cleanup(state_dir: Path) -> None:
 
 class _MaintHandler(socketserver.StreamRequestHandler):
     server: _MaintServer  # type: ignore[assignment]
+    # Backstop on the per-operation socket reads/writes so a stalled client
+    # can't park a handler thread forever. Idle time while the runner works
+    # doesn't count (settimeout bounds each recv/send, not wall-clock).
+    timeout = 5.0
 
     def handle(self) -> None:
         try:
@@ -100,12 +104,18 @@ class _MaintHandler(socketserver.StreamRequestHandler):
                     self._write({"error": "params must be a JSON object"})
                     return
                 # Serialize: a single synthesis LLM, one heavy job at a time.
-                with self.server.lock:
-                    try:
-                        result = self.server.runner(op, params)
-                    except Exception as exc:
-                        self._write({"error": f"{type(exc).__name__}: {exc}"})
-                        return
+                # Don't block a second client for the full (minutes-long) run —
+                # bail fast with "busy" if the lock is already held.
+                if not self.server.lock.acquire(timeout=1.0):
+                    self._write({"error": "busy", "kind": "maint"})
+                    return
+                try:
+                    result = self.server.runner(op, params)
+                except Exception as exc:
+                    self._write({"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                finally:
+                    self.server.lock.release()
                 self._write({"ok": True, **result})
                 return
             self._write({"error": f"unknown op: {op!r}"})

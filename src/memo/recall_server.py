@@ -516,6 +516,10 @@ class _RecallHandler(socketserver.StreamRequestHandler):
     """Handle one connection: read a JSON line, respond with a JSON line."""
 
     server: _RecallServer  # type: ignore[assignment]
+    # Backstop: a client that connects but never sends a newline would
+    # otherwise park this handler thread forever. StreamRequestHandler applies
+    # this via socket.settimeout() in setup(); readline then raises on stall.
+    timeout = 5.0
 
     def _write_response(self, result: str, *, debug: bool) -> bool:
         """Write the response line. Return True iff it reached the client.
@@ -610,7 +614,8 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     self._write_response("{}", debug=debug)
                     return
                 req = json.loads(line.decode("utf-8", errors="replace").strip())
-            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError, OSError) as exc:
+                # OSError covers socket.timeout (stalled client) — return empty.
                 error = True
                 print(f"# recall-daemon: parse error: {type(exc).__name__}: {exc}", file=sys.stderr)
                 self._write_response("{}", debug=debug)
@@ -777,16 +782,19 @@ def run_server(state_dir: Path | None = None) -> None:
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
     mem = Memory(cfg)
 
-    # Write PID file
-    pid_file.write_text(str(os.getpid()))
-
+    # Bind the socket FIRST — it is the atomic mutex. Only after a successful
+    # bind do we claim the PID file. A TOCTOU loser (another instance that also
+    # passed the alive-check during the MLX warm window) exits here without ever
+    # writing — so it can't clobber the winner's PID file (the previous order
+    # wrote PID before bind, and the loser's unlink deleted the winner's PID).
     try:
         server = _RecallServer(str(sock_path), cfg, mem)
     except OSError as exc:
-        # Another instance won the TOCTOU race and already bound the socket.
         print(f"recall-daemon: bind failed ({exc}), exiting", file=sys.stderr)
-        pid_file.unlink(missing_ok=True)
         sys.exit(0)
+
+    # Write PID file (bind succeeded — we own the socket).
+    pid_file.write_text(str(os.getpid()))
 
     # serve_forever() runs on a worker thread so the signal handler can request
     # an orderly shutdown from the main thread. Calling server.shutdown() from

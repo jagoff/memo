@@ -35,6 +35,7 @@ class _SearchOpsMixin(_MemoryBase):
         mode: str = "hybrid", load_bodies: bool = True, disable_reranker: bool = False,
         recency: bool = False, exclude_types: set[str] | None = None,
         include_forgotten: bool = False, read_through: bool = False,
+        entity_boost: bool | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
 
@@ -155,7 +156,13 @@ class _SearchOpsMixin(_MemoryBase):
         # technologies, projects), boost chunks whose extra["entities"] overlaps.
         # Gated by MEMO_ENTITY_RETRIEVAL_ENABLED. Best-effort: any failure is
         # silent so entity extraction never breaks the search path.
-        if out and os.environ.get("MEMO_ENTITY_RETRIEVAL_ENABLED") == "1":
+        # Per-call `entity_boost` overrides the env flag (thread-safe — callers
+        # like the MCP entity-search tool no longer mutate global os.environ).
+        _entity_on = (
+            entity_boost if entity_boost is not None
+            else os.environ.get("MEMO_ENTITY_RETRIEVAL_ENABLED") == "1"
+        )
+        if out and _entity_on:
             out = self._apply_entity_boost(query, out)
 
         # Contradiction penalty: penalise the older side of open contradiction
