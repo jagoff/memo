@@ -267,6 +267,46 @@ def consult_breakdown(state_dir: Path, *, limit: int = 500) -> dict[str, Any]:
     return {"sampled": len(rows), "consumers": consumers, "silent": silent}
 
 
+def _write_jsonl_entry(
+    path: Path, entry: dict[str, Any], *, cap: int, size_limit: int,
+) -> None:
+    """Append one JSON line to a ring-buffer log, trimming to the most recent
+    `cap` lines once the file exceeds `size_limit` bytes. Best-effort — these
+    logs are telemetry and must never fail the caller; OSErrors log at debug."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if path.stat().st_size > size_limit:
+            lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as exc:
+        _log.debug("dashboard: jsonl write/trim failed for %s: %s", path, exc)
+
+
+def _read_jsonl(
+    path: Path, *, limit: int, newest_first: bool = False,
+) -> list[dict[str, Any]]:
+    """Read up to the last `limit` JSON lines from a ring-buffer log, skipping
+    malformed lines. `newest_first` reverses so the most recent comes first."""
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        _log.debug("dashboard: log read failed for %s: %s", path, exc)
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines[-limit:]:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    if newest_first:
+        out.reverse()
+    return out
+
+
 def append_recall_log(
     state_dir: Path,
     *,
@@ -294,68 +334,42 @@ def append_recall_log(
     pre-correlation rows stay valid (counted in access stats, excluded from
     utility denominators).
     """
-    try:
-        state_dir.mkdir(parents=True, exist_ok=True)
-        entry: dict[str, Any] = {
-            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
-            "prompt": prompt[:200],
-            "hits": [
-                {
-                    "id": h.get("id", "")[:8],
-                    "score": h.get("score"),
-                    "title": h.get("title", "")[:80],
-                    **({"snippet": h["snippet"][:240]} if h.get("snippet") else {}),
-                }
-                for h in hits[:5]
-            ],
-        }
-        if mode is not None:
-            entry["mode"] = mode
-        if latency_ms is not None:
-            entry["latency_ms"] = latency_ms
-        if via is not None:
-            entry["via"] = via
-        if source is not None:
-            entry["source"] = source
-        if reason is not None:
-            entry["reason"] = reason[:200]
-        if error is not None:
-            entry["error"] = error[:200]
-        if session_id is not None:
-            entry["session_id"] = session_id
-        if turn is not None:
-            entry["turn"] = turn
-        if client is not None:
-            entry["client"] = client
-        path = recall_log_path(state_dir)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        # Rotate when the file gets too big (cheap line count). Skip
-        # rotation 99% of the time — only fire when over cap*1.5.
-        if path.stat().st_size > 1024 * 200:  # ~200 KB
-            lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except OSError as exc:
-        _log.debug("dashboard: log trim failed for %s: %s", path, exc)
+    entry: dict[str, Any] = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+        "prompt": prompt[:200],
+        "hits": [
+            {
+                "id": h.get("id", "")[:8],
+                "score": h.get("score"),
+                "title": h.get("title", "")[:80],
+                **({"snippet": h["snippet"][:240]} if h.get("snippet") else {}),
+            }
+            for h in hits[:5]
+        ],
+    }
+    if mode is not None:
+        entry["mode"] = mode
+    if latency_ms is not None:
+        entry["latency_ms"] = latency_ms
+    if via is not None:
+        entry["via"] = via
+    if source is not None:
+        entry["source"] = source
+    if reason is not None:
+        entry["reason"] = reason[:200]
+    if error is not None:
+        entry["error"] = error[:200]
+    if session_id is not None:
+        entry["session_id"] = session_id
+    if turn is not None:
+        entry["turn"] = turn
+    if client is not None:
+        entry["client"] = client
+    _write_jsonl_entry(recall_log_path(state_dir), entry, cap=cap, size_limit=1024 * 200)
 
 
 def read_recall_log(state_dir: Path, *, limit: int = 10) -> list[dict[str, Any]]:
-    path = recall_log_path(state_dir)
-    if not path.is_file():
-        return []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        _log.debug("dashboard: log read failed for %s: %s", path, exc)
-        return []
-    out: list[dict[str, Any]] = []
-    for line in lines[-limit:]:
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    out.reverse()  # newest first
-    return out
+    return _read_jsonl(recall_log_path(state_dir), limit=limit, newest_first=True)
 
 
 # Confidence floor above which a hit counts as a STRONG match (high-cosine,
@@ -430,38 +444,15 @@ def usage_log_path(state_dir: Path) -> Path:
 
 def append_usage_log(state_dir: Path, memoria_id: str, *, cap: int = 500) -> None:
     """Record that a memoria was fetched/clicked. Best-effort, never raises."""
-    try:
-        state_dir.mkdir(parents=True, exist_ok=True)
-        entry = {
-            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
-            "id": (memoria_id or "")[:8],
-        }
-        path = usage_log_path(state_dir)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        if path.stat().st_size > 1024 * 100:  # ~100 KB
-            lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except OSError as exc:
-        _log.debug("dashboard: log trim failed for %s: %s", path, exc)
+    entry = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+        "id": (memoria_id or "")[:8],
+    }
+    _write_jsonl_entry(usage_log_path(state_dir), entry, cap=cap, size_limit=1024 * 100)
 
 
 def read_usage_log(state_dir: Path, *, limit: int = 2000) -> list[dict[str, Any]]:
-    path = usage_log_path(state_dir)
-    if not path.is_file():
-        return []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        _log.debug("dashboard: log read failed for %s: %s", path, exc)
-        return []
-    out: list[dict[str, Any]] = []
-    for line in lines[-limit:]:
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
+    return _read_jsonl(usage_log_path(state_dir), limit=limit)
 
 
 def referenced_rate(state_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -535,52 +526,29 @@ def append_grounding_log(
 ) -> None:
     """Append one grounding event (recall→use) to the JSONL ring buffer.
     Best-effort, never raises — Stop-hook telemetry must not fail the turn."""
-    try:
-        state_dir.mkdir(parents=True, exist_ok=True)
-        entry: dict[str, Any] = {
-            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
-            "session_id": session_id,
-            "turn": int(turn),
-            "recall_id": (recall_id or "")[:8],
-            "used_score": round(float(used_score), 4),
-            "method": method,
-        }
-        if client is not None:
-            entry["client"] = client
-        if answer_len is not None:
-            entry["answer_len"] = int(answer_len)
-        if recall_top_score is not None:
-            entry["recall_top_score"] = round(float(recall_top_score), 4)
-        if downstream_action is not None:
-            entry["downstream_action"] = downstream_action
-        if action_evidence is not None:
-            entry["action_evidence"] = action_evidence[:200]
-        path = grounding_log_path(state_dir)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        if path.stat().st_size > 1024 * 200:  # ~200 KB
-            lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except OSError as exc:
-        _log.debug("dashboard: log trim failed for %s: %s", path, exc)
+    entry: dict[str, Any] = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+        "session_id": session_id,
+        "turn": int(turn),
+        "recall_id": (recall_id or "")[:8],
+        "used_score": round(float(used_score), 4),
+        "method": method,
+    }
+    if client is not None:
+        entry["client"] = client
+    if answer_len is not None:
+        entry["answer_len"] = int(answer_len)
+    if recall_top_score is not None:
+        entry["recall_top_score"] = round(float(recall_top_score), 4)
+    if downstream_action is not None:
+        entry["downstream_action"] = downstream_action
+    if action_evidence is not None:
+        entry["action_evidence"] = action_evidence[:200]
+    _write_jsonl_entry(grounding_log_path(state_dir), entry, cap=cap, size_limit=1024 * 200)
 
 
 def read_grounding_log(state_dir: Path, *, limit: int = 4000) -> list[dict[str, Any]]:
-    path = grounding_log_path(state_dir)
-    if not path.is_file():
-        return []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        _log.debug("dashboard: log read failed for %s: %s", path, exc)
-        return []
-    out: list[dict[str, Any]] = []
-    for line in lines[-limit:]:
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
+    return _read_jsonl(grounding_log_path(state_dir), limit=limit)
 
 
 def grounded_rate(state_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:

@@ -675,6 +675,88 @@ class _MaintainOpsMixin(_MemoryBase):
             skip_llm=skip_llm,
         )
 
+    def _pull_embeddings(
+        self, *, type_filter: str | None = None,
+        exclude_types: builtins.set[str] | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Pull (id, embedding, title, type, tags, path, updated) for the whole
+        corpus, newest-first. `type_filter` restricts to one type; `exclude_types`
+        drops the given types. Direct SQL — cheaper than the per-row store API."""
+        import struct
+
+        where = ""
+        params: tuple[Any, ...] = ()
+        if type_filter:
+            where = "WHERE meta.type = ? "
+            params = (type_filter,)
+        elif exclude_types:
+            placeholders = ",".join("?" for _ in exclude_types)
+            where = f"WHERE meta.type NOT IN ({placeholders}) "
+            params = tuple(sorted(exclude_types))
+        rows = self.store._conn.execute(
+            "SELECT vec.id AS id, vec.embedding AS emb, "
+            "       meta.title, meta.type, meta.tags, meta.path, meta.updated "
+            "FROM vec JOIN meta ON meta.id = vec.id "
+            + where
+            + "ORDER BY meta.updated DESC",
+            params,
+        ).fetchall()
+        items: builtins.list[dict[str, Any]] = []
+        for r in rows:
+            blob = r["emb"]
+            items.append({
+                "id": r["id"],
+                "title": r["title"],
+                "type": r["type"],
+                "tags": json.loads(r["tags"]) if r["tags"] else [],
+                "path": r["path"],
+                "updated": r["updated"],
+                "emb": list(struct.unpack(f"<{len(blob)//4}f", blob)),
+            })
+        return items
+
+    @staticmethod
+    def _greedy_cluster(
+        items: builtins.list[dict[str, Any]], threshold: float,
+    ) -> builtins.list[builtins.list[int]]:
+        """Greedy single-link clustering over L2-normalised embeddings (dot ==
+        cosine). Uses numpy for the O(N²) pass when available (1024-dim × 2000
+        in pure Python ≈ 400s; numpy < 1s), else a pure-Python fallback."""
+        try:
+            import numpy as _np
+            _mat = _np.array([it["emb"] for it in items], dtype=_np.float32)
+            _norms = _np.linalg.norm(_mat, axis=1, keepdims=True)
+            _norms[_norms == 0] = 1.0
+            _mat = _mat / _norms
+            _reps: builtins.list[int] = []
+            _cluster_map: builtins.list[int] = [-1] * len(items)
+            for i in range(len(items)):
+                if _reps:
+                    sims = _mat[_reps] @ _mat[i]
+                    best = int(_np.argmax(sims))
+                    if float(sims[best]) >= threshold:
+                        _cluster_map[i] = _reps[best]
+                        continue
+                _reps.append(i)
+                _cluster_map[i] = i
+            _cluster_dict: dict[int, builtins.list[int]] = {}
+            for i, rep in enumerate(_cluster_map):
+                _cluster_dict.setdefault(rep, []).append(i)
+            return list(_cluster_dict.values())
+        except ImportError:
+            clusters: builtins.list[builtins.list[int]] = []
+            for i in range(len(items)):
+                joined = False
+                for cluster in clusters:
+                    rep_item = items[cluster[0]]
+                    if sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=True)) >= threshold:
+                        cluster.append(i)
+                        joined = True
+                        break
+                if not joined:
+                    clusters.append([i])
+            return clusters
+
     def _consolidate_in_process(
         self, *, threshold: float = 0.85, max_clusters: int = 50,
         type_: str | None = None, skip_llm: bool = False,
@@ -700,75 +782,12 @@ class _MaintainOpsMixin(_MemoryBase):
         near-identical text. The default 0.85 is conservative for the
         Qwen3-Embedding-0.6B vector space.
         """
-        # 1) Pull all (id, embedding, title, type, tags) tuples.
-        #    Direct SQL is cheaper than going through the public store
-        #    API per-row; we only need 1024 floats x N to fit in RAM,
-        #    fine for thousands of entries.
-        import struct
-
-        store_conn = self.store._conn
-        rows = store_conn.execute(
-            "SELECT vec.id AS id, vec.embedding AS emb, "
-            "       meta.title, meta.type, meta.tags, meta.path, meta.updated "
-            "FROM vec JOIN meta ON meta.id = vec.id "
-            + ("WHERE meta.type = ? " if type_ else "")
-            + "ORDER BY meta.updated DESC",
-            (type_,) if type_ else (),
-        ).fetchall()
-
-        items: list[dict[str, Any]] = []
-        for r in rows:
-            blob = r["emb"]
-            v = list(struct.unpack(f"<{len(blob)//4}f", blob))
-            items.append({
-                "id": r["id"],
-                "title": r["title"],
-                "type": r["type"],
-                "tags": json.loads(r["tags"]) if r["tags"] else [],
-                "path": r["path"],
-                "updated": r["updated"],
-                "emb": v,
-            })
-
+        # 1) Pull all embeddings (already stored; no re-embed) and
+        # 2) greedy single-link cluster by cosine ≥ threshold.
+        items = self._pull_embeddings(type_filter=type_)
         if not items:
             return []
-
-        # 2) Greedy single-link clustering. Use numpy for O(N²) dot products
-        #    when available (1024-dim × 2000 items in Python = ~400s; numpy = <1s).
-        try:
-            import numpy as _np
-            _mat = _np.array([it["emb"] for it in items], dtype=_np.float32)  # (N, D)
-            # L2-normalise rows so dot == cosine.
-            _norms = _np.linalg.norm(_mat, axis=1, keepdims=True)
-            _norms[_norms == 0] = 1.0
-            _mat = _mat / _norms
-            _reps: list[int] = []  # index of each cluster's representative
-            _cluster_map: list[int] = [-1] * len(items)
-            for i in range(len(items)):
-                if _reps:
-                    sims = _mat[_reps] @ _mat[i]  # (K,)
-                    best = int(_np.argmax(sims))
-                    if float(sims[best]) >= threshold:
-                        _cluster_map[i] = _reps[best]
-                        continue
-                _reps.append(i)
-                _cluster_map[i] = i
-            _cluster_dict: dict[int, list[int]] = {}
-            for i, rep in enumerate(_cluster_map):
-                _cluster_dict.setdefault(rep, []).append(i)
-            clusters = list(_cluster_dict.values())
-        except ImportError:
-            clusters = []
-            for i in range(len(items)):
-                joined = False
-                for cluster in clusters:
-                    rep_item = items[cluster[0]]
-                    if sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=True)) >= threshold:
-                        cluster.append(i)
-                        joined = True
-                        break
-                if not joined:
-                    clusters.append([i])
+        clusters = self._greedy_cluster(items, threshold)
 
         # 3) Drop singletons; rank by size (then by most-recent updated).
         candidate_clusters = [c for c in clusters if len(c) >= 2]
@@ -887,7 +906,6 @@ class _MaintainOpsMixin(_MemoryBase):
         With ``dry_run=True``, returns proposals without saving anything.
         """
         import hashlib
-        import struct
 
         from memo.flags import flag_float, flag_int, flag_str
 
@@ -906,46 +924,13 @@ class _MaintainOpsMixin(_MemoryBase):
 
         store_conn = self.store._conn
 
-        # 1) Pull all non-synthesis, non-reference embeddings.
-        rows = store_conn.execute(
-            "SELECT vec.id AS id, vec.embedding AS emb, "
-            "       meta.title, meta.type, meta.tags, meta.path, meta.updated "
-            "FROM vec JOIN meta ON meta.id = vec.id "
-            "WHERE meta.type NOT IN ('reference', 'synthesis') "
-            "ORDER BY meta.updated DESC",
-        ).fetchall()
-
-        items: list[dict[str, Any]] = []
-        for r in rows:
-            blob = r["emb"]
-            v = list(struct.unpack(f"<{len(blob)//4}f", blob))
-            items.append({
-                "id": r["id"],
-                "title": r["title"],
-                "type": r["type"],
-                "path": r["path"],
-                "updated": r["updated"],
-                "emb": v,
-            })
-
+        # 1) Pull all non-synthesis, non-reference embeddings and
+        # 2) greedy single-link cluster (shared with consolidation; numpy fast
+        #    path applies here too now).
+        items = self._pull_embeddings(exclude_types={"reference", "synthesis"})
         if not items:
             return []
-
-        # 2) Greedy single-link clustering (same algorithm as consolidation).
-        def _dot(a: list[float], b: list[float]) -> float:
-            return sum(x * y for x, y in zip(a, b, strict=True))
-
-        clusters: list[list[int]] = []
-        for i in range(len(items)):
-            joined = False
-            for cluster in clusters:
-                rep = items[cluster[0]]
-                if _dot(items[i]["emb"], rep["emb"]) >= threshold:
-                    cluster.append(i)
-                    joined = True
-                    break
-            if not joined:
-                clusters.append([i])
+        clusters = self._greedy_cluster(items, threshold)
 
         candidate_clusters = [c for c in clusters if len(c) >= min_cluster_size]
         candidate_clusters.sort(key=lambda c: (-len(c), items[c[0]]["updated"]))
