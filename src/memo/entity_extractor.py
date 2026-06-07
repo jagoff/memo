@@ -14,9 +14,7 @@ Feature flag: MEMO_ENTITY_RETRIEVAL_ENABLED (default 0).
 
 from __future__ import annotations
 
-import os
 import re
-from typing import Any
 
 __all__ = [
     "entity_retrieval_enabled",
@@ -58,11 +56,13 @@ _MIN_LEN = 3
 
 
 def entity_retrieval_enabled() -> bool:
-    return os.environ.get("MEMO_ENTITY_RETRIEVAL_ENABLED", "0").strip() in {"1", "true", "on"}
+    from memo.flags import flag_bool
+    return flag_bool("MEMO_ENTITY_RETRIEVAL_ENABLED")
 
 
 def _gliner_enabled() -> bool:
-    return os.environ.get("MEMO_ENTITY_GLINER", "0").strip() in {"1", "true", "on"}
+    from memo.flags import flag_bool
+    return flag_bool("MEMO_ENTITY_GLINER")
 
 
 def _extract_regex(text: str) -> list[str]:
@@ -96,9 +96,8 @@ def _extract_gliner(text: str, labels: list[str]) -> list[str]:
     """GLiNER-based extraction (requires `pip install gliner`)."""
     try:
         import gliner  # type: ignore[import]
-        model_name = os.environ.get(
-            "MEMO_ENTITY_GLINER_MODEL", "urchade/gliner_medium-v2.1"
-        )
+        from memo.flags import flag_str
+        model_name = flag_str("MEMO_ENTITY_GLINER_MODEL")
         # Module-level singleton to avoid repeated model loads.
         _model = getattr(_extract_gliner, "_model", None)
         if _model is None or getattr(_model, "_model_name", "") != model_name:

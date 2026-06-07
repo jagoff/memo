@@ -13,7 +13,6 @@ No new MCP tool — this is a CLI/observability surface only (memo stays the sto
 from __future__ import annotations
 
 import json as _json
-import os
 
 import click
 
@@ -28,10 +27,8 @@ from .dashboard import (
 
 
 def _secs(env: str, default: int) -> int:
-    try:
-        return int(os.environ.get(env, str(default)))
-    except ValueError:
-        return default
+    from memo.flags import flag_int
+    return flag_int(env) or default
 
 
 def _fmt_duration(seconds: float) -> str:

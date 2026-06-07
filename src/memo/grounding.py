@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 import time
 from pathlib import Path
@@ -47,10 +46,8 @@ _STOP = frozenset(
 
 
 def _budget_ms() -> int:
-    try:
-        return int(os.environ.get("MEMO_GROUNDING_BUDGET_MS", "8000"))
-    except ValueError:
-        return 8000
+    from memo.flags import flag_int
+    return flag_int("MEMO_GROUNDING_BUDGET_MS") or 8000
 
 
 def _salient_tokens(text: str) -> set[str]:

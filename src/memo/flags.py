@@ -62,7 +62,7 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_DISABLE", "bool", False, "recall", "Disable the recall hook entirely."),
     _spec("MEMO_RECALL_DEBUG", "bool", False, "recall", "Verbose recall-hook diagnostics to stderr."),
     _spec("MEMO_RECALL_MODE", "str", "vec", "recall", "Retrieval mode: vec | hybrid | bm25."),
-    _spec("MEMO_RECALL_FORCE_MODE", "bool", True, "recall", "Honor MEMO_RECALL_MODE even when risky.", opt_out=True),
+    _spec("MEMO_RECALL_FORCE_MODE", "bool", False, "recall", "Honor MEMO_RECALL_MODE even when the embedder isn't warm. Default off: a cold vec/hybrid request downgrades to bm25 to avoid blowing the recall-hook cold-load budget. Set to 1 to force the requested mode regardless of warm state."),
     _spec("MEMO_RECALL_TOP_K", "int", 3, "recall", "Number of memorias injected per prompt."),
     _spec("MEMO_RECALL_MIN_SIM", "float", 0.5, "recall", "Similarity floor for a hit, applied to the recency-decayed score (decay compresses raw cosine ~0.15, so 0.5 ≈ 0.65 raw; 0.6 over-filtered and caused bails). The bigger relevance lever is reference-tier exclusion.", min_val=0.0, max_val=1.0),
     _spec("MEMO_RECALL_BODY_CHARS", "int", 400, "recall", "Max body chars per injected memoria."),
@@ -83,6 +83,8 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_SKIP_BELOW", "float", 0.45, "recall", "If >0, skip recall entirely when the best candidate's score is below this floor. Prevents low-confidence recall from injecting marginally relevant context. 0 = disabled.", min_val=0.0, max_val=1.0),
     _spec("MEMO_RECALL_FEEDBACK_HINT", "bool", True, "recall", "Append a feedback hint comment to the recall block so the AI layer can surface memory_feedback_record to the user.", opt_out=True),
     _spec("MEMO_RECALL_ADAPTIVE_CONTEXT", "bool", True, "recall", "Re-weight recall results by detected prompt intent (code/decision/write → boost matching memory types). Zero extra search cost — pure score boost on returned hits.", opt_out=True),
+    _spec("MEMO_RECALL_CLIENT", "str", "claude-code", "recall", "Front-end name stamped on recall consults for per-client telemetry."),
+    _spec("MEMO_GROUNDING_BUDGET_MS", "int", 8000, "recall", "Time budget (ms) for grounding/citation work on the recall path.", min_val=0),
     # search ranking
     _spec("MEMO_FTS_BACKEND", "str", "auto", "search",
           "FTS backend: 'auto' (tantivy if installed, else fts5) | 'tantivy' | 'fts5'."),
@@ -94,6 +96,12 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_GRAPH_EXPANSION_ENABLED", "bool", False, "search",
           "After primary search + rerank, follow knowledge-graph entity edges from the top-3 hits (1-hop) and append up to 3 adjacent memorias scored at 0.6× the minimum primary score. Requires entities to have been extracted first (`memo extract-entities`)."),
     _spec("MEMO_QUERY_CACHE_SIZE", "int", 256, "search", "LRU size for query embeddings (0 = off). Default 256 covers typical session query diversity with negligible RAM overhead (~few KB per cached vector)."),
+    _spec("MEMO_CONTRADICT_PENALTY_ENABLED", "bool", False, "search", "Penalise the older side of open contradiction pairs among retrieved results. Requires `memo contradict scan` to have populated the sidecar DB."),
+    _spec("MEMO_CONTRADICT_PENALTY", "float", 0.4, "search", "Score multiplier penalty applied to the older side of a contradiction pair.", min_val=0.0, max_val=1.0),
+    # entity-aware retrieval + knowledge-graph expansion
+    _spec("MEMO_ENTITY_RETRIEVAL_ENABLED", "bool", False, "entity", "Extract entities from queries and boost results whose extra['entities'] overlap. Prerequisite for graph expansion."),
+    _spec("MEMO_ENTITY_GLINER", "bool", False, "entity", "Use the GLiNER zero-shot NER model for entity extraction instead of the LLM (higher recall, extra dependency)."),
+    _spec("MEMO_ENTITY_GLINER_MODEL", "str", "urchade/gliner_medium-v2.1", "entity", "GLiNER model id used when MEMO_ENTITY_GLINER=1."),
     # session checkpoints / resume
     _spec("MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."),
     _spec("MEMO_SESSION_DEBUG", "bool", False, "session", "Verbose session-hook diagnostics."),
@@ -172,6 +180,13 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_NONINTERACTIVE", "bool", False, "misc", "Suppress interactive prompts (hooks/CI)."),
     _spec("MEMO_SUPPRESS_LEGACY_WARN", "bool", False, "misc", "Silence legacy-config deprecation warnings."),
     _spec("MEMO_ASK_FALLBACK_MSG", "str", "no encuentro la respuesta en las memorias guardadas", "misc", "Message returned by memory_ask when no relevant sources are found."),
+    _spec("MEMO_VAULT_SYSTEM_DIR", "str", "Obsidian", "misc", "Vault subdir holding memo's system tree (AI/, Contacts/, Whatsapp/)."),
+    # ROI accounting (memo roi)
+    _spec("MEMO_ROI_SECS_PER_GROUNDED", "int", 30, "roi", "Estimated seconds saved per grounded answer.", min_val=0),
+    _spec("MEMO_ROI_SECS_PER_REASK", "int", 120, "roi", "Estimated seconds cost per re-ask.", min_val=0),
+    # WhatsApp ingest
+    _spec("MEMO_WHATSAPP_DB", "str", "", "whatsapp", "Path to the whatsapp-mcp bridge SQLite DB to ingest."),
+    _spec("MEMO_WHATSAPP_NOTES_DIR", "str", "", "whatsapp", "Override output dir for ingested WhatsApp notes (default <SYSTEM_DIR>/Whatsapp)."),
 )
 
 REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}
@@ -259,6 +274,7 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_HELPER_MODEL", "MEMO_RERANKER_MODEL", "MEMO_RERANKER_ENABLED",
         "MEMO_RERANKER_REVISION", "MEMO_RERANK_FUSION_ALPHA", "MEMO_RERANK_INPUT_K",
         "MEMO_MAX_CONTENT_CHARS", "MEMO_SEARCH_DEFAULT_LIMIT",
+        "MEMO_CONFIG_FILE",
     }
     return sorted(
         k for k in src

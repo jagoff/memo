@@ -13,7 +13,6 @@ Wire format: ``consciousness_contracts.ConsciousnessEvent`` JSONL to
 from __future__ import annotations
 
 import logging
-import os
 import secrets
 from typing import Any
 
@@ -36,8 +35,8 @@ _writer: LedgerWriter | None = None  # type: ignore[valid-type]
 def _enabled() -> bool:
     if not _CONTRACTS_AVAILABLE:
         return False
-    raw = os.environ.get("MEMO_EMIT_LEDGER", "1")
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    from memo.flags import flag_bool
+    return flag_bool("MEMO_EMIT_LEDGER")
 
 
 def _get_writer() -> Any:

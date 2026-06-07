@@ -43,7 +43,8 @@ def _timeout() -> float:
 
 
 def _binary() -> str | None:
-    raw = os.environ.get("MEMO_MEMFLOW_BIN")
+    from memo.flags import flag_str
+    raw = flag_str("MEMO_MEMFLOW_BIN")
     if raw:
         return raw
     return shutil.which("memflow")

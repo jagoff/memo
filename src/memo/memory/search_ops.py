@@ -12,6 +12,7 @@ import os
 import sqlite3
 from dataclasses import replace
 
+from memo.flags import flag_bool, flag_float, flag_int
 from memo.perf import timer
 
 from memo.lifecycle import IS_FORGOTTEN_KEY
@@ -140,11 +141,11 @@ class _SearchOpsMixin(_MemoryBase):
         # (recall/ask/chat) still get a sensible default when they pass
         # `recency=True`, while raw `search()` callers (e.g. the eval harness)
         # stay decay-free for a comparable baseline.
-        halflife_days = float(os.environ.get("MEMO_SEARCH_DECAY_HALFLIFE", "0") or 0)
+        halflife_days = float(flag_int("MEMO_SEARCH_DECAY_HALFLIFE") or 0)
         if halflife_days <= 0 and recency:
             halflife_days = _RECALL_DECAY_HALFLIFE_DEFAULT
         if halflife_days > 0 and out:
-            alpha = min(max(float(os.environ.get("MEMO_SEARCH_DECAY_ALPHA", "0.15")), 0.0), 1.0)
+            alpha = min(max(flag_float("MEMO_SEARCH_DECAY_ALPHA") or 0.15, 0.0), 1.0)
             out = _apply_decay(out, halflife_days=halflife_days, alpha=alpha)
         # Cache-tier read-through: on a local miss/under-fill, pull from the
         # backing store and materialize locally. OPT-IN per call — only the
@@ -160,7 +161,7 @@ class _SearchOpsMixin(_MemoryBase):
         # like the MCP entity-search tool no longer mutate global os.environ).
         _entity_on = (
             entity_boost if entity_boost is not None
-            else os.environ.get("MEMO_ENTITY_RETRIEVAL_ENABLED") == "1"
+            else flag_bool("MEMO_ENTITY_RETRIEVAL_ENABLED")
         )
         if out and _entity_on:
             out = self._apply_entity_boost(query, out)
@@ -171,13 +172,13 @@ class _SearchOpsMixin(_MemoryBase):
         # off — the sidecar DB is empty until `memo contradict scan` runs at
         # least once). Only the recall/ask/chat consumer paths benefit; the eval
         # harness and recall-hook budget make this opt-in.
-        if out and os.environ.get("MEMO_CONTRADICT_PENALTY_ENABLED") == "1":
+        if out and flag_bool("MEMO_CONTRADICT_PENALTY_ENABLED"):
             out = self._apply_contradict_penalty(out)
-        if out and os.environ.get("MEMO_GRAPH_EXPANSION_ENABLED") == "1":
+        if out and flag_bool("MEMO_GRAPH_EXPANSION_ENABLED"):
             out = self._apply_graph_expansion(
                 out, load_bodies=load_bodies, exclude_types=exclude_types,
             )
-        if out and os.environ.get("MEMO_HEALTH_SCORES_DISABLED") != "1":
+        if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
             out = self._apply_health_scores(out)
         self._record_access([r.id for r in out])
         return out
@@ -251,11 +252,7 @@ class _SearchOpsMixin(_MemoryBase):
         self, results: list[MemoryRecord],
     ) -> list[MemoryRecord]:
         """Apply score penalty to the older side of open contradiction pairs."""
-        raw_penalty = os.environ.get("MEMO_CONTRADICT_PENALTY", "0.4")
-        try:
-            penalty = max(0.0, min(1.0, float(raw_penalty)))
-        except ValueError:
-            penalty = 0.4
+        penalty = max(0.0, min(1.0, flag_float("MEMO_CONTRADICT_PENALTY") or 0.4))
         ids = [r.id for r in results]
         try:
             pairs = self.contradict_store.pairs_for_ids(ids)
@@ -367,7 +364,7 @@ class _SearchOpsMixin(_MemoryBase):
             return
         try:
             self.store.touch(ids)
-            if os.environ.get("MEMO_HEALTH_SCORES_DISABLED") != "1":
+            if not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
                 self.store.boost_roi_batch(ids)
         except sqlite3.Error as exc:  # never let access tracking break a read
             _log.debug("access tracking skipped: %s", exc)

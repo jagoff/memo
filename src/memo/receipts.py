@@ -33,12 +33,11 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 _TIMEOUT_S = 5.0
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 def _is_enabled() -> bool:
-    raw = os.environ.get("MEMO_EMIT_RECEIPTS", "")
-    return raw.strip().lower() in _TRUTHY
+    from memo.flags import flag_bool
+    return flag_bool("MEMO_EMIT_RECEIPTS")
 
 
 def _project_root() -> Path | None:
@@ -56,7 +55,8 @@ def _project_root() -> Path | None:
 
 
 def _binary() -> str | None:
-    raw = os.environ.get("MEMO_MEMFLOW_BIN")
+    from memo.flags import flag_str
+    raw = flag_str("MEMO_MEMFLOW_BIN")
     if raw:
         return raw
     return shutil.which("memflow")

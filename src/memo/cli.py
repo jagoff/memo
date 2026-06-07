@@ -644,7 +644,8 @@ def recall_hook() -> None:
     # SAME turn label into the session snapshot (last_recall_turn) so Stop reads
     # it back race-free. client names the front-end for per-client value.
     _sid = (payload.get("session_id") or "").strip() or None
-    _client = os.environ.get("MEMO_RECALL_CLIENT", "claude-code")
+    from memo.flags import flag_str as _flag_str
+    _client = _flag_str("MEMO_RECALL_CLIENT")
     _turn: int | None = None
     if _sid:
         try:
@@ -700,7 +701,7 @@ def recall_hook() -> None:
         except Exception:
             pass
 
-    from memo.flags import flag_int as _flag_int
+    from memo.flags import flag_bool, flag_int as _flag_int
 
     top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
     min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.5"))
@@ -762,7 +763,7 @@ def recall_hook() -> None:
     # mode needs the embedder, downgrade to bm25 to avoid cold-load timeout.
     # The signal file is written by `memo prewarm` after a successful warm.
     # A missing or >60 min old file means the Mac just woke / first boot.
-    if mode in ("vec", "hybrid") and os.environ.get("MEMO_RECALL_FORCE_MODE") != "1":
+    if mode in ("vec", "hybrid") and not flag_bool("MEMO_RECALL_FORCE_MODE"):
         try:
             import time as _time_mod
             _signal = Config.from_env().state_dir / ".prewarm_ts"
@@ -790,7 +791,6 @@ def recall_hook() -> None:
     search_k = top_k * 3 if project_tag else top_k
     # Tier gate: keep the bulk `reference` tier out of the prompt (mirror of
     # the daemon path in recall_server.py). See `memo.tiers`.
-    from memo.flags import flag_bool
     from memo.tiers import REFERENCE_TYPES
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
     try:
