@@ -282,15 +282,8 @@ class _WriteOpsMixin(_MemoryBase):
                 _log.debug("save: dedup check skipped: %s", _exc)
 
         record_id = uuid.uuid4().hex
-        rel_path = self._build_rel_path(title, now_iso)
         body_hash = _sha256_short(content)
 
-        # Write `.md` first — if anything fails after this, the user
-        # can recover by re-indexing. Conversely if we write the index
-        # first and the disk write fails, the index points to a
-        # non-existent file.
-        abs_path = self.cfg.memory_dir / rel_path
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
         extra_for_store = dict(extra or {})
         if defer_embed:
             extra_for_store["_memo_embed_pending"] = True
@@ -323,7 +316,19 @@ class _WriteOpsMixin(_MemoryBase):
         )
         if extra_for_store:
             post["extra"] = extra_for_store
-        abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+        # Allocate a unique path and create the .md atomically under a lock:
+        # `meta.path` is UNIQUE, so two concurrent same-title+date saves probing
+        # the same free path would have the loser overwrite the winner's file
+        # before its INSERT fails — orphaning the winner's row against the
+        # loser's content. The slow embed runs AFTER this block.
+        # Write `.md` first — if anything fails after this, the user can recover
+        # by re-indexing; writing the index first would point it at a missing file.
+        with self._save_path_lock:
+            rel_path = self._build_rel_path(title, now_iso)
+            abs_path = self.cfg.memory_dir / rel_path
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
         if defer_embed:
             self.store.upsert_text_only(

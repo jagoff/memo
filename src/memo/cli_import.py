@@ -140,7 +140,7 @@ def import_whatsapp(
         try:
             subprocess.run(
                 ["memo", "ingest", str(target), "--name", "whatsapp"],
-                check=True,
+                check=True, timeout=600,
             )
         except Exception as exc:
             raise click.ClickException(f"reindex failed: {exc}") from exc
@@ -172,7 +172,7 @@ def import_whatsapp(
         try:
             subprocess.run(
                 ["memo", "ingest", summary["notes_dir"], "--name", "whatsapp"],
-                check=True,
+                check=True, timeout=600,
             )
             summary["indexed"] = True
         except Exception as exc:
