@@ -261,8 +261,13 @@ class ContextualRecall:
                     recency_boost = (1 - days_old / 30) * prefs.recency_weight * 0.1
                     contextual_score += recency_boost
                     boost_factors["recency"] = recency_boost
-            except Exception:
-                pass
+            except (ValueError, TypeError) as exc:
+                _log.debug(
+                    "contextual: bad updated timestamp %r, skipping recency "
+                    "boost: %s",
+                    hit.updated,
+                    exc,
+                )
 
             contextual_results.append(
                 ContextualSearchResult(

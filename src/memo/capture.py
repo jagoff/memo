@@ -46,12 +46,15 @@ user explicitly sets `MEMO_CAPTURE_DEBUG=1`, errors print to stderr.
 from __future__ import annotations
 
 import json
+import logging
 import re as _re
 import sys
 from pathlib import Path
 from typing import Any
 
 from memo.util import sha256_short
+
+_log = logging.getLogger(__name__)
 
 # Trigger keywords — pre-filter pass. Cheap regex check before paying
 # the helper LLM cost. Permissive; better to send to the LLM and have
@@ -334,7 +337,10 @@ def is_near_duplicate(
     try:
         emb = memory.embedder.embed_query(composed)
         rows = memory.store.search(emb, limit=1)
-    except Exception:
+    except Exception as exc:
+        # Best-effort dedup: on failure treat as non-duplicate (save proceeds),
+        # but leave a breadcrumb so an embedder/store crash isn't silent.
+        _log.debug("capture: near-duplicate check failed, treating as new: %s", exc)
         return False
     if not rows:
         return False

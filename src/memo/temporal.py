@@ -331,8 +331,13 @@ Analyze the temporal relationship between these two notes."""
                     access_count = sum(
                         1 for e in history_events if e.get("op") != "save"
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.debug(
+                        "temporal: history fetch failed for %s, "
+                        "treating as zero access: %s",
+                        rec.id,
+                        exc,
+                    )
 
                 if access_count < min_access_count:
                     stale.append(

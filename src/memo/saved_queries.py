@@ -10,10 +10,13 @@ Allows users to:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -60,7 +63,10 @@ class QueryStore:
                 data = json.loads(self.queries_file.read_text(encoding="utf-8"))
                 for name, q in data.items():
                     self._queries[name] = Query(**q)
-            except Exception:
+            except Exception as exc:
+                _log.warning(
+                    "saved_queries: file unreadable, starting empty: %s", exc
+                )
                 self._queries = {}
 
     def _save(self) -> None:
@@ -68,8 +74,8 @@ class QueryStore:
         try:
             data = {name: q.__dict__ for name, q in self._queries.items()}
             self.queries_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.error("saved_queries: failed to persist queries: %s", exc)
 
     def save_query(
         self,
