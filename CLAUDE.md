@@ -88,6 +88,13 @@ over a socket (`MEMO_EMBEDDER_VIA_DAEMON`) to skip cold load.
 usual cause of "works in CLI, broken in MCP". `memo doctor --strict-runtime`
 checks this.
 
+Runtime plumbing lives in `src/memo/runtime/`: `install.py` (runtime/install
+detection + `memo doctor`/install helpers), `daemon.py` (launchctl + warm
+recall-daemon lifecycle, `MEMO_EMBEDDER_VIA_DAEMON` socket), `report.py`
+(install-report presentation). These were extracted from `cli.py`/`cli_runtime`;
+the warm `memo-mcp` daemon they manage is what serves embeds over the socket to
+keep the recall hook under its 5s budget.
+
 ## BM25 / Spanish search
 
 FTS5's tokenizer wraps each `\w+` token in its own phrase quotes, so a
