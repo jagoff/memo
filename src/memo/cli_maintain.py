@@ -51,30 +51,66 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
 
 @click.command(name="maintain")
 @click.option("--dry-run", is_flag=True, help="Preview actions; change nothing.")
-@click.option("--min-confidence", type=float, default=0.9,
-              help="Confidence floor for auto-acting on a contradiction (default 0.9).")
-@click.option("--hard-delete", is_flag=True,
-              help="Delete (not archive) the superseded side of a contradiction. "
-                   "Manual-only; the daily auto-run never does this.")
-@click.option("--stale-days", type=int, default=365,
-              help="Archive never-accessed memorias older than this (default 365).")
-@click.option("--dup-threshold", type=float, default=0.9,
-              help="Cosine threshold for duplicate clustering (default 0.9).")
-@click.option("--max-pairs", type=int, default=200,
-              help="Max contradiction candidate pairs to scan (default 200).")
+@click.option(
+    "--min-confidence",
+    type=float,
+    default=0.9,
+    help="Confidence floor for auto-acting on a contradiction (default 0.9).",
+)
+@click.option(
+    "--hard-delete",
+    is_flag=True,
+    help="Delete (not archive) the superseded side of a contradiction. "
+    "Manual-only; the daily auto-run never does this.",
+)
+@click.option(
+    "--stale-days",
+    type=int,
+    default=365,
+    help="Archive never-accessed memorias older than this (default 365).",
+)
+@click.option(
+    "--dup-threshold",
+    type=float,
+    default=0.9,
+    help="Cosine threshold for duplicate clustering (default 0.9).",
+)
+@click.option(
+    "--max-pairs",
+    type=int,
+    default=200,
+    help="Max contradiction candidate pairs to scan (default 200).",
+)
 @click.option("--skip-contradict", is_flag=True, help="Skip the contradiction pass.")
 @click.option("--skip-consolidate", is_flag=True, help="Skip the duplicate-merge pass.")
 @click.option("--skip-stale", is_flag=True, help="Skip the staleness pass.")
-@click.option("--skip-synthesize", is_flag=True, help="Skip the emergent-synthesis pass (requires MEMO_SYNTHESIS_ENABLED=1).")
+@click.option(
+    "--skip-synthesize",
+    is_flag=True,
+    help="Skip the emergent-synthesis pass (requires MEMO_SYNTHESIS_ENABLED=1).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit the receipt as JSON.")
-@click.option("--if-due", is_flag=True,
-              help="No-op unless >24h since the last run; then spawn maintain "
-                   "detached (safe archive-only) and return. For the daily "
-                   "SessionStart guard.")
-def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
-                 stale_days: int, dup_threshold: float, max_pairs: int,
-                 skip_contradict: bool, skip_consolidate: bool, skip_stale: bool,
-                 skip_synthesize: bool, as_json: bool, if_due: bool) -> None:
+@click.option(
+    "--if-due",
+    is_flag=True,
+    help="No-op unless >24h since the last run; then spawn maintain "
+    "detached (safe archive-only) and return. For the daily "
+    "SessionStart guard.",
+)
+def maintain_cmd(
+    dry_run: bool,
+    min_confidence: float,
+    hard_delete: bool,
+    stale_days: int,
+    dup_threshold: float,
+    max_pairs: int,
+    skip_contradict: bool,
+    skip_consolidate: bool,
+    skip_stale: bool,
+    skip_synthesize: bool,
+    as_json: bool,
+    if_due: bool,
+) -> None:
     """Supersede contradictions, merge duplicates, archive stale memorias.
 
     Reversible by default (archives to inactive/). Example:
@@ -86,6 +122,7 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
     if if_due:
         import os as _os
         import subprocess as _sp
+
         if flag_bool("MEMO_MAINTAIN_DISABLE"):
             return
         ts_file = _state_path(cfg) / ".last_run_ts"
@@ -102,7 +139,9 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
             ts_file.write_text(str(time.time()), encoding="utf-8")
             _sp.Popen(
                 ["memo", "maintain"],  # safe defaults: archive-only, no --hard-delete
-                stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                stdin=_sp.DEVNULL,
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
                 start_new_session=True,
                 env={**_os.environ, "MEMO_NONINTERACTIVE": "1"},
             )
@@ -114,10 +153,10 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
     receipt: dict[str, Any] = {
         "dry_run": dry_run,
         "hard_delete": hard_delete,
-        "superseded": [],   # contradictions acted on
-        "evolved": [],      # contradictions marked evolution (both kept)
-        "merged": [],       # duplicate clusters consolidated
-        "forgotten": [],    # forget_after TTL elapsed (soft, reversible)
+        "superseded": [],  # contradictions acted on
+        "evolved": [],  # contradictions marked evolution (both kept)
+        "merged": [],  # duplicate clusters consolidated
+        "forgotten": [],  # forget_after TTL elapsed (soft, reversible)
         "archived_stale": [],
         "synthesized": [],  # emergent cross-memory insights generated
         "errors": [],
@@ -137,14 +176,16 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
     if not skip_contradict:
         try:
             mem.contradict_scanner.scan_corpus(
-                confidence_threshold=min_confidence, max_pairs=max_pairs,
+                confidence_threshold=min_confidence,
+                max_pairs=max_pairs,
             )
             for pair in mem.contradict_store.list_open(min_confidence=min_confidence):
                 rel = (pair.relationship or "").lower()
                 if "evolu" in rel:
                     if not dry_run:
-                        mem.contradict_store.resolve(pair.pair_id, "evolved",
-                                                     note="auto: evolution, both kept")
+                        mem.contradict_store.resolve(
+                            pair.pair_id, "evolved", note="auto: evolution, both kept"
+                        )
                     receipt["evolved"].append(pair.pair_id)
                     continue
                 if "contrad" not in rel:
@@ -152,15 +193,19 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
                 older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
                 action = "delete" if hard_delete else "archive"
                 if not dry_run:
-                    ok = (mem.delete(older) if hard_delete
-                          else mem.lifecycle.archive_memoria(older))
+                    ok = mem.delete(older) if hard_delete else mem.lifecycle.archive_memoria(older)
                     if ok:
                         mem.contradict_store.resolve(
-                            pair.pair_id, "kept_newer",
-                            note=f"auto: {action}d older {older}")
+                            pair.pair_id, "kept_newer", note=f"auto: {action}d older {older}"
+                        )
                 receipt["superseded"].append(
-                    {"pair_id": pair.pair_id, "older": older, "action": action,
-                     "confidence": pair.confidence})
+                    {
+                        "pair_id": pair.pair_id,
+                        "older": older,
+                        "action": action,
+                        "confidence": pair.confidence,
+                    }
+                )
         except Exception as exc:
             receipt["errors"].append(f"contradict: {type(exc).__name__}: {exc}")
 
@@ -168,16 +213,19 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
     if not skip_consolidate:
         try:
             res = mem.consolidator.consolidate_all(
-                threshold=dup_threshold, auto_apply=True, dry_run=dry_run,
+                threshold=dup_threshold,
+                auto_apply=True,
+                dry_run=dry_run,
             )
             for r in res.get("results", []):
                 receipt["merged"].append(
-                    {"merged_id": r.get("merged_id"),
-                     "archived_ids": r.get("archived_ids", [])})
+                    {"merged_id": r.get("merged_id"), "archived_ids": r.get("archived_ids", [])}
+                )
             if not res.get("results") and res.get("proposals"):
                 # dry_run path: proposals exist but nothing applied
-                receipt["merged"] = [{"would_merge": p.get("memoria_ids")}
-                                     for p in res.get("proposals", [])]
+                receipt["merged"] = [
+                    {"would_merge": p.get("memoria_ids")} for p in res.get("proposals", [])
+                ]
         except Exception as exc:
             receipt["errors"].append(f"consolidate: {type(exc).__name__}: {exc}")
 
@@ -185,15 +233,15 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
     if not skip_stale:
         try:
             stale = mem.temporal.detect_stale_memorias(
-                days_threshold=stale_days, min_access_count=0)
+                days_threshold=stale_days, min_access_count=0
+            )
             for item in stale:
                 mid = item.get("id")
                 if not mid:
                     continue
                 if not dry_run:
                     mem.lifecycle.archive_memoria(mid)
-                receipt["archived_stale"].append(
-                    {"id": mid, "days": item.get("days_since_update")})
+                receipt["archived_stale"].append({"id": mid, "days": item.get("days_since_update")})
         except Exception as exc:
             receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
 
@@ -202,13 +250,15 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
         try:
             results = mem.synthesize_cross_cluster(dry_run=dry_run)
             for r in results:
-                receipt["synthesized"].append({
-                    "title": r.get("title"),
-                    "confidence": r.get("confidence"),
-                    "sources": r.get("sources", []),
-                    "saved": r.get("saved", False),
-                    "id": r.get("id"),
-                })
+                receipt["synthesized"].append(
+                    {
+                        "title": r.get("title"),
+                        "confidence": r.get("confidence"),
+                        "sources": r.get("sources", []),
+                        "saved": r.get("saved", False),
+                        "id": r.get("id"),
+                    }
+                )
         except Exception as exc:
             receipt["errors"].append(f"synthesize: {type(exc).__name__}: {exc}")
 
@@ -221,7 +271,8 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
             d.mkdir(parents=True, exist_ok=True)
             (d / "last.json").write_text(
                 json.dumps({"ts": time.time(), **receipt}, ensure_ascii=False, indent=2),
-                encoding="utf-8")
+                encoding="utf-8",
+            )
             (d / ".last_run_ts").write_text(str(time.time()), encoding="utf-8")
         except Exception as exc:
             receipt["errors"].append(f"receipt: {type(exc).__name__}: {exc}")
@@ -232,15 +283,19 @@ def maintain_cmd(dry_run: bool, min_confidence: float, hard_delete: bool,
 
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
     console.print(f"{tag}[bold]memo maintain[/bold]")
-    console.print(f"  contradictions superseded: {len(receipt['superseded'])} "
-                  f"({'delete' if hard_delete else 'archive'}), "
-                  f"evolutions marked: {len(receipt['evolved'])}")
+    console.print(
+        f"  contradictions superseded: {len(receipt['superseded'])} "
+        f"({'delete' if hard_delete else 'archive'}), "
+        f"evolutions marked: {len(receipt['evolved'])}"
+    )
     console.print(f"  duplicate clusters merged: {len(receipt['merged'])}")
     console.print(f"  forget_after TTLs applied: {len(receipt['forgotten'])}")
     console.print(f"  stale memorias archived: {len(receipt['archived_stale'])}")
     if receipt["synthesized"]:
         saved = sum(1 for s in receipt["synthesized"] if s.get("saved"))
-        console.print(f"  emergent syntheses: {saved} saved, {len(receipt['synthesized'])} proposed")
+        console.print(
+            f"  emergent syntheses: {saved} saved, {len(receipt['synthesized'])} proposed"
+        )
     if receipt["errors"]:
         for e in receipt["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")

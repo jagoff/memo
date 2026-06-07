@@ -42,6 +42,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         each result has the same shape as `memory_search` items.
         """
         from memo.time_machine import reconstruct
+
         snap = reconstruct(memory, as_of=as_of)
         hits = snap.search(query, limit=limit, mode=mode)
         if type:
@@ -66,6 +67,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             k: Top-k memorias to feed the model as context.
         """
         from memo.time_machine import reconstruct
+
         snap = reconstruct(memory, as_of=as_of)
         return snap.ask(question, k=k)
 
@@ -81,6 +83,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         from datetime import datetime as _dt
 
         from memo.time_machine import diff as _diff
+
         to_resolved = to_ts or _dt.now(UTC).isoformat()
         d = _diff(memory, from_ts=from_ts, to_ts=to_resolved)
         return {

@@ -80,8 +80,10 @@ def embed_daemon_stats(as_json: bool) -> None:
     table.add_column("p95 ms", justify="right")
     table.add_column("p99 ms", justify="right")
     for op, row in sorted(ops.items()):
+
         def _fmt(v: float | None) -> str:
             return "-" if v is None else f"{v:.1f}"
+
         table.add_row(
             op,
             str(row.get("count", 0)),

@@ -12,8 +12,13 @@ from memo.config import Config
 
 
 @click.command(name="watch")
-@click.option("--delay", default=2.0, type=float, show_default=True,
-              help="Debounce window in seconds — coalesces bursts of edits into one reindex.")
+@click.option(
+    "--delay",
+    default=2.0,
+    type=float,
+    show_default=True,
+    help="Debounce window in seconds — coalesces bursts of edits into one reindex.",
+)
 @click.option("--debug", is_flag=True, help="Print every reindex result to stderr.")
 def watch(delay: float, debug: bool) -> None:
     """Auto-reindex on `.md` change. Foreground; Ctrl+C to stop.
@@ -30,10 +35,13 @@ def watch(delay: float, debug: bool) -> None:
 
 
 @click.command(name="install-watcher")
-@click.option("--bin", "memo_bin", default=None,
-              help="Absolute path to the `memo` binary (default: auto-detect via shutil.which).")
-@click.option("--no-load", is_flag=True,
-              help="Write the plist but don't `launchctl bootstrap` it.")
+@click.option(
+    "--bin",
+    "memo_bin",
+    default=None,
+    help="Absolute path to the `memo` binary (default: auto-detect via shutil.which).",
+)
+@click.option("--no-load", is_flag=True, help="Write the plist but don't `launchctl bootstrap` it.")
 def install_watcher(memo_bin: str | None, no_load: bool) -> None:
     """Install + load the file-watcher as a launchd daemon.
 
@@ -71,11 +79,13 @@ def install_watcher(memo_bin: str | None, no_load: bool) -> None:
     # Unload first if already present, to pick up plist changes.
     subprocess.run(
         ["launchctl", "bootout", target],
-        check=False, capture_output=True,
+        check=False,
+        capture_output=True,
     )
     res = subprocess.run(
         ["launchctl", "bootstrap", domain, str(plist_path)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if res.returncode != 0:
         raise click.ClickException(
@@ -85,7 +95,8 @@ def install_watcher(memo_bin: str | None, no_load: bool) -> None:
     # Verify.
     verify = subprocess.run(
         ["launchctl", "print", target],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if verify.returncode != 0:
         raise click.ClickException(
@@ -93,14 +104,16 @@ def install_watcher(memo_bin: str | None, no_load: bool) -> None:
             "Inspect `~/Library/Logs/memo/watch.err.log`.",
         )
 
-    console.print(Panel.fit(
-        f"[bold]watcher loaded[/bold]\n"
-        f"[dim]label:[/dim] {_PLIST_LABEL}\n"
-        f"[dim]plist:[/dim] {plist_path}\n"
-        f"[dim]logs:[/dim] ~/Library/Logs/memo/watch.{{out,err}}.log",
-        title="✓ install-watcher",
-        border_style="green",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]watcher loaded[/bold]\n"
+            f"[dim]label:[/dim] {_PLIST_LABEL}\n"
+            f"[dim]plist:[/dim] {plist_path}\n"
+            f"[dim]logs:[/dim] ~/Library/Logs/memo/watch.{{out,err}}.log",
+            title="✓ install-watcher",
+            border_style="green",
+        )
+    )
 
 
 @click.command(name="uninstall-watcher")
@@ -114,7 +127,8 @@ def uninstall_watcher_cmd() -> None:
     target = f"gui/{uid}/{_PLIST_LABEL}"
     subprocess.run(
         ["launchctl", "bootout", target],
-        check=False, capture_output=True,
+        check=False,
+        capture_output=True,
     )
     existed = uninstall_plist()
     if existed:
@@ -154,6 +168,7 @@ def prewarm(download_all: bool) -> None:
         _sys.exit(0)
     try:
         from memo.embedder import MLXEmbedder
+
         cfg = Config.from_env()
         emb = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
         emb.embed(["warmup"])  # batch=1; forces MLX load + first forward pass
@@ -162,6 +177,7 @@ def prewarm(download_all: bool) -> None:
         # 30s budget on machines that opted out of rerank entirely.
         if cfg.reranker_enabled:
             from memo.reranker import MLXReranker
+
             r = MLXReranker(
                 model_path=cfg.reranker_model,
                 revision=cfg.reranker_revision,
@@ -178,6 +194,7 @@ def prewarm(download_all: bool) -> None:
             # cached, so re-running this is safe.
             try:
                 from huggingface_hub import snapshot_download
+
                 for repo in (cfg.llm_model, cfg.helper_model):
                     click.echo(f"[memo] downloading {repo}…")
                     snapshot_download(repo_id=repo)

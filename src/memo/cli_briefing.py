@@ -54,6 +54,7 @@ def briefing() -> None:
     try:
         cfg = Config.from_env()
         from memo.memory import Memory
+
         mem = Memory(cfg)
     except Exception as exc:
         _bail(f"Memory init failed: {exc}")
@@ -77,9 +78,9 @@ def briefing() -> None:
             top = same_proj[0]
             sid = top.get("session_id") or ""
             when = format_relative(top.get("updated"))
-            summary = (
-                top.get("summary") or top.get("last_user_msg") or "—"
-            ).replace("\n", " ")[:120]
+            summary = (top.get("summary") or top.get("last_user_msg") or "—").replace("\n", " ")[
+                :120
+            ]
             lines.append("## El Briefing")
             lines.append("")
             lines.append(f"**Última sesión en este proyecto** ({when}): {summary}")
@@ -115,10 +116,7 @@ def briefing() -> None:
     try:
         cutoff = (datetime.now(tz=UTC) - timedelta(days=loops_days)).isoformat()
         all_recent = mem.store.list_recent(limit=loops_n * 4, exclude_types={"reference"})
-        open_loops = [
-            r for r in all_recent
-            if (r.get("updated") or "") >= cutoff
-        ][:loops_n]
+        open_loops = [r for r in all_recent if (r.get("updated") or "") >= cutoff][:loops_n]
 
         if open_loops:
             lines.append(f"### Loops abiertos (últimos {loops_days} días)")
@@ -127,6 +125,7 @@ def briefing() -> None:
                 tags = r.get("tags") or []
                 if isinstance(tags, str):
                     import json as _j
+
                     try:
                         tags = _j.loads(tags)
                     except Exception:
@@ -208,4 +207,3 @@ def briefing() -> None:
         }
     }
     print(_json.dumps(output, ensure_ascii=False))
-

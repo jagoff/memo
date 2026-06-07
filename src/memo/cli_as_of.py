@@ -32,11 +32,17 @@ def as_of_group() -> None:
 @click.option("--date", "as_of", required=True, help="YYYY-MM-DD or full ISO 8601.")
 @click.option("--limit", default=10, type=int, show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
-@click.option("--mode", default="hybrid",
-              type=click.Choice(["hybrid", "vec", "bm25"]), show_default=True)
+@click.option(
+    "--mode", default="hybrid", type=click.Choice(["hybrid", "vec", "bm25"]), show_default=True
+)
 @click.option("--json", "as_json", is_flag=True)
 def as_of_search(
-    query: str, as_of: str, limit: int, type_: str | None, mode: str, as_json: bool,
+    query: str,
+    as_of: str,
+    limit: int,
+    type_: str | None,
+    mode: str,
+    as_json: bool,
 ) -> None:
     """Search the corpus as it existed on a past date."""
     from memo.memory import Memory
@@ -49,21 +55,27 @@ def as_of_search(
         hits = [h for h in hits if h.type == type_]
 
     if as_json:
-        click.echo(json.dumps(
-            {
-                "as_of": snap.as_of.isoformat(),
-                "snapshot_size": len(snap),
-                "results": [h.to_dict() for h in hits],
-            },
-            ensure_ascii=False, indent=2,
-        ))
+        click.echo(
+            json.dumps(
+                {
+                    "as_of": snap.as_of.isoformat(),
+                    "snapshot_size": len(snap),
+                    "results": [h.to_dict() for h in hits],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
 
     if not hits:
         console.print(f"[dim]no results in snapshot @ {snap.as_of.date().isoformat()}[/dim]")
         return
-    tbl = Table(show_lines=False, expand=True,
-                title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias existían")
+    tbl = Table(
+        show_lines=False,
+        expand=True,
+        title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias existían",
+    )
     tbl.add_column("score", justify="right", width=6)
     tbl.add_column("type", width=10)
     tbl.add_column("title", overflow="fold")
@@ -96,11 +108,13 @@ def as_of_ask(question: str, as_of: str, k: int, as_json: bool) -> None:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
         return
 
-    console.print(Panel.fit(
-        out["answer"] or "[dim](sin respuesta)[/dim]",
-        title=f"✓ as-of {snap.as_of.date().isoformat()} ({len(snap)} memorias in scope)",
-        border_style="magenta",
-    ))
+    console.print(
+        Panel.fit(
+            out["answer"] or "[dim](sin respuesta)[/dim]",
+            title=f"✓ as-of {snap.as_of.date().isoformat()} ({len(snap)} memorias in scope)",
+            border_style="magenta",
+        )
+    )
     if out.get("sources"):
         console.print("\n[dim]sources:[/dim]")
         for s in out["sources"]:
@@ -122,25 +136,36 @@ def as_of_list(as_of: str, type_: str | None, limit: int, as_json: bool) -> None
     rows = snap.list(type_=type_)[:limit]
 
     if as_json:
-        click.echo(json.dumps(
-            {
-                "as_of": snap.as_of.isoformat(),
-                "snapshot_size": len(snap),
-                "records": [
-                    {"id": r.id, "title": r.title, "type": r.type, "tags": r.tags,
-                     "updated": r.updated}
-                    for r in rows
-                ],
-            },
-            ensure_ascii=False, indent=2,
-        ))
+        click.echo(
+            json.dumps(
+                {
+                    "as_of": snap.as_of.isoformat(),
+                    "snapshot_size": len(snap),
+                    "records": [
+                        {
+                            "id": r.id,
+                            "title": r.title,
+                            "type": r.type,
+                            "tags": r.tags,
+                            "updated": r.updated,
+                        }
+                        for r in rows
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
 
     if not rows:
         console.print(f"[dim]empty snapshot @ {snap.as_of.date().isoformat()}[/dim]")
         return
-    tbl = Table(show_lines=False, expand=True,
-                title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias")
+    tbl = Table(
+        show_lines=False,
+        expand=True,
+        title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias",
+    )
     tbl.add_column("id", width=10)
     tbl.add_column("type", width=10)
     tbl.add_column("title", overflow="fold")

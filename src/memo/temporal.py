@@ -64,6 +64,7 @@ Output ONLY the JSON, no markdown fences, no commentary."""
 @dataclass(frozen=True)
 class Contradiction:
     """A detected contradiction between two memorias."""
+
     memoria_id_a: str
     memoria_id_b: str
     title_a: str
@@ -78,6 +79,7 @@ class Contradiction:
 @dataclass(frozen=True)
 class TimelineEvent:
     """One event in an entity's temporal timeline."""
+
     memoria_id: str
     title: str
     date: str
@@ -88,6 +90,7 @@ class TimelineEvent:
 @dataclass(frozen=True)
 class EntityTimeline:
     """Timeline of all memorias mentioning a specific entity."""
+
     entity_name: str
     entity_type: str
     events: list[TimelineEvent]
@@ -315,7 +318,8 @@ Analyze the temporal relationship between these two notes."""
         if len(all_records) >= _ANALYSIS_ROW_CAP:
             _log.warning(
                 "detect_stale_memorias: corpus hit the %d-row cap; older "
-                "memorias were not scanned.", _ANALYSIS_ROW_CAP,
+                "memorias were not scanned.",
+                _ANALYSIS_ROW_CAP,
             )
         stale = []
 
@@ -324,17 +328,12 @@ Analyze the temporal relationship between these two notes."""
                 # Check access count from history if available
                 access_count = 0
                 try:
-                    history_events = self.memory.history.list_recent(
-                        record_id=rec.id, limit=100
-                    )
+                    history_events = self.memory.history.list_recent(record_id=rec.id, limit=100)
                     # Count only non-save events (saves are initial creation)
-                    access_count = sum(
-                        1 for e in history_events if e.get("op") != "save"
-                    )
+                    access_count = sum(1 for e in history_events if e.get("op") != "save")
                 except Exception as exc:
                     _log.debug(
-                        "temporal: history fetch failed for %s, "
-                        "treating as zero access: %s",
+                        "temporal: history fetch failed for %s, treating as zero access: %s",
                         rec.id,
                         exc,
                     )
@@ -348,9 +347,7 @@ Analyze the temporal relationship between these two notes."""
                             "updated": rec.updated,
                             "days_since_update": (
                                 datetime.now(UTC)
-                                - datetime.fromisoformat(
-                                    rec.updated.replace("Z", "+00:00")
-                                )
+                                - datetime.fromisoformat(rec.updated.replace("Z", "+00:00"))
                             ).days,
                             "access_count": access_count,
                         }
@@ -372,7 +369,8 @@ Analyze the temporal relationship between these two notes."""
         if len(all_records) >= _ANALYSIS_ROW_CAP:
             _log.warning(
                 "detect_temporal_patterns: corpus hit the %d-row cap; older "
-                "memorias were not included.", _ANALYSIS_ROW_CAP,
+                "memorias were not included.",
+                _ANALYSIS_ROW_CAP,
             )
 
         # Memorias per month
@@ -405,9 +403,7 @@ Analyze the temporal relationship between these two notes."""
 
         return {
             "memorias_per_month": dict(sorted(monthly.items())),
-            "type_distribution_over_time": {
-                k: dict(v) for k, v in sorted(type_over_time.items())
-            },
+            "type_distribution_over_time": {k: dict(v) for k, v in sorted(type_over_time.items())},
             "most_active_entities": dict(
                 sorted(entity_counts.items(), key=lambda x: x[1], reverse=True)[:20]
             ),

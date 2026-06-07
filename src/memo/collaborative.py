@@ -26,6 +26,7 @@ _log = logging.getLogger(__name__)
 @dataclass
 class SharedConnection:
     """Una conexión descubierta por otro usuario."""
+
     connection_id: str
     from_user: str
     entity_a: str
@@ -39,6 +40,7 @@ class SharedConnection:
 @dataclass
 class CollectiveInsight:
     """Un insight generado colectivamente."""
+
     insight_id: str
     content: str
     contributors: list[str]
@@ -50,6 +52,7 @@ class CollectiveInsight:
 @dataclass
 class UserProfile:
     """Perfil de usuario en la red colaborativa."""
+
     user_id: str
     username: str
     reputation: int
@@ -193,8 +196,7 @@ class CollaborativeGraph:
             Lista de SharedConnection.
         """
         return [
-            c for c in self._connections.values()
-            if c.entity_a == entity or c.entity_b == entity
+            c for c in self._connections.values() if c.entity_a == entity or c.entity_b == entity
         ]
 
     def add_insight(
@@ -311,13 +313,15 @@ class CollaborativeFilter:
 
             # Si la conexión comparte una entidad con las existentes, recomendarla
             for existing_conn in existing:
-                if (conn.entity_a == existing_conn.entity_b or
-                    conn.entity_b == existing_conn.entity_a):
+                if (
+                    conn.entity_a == existing_conn.entity_b
+                    or conn.entity_b == existing_conn.entity_a
+                ):
                     recommendations.append(conn)
 
         # Ordenar por votos y confianza
         recommendations.sort(
-            key=lambda c: (c.votes + c.confidence * 10),
+            key=lambda c: c.votes + c.confidence * 10,
             reverse=True,
         )
 
@@ -450,4 +454,3 @@ __all__ = [
     "SharedConnection",
     "UserProfile",
 ]
-

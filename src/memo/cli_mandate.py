@@ -63,19 +63,24 @@ def _write_mandate(target: Path, *, dry_run: bool) -> str:
 
 @click.command(name="mandate")
 @click.option(
-    "--client", "client",
+    "--client",
+    "client",
     type=click.Choice(["all", "codex", "devin", "windsurf", "cursor"]),
     default=None,
     help="Write the mandate into this client's project-local instruction file.",
 )
 @click.option("--write", "do_write", is_flag=True, help="Write the file(s) (default: print only).")
-@click.option("--dry-run", is_flag=True, help="With --write, show what would change without writing.")
+@click.option(
+    "--dry-run", is_flag=True, help="With --write, show what would change without writing."
+)
 def mandate(*, client: str | None = None, do_write: bool = False, dry_run: bool = False) -> None:
     """Print (or install) the 'consult memo first' mandate for non-hook clients."""
     if not client and not do_write:
         click.echo(MANDATE_TEXT)
-        click.echo("\n# Paste into the client's instruction file, or run with "
-                   "--client <codex|devin|windsurf|cursor|all> --write (project-local).")
+        click.echo(
+            "\n# Paste into the client's instruction file, or run with "
+            "--client <codex|devin|windsurf|cursor|all> --write (project-local)."
+        )
         return
 
     if not do_write:

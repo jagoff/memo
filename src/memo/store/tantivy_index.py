@@ -18,6 +18,7 @@ from typing import Any, ClassVar
 def _tantivy_available() -> bool:
     try:
         import tantivy  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -27,8 +28,7 @@ def _tantivy_available() -> bool:
 def _fold_diacritics(text: str) -> str:
     """Strip combining diacritical marks so 'decisión' matches 'decision'."""
     return "".join(
-        c for c in unicodedata.normalize("NFD", text)
-        if not unicodedata.combining(c)
+        c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c)
     ).lower()
 
 
@@ -150,9 +150,7 @@ class TantivyFTSIndex:
             }
             if fuzzy:
                 kwargs["fuzzy_fields"] = self._FUZZY_FIELDS
-            q = self._index.parse_query(
-                query_str, ["title", "tags", "body"], **kwargs
-            )
+            q = self._index.parse_query(query_str, ["title", "tags", "body"], **kwargs)
         except Exception:
             return []
         searcher = self._index.searcher()

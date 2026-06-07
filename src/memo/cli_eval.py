@@ -56,16 +56,21 @@ def eval_group() -> None:
 
 @eval_group.command(name="recall")
 @click.option("--k", type=int, default=3, help="Top-K to score (default: 3).")
-@click.option("--labels", "labels_path", type=click.Path(exists=True, dir_okay=False),
-              help="JSON label set (schema memo.eval_recall.labels.v1). "
-                   "Defaults to the built-in example — supply your own corpus "
-                   "for meaningful numbers.")
+@click.option(
+    "--labels",
+    "labels_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON label set (schema memo.eval_recall.labels.v1). "
+    "Defaults to the built-in example — supply your own corpus "
+    "for meaningful numbers.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit raw JSON.")
 @click.option("--detail", is_flag=True, help="Print per-prompt top-K.")
 @click.option("--force", is_flag=True, help="Ignore cached results and re-run.")
 @click.option("--no-cache", is_flag=True, help="Neither read nor write the cache.")
-def eval_recall_cmd(k: int, labels_path: str | None, as_json: bool,
-                    detail: bool, force: bool, no_cache: bool) -> None:
+def eval_recall_cmd(
+    k: int, labels_path: str | None, as_json: bool, detail: bool, force: bool, no_cache: bool
+) -> None:
     """Precision@K / noise@K per retrieval config over labeled prompts.
 
     Example: memo eval recall --k 3 --labels mylabels.json --json
@@ -80,8 +85,10 @@ def eval_recall_cmd(k: int, labels_path: str | None, as_json: bool,
     else:
         labels = eval_recall.DEFAULT_LABELS
         if not as_json:
-            console.print("[dim]Using the built-in example label set; pass "
-                          "--labels for your own corpus.[/dim]")
+            console.print(
+                "[dim]Using the built-in example label set; pass "
+                "--labels for your own corpus.[/dim]"
+            )
 
     mem = _get_memory(cfg)
     corpus_fp = eval_recall.fingerprint_corpus(mem)
@@ -99,19 +106,24 @@ def eval_recall_cmd(k: int, labels_path: str | None, as_json: bool,
         rows = eval_recall.evaluate(mem, k=k, labels=labels)
         if not no_cache:
             cache = _load_cache(cfg)
-            cache[cache_key] = {"ts": time.time(), "k": k,
-                                "rows": [r.__dict__ for r in rows]}
+            cache[cache_key] = {"ts": time.time(), "k": k, "rows": [r.__dict__ for r in rows]}
             _save_cache(cfg, cache)
 
     if as_json:
-        click.echo(json.dumps({
-            "k": k,
-            "cached": cached,
-            "corpus": corpus_fp,
-            "labels_fingerprint": labels.fingerprint(),
-            "rows": [r.__dict__ for r in rows],
-            "recommendation": eval_recall.recommend(rows),
-        }, ensure_ascii=False, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "k": k,
+                    "cached": cached,
+                    "corpus": corpus_fp,
+                    "labels_fingerprint": labels.fingerprint(),
+                    "rows": [r.__dict__ for r in rows],
+                    "recommendation": eval_recall.recommend(rows),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return
 
     console.print(eval_recall.rows_to_table(rows, k))

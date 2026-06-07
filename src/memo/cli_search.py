@@ -22,9 +22,13 @@ from memo.config import Config
 @click.argument("query")
 @click.option("--limit", default=10, type=int, show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
-@click.option("--mode", default="hybrid",
-              type=click.Choice(["hybrid", "vec", "bm25"]), show_default=True,
-              help="hybrid = RRF fusion of vec + bm25 (default). vec = semantic only. bm25 = keyword only.")
+@click.option(
+    "--mode",
+    default="hybrid",
+    type=click.Choice(["hybrid", "vec", "bm25"]),
+    show_default=True,
+    help="hybrid = RRF fusion of vec + bm25 (default). vec = semantic only. bm25 = keyword only.",
+)
 @click.option("--json", "as_json", is_flag=True)
 def search(query: str, limit: int, type_: str | None, mode: str, as_json: bool) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
@@ -51,10 +55,12 @@ def search(query: str, limit: int, type_: str | None, mode: str, as_json: bool) 
         )
     console.print(tbl)
 
+
 @click.command()
 @click.argument("question")
-@click.option("--k", default=5, type=int, show_default=True,
-              help="Top-K memorias to feed the LLM as context.")
+@click.option(
+    "--k", default=5, type=int, show_default=True, help="Top-K memorias to feed the LLM as context."
+)
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option("--json", "as_json", is_flag=True)
 def ask(question: str, k: int, type_: str | None, as_json: bool) -> None:
@@ -67,10 +73,13 @@ def ask(question: str, k: int, type_: str | None, as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
         return
-    console.print(Panel.fit(
-        out["answer"] or "[dim](sin respuesta)[/dim]",
-        title=f"❓ {question[:60]}", border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            out["answer"] or "[dim](sin respuesta)[/dim]",
+            title=f"❓ {question[:60]}",
+            border_style="cyan",
+        )
+    )
     if out["sources"]:
         console.print("[dim]fuentes:[/dim]")
         for s in out["sources"]:
@@ -79,13 +88,16 @@ def ask(question: str, k: int, type_: str | None, as_json: bool) -> None:
                 f"[dim](score {s['score']:.3f})[/dim]"
             )
 
+
 @click.command(name="embed")
 @click.argument("text", required=False)
 @click.option(
-    "--batch-json", type=click.File("r"), default=None,
+    "--batch-json",
+    type=click.File("r"),
+    default=None,
     help="Read JSON list of texts from this path (or '-' for stdin). "
-         "Each text is embedded with the SYMMETRIC (document) prefix. "
-         "Mutually exclusive with positional TEXT.",
+    "Each text is embedded with the SYMMETRIC (document) prefix. "
+    "Mutually exclusive with positional TEXT.",
 )
 def embed_cmd(text: str | None, batch_json) -> None:
     """Compute embedding vector(s) using memo's MLX embedder.
@@ -128,18 +140,30 @@ def embed_cmd(text: str | None, batch_json) -> None:
     sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
+
 @click.command(name="chat-ask")
 @click.argument("question")
-@click.option("--k", default=7, type=int, show_default=True,
-              help="Top-K memorias to feed the LLM as context.")
+@click.option(
+    "--k", default=7, type=int, show_default=True, help="Top-K memorias to feed the LLM as context."
+)
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
-@click.option("--history-json", type=click.File("r"), default=None,
-              help="Conversation history JSON: list of {role,text}. '-' reads stdin.")
-@click.option("--context-json", type=click.File("r"), default=None,
-              help="Caller-supplied federation context (e.g. Synapse packet) for richer synthesis.")
+@click.option(
+    "--history-json",
+    type=click.File("r"),
+    default=None,
+    help="Conversation history JSON: list of {role,text}. '-' reads stdin.",
+)
+@click.option(
+    "--context-json",
+    type=click.File("r"),
+    default=None,
+    help="Caller-supplied federation context (e.g. Synapse packet) for richer synthesis.",
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
-    "--stream", "as_stream", is_flag=True,
+    "--stream",
+    "as_stream",
+    is_flag=True,
     help=(
         "Emit one NDJSON event per line (context/token/done) flushed "
         "immediately. Forces JSON output and disables the panel."
@@ -178,6 +202,7 @@ def chat_ask(
 
     if as_stream:
         import sys
+
         for event in mem.chat_ask_stream(
             question,
             k=k,
@@ -199,30 +224,41 @@ def chat_ask(
     if as_json:
         click.echo(json.dumps(envelope, ensure_ascii=False, indent=2))
         return
-    console.print(Panel.fit(
-        envelope["answer"] or "[dim](sin respuesta)[/dim]",
-        title=f"❓ {question[:60]}", border_style="magenta",
-    ))
+    console.print(
+        Panel.fit(
+            envelope["answer"] or "[dim](sin respuesta)[/dim]",
+            title=f"❓ {question[:60]}",
+            border_style="magenta",
+        )
+    )
     if envelope["sources"]:
         console.print("[dim]fuentes:[/dim]")
         for s in envelope["sources"]:
             console.print(
-                f"  [dim][{s.get('id_short','?')}][/dim] {(s.get('title','') or '')[:60]}  "
+                f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "
                 f"[dim](score {s.get('score', 0):.3f})[/dim]"
             )
+
 
 @click.command(name="rerank")
 @click.option("--query", "query", required=True, help="The search query.")
 @click.option(
-    "--hits-file", type=click.Path(exists=True, dir_okay=False),
-    default=None, help="JSON file with hits array. If omitted, reads stdin.",
+    "--hits-file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="JSON file with hits array. If omitted, reads stdin.",
 )
 @click.option(
-    "--top-n", type=int, default=None,
+    "--top-n",
+    type=int,
+    default=None,
     help="Truncate output to top-N after reranking.",
 )
 @click.option(
-    "--body-chars", type=int, default=1200, show_default=True,
+    "--body-chars",
+    type=int,
+    default=1200,
+    show_default=True,
     help="Per-hit body truncation before scoring.",
 )
 @click.option("--trace-id", default="", help="Trace ID for provenance (unused locally).")
@@ -277,9 +313,7 @@ def rerank_cmd(
         if not isinstance(h, dict):
             continue
         title = str(h.get("title") or "")
-        body_src = str(h.get("snippet") or h.get("body") or "")[
-            : max(0, body_chars)
-        ]
+        body_src = str(h.get("snippet") or h.get("body") or "")[: max(0, body_chars)]
         doc = f"{title}\n\n{body_src}" if body_src else title
         try:
             p = float(r.score(query, doc))

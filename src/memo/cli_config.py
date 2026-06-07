@@ -40,14 +40,16 @@ def config_flags(group_filter: str | None, active: bool, as_json: bool) -> None:
             continue
         if active and name not in active_vals:
             continue
-        rows.append({
-            "flag": name,
-            "group": spec.group,
-            "kind": spec.kind,
-            "default": spec.default,
-            "active": active_vals.get(name),
-            "help": spec.help,
-        })
+        rows.append(
+            {
+                "flag": name,
+                "group": spec.group,
+                "kind": spec.kind,
+                "default": spec.default,
+                "active": active_vals.get(name),
+                "help": spec.help,
+            }
+        )
 
     if as_json:
         click.echo(json.dumps(rows, indent=2, default=str))
@@ -61,7 +63,9 @@ def config_flags(group_filter: str | None, active: bool, as_json: bool) -> None:
     table.add_column("active", style="green")
     for r in rows:
         table.add_row(
-            r["flag"], r["group"], r["kind"],
+            r["flag"],
+            r["group"],
+            r["kind"],
             "" if r["default"] is None else str(r["default"]),
             "" if r["active"] is None else str(r["active"]),
         )

@@ -93,6 +93,7 @@ def _run_with_repo_progress(
         TimeElapsedColumn(),
         console=console,
     ) as progress:
+
         def _on_progress(event: str, data: dict[str, Any]) -> None:
             if event == "clone_start":
                 console.print(f"[dim]clone/fetch[/dim] {data['url']}")
@@ -108,10 +109,7 @@ def _run_with_repo_progress(
                 if task_id is not None:
                     progress.advance(task_id)
             elif event == "write_start":
-                console.print(
-                    "[dim]write sqlite[/dim] "
-                    f"flush_batch={data.get('flush_batch')}"
-                )
+                console.print(f"[dim]write sqlite[/dim] flush_batch={data.get('flush_batch')}")
             elif event == "write_done":
                 console.print(
                     "[dim]write sqlite done[/dim] "
@@ -120,16 +118,14 @@ def _run_with_repo_progress(
                 )
             elif event == "semantic_prepare":
                 console.print(
-                    "[dim]embedder[/dim] preparing pending chunks "
-                    f"for {data.get('repo') or 'repo'}"
+                    f"[dim]embedder[/dim] preparing pending chunks for {data.get('repo') or 'repo'}"
                 )
             elif event == "semantic_start":
                 total = int(data.get("chunks") or 0)
                 if total:
                     repo = data.get("repo") or "repo"
                     console.print(
-                        "[dim]embedder[/dim] "
-                        f"{total} pending chunks; use --no-embeddings to skip"
+                        f"[dim]embedder[/dim] {total} pending chunks; use --no-embeddings to skip"
                     )
                     progress_state["semantic_task"] = progress.add_task(
                         f"embedder {repo}",
@@ -153,10 +149,18 @@ def _run_with_repo_progress(
 @repo_group.command(name="index")
 @click.argument("url")
 @click.option("--name", default=None, help="Stable repo label. Defaults to repo basename.")
-@click.option("--ref", "ref_", default=None, help="Branch, tag, or commit. Default: current/default HEAD.")
+@click.option(
+    "--ref", "ref_", default=None, help="Branch, tag, or commit. Default: current/default HEAD."
+)
 @click.option("--force", is_flag=True, help="Re-index even when commit/file hashes are unchanged.")
-@click.option("--no-embeddings", is_flag=True, help="Write exact line/BM25 index only; run `memo repo embed` later.")
-@click.option("--include", multiple=True, help="Glob to include. Repeatable. Default: all text files.")
+@click.option(
+    "--no-embeddings",
+    is_flag=True,
+    help="Write exact line/BM25 index only; run `memo repo embed` later.",
+)
+@click.option(
+    "--include", multiple=True, help="Glob to include. Repeatable. Default: all text files."
+)
 @click.option("--exclude", multiple=True, help="Glob to exclude. Repeatable.")
 @click.option("--max-file-bytes", default=None, type=int, help="Skip files above this byte size.")
 @click.option("--json", "as_json", is_flag=True)
@@ -188,6 +192,7 @@ def repo_index_cmd(
                 max_file_bytes=max_file_bytes,
             )
         else:
+
             def _run(progress: Callable[[str, dict[str, Any]], None]) -> dict[str, Any]:
                 out = mem.repo_index(
                     url,
@@ -379,17 +384,21 @@ def repo_get_cmd(
     if as_json:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
         return
-    console.print(Panel.fit(
-        out["text"],
-        title=f"{out['repo_name']}:{out['path']}:{out['start']}-{out['end']}",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            out["text"],
+            title=f"{out['repo_name']}:{out['path']}:{out['start']}-{out['end']}",
+            border_style="cyan",
+        )
+    )
 
 
 @repo_group.command(name="delete")
 @click.argument("repo")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
-@click.option("--keep-clone", is_flag=True, help="Only delete index rows; keep memo's managed clone.")
+@click.option(
+    "--keep-clone", is_flag=True, help="Only delete index rows; keep memo's managed clone."
+)
 def repo_delete_cmd(repo: str, yes: bool, keep_clone: bool) -> None:
     """Delete one indexed repo."""
     from memo.memory import Memory

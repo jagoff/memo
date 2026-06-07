@@ -69,6 +69,7 @@ def capture_stop() -> None:
 
     try:
         from memo.capture import run_capture
+
         run_capture(Path(transcript_path), debug=debug)
     except Exception as exc:
         if debug:
@@ -80,6 +81,7 @@ def capture_stop() -> None:
     try:
         from memo import grounding
         from memo.config import Config
+
         summary = grounding.score_turn(Config.from_env().state_dir, payload)
         if debug and summary:
             print(f"# memo grounding: {summary}", file=_sys.stderr)
@@ -97,19 +99,32 @@ def capture_stop() -> None:
 # (decisions, facts, bugs, follow-ups), and save them as memorias + a session
 # arc nota. Auto-idempotent via `reflected_at` stamp in the session snapshot.
 
+
 @click.command(name="resume")
 @click.argument("session_id", required=False)
-@click.option("--limit", default=10, type=int, show_default=True,
-              help="Max sessions to show (only used when SESSION_ID is omitted).")
+@click.option(
+    "--limit",
+    default=10,
+    type=int,
+    show_default=True,
+    help="Max sessions to show (only used when SESSION_ID is omitted).",
+)
 @click.option("--project", default=None, help="Filter to one project basename.")
-@click.option("--cwd", "cwd_filter", default=None,
-              help="Filter to sessions for this exact cwd (resolved). "
-                   "Used by the shell wrapper to ask 'what was open here?' "
-                   "without manual path comparison.")
+@click.option(
+    "--cwd",
+    "cwd_filter",
+    default=None,
+    help="Filter to sessions for this exact cwd (resolved). "
+    "Used by the shell wrapper to ask 'what was open here?' "
+    "without manual path comparison.",
+)
 @click.option("--json", "as_json", is_flag=True)
 def resume(
-    session_id: str | None, limit: int,
-    project: str | None, cwd_filter: str | None, as_json: bool,
+    session_id: str | None,
+    limit: int,
+    project: str | None,
+    cwd_filter: str | None,
+    as_json: bool,
 ) -> None:
     """Recent sessions to retomar — picker for the SessionStart flow.
 
@@ -139,21 +154,24 @@ def resume(
         if len(mods) > 5:
             mods_line += f", …(+{len(mods) - 5})"
         sid = snap.get("session_id") or ""
-        console.print(Panel.fit(
-            f"[bold]{snap.get('summary') or snap.get('last_user_msg') or 'session'}[/bold]\n"
-            f"[dim]session_id:[/dim] {sid}\n"
-            f"[dim]project:[/dim]    {snap.get('project') or '—'}\n"
-            f"[dim]cwd:[/dim]        {snap.get('cwd') or '—'}\n"
-            f"[dim]branch:[/dim]     {snap.get('branch') or '—'}\n"
-            f"[dim]head:[/dim]       {snap.get('head_commit') or '—'}\n"
-            f"[dim]modified:[/dim]   {mods_line or '—'}\n"
-            f"[dim]transcript:[/dim] {snap.get('transcript_path') or '—'}\n"
-            f"[dim]created:[/dim]    {snap.get('created')}  ({format_relative(snap.get('created'))})\n"
-            f"[dim]updated:[/dim]    {snap.get('updated')}  ({format_relative(snap.get('updated'))})\n"
-            f"[dim]turns:[/dim]      {snap.get('turn_count')}\n\n"
-            f"{snap.get('last_user_msg') or ''}",
-            title="session", border_style="cyan",
-        ))
+        console.print(
+            Panel.fit(
+                f"[bold]{snap.get('summary') or snap.get('last_user_msg') or 'session'}[/bold]\n"
+                f"[dim]session_id:[/dim] {sid}\n"
+                f"[dim]project:[/dim]    {snap.get('project') or '—'}\n"
+                f"[dim]cwd:[/dim]        {snap.get('cwd') or '—'}\n"
+                f"[dim]branch:[/dim]     {snap.get('branch') or '—'}\n"
+                f"[dim]head:[/dim]       {snap.get('head_commit') or '—'}\n"
+                f"[dim]modified:[/dim]   {mods_line or '—'}\n"
+                f"[dim]transcript:[/dim] {snap.get('transcript_path') or '—'}\n"
+                f"[dim]created:[/dim]    {snap.get('created')}  ({format_relative(snap.get('created'))})\n"
+                f"[dim]updated:[/dim]    {snap.get('updated')}  ({format_relative(snap.get('updated'))})\n"
+                f"[dim]turns:[/dim]      {snap.get('turn_count')}\n\n"
+                f"{snap.get('last_user_msg') or ''}",
+                title="session",
+                border_style="cyan",
+            )
+        )
         if sid:
             console.print(
                 f"\n[bold green]Para retomar:[/bold green]  "
@@ -165,7 +183,10 @@ def resume(
 
     # List view — picker.
     rows = list_sessions(
-        cfg.state_dir, limit=limit, project=project, cwd=cwd_filter,
+        cfg.state_dir,
+        limit=limit,
+        project=project,
+        cwd=cwd_filter,
     )
     if as_json:
         click.echo(json.dumps(rows, ensure_ascii=False, indent=2))
@@ -187,6 +208,7 @@ def resume(
         # resume", not a generic chronological list.
         import os as _os
         from pathlib import Path as _Path
+
         cur_cwd = str(_Path(_os.getcwd()).resolve())
         same_cwd = [r for r in rows if (r.get("cwd") or "") == cur_cwd]
     if same_cwd:
@@ -198,8 +220,7 @@ def resume(
             f"{(top.get('summary') or top.get('last_user_msg') or '—')[:80]}",
         )
         console.print(
-            f"[bold green]Para retomar:[/bold green]  "
-            f"[cyan]claude --resume {sid}[/cyan]\n",
+            f"[bold green]Para retomar:[/bold green]  [cyan]claude --resume {sid}[/cyan]\n",
         )
 
     tbl = Table(show_lines=False, expand=True)

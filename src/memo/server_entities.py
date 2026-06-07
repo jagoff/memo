@@ -17,7 +17,9 @@ from memo.memory import Memory
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memory_extract_entities(
-        ids: list[str] | None = None, all_: bool = False, force: bool = False,
+        ids: list[str] | None = None,
+        all_: bool = False,
+        force: bool = False,
     ) -> dict[str, int]:
         """Extract named entities (person/project/technology/file/org/concept)
         from memoria bodies via Qwen2.5-3B and write them to the graph DB.
@@ -34,12 +36,15 @@ def register(server: FastMCP, memory: Memory) -> None:
         install, then incrementally on new memorias.
         """
         return memory.extract_entities(
-            ids=ids, all_=all_, skip_already_indexed=not force,
+            ids=ids,
+            all_=all_,
+            skip_already_indexed=not force,
         )
 
     @server.tool()
     def memory_entities(
-        limit: int = 30, type: str | None = None,
+        limit: int = 30,
+        type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Top entities in the knowledge graph, ranked by mention count.
 

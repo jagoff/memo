@@ -48,9 +48,9 @@ _log = logging.getLogger(__name__)
 
 # Keys carried in a memoria's `extra` bag (persisted to meta.extra_json and to
 # the on-disk frontmatter `extra:` block, so they survive a reindex for free).
-FORGET_AFTER_KEY = "forget_after"   # ISO date/datetime; soft-forget once passed
+FORGET_AFTER_KEY = "forget_after"  # ISO date/datetime; soft-forget once passed
 FORGET_REASON_KEY = "forget_reason"  # free-text why
-IS_FORGOTTEN_KEY = "is_forgotten"   # bool; excluded from search/recall/list
+IS_FORGOTTEN_KEY = "is_forgotten"  # bool; excluded from search/recall/list
 
 
 def _parse_iso_date(value: Any) -> datetime | None:
@@ -66,7 +66,10 @@ def _parse_iso_date(value: Any) -> datetime | None:
     try:
         if len(s) == 10:  # YYYY-MM-DD
             dt = datetime.fromisoformat(s).replace(
-                hour=23, minute=59, second=59, tzinfo=UTC,
+                hour=23,
+                minute=59,
+                second=59,
+                tzinfo=UTC,
             )
         else:
             dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -80,6 +83,7 @@ def _parse_iso_date(value: Any) -> datetime | None:
 @dataclass
 class LifecyclePolicy:
     """Policy rules for memory lifecycle management."""
+
     archival_days: int = 180  # Days of inactivity before archival
     promotion_threshold: int = 5  # Access count to promote
     demotion_threshold: int = 2  # Access count below which to demote
@@ -90,6 +94,7 @@ class LifecyclePolicy:
 @dataclass
 class LifecycleAction:
     """A lifecycle action taken on a memoria."""
+
     memoria_id: str
     action: str  # archive, promote, demote, expire, delete
     reason: str
@@ -253,7 +258,10 @@ class LifecycleManager:
         return False, f"forget_after {due.date().isoformat()} not yet reached"
 
     def enforce_forget_ttl(
-        self, *, dry_run: bool = False, limit: int = 1000,
+        self,
+        *,
+        dry_run: bool = False,
+        limit: int = 1000,
     ) -> list[dict[str, Any]]:
         """Soft-forget every memoria whose `forget_after` TTL has elapsed.
 

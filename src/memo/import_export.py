@@ -21,6 +21,7 @@ from typing import Any
 @dataclass
 class ImportResult:
     """Result of an import operation."""
+
     imported_count: int
     skipped_count: int
     errors: list[str]
@@ -29,6 +30,7 @@ class ImportResult:
 @dataclass
 class ExportResult:
     """Result of an export operation."""
+
     exported_count: int
     output_path: str
     format: str
@@ -220,15 +222,17 @@ class Exporter:
             writer.writerow(["id", "title", "body", "tags", "type", "created", "updated"])
 
             for m in memorias:
-                writer.writerow([
-                    m.id,
-                    m.title,
-                    m.body or "",
-                    ",".join(m.tags),
-                    m.type,
-                    m.created,
-                    m.updated,
-                ])
+                writer.writerow(
+                    [
+                        m.id,
+                        m.title,
+                        m.body or "",
+                        ",".join(m.tags),
+                        m.type,
+                        m.created,
+                        m.updated,
+                    ]
+                )
 
         return ExportResult(
             exported_count=len(memorias),

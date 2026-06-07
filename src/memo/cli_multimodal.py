@@ -33,6 +33,7 @@ def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     content = mem.multimodal.add_image(Path(image_path), memoria_id)
 
     console.print("[green]Image added[/green]")
@@ -52,6 +53,7 @@ def multimodal_add_audio(audio_path: str, memoria_id: str | None) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     content = mem.multimodal.add_audio(Path(audio_path), memoria_id)
 
     console.print("[green]Audio added[/green]")

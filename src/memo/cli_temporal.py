@@ -27,14 +27,23 @@ def temporal_group() -> None:
 @temporal_group.command(name="contradictions")
 @click.argument("entity")
 @click.option("--type", "entity_type", help="Filter by entity type from graph")
-@click.option("--confidence", "min_confidence", type=float, default=0.7,
-              help="Minimum confidence threshold (default: 0.7)")
-@click.option("--max-pairs", type=int, default=20,
-              help="Maximum number of pairs to analyze (default: 20)")
+@click.option(
+    "--confidence",
+    "min_confidence",
+    type=float,
+    default=0.7,
+    help="Minimum confidence threshold (default: 0.7)",
+)
+@click.option(
+    "--max-pairs", type=int, default=20, help="Maximum number of pairs to analyze (default: 20)"
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def temporal_contradictions(
-    entity: str, entity_type: str | None, min_confidence: float,
-    max_pairs: int, as_json: bool,
+    entity: str,
+    entity_type: str | None,
+    min_confidence: float,
+    max_pairs: int,
+    as_json: bool,
 ) -> None:
     """Detect contradictions among memorias mentioning a specific entity.
 
@@ -103,13 +112,18 @@ def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> No
         return
 
     if as_json:
-        click.echo(json.dumps({
-            "entity_name": timeline.entity_name,
-            "entity_type": timeline.entity_type,
-            "first_seen": timeline.first_seen,
-            "last_seen": timeline.last_seen,
-            "events": [e.__dict__ for e in timeline.events],
-        }, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "entity_name": timeline.entity_name,
+                    "entity_type": timeline.entity_type,
+                    "first_seen": timeline.first_seen,
+                    "last_seen": timeline.last_seen,
+                    "events": [e.__dict__ for e in timeline.events],
+                },
+                indent=2,
+            )
+        )
         return
 
     console.print(f"[bold]Timeline for '{entity}' ({timeline.entity_type})[/bold]")
@@ -125,10 +139,16 @@ def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> No
 
 
 @temporal_group.command(name="stale")
-@click.option("--days", type=int, default=180,
-              help="Days since last update to consider stale (default: 180)")
-@click.option("--min-access", "min_access_count", type=int, default=0,
-              help="Minimum access count to exclude (default: 0)")
+@click.option(
+    "--days", type=int, default=180, help="Days since last update to consider stale (default: 180)"
+)
+@click.option(
+    "--min-access",
+    "min_access_count",
+    type=int,
+    default=0,
+    help="Minimum access count to exclude (default: 0)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def temporal_stale(days: int, min_access_count: int, as_json: bool) -> None:
     """Find memorias that may be stale based on age and lack of access.

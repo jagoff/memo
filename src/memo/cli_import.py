@@ -33,6 +33,7 @@ def import_json(input_path: str, format: str | None) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     result = mem.import_export.import_from(Path(input_path), format or "json")
 
     console.print("[green]Import complete[/green]")
@@ -54,6 +55,7 @@ def import_csv(input_path: str) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     result = mem.import_export.import_from(Path(input_path), "csv")
 
     console.print("[green]Import complete[/green]")
@@ -65,28 +67,52 @@ def import_csv(input_path: str) -> None:
 
 
 @import_group.command(name="whatsapp")
-@click.option("--include-chat", "include_chats", multiple=True,
-              help="Chat JID to ingest (repeatable). Opt-in allowlist.")
-@click.option("--exclude-chat", "exclude_chats", multiple=True,
-              help="Chat JID to skip (repeatable).")
-@click.option("--all-chats", is_flag=True,
-              help="Ingest every chat (minus exclusions). Required if no --include-chat.")
-@click.option("--retention-days", type=int, default=180, show_default=True,
-              help="Only include messages newer than N days.")
+@click.option(
+    "--include-chat",
+    "include_chats",
+    multiple=True,
+    help="Chat JID to ingest (repeatable). Opt-in allowlist.",
+)
+@click.option(
+    "--exclude-chat", "exclude_chats", multiple=True, help="Chat JID to skip (repeatable)."
+)
+@click.option(
+    "--all-chats",
+    is_flag=True,
+    help="Ingest every chat (minus exclusions). Required if no --include-chat.",
+)
+@click.option(
+    "--retention-days",
+    type=int,
+    default=180,
+    show_default=True,
+    help="Only include messages newer than N days.",
+)
 @click.option("--since", help="Floor date YYYY-MM-DD (in addition to retention).")
-@click.option("--notes-dir", "notes_dir", type=click.Path(), default=None,
-              help="Override output folder (default: <vault>/<SYSTEM_DIR>/Whatsapp, "
-                   "or $MEMO_WHATSAPP_NOTES_DIR). If under <SYSTEM_DIR>/AI/ — excluded "
-                   "from generic vault ingest — the --index step still indexes it "
-                   "directly as `--name whatsapp`.")
+@click.option(
+    "--notes-dir",
+    "notes_dir",
+    type=click.Path(),
+    default=None,
+    help="Override output folder (default: <vault>/<SYSTEM_DIR>/Whatsapp, "
+    "or $MEMO_WHATSAPP_NOTES_DIR). If under <SYSTEM_DIR>/AI/ — excluded "
+    "from generic vault ingest — the --index step still indexes it "
+    "directly as `--name whatsapp`.",
+)
 @click.option("--dry-run", is_flag=True, help="Report counts, write nothing.")
-@click.option("--index/--no-index", default=True, show_default=True,
-              help="Run `memo ingest` on the notes folder so the chat can find them.")
-@click.option("--reindex", is_flag=True,
-              help="Skip the bridge; just re-run `memo ingest` over the existing "
-                   "notes folder. Repairs 'notes exist on disk but aren't searchable'.")
-@click.option("--db", "db_path", type=click.Path(),
-              help="Override bridge messages.db path.")
+@click.option(
+    "--index/--no-index",
+    default=True,
+    show_default=True,
+    help="Run `memo ingest` on the notes folder so the chat can find them.",
+)
+@click.option(
+    "--reindex",
+    is_flag=True,
+    help="Skip the bridge; just re-run `memo ingest` over the existing "
+    "notes folder. Repairs 'notes exist on disk but aren't searchable'.",
+)
+@click.option("--db", "db_path", type=click.Path(), help="Override bridge messages.db path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit the summary as JSON.")
 def import_whatsapp(
     include_chats: tuple[str, ...],
@@ -140,7 +166,8 @@ def import_whatsapp(
         try:
             subprocess.run(
                 ["memo", "ingest", str(target), "--name", "whatsapp"],
-                check=True, timeout=600,
+                check=True,
+                timeout=600,
             )
         except Exception as exc:
             raise click.ClickException(f"reindex failed: {exc}") from exc
@@ -172,7 +199,8 @@ def import_whatsapp(
         try:
             subprocess.run(
                 ["memo", "ingest", summary["notes_dir"], "--name", "whatsapp"],
-                check=True, timeout=600,
+                check=True,
+                timeout=600,
             )
             summary["indexed"] = True
         except Exception as exc:
@@ -205,6 +233,7 @@ def import_markdown_bundle(input_path: str) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     result = mem.import_export.import_from(Path(input_path), "markdown_bundle")
 
     console.print("[green]Import complete[/green]")

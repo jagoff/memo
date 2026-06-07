@@ -39,7 +39,9 @@ _VAULT_PREFIXES: tuple[str, ...] = ("notes/", "work/")
 
 
 def is_reference_candidate(
-    path: str | None, tags: Iterable[str] | None, title: str | None,
+    path: str | None,
+    tags: Iterable[str] | None,
+    title: str | None,
 ) -> bool:
     """True if a `note` looks like bulk-ingested vault reference material.
 

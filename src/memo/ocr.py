@@ -35,6 +35,7 @@ def vision_available() -> bool:
     try:
         import Quartz  # noqa: F401
         import Vision  # noqa: F401
+
         _VISION_OK = True
     except ImportError as exc:
         _log.debug("Apple Vision not installed: %s", exc)
@@ -75,7 +76,8 @@ def extract_text(
             return ""
 
         handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(
-            cg_image, None,
+            cg_image,
+            None,
         )
         request = Vision.VNRecognizeTextRequest.alloc().init()
         # Methods may be unavailable on older macOS versions.

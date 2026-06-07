@@ -78,8 +78,7 @@ _SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 # the input context for short notes. Mirror of the embedder's
 # `_QUERY_INSTRUCTION_PREFIX` design.
 _DEFAULT_TASK = (
-    "Given a search query, retrieve relevant memory entries "
-    "from the user's personal notes."
+    "Given a search query, retrieve relevant memory entries from the user's personal notes."
 )
 
 
@@ -159,11 +158,7 @@ class MLXReranker:
             self._load_lock.release()
 
     def _format(self, query: str, doc: str) -> str:
-        return (
-            f"{_PREFIX}<Instruct>: {self.task}\n"
-            f"<Query>: {query}\n"
-            f"<Document>: {doc}{_SUFFIX}"
-        )
+        return f"{_PREFIX}<Instruct>: {self.task}\n<Query>: {query}\n<Document>: {doc}{_SUFFIX}"
 
     def score(self, query: str, doc: str) -> float:
         """Score a single `(query, doc)` pair → `P(yes)` in [0, 1]."""

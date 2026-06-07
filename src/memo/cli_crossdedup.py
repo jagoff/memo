@@ -61,7 +61,10 @@ def _memflow_query(
     try:
         proc = subprocess.run(
             ["memflow", "query", query, "-k", str(k)],
-            capture_output=True, text=True, timeout=timeout, env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
@@ -89,12 +92,19 @@ def _memflow_query(
 
 
 @click.command(name="cross-dedup")
-@click.option("--threshold", type=float, default=0.50,
-              help="Memflow score floor to flag an overlap (default 0.50).")
-@click.option("--limit", type=int, default=50,
-              help="Max memo memories to scan (default 50).")
-@click.option("--type", "type_", default=None,
-              help="Restrict memo side to a single type (e.g. decision, fact).")
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.50,
+    help="Memflow score floor to flag an overlap (default 0.50).",
+)
+@click.option("--limit", type=int, default=50, help="Max memo memories to scan (default 50).")
+@click.option(
+    "--type",
+    "type_",
+    default=None,
+    help="Restrict memo side to a single type (e.g. decision, fact).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.option("--verbose", is_flag=True, help="Show snippet text in table.")
 def cross_dedup_cmd(
@@ -126,7 +136,9 @@ def cross_dedup_cmd(
     overlaps: list[dict[str, Any]] = []
 
     if not as_json:
-        console.print(f"[bold]memo cross-dedup[/bold] — scanning {len(hits)} memories against memflow")
+        console.print(
+            f"[bold]memo cross-dedup[/bold] — scanning {len(hits)} memories against memflow"
+        )
 
     for rec in hits:
         title = getattr(rec, "title", "") or ""
@@ -145,15 +157,17 @@ def cross_dedup_cmd(
                 continue
             if mfh["kind"] in _SKIP_KINDS:
                 continue
-            overlaps.append({
-                "memo_id": rid[:8],
-                "memo_type": rtype,
-                "memo_title": title,
-                "memflow_kind": mfh["kind"],
-                "memflow_path": mfh["path"].split("/")[-1][:40],
-                "score": round(mfh["score"], 3),
-                "snippet": mfh["snippet"],
-            })
+            overlaps.append(
+                {
+                    "memo_id": rid[:8],
+                    "memo_type": rtype,
+                    "memo_title": title,
+                    "memflow_kind": mfh["kind"],
+                    "memflow_path": mfh["path"].split("/")[-1][:40],
+                    "score": round(mfh["score"], 3),
+                    "snippet": mfh["snippet"],
+                }
+            )
 
     if as_json:
         click.echo(json.dumps(overlaps, ensure_ascii=False, indent=2))
@@ -163,7 +177,9 @@ def cross_dedup_cmd(
         console.print("[dim]no overlaps found above threshold[/dim]")
         return
 
-    console.print(f"\n[bold]{len(overlaps)} potential overlap(s) found[/bold] (threshold={threshold})\n")
+    console.print(
+        f"\n[bold]{len(overlaps)} potential overlap(s) found[/bold] (threshold={threshold})\n"
+    )
 
     for o in overlaps:
         console.print(

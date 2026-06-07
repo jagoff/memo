@@ -50,7 +50,7 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-xdist>=3.6",
     "pytest-timeout>=2.3",
-    "ruff>=0.5",
+    "ruff==0.15.14",
     "mypy>=1.10",
 ]
 # Apple Vision OCR for screenshots/images embedded in Obsidian notes.

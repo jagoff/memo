@@ -113,15 +113,19 @@ def run_watcher(*, delay: float = 2.0, debug: bool = False) -> None:
                 return
             deb.schedule(Path(src))
 
-        def on_modified(self, event: Any) -> None: self._maybe(event)
-        def on_created(self, event: Any) -> None: self._maybe(event)
-        def on_moved(self, event: Any) -> None: self._maybe(event)
+        def on_modified(self, event: Any) -> None:
+            self._maybe(event)
+
+        def on_created(self, event: Any) -> None:
+            self._maybe(event)
+
+        def on_moved(self, event: Any) -> None:
+            self._maybe(event)
 
     obs = Observer()
     obs.schedule(_Handler(), str(target), recursive=True)
     obs.start()
-    print(f"# memo watch: watching {target} (debounce {delay}s, Ctrl+C to stop)",
-          file=sys.stderr)
+    print(f"# memo watch: watching {target} (debounce {delay}s, Ctrl+C to stop)", file=sys.stderr)
 
     stop = threading.Event()
 
@@ -166,10 +170,13 @@ def render_plist(memo_bin: str) -> str:
     # daemon uses the same vault/state dir as `memo` in a terminal.
     env_vars = {k: v for k, v in os.environ.items() if k.startswith("MEMO_")}
     env_keys = "".join(
-        f"        <key>{k}</key>\n        <string>{v}</string>\n"
-        for k, v in env_vars.items()
+        f"        <key>{k}</key>\n        <string>{v}</string>\n" for k, v in env_vars.items()
     )
-    env_block = f"    <key>EnvironmentVariables</key>\n    <dict>\n{env_keys}    </dict>\n" if env_vars else ""
+    env_block = (
+        f"    <key>EnvironmentVariables</key>\n    <dict>\n{env_keys}    </dict>\n"
+        if env_vars
+        else ""
+    )
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

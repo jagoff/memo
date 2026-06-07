@@ -56,7 +56,9 @@ def enqueue(
     return str(job_id) if job_id else None
 
 
-def status(job_id: str, *, state_dir: Path | None = None, timeout: float = _DEFAULT_TIMEOUT_S) -> dict[str, Any] | None:
+def status(
+    job_id: str, *, state_dir: Path | None = None, timeout: float = _DEFAULT_TIMEOUT_S
+) -> dict[str, Any] | None:
     """Poll a job's state. Returns its status dict, or None if unreachable."""
     sock = _socket_path(_resolve_state_dir(state_dir))
     resp = embed_protocol.send_request(sock, {"op": "status", "job_id": job_id}, timeout=timeout)

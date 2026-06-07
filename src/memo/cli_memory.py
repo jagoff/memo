@@ -28,28 +28,53 @@ from memo.config import Config
 @click.argument("content")
 @click.option("--title", default=None, help="Short title (default: first line of content)")
 @click.option(
-    "--type", "type_",
+    "--type",
+    "type_",
     type=click.Choice(
         ["decision", "fact", "bug", "feedback", "preference", "note", "manual"],
     ),
-    default="note", show_default=True,
+    default="note",
+    show_default=True,
 )
 @click.option("--tag", "-t", "tags", multiple=True, help="Repeatable. Lower-cased + de-duplicated.")
-@click.option("--auto-derive", is_flag=True,
-              help="When title/type/tags missing, ask Qwen2.5-3B helper to derive them. "
-                   "Adds ~1-2s latency on first call.")
-@click.option("--no-project-tag", "no_project_tag", is_flag=True,
-              help="Skip the auto `project:<repo>` tag derived from the current git toplevel.")
-@click.option("--defer-embed", is_flag=True,
-              help="Save markdown + BM25 index only; run `memo reindex` later for semantic search.")
-@click.option("--meta", "meta_pairs", multiple=True, metavar="KEY=VALUE",
-              help="Repeatable. Adds an entry to the `extra` metadata bag persisted "
-                   "to frontmatter + meta.extra_json. Synapse uses this to attach "
-                   "provenance (`--meta synapse_trace_id=...`, `--meta synapse_agent_id=...`).")
+@click.option(
+    "--auto-derive",
+    is_flag=True,
+    help="When title/type/tags missing, ask Qwen2.5-3B helper to derive them. "
+    "Adds ~1-2s latency on first call.",
+)
+@click.option(
+    "--no-project-tag",
+    "no_project_tag",
+    is_flag=True,
+    help="Skip the auto `project:<repo>` tag derived from the current git toplevel.",
+)
+@click.option(
+    "--defer-embed",
+    is_flag=True,
+    help="Save markdown + BM25 index only; run `memo reindex` later for semantic search.",
+)
+@click.option(
+    "--meta",
+    "meta_pairs",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Repeatable. Adds an entry to the `extra` metadata bag persisted "
+    "to frontmatter + meta.extra_json. Synapse uses this to attach "
+    "provenance (`--meta synapse_trace_id=...`, `--meta synapse_agent_id=...`).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a panel.")
-def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
-         auto_derive: bool, no_project_tag: bool, defer_embed: bool,
-         meta_pairs: tuple[str, ...], as_json: bool) -> None:
+def save(
+    content: str,
+    title: str | None,
+    type_: str,
+    tags: tuple[str, ...],
+    auto_derive: bool,
+    no_project_tag: bool,
+    defer_embed: bool,
+    meta_pairs: tuple[str, ...],
+    as_json: bool,
+) -> None:
     """Persist CONTENT to the vault + index. Pass `-` to read CONTENT from stdin."""
 
     if content == "-":
@@ -60,30 +85,42 @@ def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
         for pair in meta_pairs:
             if "=" not in pair:
                 raise click.BadParameter(
-                    f"--meta expects KEY=VALUE, got {pair!r}", param_hint="--meta",
+                    f"--meta expects KEY=VALUE, got {pair!r}",
+                    param_hint="--meta",
                 )
             key, _, value = pair.partition("=")
             key = key.strip()
             if not key:
                 raise click.BadParameter(
-                    f"--meta key cannot be empty: {pair!r}", param_hint="--meta",
+                    f"--meta key cannot be empty: {pair!r}",
+                    param_hint="--meta",
                 )
             extra[key] = value
     mem = _get_memory(Config.from_env())
-    rec = mem.save(content=content, title=title, type_=type_,
-                   tags=list(tags), auto_derive=auto_derive,
-                   auto_project=not no_project_tag,
-                   defer_embed=defer_embed, extra=extra)
+    rec = mem.save(
+        content=content,
+        title=title,
+        type_=type_,
+        tags=list(tags),
+        auto_derive=auto_derive,
+        auto_project=not no_project_tag,
+        defer_embed=defer_embed,
+        extra=extra,
+    )
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return
-    console.print(Panel.fit(
-        f"[bold]{rec.title}[/bold]\n"
-        f"[dim]id:[/dim] {rec.id}\n"
-        f"[dim]path:[/dim] {rec.path}\n"
-        f"[dim]type:[/dim] {rec.type}  [dim]tags:[/dim] {', '.join(rec.tags) or '—'}",
-        title="✓ saved", border_style="green",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]{rec.title}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}\n"
+            f"[dim]path:[/dim] {rec.path}\n"
+            f"[dim]type:[/dim] {rec.type}  [dim]tags:[/dim] {', '.join(rec.tags) or '—'}",
+            title="✓ saved",
+            border_style="green",
+        )
+    )
+
 
 @click.command(name="list")
 @click.option("--limit", default=20, type=int, show_default=True)
@@ -109,6 +146,7 @@ def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
         tbl.add_row(r.updated[:19], r.type, r.title, ", ".join(r.tags) or "—")
     console.print(tbl)
 
+
 @click.command()
 @click.argument("id_")
 @click.option("--json", "as_json", is_flag=True)
@@ -126,21 +164,26 @@ def get(id_: str, as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return
-    console.print(Panel.fit(
-        f"[bold]{rec.title}[/bold]\n"
-        f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
-        f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
-        f"[dim]created:[/dim] {rec.created}\n"
-        f"[dim]updated:[/dim] {rec.updated}\n\n"
-        f"{rec.body}",
-        title=rec.title, border_style="cyan",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]{rec.title}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
+            f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
+            f"[dim]created:[/dim] {rec.created}\n"
+            f"[dim]updated:[/dim] {rec.updated}\n\n"
+            f"{rec.body}",
+            title=rec.title,
+            border_style="cyan",
+        )
+    )
+
 
 @click.command()
 @click.argument("id_")
 @click.option("--title", default=None)
 @click.option(
-    "--type", "type_",
+    "--type",
+    "type_",
     type=click.Choice(
         ["decision", "fact", "bug", "feedback", "preference", "note", "manual"],
     ),
@@ -148,7 +191,8 @@ def get(id_: str, as_json: bool) -> None:
 )
 @click.option("--tag", "-t", "tags", multiple=True, help="Replaces existing tags.")
 @click.option(
-    "--content", default=None,
+    "--content",
+    default=None,
     help="Replace body. Use '-' to read from stdin.",
 )
 @click.option("--json", "as_json", is_flag=True)
@@ -166,31 +210,40 @@ def update(
         content = sys.stdin.read()
 
     mem = _get_memory(Config.from_env())
-    rec = _resolved(lambda: mem.update(
-        id_,
-        title=title,
-        type_=type_,
-        tags=list(tags) if tags else None,
-        content=content,
-    ))
+    rec = _resolved(
+        lambda: mem.update(
+            id_,
+            title=title,
+            type_=type_,
+            tags=list(tags) if tags else None,
+            content=content,
+        )
+    )
     if rec is None:
         console.print(f"[red]not found:[/red] {id_}")
         sys.exit(1)
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return
-    console.print(Panel.fit(
-        f"[bold]{rec.title}[/bold]\n"
-        f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
-        f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
-        f"[dim]updated:[/dim] {rec.updated}",
-        title="✓ updated", border_style="yellow",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]{rec.title}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
+            f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
+            f"[dim]updated:[/dim] {rec.updated}",
+            title="✓ updated",
+            border_style="yellow",
+        )
+    )
+
 
 @click.command()
-@click.option("--force", is_flag=True,
-              help="Re-embed ALL indexed entries regardless of body_hash. "
-                   "Use after embedder swap or composition change.")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-embed ALL indexed entries regardless of body_hash. "
+    "Use after embedder swap or composition change.",
+)
 @click.option("--json", "as_json", is_flag=True)
 def reindex(force: bool, as_json: bool) -> None:
     """Re-scan memory dir, re-embed entries with body_hash mismatch.
@@ -212,6 +265,7 @@ def reindex(force: bool, as_json: bool) -> None:
         f"skipped: [dim]{counts['skipped']}[/dim]",
     )
 
+
 @click.command()
 @click.argument("id_")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
@@ -220,17 +274,27 @@ def delete(id_: str, yes: bool) -> None:
 
     mem = _get_memory(Config.from_env())
     if not yes:
-        click.confirm(f"Delete memory {id_!r}? This removes the .md and the index entry.", abort=True)
+        click.confirm(
+            f"Delete memory {id_!r}? This removes the .md and the index entry.", abort=True
+        )
     ok = _resolved(lambda: mem.delete(id_))
     console.print(f"[{'green' if ok else 'red'}]{'✓ deleted' if ok else 'not found'}[/]: {id_}")
 
+
 @click.command()
 @click.option("--limit", default=20, type=int, show_default=True)
-@click.option("--op", default=None,
-              type=click.Choice(["save", "update", "delete"]),
-              help="Filter to one op type.")
-@click.option("--id", "record_id", default=None,
-              help="Filter to events for one record (full id or unique prefix).")
+@click.option(
+    "--op",
+    default=None,
+    type=click.Choice(["save", "update", "delete"]),
+    help="Filter to one op type.",
+)
+@click.option(
+    "--id",
+    "record_id",
+    default=None,
+    help="Filter to events for one record (full id or unique prefix).",
+)
 @click.option("--json", "as_json", is_flag=True)
 def history(limit: int, op: str | None, record_id: str | None, as_json: bool) -> None:
     """Recent save/update/delete events. Append-only audit log."""
@@ -261,10 +325,14 @@ def history(limit: int, op: str | None, record_id: str | None, as_json: bool) ->
         if r.get("delta"):
             delta = ", ".join(f"{k}" for k in r["delta"])
         tbl.add_row(
-            (r["ts"] or "")[:19], r["op"], (r["record_id"] or "")[:8],
-            r["title"] or "—", delta or "—",
+            (r["ts"] or "")[:19],
+            r["op"],
+            (r["record_id"] or "")[:8],
+            r["title"] or "—",
+            delta or "—",
         )
     console.print(tbl)
+
 
 @click.command(name="ocr-image")
 @click.argument("image_path", type=click.Path(exists=True, dir_okay=False))
@@ -293,6 +361,7 @@ def ocr_image(image_path: str, as_json: bool) -> None:
     else:
         click.echo(text)
 
+
 @click.command()
 @click.argument("id_", metavar="ID")
 @click.option("--json", "as_json", is_flag=True)
@@ -314,10 +383,13 @@ def provenance(id_: str, as_json: bool) -> None:
         return
     cur = payload.get("current") or {}
     if cur:
-        console.print(Panel.fit(
-            "\n".join(f"[dim]{k}:[/dim] {v}" for k, v in cur.items()),
-            title=f"provenance {payload['id'][:8]}", border_style="cyan",
-        ))
+        console.print(
+            Panel.fit(
+                "\n".join(f"[dim]{k}:[/dim] {v}" for k, v in cur.items()),
+                title=f"provenance {payload['id'][:8]}",
+                border_style="cyan",
+            )
+        )
     else:
         console.print(f"[dim]no provenance for {payload['id'][:8]} (current state)[/dim]")
     events = payload.get("events") or []
@@ -333,12 +405,21 @@ def provenance(id_: str, as_json: bool) -> None:
         tbl.add_row((ev.get("ts") or "")[:19], ev.get("op") or "", prov_str)
     console.print(tbl)
 
+
 @click.command()
-@click.option("--category", default=None,
-              type=click.Choice(["legacy_extra", "few_tags", "body_skinny", "untitled"]),
-              help="Show only one category. Default: summary of all.")
-@click.option("--limit", default=20, type=int, show_default=True,
-              help="Max entries per category in the report.")
+@click.option(
+    "--category",
+    default=None,
+    type=click.Choice(["legacy_extra", "few_tags", "body_skinny", "untitled"]),
+    help="Show only one category. Default: summary of all.",
+)
+@click.option(
+    "--limit",
+    default=20,
+    type=int,
+    show_default=True,
+    help="Max entries per category in the report.",
+)
 @click.option("--json", "as_json", is_flag=True)
 def lint(category: str | None, limit: int, as_json: bool) -> None:
     """Surface memorias with quality issues. Read-only — does not edit
@@ -365,12 +446,16 @@ def lint(category: str | None, limit: int, as_json: bool) -> None:
         if n > limit:
             console.print(f"  · …and {n - limit} more")
 
+
 @click.command()
 @click.argument("zip_path", type=click.Path(exists=True))
-@click.option("--reindex", is_flag=True,
-              help="After restoring .md files, run `memo reindex` to "
-                   "rebuild the index from disk (use when restoring without "
-                   "the bundled state DBs, or across embedder model versions).")
+@click.option(
+    "--reindex",
+    is_flag=True,
+    help="After restoring .md files, run `memo reindex` to "
+    "rebuild the index from disk (use when restoring without "
+    "the bundled state DBs, or across embedder model versions).",
+)
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def restore(zip_path: str, reindex: bool, yes: bool) -> None:
     """Restore from a backup zip created by `memo backup`.
@@ -398,7 +483,8 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
         if not yes:
             click.confirm(
                 f"Extract into {cfg.data_dir} + {cfg.state_dir}? "
-                "Existing files will be overwritten.", abort=True,
+                "Existing files will be overwritten.",
+                abort=True,
             )
         # Stream entries.
         n_md = n_db = 0
@@ -407,21 +493,20 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
                 continue
             data = zf.read(info)
             if info.filename.startswith("memory/"):
-                rel = info.filename[len("memory/"):]
+                rel = info.filename[len("memory/") :]
                 dest = cfg.data_dir / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
                 n_md += 1
             elif info.filename.startswith("state/"):
-                rel = info.filename[len("state/"):]
+                rel = info.filename[len("state/") :]
                 dest = cfg.state_dir / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
                 n_db += 1
 
     console.print(
-        f"[green]✓[/green] restored {n_md} memorias + {n_db} state DB(s) "
-        f"into {cfg.data_dir}",
+        f"[green]✓[/green] restored {n_md} memorias + {n_db} state DB(s) into {cfg.data_dir}",
     )
 
     if reindex:

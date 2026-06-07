@@ -22,17 +22,15 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-OBSIDIAN_REGISTRY = (
-    Path.home() / "Library" / "Application Support" / "obsidian" / "obsidian.json"
-)
+OBSIDIAN_REGISTRY = Path.home() / "Library" / "Application Support" / "obsidian" / "obsidian.json"
 
 
 @dataclass(frozen=True)
 class VaultInfo:
     """One detected Obsidian vault."""
 
-    name: str          # basename of the vault path
-    path: Path         # absolute path on disk
+    name: str  # basename of the vault path
+    path: Path  # absolute path on disk
     last_opened_ms: int  # epoch ms; 0 if registry omits `ts`
 
 

@@ -29,21 +29,58 @@ from memo.retrieval_boost import boost_for as _retrieval_boost_for
 from memo.store import VecStore
 from memo.util import sha256_short as _short_hash
 
-DEFAULT_EXCLUDE_DIRS = frozenset({
-    ".git", ".hg", ".svn",
-    ".claude", ".codex", ".devin",
-    ".venv", "venv", "env",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    "node_modules", ".next", ".nuxt", ".turbo",
-    "dist", "build", "target", "coverage",
-    ".idea", ".vscode",
-})
+DEFAULT_EXCLUDE_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".claude",
+        ".codex",
+        ".devin",
+        ".venv",
+        "venv",
+        "env",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+        ".next",
+        ".nuxt",
+        ".turbo",
+        "dist",
+        "build",
+        "target",
+        "coverage",
+        ".idea",
+        ".vscode",
+    }
+)
 
 DEFAULT_EXCLUDE_GLOBS = (
-    "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.ico",
-    "*.pdf", "*.zip", "*.gz", "*.bz2", "*.xz", "*.7z", "*.tar",
-    "*.sqlite", "*.sqlite3", "*.db", "*.dylib", "*.so", "*.a",
-    "*.pyc", "*.class", "*.o", "*.wasm",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.gif",
+    "*.webp",
+    "*.ico",
+    "*.pdf",
+    "*.zip",
+    "*.gz",
+    "*.bz2",
+    "*.xz",
+    "*.7z",
+    "*.tar",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.db",
+    "*.dylib",
+    "*.so",
+    "*.a",
+    "*.pyc",
+    "*.class",
+    "*.o",
+    "*.wasm",
 )
 
 DEFAULT_MAX_FILE_BYTES = 2_000_000
@@ -66,6 +103,8 @@ def _is_noise_chunk(body: str) -> bool:
         return False  # markdown heading — keep
     # wikilink / md link / URL — keep; otherwise it's noise
     return not _LINK_RE.search(stripped)
+
+
 DEFAULT_EMBED_BATCH = 64
 MIN_EMBED_BATCH = 1
 DEFAULT_FLUSH_BATCH = 25
@@ -275,21 +314,23 @@ class RepoCorpus:
         # Persist target commit + indexing status BEFORE the scan so a
         # partial run is recoverable: file-batch commits below remain on
         # disk and the next call resumes via the sha256 short-circuit.
-        self.store.upsert_repo_source({
-            "id": repo_id,
-            "name": repo_name,
-            "url": url.strip(),
-            "ref": ref_name,
-            "commit_sha": commit_sha,
-            "clone_path": str(clone_path),
-            "indexed_at": indexed_at,
-            "status": STATUS_INDEXING,
-            "extra": {
-                "include": include_globs,
-                "exclude": list(exclude or []),
-                "max_file_bytes": max_bytes,
-            },
-        })
+        self.store.upsert_repo_source(
+            {
+                "id": repo_id,
+                "name": repo_name,
+                "url": url.strip(),
+                "ref": ref_name,
+                "commit_sha": commit_sha,
+                "clone_path": str(clone_path),
+                "indexed_at": indexed_at,
+                "status": STATUS_INDEXING,
+                "extra": {
+                    "include": include_globs,
+                    "exclude": list(exclude or []),
+                    "max_file_bytes": max_bytes,
+                },
+            }
+        )
 
         def _flush() -> None:
             nonlocal pending_files, flushed_files
@@ -350,12 +391,12 @@ class RepoCorpus:
                 # the embedder sees screenshot content. Hash is composed
                 # with each image's bytes hash so changing the image
                 # invalidates the cache.
-                if (
-                    ocr_enabled_via_env()
-                    and rel_posix.lower().endswith(".md")
-                ):
+                if ocr_enabled_via_env() and rel_posix.lower().endswith(".md"):
                     enriched, _resolved, img_hashes = enrich_with_ocr(
-                        text, path, clone_path, self.cfg.state_dir,
+                        text,
+                        path,
+                        clone_path,
+                        self.cfg.state_dir,
                     )
                     if img_hashes:
                         text = enriched
@@ -398,9 +439,7 @@ class RepoCorpus:
         _flush()
 
         deleted_file_ids = [
-            meta["id"]
-            for path, meta in existing_files.items()
-            if path not in seen_paths
+            meta["id"] for path, meta in existing_files.items() if path not in seen_paths
         ]
         if deleted_file_ids:
             self.store.delete_repo_files(repo_id, deleted_file_ids)
@@ -472,13 +511,25 @@ class RepoCorpus:
         oversample = max(limit * 4, 40)
 
         if mode == "line":
-            return _boost_and_resort(_hits_from_rows(
-                self.store.search_repo_lines(query, limit=oversample, repo_id=repo_id, path_glob=path)
-            ), query=query, limit=limit)
+            return _boost_and_resort(
+                _hits_from_rows(
+                    self.store.search_repo_lines(
+                        query, limit=oversample, repo_id=repo_id, path_glob=path
+                    )
+                ),
+                query=query,
+                limit=limit,
+            )
         if mode == "bm25":
-            return _boost_and_resort(_hits_from_rows(
-                self.store.search_repo_bm25(query, limit=oversample, repo_id=repo_id, path_glob=path)
-            ), query=query, limit=limit)
+            return _boost_and_resort(
+                _hits_from_rows(
+                    self.store.search_repo_bm25(
+                        query, limit=oversample, repo_id=repo_id, path_glob=path
+                    )
+                ),
+                query=query,
+                limit=limit,
+            )
 
         query_terms = _extract_query_terms(query)
 
@@ -487,8 +538,12 @@ class RepoCorpus:
                 return []
             rows = _rrf_fuse_repo(
                 [
-                    self.store.search_repo_bm25(query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path),
-                    self.store.search_repo_lines(query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path),
+                    self.store.search_repo_bm25(
+                        query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path
+                    ),
+                    self.store.search_repo_lines(
+                        query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path
+                    ),
                 ],
                 limit=limit,
                 query_terms=query_terms,
@@ -499,20 +554,28 @@ class RepoCorpus:
         assert_valid_embedding(emb, self.cfg.embedder_dims, context="repo search query")
 
         if mode == "vec":
-            return _boost_and_resort(_hits_from_rows(
-                self.store.search_repo_vec(emb, limit=limit, repo_id=repo_id, path_glob=path)
-            ), query=query, limit=limit)
+            return _boost_and_resort(
+                _hits_from_rows(
+                    self.store.search_repo_vec(emb, limit=limit, repo_id=repo_id, path_glob=path)
+                ),
+                query=query,
+                limit=limit,
+            )
 
         input_k = max(limit * 2, 30)
         vec_hits = self.store.search_repo_vec(emb, limit=input_k, repo_id=repo_id, path_glob=path)
         bm_hits = self.store.search_repo_bm25(query, limit=input_k, repo_id=repo_id, path_glob=path)
-        line_hits = self.store.search_repo_lines(query, limit=input_k, repo_id=repo_id, path_glob=path)
+        line_hits = self.store.search_repo_lines(
+            query, limit=input_k, repo_id=repo_id, path_glob=path
+        )
         return _boost_and_resort(
-            _hits_from_rows(_rrf_fuse_repo(
-                [vec_hits, bm_hits, line_hits],
-                limit=max(limit * 2, 30),
-                query_terms=query_terms,
-            )),
+            _hits_from_rows(
+                _rrf_fuse_repo(
+                    [vec_hits, bm_hits, line_hits],
+                    limit=max(limit * 2, 30),
+                    query_terms=query_terms,
+                )
+            ),
             query=query,
             limit=limit,
         )
@@ -761,14 +824,16 @@ class RepoCorpus:
             if is_markdown and _is_noise_chunk(body):
                 continue  # near-empty md chunk, no heading/link — ingest noise
             chunk_id = _stable_id("repo-chunk", file_id, str(seq), _short_hash(body))
-            chunk_payloads.append({
-                "id": chunk_id,
-                "chunk_seq": seq,
-                "line_start": line_start,
-                "line_end": line_end,
-                "text_hash": _short_hash(body),
-                "body_text": body,
-            })
+            chunk_payloads.append(
+                {
+                    "id": chunk_id,
+                    "chunk_seq": seq,
+                    "line_start": line_start,
+                    "line_end": line_end,
+                    "text_hash": _short_hash(body),
+                    "body_text": body,
+                }
+            )
 
         return {
             "id": file_id,
@@ -893,9 +958,7 @@ def _tracked_files(clone_path: Path) -> list[str]:
         paths = [p for p in proc.stdout.split("\0") if p]
         return sorted(paths)
     return sorted(
-        p.relative_to(clone_path).as_posix()
-        for p in clone_path.rglob("*")
-        if p.is_file()
+        p.relative_to(clone_path).as_posix() for p in clone_path.rglob("*") if p.is_file()
     )
 
 
@@ -1069,10 +1132,27 @@ _INGEST_PATH_MARKERS = (
 # lowercase, and drop tokens shorter than 3 chars so noise like "es",
 # "de", or "?" doesn't trigger spurious path-name boosts.
 _QUERY_TERM_MIN_LEN = 3
-_QUERY_TERM_STOPWORDS = frozenset({
-    "the", "and", "for", "with", "que", "los", "las", "una", "del",
-    "como", "qué", "cuál", "quién", "donde", "cuando", "este", "esta",
-})
+_QUERY_TERM_STOPWORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "que",
+        "los",
+        "las",
+        "una",
+        "del",
+        "como",
+        "qué",
+        "cuál",
+        "quién",
+        "donde",
+        "cuando",
+        "este",
+        "esta",
+    }
+)
 
 
 def _extract_query_terms(query: str) -> list[str]:
@@ -1086,8 +1166,7 @@ def _extract_query_terms(query: str) -> list[str]:
         return []
     raw = re.split(r"[^\w]+", query.lower(), flags=re.UNICODE)
     return [
-        tok for tok in raw
-        if len(tok) >= _QUERY_TERM_MIN_LEN and tok not in _QUERY_TERM_STOPWORDS
+        tok for tok in raw if len(tok) >= _QUERY_TERM_MIN_LEN and tok not in _QUERY_TERM_STOPWORDS
     ]
 
 

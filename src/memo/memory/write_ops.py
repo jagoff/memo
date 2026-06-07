@@ -20,6 +20,7 @@ from typing import Any
 
 import frontmatter
 
+from memo._trace import current_trace
 from memo.embedder import assert_valid_embedding
 from memo.lifecycle import (
     FORGET_AFTER_KEY,
@@ -41,18 +42,38 @@ from memo.memory.record import (
 from memo.util import sha256_short as _sha256_short
 
 _TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("decision",   re.compile(
-        r"\b(decided?\s+to|we\s+will\s+use|going\s+with|chosen?\s+to|from\s+now\s+on|"
-        r"the\s+decision\s+is|decidimos)\b", re.I)),
-    ("preference", re.compile(
-        r"\b(i\s+prefer|prefer\s+to|always\s+use|i\s+like\s+to|"
-        r"i\s+don'?t\s+want|prefiero|siempre\s+usar)\b", re.I)),
-    ("bug",        re.compile(
-        r"\b(bug:|issue:|found\s+that|the\s+problem\s+was|root\s+cause|"
-        r"error\s+was|causa\s+ra[ií]z|el\s+problema\s+era)\b", re.I)),
-    ("fact",       re.compile(
-        r"\b(turns?\s+out|discovered\s+that|learned\s+that|actually\s+the|"
-        r"resulta\s+que|descubr[íi]\s+que)\b", re.I)),
+    (
+        "decision",
+        re.compile(
+            r"\b(decided?\s+to|we\s+will\s+use|going\s+with|chosen?\s+to|from\s+now\s+on|"
+            r"the\s+decision\s+is|decidimos)\b",
+            re.I,
+        ),
+    ),
+    (
+        "preference",
+        re.compile(
+            r"\b(i\s+prefer|prefer\s+to|always\s+use|i\s+like\s+to|"
+            r"i\s+don'?t\s+want|prefiero|siempre\s+usar)\b",
+            re.I,
+        ),
+    ),
+    (
+        "bug",
+        re.compile(
+            r"\b(bug:|issue:|found\s+that|the\s+problem\s+was|root\s+cause|"
+            r"error\s+was|causa\s+ra[ií]z|el\s+problema\s+era)\b",
+            re.I,
+        ),
+    ),
+    (
+        "fact",
+        re.compile(
+            r"\b(turns?\s+out|discovered\s+that|learned\s+that|actually\s+the|"
+            r"resulta\s+que|descubr[íi]\s+que)\b",
+            re.I,
+        ),
+    ),
 ]
 
 
@@ -109,7 +130,7 @@ class _WriteOpsMixin(_MemoryBase):
         if not isinstance(data, dict):
             return {}
         derived: dict[str, Any] = {}
-        t_title = (data.get("title") or "")
+        t_title = data.get("title") or ""
         if isinstance(t_title, str) and t_title.strip():
             derived["title"] = t_title.strip()[:80]
         t_type = data.get("type")
@@ -171,26 +192,29 @@ class _WriteOpsMixin(_MemoryBase):
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
 
-        # Auto-attach SYNAPSE_TRACE_ID from env when the caller did not
-        # carry an explicit trace_id in `extra`. Lets provenance walks
-        # link memo writes back to the synapse session that spawned the
-        # subprocess, even for direct `memo save` CLI invocations.
-        env_trace = os.environ.get("SYNAPSE_TRACE_ID", "").strip()
-        if env_trace and (extra is None or not extra.get("synapse_trace_id")):
+        # Auto-attach the synapse trace id when the caller did not carry an
+        # explicit one in `extra`. Two transports feed it: the warm-daemon MCP
+        # path sets the trace contextvar (from the `x-synapse-trace-id` header,
+        # via the server middleware); the subprocess path sets `SYNAPSE_TRACE_ID`
+        # in the env. Prefer the contextvar (per-request, precise) and fall back
+        # to env (covers direct `memo save` CLI invocations). Lets provenance
+        # walks link memo writes back to the synapse session that spawned them.
+        ambient_trace = current_trace() or os.environ.get("SYNAPSE_TRACE_ID", "").strip()
+        if ambient_trace and (extra is None or not extra.get("synapse_trace_id")):
             extra = dict(extra or {})
-            extra["synapse_trace_id"] = env_trace
+            extra["synapse_trace_id"] = ambient_trace
 
         # Freeze-write protocol: opt-in pre-write check against synapse.
         # Only fires when (a) the caller asked (kwarg or env), (b) the
         # save carries provenance (otherwise we have no agent context
         # to reason about), and (c) synapse is on PATH.
         if respect_synapse_freeze is None:
-            respect_synapse_freeze = (
-                os.environ.get("MEMO_RESPECT_SYNAPSE_FREEZE") == "1"
-            )
+            respect_synapse_freeze = os.environ.get("MEMO_RESPECT_SYNAPSE_FREEZE") == "1"
         if respect_synapse_freeze and extra and extra.get("synapse_trace_id"):
             self._enforce_synapse_freeze(
-                title=title, content=content, tags=tags,
+                title=title,
+                content=content,
+                tags=tags,
                 trace_id=str(extra.get("synapse_trace_id") or ""),
             )
         if type is not None:
@@ -237,6 +261,7 @@ class _WriteOpsMixin(_MemoryBase):
         if auto_project and os.environ.get("MEMO_AUTO_PROJECT_TAG", "1") == "1":
             try:
                 from memo.project import current_project_tag, has_project_tag
+
                 if not has_project_tag(norm_tags):
                     pt = current_project_tag(cwd)
                     if pt:
@@ -251,7 +276,9 @@ class _WriteOpsMixin(_MemoryBase):
         if len(content) > self.cfg.max_content_chars:
             _log.warning(
                 "save: content truncated from %d to %d chars (title=%r)",
-                len(content), self.cfg.max_content_chars, title,
+                len(content),
+                self.cfg.max_content_chars,
+                title,
             )
         content = content[: self.cfg.max_content_chars]
 
@@ -259,6 +286,7 @@ class _WriteOpsMixin(_MemoryBase):
         # — never blocks the save. Gated on MEMO_SAVE_DEDUP_CHECK (default on).
         # Skipped on an empty corpus (no embed cost, no duplicates possible).
         from memo.flags import flag_bool, flag_float
+
         if flag_bool("MEMO_SAVE_DEDUP_CHECK") and not defer_embed:
             try:
                 _existing_sample = self.store.list_recent(limit=1)
@@ -275,7 +303,10 @@ class _WriteOpsMixin(_MemoryBase):
                             _log.warning(
                                 "save: near-duplicate detected — '%s' (sim=%.2f, id=%s). "
                                 "Consider `memo update %s` instead of creating a new memoria.",
-                                _dup_title, _dup_score, _dup_id, _dup_id,
+                                _dup_title,
+                                _dup_score,
+                                _dup_id,
+                                _dup_id,
                             )
                             break
             except Exception as _exc:
@@ -295,6 +326,7 @@ class _WriteOpsMixin(_MemoryBase):
         if not extra_for_store.get("entities"):
             try:
                 from memo.entity_extractor import entity_retrieval_enabled, extract_entities
+
                 if entity_retrieval_enabled():
                     ents = extract_entities(f"{title} {content}"[:3000])
                     if ents:
@@ -344,15 +376,27 @@ class _WriteOpsMixin(_MemoryBase):
                 body_text=content,
             )
             self.history.log_save(
-                ts=now_iso, record_id=record_id, title=title, type_=type_,
+                ts=now_iso,
+                record_id=record_id,
+                title=title,
+                type_=type_,
                 provenance=_extract_provenance(extra_for_store),
             )
             deferred_rec = MemoryRecord(
-                id=record_id, path=rel_path, title=title, type=type_, tags=norm_tags,
-                created=created_iso, updated=now_iso, body=content, extra=extra_for_store,
+                id=record_id,
+                path=rel_path,
+                title=title,
+                type=type_,
+                tags=norm_tags,
+                created=created_iso,
+                updated=now_iso,
+                body=content,
+                extra=extra_for_store,
             )
             self._emit_save_receipt(
-                deferred_rec, deferred=True, disabled=skip_memflow_receipt,
+                deferred_rec,
+                deferred=True,
+                disabled=skip_memflow_receipt,
             )
             return deferred_rec
 
@@ -364,7 +408,9 @@ class _WriteOpsMixin(_MemoryBase):
         # long — see embedder.py for the truncation rationale.
         embedding = self.embedder.embed([self._compose_for_embed(title, content)])[0]
         assert_valid_embedding(
-            embedding, self.cfg.embedder_dims, context=f"save id={record_id[:8]}",
+            embedding,
+            self.cfg.embedder_dims,
+            context=f"save id={record_id[:8]}",
         )
 
         self.store.upsert(
@@ -382,13 +428,23 @@ class _WriteOpsMixin(_MemoryBase):
         )
 
         self.history.log_save(
-            ts=now_iso, record_id=record_id, title=title, type_=type_,
+            ts=now_iso,
+            record_id=record_id,
+            title=title,
+            type_=type_,
             provenance=_extract_provenance(extra_for_store),
         )
 
         rec = MemoryRecord(
-            id=record_id, path=rel_path, title=title, type=type_, tags=norm_tags,
-            created=created_iso, updated=now_iso, body=content, extra=extra_for_store,
+            id=record_id,
+            path=rel_path,
+            title=title,
+            type=type_,
+            tags=norm_tags,
+            created=created_iso,
+            updated=now_iso,
+            body=content,
+            extra=extra_for_store,
         )
         self._emit_save_receipt(rec, deferred=False, disabled=skip_memflow_receipt)
         # Cache-tier: write policy (push/dirty) then capacity bound. Both
@@ -403,7 +459,11 @@ class _WriteOpsMixin(_MemoryBase):
         return rec
 
     def _emit_save_receipt(
-        self, rec: MemoryRecord, *, deferred: bool, disabled: bool,
+        self,
+        rec: MemoryRecord,
+        *,
+        deferred: bool,
+        disabled: bool,
     ) -> None:
         """Fire-and-forget memflow receipt for a successful save.
 
@@ -523,7 +583,7 @@ class _WriteOpsMixin(_MemoryBase):
 
         # Body resolution: provided > on-disk > empty.
         old_body = self._read_body(r["path"])
-        new_body = (content if content is not None else old_body)
+        new_body = content if content is not None else old_body
         new_body = new_body[: self.cfg.max_content_chars]
         new_body_hash = _sha256_short(new_body)
         body_changed = new_body_hash != r["body_hash"]
@@ -549,17 +609,30 @@ class _WriteOpsMixin(_MemoryBase):
         # changes still skip the embedder.
         if body_changed or title_changed:
             embedding = self.embedder.embed([self._compose_for_embed(new_title, new_body)])[0]
-            assert_valid_embedding(embedding, self.cfg.embedder_dims, context=f"update id={id_[:8]}")
+            assert_valid_embedding(
+                embedding, self.cfg.embedder_dims, context=f"update id={id_[:8]}"
+            )
             self.store.upsert(
-                id_=id_, path=r["path"], title=new_title, type_=new_type,
-                tags=new_tags, created=r["created"], updated=now_iso,
-                body_hash=new_body_hash, embedding=embedding, extra=new_extra,
+                id_=id_,
+                path=r["path"],
+                title=new_title,
+                type_=new_type,
+                tags=new_tags,
+                created=r["created"],
+                updated=now_iso,
+                body_hash=new_body_hash,
+                embedding=embedding,
+                extra=new_extra,
                 body_text=new_body,
             )
         else:
             self.store.update_meta(
-                id_=id_, title=new_title, type_=new_type, tags=new_tags,
-                updated=now_iso, extra=new_extra,
+                id_=id_,
+                title=new_title,
+                type_=new_type,
+                tags=new_tags,
+                updated=now_iso,
+                extra=new_extra,
             )
 
         # Audit log: build a delta of just the fields that changed.
@@ -580,14 +653,23 @@ class _WriteOpsMixin(_MemoryBase):
             delta["_provenance"] = (old_prov, new_prov)
         if delta:
             self.history.log_update(
-                ts=now_iso, record_id=id_, title=new_title, type_=new_type,
+                ts=now_iso,
+                record_id=id_,
+                title=new_title,
+                type_=new_type,
                 delta=delta,
             )
 
         updated_rec = MemoryRecord(
-            id=id_, path=r["path"], title=new_title, type=new_type,
-            tags=new_tags, created=r["created"], updated=now_iso,
-            body=new_body, extra=new_extra,
+            id=id_,
+            path=r["path"],
+            title=new_title,
+            type=new_type,
+            tags=new_tags,
+            created=r["created"],
+            updated=now_iso,
+            body=new_body,
+            extra=new_extra,
         )
         if delta:
             from memo.receipts import emit_receipt
@@ -664,7 +746,10 @@ class _WriteOpsMixin(_MemoryBase):
             self._resolve_existing(r["path"]).unlink(missing_ok=True)
         if existed:
             self.history.log_delete(
-                ts=_now_iso(), record_id=id_, title=r["title"], type_=r["type"],
+                ts=_now_iso(),
+                record_id=id_,
+                title=r["title"],
+                type_=r["type"],
             )
             # Drop graph edges for this memoria so entity counts stay
             # honest. Cheap (one DELETE + counter decrement per edge).
@@ -693,7 +778,9 @@ class _WriteOpsMixin(_MemoryBase):
             emit_event(
                 "delete",
                 subject_uri=f"memo://memoria/{id_}",
-                trace_id=(_extract_provenance(r.get("extra") or {}) or {}).get("synapse_trace_id", ""),
+                trace_id=(_extract_provenance(r.get("extra") or {}) or {}).get(
+                    "synapse_trace_id", ""
+                ),
                 actor="memo",
                 payload={
                     "id": id_,
@@ -763,8 +850,7 @@ class _WriteOpsMixin(_MemoryBase):
         # from there so retrieval surfaces real snippets instead of "".
         try:
             row = self.store._conn.execute(
-                "SELECT body FROM fts WHERE id = "
-                "(SELECT id FROM meta WHERE path = ?)",
+                "SELECT body FROM fts WHERE id = (SELECT id FROM meta WHERE path = ?)",
                 (rel_path,),
             ).fetchone()
             if row and row["body"]:
@@ -775,4 +861,3 @@ class _WriteOpsMixin(_MemoryBase):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
-

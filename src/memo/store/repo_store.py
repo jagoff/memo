@@ -80,7 +80,9 @@ class _RepoStoreMixin(_StoreBase):
             "embedded_chunks": int(row["embedded_chunks"] or 0),
         }
 
-    def update_repo_status(self, repo_id: str, status: str, *, indexed_at: str | None = None) -> None:
+    def update_repo_status(
+        self, repo_id: str, status: str, *, indexed_at: str | None = None
+    ) -> None:
         with self._tx() as cx:
             if indexed_at is None:
                 cx.execute("UPDATE repo_sources SET status = ? WHERE id = ?", (status, repo_id))
@@ -244,8 +246,13 @@ class _RepoStoreMixin(_StoreBase):
                 "indexed_at=excluded.indexed_at, status=excluded.status, "
                 "extra_json=excluded.extra_json",
                 (
-                    source["id"], source["name"], source["url"], source["ref"],
-                    source["commit_sha"], source["clone_path"], source["indexed_at"],
+                    source["id"],
+                    source["name"],
+                    source["url"],
+                    source["ref"],
+                    source["commit_sha"],
+                    source["clone_path"],
+                    source["indexed_at"],
                     source.get("status") or "ready",
                     json.dumps(source.get("extra") or {}, default=str),
                 ),
@@ -259,17 +266,26 @@ class _RepoStoreMixin(_StoreBase):
                     "(id, repo_id, path, language, size_bytes, sha256, line_count, indexed_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
-                        file_data["id"], source["id"], file_data["path"],
-                        file_data.get("language") or "", int(file_data.get("size_bytes") or 0),
-                        file_data["sha256"], int(file_data.get("line_count") or 0),
+                        file_data["id"],
+                        source["id"],
+                        file_data["path"],
+                        file_data.get("language") or "",
+                        int(file_data.get("size_bytes") or 0),
+                        file_data["sha256"],
+                        int(file_data.get("line_count") or 0),
                         source["indexed_at"],
                     ),
                 )
 
                 line_rows = [
                     (
-                        line["id"], source["id"], file_data["id"], file_data["path"],
-                        int(line["line_no"]), line.get("text") or "", line["text_hash"],
+                        line["id"],
+                        source["id"],
+                        file_data["id"],
+                        file_data["path"],
+                        int(line["line_no"]),
+                        line.get("text") or "",
+                        line["text_hash"],
                     )
                     for line in file_data.get("lines") or []
                 ]
@@ -282,17 +298,20 @@ class _RepoStoreMixin(_StoreBase):
                 cx.executemany(
                     "INSERT INTO repo_line_fts (id, repo_name, path, line_no, body) "
                     "VALUES (?, ?, ?, ?, ?)",
-                    [
-                        (line[0], source["name"], line[3], line[4], line[5])
-                        for line in line_rows
-                    ],
+                    [(line[0], source["name"], line[3], line[4], line[5]) for line in line_rows],
                 )
 
                 chunk_rows = [
                     (
-                        chunk["id"], source["id"], file_data["id"], file_data["path"],
-                        int(chunk["chunk_seq"]), int(chunk["line_start"]),
-                        int(chunk["line_end"]), chunk["text_hash"], chunk.get("body_text") or "",
+                        chunk["id"],
+                        source["id"],
+                        file_data["id"],
+                        file_data["path"],
+                        int(chunk["chunk_seq"]),
+                        int(chunk["line_start"]),
+                        int(chunk["line_end"]),
+                        chunk["text_hash"],
+                        chunk.get("body_text") or "",
                         source["indexed_at"],
                     )
                     for chunk in file_data.get("chunks") or []
@@ -313,12 +332,8 @@ class _RepoStoreMixin(_StoreBase):
                     ],
                 )
                 cx.executemany(
-                    "INSERT INTO repo_chunk_fts (id, repo_name, path, body) "
-                    "VALUES (?, ?, ?, ?)",
-                    [
-                        (chunk[0], source["name"], chunk[3], chunk[8])
-                        for chunk in chunk_rows
-                    ],
+                    "INSERT INTO repo_chunk_fts (id, repo_name, path, body) VALUES (?, ?, ?, ?)",
+                    [(chunk[0], source["name"], chunk[3], chunk[8]) for chunk in chunk_rows],
                 )
         self._checkpoint()
 
@@ -340,8 +355,13 @@ class _RepoStoreMixin(_StoreBase):
                 "indexed_at=excluded.indexed_at, status=excluded.status, "
                 "extra_json=excluded.extra_json",
                 (
-                    source["id"], source["name"], source["url"], source["ref"],
-                    source["commit_sha"], source["clone_path"], source["indexed_at"],
+                    source["id"],
+                    source["name"],
+                    source["url"],
+                    source["ref"],
+                    source["commit_sha"],
+                    source["clone_path"],
+                    source["indexed_at"],
                     source.get("status") or "ready",
                     json.dumps(source.get("extra") or {}, default=str),
                 ),
@@ -389,17 +409,26 @@ class _RepoStoreMixin(_StoreBase):
                     "(id, repo_id, path, language, size_bytes, sha256, line_count, indexed_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
-                        file_data["id"], repo_id, file_data["path"],
-                        file_data.get("language") or "", int(file_data.get("size_bytes") or 0),
-                        file_data["sha256"], int(file_data.get("line_count") or 0),
+                        file_data["id"],
+                        repo_id,
+                        file_data["path"],
+                        file_data.get("language") or "",
+                        int(file_data.get("size_bytes") or 0),
+                        file_data["sha256"],
+                        int(file_data.get("line_count") or 0),
                         indexed_at,
                     ),
                 )
 
                 line_rows = [
                     (
-                        line["id"], repo_id, file_data["id"], file_data["path"],
-                        int(line["line_no"]), line.get("text") or "", line["text_hash"],
+                        line["id"],
+                        repo_id,
+                        file_data["id"],
+                        file_data["path"],
+                        int(line["line_no"]),
+                        line.get("text") or "",
+                        line["text_hash"],
                     )
                     for line in file_data.get("lines") or []
                 ]
@@ -412,17 +441,20 @@ class _RepoStoreMixin(_StoreBase):
                 cx.executemany(
                     "INSERT INTO repo_line_fts (id, repo_name, path, line_no, body) "
                     "VALUES (?, ?, ?, ?, ?)",
-                    [
-                        (line[0], repo_name, line[3], line[4], line[5])
-                        for line in line_rows
-                    ],
+                    [(line[0], repo_name, line[3], line[4], line[5]) for line in line_rows],
                 )
 
                 chunk_rows = [
                     (
-                        chunk["id"], repo_id, file_data["id"], file_data["path"],
-                        int(chunk["chunk_seq"]), int(chunk["line_start"]),
-                        int(chunk["line_end"]), chunk["text_hash"], chunk.get("body_text") or "",
+                        chunk["id"],
+                        repo_id,
+                        file_data["id"],
+                        file_data["path"],
+                        int(chunk["chunk_seq"]),
+                        int(chunk["line_start"]),
+                        int(chunk["line_end"]),
+                        chunk["text_hash"],
+                        chunk.get("body_text") or "",
                         indexed_at,
                     )
                     for chunk in file_data.get("chunks") or []
@@ -443,12 +475,8 @@ class _RepoStoreMixin(_StoreBase):
                     ],
                 )
                 cx.executemany(
-                    "INSERT INTO repo_chunk_fts (id, repo_name, path, body) "
-                    "VALUES (?, ?, ?, ?)",
-                    [
-                        (chunk[0], repo_name, chunk[3], chunk[8])
-                        for chunk in chunk_rows
-                    ],
+                    "INSERT INTO repo_chunk_fts (id, repo_name, path, body) VALUES (?, ?, ?, ?)",
+                    [(chunk[0], repo_name, chunk[3], chunk[8]) for chunk in chunk_rows],
                 )
         self._checkpoint()
 
@@ -492,9 +520,13 @@ class _RepoStoreMixin(_StoreBase):
         if source is None:
             return False
         repo_id = source["id"]
-        file_ids = [r["id"] for r in self._conn.execute(
-            "SELECT id FROM repo_files WHERE repo_id = ?", (repo_id,),
-        ).fetchall()]
+        file_ids = [
+            r["id"]
+            for r in self._conn.execute(
+                "SELECT id FROM repo_files WHERE repo_id = ?",
+                (repo_id,),
+            ).fetchall()
+        ]
         with self._tx() as cx:
             self._delete_repo_file_rows(cx, file_ids)
             cx.execute("DELETE FROM repo_sources WHERE id = ?", (repo_id,))
@@ -659,8 +691,7 @@ class _RepoStoreMixin(_StoreBase):
         start = max(1, int(start or 1))
         params: list[Any] = [repo_id, path, start]
         sql = (
-            "SELECT line_no, text FROM repo_lines "
-            "WHERE repo_id = ? AND path = ? AND line_no >= ? "
+            "SELECT line_no, text FROM repo_lines WHERE repo_id = ? AND path = ? AND line_no >= ? "
         )
         if end is not None:
             sql += "AND line_no <= ? "

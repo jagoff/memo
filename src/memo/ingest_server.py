@@ -284,5 +284,8 @@ def run_server(state_dir: Path | None = None, *, runner: JobRunner | None = None
         _cleanup(state_dir)
 
     serve_until_shutdown(
-        server, shutdown_event, name="ingest-daemon-serve", on_shutdown=_on_shutdown,
+        server,
+        shutdown_event,
+        name="ingest-daemon-serve",
+        on_shutdown=_on_shutdown,
     )

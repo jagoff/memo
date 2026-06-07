@@ -25,8 +25,12 @@ from memo.memory.record import (
 
 class _ConsolidateOpsMixin(_MemoryBase):
     def consolidate(
-        self, *, threshold: float = 0.85, max_clusters: int = 50,
-        type_: str | None = None, skip_llm: bool = False,
+        self,
+        *,
+        threshold: float = 0.85,
+        max_clusters: int = 50,
+        type_: str | None = None,
+        skip_llm: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """Propose near-duplicate merges (LLM synthesis step).
 
@@ -51,19 +55,24 @@ class _ConsolidateOpsMixin(_MemoryBase):
             from memo import maint_client
 
             proposals = maint_client.consolidate(
-                threshold=threshold, max_clusters=max_clusters, type_=type_,
+                threshold=threshold,
+                max_clusters=max_clusters,
+                type_=type_,
             )
             if proposals is not None:
                 return proposals
             # daemon unreachable → fall through to in-process (graceful)
         return self._consolidate_in_process(
-            threshold=threshold, max_clusters=max_clusters, type_=type_,
+            threshold=threshold,
+            max_clusters=max_clusters,
+            type_=type_,
             skip_llm=skip_llm,
         )
 
-
     def _pull_embeddings(
-        self, *, type_filter: str | None = None,
+        self,
+        *,
+        type_filter: str | None = None,
         exclude_types: builtins.set[str] | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """Pull (id, embedding, title, type, tags, path, updated) for the whole
@@ -83,35 +92,36 @@ class _ConsolidateOpsMixin(_MemoryBase):
         rows = self.store._conn.execute(
             "SELECT vec.id AS id, vec.embedding AS emb, "
             "       meta.title, meta.type, meta.tags, meta.path, meta.updated "
-            "FROM vec JOIN meta ON meta.id = vec.id "
-            + where
-            + "ORDER BY meta.updated DESC",
+            "FROM vec JOIN meta ON meta.id = vec.id " + where + "ORDER BY meta.updated DESC",
             params,
         ).fetchall()
         items: builtins.list[dict[str, Any]] = []
         for r in rows:
             blob = r["emb"]
-            items.append({
-                "id": r["id"],
-                "title": r["title"],
-                "type": r["type"],
-                "tags": json.loads(r["tags"]) if r["tags"] else [],
-                "path": r["path"],
-                "updated": r["updated"],
-                "emb": list(struct.unpack(f"<{len(blob)//4}f", blob)),
-            })
+            items.append(
+                {
+                    "id": r["id"],
+                    "title": r["title"],
+                    "type": r["type"],
+                    "tags": json.loads(r["tags"]) if r["tags"] else [],
+                    "path": r["path"],
+                    "updated": r["updated"],
+                    "emb": list(struct.unpack(f"<{len(blob) // 4}f", blob)),
+                }
+            )
         return items
 
     @staticmethod
-
     def _greedy_cluster(
-        items: builtins.list[dict[str, Any]], threshold: float,
+        items: builtins.list[dict[str, Any]],
+        threshold: float,
     ) -> builtins.list[builtins.list[int]]:
         """Greedy single-link clustering over L2-normalised embeddings (dot ==
         cosine). Uses numpy for the O(N²) pass when available (1024-dim × 2000
         in pure Python ≈ 400s; numpy < 1s), else a pure-Python fallback."""
         try:
             import numpy as _np
+
             _mat = _np.array([it["emb"] for it in items], dtype=_np.float32)
             _norms = _np.linalg.norm(_mat, axis=1, keepdims=True)
             _norms[_norms == 0] = 1.0
@@ -137,7 +147,10 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 joined = False
                 for cluster in clusters:
                     rep_item = items[cluster[0]]
-                    if sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=True)) >= threshold:
+                    if (
+                        sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=True))
+                        >= threshold
+                    ):
                         cluster.append(i)
                         joined = True
                         break
@@ -145,10 +158,13 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     clusters.append([i])
             return clusters
 
-
     def _consolidate_in_process(
-        self, *, threshold: float = 0.85, max_clusters: int = 50,
-        type_: str | None = None, skip_llm: bool = False,
+        self,
+        *,
+        threshold: float = 0.85,
+        max_clusters: int = 50,
+        type_: str | None = None,
+        skip_llm: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """Find clusters of near-duplicate memorias and propose actions.
 
@@ -196,25 +212,29 @@ class _ConsolidateOpsMixin(_MemoryBase):
             for idx in cluster:
                 it = items[idx]
                 body = self._read_body(it["path"])
-                members.append({
-                    "id": it["id"],
-                    "id_short": it["id"][:8],
-                    "title": it["title"],
-                    "type": it["type"],
-                    "tags": it["tags"],
-                    "updated": it["updated"],
-                    "body_preview": (body[:600] + ("…" if len(body) > 600 else "")),
-                })
+                members.append(
+                    {
+                        "id": it["id"],
+                        "id_short": it["id"][:8],
+                        "title": it["title"],
+                        "type": it["type"],
+                        "tags": it["tags"],
+                        "updated": it["updated"],
+                        "body_preview": (body[:600] + ("…" if len(body) > 600 else "")),
+                    }
+                )
 
             if skip_llm:
-                out.append({
-                    "cluster_id": ci,
-                    "size": len(members),
-                    "members": members,
-                    "summary": "",
-                    "relationship": "duplicate",
-                    "rationale": f"High-confidence cluster (cosine ≥ {threshold:.2f}); LLM skipped.",
-                })
+                out.append(
+                    {
+                        "cluster_id": ci,
+                        "size": len(members),
+                        "members": members,
+                        "summary": "",
+                        "relationship": "duplicate",
+                        "rationale": f"High-confidence cluster (cosine ≥ {threshold:.2f}); LLM skipped.",
+                    }
+                )
                 continue
 
             # Build LLM prompt with all members, capped to avoid blowing the
@@ -236,7 +256,8 @@ class _ConsolidateOpsMixin(_MemoryBase):
             try:
                 chat = self._ensure_chat()
                 chat_out = chat_with_timeout(
-                    chat, timeout=60,
+                    chat,
+                    timeout=60,
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _CONSOLIDATE_SYSTEM_PROMPT},
@@ -256,17 +277,19 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 data = json.loads(text) if text else {}
             except (ValueError, TypeError):
                 data = {}
-            out.append({
-                "cluster_id": ci,
-                "size": len(members),
-                "members": members,
-                "summary": (data.get("summary") or "").strip(),
-                "relationship": data.get("relationship") if data.get("relationship") in
-                    ("duplicate", "evolution", "facets", "unrelated") else "unrelated",
-                "rationale": (data.get("rationale") or "").strip(),
-            })
+            out.append(
+                {
+                    "cluster_id": ci,
+                    "size": len(members),
+                    "members": members,
+                    "summary": (data.get("summary") or "").strip(),
+                    "relationship": data.get("relationship")
+                    if data.get("relationship") in ("duplicate", "evolution", "facets", "unrelated")
+                    else "unrelated",
+                    "rationale": (data.get("rationale") or "").strip(),
+                }
+            )
         return out
-
 
     def synthesize_cross_cluster(
         self,
@@ -299,14 +322,18 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
         from memo.flags import flag_float, flag_int, flag_str
 
-        threshold = threshold if threshold is not None else (
-            flag_float("MEMO_SYNTHESIS_THRESHOLD") or 0.78
+        threshold = (
+            threshold if threshold is not None else (flag_float("MEMO_SYNTHESIS_THRESHOLD") or 0.78)
         )
-        min_cluster_size = min_cluster_size if min_cluster_size is not None else (
-            flag_int("MEMO_SYNTHESIS_MIN_CLUSTER") or 3
+        min_cluster_size = (
+            min_cluster_size
+            if min_cluster_size is not None
+            else (flag_int("MEMO_SYNTHESIS_MIN_CLUSTER") or 3)
         )
-        max_clusters = max_clusters if max_clusters is not None else (
-            flag_int("MEMO_SYNTHESIS_MAX_CLUSTERS") or 20
+        max_clusters = (
+            max_clusters
+            if max_clusters is not None
+            else (flag_int("MEMO_SYNTHESIS_MAX_CLUSTERS") or 20)
         )
         min_confidence = min_confidence or flag_str("MEMO_SYNTHESIS_MIN_CONFIDENCE") or "medium"
         _conf_rank = {"low": 0, "medium": 1, "high": 2}
@@ -358,9 +385,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
         for cluster in candidate_clusters:
             source_ids = [items[idx]["id"] for idx in cluster]
-            sources_hash = hashlib.sha256(
-                ",".join(sorted(source_ids)).encode()
-            ).hexdigest()[:16]
+            sources_hash = hashlib.sha256(",".join(sorted(source_ids)).encode()).hexdigest()[:16]
 
             if sources_hash in existing_hashes:
                 continue  # up-to-date synthesis already exists
@@ -369,13 +394,15 @@ class _ConsolidateOpsMixin(_MemoryBase):
             for idx in cluster:
                 it = items[idx]
                 body = self._read_body(it["path"])
-                members.append({
-                    "id": it["id"],
-                    "id_short": it["id"][:8],
-                    "title": it["title"],
-                    "type": it["type"],
-                    "body_preview": (body[:500] + ("…" if len(body) > 500 else "")),
-                })
+                members.append(
+                    {
+                        "id": it["id"],
+                        "id_short": it["id"][:8],
+                        "title": it["title"],
+                        "type": it["type"],
+                        "body_preview": (body[:500] + ("…" if len(body) > 500 else "")),
+                    }
+                )
 
             _MAX_CHARS = 20_000
             lines = [
@@ -394,7 +421,8 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
             try:
                 chat_out = chat_with_timeout(
-                    chat, timeout=60,
+                    chat,
+                    timeout=60,
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},

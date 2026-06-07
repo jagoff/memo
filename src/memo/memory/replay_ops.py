@@ -11,6 +11,7 @@ from typing import Any
 
 try:
     from consciousness_contracts.uri import is_memo_uri, parse_uri
+
     _HAS_URI_HELPERS = True
 except ImportError:
     _HAS_URI_HELPERS = False
@@ -71,11 +72,11 @@ class _ReplayOpsMixin(_MemoryBase):
             parts = parse_uri(uri)
             if parts is None:
                 return payload("missing", "Invalid URI format.")
-            
+
             resource_type = parts.resource_type
             resource_id = parts.resource_id or ""
             subpath = parts.subpath or ""
-            
+
             if resource_type == "memoria":
                 if not resource_id:
                     return payload("missing", "memo://memoria URI did not include an id.")
@@ -94,19 +95,31 @@ class _ReplayOpsMixin(_MemoryBase):
                     content_hash=_stable_content_hash(rec.to_dict()),
                     target={"kind": "memoria", "id": rec.id, "path": rec.path},
                 )
-            
+
             elif resource_type == "repo-index":
                 # parse_uri splits memo://repo-index/<name>/<commit> as:
                 # resource_id=<name>, subpath=<commit>
-                repo_name = resource_id or (subpath.split("/", 1)[0] if subpath and "/" in subpath else "")
-                commit_prefix = subpath if resource_id else (subpath.split("/", 1)[1] if subpath and "/" in subpath else "")
+                repo_name = resource_id or (
+                    subpath.split("/", 1)[0] if subpath and "/" in subpath else ""
+                )
+                commit_prefix = (
+                    subpath
+                    if resource_id
+                    else (subpath.split("/", 1)[1] if subpath and "/" in subpath else "")
+                )
                 if not repo_name:
-                    return payload("missing", "memo://repo-index URI must include <repo-name>/<commit-prefix>.")
+                    return payload(
+                        "missing", "memo://repo-index URI must include <repo-name>/<commit-prefix>."
+                    )
                 source = self.store.get_repo_source(repo_name)
                 if source is None:
                     return payload("missing", "Memo repo source was not found.")
                 commit = str(source.get("commit_sha") or "")
-                if commit_prefix and commit_prefix != "unknown" and not commit.startswith(commit_prefix):
+                if (
+                    commit_prefix
+                    and commit_prefix != "unknown"
+                    and not commit.startswith(commit_prefix)
+                ):
                     return payload(
                         "missing",
                         "Memo repo source exists but commit did not match the receipt URI.",
@@ -124,7 +137,7 @@ class _ReplayOpsMixin(_MemoryBase):
                     content_hash=_stable_content_hash(resolved),
                     target=resolved,
                 )
-            
+
             elif resource_type == "repo":
                 if not resource_id:
                     return payload("missing", "memo://repo URI did not include a repo id/name/url.")
@@ -138,7 +151,7 @@ class _ReplayOpsMixin(_MemoryBase):
                     content_hash=_stable_content_hash(resolved),
                     target=resolved,
                 )
-            
+
             else:
                 return payload(
                     "unsupported",
@@ -151,7 +164,7 @@ class _ReplayOpsMixin(_MemoryBase):
             repo_prefix = "memo://repo/"
 
             if uri.startswith(memoria_prefix):
-                memoria_id = uri[len(memoria_prefix):].strip()
+                memoria_id = uri[len(memoria_prefix) :].strip()
                 if not memoria_id:
                     return payload("missing", "memo://memoria URI did not include an id.")
                 try:
@@ -171,7 +184,7 @@ class _ReplayOpsMixin(_MemoryBase):
                 )
 
             if uri.startswith(repo_index_prefix):
-                rest = uri[len(repo_index_prefix):].strip("/")
+                rest = uri[len(repo_index_prefix) :].strip("/")
                 if not rest or "/" not in rest:
                     return payload(
                         "missing",
@@ -182,7 +195,11 @@ class _ReplayOpsMixin(_MemoryBase):
                 if source is None:
                     return payload("missing", "Memo repo source was not found.")
                 commit = str(source.get("commit_sha") or "")
-                if commit_prefix and commit_prefix != "unknown" and not commit.startswith(commit_prefix):
+                if (
+                    commit_prefix
+                    and commit_prefix != "unknown"
+                    and not commit.startswith(commit_prefix)
+                ):
                     return payload(
                         "missing",
                         "Memo repo source exists but commit did not match the receipt URI.",
@@ -202,7 +219,7 @@ class _ReplayOpsMixin(_MemoryBase):
                 )
 
             if uri.startswith(repo_prefix):
-                repo_key = uri[len(repo_prefix):].strip()
+                repo_key = uri[len(repo_prefix) :].strip()
                 if not repo_key:
                     return payload("missing", "memo://repo URI did not include a repo id/name/url.")
                 source = self.store.get_repo_source(repo_key)
@@ -222,15 +239,18 @@ class _ReplayOpsMixin(_MemoryBase):
                 "memo://repo/<id|name|url>, and memo://repo-index/<name>/<commit> evidence.",
             )
 
-
     def _repo_replay_payload(self, source: dict[str, Any]) -> dict[str, Any]:
         repo_id = str(source.get("id") or "")
-        counts = self.store.repo_counts(repo_id) if repo_id else {
-            "files": 0,
-            "lines": 0,
-            "chunks": 0,
-            "embedded_chunks": 0,
-        }
+        counts = (
+            self.store.repo_counts(repo_id)
+            if repo_id
+            else {
+                "files": 0,
+                "lines": 0,
+                "chunks": 0,
+                "embedded_chunks": 0,
+            }
+        )
         pending_chunks = counts["chunks"] - counts["embedded_chunks"]
         return {
             "kind": "repo",
@@ -242,8 +262,10 @@ class _ReplayOpsMixin(_MemoryBase):
             "indexed_at": source.get("indexed_at") or "",
             "status": source.get("status") or "",
             "semantic_status": (
-                "semantic_ready" if counts["chunks"] and pending_chunks == 0
-                else "semantic_pending" if pending_chunks > 0
+                "semantic_ready"
+                if counts["chunks"] and pending_chunks == 0
+                else "semantic_pending"
+                if pending_chunks > 0
                 else str(source.get("status") or "")
             ),
             "counts": {

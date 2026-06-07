@@ -31,8 +31,13 @@ def query_group() -> None:
 @click.option("--tags", "tags_filter", multiple=True, help="Filter by tags")
 @click.option("--date-from", help="Start date (ISO format)")
 @click.option("--date-to", help="End date (ISO format)")
-@click.option("--mode", "search_mode", type=click.Choice(["vec", "bm25", "hybrid"]), default="hybrid",
-              help="Search mode (default: hybrid)")
+@click.option(
+    "--mode",
+    "search_mode",
+    type=click.Choice(["vec", "bm25", "hybrid"]),
+    default="hybrid",
+    help="Search mode (default: hybrid)",
+)
 @click.option("--limit", type=int, default=10, help="Result limit")
 @click.option("--description", help="Query description")
 @click.option("--execute", is_flag=True, help="Execute the query after saving")
@@ -146,12 +151,17 @@ def query_run(name: str, as_json: bool) -> None:
     if as_json:
         # Convert results to dict format
         results_dict = [r.__dict__ for r in result.results]
-        click.echo(json.dumps({
-            "query_name": result.query_name,
-            "count": result.count,
-            "executed_at": result.executed_at,
-            "results": results_dict,
-        }, indent=2))
+        click.echo(
+            json.dumps(
+                {
+                    "query_name": result.query_name,
+                    "count": result.count,
+                    "executed_at": result.executed_at,
+                    "results": results_dict,
+                },
+                indent=2,
+            )
+        )
         return
 
     console.print(f"[bold]Query: {name}[/bold]")

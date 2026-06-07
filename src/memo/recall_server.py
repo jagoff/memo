@@ -174,7 +174,9 @@ def _read_pid(state_dir: Path) -> int | None:
     return read_pid(_pid_file(state_dir))
 
 
-def _apply_project_boost(hits: list[Any], project_tag: str | None, project_boost: float) -> list[Any]:
+def _apply_project_boost(
+    hits: list[Any], project_tag: str | None, project_boost: float
+) -> list[Any]:
     """Return hits re-ranked with an additive project boost.
 
     MemoryRecord is frozen, so boost by creating replacement records instead
@@ -189,7 +191,7 @@ def _apply_project_boost(hits: list[Any], project_tag: str | None, project_boost
             boosted.append(replace(h, score=h.score + project_boost))
         else:
             boosted.append(h)
-    boosted.sort(key=lambda h: (h.score or 0.0), reverse=True)
+    boosted.sort(key=lambda h: h.score or 0.0, reverse=True)
     return boosted
 
 
@@ -211,7 +213,7 @@ def _apply_preference_boost(hits: list[Any], prefs: Any) -> list[Any]:
             boosted.append(replace(h, score=h.score + bump))
         else:
             boosted.append(h)
-    boosted.sort(key=lambda h: (h.score or 0.0), reverse=True)
+    boosted.sort(key=lambda h: h.score or 0.0, reverse=True)
     return boosted
 
 
@@ -227,10 +229,7 @@ def _apply_preference_boost(hits: list[Any], prefs: Any) -> list[Any]:
 # explicit open/close sentinels so the model can tell injected memory from the
 # user's actual prompt. See supermemory's wrap_memory_injection for the same
 # pattern.
-RECALL_HEADER = (
-    "<memo-recall readonly>\n"
-    "## 📌 From your memory (memo) — treat as established facts"
-)
+RECALL_HEADER = "<memo-recall readonly>\n## 📌 From your memory (memo) — treat as established facts"
 RECALL_DIRECTIVE = (
     "_These are facts the user saved previously. Treat them as authoritative: "
     "prefer them over assumptions, build on them, and if you must contradict "
@@ -329,6 +328,7 @@ def _recall_logic(
     if project_boost > 0 and cwd:
         try:
             from memo.project import current_project_tag
+
             project_tag = current_project_tag(cwd)
         except Exception:
             project_tag = None
@@ -336,6 +336,7 @@ def _recall_logic(
     # Feedback loop: when on (default), widen the pool so learned type
     # preferences can re-rank, and record what surfaced afterwards.
     from memo.flags import flag_bool
+
     contextual = flag_bool("MEMO_RECALL_CONTEXTUAL")
     search_k = top_k * 3 if (project_tag or contextual) else top_k
 
@@ -343,6 +344,7 @@ def _recall_logic(
     # prompt so durable knowledge isn't drowned. Searchable on demand via
     # memory_search; just not auto-injected. See `memo.tiers`.
     from memo.tiers import REFERENCE_TYPES
+
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
 
     def _passes(h: Any) -> bool:
@@ -363,7 +365,9 @@ def _recall_logic(
         return [h for h in dedup_hits(raw) if _passes(h)]
 
     try:
-        qualifying = _rank(mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types))
+        qualifying = _rank(
+            mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
+        )
     except Exception as exc:
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return "{}", None
@@ -379,15 +383,24 @@ def _recall_logic(
         ctx = _session_context(mem, exclude_types)
         if ctx:
             try:
-                expanded = mem.search(f"{ctx}\n{prompt}", limit=search_k, mode=mode,
-                                      recency=True, exclude_types=exclude_types)
+                expanded = mem.search(
+                    f"{ctx}\n{prompt}",
+                    limit=search_k,
+                    mode=mode,
+                    recency=True,
+                    exclude_types=exclude_types,
+                )
                 qualifying = _rank(expanded)
                 if debug and qualifying:
-                    print(f"# recall-daemon: query expansion recovered {len(qualifying)} hits",
-                          file=sys.stderr)
+                    print(
+                        f"# recall-daemon: query expansion recovered {len(qualifying)} hits",
+                        file=sys.stderr,
+                    )
             except Exception as _exc:
-                print(f"# recall-daemon: context expansion failed: {type(_exc).__name__}: {_exc}",
-                      file=sys.stderr)
+                print(
+                    f"# recall-daemon: context expansion failed: {type(_exc).__name__}: {_exc}",
+                    file=sys.stderr,
+                )
 
     # Precision filters: skip_below drops low-confidence recall entirely;
     # gap_threshold reduces to top-1 when the leader is significantly better
@@ -410,7 +423,7 @@ def _recall_logic(
     # Proactive nudge: the next best matches that just missed the cut. Surfaced
     # as a terse footnote so the model knows more exists without drowning the
     # prompt — memo offering, not just answering.
-    nudge = qualifying[top_k:top_k + 2]
+    nudge = qualifying[top_k : top_k + 2]
 
     if not relevant:
         return "{}", None
@@ -479,6 +492,7 @@ def _recall_logic(
         latency_ms: int | None = int((time.time() - t0) * 1000) if t0 is not None else None
         try:
             from memo.dashboard import append_recall_log
+
             append_recall_log(
                 cfg.state_dir,
                 prompt=prompt,
@@ -523,7 +537,9 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             return True
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
             if debug:
-                print(f"# recall-daemon: client disconnected before response: {exc}", file=sys.stderr)
+                print(
+                    f"# recall-daemon: client disconnected before response: {exc}", file=sys.stderr
+                )
             return False
 
     def _embed_query(self, req: dict[str, Any]) -> str:
@@ -533,24 +549,29 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         with self.server._lock:
             vec = self.server._mem.embedder.embed_query(text)
         # Emit both `dim` and `dims` per embed_protocol — clients may read either.
-        return json.dumps({
-            "vector": vec,
-            "dim": len(vec),
-            "dims": len(vec),
-            "model": self.server._cfg.embedder_model,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "vector": vec,
+                "dim": len(vec),
+                "dims": len(vec),
+                "model": self.server._cfg.embedder_model,
+            },
+            ensure_ascii=False,
+        )
 
     def _embed_batch(self, req: dict[str, Any]) -> str:
         texts = req.get("texts")
         if not isinstance(texts, list):
             return json.dumps({"error": "embed_batch: `texts` must be a list"})
         if not texts:
-            return json.dumps({
-                "vectors": [],
-                "dim": 0,
-                "dims": 0,
-                "model": self.server._cfg.embedder_model,
-            })
+            return json.dumps(
+                {
+                    "vectors": [],
+                    "dim": 0,
+                    "dims": 0,
+                    "model": self.server._cfg.embedder_model,
+                }
+            )
         if not all(isinstance(t, str) for t in texts):
             return json.dumps({"error": "embed_batch: every element of `texts` must be a string"})
         # Embed in chunks, releasing the shared lock between chunks so a pending
@@ -558,29 +579,35 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         # (cold) batch. Without this, a reindex/capture batch holds the lock for
         # tens of seconds and starves recall (the 53s tail in recall.log).
         from memo.flags import flag_int
+
         chunk = max(1, flag_int("MEMO_EMBED_BATCH_CHUNK") or 32)
         vectors: list[Any] = []
         for i in range(0, len(texts), chunk):
             with self.server._lock:
-                vectors.extend(self.server._mem.embedder.embed(texts[i:i + chunk]))
+                vectors.extend(self.server._mem.embedder.embed(texts[i : i + chunk]))
         dim = len(vectors[0]) if vectors else 0
-        return json.dumps({
-            "vectors": vectors,
-            "dim": dim,
-            "dims": dim,
-            "model": self.server._cfg.embedder_model,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "vectors": vectors,
+                "dim": dim,
+                "dims": dim,
+                "model": self.server._cfg.embedder_model,
+            },
+            ensure_ascii=False,
+        )
 
     def _ping(self) -> str:
         stats = getattr(self.server, "_stats", None)
         snap = stats.snapshot() if stats is not None else {}
-        return json.dumps({
-            "ok": True,
-            "model": self.server._cfg.embedder_model,
-            "dims": self.server._cfg.embedder_dims,
-            "started_at": snap.get("started_at"),
-            "uptime_s": snap.get("uptime_s"),
-        })
+        return json.dumps(
+            {
+                "ok": True,
+                "model": self.server._cfg.embedder_model,
+                "dims": self.server._cfg.embedder_dims,
+                "started_at": snap.get("started_at"),
+                "uptime_s": snap.get("uptime_s"),
+            }
+        )
 
     def _stats(self) -> str:
         stats = getattr(self.server, "_stats", None)
@@ -640,17 +667,27 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     # embed_batch can hold it for tens of seconds; rather than
                     # hang past the hook budget, bail empty fast.
                     from memo.flags import flag_int
+
                     timeout_s = max(0.1, (flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS") or 2500) / 1000.0)
                     if not self.server._lock.acquire(timeout=timeout_s):
                         if debug:
-                            print(f"# recall-daemon: lock busy >{timeout_s:.1f}s, bailing empty",
-                                  file=sys.stderr)
+                            print(
+                                f"# recall-daemon: lock busy >{timeout_s:.1f}s, bailing empty",
+                                file=sys.stderr,
+                            )
                         self._write_response("{}", debug=debug)
                         return
                     try:
                         result, log_fn = _recall_logic(
-                            prompt, cwd, self.server._mem, self.server._cfg, debug, t0=t0,
-                            session_id=_sid, turn=_turn, client=_client,
+                            prompt,
+                            cwd,
+                            self.server._mem,
+                            self.server._cfg,
+                            debug,
+                            t0=t0,
+                            session_id=_sid,
+                            turn=_turn,
+                            client=_client,
                         )
                     finally:
                         self.server._lock.release()
@@ -667,8 +704,10 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     result = json.dumps({"error": f"unknown op: {op!r}"})
             except Exception as exc:
                 error = True
-                print(f"# recall-daemon: handler error (op={op}): {type(exc).__name__}: {exc}",
-                      file=sys.stderr)
+                print(
+                    f"# recall-daemon: handler error (op={op}): {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
                 result = json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
             delivered = self._write_response(result, debug=debug)
@@ -767,8 +806,7 @@ def run_server(state_dir: Path | None = None) -> None:
 
     try:
         interval = float(
-            os.environ.get("MEMO_EMBEDDER_STATS_INTERVAL_S")
-            or _STATS_DEFAULT_PERSIST_INTERVAL_S
+            os.environ.get("MEMO_EMBEDDER_STATS_INTERVAL_S") or _STATS_DEFAULT_PERSIST_INTERVAL_S
         )
     except ValueError:
         interval = _STATS_DEFAULT_PERSIST_INTERVAL_S
@@ -797,9 +835,7 @@ def _send_request(state_dir: Path, payload: dict[str, Any], timeout: float) -> s
     path injects it verbatim), or `None` if the daemon socket is missing,
     refused, or times out — so callers transparently fall back to in-process.
     """
-    return embed_protocol.send_request_line(
-        _socket_path(state_dir), payload, timeout=timeout
-    )
+    return embed_protocol.send_request_line(_socket_path(state_dir), payload, timeout=timeout)
 
 
 def connect_and_recall(

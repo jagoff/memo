@@ -28,6 +28,7 @@ _log = logging.getLogger(__name__)
 
 class Modality(Enum):
     """Tipos de modalidad de contenido."""
+
     TEXT = "text"
     IMAGE = "image"
     AUDIO = "audio"
@@ -37,6 +38,7 @@ class Modality(Enum):
 @dataclass
 class MultiModalContent:
     """Contenido multi-modal con embedding."""
+
     id: str
     memoria_id: str | None  # Si está asociado a una memoria
     modality: str
@@ -49,6 +51,7 @@ class MultiModalContent:
 @dataclass
 class CrossModalResult:
     """Resultado de búsqueda cross-modal."""
+
     content_id: str
     modality: str
     similarity: float

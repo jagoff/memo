@@ -28,6 +28,7 @@ from .dashboard import (
 
 def _secs(env: str, default: int) -> int:
     from memo.flags import flag_int
+
     return flag_int(env) or default
 
 
@@ -54,6 +55,7 @@ def compute_roi(state_dir, *, limit: int = 500, window_turns: int = 4) -> dict:
         a = actions.setdefault(client, {"grounded": 0, "actions": 0})
         score = g.get("used_score")
         from .dashboard import GROUNDED_SCORE
+
         if isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
             a["grounded"] += 1
         if g.get("downstream_action"):
@@ -110,10 +112,14 @@ def roi(*, limit: int = 500, window_turns: int = 4, as_json: bool = False) -> No
     click.echo("memo ROI — value generated\n")
     click.echo(f"  grounding         {g_line}")
     if reask.get("reask_avoided") is not None:
-        click.echo(f"  re-derivations    {reask['reask_avoided']} prevented "
-                   f"({reask['considered']} grounded recalls, {reask['reask']} re-asked)")
-    click.echo(f"  estimated time    ~{data['time_saved_human']} saved "
-               f"(est: {data['secs_per_grounded']}s/grounded + {data['secs_per_reask']}s/re-ask avoided)")
+        click.echo(
+            f"  re-derivations    {reask['reask_avoided']} prevented "
+            f"({reask['considered']} grounded recalls, {reask['reask']} re-asked)"
+        )
+    click.echo(
+        f"  estimated time    ~{data['time_saved_human']} saved "
+        f"(est: {data['secs_per_grounded']}s/grounded + {data['secs_per_reask']}s/re-ask avoided)"
+    )
 
     # Per-client value table.
     click.echo(f"\n  {'client':<16} {'consults':>8} {'hit%':>6} {'grnd%':>6} {'act':>5}  last")
@@ -126,12 +132,17 @@ def roi(*, limit: int = 500, window_turns: int = 4, as_json: bool = False) -> No
         act = actions.get(name, {}).get("actions", 0)
         act_s = str(act) if act else "—"
         from .dashboard import _human_age
-        click.echo(f"  {name:<16} {c['consults']:>8} {hit:>6} {grnd:>6} {act_s:>5}  "
-                   f"{_human_age(c.get('last_seen'))}")
+
+        click.echo(
+            f"  {name:<16} {c['consults']:>8} {hit:>6} {grnd:>6} {act_s:>5}  "
+            f"{_human_age(c.get('last_seen'))}"
+        )
 
     if data["silent"]:
         click.echo(f"\n  ⚠ wired but silent (not reading memo): {', '.join(data['silent'])}")
 
     if not grounding_log_path(cfg.state_dir).is_file():
-        click.echo("\n  (grounding.log empty — run a few Claude Code turns so the Stop-hook "
-                   "detector can populate outcome data.)")
+        click.echo(
+            "\n  (grounding.log empty — run a few Claude Code turns so the Stop-hook "
+            "detector can populate outcome data.)"
+        )

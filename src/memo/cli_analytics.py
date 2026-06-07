@@ -97,6 +97,7 @@ def analytics_export_json(output_path: str) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     mem.analytics.export_metrics_json(Path(output_path))
 
     console.print(f"[green]Exported analytics to {output_path}[/green]")
@@ -113,6 +114,7 @@ def analytics_export_csv(output_path: str) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     mem.analytics.export_metrics_csv(Path(output_path))
 
     console.print(f"[green]Exported analytics to {output_path}[/green]")
@@ -129,6 +131,7 @@ def analytics_dashboard_html(output_path: str) -> None:
     mem = _get_memory(cfg)
 
     from pathlib import Path
+
     mem.dashboard.generate_html_dashboard(Path(output_path))
 
     console.print(f"[green]Generated HTML dashboard at {output_path}[/green]")

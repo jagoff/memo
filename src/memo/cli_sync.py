@@ -35,6 +35,7 @@ def sync_diff(remote: str | None, as_json: bool) -> None:
     from pathlib import Path
 
     from memo.sync import SyncManager
+
     remote_path = Path(remote) if remote else None
 
     sync_mgr = SyncManager(mem, remote_path=remote_path)
@@ -65,6 +66,7 @@ def sync_push(remote: str | None) -> None:
     from pathlib import Path
 
     from memo.sync import SyncManager
+
     remote_path = Path(remote) if remote else None
 
     sync_mgr = SyncManager(mem, remote_path=remote_path)
@@ -88,6 +90,7 @@ def sync_pull(remote: str | None) -> None:
     from pathlib import Path
 
     from memo.sync import SyncManager
+
     remote_path = Path(remote) if remote else None
 
     sync_mgr = SyncManager(mem, remote_path=remote_path)
@@ -111,6 +114,7 @@ def sync_both(remote: str | None) -> None:
     from pathlib import Path
 
     from memo.sync import SyncManager
+
     remote_path = Path(remote) if remote else None
 
     sync_mgr = SyncManager(mem, remote_path=remote_path)

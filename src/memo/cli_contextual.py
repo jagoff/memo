@@ -26,10 +26,13 @@ def contextual_group() -> None:
 
 @contextual_group.command(name="search")
 @click.argument("query")
-@click.option("--limit", type=int, default=10,
-              help="Max results (default: 10)")
-@click.option("--mode", type=click.Choice(["vec", "bm25", "hybrid"]), default="hybrid",
-              help="Search mode (default: hybrid)")
+@click.option("--limit", type=int, default=10, help="Max results (default: 10)")
+@click.option(
+    "--mode",
+    type=click.Choice(["vec", "bm25", "hybrid"]),
+    default="hybrid",
+    help="Search mode (default: hybrid)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def contextual_search(query: str, limit: int, mode: str, as_json: bool) -> None:
     """Search with contextual re-ranking based on conversation history.
@@ -138,7 +141,9 @@ def contextual_preferences(as_json: bool) -> None:
 
     console.print("[yellow]Preferred Entities:[/yellow]")
     if prefs.preferred_entities:
-        for entity, score in sorted(prefs.preferred_entities.items(), key=lambda x: x[1], reverse=True)[:10]:
+        for entity, score in sorted(
+            prefs.preferred_entities.items(), key=lambda x: x[1], reverse=True
+        )[:10]:
             console.print(f"  {entity}: {score:.2f}")
         if len(prefs.preferred_entities) > 10:
             console.print(f"  [dim]...and {len(prefs.preferred_entities) - 10} more[/dim]")
@@ -147,8 +152,9 @@ def contextual_preferences(as_json: bool) -> None:
 
 
 @contextual_group.command(name="history")
-@click.option("--limit", type=int, default=10,
-              help="Number of recent prompts to show (default: 10)")
+@click.option(
+    "--limit", type=int, default=10, help="Number of recent prompts to show (default: 10)"
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def contextual_history(limit: int, as_json: bool) -> None:
     """Show recent conversation history used for contextual recall.

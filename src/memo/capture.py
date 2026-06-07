@@ -60,13 +60,49 @@ _log = logging.getLogger(__name__)
 # the helper LLM cost. Permissive; better to send to the LLM and have
 # it return [] than to skip a real insight on a false negative.
 _TRIGGER_PATTERNS = (
-    "decid", "fix", "bug", "error", "issue", "from now on", "siempre",
-    "nunca", "regla", "preferenc", "discover", "turns out", "result",
-    "shippe", "merged", "deploy", "config", "instal", "uninstal",
-    "migrate", "switch to", "use ", "usá", "uso ahora", "should",
-    "porque", "because", "why ", "fail", "broke", "rompi", "crash",
-    "perform", "latenc", "warm", "cold", "model", "embed", "rerank",
-    "commit", "branch", "test", "regress",
+    "decid",
+    "fix",
+    "bug",
+    "error",
+    "issue",
+    "from now on",
+    "siempre",
+    "nunca",
+    "regla",
+    "preferenc",
+    "discover",
+    "turns out",
+    "result",
+    "shippe",
+    "merged",
+    "deploy",
+    "config",
+    "instal",
+    "uninstal",
+    "migrate",
+    "switch to",
+    "use ",
+    "usá",
+    "uso ahora",
+    "should",
+    "porque",
+    "because",
+    "why ",
+    "fail",
+    "broke",
+    "rompi",
+    "crash",
+    "perform",
+    "latenc",
+    "warm",
+    "cold",
+    "model",
+    "embed",
+    "rerank",
+    "commit",
+    "branch",
+    "test",
+    "regress",
 )
 
 
@@ -239,9 +275,16 @@ _GENERIC_PREFIXES = (
     # Session-narrative openers — produce low-value "what happened today" summaries
     # rather than durable knowledge. "today i " is intentionally excluded here
     # because many genuine decision memories start with "Today I decided/chose/..."
-    "the user ", "today the ", "we discussed ", "we worked on ",
-    "i helped ", "i assisted ", "this session ", "during this ",
+    "the user ",
+    "today the ",
+    "we discussed ",
+    "we worked on ",
+    "i helped ",
+    "i assisted ",
+    "this session ",
+    "during this ",
 )
+
 
 def _passes_quality(text: str, min_words: int | None = None) -> bool:
     """True if text is specific enough to be worth saving as a long-term memory.
@@ -251,6 +294,7 @@ def _passes_quality(text: str, min_words: int | None = None) -> bool:
     """
     if min_words is None:
         from memo.flags import flag_int
+
         min_words = max(0, flag_int("MEMO_CAPTURE_MIN_WORDS") or 15)
     t = text.strip()
     # Too short
@@ -261,7 +305,7 @@ def _passes_quality(text: str, min_words: int | None = None) -> bool:
     if any(lower.startswith(p) for p in _GENERIC_PREFIXES):
         return False
     # Pure temporal noise: "on 2026-05-16 ..."
-    return not _re.match(r'^(on )?\d{4}-\d{2}-\d{2}', lower)
+    return not _re.match(r"^(on )?\d{4}-\d{2}-\d{2}", lower)
 
 
 def _hash_assistant(text: str) -> str:
@@ -269,15 +313,16 @@ def _hash_assistant(text: str) -> str:
 
 
 def extract_insights(
-    helper_chat: Any, helper_model: str, user_text: str, assistant_text: str,
+    helper_chat: Any,
+    helper_model: str,
+    user_text: str,
+    assistant_text: str,
 ) -> list[dict[str, Any]]:
     """Run the helper LLM. Returns a list of insight dicts; empty on
     parse failure or model refusal. The helper is the small Qwen2.5-3B
     so latency is bounded (~1-3s warm).
     """
-    user_block = (
-        f"USER:\n{user_text[:4000]}\n\nASSISTANT:\n{assistant_text[:8000]}"
-    )
+    user_block = f"USER:\n{user_text[:4000]}\n\nASSISTANT:\n{assistant_text[:8000]}"
     try:
         resp = helper_chat.chat(
             model=helper_model,
@@ -317,17 +362,21 @@ def extract_insights(
             continue
         if not isinstance(tags, list):
             tags = []
-        out.append({
-            "title": title[:80],
-            "type": type_,
-            "body": body,
-            "tags": [str(t).lower().strip() for t in tags if t],
-        })
+        out.append(
+            {
+                "title": title[:80],
+                "type": type_,
+                "body": body,
+                "tags": [str(t).lower().strip() for t in tags if t],
+            }
+        )
     return out
 
 
 def is_near_duplicate(
-    memory: Any, candidate: dict[str, Any], threshold: float = 0.85,
+    memory: Any,
+    candidate: dict[str, Any],
+    threshold: float = 0.85,
 ) -> bool:
     """Return True if the candidate is semantically near a record
     already in the corpus. Uses pure vec search (not hybrid+rerank) —
@@ -382,8 +431,8 @@ def run_capture(
         if elapsed_min < cooldown_min:
             if debug:
                 print(
-                    f"# memo capture: cooldown — {elapsed_min:.1f}m elapsed, "
-                    f"need {cooldown_min}m", file=sys.stderr,
+                    f"# memo capture: cooldown — {elapsed_min:.1f}m elapsed, need {cooldown_min}m",
+                    file=sys.stderr,
                 )
             return {"status": "cooldown"}
 
@@ -411,10 +460,14 @@ def run_capture(
     mem = Memory(cfg)
     if mem._chat is None:  # type: ignore[attr-defined]
         from memo.llm import MLXChat
+
         mem._chat = MLXChat()  # type: ignore[attr-defined]
 
     insights = extract_insights(
-        mem._chat, cfg.helper_model, user_text, assistant_text,  # type: ignore[attr-defined]
+        mem._chat,
+        cfg.helper_model,
+        user_text,
+        assistant_text,  # type: ignore[attr-defined]
     )
     if debug:
         print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
@@ -441,8 +494,10 @@ def run_capture(
             continue
         try:
             rec = mem.save(
-                content=cand["body"], title=cand["title"],
-                type_=cand["type"], tags=cand["tags"],
+                content=cand["body"],
+                title=cand["title"],
+                type_=cand["type"],
+                tags=cand["tags"],
             )
             saved.append(rec.id)
             if debug:

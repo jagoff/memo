@@ -17,10 +17,14 @@ from memo.config import Config
 
 
 @click.command(name="tui")
-@click.option("--refresh", type=float, default=1.0, show_default=True,
-              help="Refresh interval in seconds.")
-@click.option("--no-clear", is_flag=True,
-              help="Don't take over the terminal screen — render inline (handy for tmux/screen).")
+@click.option(
+    "--refresh", type=float, default=1.0, show_default=True, help="Refresh interval in seconds."
+)
+@click.option(
+    "--no-clear",
+    is_flag=True,
+    help="Don't take over the terminal screen — render inline (handy for tmux/screen).",
+)
 def tui(refresh: float, no_clear: bool) -> None:
     """Live terminal dashboard — corpus stats, recent saves/recalls, MLX warm-state,
     watcher status, top tags, 14-day sparklines. Ctrl+C to exit.
@@ -35,10 +39,10 @@ def tui(refresh: float, no_clear: bool) -> None:
 
 
 @click.command(name="hook-log")
-@click.option("--limit", default=20, type=int, show_default=True,
-              help="Number of recent entries to show.")
-@click.option("--follow", is_flag=True,
-              help="Tail the log file (like tail -f). Ctrl+C to stop.")
+@click.option(
+    "--limit", default=20, type=int, show_default=True, help="Number of recent entries to show."
+)
+@click.option("--follow", is_flag=True, help="Tail the log file (like tail -f). Ctrl+C to stop.")
 def hook_log(limit: int, follow: bool) -> None:
     """Show recent recall-hook activity.
 
@@ -74,7 +78,7 @@ def hook_log(limit: int, follow: bool) -> None:
             f"via=[yellow]{via_val}[/yellow]  "
             f"hits=[bold]{n_hits}[/bold]  "
             f"latency=[magenta]{latency_str}[/magenta]  "
-            f"[dim]\"{prompt}\"[/dim]"
+            f'[dim]"{prompt}"[/dim]'
         )
 
     if not follow:
@@ -89,6 +93,7 @@ def hook_log(limit: int, follow: bool) -> None:
 
     # --follow: tail the log file
     from memo.dashboard import recall_log_path
+
     log_path = recall_log_path(state_dir)
     console.print(f"[dim]tailing {log_path} … Ctrl+C to stop[/dim]")
 
@@ -127,10 +132,10 @@ def hook_log(limit: int, follow: bool) -> None:
     show_default=True,
     help="Which log to read. 'all' interleaves by timestamp where possible.",
 )
-@click.option("--tail", default=40, type=int, show_default=True,
-              help="Number of recent lines per source.")
-@click.option("--paths", is_flag=True,
-              help="Just print the log file paths (for tail -f / less).")
+@click.option(
+    "--tail", default=40, type=int, show_default=True, help="Number of recent lines per source."
+)
+@click.option("--paths", is_flag=True, help="Just print the log file paths (for tail -f / less).")
 def logs(source: str, tail: int, paths: bool) -> None:
     """Show recent memo log activity in one place.
 
@@ -220,4 +225,3 @@ def logs(source: str, tail: int, paths: bool) -> None:
             console.print(f"[bold]watcher.err[/bold]  [dim]{watch_err_p}[/dim]")
             for line in err_lines:
                 console.print(f"  [red]{line}[/red]")
-

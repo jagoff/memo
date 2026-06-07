@@ -64,8 +64,13 @@ def _portable_backup(out_path: str | None) -> None:
 
 
 @click.group(name="backup", invoke_without_command=True)
-@click.option("--out", "out_path", default=None, type=click.Path(),
-              help="Output portable zip path. Default: ./memo-backup-<YYYYMMDD-HHMMSS>.zip")
+@click.option(
+    "--out",
+    "out_path",
+    default=None,
+    type=click.Path(),
+    help="Output portable zip path. Default: ./memo-backup-<YYYYMMDD-HHMMSS>.zip",
+)
 @click.pass_context
 def backup_group(ctx: click.Context, out_path: str | None) -> None:
     """Create a portable backup, or manage named backups with subcommands."""
@@ -142,7 +147,9 @@ def backup_list(as_json: bool) -> None:
 @click.argument("backup_name")
 @click.option("--no-memorias", "skip_memorias", is_flag=True, help="Skip memoria files")
 @click.option("--no-dbs", "skip_dbs", is_flag=True, help="Skip databases")
-@click.confirmation_option(prompt="This will restore from backup. Current data may be overwritten. Continue?")
+@click.confirmation_option(
+    prompt="This will restore from backup. Current data may be overwritten. Continue?"
+)
 def backup_restore(backup_name: str, skip_memorias: bool, skip_dbs: bool) -> None:
     """Restore from a backup.
 

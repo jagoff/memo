@@ -26,7 +26,9 @@ __all__ = [
 
 # Sequences of ≥2 consecutive capitalized words (proper noun phrases).
 # "Fernando Ferrari", "React Native", "Apple Silicon"
-_PROPER_NOUN_RE = re.compile(r"\b[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-ZÁÉÍÓÚÜÑ]+(?:\s+[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-ZÁÉÍÓÚÜÑ]+)+")
+_PROPER_NOUN_RE = re.compile(
+    r"\b[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-ZÁÉÍÓÚÜÑ]+(?:\s+[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-ZÁÉÍÓÚÜÑ]+)+"
+)
 
 # Single capitalized words that are likely proper nouns (≥4 chars, not at
 # sentence start — heuristic: preceded by a non-sentence-boundary char).
@@ -43,13 +45,41 @@ _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _QUOTED_RE = re.compile(r'"([^"]{3,40})"')
 
 # Spanish/English stopwords to filter single-word proper nouns.
-_STOPWORDS = frozenset({
-    "the", "The", "Esta", "Este", "Esto", "Aquí", "Hay", "Pero",
-    "Para", "Como", "Cuando", "Donde", "Algo", "Cada", "Cuándo",
-    "Cómo", "Qué", "Quién", "Cuál", "Ningún", "Todos", "Todas",
-    "Desde", "Hasta", "Según", "También", "Además", "Aunque",
-    "Sin embargo", "Por lo tanto", "En cambio",
-})
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "The",
+        "Esta",
+        "Este",
+        "Esto",
+        "Aquí",
+        "Hay",
+        "Pero",
+        "Para",
+        "Como",
+        "Cuando",
+        "Donde",
+        "Algo",
+        "Cada",
+        "Cuándo",
+        "Cómo",
+        "Qué",
+        "Quién",
+        "Cuál",
+        "Ningún",
+        "Todos",
+        "Todas",
+        "Desde",
+        "Hasta",
+        "Según",
+        "También",
+        "Además",
+        "Aunque",
+        "Sin embargo",
+        "Por lo tanto",
+        "En cambio",
+    }
+)
 
 # Min length for entity inclusion.
 _MIN_LEN = 3
@@ -57,11 +87,13 @@ _MIN_LEN = 3
 
 def entity_retrieval_enabled() -> bool:
     from memo.flags import flag_bool
+
     return flag_bool("MEMO_ENTITY_RETRIEVAL_ENABLED")
 
 
 def _gliner_enabled() -> bool:
     from memo.flags import flag_bool
+
     return flag_bool("MEMO_ENTITY_GLINER")
 
 
@@ -98,6 +130,7 @@ def _extract_gliner(text: str, labels: list[str]) -> list[str]:
         import gliner  # type: ignore[import]
 
         from memo.flags import flag_str
+
         model_name = flag_str("MEMO_ENTITY_GLINER_MODEL")
         # Module-level singleton to avoid repeated model loads.
         _model = getattr(_extract_gliner, "_model", None)

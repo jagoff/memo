@@ -49,6 +49,7 @@ _log = logging.getLogger(__name__)
 @dataclass
 class PromptContext:
     """A single prompt in the conversation history."""
+
     timestamp: str
     prompt: str
     recalled_memorias: list[str]  # IDs of memorias recalled for this prompt
@@ -57,6 +58,7 @@ class PromptContext:
 @dataclass
 class UserPreferences:
     """Learned user preferences for memory recall."""
+
     preferred_types: dict[str, float] = field(default_factory=dict)  # type -> score
     preferred_entities: dict[str, float] = field(default_factory=dict)  # entity -> score
     recency_weight: float = 0.5  # 0-1, how much to prefer recent memories
@@ -67,6 +69,7 @@ class UserPreferences:
 @dataclass
 class ContextualSearchResult:
     """A search result with contextual scoring."""
+
     memoria_id: str
     title: str
     original_score: float
@@ -118,7 +121,7 @@ class ContextStore:
     def _sync_context_maxlen(self) -> None:
         if self._context.maxlen != self.max_context_length:
             self._context = deque(
-                list(self._context)[-self.max_context_length:],
+                list(self._context)[-self.max_context_length :],
                 maxlen=self.max_context_length,
             )
 
@@ -160,6 +163,7 @@ class ContextStore:
         # bug that produced `preferred_types: {note: 0.6}` pre-tiering). See
         # `memo.tiers`.
         from memo.tiers import REFERENCE_TYPES
+
         if memoria_type not in REFERENCE_TYPES:
             # Boost the type
             self._preferences.preferred_types[memoria_type] = (
@@ -231,7 +235,8 @@ class ContextualRecall:
 
             # Entity overlap boost
             memoria_entities = {
-                e["name"] for e in self.memory.graph.memoria_entities(hit.id)
+                e["name"]
+                for e in self.memory.graph.memoria_entities(hit.id)
                 if isinstance(e, dict) and e.get("name")
             }
             entity_overlap = len(memoria_entities & context_entities)
@@ -247,8 +252,7 @@ class ContextualRecall:
 
             # Entity preference boost
             entity_pref_boost = sum(
-                prefs.preferred_entities.get(e, 0.0) * 0.03
-                for e in memoria_entities
+                prefs.preferred_entities.get(e, 0.0) * 0.03 for e in memoria_entities
             )
             contextual_score += entity_pref_boost
             boost_factors["entity_preference"] = entity_pref_boost
@@ -263,8 +267,7 @@ class ContextualRecall:
                     boost_factors["recency"] = recency_boost
             except (ValueError, TypeError) as exc:
                 _log.debug(
-                    "contextual: bad updated timestamp %r, skipping recency "
-                    "boost: %s",
+                    "contextual: bad updated timestamp %r, skipping recency boost: %s",
                     hit.updated,
                     exc,
                 )
@@ -303,7 +306,8 @@ class ContextualRecall:
         rec = self.memory.get(memoria_id)
         if rec:
             entities = [
-                e["name"] for e in self.memory.graph.memoria_entities(memoria_id)
+                e["name"]
+                for e in self.memory.graph.memoria_entities(memoria_id)
                 if isinstance(e, dict) and e.get("name")
             ]
             self.context.record_feedback(memoria_id, rec.type, entities)
@@ -312,6 +316,7 @@ class ContextualRecall:
             # `memo usefulness` → referenced_rate. Best-effort, off hot path.
             try:
                 from memo.dashboard import append_usage_log
+
                 append_usage_log(self.context.context_file.parent, memoria_id)
             except Exception:
                 pass

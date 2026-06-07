@@ -53,8 +53,43 @@ from memo import server_sync as _srv_sync
 from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
 from memo import server_version as _srv_version
+from memo._trace import TRACE_HEADER, trace_scope
 from memo.config import Config
 from memo.memory import AmbiguousIdError, Memory
+
+
+def _make_trace_middleware() -> Any:
+    """Bridge the synapse trace header into the shared trace contextvar.
+
+    Synapse forwards its ``synapse://trace/<id>`` two ways: the
+    ``SYNAPSE_TRACE_ID`` env var (subprocess path) and the
+    ``x-synapse-trace-id`` HTTP header (warm-daemon path). The env var is read
+    in `write_ops`; this middleware covers the header path so a warm-daemon
+    write stamps the same trace id and the ledger trails stitch into one span.
+
+    Returns ``None`` when FastMCP middleware isn't available so `build_server`
+    can skip wiring it without failing.
+    """
+    try:
+        from fastmcp.server.dependencies import get_http_headers
+        from fastmcp.server.middleware import Middleware
+    except ImportError:
+        return None
+
+    class _TraceMiddleware(Middleware):  # type: ignore[misc]
+        async def on_call_tool(self, context: Any, call_next: Any) -> Any:
+            trace_id = ""
+            try:
+                headers = get_http_headers() or {}
+                trace_id = (headers.get(TRACE_HEADER) or "").strip()
+            except Exception:
+                trace_id = ""
+            if not trace_id:
+                return await call_next(context)
+            with trace_scope(trace_id):
+                return await call_next(context)
+
+    return _TraceMiddleware()
 
 
 def _now_ms() -> int:
@@ -103,6 +138,12 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
     server = FastMCP("memo")
 
+    # Stitch the synapse trace header into the shared trace contextvar so
+    # warm-daemon writes carry the same trace id as the subprocess path.
+    _trace_mw = _make_trace_middleware()
+    if _trace_mw is not None:
+        server.add_middleware(_trace_mw)
+
     # Domain tool modules register their @server.tool() closures here.
     _srv_repo.register(server, memory)
     _srv_entities.register(server, memory)
@@ -130,6 +171,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     _srv_asof.register(server, memory)
     # ToolSpec-registry tools (new pattern — see mcp_tools.py)
     from memo.mcp_tools import register_all as _register_mcp_tools
+
     _register_mcp_tools(server, memory)
 
     @server.tool()
@@ -181,8 +223,12 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
         try:
             rec = memory.save(
-                content=content, title=title, type_=type, tags=tags,
-                auto_derive=auto_derive, extra=extra,
+                content=content,
+                title=title,
+                type_=type,
+                tags=tags,
+                auto_derive=auto_derive,
+                extra=extra,
                 respect_synapse_freeze=respect_synapse_freeze,
             )
         except WriteRefused as exc:
@@ -281,8 +327,14 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
         t0 = _now_ms()
         lines = synapse_briefing_lines(cwd)
-        _log_consult(memory, tool="unified_briefing", query=cwd or "briefing",
-                     hits=[], t0_ms=t0, source=source)
+        _log_consult(
+            memory,
+            tool="unified_briefing",
+            query=cwd or "briefing",
+            hits=[],
+            t0_ms=t0,
+            source=source,
+        )
         return {
             "available": bool(lines),
             "markdown": "\n".join(lines),
@@ -454,13 +506,15 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         out = res if isinstance(res, dict) else {"answer": str(res)}
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
-        _log_consult(memory, tool="chat_ask", query=question, hits=hit_dicts,
-                     t0_ms=t0, source=source)
+        _log_consult(
+            memory, tool="chat_ask", query=question, hits=hit_dicts, t0_ms=t0, source=source
+        )
         return out
 
     @server.tool()
     def memory_list(
-        limit: int = 20, type: str | None = None,
+        limit: int = 20,
+        type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Recent memories ordered by `updated` desc. No vector lookup
         — useful when you want to inspect "what did I save lately"
@@ -504,7 +558,11 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         """
         try:
             rec = memory.update(
-                id, title=title, type_=type, tags=tags, content=content,
+                id,
+                title=title,
+                type_=type,
+                tags=tags,
+                content=content,
             )
         except AmbiguousIdError as exc:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
@@ -523,7 +581,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         Returns `{"checked", "reindexed", "added", "skipped"}`.
         """
         return memory.reindex(force=force)
-
 
     @server.tool()
     def memory_delete(id: str) -> dict[str, Any]:
@@ -584,10 +641,11 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             return {"unforgotten": False}
         return {"unforgotten": True, "id": rec.id}
 
-
     @server.tool()
     def memory_consolidate(
-        threshold: float = 0.85, max_clusters: int = 20, type: str | None = None,
+        threshold: float = 0.85,
+        max_clusters: int = 20,
+        type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Find clusters of near-duplicate memorias and propose actions.
 
@@ -603,7 +661,9 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             type: Optional filter to one record type.
         """
         return memory.consolidate(
-            threshold=threshold, max_clusters=max_clusters, type_=type,
+            threshold=threshold,
+            max_clusters=max_clusters,
+            type_=type,
         )
 
     @server.tool()
@@ -645,7 +705,9 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
     @server.tool()
     def memory_history(
-        limit: int = 20, op: str | None = None, id: str | None = None,
+        limit: int = 20,
+        op: str | None = None,
+        id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Recent save/update/delete events from the audit log.
 
@@ -668,7 +730,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
     @server.tool()
     def memory_session_list(
-        limit: int = 10, project: str | None = None,
+        limit: int = 10,
+        project: str | None = None,
     ) -> list[dict[str, Any]]:
         """Recent Claude Code session snapshots ordered by `updated` desc.
 
@@ -687,6 +750,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         turn_count, modified_files, ...}`.
         """
         from memo.session import list_sessions
+
         return list_sessions(memory.cfg.state_dir, limit=limit, project=project)
 
     @server.tool()
@@ -695,6 +759,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         chars). Returns None when no match. Companion to
         `memory_session_list` for the `/memo resume` picker."""
         from memo.session import get_session
+
         return get_session(memory.cfg.state_dir, session_id)
 
     @server.tool()
@@ -706,9 +771,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         stats: dict[str, Any] = {
             "total": memory.store.count(),
             "data_dir": str(memory.cfg.data_dir),
-            "vault_path": (
-                str(memory.cfg.vault_path) if memory.cfg.vault_path else None
-            ),
+            "vault_path": (str(memory.cfg.vault_path) if memory.cfg.vault_path else None),
             "db_path": str(memory.cfg.db_path),
             "embedder_model": memory.cfg.embedder_model,
             "history_errors": history_errors,
@@ -717,6 +780,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         # is visible over MCP too. Best-effort; never breaks stats.
         with contextlib.suppress(Exception):
             from memo.dashboard import recall_health
+
             stats["recall_health"] = recall_health(memory.cfg.state_dir)
         return stats
 
@@ -726,7 +790,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     # boundary test). The previously-dead helper stubs for them were removed.
 
     # -- time-machine (as-of) ---------------------------------------------------
-
 
     @server.resource("memo://recent")
     def _resource_recent() -> str:
@@ -753,9 +816,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         try:
             rec = memory.get(id)
         except AmbiguousIdError as exc:
-            return (
-                f"# Ambiguous id `{id}`\n\nMatches:\n\n"
-                + "\n".join(f"- `{m}`" for m in exc.matches)
+            return f"# Ambiguous id `{id}`\n\nMatches:\n\n" + "\n".join(
+                f"- `{m}`" for m in exc.matches
             )
         if rec is None:
             return f"# Not found\n\nNo memoria for id `{id}`.\n"
@@ -790,11 +852,13 @@ def build_server(memory: Memory | None = None) -> FastMCP:
             body = await request.json()
         except Exception:
             from starlette.responses import JSONResponse
+
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
 
         question = str(body.get("question") or "")
         if not question.strip():
             from starlette.responses import JSONResponse
+
             return JSONResponse({"error": "empty question"}, status_code=400)
         k = int(body.get("k") or 7)
         type_ = body.get("type") or None
@@ -804,7 +868,11 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         def _gen():
             try:
                 for ev in memory.chat_ask_stream(
-                    question, k=k, type_=type_, history=history, context=context,
+                    question,
+                    k=k,
+                    type_=type_,
+                    history=history,
+                    context=context,
                 ):
                     yield f"data: {_json.dumps(ev, ensure_ascii=False)}\n\n"
             except Exception as exc:  # never hang the client mid-stream

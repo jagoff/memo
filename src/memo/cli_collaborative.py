@@ -27,7 +27,9 @@ def collaborative_group() -> None:
 @click.argument("entity-b")
 @click.argument("relationship")
 @click.option("--confidence", type=float, default=0.7, help="Confidence score")
-def collaborative_share_connection(user_id: str, entity_a: str, entity_b: str, relationship: str, confidence: float) -> None:
+def collaborative_share_connection(
+    user_id: str, entity_a: str, entity_b: str, relationship: str, confidence: float
+) -> None:
     """Comparte una conexión descubierta con la comunidad.
 
     Example: memo collaborative share-connection user123 MLX Apple "optimized for"

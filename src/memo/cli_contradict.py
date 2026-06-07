@@ -40,24 +40,42 @@ def _fmt_pair_header(rec_a, rec_b, pair) -> str:
 
 
 @contradict_group.command(name="scan")
-@click.option("--top-k", type=int, default=5,
-              help="Vec neighbors to consider per memoria (default: 5)")
-@click.option("--sim-floor", type=float, default=0.55,
-              help="Cosine floor; pairs below are skipped (default: 0.55)")
-@click.option("--confidence", type=float, default=0.7,
-              help="Min LLM confidence to store (default: 0.7)")
-@click.option("--min-days-apart", type=int, default=1,
-              help="Skip pairs whose updates are within N days (default: 1)")
-@click.option("--max-memorias", type=int, default=2000,
-              help="Cap on memorias visited (default: 2000)")
-@click.option("--max-pairs", type=int, default=500,
-              help="Cap on pairs sent to the LLM (default: 500)")
+@click.option(
+    "--top-k", type=int, default=5, help="Vec neighbors to consider per memoria (default: 5)"
+)
+@click.option(
+    "--sim-floor",
+    type=float,
+    default=0.55,
+    help="Cosine floor; pairs below are skipped (default: 0.55)",
+)
+@click.option(
+    "--confidence", type=float, default=0.7, help="Min LLM confidence to store (default: 0.7)"
+)
+@click.option(
+    "--min-days-apart",
+    type=int,
+    default=1,
+    help="Skip pairs whose updates are within N days (default: 1)",
+)
+@click.option(
+    "--max-memorias", type=int, default=2000, help="Cap on memorias visited (default: 2000)"
+)
+@click.option(
+    "--max-pairs", type=int, default=500, help="Cap on pairs sent to the LLM (default: 500)"
+)
 @click.option("--since", help="Only scan memorias updated on/after this ISO date")
 @click.option("--type", "type_", help="Filter by memoria type")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def contradict_scan(
-    top_k: int, sim_floor: float, confidence: float, min_days_apart: int,
-    max_memorias: int, max_pairs: int, since: str | None, type_: str | None,
+    top_k: int,
+    sim_floor: float,
+    confidence: float,
+    min_days_apart: int,
+    max_memorias: int,
+    max_pairs: int,
+    since: str | None,
+    type_: str | None,
     as_json: bool,
 ) -> None:
     """Scan the corpus for contradiction/evolution pairs.
@@ -108,23 +126,30 @@ def contradict_scan(
     console.print(table)
 
     if result.contradictions_found or result.evolutions_found:
-        console.print(
-            "\n[green]→[/green] Run [cyan]memo contradict triage[/cyan] to resolve them."
-        )
+        console.print("\n[green]→[/green] Run [cyan]memo contradict triage[/cyan] to resolve them.")
 
 
 @contradict_group.command(name="list")
 @click.option("--limit", type=int, default=20, help="Max rows (default: 20)")
 @click.option("--min-confidence", type=float, default=0.0)
-@click.option("--relationship", type=click.Choice(["contradiction", "evolution"]),
-              help="Filter by relationship type")
-@click.option("--status", type=click.Choice(
-    ["open", "fused", "kept_newer", "kept_older", "evolved", "dismissed"]),
-    default="open", help="Filter by status (default: open)")
+@click.option(
+    "--relationship",
+    type=click.Choice(["contradiction", "evolution"]),
+    help="Filter by relationship type",
+)
+@click.option(
+    "--status",
+    type=click.Choice(["open", "fused", "kept_newer", "kept_older", "evolved", "dismissed"]),
+    default="open",
+    help="Filter by status (default: open)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def contradict_list(
-    limit: int, min_confidence: float, relationship: str | None,
-    status: str, as_json: bool,
+    limit: int,
+    min_confidence: float,
+    relationship: str | None,
+    status: str,
+    as_json: bool,
 ) -> None:
     """List contradiction pairs from the sidecar DB."""
     cfg = Config.from_env()
@@ -132,7 +157,9 @@ def contradict_list(
 
     if status == "open":
         pairs = mem.contradict_store.list_open(
-            limit=limit, min_confidence=min_confidence, relationship=relationship,
+            limit=limit,
+            min_confidence=min_confidence,
+            relationship=relationship,
         )
     else:
         pairs = mem.contradict_store.list_all(status=status, limit=limit)
@@ -168,6 +195,7 @@ def contradict_list(
 
 def _display_pair_excerpt(rec, label: str, *, stale_days: int = 180) -> None:
     from memo.contradict import is_stale
+
     age_marker = "  [red](stale)[/red]" if is_stale(rec.updated, stale_days) else ""
     console.print(
         f"[bold cyan]{label}[/bold cyan] · {rec.id[:8]} · "
@@ -195,19 +223,35 @@ Actions for each pair:
 
 
 @contradict_group.command(name="triage")
-@click.option("--limit", type=int, default=20,
-              help="Max pairs to walk in this session (default: 20)")
-@click.option("--min-confidence", type=float, default=0.7,
-              help="Skip pairs below this LLM confidence (default: 0.7)")
-@click.option("--relationship", type=click.Choice(["contradiction", "evolution"]),
-              help="Only walk pairs of this relationship type")
-@click.option("--stale-days", type=int, default=180,
-              help="Days threshold for the [stale] marker (default: 180)")
-@click.option("--yes-fuse", is_flag=True,
-              help="Auto-accept fuse without an extra confirmation prompt")
+@click.option(
+    "--limit", type=int, default=20, help="Max pairs to walk in this session (default: 20)"
+)
+@click.option(
+    "--min-confidence",
+    type=float,
+    default=0.7,
+    help="Skip pairs below this LLM confidence (default: 0.7)",
+)
+@click.option(
+    "--relationship",
+    type=click.Choice(["contradiction", "evolution"]),
+    help="Only walk pairs of this relationship type",
+)
+@click.option(
+    "--stale-days",
+    type=int,
+    default=180,
+    help="Days threshold for the [stale] marker (default: 180)",
+)
+@click.option(
+    "--yes-fuse", is_flag=True, help="Auto-accept fuse without an extra confirmation prompt"
+)
 def contradict_triage(
-    limit: int, min_confidence: float, relationship: str | None,
-    stale_days: int, yes_fuse: bool,
+    limit: int,
+    min_confidence: float,
+    relationship: str | None,
+    stale_days: int,
+    yes_fuse: bool,
 ) -> None:
     """Interactive triage walker over open contradiction pairs.
 
@@ -217,7 +261,9 @@ def contradict_triage(
     mem = _get_memory(cfg)
 
     pairs = mem.contradict_store.list_open(
-        limit=limit, min_confidence=min_confidence, relationship=relationship,
+        limit=limit,
+        min_confidence=min_confidence,
+        relationship=relationship,
     )
     if not pairs:
         console.print("[green]No open pairs to triage.[/green]")
@@ -230,7 +276,8 @@ def contradict_triage(
         rec_b = mem.get(pair.memoria_id_b)
         if rec_a is None or rec_b is None:
             mem.contradict_store.resolve(
-                pair.pair_id, "dismissed",
+                pair.pair_id,
+                "dismissed",
                 note="auto: one side missing at triage time",
             )
             continue
@@ -249,10 +296,16 @@ def contradict_triage(
         _display_pair_excerpt(rec_b, "NEWER", stale_days=stale_days)
 
         while True:
-            choice = click.prompt(
-                "Action [f/n/o/e/d/s/q/?]",
-                type=str, default="s", show_default=False,
-            ).strip().lower()
+            choice = (
+                click.prompt(
+                    "Action [f/n/o/e/d/s/q/?]",
+                    type=str,
+                    default="s",
+                    show_default=False,
+                )
+                .strip()
+                .lower()
+            )
             if choice == "?":
                 console.print(_TRIAGE_HELP)
                 continue
@@ -277,15 +330,17 @@ def contradict_triage(
         if choice == "n":
             if click.confirm(f"Delete OLDER {rec_a.id[:8]}?", default=False):
                 mem.delete(rec_a.id)
-                mem.contradict_store.resolve(pair.pair_id, "kept_newer",
-                                             note=f"deleted older {rec_a.id}")
+                mem.contradict_store.resolve(
+                    pair.pair_id, "kept_newer", note=f"deleted older {rec_a.id}"
+                )
                 console.print(f"[green]kept newer.[/green] older {rec_a.id[:8]} deleted.")
             continue
         if choice == "o":
             if click.confirm(f"Delete NEWER {rec_b.id[:8]}?", default=False):
                 mem.delete(rec_b.id)
-                mem.contradict_store.resolve(pair.pair_id, "kept_older",
-                                             note=f"deleted newer {rec_b.id}")
+                mem.contradict_store.resolve(
+                    pair.pair_id, "kept_older", note=f"deleted newer {rec_b.id}"
+                )
                 console.print(f"[green]kept older.[/green] newer {rec_b.id[:8]} deleted.")
             continue
         if choice == "f":
@@ -295,12 +350,14 @@ def contradict_triage(
                 "rationale": pair.rationale,
                 "members": [
                     {
-                        "id": rec_a.id, "title": rec_a.title,
+                        "id": rec_a.id,
+                        "title": rec_a.title,
                         "updated": rec_a.updated,
                         "body_preview": (rec_a.body or "")[:400],
                     },
                     {
-                        "id": rec_b.id, "title": rec_b.title,
+                        "id": rec_b.id,
+                        "title": rec_b.title,
                         "updated": rec_b.updated,
                         "body_preview": (rec_b.body or "")[:400],
                     },
@@ -310,15 +367,14 @@ def contradict_triage(
             if proposal is None:
                 console.print("[red]LLM declined to propose a merge. Skipping.[/red]")
                 continue
-            console.print(
-                f"[bold]Proposed merged title:[/bold] {proposal.merged_title}"
-            )
+            console.print(f"[bold]Proposed merged title:[/bold] {proposal.merged_title}")
             console.print(f"[dim]strategy={proposal.merge_strategy}[/dim]")
             console.print(f"[dim]rationale={proposal.rationale}[/dim]")
             if yes_fuse or click.confirm("Apply this merge?", default=False):
                 merge_result = mem.consolidator.apply_merge(proposal, dry_run=False)
                 mem.contradict_store.resolve(
-                    pair.pair_id, "fused",
+                    pair.pair_id,
+                    "fused",
                     note=f"merged into {merge_result.merged_id}",
                 )
                 console.print(

@@ -80,13 +80,33 @@ DEFAULT_LABELS = LabelSet(
         Prompt("receta para hacer una tarta de manzana", relevant=False),
     ],
     relevant_terms={
-        "synapse", "memflow", "memo", "3-pilares", "stack", "tier-2", "tier 2",
-        "arquitectura", "recall", "provenance", "consciousness", "consciencia",
-        "onboarding", "daemon", "mcp",
+        "synapse",
+        "memflow",
+        "memo",
+        "3-pilares",
+        "stack",
+        "tier-2",
+        "tier 2",
+        "arquitectura",
+        "recall",
+        "provenance",
+        "consciousness",
+        "consciencia",
+        "onboarding",
+        "daemon",
+        "mcp",
     },
     noise_tags={
-        "04-archive", "old", "moka", "foda", "swot", "aws", "aws-tagging",
-        "hr", "1a1", "companies",
+        "04-archive",
+        "old",
+        "moka",
+        "foda",
+        "swot",
+        "aws",
+        "aws-tagging",
+        "hr",
+        "1a1",
+        "companies",
     },
     noise_path_fragments=("inactive/", "/04-archive/", "04-archive/", "/old/", "/companies/"),
     session_context=(
@@ -109,11 +129,13 @@ def load_labels(path: Path) -> LabelSet:
         if isinstance(p, str):
             prompts.append(Prompt(text=p))
         elif isinstance(p, dict) and p.get("text"):
-            prompts.append(Prompt(
-                text=str(p["text"]),
-                relevant=bool(p.get("relevant", False)),
-                expect_ids=[str(x) for x in (p.get("expect_ids") or [])],
-            ))
+            prompts.append(
+                Prompt(
+                    text=str(p["text"]),
+                    relevant=bool(p.get("relevant", False)),
+                    expect_ids=[str(x) for x in (p.get("expect_ids") or [])],
+                )
+            )
     if not prompts:
         raise ValueError(f"label set {path} has no usable prompts")
     return LabelSet(
@@ -174,12 +196,14 @@ def _is_relevant(rec: Any, prompt: Prompt, labels: LabelSet) -> bool:
         return _id_matches(getattr(rec, "id", ""), prompt.expect_ids)
     if _is_noise(rec, labels):
         return False
-    hay = " ".join([
-        getattr(rec, "title", "") or "",
-        " ".join(getattr(rec, "tags", None) or []),
-        getattr(rec, "path", "") or "",
-        (getattr(rec, "body", "") or "")[:200],
-    ]).lower()
+    hay = " ".join(
+        [
+            getattr(rec, "title", "") or "",
+            " ".join(getattr(rec, "tags", None) or []),
+            getattr(rec, "path", "") or "",
+            (getattr(rec, "body", "") or "")[:200],
+        ]
+    ).lower()
     return any(term in hay for term in labels.relevant_terms)
 
 
@@ -209,7 +233,11 @@ def run_config(mem: Any, cfg: Cfg, k: int, labels: LabelSet) -> Row:
     n_prompts = len(labels.prompts) or 1
     for prompt in labels.prompts:
         scored = prompt.relevant or bool(prompt.expect_ids)
-        query = f"{labels.session_context}\n{prompt.text}" if cfg.context and labels.session_context else prompt.text
+        query = (
+            f"{labels.session_context}\n{prompt.text}"
+            if cfg.context and labels.session_context
+            else prompt.text
+        )
         t0 = time.time()
         hits = mem.search(query, limit=k * 4, mode=cfg.mode)
         lat.append((time.time() - t0) * 1000)
@@ -221,15 +249,21 @@ def run_config(mem: Any, cfg: Cfg, k: int, labels: LabelSet) -> Row:
         if scored:
             prec_total += k
             prec_hits += sum(1 for h in top if _is_relevant(h, prompt, labels))
-        detail.append({
-            "prompt": prompt.text[:48],
-            "scored": scored,
-            "top": [
-                {"title": (h.title or "")[:40], "score": round(h.score or 0, 3),
-                 "noise": _is_noise(h, labels), "relevant": _is_relevant(h, prompt, labels)}
-                for h in top
-            ],
-        })
+        detail.append(
+            {
+                "prompt": prompt.text[:48],
+                "scored": scored,
+                "top": [
+                    {
+                        "title": (h.title or "")[:40],
+                        "score": round(h.score or 0, 3),
+                        "noise": _is_noise(h, labels),
+                        "relevant": _is_relevant(h, prompt, labels),
+                    }
+                    for h in top
+                ],
+            }
+        )
     lat.sort()
     return Row(
         config=cfg.name,
@@ -240,8 +274,9 @@ def run_config(mem: Any, cfg: Cfg, k: int, labels: LabelSet) -> Row:
     )
 
 
-def evaluate(mem: Any, *, k: int = 3, labels: LabelSet | None = None,
-             configs: list[Cfg] | None = None) -> list[Row]:
+def evaluate(
+    mem: Any, *, k: int = 3, labels: LabelSet | None = None, configs: list[Cfg] | None = None
+) -> list[Row]:
     labels = labels or DEFAULT_LABELS
     configs = configs or default_configs()
     return [run_config(mem, cfg, k, labels) for cfg in configs]
@@ -257,7 +292,9 @@ def rows_to_table(rows: list[Row], k: int) -> str:
         "-" * 45,
     ]
     for r in rows:
-        lines.append(f"{r.config:<18} {r.precision_at_k:>7} {r.noise_at_k:>8} {r.latency_ms_p50:>8}")
+        lines.append(
+            f"{r.config:<18} {r.precision_at_k:>7} {r.noise_at_k:>8} {r.latency_ms_p50:>8}"
+        )
     lines.append("\nHigher prec@k + lower noise@k is better. Baseline = first config.")
     return "\n".join(lines)
 
@@ -285,16 +322,16 @@ def recommend(rows: list[Row]) -> str:
     cfg = next((c for c in default_configs() if c.name == best.config), None)
     knobs = ""
     if cfg is not None:
-        knobs = (f"  export MEMO_RECALL_MODE={cfg.mode}\n"
-                 f"  export MEMO_RECALL_MIN_SIM={cfg.floor}")
+        knobs = f"  export MEMO_RECALL_MODE={cfg.mode}\n  export MEMO_RECALL_MIN_SIM={cfg.floor}"
         if cfg.exclude_archived:
             knobs += "\n  (and keep archive exclusion on in the recall hook)"
-    out = (f"Best config: {best.config} "
-           f"(prec {dp:+.3f}, noise {dn:+.3f} vs baseline).\n{knobs}")
+    out = f"Best config: {best.config} (prec {dp:+.3f}, noise {dn:+.3f} vs baseline).\n{knobs}"
     if best.latency_ms_p50 > _HOOK_SEARCH_BUDGET_MS:
-        out += (f"\n  ⚠ p50 search {best.latency_ms_p50:.0f}ms exceeds the "
-                f"~{_HOOK_SEARCH_BUDGET_MS:.0f}ms recall-hook budget — best for "
-                f"`memo ask`/chat, but keep a faster mode for the hook.")
+        out += (
+            f"\n  ⚠ p50 search {best.latency_ms_p50:.0f}ms exceeds the "
+            f"~{_HOOK_SEARCH_BUDGET_MS:.0f}ms recall-hook budget — best for "
+            f"`memo ask`/chat, but keep a faster mode for the hook."
+        )
     return out
 
 

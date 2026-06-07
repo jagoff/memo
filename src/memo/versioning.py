@@ -22,6 +22,7 @@ from typing import Any
 @dataclass
 class Version:
     """A version of a memoria."""
+
     version_id: int
     memoria_id: str
     timestamp: str
@@ -35,6 +36,7 @@ class Version:
 @dataclass
 class DiffResult:
     """Result of comparing two versions."""
+
     memoria_id: str
     version_a: int
     version_b: int
@@ -62,10 +64,13 @@ class VersionStore:
             # check_same_thread=False + WAL so the shared handle survives the
             # FastMCP worker threadpool (default would raise on the 2nd thread).
             self._conn = sqlite3.connect(
-                str(self.db_path), timeout=10.0, check_same_thread=False,
+                str(self.db_path),
+                timeout=10.0,
+                check_same_thread=False,
             )
             self._conn.row_factory = sqlite3.Row
             from contextlib import suppress
+
             with suppress(sqlite3.Error):
                 self._conn.execute("PRAGMA journal_mode=WAL")
         return self._conn
@@ -105,8 +110,15 @@ class VersionStore:
             (memoria_id, timestamp, title, type, tags, body, reason)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (memoria_id, datetime.now(UTC).isoformat(), title, type,
-             json.dumps(tags), body, reason),
+            (
+                memoria_id,
+                datetime.now(UTC).isoformat(),
+                title,
+                type,
+                json.dumps(tags),
+                body,
+                reason,
+            ),
         )
         conn.commit()
         return cursor.lastrowid
@@ -187,9 +199,7 @@ class VersionManager:
         reason: str | None = None,
     ) -> int:
         """Track a memoria update by saving a new version."""
-        return self.version_store.save_version(
-            memoria_id, title, type, tags, body, reason
-        )
+        return self.version_store.save_version(memoria_id, title, type, tags, body, reason)
 
     def diff_versions(
         self,
@@ -220,14 +230,19 @@ class VersionManager:
         body_b = v_b.body.splitlines(keepends=True)
 
         diff = difflib.unified_diff(
-            body_a, body_b,
+            body_a,
+            body_b,
             fromfile=f"v{v_a.version_id}",
             tofile=f"v{v_b.version_id}",
             lineterm="",
         )
 
         unified_diff = "".join(diff)
-        changes = [line for line in unified_diff.split("\n") if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
+        changes = [
+            line
+            for line in unified_diff.split("\n")
+            if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+        ]
 
         return DiffResult(
             memoria_id=memoria_id,
@@ -269,4 +284,3 @@ __all__ = [
     "VersionManager",
     "VersionStore",
 ]
-

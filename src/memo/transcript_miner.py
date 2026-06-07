@@ -50,7 +50,9 @@ def _save_state(state_dir: Path, state: dict[str, Any]) -> None:
 
 
 def find_transcripts(
-    root: Path, *, since_days: int | None = None,
+    root: Path,
+    *,
+    since_days: int | None = None,
 ) -> list[Path]:
     """Return all `.jsonl` files under `root`, newest first.
 
@@ -152,6 +154,7 @@ def mine_transcripts(
     mem = Memory(cfg)
     if mem._chat is None:  # type: ignore[attr-defined]
         from memo.llm import MLXChat
+
         mem._chat = MLXChat()  # type: ignore[attr-defined]
 
     total_candidates = 0
@@ -209,8 +212,10 @@ def mine_transcripts(
                     continue
                 try:
                     rec = mem.save(
-                        content=cand["body"], title=cand["title"],
-                        type_=cand["type"], tags=cand["tags"],
+                        content=cand["body"],
+                        title=cand["title"],
+                        type_=cand["type"],
+                        tags=cand["tags"],
                         auto_project=False,  # historical: project context unreliable
                     )
                     total_saved.append(rec.id)

@@ -22,6 +22,7 @@ _log = logging.getLogger(__name__)
 
 try:
     from consciousness_contracts import ConsciousnessEvent, LedgerWriter
+
     _CONTRACTS_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dep
     ConsciousnessEvent = None  # type: ignore[assignment,misc]
@@ -36,6 +37,7 @@ def _enabled() -> bool:
     if not _CONTRACTS_AVAILABLE:
         return False
     from memo.flags import flag_bool
+
     return flag_bool("MEMO_EMIT_LEDGER")
 
 
@@ -45,8 +47,6 @@ def _get_writer() -> Any:
     if _writer is None and _CONTRACTS_AVAILABLE:
         _writer = LedgerWriter(on_error=lambda exc: _log.debug("ledger write failed: %s", exc))
     return _writer
-
-
 
 
 def emit_event(

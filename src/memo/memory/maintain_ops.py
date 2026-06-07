@@ -59,7 +59,8 @@ class _MaintainOpsMixin(_MemoryBase):
             return
         try:
             conflicts = synapse_client.list_conflicts(
-                query, trace_id=trace_id,
+                query,
+                trace_id=trace_id,
             )
         except Exception as exc:  # pragma: no cover - subprocess noise
             _log.debug("synapse freeze-check failed: %s", exc)
@@ -69,7 +70,6 @@ class _MaintainOpsMixin(_MemoryBase):
             raise WriteRefused(conflict)
 
     # -- provenance ---------------------------------------------------------
-
 
     def provenance(self, id_: str) -> dict[str, Any] | None:
         """Return the full provenance trail for a memoria.
@@ -121,7 +121,6 @@ class _MaintainOpsMixin(_MemoryBase):
 
     # -- reindex / gc -------------------------------------------------------
 
-
     def reindex(self, *, force: bool = False) -> dict[str, int]:
         """Scan the memory dir, re-embed entries whose on-disk body
         diverged from `body_hash`. Picks up edits the user made in
@@ -164,7 +163,9 @@ class _MaintainOpsMixin(_MemoryBase):
             title = (meta.get("title") or _derive_title(body) or "untitled").strip()
             type_ = meta.get("type") or "note"
             if type_ not in _VALID_TYPES:
-                _log.warning("reindex: invalid type %r in %s, coercing to 'note'", type_, md_path.name)
+                _log.warning(
+                    "reindex: invalid type %r in %s, coercing to 'note'", type_, md_path.name
+                )
                 type_ = "note"
             tags = _normalise_tags(list(meta.get("tags") or []))
             created = meta.get("created") or _now_iso()
@@ -188,17 +189,27 @@ class _MaintainOpsMixin(_MemoryBase):
                 stale = self.store.get_by_path(rel)
                 if stale is not None:
                     _log.warning(
-                        "reindex: path %r reused with new id (%s → %s); "
-                        "replacing stale row",
-                        rel, stale["id"][:8], md_id[:8],
+                        "reindex: path %r reused with new id (%s → %s); replacing stale row",
+                        rel,
+                        stale["id"][:8],
+                        md_id[:8],
                     )
                     self.store.delete(stale["id"])
                 emb = self.embedder.embed([self._compose_for_embed(title, body)])[0]
-                assert_valid_embedding(emb, self.cfg.embedder_dims, context=f"reindex add {md_id[:8]}")
+                assert_valid_embedding(
+                    emb, self.cfg.embedder_dims, context=f"reindex add {md_id[:8]}"
+                )
                 self.store.upsert(
-                    id_=md_id, path=rel, title=title, type_=type_, tags=tags,
-                    created=created, updated=updated, body_hash=new_hash,
-                    embedding=emb, extra=extra if extra else None,
+                    id_=md_id,
+                    path=rel,
+                    title=title,
+                    type_=type_,
+                    tags=tags,
+                    created=created,
+                    updated=updated,
+                    body_hash=new_hash,
+                    embedding=emb,
+                    extra=extra if extra else None,
                     body_text=body,
                 )
                 added += 1
@@ -209,11 +220,19 @@ class _MaintainOpsMixin(_MemoryBase):
                     extra = dict(extra)
                     extra.pop("_memo_embed_pending", None)
                 emb = self.embedder.embed([self._compose_for_embed(title, body)])[0]
-                assert_valid_embedding(emb, self.cfg.embedder_dims, context=f"reindex update {md_id[:8]}")
+                assert_valid_embedding(
+                    emb, self.cfg.embedder_dims, context=f"reindex update {md_id[:8]}"
+                )
                 self.store.upsert(
-                    id_=md_id, path=rel, title=title, type_=type_, tags=tags,
-                    created=existing["created"], updated=_now_iso(),
-                    body_hash=new_hash, embedding=emb,
+                    id_=md_id,
+                    path=rel,
+                    title=title,
+                    type_=type_,
+                    tags=tags,
+                    created=existing["created"],
+                    updated=_now_iso(),
+                    body_hash=new_hash,
+                    embedding=emb,
                     extra=extra if extra else None,
                     body_text=body,
                 )
@@ -242,7 +261,6 @@ class _MaintainOpsMixin(_MemoryBase):
             )
         return counts
 
-
     def lint(self) -> dict[str, builtins.list[dict[str, Any]]]:
         """Surface memorias with quality issues.
 
@@ -261,9 +279,15 @@ class _MaintainOpsMixin(_MemoryBase):
         Returns a dict of category → list of {id, title, reason} dicts.
         Pure read; never modifies the store.
         """
-        legacy_keys = frozenset({
-            "agent_id", "last_used", "usage_count", "user_id", "description",
-        })
+        legacy_keys = frozenset(
+            {
+                "agent_id",
+                "last_used",
+                "usage_count",
+                "user_id",
+                "description",
+            }
+        )
         out: dict[str, list[dict[str, Any]]] = {
             "legacy_extra": [],
             "few_tags": [],
@@ -275,8 +299,11 @@ class _MaintainOpsMixin(_MemoryBase):
             extra = r.get("extra") or {}
             if any(k in extra for k in legacy_keys):
                 out["legacy_extra"].append(
-                    {**entry, "reason": "mem-vault legacy fields in extra: "
-                                        + ", ".join(sorted(set(extra) & legacy_keys))},
+                    {
+                        **entry,
+                        "reason": "mem-vault legacy fields in extra: "
+                        + ", ".join(sorted(set(extra) & legacy_keys)),
+                    },
                 )
             if len(r.get("tags") or []) < 3:
                 out["few_tags"].append(
@@ -294,9 +321,11 @@ class _MaintainOpsMixin(_MemoryBase):
 
     # -- knowledge graph ----------------------------------------------------
 
-
     def extract_entities(
-        self, *, ids: builtins.list[str] | None = None, all_: bool = False,
+        self,
+        *,
+        ids: builtins.list[str] | None = None,
+        all_: bool = False,
         skip_already_indexed: bool = True,
         max_batch: int | None = None,
     ) -> dict[str, int]:
@@ -324,16 +353,18 @@ class _MaintainOpsMixin(_MemoryBase):
 
         # Pre-filter already-indexed unless --force.
         if skip_already_indexed:
-            target = [
-                tid for tid in target
-                if not self.graph.memoria_entities(tid)
-            ]
+            target = [tid for tid in target if not self.graph.memoria_entities(tid)]
 
         if max_batch is not None:
             target = target[:max_batch]
 
-        counts = {"processed": 0, "entities_extracted": 0,
-                  "links_written": 0, "skipped": 0, "errors": 0}
+        counts = {
+            "processed": 0,
+            "entities_extracted": 0,
+            "links_written": 0,
+            "skipped": 0,
+            "errors": 0,
+        }
 
         if not target:
             return counts
@@ -359,7 +390,8 @@ class _MaintainOpsMixin(_MemoryBase):
             )
             try:
                 out = chat_with_timeout(
-                    chat, timeout=30,
+                    chat,
+                    timeout=30,
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _EXTRACT_ENTITIES_SYSTEM_PROMPT},
@@ -401,7 +433,6 @@ class _MaintainOpsMixin(_MemoryBase):
             counts["entities_extracted"] += len(ents)
             counts["links_written"] += n
         return counts
-
 
     def gc(self, *, fix: bool = False) -> dict[str, builtins.list[str]]:
         """Find orphans between the store and the memory dir.

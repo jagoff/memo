@@ -41,23 +41,71 @@ def _resolve_ingest_row(store, path_str):
     id_ = hashlib.sha256(path_str.encode("utf-8")).hexdigest()[:32]
     return id_, store.get(id_)
 
+
 @click.command(name="ingest")
 @click.argument("vault_path", type=click.Path(exists=True, file_okay=False, resolve_path=True))
-@click.option("--name", default=None, help="Vault label (default: dirname). Used as path prefix in store.")
+@click.option(
+    "--name", default=None, help="Vault label (default: dirname). Used as path prefix in store."
+)
 @click.option("--force", is_flag=True, help="Re-embed even if body unchanged.")
 @click.option("--dry-run", is_flag=True, help="Walk + report counts, don't embed/write.")
-@click.option("--exclude", multiple=True, help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/Obsidian/AI/")
-@click.option("--ocr/--no-ocr", default=True, help="Run OCR on ![[image]] embeds inside notes (Apple Vision). Default on.")
-@click.option("--chunk/--no-chunk", default=True, help="Semantically chunk markdown/PDF bodies for better retrieval precision. Default on.")
-@click.option("--chunk-chars", default=1500, show_default=True, type=int, help="Target chunk size in characters.")
-@click.option("--chunk-overlap", default=250, show_default=True, type=int, help="Overlap between consecutive chunks.")
-@click.option("--include-pdf/--no-include-pdf", default=True, help="Extract text from .pdf via pdftotext + chunk + embed.")
-@click.option("--include-orphan-images/--no-include-orphan-images", default=True, help="OCR images not referenced by any note and ingest them as standalone memorias.")
-@click.option("--prune/--no-prune", default=False, help="Delete stale vault-ingest chunks under this label: files moved/renamed/deleted (abs_path gone) and leftover chunks of notes edited down to fewer chunks. Default off (ingest is purely additive); the synapse vault-ingest agent passes --prune so the index self-heals.")
+@click.option(
+    "--exclude",
+    multiple=True,
+    help="Glob to exclude (relative to vault). Repeat. Default: .obsidian/.git/.trash/.makemd/.smart-env/.space/Obsidian/AI/",
+)
+@click.option(
+    "--ocr/--no-ocr",
+    default=True,
+    help="Run OCR on ![[image]] embeds inside notes (Apple Vision). Default on.",
+)
+@click.option(
+    "--chunk/--no-chunk",
+    default=True,
+    help="Semantically chunk markdown/PDF bodies for better retrieval precision. Default on.",
+)
+@click.option(
+    "--chunk-chars",
+    default=1500,
+    show_default=True,
+    type=int,
+    help="Target chunk size in characters.",
+)
+@click.option(
+    "--chunk-overlap",
+    default=250,
+    show_default=True,
+    type=int,
+    help="Overlap between consecutive chunks.",
+)
+@click.option(
+    "--include-pdf/--no-include-pdf",
+    default=True,
+    help="Extract text from .pdf via pdftotext + chunk + embed.",
+)
+@click.option(
+    "--include-orphan-images/--no-include-orphan-images",
+    default=True,
+    help="OCR images not referenced by any note and ingest them as standalone memorias.",
+)
+@click.option(
+    "--prune/--no-prune",
+    default=False,
+    help="Delete stale vault-ingest chunks under this label: files moved/renamed/deleted (abs_path gone) and leftover chunks of notes edited down to fewer chunks. Default off (ingest is purely additive); the synapse vault-ingest agent passes --prune so the index self-heals.",
+)
 def ingest(
-    vault_path: str, name: str | None, force: bool, dry_run: bool, exclude: tuple[str, ...],
-    ocr: bool, chunk: bool, chunk_chars: int, chunk_overlap: int,
-    include_pdf: bool, include_orphan_images: bool, prune: bool,
+    vault_path: str,
+    name: str | None,
+    force: bool,
+    dry_run: bool,
+    exclude: tuple[str, ...],
+    ocr: bool,
+    chunk: bool,
+    chunk_chars: int,
+    chunk_overlap: int,
+    include_pdf: bool,
+    include_orphan_images: bool,
+    prune: bool,
 ) -> None:
     """Bulk-ingest all .md from a vault into the memo index.
 
@@ -111,8 +159,15 @@ def ingest(
     label = "" if is_principal_vault else (name or vault.name)
 
     default_excludes = (
-        ".obsidian", ".git", ".trash", ".makemd", ".smart-env", ".space",
-        ".claude", ".devin", AI_SUBDIR,
+        ".obsidian",
+        ".git",
+        ".trash",
+        ".makemd",
+        ".smart-env",
+        ".space",
+        ".claude",
+        ".devin",
+        AI_SUBDIR,
     )
     # `.memoignore` in the vault root lets the user exclude folders durably,
     # without touching the (auto-regenerated) launchd ingest invocation. One
@@ -213,8 +268,14 @@ def ingest(
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
     def _emit_record(
-        *, store_path: str, title: str, tags: list[str], body: str,
-        abs_path: Path, source: str, extra_meta: dict | None = None,
+        *,
+        store_path: str,
+        title: str,
+        tags: list[str],
+        body: str,
+        abs_path: Path,
+        source: str,
+        extra_meta: dict | None = None,
     ) -> str | None:
         """Embed `title + body` (chunked if --chunk and large) and upsert
         one row per chunk. Returns "added" / "updated" / None on error.
@@ -226,7 +287,9 @@ def ingest(
         nonlocal errors, chunks_emitted
         composed_full = f"{title}\n\n{body}"
         if chunk and len(composed_full) > chunk_chars:
-            pieces = chunk_markdown(composed_full, target_chars=chunk_chars, overlap_chars=chunk_overlap)
+            pieces = chunk_markdown(
+                composed_full, target_chars=chunk_chars, overlap_chars=chunk_overlap
+            )
         else:
             pieces = None  # single-vector path
 
@@ -249,10 +312,17 @@ def ingest(
             if extra_meta:
                 extra.update(extra_meta)
             store.upsert(
-                id_=id_, path=store_path, title=title[:200], type_="reference",
-                tags=tags, created=existing["created"] if existing else now,
-                updated=now, body_hash=body_hash, embedding=emb,
-                extra=extra, body_text=body,
+                id_=id_,
+                path=store_path,
+                title=title[:200],
+                type_="reference",
+                tags=tags,
+                created=existing["created"] if existing else now,
+                updated=now,
+                body_hash=body_hash,
+                embedding=emb,
+                extra=extra,
+                body_text=body,
             )
             chunks_emitted += 1
             if prune:
@@ -283,21 +353,32 @@ def ingest(
                     console.print(f"[red]reject:[/] {exc}")
                 continue
             now = datetime.now(UTC).isoformat()
-            chunk_title = f"{title} (§{seq+1}/{len(pieces)})"
+            chunk_title = f"{title} (§{seq + 1}/{len(pieces)})"
             if heading:
                 chunk_title = f"{title} — {heading}"
             extra = {
-                "source": source, "vault": label, "abs_path": str(abs_path),
-                "parent_path": store_path, "chunk_seq": seq,
-                "chunk_count": len(pieces), "chunk_heading": heading,
+                "source": source,
+                "vault": label,
+                "abs_path": str(abs_path),
+                "parent_path": store_path,
+                "chunk_seq": seq,
+                "chunk_count": len(pieces),
+                "chunk_heading": heading,
             }
             if extra_meta:
                 extra.update(extra_meta)
             store.upsert(
-                id_=id_, path=chunk_path, title=chunk_title[:200], type_="reference",
-                tags=[*tags, "chunk"], created=existing["created"] if existing else now,
-                updated=now, body_hash=chunk_body_hash, embedding=emb,
-                extra=extra, body_text=chunk_body,
+                id_=id_,
+                path=chunk_path,
+                title=chunk_title[:200],
+                type_="reference",
+                tags=[*tags, "chunk"],
+                created=existing["created"] if existing else now,
+                updated=now,
+                body_hash=chunk_body_hash,
+                embedding=emb,
+                extra=extra,
+                body_text=chunk_body,
             )
             chunks_emitted += 1
             if existing:
@@ -375,7 +456,10 @@ def ingest(
                 # knows which files are already claimed.
                 if ocr:
                     enriched, resolved, _ = enrich_with_ocr(
-                        body, path, vault, cfg.state_dir,
+                        body,
+                        path,
+                        vault,
+                        cfg.state_dir,
                     )
                     referenced_images.update(resolved)
                     body = enriched
@@ -387,8 +471,12 @@ def ingest(
                     continue
 
                 outcome = _emit_record(
-                    store_path=store_path, title=title, tags=tags, body=body,
-                    abs_path=path, source="vault-ingest",
+                    store_path=store_path,
+                    title=title,
+                    tags=tags,
+                    body=body,
+                    abs_path=path,
+                    source="vault-ingest",
                 )
                 if outcome == "added":
                     added += 1
@@ -415,8 +503,12 @@ def ingest(
                     title = pdf_path.stem.replace("-", " ").replace("_", " ")
                     tags = [p for p in rel.parent.parts if p] + ["pdf"]
                     outcome = _emit_record(
-                        store_path=store_path, title=title, tags=tags, body=text,
-                        abs_path=pdf_path, source="vault-ingest-pdf",
+                        store_path=store_path,
+                        title=title,
+                        tags=tags,
+                        body=text,
+                        abs_path=pdf_path,
+                        source="vault-ingest-pdf",
                     )
                     if outcome == "added":
                         pdf_added += 1
@@ -428,17 +520,22 @@ def ingest(
                     progress.advance(pdf_task)
 
         if include_orphan_images and ocr:
-            orphans = find_orphan_images(vault, referenced_images, excluded_dirs=tuple(exclude_patterns))
+            orphans = find_orphan_images(
+                vault, referenced_images, excluded_dirs=tuple(exclude_patterns)
+            )
             # Filter image extensions we actually OCR (Apple Vision covers png/jpg/webp/heic).
             orphans = [o for o in orphans if o.suffix.lower() in IMAGE_EXTENSIONS]
             if orphans:
                 orphan_task = progress.add_task(f"OCR orphan imgs {label}", total=len(orphans))
                 from memo.ocr import extract_text_cached
+
                 cache_dir = cfg.state_dir / "ocr_cache"
                 for img_path in orphans:
                     try:
                         seen_abs.add(str(img_path))
-                        ocr_text = (extract_text_cached(img_path, cache_dir=cache_dir) or "").strip()
+                        ocr_text = (
+                            extract_text_cached(img_path, cache_dir=cache_dir) or ""
+                        ).strip()
                         if not ocr_text:
                             orphan_skipped += 1
                             continue
@@ -447,8 +544,12 @@ def ingest(
                         title = img_path.stem.replace("-", " ").replace("_", " ")
                         tags = [p for p in rel.parent.parts if p] + ["standalone-image"]
                         outcome = _emit_record(
-                            store_path=store_path, title=title, tags=tags, body=ocr_text,
-                            abs_path=img_path, source="vault-ingest-image",
+                            store_path=store_path,
+                            title=title,
+                            tags=tags,
+                            body=ocr_text,
+                            abs_path=img_path,
+                            source="vault-ingest-image",
                             extra_meta={"image_ext": img_path.suffix.lower()},
                         )
                         if outcome == "added":
@@ -490,26 +591,56 @@ def ingest(
         f"errors={errors}"
     )
 
-_HIGH_SIGNAL_TAGS = frozenset({
-    # Notes pinned to lookup-style facts. Lowercase compare; surface
-    # forms like "Link" / "LINKS" / "Pago" all match. Spanish + English
-    # variants because the vault mixes both.
-    "link", "links", "url", "urls",
-    "dato", "datos", "data",
-    "ref", "refs", "referencia", "referencias", "reference",
-    "comando", "comandos", "command", "commands", "cmd", "snippet",
-    "pago", "pagos", "payment",
-    "credencial", "credenciales", "credential", "credentials",
-    "endpoint", "endpoints", "api",
-    "telefono", "teléfono", "phone", "tel",
-    "cbu", "alias", "iban",
-})
+
+_HIGH_SIGNAL_TAGS = frozenset(
+    {
+        # Notes pinned to lookup-style facts. Lowercase compare; surface
+        # forms like "Link" / "LINKS" / "Pago" all match. Spanish + English
+        # variants because the vault mixes both.
+        "link",
+        "links",
+        "url",
+        "urls",
+        "dato",
+        "datos",
+        "data",
+        "ref",
+        "refs",
+        "referencia",
+        "referencias",
+        "reference",
+        "comando",
+        "comandos",
+        "command",
+        "commands",
+        "cmd",
+        "snippet",
+        "pago",
+        "pagos",
+        "payment",
+        "credencial",
+        "credenciales",
+        "credential",
+        "credentials",
+        "endpoint",
+        "endpoints",
+        "api",
+        "telefono",
+        "teléfono",
+        "phone",
+        "tel",
+        "cbu",
+        "alias",
+        "iban",
+    }
+)
 
 # Match http(s):// URLs — anchored end on whitespace, ), >, ], or "
 # (common markdown wrappers). Permissive enough to catch trailing
 # punctuation cases without dragging adjacent text in.
 
 _URL_RE = re.compile(r"https?://[^\s)>\]\"]+")
+
 
 def _is_high_signal(body: str, fm_tags: Any) -> bool:
     """Short notes worth indexing despite being below MIN_CHARS.
@@ -541,6 +672,7 @@ def _is_high_signal(body: str, fm_tags: Any) -> bool:
         return True
 
     return "```" in body
+
 
 def _extract_first_h1(body: str) -> str | None:
     """Return text of the first `# H1` line, or None."""

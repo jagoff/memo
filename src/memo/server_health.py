@@ -72,7 +72,5 @@ def register(server: FastMCP, memory: Memory) -> None:
                 }
                 for r in rows_high
             ],
-            "total_tracked": conn.execute(
-                "SELECT COUNT(*) FROM memory_health"
-            ).fetchone()[0],
+            "total_tracked": conn.execute("SELECT COUNT(*) FROM memory_health").fetchone()[0],
         }

@@ -44,6 +44,7 @@ def _timeout() -> float:
 
 def _binary() -> str | None:
     from memo.flags import flag_str
+
     raw = flag_str("MEMO_MEMFLOW_BIN")
     if raw:
         return raw
@@ -145,8 +146,9 @@ class MemflowBackend:
         if proc is None:
             return False
         if proc.returncode != 0:
-            _log.debug("memflow push exit=%s: %s", proc.returncode,
-                       (proc.stderr or "").strip()[:200])
+            _log.debug(
+                "memflow push exit=%s: %s", proc.returncode, (proc.stderr or "").strip()[:200]
+            )
             return False
         return True
 
@@ -195,20 +197,20 @@ class MemflowBackend:
         if not isinstance(meta, dict):
             meta = {}
         body = (
-            item.get("text") or item.get("body") or item.get("content")
-            or item.get("answer") or ""
+            item.get("text") or item.get("body") or item.get("content") or item.get("answer") or ""
         )
         if not str(body).strip():
             return None
         title = (
-            meta.get("memo_title") or item.get("title")
-            or str(body).strip().splitlines()[0][:80]
+            meta.get("memo_title") or item.get("title") or str(body).strip().splitlines()[0][:80]
         )
         rtype = meta.get("memo_type") or item.get("type") or item.get("kind") or "note"
         # Prefer memo's own id so a round-trip is idempotent; else derive a
         # stable id from the body so repeated fetches don't duplicate.
         rid = (
-            meta.get("memo_id") or item.get("memo_id") or item.get("id")
+            meta.get("memo_id")
+            or item.get("memo_id")
+            or item.get("id")
             or hashlib.sha256(str(body).encode("utf-8")).hexdigest()[:32]
         )
         tags_raw = meta.get("memo_tags") or ""
@@ -240,8 +242,10 @@ def make_backend(backend: str) -> Any:
         mf = MemflowBackend()
         if mf.available:
             return mf
-        _log.warning("cache backend 'memflow' selected but binary/project root "
-                     "not found; falling back to NullBackend (local-only).")
+        _log.warning(
+            "cache backend 'memflow' selected but binary/project root "
+            "not found; falling back to NullBackend (local-only)."
+        )
         return NullBackend()
     if name == "vault":
         # Remote-vault backend reuses sync.py's SyncManager; not yet wired as

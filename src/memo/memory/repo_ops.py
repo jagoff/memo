@@ -75,7 +75,11 @@ class _RepoOpsMixin(_MemoryBase):
         mode: str = "hybrid",
     ):
         return self._repo_corpus().search(
-            query, limit=limit, repo=repo, path=path, mode=mode,
+            query,
+            limit=limit,
+            repo=repo,
+            path=path,
+            mode=mode,
         )
 
     def repo_get_file(
@@ -93,4 +97,3 @@ class _RepoOpsMixin(_MemoryBase):
 
     def repo_delete(self, repo: str, *, remove_clone: bool = True) -> bool:
         return self._repo_corpus().delete(repo, remove_clone=remove_clone)
-

@@ -47,14 +47,16 @@ MEMO_BACKEND_NAME = "memo"
 # memo never invents values. Listed here so `Memory.provenance()` and
 # `MemoSynapseBackend` know exactly which fields are "provenance" vs "user
 # extra metadata" without hardcoding the prefix string in multiple places.
-_PROVENANCE_KEYS: frozenset[str] = frozenset({
-    "synapse_trace_id",
-    "synapse_route_reason",
-    "synapse_write_policy_schema",
-    "synapse_write_target",
-    "synapse_agent_id",
-    "synapse_agent_signature",
-})
+_PROVENANCE_KEYS: frozenset[str] = frozenset(
+    {
+        "synapse_trace_id",
+        "synapse_route_reason",
+        "synapse_write_policy_schema",
+        "synapse_write_target",
+        "synapse_agent_id",
+        "synapse_agent_signature",
+    }
+)
 
 
 def _extract_provenance(extra: dict[str, Any] | None) -> dict[str, Any]:
@@ -110,12 +112,29 @@ def _vault_dedup_keys(rec: MemoryRecord) -> set[str]:
 # `## YYYY-MM-DD` day headers + dated chunk titles), floating conversation
 # sources up when the question itself names the channel ("por whatsapp").
 _RECENCY_TOKENS = (
-    "ultimo", "ultima", "ultimos", "ultimas",
-    "último", "última", "últimos", "últimas",
-    "reciente", "recientes", "recientemente",
-    "last", "latest", "most recent", "more recent", "recent",
-    "qué dijo", "que dijo", "qué escribió", "que escribio",
-    "lo que dijo", "what did", "said last",
+    "ultimo",
+    "ultima",
+    "ultimos",
+    "ultimas",
+    "último",
+    "última",
+    "últimos",
+    "últimas",
+    "reciente",
+    "recientes",
+    "recientemente",
+    "last",
+    "latest",
+    "most recent",
+    "more recent",
+    "recent",
+    "qué dijo",
+    "que dijo",
+    "qué escribió",
+    "que escribio",
+    "lo que dijo",
+    "what did",
+    "said last",
 )
 _ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 # WhatsApp transcript lines carry per-message clock times: "**yo** (21:06): …".
@@ -134,10 +153,26 @@ def _is_recency_query(q: str) -> bool:
 # message query whose dated transcript loses to the same-named contact card on
 # pure cosine. We float WhatsApp transcripts for these too — see _build_ask_context.
 _CONVERSATION_TOKENS = (
-    "mensaje", "mensajes", "chat", "conversación", "conversacion",
-    "escribió", "escribio", "escribiste", "hablé", "hable", "hablamos",
-    "whatsapp", "wpp", "message", "messages", "texted", "wrote",
-    "conversation", "chatted", "talked",
+    "mensaje",
+    "mensajes",
+    "chat",
+    "conversación",
+    "conversacion",
+    "escribió",
+    "escribio",
+    "escribiste",
+    "hablé",
+    "hable",
+    "hablamos",
+    "whatsapp",
+    "wpp",
+    "message",
+    "messages",
+    "texted",
+    "wrote",
+    "conversation",
+    "chatted",
+    "talked",
 )
 
 
@@ -189,6 +224,7 @@ def _recency_key(rec: MemoryRecord) -> str:
 
 
 # -- LLM-call helpers (shared by the maintain/consolidate/synthesize loops) ----
+
 
 def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, Any] | None:
     """Run ``chat.chat(**kwargs)`` with a hard wall-clock timeout.

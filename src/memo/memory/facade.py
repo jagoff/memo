@@ -91,11 +91,16 @@ class Memory(
         # synthesis model — the recall daemon already holds the embedder warm.
         # Falls back in-process automatically if the socket is down.
         if os.environ.get("MEMO_EMBEDDER_VIA_DAEMON", "").strip().lower() in (
-            "1", "true", "yes", "on",
+            "1",
+            "true",
+            "yes",
+            "on",
         ):
             from memo.embedder_client import SocketEmbedder
+
             self.embedder: Any = SocketEmbedder(
-                cfg.embedder_dims, state_dir=cfg.state_dir,
+                cfg.embedder_dims,
+                state_dir=cfg.state_dir,
             )
         else:
             self.embedder = MLXEmbedder(
@@ -107,6 +112,7 @@ class Memory(
         # Audit failures never propagate to the caller — HistoryStore
         # swallows its own exceptions internally.
         from memo.history import HistoryStore as _HS
+
         self.history = _HS(cfg.history_db)
         # Helper LLM is lazy — only constructed when `auto_derive=True`
         # is requested. Cold load of Qwen2.5-3B is ~2-3s; users who
@@ -164,6 +170,7 @@ class Memory(
             with self._reranker_lock:
                 if self._reranker is None:
                     from memo.reranker import MLXReranker
+
                     self._reranker = MLXReranker(
                         model_path=self.cfg.reranker_model,
                         revision=self.cfg.reranker_revision,
@@ -257,6 +264,7 @@ class Memory(
         """
         if self._cache is None:
             from memo.cache import CacheManager
+
             self._cache = CacheManager(self)
         return self._cache
 
@@ -349,13 +357,11 @@ class Memory(
             sample = self.store.list_recent(limit=5)
             if not sample:
                 return
-            missing = sum(
-                1 for r in sample
-                if not self._resolve_existing(r["path"]).is_file()
-            )
+            missing = sum(1 for r in sample if not self._resolve_existing(r["path"]).is_file())
             if missing == len(sample):
                 import os as _os
                 import sys
+
                 # Suppressible — TUI sets MEMO_SUPPRESS_LEGACY_WARN=1 because
                 # the message is moot while in alt-screen mode.
                 if _os.environ.get("MEMO_SUPPRESS_LEGACY_WARN") == "1":
@@ -383,6 +389,7 @@ class Memory(
         """Flag a memoria as written-locally-but-not-yet-on-backing-store
         (write-back). Metadata-only update — no re-embed."""
         from memo.cache import CACHE_DIRTY_KEY
+
         r = self.store.get(id_)
         if r is None:
             return
@@ -390,4 +397,3 @@ class Memory(
         merged[CACHE_DIRTY_KEY] = True
         with contextlib.suppress(Exception):
             self.update(id_, extra=merged)
-
