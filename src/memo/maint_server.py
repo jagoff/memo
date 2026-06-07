@@ -36,7 +36,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from memo.daemon_common import cleanup, is_pid_alive, read_pid, serve_until_shutdown
+from memo.daemon_common import (
+    cleanup,
+    daemon_paths,
+    is_pid_alive,
+    read_pid,
+    serve_until_shutdown,
+)
 
 # Back-compat alias for the CLI daemon wrapper.
 _is_pid_alive = is_pid_alive
@@ -49,11 +55,11 @@ MaintRunner = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
 def _socket_path(state_dir: Path) -> Path:
-    return state_dir / "maint.sock"
+    return daemon_paths(state_dir, "maint")[0]
 
 
 def _pid_file(state_dir: Path) -> Path:
-    return state_dir / "maint-daemon.pid"
+    return daemon_paths(state_dir, "maint")[1]
 
 
 def _read_pid(state_dir: Path) -> int | None:

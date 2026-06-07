@@ -15,6 +15,16 @@ from pathlib import Path
 from typing import Any
 
 
+def daemon_paths(state_dir: Path, name: str) -> tuple[Path, Path]:
+    """Return ``(socket_path, pid_file)`` for the daemon called ``name``.
+
+    Single source of the filename convention shared by the recall/ingest/maint
+    daemons: ``<name>.sock`` + ``<name>-daemon.pid`` under ``state_dir``. The
+    per-daemon ``_socket_path`` / ``_pid_file`` wrappers delegate here.
+    """
+    return state_dir / f"{name}.sock", state_dir / f"{name}-daemon.pid"
+
+
 def is_pid_alive(pid: int) -> bool:
     """Return True if a process with this PID is running."""
     try:
