@@ -8,6 +8,7 @@ be a circular import. cli.py and every cli_*.py group import from here.
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any
 
 import click
@@ -60,3 +61,21 @@ def _memo_backend_version() -> str:
     from memo import __version__
 
     return __version__
+
+
+def _resolved(thunk: Any) -> Any:
+    """Run `thunk()` translating `AmbiguousIdError` into a friendly print
+    + exit code 2. Used by every CLI verb that takes an id-or-prefix
+    argument (`get`, `update`, `delete`, `extract-entities`).
+    """
+    from memo.memory import AmbiguousIdError
+
+    try:
+        return thunk()
+    except AmbiguousIdError as exc:
+        console.print(f"[red]ambiguous id prefix[/red] {exc.prefix!r} matches:")
+        for m in exc.matches[:8]:
+            console.print(f"  · {m}")
+        if len(exc.matches) > 8:
+            console.print(f"  · …and {len(exc.matches) - 8} more")
+        sys.exit(2)

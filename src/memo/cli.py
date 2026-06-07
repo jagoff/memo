@@ -51,6 +51,7 @@ from memo.cli_diag import _db_health_report, _doctor_report, _recall_daemon_heal
 from memo.cli_dream import dream_cmd
 from memo.cli_embed_daemon import embed_daemon_group
 from memo.cli_encrypt import encrypt_group
+from memo.cli_entities import entities, entity, extract_entities
 from memo.cli_eval import eval_group
 from memo.cli_export import export_group
 from memo.cli_feedback import feedback_group
@@ -64,13 +65,7 @@ from memo.cli_maint_daemon import maint_daemon_group
 from memo.cli_maintain import maintain_cmd
 from memo.cli_mandate import mandate as mandate_cmd
 from memo.cli_memory import (
-    ask,
-    chat_ask,
     delete,
-    embed_cmd,
-    entities,
-    entity,
-    extract_entities,
     get,
     history,
     lint,
@@ -78,10 +73,8 @@ from memo.cli_memory import (
     ocr_image,
     provenance,
     reindex,
-    rerank_cmd,
     restore,
     save,
-    search,
     update,
 )
 from memo.cli_multimodal import multimodal_group
@@ -105,6 +98,7 @@ from memo.cli_runtime import (
     uninstall_watcher_cmd,
     watch,
 )
+from memo.cli_search import ask, chat_ask, embed_cmd, rerank_cmd, search
 from memo.cli_session import session_group
 from memo.cli_share import share_group
 from memo.cli_sync import sync_group
