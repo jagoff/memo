@@ -176,9 +176,9 @@ class _QueriesMixin(_StoreBase):
                 "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
                 (id_, title, " ".join(tags), body_text),
             )
-            updated = cur.rowcount > 0
+            was_updated = cur.rowcount > 0
         # Dual-write to tantivy (preserve existing body, just update title/tags).
-        if updated:
+        if was_updated:
             tantivy = self._get_tantivy()
             if tantivy is not None:
                 try:
@@ -187,7 +187,7 @@ class _QueriesMixin(_StoreBase):
                     tantivy.commit()
                 except Exception as exc:
                     _log.warning("tantivy update_meta failed: %s", exc)
-        return updated
+        return was_updated
 
     def get(self, id_: str) -> dict[str, Any] | None:
         row = self._conn.execute(

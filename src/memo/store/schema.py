@@ -265,7 +265,7 @@ class _SchemaMixin(_StoreBase):
         return _REQUIRED_SCHEMA_OBJECTS.issubset(present)
 
     def _vec_table_dims(self, table: str) -> int | None:
-        if table not in {"vec", "repo_vec"}:
+        if table not in {"vec", "repo_vec", "source_feedback_vec"}:
             raise ValueError(f"unknown vector table: {table!r}")
         row = self._conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -273,23 +273,22 @@ class _SchemaMixin(_StoreBase):
         ).fetchone()
         if not row or not row["sql"]:
             return None
-        match = re.search(r"embedding\s+FLOAT\[(\d+)\]", str(row["sql"]))
+        # Matches `embedding FLOAT[N]` (vec/repo_vec) and `query_emb FLOAT[N]`
+        # (source_feedback_vec) alike.
+        match = re.search(r"FLOAT\[(\d+)\]", str(row["sql"]))
         return int(match.group(1)) if match else None
 
     def _validate_vec_dims(self) -> None:
-        actual_dims = self._vec_table_dims("vec")
-        if actual_dims is not None and actual_dims != self.dims:
-            raise RuntimeError(
-                f"Embedding dimension mismatch: store has {actual_dims}D vectors "
-                f"but config expects {self.dims}D.\n"
-                f"Fix: rm {self.db_path} && memo reindex\n"
-                f"Or check: MEMO_MODEL_PROFILE={self.dims}D or MEMO_EMBEDDER_DIMS={self.dims}"
-            )
-        repo_actual_dims = self._vec_table_dims("repo_vec")
-        if repo_actual_dims is not None and repo_actual_dims != self.dims:
-            raise RuntimeError(
-                f"Repo embedding dimension mismatch: store has {repo_actual_dims}D vectors "
-                f"but config expects {self.dims}D.\n"
-                f"Fix: rm {self.db_path} && memo reindex\n"
-                f"Or check: MEMO_MODEL_PROFILE={self.dims}D or MEMO_EMBEDDER_DIMS={self.dims}"
-            )
+        for table, label in (
+            ("vec", "Embedding"),
+            ("repo_vec", "Repo embedding"),
+            ("source_feedback_vec", "Feedback embedding"),
+        ):
+            actual_dims = self._vec_table_dims(table)
+            if actual_dims is not None and actual_dims != self.dims:
+                raise RuntimeError(
+                    f"{label} dimension mismatch: store has {actual_dims}D vectors "
+                    f"but config expects {self.dims}D.\n"
+                    f"Fix: rm {self.db_path} && memo reindex\n"
+                    f"Or check: MEMO_MODEL_PROFILE={self.dims}D or MEMO_EMBEDDER_DIMS={self.dims}"
+                )

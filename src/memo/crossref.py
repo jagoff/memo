@@ -139,19 +139,21 @@ class CrossReferenceIndex:
                 )
             )
 
-        # Store in index
+        # Store in index — one executemany in a single transaction (target is
+        # stored as-is; it could be an ID or a title resolved later).
         conn = self._get_conn()
-        for link in wikilinks:
-            # Try to resolve target to a memoria ID
-            # For now, store as-is (target could be ID or title)
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO backlinks
-                (source_id, target_id, link_type, context, created_at)
-                VALUES (?, ?, 'wikilink', ?, datetime('now'))
-                """,
-                (memoria_id, link.target, content[max(0, link.position - 50):link.position + 50]),
-            )
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO backlinks
+            (source_id, target_id, link_type, context, created_at)
+            VALUES (?, ?, 'wikilink', ?, datetime('now'))
+            """,
+            [
+                (memoria_id, link.target,
+                 content[max(0, link.position - 50):link.position + 50])
+                for link in wikilinks
+            ],
+        )
         conn.commit()
 
         return wikilinks

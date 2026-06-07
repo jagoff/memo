@@ -2,7 +2,7 @@
 
 import pytest
 
-from memo.queries import (
+from memo.saved_queries import (
     Query,
     QueryComposer,
     QueryResult,

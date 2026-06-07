@@ -27,6 +27,7 @@ all analysis is computed on-the-fly from the corpus + history.
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -34,6 +35,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from memo.llm import MLXChat
+
+_log = logging.getLogger(__name__)
+
+# Cap on rows pulled into memory for whole-corpus temporal analysis. A corpus
+# larger than this is silently truncated — we log a warning when the cap bites.
+_ANALYSIS_ROW_CAP = 10_000
 
 _CONTRADICTION_SYSTEM_PROMPT = """You analyze two memory notes from a personal archive to detect temporal contradictions.
 
@@ -304,7 +311,12 @@ Analyze the temporal relationship between these two notes."""
         cutoff = (datetime.now(UTC) - timedelta(days=days_threshold)).isoformat()
 
         # Get all memorias, filter by date
-        all_records = self.memory.list(limit=10000)  # Cap for performance
+        all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP)
+        if len(all_records) >= _ANALYSIS_ROW_CAP:
+            _log.warning(
+                "detect_stale_memorias: corpus hit the %d-row cap; older "
+                "memorias were not scanned.", _ANALYSIS_ROW_CAP,
+            )
         stale = []
 
         for rec in all_records:
@@ -351,7 +363,12 @@ Analyze the temporal relationship between these two notes."""
             - type_distribution_over_time: how memory types change over time
             - most_active_entities: entities with most temporal churn
         """
-        all_records = self.memory.list(limit=10000)
+        all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP)
+        if len(all_records) >= _ANALYSIS_ROW_CAP:
+            _log.warning(
+                "detect_temporal_patterns: corpus hit the %d-row cap; older "
+                "memorias were not included.", _ANALYSIS_ROW_CAP,
+            )
 
         # Memorias per month
         monthly: defaultdict[str, int] = defaultdict(int)

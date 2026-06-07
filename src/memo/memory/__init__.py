@@ -113,7 +113,7 @@ from memo.multimodal import (  # noqa: F401
 )
 from memo.navigation import GraphNavigator  # noqa: F401
 from memo.proactive import ProactiveSuggester  # noqa: F401
-from memo.queries import QueryComposer, QueryStore  # noqa: F401
+from memo.saved_queries import QueryComposer, QueryStore  # noqa: F401
 from memo.sharing import ShareManager, ShareStore  # noqa: F401
 from memo.store import VecStore  # noqa: F401
 from memo.sync import BackupManager, SyncManager  # noqa: F401
