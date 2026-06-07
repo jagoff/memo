@@ -15,9 +15,12 @@ de las conexiones de todos.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -100,8 +103,8 @@ class CollaborativeGraph:
                 "users": {uid: u.__dict__ for uid, u in self._users.items()},
             }
             self.graph_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            _log.error("collaborative: failed to persist graph: %s", exc)
 
     def add_connection(
         self,

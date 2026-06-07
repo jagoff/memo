@@ -12,8 +12,11 @@ Enables searching and aggregating results from multiple memo vaults:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,7 +62,8 @@ class FederationConfig:
                     vault_data = dict(v)
                     vault_data.pop("name", None)
                     self._vaults[name] = VaultConfig(name=name, **vault_data)
-            except Exception:
+            except (OSError, ValueError, TypeError) as exc:
+                _log.warning("federation: config unreadable, starting empty: %s", exc)
                 self._vaults = {}
 
     def _save(self) -> None:
@@ -76,8 +80,8 @@ class FederationConfig:
                 }
             }
             self.config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            _log.error("federation: failed to persist vault config: %s", exc)
 
     def add_vault(self, name: str, path: str, weight: float = 1.0) -> None:
         """Add a vault to the federation.

@@ -33,6 +33,7 @@ Tracks which suggestions the user accepts to improve future suggestions.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -40,6 +41,8 @@ from pathlib import Path
 from typing import Any
 
 from memo.llm import MLXChat
+
+_log = logging.getLogger(__name__)
 
 _SUGGESTION_SYSTEM_PROMPT = """You analyze a conversation to suggest potential memories to save.
 
@@ -141,7 +144,8 @@ class ProactiveSuggester:
                 options={"temperature": 0.0, "max_tokens": 512},
             )
             raw = (out.get("message") or {}).get("content") or ""
-        except Exception:
+        except Exception as exc:
+            _log.warning("proactive: suggestion LLM call failed: %s", exc)
             return []
 
         raw = raw.strip()
@@ -150,7 +154,8 @@ class ProactiveSuggester:
 
         try:
             data = json.loads(raw)
-        except Exception:
+        except (ValueError, TypeError) as exc:
+            _log.warning("proactive: suggestion JSON parse failed: %s", exc)
             return []
 
         suggestions = []

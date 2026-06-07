@@ -25,12 +25,15 @@ merged memoria ID.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from memo.llm import MLXChat
+
+_log = logging.getLogger(__name__)
 
 _MERGE_SYSTEM_PROMPT = """You merge multiple related memory notes into a single coherent entry.
 
@@ -156,7 +159,8 @@ class AdvancedConsolidator:
                 options={"temperature": 0.0, "max_tokens": 1024},
             )
             raw = (out.get("message") or {}).get("content") or ""
-        except Exception:
+        except Exception as exc:
+            _log.warning("consolidation: merge-proposal LLM call failed: %s", exc)
             return None
 
         raw = raw.strip()
@@ -165,7 +169,8 @@ class AdvancedConsolidator:
 
         try:
             data = json.loads(raw)
-        except Exception:
+        except (ValueError, TypeError) as exc:
+            _log.warning("consolidation: merge-proposal JSON parse failed: %s", exc)
             return None
 
         if not isinstance(data, dict):

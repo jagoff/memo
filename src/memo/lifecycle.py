@@ -39,9 +39,12 @@ window and are archived or deleted based on policy.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Keys carried in a memoria's `extra` bag (persisted to meta.extra_json and to
 # the on-disk frontmatter `extra:` block, so they survive a reindex for free).
@@ -135,7 +138,8 @@ class LifecycleManager:
         try:
             last_ts = datetime.fromisoformat(last_ts_raw.replace("Z", "+00:00"))
             return (datetime.now(UTC) - last_ts).days
-        except Exception:
+        except (ValueError, AttributeError, TypeError) as exc:
+            _log.debug("lifecycle: bad access ts %r for %s: %s", last_ts_raw, memoria_id, exc)
             return None
 
     def get_days_since_update(self, memoria_id: str) -> int:
@@ -148,7 +152,10 @@ class LifecycleManager:
             updated = datetime.fromisoformat(rec.updated.replace("Z", "+00:00"))
             days = (datetime.now(UTC) - updated).days
             return days
-        except Exception:
+        except (ValueError, AttributeError, TypeError) as exc:
+            # Bad timestamp → treated as "0 days" (just-updated), which blocks
+            # archival; log so the corrupt record is diagnosable.
+            _log.debug("lifecycle: bad updated ts for %s: %s", memoria_id, exc)
             return 0
 
     def should_archive(self, memoria_id: str) -> tuple[bool, str]:

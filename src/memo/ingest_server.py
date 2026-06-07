@@ -177,7 +177,7 @@ class _IngestHandler(socketserver.StreamRequestHandler):
                 return
             try:
                 req = json.loads(line.decode("utf-8", errors="replace").strip())
-            except Exception:
+            except json.JSONDecodeError:
                 self._write({"error": "malformed JSON request"})
                 return
             if not isinstance(req, dict):
