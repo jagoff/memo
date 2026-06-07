@@ -36,6 +36,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from memo.daemon_common import cleanup, is_pid_alive, read_pid, serve_until_shutdown
+
+# Back-compat alias for the CLI daemon wrapper.
+_is_pid_alive = is_pid_alive
+
 _MAX_LINE_BYTES = 1 << 20
 
 # A runner takes (op, params) and returns a JSON-serializable result dict.
@@ -51,27 +56,12 @@ def _pid_file(state_dir: Path) -> Path:
     return state_dir / "maint-daemon.pid"
 
 
-def _is_pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
-
-
 def _read_pid(state_dir: Path) -> int | None:
-    pf = _pid_file(state_dir)
-    if not pf.is_file():
-        return None
-    try:
-        return int(pf.read_text().strip())
-    except (ValueError, OSError):
-        return None
+    return read_pid(_pid_file(state_dir))
 
 
 def _cleanup(state_dir: Path) -> None:
-    _socket_path(state_dir).unlink(missing_ok=True)
-    _pid_file(state_dir).unlink(missing_ok=True)
+    cleanup(_socket_path(state_dir), _pid_file(state_dir))
 
 
 class _MaintHandler(socketserver.StreamRequestHandler):
@@ -169,7 +159,7 @@ def run_server(state_dir: Path | None = None, *, runner: MaintRunner | None = No
     pid_file = _pid_file(state_dir)
 
     existing = _read_pid(state_dir)
-    if existing is not None and _is_pid_alive(existing):
+    if existing is not None and is_pid_alive(existing):
         print("maint-daemon: already running", file=sys.stderr)
         sys.exit(0)
 
@@ -192,15 +182,7 @@ def run_server(state_dir: Path | None = None, *, runner: MaintRunner | None = No
     signal.signal(signal.SIGTERM, _sigterm)
     signal.signal(signal.SIGINT, _sigterm)
 
-    server_thread = threading.Thread(target=server.serve_forever, name="maint-daemon-serve", daemon=True)
-    server_thread.start()
-    try:
-        while not shutdown_event.wait(timeout=1.0):
-            pass
-    finally:
-        with contextlib.suppress(Exception):
-            server.shutdown()
-        with contextlib.suppress(Exception):
-            server.server_close()
-        server_thread.join(timeout=5.0)
-        _cleanup(state_dir)
+    serve_until_shutdown(
+        server, shutdown_event, name="maint-daemon-serve",
+        on_shutdown=lambda: _cleanup(state_dir),
+    )

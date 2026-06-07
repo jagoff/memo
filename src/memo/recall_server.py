@@ -65,6 +65,11 @@ from pathlib import Path
 from typing import Any
 
 from memo import embed_protocol
+from memo.daemon_common import cleanup, is_pid_alive, read_pid
+from memo.daemon_common import serve_until_shutdown as _serve_until_shutdown
+
+# Back-compat alias: tests import `recall_server._is_pid_alive`.
+_is_pid_alive = is_pid_alive
 
 _STATS_SAMPLE_CAP = 1024
 _STATS_DEFAULT_PERSIST_INTERVAL_S = 60.0
@@ -164,24 +169,9 @@ def _pid_file(state_dir: Path) -> Path:
     return state_dir / "recall-daemon.pid"
 
 
-def _is_pid_alive(pid: int) -> bool:
-    """Return True if a process with this PID is running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
-
-
 def _read_pid(state_dir: Path) -> int | None:
-    """Read the PID from the PID file. Returns None if missing or invalid."""
-    pf = _pid_file(state_dir)
-    if not pf.is_file():
-        return None
-    try:
-        return int(pf.read_text().strip())
-    except (ValueError, OSError):
-        return None
+    """Read the PID from this daemon's PID file (None if missing/invalid)."""
+    return read_pid(_pid_file(state_dir))
 
 
 def _apply_project_boost(hits: list[Any], project_tag: str | None, project_boost: float) -> list[Any]:
@@ -712,46 +702,7 @@ class _RecallServer(socketserver.ThreadingUnixStreamServer):
 
 
 def _cleanup(state_dir: Path) -> None:
-    _socket_path(state_dir).unlink(missing_ok=True)
-    _pid_file(state_dir).unlink(missing_ok=True)
-
-
-def _serve_until_shutdown(
-    server: Any,
-    shutdown_event: threading.Event,
-    *,
-    on_shutdown: Callable[[], None] | None = None,
-    poll_interval: float = 1.0,
-    join_timeout: float = 5.0,
-) -> None:
-    """Run ``server.serve_forever()`` on a worker thread and block until
-    ``shutdown_event`` is set, then shut down in order.
-
-    Extracted from :func:`run_server` so the daemon lifecycle is unit-testable
-    without loading MLX. Calling ``server.shutdown()`` here is safe because it
-    runs on a *different* thread than ``serve_forever()`` — the signal handler
-    only sets the event, avoiding the join-self deadlock that previously forced
-    an ungraceful ``os._exit(0)``.
-    """
-    server_thread = threading.Thread(
-        target=server.serve_forever,
-        name="recall-daemon-serve",
-        daemon=True,
-    )
-    server_thread.start()
-    try:
-        # Poll so a signal delivered to the main thread is observed promptly
-        # even where Event.wait() is not interrupted by the handler.
-        while not shutdown_event.wait(timeout=poll_interval):
-            pass
-    finally:
-        with contextlib.suppress(Exception):
-            server.shutdown()
-        with contextlib.suppress(Exception):
-            server.server_close()
-        server_thread.join(timeout=join_timeout)
-        if on_shutdown is not None:
-            on_shutdown()
+    cleanup(_socket_path(state_dir), _pid_file(state_dir))
 
 
 def run_server(state_dir: Path | None = None) -> None:
@@ -833,6 +784,7 @@ def run_server(state_dir: Path | None = None) -> None:
     _serve_until_shutdown(
         server,
         shutdown_event,
+        name="recall-daemon-serve",
         on_shutdown=lambda: _cleanup(state_dir),
     )
 
