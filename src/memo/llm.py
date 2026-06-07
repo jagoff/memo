@@ -55,6 +55,16 @@ def _prompt_cache_enabled() -> bool:
     )
 
 
+def _apply_chat_template(tok: Any, **kw: Any) -> Any:
+    """Call `tok.apply_chat_template`, dropping `enable_thinking` gracefully
+    on tokenizers that don't accept it (non-Qwen3, older mlx-lm)."""
+    try:
+        return tok.apply_chat_template(**kw)
+    except TypeError:
+        kw.pop("enable_thinking", None)
+        return tok.apply_chat_template(**kw)
+
+
 class MLXChat:
     """Thin chat wrapper around `mlx_lm.generate()`.
 
@@ -222,22 +232,14 @@ class MLXChat:
         m, tok = self._ensure_model(model)
         sampler = make_sampler(temp=temperature, top_p=top_p)
 
-        def _apply_template(**kw: Any) -> Any:
-            """Call apply_chat_template, suppressing unknown kwargs gracefully."""
-            try:
-                return tok.apply_chat_template(**kw)
-            except TypeError:
-                kw.pop("enable_thinking", None)
-                return tok.apply_chat_template(**kw)
-
         if _prompt_cache_enabled():
             # Prefix-cache path: drive stream_generate so we can capture the
             # decoded token ids (needed to extend the cache); accumulate text.
             # Byte-identical to the non-cached greedy result.
             from mlx_lm import stream_generate as _mlx_stream
             prompt_tokens = list(
-                _apply_template(
-                    conversation=messages, tokenize=True,
+                _apply_chat_template(
+                    tok, conversation=messages, tokenize=True,
                     add_generation_prompt=True, enable_thinking=thinking,
                 )
             )
@@ -266,8 +268,8 @@ class MLXChat:
                     self._last_use[model] = time.time()
             return {"message": {"content": ("".join(parts) or "").strip()}}
 
-        prompt = _apply_template(
-            conversation=messages, tokenize=False,
+        prompt = _apply_chat_template(
+            tok, conversation=messages, tokenize=False,
             add_generation_prompt=True, enable_thinking=thinking,
         )
         text = _mlx_generate(
@@ -308,6 +310,9 @@ class MLXChat:
         temperature = float(opts.get("temperature", 0.0))
         top_p = float(opts.get("top_p", 1.0))
         max_tokens = int(opts.get("num_predict") or opts.get("max_tokens") or 512)
+        # `thinking` — pass False to disable chain-of-thought on Qwen3 models;
+        # otherwise <think>…</think> leaks into the streamed deltas uncleaned.
+        thinking: bool = bool(opts.get("thinking", True))
 
         m, tok = self._ensure_model(model)
         sampler = make_sampler(temp=temperature, top_p=top_p)
@@ -316,8 +321,9 @@ class MLXChat:
             # Prefix-cache path: feed only the suffix beyond the cached
             # system-prompt prefix. Output is byte-identical (greedy/temp=0).
             prompt_tokens = list(
-                tok.apply_chat_template(
-                    messages, tokenize=True, add_generation_prompt=True,
+                _apply_chat_template(
+                    tok, conversation=messages, tokenize=True,
+                    add_generation_prompt=True, enable_thinking=thinking,
                 )
             )
             with self._gen_lock:
@@ -348,8 +354,9 @@ class MLXChat:
                     self._last_use[model] = time.time()
             return
 
-        prompt = tok.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True,
+        prompt = _apply_chat_template(
+            tok, conversation=messages, tokenize=False,
+            add_generation_prompt=True, enable_thinking=thinking,
         )
         try:
             for resp in _mlx_stream(

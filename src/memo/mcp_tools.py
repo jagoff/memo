@@ -196,7 +196,7 @@ def _handle_entity_search(memory: Memory, args: dict[str, Any]) -> dict[str, Any
         os.environ["MEMO_ENTITY_RETRIEVAL_ENABLED"] = prev
     return {
         "query": query,
-        "results": [r.as_dict() for r in results],
+        "results": [r.to_dict() for r in results],
         "count": len(results),
         "entity_boost": True,
     }

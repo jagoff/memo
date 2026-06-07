@@ -511,6 +511,8 @@ class _QueriesMixin(_StoreBase):
 
         Returns dicts: {id, type, access_count, last_accessed, updated}.
         """
+        if policy not in {"lru", "lfu", "ttl"}:
+            raise ValueError(f"unknown eviction policy: {policy!r}")
         eff = "COALESCE(a.last_accessed, m.updated)"
         # lru and ttl share coldest-first-by-recency ordering
         order = f"COALESCE(a.access_count, 0) ASC, {eff} ASC" if policy == "lfu" else f"{eff} ASC"

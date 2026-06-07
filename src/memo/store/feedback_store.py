@@ -37,27 +37,30 @@ class _FeedbackMixin(_StoreBase):
                 f"query_emb dim mismatch: got {len(query_emb)}, expected {self.dims}"
             )
         now = datetime.now(UTC).isoformat()
-        # Find any existing row for this (source, query) regardless of rating.
-        existing = self._conn.execute(
-            "SELECT id, rating FROM source_feedback "
-            "WHERE source_id = ? AND query_text = ?",
-            (source_id, query_text),
-        ).fetchone()
-        if existing and int(existing["rating"]) == rating:
-            return str(existing["id"])
-        with self._conn:
+        # Read + write inside one BEGIN IMMEDIATE so concurrent FastMCP threads
+        # serialise — a plain SELECT then `with self._conn` (BEGIN DEFERRED) let
+        # two threads both see existing=None and race the UNIQUE constraint.
+        with self._tx() as cx:
+            # Find any existing row for this (source, query) regardless of rating.
+            existing = cx.execute(
+                "SELECT id, rating FROM source_feedback "
+                "WHERE source_id = ? AND query_text = ?",
+                (source_id, query_text),
+            ).fetchone()
+            if existing and int(existing["rating"]) == rating:
+                return str(existing["id"])
             if existing:
                 # Replacing rating — drop old vec + row first.
-                self._conn.execute(
+                cx.execute(
                     "DELETE FROM source_feedback_vec WHERE feedback_id = ?",
                     (existing["id"],),
                 )
-                self._conn.execute(
+                cx.execute(
                     "DELETE FROM source_feedback WHERE id = ?",
                     (existing["id"],),
                 )
             fid = feedback_id or uuid.uuid4().hex
-            self._conn.execute(
+            cx.execute(
                 "INSERT INTO source_feedback "
                 "(id, source_id, query_text, rating, created_at, extra_json) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
@@ -66,7 +69,7 @@ class _FeedbackMixin(_StoreBase):
                     json.dumps(extra) if extra else None,
                 ),
             )
-            self._conn.execute(
+            cx.execute(
                 "INSERT INTO source_feedback_vec (feedback_id, query_emb) "
                 "VALUES (?, ?)",
                 (fid, serialize_float32(query_emb)),
@@ -139,21 +142,21 @@ class _FeedbackMixin(_StoreBase):
 
     def clear_source_feedback(self, source_id: str) -> int:
         """Drop all feedback rows for a source. Returns count deleted."""
-        ids = [
-            r["id"] for r in self._conn.execute(
-                "SELECT id FROM source_feedback WHERE source_id = ?",
-                (source_id,),
-            ).fetchall()
-        ]
-        if not ids:
-            return 0
-        with self._conn:
+        with self._tx() as cx:
+            ids = [
+                r["id"] for r in cx.execute(
+                    "SELECT id FROM source_feedback WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            ]
+            if not ids:
+                return 0
             placeholders = ",".join("?" * len(ids))
-            self._conn.execute(
+            cx.execute(
                 f"DELETE FROM source_feedback_vec WHERE feedback_id IN ({placeholders})",
                 ids,
             )
-            self._conn.execute(
+            cx.execute(
                 f"DELETE FROM source_feedback WHERE id IN ({placeholders})",
                 ids,
             )

@@ -571,7 +571,7 @@ def recall_hook() -> None:
         exclusion (on by default) is the bigger noise lever. For pure
         mode=vec without recency, 0.6 is a tighter choice.
       MEMO_RECALL_MIN_PROMPT_CHARS — default 12 (skip very short prompts)
-      MEMO_RECALL_BODY_CHARS       — default 240 (snippet length per result)
+      MEMO_RECALL_BODY_CHARS       — default 400 (snippet length per result)
       MEMO_RECALL_SKIP_SLASH       — default "1" (skip if prompt starts with /)
       MEMO_RECALL_MODE             — default "vec" (pure cosine, fast:
         ~120ms p50). "hybrid" (RRF + cross-encoder rerank) is markedly
@@ -700,9 +700,13 @@ def recall_hook() -> None:
         except Exception:
             pass
 
+    from memo.flags import flag_int as _flag_int
+
     top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
     min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.5"))
-    body_chars = int(os.environ.get("MEMO_RECALL_BODY_CHARS", "240"))
+    # Source of truth is the flags registry (default 400) — not a hardcoded
+    # fallback that silently diverged from it.
+    body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
     token_budget = int(os.environ.get("MEMO_RECALL_TOKEN_BUDGET", "0") or 0)
     project_boost = float(os.environ.get("MEMO_RECALL_PROJECT_BOOST", "0.15"))
 
