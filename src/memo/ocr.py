@@ -132,18 +132,20 @@ def extract_text_cached(
         return ""
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
+    except OSError as exc:
+        _log.debug("ocr: cache dir unavailable, bypassing cache: %s", exc)
         return extract_text(p, languages=languages)
     try:
         digest = _hash_bytes(p)
-    except Exception:
+    except OSError as exc:
+        _log.debug("ocr: hash failed, bypassing cache: %s", exc)
         return extract_text(p, languages=languages)
     cache_path = cache_dir / f"{digest[:32]}.txt"
     if cache_path.exists():
         try:
             return cache_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        except OSError as exc:
+            _log.debug("ocr: cache read failed, re-extracting: %s", exc)
     text = extract_text(p, languages=languages)
     with contextlib.suppress(Exception):
         cache_path.write_text(text, encoding="utf-8")

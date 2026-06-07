@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 class Modality(Enum):
@@ -101,8 +104,8 @@ class MultiModalStore:
                     "created_at": content.created_at,
                 }
             self.content_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            _log.error("multimodal: failed to persist content store: %s", exc)
 
     def add_content(
         self,
