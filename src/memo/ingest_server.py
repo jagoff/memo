@@ -42,7 +42,13 @@ from pathlib import Path
 from typing import Any
 
 from memo import embed_protocol
-from memo.daemon_common import cleanup, is_pid_alive, read_pid, serve_until_shutdown
+from memo.daemon_common import (
+    cleanup,
+    daemon_paths,
+    is_pid_alive,
+    read_pid,
+    serve_until_shutdown,
+)
 
 # Back-compat alias for the CLI daemon wrapper.
 _is_pid_alive = is_pid_alive
@@ -56,11 +62,11 @@ JobRunner = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
 def _socket_path(state_dir: Path) -> Path:
-    return state_dir / "ingest.sock"
+    return daemon_paths(state_dir, "ingest")[0]
 
 
 def _pid_file(state_dir: Path) -> Path:
-    return state_dir / "ingest-daemon.pid"
+    return daemon_paths(state_dir, "ingest")[1]
 
 
 def _read_pid(state_dir: Path) -> int | None:

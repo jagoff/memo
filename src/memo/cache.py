@@ -158,9 +158,6 @@ class CacheManager:
 
     # -- flush (write-back safety) -----------------------------------------
 
-    def _is_dirty(self, record: dict[str, Any]) -> bool:
-        return bool((record.get("extra") or {}).get(CACHE_DIRTY_KEY))
-
     def _flush(self, memoria_id: str) -> bool:
         """Push a memoria to the backing store before eviction. Returns True
         if the local copy is safe to drop (clean, or successfully flushed)."""

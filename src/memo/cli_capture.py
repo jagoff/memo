@@ -11,7 +11,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import os
 import re
 import sys
 from datetime import UTC, datetime
@@ -683,11 +682,13 @@ def capture_stop() -> None:
     import sys as _sys
     from pathlib import Path
 
-    if os.environ.get("MEMO_CAPTURE_DISABLE") == "1":
+    from memo.flags import flag_bool
+
+    if flag_bool("MEMO_CAPTURE_DISABLE"):
         print("{}")
         _sys.exit(0)
 
-    debug = os.environ.get("MEMO_CAPTURE_DEBUG") == "1"
+    debug = flag_bool("MEMO_CAPTURE_DEBUG")
 
     try:
         raw = _sys.stdin.read()
@@ -999,9 +1000,10 @@ def reflect(
       memo reflect --last --dry-run  # preview without saving
     """
     from memo.config import Config
+    from memo.flags import flag_bool
     from memo.session import get_session, list_sessions
 
-    if os.environ.get("MEMO_CAPTURE_DISABLE") == "1":
+    if flag_bool("MEMO_CAPTURE_DISABLE"):
         if quiet:
             click.echo(json.dumps({"status": "disabled"}))
         return

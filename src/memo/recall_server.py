@@ -65,7 +65,7 @@ from pathlib import Path
 from typing import Any
 
 from memo import embed_protocol
-from memo.daemon_common import cleanup, is_pid_alive, read_pid
+from memo.daemon_common import cleanup, daemon_paths, is_pid_alive, read_pid
 from memo.daemon_common import serve_until_shutdown as _serve_until_shutdown
 
 # Back-compat alias: tests import `recall_server._is_pid_alive`.
@@ -162,11 +162,11 @@ def _stats_persister(state_dir: Path, stats: _DaemonStats, interval_s: float) ->
 
 
 def _socket_path(state_dir: Path) -> Path:
-    return state_dir / "recall.sock"
+    return daemon_paths(state_dir, "recall")[0]
 
 
 def _pid_file(state_dir: Path) -> Path:
-    return state_dir / "recall-daemon.pid"
+    return daemon_paths(state_dir, "recall")[1]
 
 
 def _read_pid(state_dir: Path) -> int | None:
