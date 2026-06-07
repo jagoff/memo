@@ -13,11 +13,14 @@ Enables:
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 class Permission(Enum):
@@ -116,8 +119,10 @@ class ShareStore:
                 json.dumps([c.__dict__ for c in self._comments], indent=2),
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+        except (OSError, TypeError, ValueError) as exc:
+            # Data-loss path: a failed persist silently drops shares/links —
+            # surface it instead of swallowing.
+            _log.error("sharing: failed to persist share state: %s", exc)
 
     def add_share(
         self,

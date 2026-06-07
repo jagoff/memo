@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -33,6 +34,8 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from rich.align import Align
 from rich.console import Console, Group
@@ -332,8 +335,8 @@ def append_recall_log(
         if path.stat().st_size > 1024 * 200:  # ~200 KB
             lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except Exception:
-        pass
+    except OSError as exc:
+        _log.debug("dashboard: log trim failed for %s: %s", path, exc)
 
 
 def read_recall_log(state_dir: Path, *, limit: int = 10) -> list[dict[str, Any]]:
@@ -342,7 +345,8 @@ def read_recall_log(state_dir: Path, *, limit: int = 10) -> list[dict[str, Any]]
         return []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except OSError as exc:
+        _log.debug("dashboard: log read failed for %s: %s", path, exc)
         return []
     out: list[dict[str, Any]] = []
     for line in lines[-limit:]:
@@ -438,8 +442,8 @@ def append_usage_log(state_dir: Path, memoria_id: str, *, cap: int = 500) -> Non
         if path.stat().st_size > 1024 * 100:  # ~100 KB
             lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except Exception:
-        pass
+    except OSError as exc:
+        _log.debug("dashboard: log trim failed for %s: %s", path, exc)
 
 
 def read_usage_log(state_dir: Path, *, limit: int = 2000) -> list[dict[str, Any]]:
@@ -448,7 +452,8 @@ def read_usage_log(state_dir: Path, *, limit: int = 2000) -> list[dict[str, Any]
         return []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except OSError as exc:
+        _log.debug("dashboard: log read failed for %s: %s", path, exc)
         return []
     out: list[dict[str, Any]] = []
     for line in lines[-limit:]:
@@ -556,8 +561,8 @@ def append_grounding_log(
         if path.stat().st_size > 1024 * 200:  # ~200 KB
             lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except Exception:
-        pass
+    except OSError as exc:
+        _log.debug("dashboard: log trim failed for %s: %s", path, exc)
 
 
 def read_grounding_log(state_dir: Path, *, limit: int = 4000) -> list[dict[str, Any]]:
@@ -566,7 +571,8 @@ def read_grounding_log(state_dir: Path, *, limit: int = 4000) -> list[dict[str, 
         return []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except OSError as exc:
+        _log.debug("dashboard: log read failed for %s: %s", path, exc)
         return []
     out: list[dict[str, Any]] = []
     for line in lines[-limit:]:
@@ -748,7 +754,7 @@ def _human_age(ts: str | None) -> str:
             dt = dt.replace(tzinfo=UTC)
         delta = datetime.now(UTC) - dt
         secs = int(delta.total_seconds())
-    except Exception:
+    except (ValueError, TypeError):
         return "—"
     if secs < 0:
         return "now"
@@ -839,8 +845,8 @@ def _panel_runtime(memory: Any) -> Panel:
         rr = getattr(memory, "_reranker", None)
         if rr is not None:
             rerank_warm = bool(getattr(rr, "_model", None))
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.debug("dashboard: reranker warm probe failed: %s", exc)
 
     vault_size = _dir_size(cfg.memory_dir)
     watcher_loaded, watcher_state = _watcher_status()
@@ -895,7 +901,7 @@ def _daemon_status(state_dir: Path) -> str:
         from memo.recall_server import _is_pid_alive, _read_pid
         pid = _read_pid(state_dir)
         running = pid is not None and _is_pid_alive(pid)
-    except Exception:
+    except (OSError, ValueError):
         running = False
 
     try:
@@ -904,7 +910,7 @@ def _daemon_status(state_dir: Path) -> str:
             warm_signal.exists()
             and (time.time() - float(warm_signal.read_text().strip())) < 3600
         )
-    except Exception:
+    except (OSError, ValueError):
         warm = False
 
     daemon_label = "[green]running[/green]" if running else "[dim]off[/dim]"
@@ -978,7 +984,7 @@ def _panel_activity(memory: Any, state_dir: Path) -> Panel:
         ts = ev.get("ts") or ""
         try:
             day = datetime.fromisoformat(ts.rstrip("Z")).date().isoformat()
-        except Exception:
+        except ValueError:
             continue
         if day in buckets:
             buckets[day] += 1
@@ -990,7 +996,7 @@ def _panel_activity(memory: Any, state_dir: Path) -> Panel:
         ts = e.get("ts") or ""
         try:
             day = datetime.fromisoformat(ts.rstrip("Z")).date().isoformat()
-        except Exception:
+        except ValueError:
             continue
         if day in recall_buckets:
             recall_buckets[day] += 1

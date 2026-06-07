@@ -30,6 +30,10 @@ try:
 except ImportError:
     _HAS_SYNC_COORDINATOR = False
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 
 @dataclass
 class SyncDiff:
@@ -267,8 +271,11 @@ class BackupManager:
                         data = json.loads(extracted.read().decode("utf-8"))
                         data["compressed_size"] = archive.stat().st_size
                         return BackupMetadata(**data)
-        except Exception:
-            pass
+        except (OSError, tarfile.TarError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            # Corrupt/unreadable archive — warn, then fall through to the
+            # zero-count placeholder so the caller sees "0 memorias" with a log
+            # breadcrumb instead of a silent empty backup.
+            _log.warning("backup: could not read metadata from %s: %s", archive.name, exc)
 
         return BackupMetadata(
             timestamp=self._timestamp_from_name(archive.name.removesuffix(".tar.gz")),
@@ -283,7 +290,7 @@ class BackupManager:
             raw = name.removeprefix("backup_").replace("-", ":")
             try:
                 return datetime.fromisoformat(raw).isoformat()
-            except Exception:
+            except ValueError:
                 pass
         return datetime.now(UTC).isoformat()
 

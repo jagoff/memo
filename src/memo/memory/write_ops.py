@@ -308,8 +308,11 @@ class _WriteOpsMixin(_MemoryBase):
                     ents = extract_entities(f"{title} {content}"[:3000])
                     if ents:
                         extra_for_store["entities"] = ents
-            except Exception:
-                pass
+            except Exception as exc:
+                # Entities are opt-in best-effort — a broken extractor/model
+                # must not fail the save, but log so silent install breakage
+                # is visible.
+                _log.debug("entity extraction failed during save: %s", exc)
 
         post = frontmatter.Post(
             content,
