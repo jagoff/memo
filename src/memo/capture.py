@@ -45,12 +45,13 @@ user explicitly sets `MEMO_CAPTURE_DEBUG=1`, errors print to stderr.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re as _re
 import sys
 from pathlib import Path
 from typing import Any
+
+from memo.util import sha256_short
 
 # Trigger keywords — pre-filter pass. Cheap regex check before paying
 # the helper LLM cost. Permissive; better to send to the LLM and have
@@ -261,7 +262,7 @@ def _passes_quality(text: str, min_words: int | None = None) -> bool:
 
 
 def _hash_assistant(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return sha256_short(text)
 
 
 def extract_insights(

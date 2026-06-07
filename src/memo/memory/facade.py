@@ -126,6 +126,8 @@ class Memory(
         # if `cfg.reranker_enabled`. Cold load of Qwen3-Reranker-0.6B
         # is ~1-2s; users who disable it (CI, vec-only mode) pay zero.
         self._reranker: Any | None = None
+        # Guards lazy reranker construction across the FastMCP threadpool.
+        self._reranker_lock = threading.Lock()
         # Self-heal probe: warn (don't crash) if the store has paths
         # that don't resolve in the current `memory_dir` layout. Common
         # after upgrading from a legacy install without running
@@ -145,6 +147,19 @@ class Memory(
                 if self._chat is None:
                     self._chat = MLXChat()
         return self._chat
+
+    def _ensure_reranker(self) -> Any:
+        """Lazily construct the cross-encoder reranker (thread-safe). Shared by
+        both rerank paths so the construction args live in one place."""
+        if self._reranker is None:
+            with self._reranker_lock:
+                if self._reranker is None:
+                    from memo.reranker import MLXReranker
+                    self._reranker = MLXReranker(
+                        model_path=self.cfg.reranker_model,
+                        revision=self.cfg.reranker_revision,
+                    )
+        return self._reranker
 
     def _generate_contextual_summary(self, prompt: str) -> str:
         """Generate the short indexing-only context for contextual retrieval."""

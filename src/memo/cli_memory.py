@@ -20,6 +20,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from memo.cli_common import console
+from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
 
 
@@ -68,7 +69,6 @@ def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
          auto_derive: bool, no_project_tag: bool, defer_embed: bool,
          meta_pairs: tuple[str, ...], as_json: bool) -> None:
     """Persist CONTENT to the vault + index. Pass `-` to read CONTENT from stdin."""
-    from memo.memory import Memory
 
     if content == "-":
         content = sys.stdin.read()
@@ -87,7 +87,7 @@ def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
                     f"--meta key cannot be empty: {pair!r}", param_hint="--meta",
                 )
             extra[key] = value
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     rec = mem.save(content=content, title=title, type_=type_,
                    tags=list(tags), auto_derive=auto_derive,
                    auto_project=not no_project_tag,
@@ -114,9 +114,8 @@ def save(content: str, title: str | None, type_: str, tags: tuple[str, ...],
 @click.option("--json", "as_json", is_flag=True)
 def search(query: str, limit: int, type_: str | None, mode: str, as_json: bool) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     hits = mem.search(query, limit=limit, type_=type_, mode=mode)
     if as_json:
         click.echo(json.dumps([h.to_dict() for h in hits], ensure_ascii=False, indent=2))
@@ -149,9 +148,8 @@ def ask(question: str, k: int, type_: str | None, as_json: bool) -> None:
     """RAG over the memory archive — synthesises a prose answer with
     inline `[id]` citations using MLXChat 7B over the top-K hybrid hits.
     """
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     out = mem.ask(question, k=k, type_=type_)
     if as_json:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
@@ -194,14 +192,13 @@ def embed_cmd(text: str | None, batch_json) -> None:
     Synapse consumes this as its unified embed RPC (replaces a separate
     Ollama embedder so query/document vectors share memo's space).
     """
-    from memo.memory import Memory
 
     if batch_json is not None and text:
         raise click.UsageError("--batch-json and TEXT are mutually exclusive")
     if batch_json is None and not text:
         raise click.UsageError("provide TEXT or --batch-json")
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     if batch_json is not None:
         try:
             texts = json.load(batch_json)
@@ -247,7 +244,6 @@ def chat_ask(
     as_stream: bool,
 ) -> None:
     """Chat-shaped RAG over memo."""
-    from memo.memory import Memory
 
     history: list[dict] = []
     if history_json is not None:
@@ -267,7 +263,7 @@ def chat_ask(
         except Exception:
             context = {}
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
 
     if as_stream:
         import sys
@@ -400,9 +396,8 @@ def rerank_cmd(
 @click.option("--json", "as_json", is_flag=True)
 def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
     """Recent memories by `updated` desc."""
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     items = mem.list(limit=limit, type_=type_)
     if as_json:
         click.echo(json.dumps([r.to_dict() for r in items], ensure_ascii=False, indent=2))
@@ -425,9 +420,8 @@ def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True)
 def get(id_: str, as_json: bool) -> None:
     """Fetch one memory by id."""
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     rec = _resolved(lambda: mem.get(id_))
     if rec is None:
         console.print(f"[red]not found:[/red] {id_}")
@@ -474,12 +468,11 @@ def update(
     as_json: bool,
 ) -> None:
     """Patch fields on an existing memory. Re-embeds only if body changed."""
-    from memo.memory import Memory
 
     if content == "-":
         content = sys.stdin.read()
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     rec = _resolved(lambda: mem.update(
         id_,
         title=title,
@@ -514,9 +507,8 @@ def reindex(force: bool, as_json: bool) -> None:
     restoring memories from a backup. Use `--force` to re-embed every
     entry (slower; needed after model/composition changes).
     """
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     counts = mem.reindex(force=force)
     if as_json:
         click.echo(json.dumps(counts, indent=2))
@@ -538,9 +530,8 @@ def reindex(force: bool, as_json: bool) -> None:
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def delete(id_: str, yes: bool) -> None:
     """Delete one memory by id."""
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     if not yes:
         click.confirm(f"Delete memory {id_!r}? This removes the .md and the index entry.", abort=True)
     ok = _resolved(lambda: mem.delete(id_))
@@ -557,9 +548,8 @@ def delete(id_: str, yes: bool) -> None:
 @click.option("--json", "as_json", is_flag=True)
 def history(limit: int, op: str | None, record_id: str | None, as_json: bool) -> None:
     """Recent save/update/delete events. Append-only audit log."""
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     if record_id and len(record_id) < 32:
         # Resolve prefix → full id (audit log stores full ids).
         resolved = mem.resolve_id(record_id)
@@ -629,9 +619,8 @@ def provenance(id_: str, as_json: bool) -> None:
     event carrying its own provenance snapshot. Useful to audit which
     agent / trace_id / route_reason produced each version of a memoria.
     """
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     payload = mem.provenance(id_)
     if payload is None:
         console.print(f"[red]not found:[/red] {id_}")
@@ -674,13 +663,12 @@ def extract_entities(all_: bool, id_: tuple[str, ...], force: bool, as_json: boo
 
     Cost: ~0.5-1s per memoria. 223-doc corpus ≈ 2-4 min.
     """
-    from memo.memory import Memory
 
     if not all_ and not id_:
         click.echo("pass --all or one or more --id <prefix>", err=True)
         sys.exit(2)
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     resolved_ids: list[str] | None = None
     if id_:
         resolved_ids = []
@@ -714,9 +702,8 @@ def extract_entities(all_: bool, id_: tuple[str, ...], force: bool, as_json: boo
 @click.option("--json", "as_json", is_flag=True)
 def entities(limit: int, type_: str | None, as_json: bool) -> None:
     """Top entities by mention count."""
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     rows = mem.graph.top_entities(limit=limit, type_=type_)
     if as_json:
         click.echo(json.dumps(rows, indent=2))
@@ -745,9 +732,8 @@ def entities(limit: int, type_: str | None, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True)
 def entity(name: str, type_: str | None, as_json: bool) -> None:
     """Memorias that mention an entity."""
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     ids = mem.graph.entity_memorias(name, type_=type_)
     if as_json:
         click.echo(json.dumps(ids, indent=2))
@@ -775,9 +761,8 @@ def lint(category: str | None, limit: int, as_json: bool) -> None:
     """Surface memorias with quality issues. Read-only — does not edit
     anything. Use to plan a manual cleanup pass.
     """
-    from memo.memory import Memory
 
-    mem = Memory(Config.from_env())
+    mem = _get_memory(Config.from_env())
     report = mem.lint()
     if category:
         report = {category: report.get(category, [])}
@@ -860,8 +845,7 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
     )
 
     if reindex:
-        from memo.memory import Memory
-        mem = Memory(Config.from_env())
+        mem = _get_memory(Config.from_env())
         # Force re-embed in case the bundled DB is from a different
         # embedder model — rebuilds vectors from .md authoritative state.
         counts = mem.reindex(force=True)
