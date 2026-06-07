@@ -203,14 +203,7 @@ class _RerankOpsMixin(_MemoryBase):
             return list(hits or [])
         if not self.cfg.reranker_enabled:
             return list(hits)
-        reranker = self._reranker
-        if reranker is None:
-            from memo.reranker import MLXReranker
-            reranker = MLXReranker(
-                model_path=self.cfg.reranker_model,
-                revision=self.cfg.reranker_revision,
-            )
-            self._reranker = reranker
+        reranker = self._ensure_reranker()
         scored: list[tuple[float, dict[str, Any]]] = []
         for h in hits:
             if not isinstance(h, dict):
@@ -247,14 +240,7 @@ class _RerankOpsMixin(_MemoryBase):
         if MLX runs into a Metal hiccup mid-rerank we fall back to the
         original RRF order so search never goes dark on the user.
         """
-        reranker = self._reranker
-        if reranker is None:
-            from memo.reranker import MLXReranker
-            reranker = MLXReranker(
-                model_path=self.cfg.reranker_model,
-                revision=self.cfg.reranker_revision,
-            )
-            self._reranker = reranker
+        reranker = self._ensure_reranker()
 
         # Snapshot original RRF positions BEFORE rerank rewrites the
         # `score` field. Index by id rather than object identity so the
