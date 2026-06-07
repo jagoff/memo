@@ -67,3 +67,47 @@ def test_dry_run_on_empty_corpus_is_safe_noop(tmp_path: Path):
     assert receipt["superseded"] == []
     assert receipt["merged"] == []
     assert receipt["archived_stale"] == []
+
+
+# -- Memory.lint() (was untested) ------------------------------------------
+
+
+def test_lint_empty_corpus_returns_empty_categories(mock_memory):
+    out = mock_memory.lint()
+    assert out == {
+        "legacy_extra": [],
+        "few_tags": [],
+        "body_skinny": [],
+        "untitled": [],
+    }
+
+
+def test_lint_flags_few_tags_and_skinny_body(mock_memory):
+    rec = mock_memory.save(content="short", title="Tiny", tags=["only-one"])
+    out = mock_memory.lint()
+    assert rec.id in {e["id"] for e in out["few_tags"]}
+    assert rec.id in {e["id"] for e in out["body_skinny"]}
+
+
+def test_lint_flags_legacy_extra_fields(mock_memory):
+    rec = mock_memory.save(
+        content="x" * 200,
+        title="Has legacy fields",
+        tags=["a", "b", "c"],
+        extra={"usage_count": 5, "agent_id": "old"},
+    )
+    legacy = {e["id"]: e for e in mock_memory.lint()["legacy_extra"]}
+    assert rec.id in legacy
+    assert "usage_count" in legacy[rec.id]["reason"]
+    assert "agent_id" in legacy[rec.id]["reason"]
+
+
+def test_lint_clean_memoria_has_no_issues(mock_memory):
+    rec = mock_memory.save(
+        content="x" * 200,
+        title="Well formed memoria",
+        tags=["project:memo", "domain:test", "technique:unit"],
+    )
+    out = mock_memory.lint()
+    flagged = {e["id"] for cat in out.values() for e in cat}
+    assert rec.id not in flagged
