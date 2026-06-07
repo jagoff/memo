@@ -40,7 +40,7 @@ from memo.memory.write_ops import _WriteOpsMixin
 from memo.multimodal import CrossModalSearch, MultiModalManager, MultiModalStore, UniversalEmbedder
 from memo.navigation import GraphNavigator
 from memo.proactive import ProactiveSuggester
-from memo.queries import QueryComposer, QueryStore
+from memo.saved_queries import QueryComposer, QueryStore
 from memo.sharing import ShareManager, ShareStore
 from memo.store import VecStore
 from memo.sync import BackupManager, SyncManager

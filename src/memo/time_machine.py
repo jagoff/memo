@@ -49,6 +49,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+# reconstruct()/diff() pull the full corpus + audit log into RAM. This bound is
+# effectively "all rows" for a personal vault; it exists only as a backstop.
+# NB: diff() calls reconstruct() twice, so a large corpus loads 4 full dumps.
+_FULL_DUMP_LIMIT = 1_000_000
+
 
 def _parse_ts(s: str | datetime) -> datetime:
     """Parse an ISO-8601 string (with or without trailing Z) or pass
@@ -193,7 +198,7 @@ def reconstruct(memory: Any, *, as_of: str | datetime) -> CorpusSnapshot:
     target = _parse_ts(as_of)
 
     # 1. Current state — full row dump from the store layer.
-    current_rows = memory.store.list_recent(limit=1_000_000)
+    current_rows = memory.store.list_recent(limit=_FULL_DUMP_LIMIT)
     snap: dict[str, SnapshotRecord] = {}
     for r in current_rows:
         snap[r["id"]] = SnapshotRecord(
@@ -207,7 +212,7 @@ def reconstruct(memory: Any, *, as_of: str | datetime) -> CorpusSnapshot:
     # tz-aware datetime so the comparison is timezone-correct
     # (lexicographic compare on ISO strings breaks when stored ts uses
     # a non-UTC offset, which `Memory.save()` produces).
-    all_events = memory.history.list_recent(limit=1_000_000)
+    all_events = memory.history.list_recent(limit=_FULL_DUMP_LIMIT)
 
     def _ev_dt(e: dict[str, Any]) -> datetime | None:
         ts = e.get("ts")
