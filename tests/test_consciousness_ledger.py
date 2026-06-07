@@ -65,6 +65,34 @@ def test_save_with_synapse_trace_propagates_to_ledger(mock_memory, ledger_root: 
     assert ev["subject_uri"] == f"memo://memoria/{rec.id}"
 
 
+def test_save_under_trace_scope_propagates_to_ledger(mock_memory, ledger_root: Path) -> None:
+    """Warm-daemon path: the trace arrives as a contextvar (from the
+    `x-synapse-trace-id` header via the server middleware), not in `extra`.
+    write_ops must stamp it onto the memoria so the ledger event carries it."""
+    from memo._trace import trace_scope
+
+    with trace_scope("synapse://trace/ctxvar"):
+        rec = mock_memory.save(content="warm-daemon save", title="warm")
+    events = _read_today(ledger_root)
+    assert len(events) == 1
+    assert events[0]["trace_id"] == "synapse://trace/ctxvar"
+    assert events[0]["subject_uri"] == f"memo://memoria/{rec.id}"
+
+
+def test_explicit_extra_trace_wins_over_scope(mock_memory, ledger_root: Path) -> None:
+    from memo._trace import trace_scope
+
+    with trace_scope("from-ctxvar"):
+        mock_memory.save(
+            content="explicit wins",
+            title="explicit",
+            extra={"synapse_trace_id": "from-extra"},
+        )
+    events = _read_today(ledger_root)
+    assert len(events) == 1
+    assert events[0]["trace_id"] == "from-extra"
+
+
 def test_update_emits_event(mock_memory, ledger_root: Path) -> None:
     rec = mock_memory.save(content="v1 body", title="orig")
     mock_memory.update(rec.id, title="renamed")
