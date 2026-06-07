@@ -17,15 +17,18 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
-from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES
-from memo.memory.prompts import (  # re-export — callers import from here
-    _ASK_SYSTEM_PROMPT,
-    _CONSOLIDATE_SYSTEM_PROMPT,
-    _DERIVE_SYSTEM_PROMPT,
-    _EXTRACT_ENTITIES_SYSTEM_PROMPT,
-    _REFLECT_SYSTEM_PROMPT,
-    _SYNTHESIS_SYSTEM_PROMPT,
+# Re-export the system prompts — callers import them from here (ask_ops,
+# write_ops, maintain_ops, cli_capture, memory/__init__). Unused in this module
+# itself, hence the per-symbol noqa.
+from memo.memory.prompts import (
+    _ASK_SYSTEM_PROMPT,  # noqa: F401
+    _CONSOLIDATE_SYSTEM_PROMPT,  # noqa: F401
+    _DERIVE_SYSTEM_PROMPT,  # noqa: F401
+    _EXTRACT_ENTITIES_SYSTEM_PROMPT,  # noqa: F401
+    _REFLECT_SYSTEM_PROMPT,  # noqa: F401
+    _SYNTHESIS_SYSTEM_PROMPT,  # noqa: F401
 )
+from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES
 
 _log = logging.getLogger(__name__)
 

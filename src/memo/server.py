@@ -46,10 +46,10 @@ from memo import server_import_export as _srv_import_export
 from memo import server_links as _srv_links
 from memo import server_multimodal as _srv_multimodal
 from memo import server_query as _srv_query
+from memo import server_reflect as _srv_reflect
 from memo import server_repo as _srv_repo
 from memo import server_share as _srv_share
 from memo import server_sync as _srv_sync
-from memo import server_reflect as _srv_reflect
 from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
 from memo import server_version as _srv_version

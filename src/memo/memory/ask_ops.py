@@ -14,7 +14,6 @@ from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
 
-from memo.llm import MLXChat
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _ASK_SYSTEM_PROMPT,

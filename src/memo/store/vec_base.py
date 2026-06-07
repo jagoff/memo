@@ -67,6 +67,7 @@ class VecStoreBase:
 
     def upsert(
         self,
+        *,
         id_: str,
         path: str,
         title: str,
@@ -74,9 +75,10 @@ class VecStoreBase:
         tags: list[str],
         created: str,
         updated: str,
-        embedding: list[float],
         body_hash: str,
+        embedding: list[float],
         extra: dict[str, Any] | None = None,
+        body_text: str = "",
     ) -> None:
         """Insert-or-replace a document with its embedding vector."""
         raise NotImplementedError

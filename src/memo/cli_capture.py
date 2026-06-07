@@ -1075,7 +1075,7 @@ def reflect(
         console.print(f"[dim]already reflected: {target_id[:8]}[/dim]")
         return
 
-    saved = result.get("saved") or []
+    saved = list(result.get("saved") or [])
     skipped = result.get("skipped_dup") or 0
     arc_id = result.get("arc_id")
     dry_label = " [yellow](dry-run)[/yellow]" if dry_run else ""

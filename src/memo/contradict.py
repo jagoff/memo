@@ -57,12 +57,8 @@ from memo.temporal import TemporalAnalyzer
 
 try:
     from consciousness_contracts import (
-        Anomaly,
         AnomalyKind,
-        ConflictState,
         generate_anomaly_id,
-        memo_status_to_conflict_state,
-        memo_status_to_resolution_kind,
     )
     _HAS_CONFLICT_CONTRACTS = True
 except ImportError:
@@ -549,12 +545,9 @@ def emit_anomaly(
     if not _HAS_CONFLICT_CONTRACTS:
         return None
 
-    # Map Memo status to conflict state
-    state = memo_status_to_conflict_state(status)
-    resolution = memo_status_to_resolution_kind(status)
-
-    # Generate anomaly ID
-    anomaly_id = generate_anomaly_id(AnomalyKind.semantic_contradiction, f"memo:{memoria_id_a}:{memoria_id_b}")
+    # NB: status→ConflictState/ResolutionKind mapping will be needed once the
+    # anomaly is actually written to Memflow (TODO below); not computed yet.
+    anomaly_id = generate_anomaly_id(AnomalyKind.semantic_contradiction, f"memo:{memoria_id_a}:{memoria_id_b}")  # type: ignore[attr-defined]  # guarded optional dep
 
     # TODO: Write anomaly to Memflow via MCP/CLI
     # For now, this is a stub that returns the ID for future use

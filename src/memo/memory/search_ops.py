@@ -13,8 +13,6 @@ import sqlite3
 from dataclasses import replace
 
 from memo.flags import flag_bool, flag_float, flag_int
-from memo.perf import timer
-
 from memo.lifecycle import IS_FORGOTTEN_KEY
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -25,6 +23,7 @@ from memo.memory.record import (
     _log,
     _rrf_fuse,
 )
+from memo.perf import timer
 
 
 class _SearchOpsMixin(_MemoryBase):

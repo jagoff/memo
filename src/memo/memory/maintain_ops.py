@@ -15,14 +15,13 @@ from typing import Any
 import frontmatter
 
 try:
-    from consciousness_contracts.uri import extract_resource_id, is_memo_uri, parse_uri
+    from consciousness_contracts.uri import is_memo_uri, parse_uri
     _HAS_URI_HELPERS = True
 except ImportError:
     _HAS_URI_HELPERS = False
 
 from memo.embedder import assert_valid_embedding
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
-from memo.llm import MLXChat
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _CONSOLIDATE_SYSTEM_PROMPT,
@@ -763,8 +762,8 @@ class _MaintainOpsMixin(_MemoryBase):
             for i in range(len(items)):
                 joined = False
                 for cluster in clusters:
-                    rep = items[cluster[0]]
-                    if sum(x * y for x, y in zip(items[i]["emb"], rep["emb"], strict=True)) >= threshold:
+                    rep_item = items[cluster[0]]
+                    if sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=True)) >= threshold:
                         cluster.append(i)
                         joined = True
                         break

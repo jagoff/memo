@@ -17,9 +17,9 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "entity_match_score",
     "entity_retrieval_enabled",
     "extract_entities",
-    "entity_match_score",
 ]
 
 # -- Regex patterns for dependency-free entity extraction -------------------
@@ -96,6 +96,7 @@ def _extract_gliner(text: str, labels: list[str]) -> list[str]:
     """GLiNER-based extraction (requires `pip install gliner`)."""
     try:
         import gliner  # type: ignore[import]
+
         from memo.flags import flag_str
         model_name = flag_str("MEMO_ENTITY_GLINER_MODEL")
         # Module-level singleton to avoid repeated model loads.

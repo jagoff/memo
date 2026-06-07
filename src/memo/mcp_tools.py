@@ -19,17 +19,18 @@ can be imported in tests without the MCP runtime.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
 
 from memo.memory import Memory
 
 __all__ = [
     "Param",
     "ToolSpec",
-    "schema_from_spec",
     "coerce_args",
     "register_all",
+    "schema_from_spec",
 ]
 
 
@@ -38,9 +39,9 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 class _Missing:
-    _instance: Optional["_Missing"] = None
+    _instance: _Missing | None = None
 
-    def __new__(cls) -> "_Missing":
+    def __new__(cls) -> _Missing:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -83,7 +84,7 @@ class Param:
 
     def annotation(self) -> Any:
         base: Any = list[str] if self.json_type == "array" else _PY_TYPE[self.json_type]
-        return Optional[base] if self.nullable else base
+        return (base | None) if self.nullable else base
 
     def json_schema(self) -> dict[str, Any]:
         type_field: Any = [self.json_type, "null"] if self.nullable else self.json_type
@@ -258,7 +259,9 @@ def register_all(server: Any, memory: Memory) -> None:
     for spec in _TOOL_SPECS:
         sig, annotations = _signature_from_spec(spec)
 
-        def _make_wrapper(s: ToolSpec) -> Callable[..., Any]:
+        def _make_wrapper(
+            s: ToolSpec, sig: Any, annotations: dict[str, Any],
+        ) -> Callable[..., Any]:
             def _wrapper(**kwargs: Any) -> Any:
                 return s.handler(memory, kwargs)
             _wrapper.__name__ = s.name
@@ -267,5 +270,5 @@ def register_all(server: Any, memory: Memory) -> None:
             _wrapper.__annotations__ = annotations
             return _wrapper
 
-        wrapper = _make_wrapper(spec)
+        wrapper = _make_wrapper(spec, sig, annotations)
         server.tool()(wrapper)

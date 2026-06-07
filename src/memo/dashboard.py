@@ -35,8 +35,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_log = logging.getLogger(__name__)
-
 from rich.align import Align
 from rich.console import Console, Group
 from rich.layout import Layout
@@ -44,6 +42,8 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+_log = logging.getLogger(__name__)
 
 # Unicode block characters for sparklines (8 levels, low→high).
 _SPARK = "▁▂▃▄▅▆▇█"

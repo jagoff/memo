@@ -91,10 +91,10 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_SEARCH_DECAY_ALPHA", "float", 0.15, "search", "Recency-decay weight in hybrid ranking.", min_val=0.0, max_val=1.0),
     _spec("MEMO_SEARCH_DECAY_HALFLIFE", "int", 0, "search", "Recency-decay half-life in days (0 = off)."),
     _spec("MEMO_HEALTH_SCORES_DISABLED", "bool", False, "search",
-          "Disable health-score (confidence × roi_score) multiplier in search ranking. "
-          "Defaults off — health scoring is neutral (1.0×) until Dream mode or contradiction scan have run.", opt_out=False),
+          "Disable health-score (confidence x roi_score) multiplier in search ranking. "
+          "Defaults off — health scoring is neutral (1.0x) until Dream mode or contradiction scan have run.", opt_out=False),
     _spec("MEMO_GRAPH_EXPANSION_ENABLED", "bool", False, "search",
-          "After primary search + rerank, follow knowledge-graph entity edges from the top-3 hits (1-hop) and append up to 3 adjacent memorias scored at 0.6× the minimum primary score. Requires entities to have been extracted first (`memo extract-entities`)."),
+          "After primary search + rerank, follow knowledge-graph entity edges from the top-3 hits (1-hop) and append up to 3 adjacent memorias scored at 0.6x the minimum primary score. Requires entities to have been extracted first (`memo extract-entities`)."),
     _spec("MEMO_QUERY_CACHE_SIZE", "int", 256, "search", "LRU size for query embeddings (0 = off). Default 256 covers typical session query diversity with negligible RAM overhead (~few KB per cached vector)."),
     _spec("MEMO_CONTRADICT_PENALTY_ENABLED", "bool", False, "search", "Penalise the older side of open contradiction pairs among retrieved results. Requires `memo contradict scan` to have populated the sidecar DB."),
     _spec("MEMO_CONTRADICT_PENALTY", "float", 0.4, "search", "Score multiplier penalty applied to the older side of a contradiction pair.", min_val=0.0, max_val=1.0),

@@ -22,7 +22,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 from typing import Any
 
 import click
