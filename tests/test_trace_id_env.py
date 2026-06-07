@@ -23,7 +23,9 @@ def memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Memory:
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
-    monkeypatch.setenv("MEMO_DISABLE_RECEIPTS", "1")
+    # Receipts default off; pin the real flag. (MEMO_DISABLE_RECEIPTS was a
+    # phantom — no such flag — so it was a silent no-op.)
+    monkeypatch.setenv("MEMO_EMIT_RECEIPTS", "0")
     return Memory(Config.from_env())
 
 
