@@ -109,7 +109,7 @@ def test_mcp_command_pins_resolved_memo_mcp(monkeypatch):
 
 
 def test_backup_group_keeps_portable_out_option():
-    result = CliRunner().invoke(cli, ["backup", "--help"])
+    result = CliRunner().invoke(cli, ["backup", "--help"], env={"MEMO_NONINTERACTIVE": "1"})
 
     assert result.exit_code == 0
     assert "--out" in result.output

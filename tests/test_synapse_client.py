@@ -44,7 +44,9 @@ class TestTimeout:
 
     def test_timeout_default(self) -> None:
         """_timeout() retorna default si no está set."""
-        with patch.dict("os.environ", {}, clear=True):
+        # Empty value == unset for a float flag; scope the patch to just this
+        # key instead of clear=True (which strips conftest isolation guards).
+        with patch.dict("os.environ", {"MEMO_SYNAPSE_CLIENT_TIMEOUT": ""}, clear=False):
             assert synapse_client._timeout() == 8.0
 
     def test_timeout_from_env(self) -> None:
