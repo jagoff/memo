@@ -28,6 +28,23 @@ def _emb(*xs: float) -> list[float]:
     return [x / norm for x in xs]
 
 
+def test_set_confidence_batch_writes_absolute_value(store: VecStore):
+    store.set_confidence_batch([("img1", 0.45), ("img2", 0.02)])
+    health = store.get_health_batch(["img1", "img2"])
+    assert health["img1"]["confidence"] == 0.45
+    assert health["img2"]["confidence"] == 0.1  # floored
+
+
+def test_set_confidence_batch_only_lowers(store: VecStore):
+    store.set_confidence_batch([("img1", 0.45)])
+    # a higher value must not raise an already-low confidence
+    store.set_confidence_batch([("img1", 0.9)])
+    assert store.get_health_batch(["img1"])["img1"]["confidence"] == 0.45
+    # a lower value does apply
+    store.set_confidence_batch([("img1", 0.3)])
+    assert store.get_health_batch(["img1"])["img1"]["confidence"] == 0.3
+
+
 def test_upsert_and_get(store: VecStore):
     store.upsert(
         id_="abc", path="memory/x.md", title="X", type_="note", tags=["a", "b"],
