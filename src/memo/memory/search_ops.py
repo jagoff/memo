@@ -141,11 +141,15 @@ class _SearchOpsMixin(_MemoryBase):
         # (reusing the vec-mode embedding when available) and consults
         # the `source_feedback` table for each hit. Disabled when
         # MEMO_FEEDBACK_DISABLED=1.
-        if out and os.environ.get("MEMO_FEEDBACK_DISABLED") != "1":
+        # Reuse the vec/hybrid-mode query embedding; never force a cold embed
+        # here just to score feedback. In bm25/fuzzy mode `emb` is unset and the
+        # caller deliberately opted out of the bi-encoder — a cold embed_query
+        # on this path would blow the recall hook's 5s budget. Feedback matching
+        # is itself vector-based, so applying it only when a query vector already
+        # exists is consistent.
+        fb_emb = locals().get("emb")
+        if out and fb_emb is not None and os.environ.get("MEMO_FEEDBACK_DISABLED") != "1":
             try:
-                fb_emb = locals().get("emb")
-                if fb_emb is None:
-                    fb_emb = self.embedder.embed_query(query)
                 out = self._apply_source_feedback(out, fb_emb)
             except Exception as exc:
                 _log.warning("source_feedback failed: %s", exc, exc_info=True)
@@ -201,6 +205,8 @@ class _SearchOpsMixin(_MemoryBase):
                 load_bodies=load_bodies,
                 exclude_types=exclude_types,
             )
+        if out and flag_bool("MEMO_RETRIEVAL_BOOST"):
+            out = self._apply_retrieval_boost(query, out)
         if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
             out = self._apply_health_scores(out)
         self._record_access([r.id for r in out])
@@ -345,6 +351,51 @@ class _SearchOpsMixin(_MemoryBase):
                 boosted.sort(key=lambda r: r.score or 0.0, reverse=True)
             return boosted
         except Exception:
+            return results
+
+    def _apply_retrieval_boost(
+        self,
+        query: str,
+        results: list[MemoryRecord],
+    ) -> list[MemoryRecord]:
+        """Multiply each result's score by a curatorial boost (filename / title /
+        heading / tag overlap with the query) so a note whose metadata is the
+        answer wins decisively over body-text-only matches. Source-agnostic.
+        Mirrors the boost already applied to the repo surface (repo_index).
+
+        Skips records whose health confidence is low (< 0.9): a garbled OCR
+        screenshot or low-quality import has an auto-generated title and garbage
+        body — NOT a curatorial signal — so it must not earn a metadata boost
+        that would undo its quality down-weight. Best-effort: failure → unchanged.
+        """
+        try:
+            from memo.retrieval_boost import boost_for
+            health = self.store.get_health_batch([r.id for r in results])
+            changed = False
+            out: list[MemoryRecord] = []
+            for r in results:
+                h = health.get(r.id)
+                if h is not None and h["confidence"] < 0.9:
+                    out.append(r)  # untrusted metadata — no curatorial boost
+                    continue
+                heading = str(r.extra.get("chunk_heading") or "") if r.extra else ""
+                b = boost_for(
+                    query=query,
+                    filename=r.path or "",
+                    title=r.title or "",
+                    headings=[heading] if heading else None,
+                    tags=r.tags or None,
+                )
+                if abs(b - 1.0) < 1e-6:
+                    out.append(r)
+                    continue
+                out.append(replace(r, score=round((r.score or 0.0) * b, 6)))
+                changed = True
+            if changed:
+                out.sort(key=lambda r: r.score or 0.0, reverse=True)
+            return out
+        except Exception as exc:
+            _log.debug("retrieval_boost failed: %s", exc)
             return results
 
     def _apply_health_scores(
