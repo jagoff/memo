@@ -286,6 +286,16 @@ def ingest(
         `#chunk-N` to the store_path so each chunk is its own row.
         """
         nonlocal errors, chunks_emitted
+        # Universal text-quality gate: down-weight garbled records (mojibake from
+        # any source — pdftotext, broken encodings, future OCR) so they rank below
+        # clean notes. Combined with any per-source signal already passed (e.g.
+        # OCR mean-confidence for images): keep the LOWER confidence.
+        from .text_quality import text_health_confidence as _text_conf
+        _tq = _text_conf(body)
+        if _tq is not None:
+            health_confidence = (
+                _tq if health_confidence is None else min(health_confidence, _tq)
+            )
         composed_full = f"{title}\n\n{body}"
         if chunk and len(composed_full) > chunk_chars:
             pieces = chunk_markdown(

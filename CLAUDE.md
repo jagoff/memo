@@ -174,6 +174,27 @@ layer above is the cognition.
 
 `pytest`, `mypy`, and coverage run per commit. Keep the suite green.
 
+## Retrieval-regression discipline (every failed search → a system change, measured)
+
+**Rule:** when a search returns wrong results, do NOT patch that one query. Make a
+**systemic** change (ingest quality, ranking, a general gate) and prove it holds
+across the whole regression set — never per-question.
+
+- Growing committed corpus: `eval/regression_labels.json` (schema
+  `memo.eval_recall.labels.v1`). Every incident adds a labeled prompt:
+  `relevant=true` + `expect_ids` (the note that MUST surface, ≥8 hex prefix),
+  and `noise_tags` / `noise_path_fragments` for records that must NOT crowd
+  top-K (garbled OCR screenshots, archived/old notes).
+- Gate (fast, no MLX — retrieval only, ~0.5s/prompt):
+  `memo eval recall --labels eval/regression_labels.json --k 5 --force`.
+  A retrieval/ingest change must keep **precision@K** high and **noise@K** low
+  across ALL prompts. Baseline today: prec@5=0.2 (max for a single-answer
+  prompt), noise@5=0.0. Runs against the live index (machine-local, not GitHub CI).
+- Split of concerns: retrieval-class regressions (right note buried, garbage
+  crowding) gate here; synthesis-class regressions (fabrication, refusal,
+  wrong format) gate in synapse `eval-chat` with `require_substrings` /
+  `forbid_substrings` checks.
+
 ## Workflows (Claude Code dynamic workflows)
 
 Saved orchestration scripts in `.claude/workflows/`, invoked as `/`-commands:

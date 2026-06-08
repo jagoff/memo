@@ -1,0 +1,18 @@
+{
+  "schema": "memo.eval_recall.labels.v1",
+  "_doc": "Committed retrieval-regression corpus. DISCIPLINE: every search that returns wrong results becomes a permanent labeled prompt here — never patch a single query, prove the whole set holds. Run: `memo eval recall --labels eval/regression_labels.json --k 5 --json --force`. A retrieval/ingest change must keep precision@K high and noise@K low across ALL prompts, not just the new one. relevant=true prompts must surface their expect_ids (>=8 hex prefix); noise_tags / noise_path_fragments mark records that must NOT crowd the top-K (garbled OCR screenshots, archived/old notes).",
+  "prompts": [
+    {
+      "text": "donde se hace el deploy de las lambda",
+      "relevant": true,
+      "expect_ids": ["231d4534"],
+      "_note": "2026-06-08 incident: garbled AWS-console OCR screenshots (99-Attachments) outranked the real note 'Deploy nuevas lambda' (work/03-Resources), causing a fabricated answer (us-east-1, lambda-athena-billing-report). Fixed by the OCR confidence gate (6a7fcaa). This prompt guards the whole class."
+    }
+  ],
+  "relevant_terms": [
+    "lambda", "deploy", "dev-publiccloudinfrastructure", "publiccloudinfrastructure"
+  ],
+  "noise_tags": ["standalone-image"],
+  "noise_path_fragments": ["99-Attachments/", "/99-Attachments/"],
+  "session_context": "trabajo: deploy de lambdas en el entorno dev-PublicCloudInfrastructure"
+}
