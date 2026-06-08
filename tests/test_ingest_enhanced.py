@@ -208,8 +208,15 @@ def test_ingest_orphan_image_becomes_memoria(tmp_path: Path, runner_env):
     def fake_ocr(img_path, cache_dir=None):
         return "ORPHAN_SCREENSHOT_AWS_BUDGET_2026"
 
+    def fake_ocr_conf(img_path, cache_dir=None):
+        return "ORPHAN_SCREENSHOT_AWS_BUDGET_2026", 0.9
+
     with patch("memo.ingest_helpers.extract_text_cached", side_effect=fake_ocr), \
-         patch("memo.ocr.extract_text_cached", side_effect=fake_ocr):
+         patch("memo.ocr.extract_text_cached", side_effect=fake_ocr), \
+         patch(
+             "memo.ocr.extract_text_cached_with_confidence",
+             side_effect=fake_ocr_conf,
+         ):
         result = CliRunner().invoke(
             cli, ["ingest", str(vault), "--name", "v", "--ocr", "--no-chunk", "--no-include-pdf", "--include-orphan-images"],
             env=runner_env,

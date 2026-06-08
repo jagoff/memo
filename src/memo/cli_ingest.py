@@ -276,6 +276,7 @@ def ingest(
         abs_path: Path,
         source: str,
         extra_meta: dict | None = None,
+        health_confidence: float | None = None,
     ) -> str | None:
         """Embed `title + body` (chunked if --chunk and large) and upsert
         one row per chunk. Returns "added" / "updated" / None on error.
@@ -325,6 +326,8 @@ def ingest(
                 body_text=body,
             )
             chunks_emitted += 1
+            if health_confidence is not None:
+                store.set_confidence_batch([(id_, health_confidence)])
             if prune:
                 _reconcile_file(store_path, {store_path})
             return "updated" if existing else "added"
@@ -332,6 +335,7 @@ def ingest(
         # Multi-chunk path. Each chunk = own meta row; parent_path lets
         # the chat-ask dedup collapse chunks back to one source.
         any_added = any_updated = False
+        emitted_ids: list[str] = []
         for piece in pieces:
             seq = piece["seq"]
             heading = piece["heading"]
@@ -381,10 +385,13 @@ def ingest(
                 body_text=chunk_body,
             )
             chunks_emitted += 1
+            emitted_ids.append(id_)
             if existing:
                 any_updated = True
             else:
                 any_added = True
+        if health_confidence is not None and emitted_ids:
+            store.set_confidence_batch([(i, health_confidence) for i in emitted_ids])
         if prune:
             _reconcile_file(
                 store_path,
@@ -527,15 +534,19 @@ def ingest(
             orphans = [o for o in orphans if o.suffix.lower() in IMAGE_EXTENSIONS]
             if orphans:
                 orphan_task = progress.add_task(f"OCR orphan imgs {label}", total=len(orphans))
-                from memo.ocr import extract_text_cached
+                from memo.ocr import (
+                    extract_text_cached_with_confidence,
+                    image_health_confidence,
+                )
 
                 cache_dir = cfg.state_dir / "ocr_cache"
                 for img_path in orphans:
                     try:
                         seen_abs.add(str(img_path))
-                        ocr_text = (
-                            extract_text_cached(img_path, cache_dir=cache_dir) or ""
-                        ).strip()
+                        ocr_text_raw, ocr_conf = extract_text_cached_with_confidence(
+                            img_path, cache_dir=cache_dir
+                        )
+                        ocr_text = (ocr_text_raw or "").strip()
                         if not ocr_text:
                             orphan_skipped += 1
                             continue
@@ -551,6 +562,9 @@ def ingest(
                             abs_path=img_path,
                             source="vault-ingest-image",
                             extra_meta={"image_ext": img_path.suffix.lower()},
+                            # Down-weight low-quality screenshot OCR so garbled
+                            # captures rank below clean text notes.
+                            health_confidence=image_health_confidence(ocr_conf),
                         )
                         if outcome == "added":
                             orphan_added += 1

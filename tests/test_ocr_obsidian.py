@@ -154,7 +154,7 @@ def test_extract_text_cached_caches_empty_for_unavailable(tmp_path: Path) -> Non
     cache_dir = tmp_path / "cache"
     out = extract_text_cached(fake_img, cache_dir=cache_dir)
     assert out == ""
-    cache_files = list(cache_dir.glob("*.txt"))
+    cache_files = list(cache_dir.glob("*.json"))
     assert len(cache_files) == 1
     # Second call reads from cache (deterministic, no re-OCR attempted).
     out2 = extract_text_cached(fake_img, cache_dir=cache_dir)

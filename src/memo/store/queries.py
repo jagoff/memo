@@ -511,6 +511,28 @@ class _QueriesMixin(_StoreBase):
                 [(i, floor, delta, delta) for i in ids],
             )
 
+    def set_confidence_batch(
+        self,
+        pairs: list[tuple[str, float]],
+        floor: float = 0.1,
+    ) -> None:
+        """Set an absolute confidence for each (id, confidence) pair, floored at
+        ``floor``. Unlike :meth:`penalize_confidence_batch` (relative decrement),
+        this writes the value directly — used to stamp OCR'd-image records with
+        their measured quality so low-confidence screenshots rank below clean
+        notes (search score x confidence). roi_score left neutral (1.0)."""
+        if not pairs:
+            return
+        with self._tx() as cx:
+            cx.executemany(
+                "INSERT INTO memory_health(id, confidence, roi_score, updated_at) "
+                "VALUES(?, max(?, ?), 1.0, datetime('now')) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "confidence = min(confidence, ?), "
+                "updated_at = datetime('now')",
+                [(i, floor, c, c) for i, c in pairs],
+            )
+
     def decay_roi(
         self,
         factor: float = 0.98,
