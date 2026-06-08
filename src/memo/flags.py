@@ -592,6 +592,26 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True
     ),
+    _spec(
+        "MEMO_OCR_MIN_CONFIDENCE", "float", 0.4, "ingest",
+        "Per-line OCR confidence floor: drop mojibake lines below this before indexing.",
+        min_val=0.0, max_val=1.0,
+    ),
+    _spec(
+        "MEMO_OCR_LOW_CONF_THRESHOLD", "float", 0.6, "ingest",
+        "Mean OCR confidence below which an image is down-weighted (memory_health.confidence).",
+        min_val=0.0, max_val=1.0,
+    ),
+    _spec(
+        "MEMO_TEXT_QUALITY", "bool", True, "ingest",
+        "Universal text-quality gate: down-weight garbled records (mojibake) from any source.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_TEXT_QUALITY_THRESHOLD", "float", 0.02, "ingest",
+        "Replacement/control-char ratio at/above which a record is down-weighted.",
+        min_val=0.0, max_val=1.0,
+    ),
     _spec("MEMO_PROMPT_CACHE", "bool", False, "misc", "Enable LLM prompt caching."),
     _spec(
         "MEMO_CONTEXTUAL_RETRIEVAL",
