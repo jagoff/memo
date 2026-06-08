@@ -84,8 +84,17 @@ def test_total_boost_cap_around_10() -> None:
         headings=["AWS Legacy procedure"],
         tags=["#aws", "#legacy"],
     )
-    # 4 (filename exact) × 1.5 (title) × 1.25 (heading) × 1.4 (tag) = 10.5
-    assert 10.0 < b <= 11.0
+    # filename×4 · title×2.5 · heading×1.5 · tag×1.4 = 21 → hard-capped at 12.
+    assert 11.0 < b <= 12.0
+
+
+def test_title_scales_with_overlap() -> None:
+    # Near-exact frontmatter title (distinct from filename) must out-boost a
+    # half-match — the asymmetry that let a terse correct note get blended.
+    near = boost_for(query="deploy lambda", title="Deploy nuevas lambda")
+    half = boost_for(query="deploy lambda aws prod", title="Deploy nuevas lambda")
+    assert near >= 2.5
+    assert near > half
 
 
 def test_filename_with_extension_handled() -> None:

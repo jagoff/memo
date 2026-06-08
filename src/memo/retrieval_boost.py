@@ -21,6 +21,10 @@ from pathlib import PurePosixPath
 
 __all__ = ["boost_for", "query_terms"]
 
+# Hard cap on the multiplicative boost — keeps a metadata-perfect note from
+# burying a much stronger body match.
+_MAX_BOOST = 12.0
+
 _TERM_RE = re.compile(r"[\w\-]{3,}", re.UNICODE)
 _STOPWORDS_ES_EN = frozenset(
     {
@@ -126,8 +130,9 @@ def boost_for(
       - Any tag matches a query term: ×1.4
 
     Returns 1.0 when query has no significant terms (e.g. all stopwords)
-    or no metadata fields match. Caps implicitly at ~10.5× (all signals
-    aligned). Tests assert these ranges.
+    or no metadata fields match. Hard-capped at ``_MAX_BOOST`` (12×) so a
+    metadata-perfect note wins decisively without burying a stronger body
+    match. Tests assert these ranges.
     """
     terms = query_terms(query)
     if not terms:
@@ -148,16 +153,27 @@ def boost_for(
 
     t_lower = (title or "").lower().strip()
     if t_lower and t_lower != fname:
-        hits = sum(1 for t in terms if t in t_lower)
-        if hits and hits / len(terms) >= 0.5:
+        ratio = sum(1 for t in terms if t in t_lower) / len(terms)
+        # Scale with overlap like the filename does — a near-exact frontmatter
+        # title is a strong curatorial signal that THIS note is the answer, so it
+        # must win decisively, not flat ×1.5 (which tied a 50% match with a
+        # full-coverage one and let a terse correct note get blended with noise).
+        if ratio >= 0.99:
+            boost *= 2.5
+        elif ratio >= 0.75:
+            boost *= 2.0
+        elif ratio >= 0.5:
             boost *= 1.5
 
     for h in headings or []:
         h_lower = (h or "").lower()
         if not h_lower:
             continue
-        hits = sum(1 for t in terms if t in h_lower)
-        if hits and hits / len(terms) >= 0.5:
+        ratio = sum(1 for t in terms if t in h_lower) / len(terms)
+        if ratio >= 0.99:
+            boost *= 1.5
+            break
+        if ratio >= 0.5:
             boost *= 1.25
             break
 
@@ -169,4 +185,6 @@ def boost_for(
             boost *= 1.4
             break
 
-    return boost
+    # Explicit cap: a metadata-perfect note wins decisively but never buries a
+    # much stronger body match (a hit with body score >cap× the top still surfaces).
+    return min(boost, _MAX_BOOST)
