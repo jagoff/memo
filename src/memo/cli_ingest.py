@@ -168,6 +168,12 @@ def ingest(
         ".claude",
         ".devin",
         AI_SUBDIR,
+        # Archived notes are not durable knowledge — they pollute recall. Kept
+        # out by default (any depth, case-insensitive — see `_excluded`) so the
+        # exclusion does not depend on a per-vault `.memoignore` surviving.
+        "04-Archive",
+        "Archive",
+        "archive",
     )
     # `.memoignore` in the vault root lets the user exclude folders durably,
     # without touching the (auto-regenerated) launchd ingest invocation. One
@@ -185,21 +191,34 @@ def ingest(
     def _excluded(rel: Path) -> bool:
         s = str(rel)
         padded = f"/{s}/"
+        # Lowercased forms for the case-insensitive literal/segment match below.
+        # APFS is case-insensitive, so a folder physically named `Archive` can be
+        # walked as `archive`/`ARCHIVE`; a case-sensitive compare would miss it.
+        s_low = s.lower()
+        padded_low = padded.lower()
         for pat in exclude_patterns:
             # A trailing `/**` means "this directory and everything under it".
             # The launchd ingest invocation passes patterns in this form
             # (`Obsidian/Whatsapp/**`); without this they silently no-op and the
             # subtree gets double-ingested by both the generic and dedicated
-            # importers.
+            # importers. Kept case-sensitive — user globs are explicit.
             if pat.endswith("/**"):
                 base = pat[:-3]
                 if s.startswith(base) or f"/{base}/" in padded:
                     return True
                 continue
-            # Literal prefix or `/segment/` anywhere in the rel path.
-            if s.startswith(pat) or f"/{pat}/" in padded:
+            # Literal prefix or `/segment/` anywhere in the rel path — matched
+            # case-insensitively so archive-folder casing variants are caught.
+            pat_low = pat.lower()
+            if (
+                s.startswith(pat)
+                or f"/{pat}/" in padded
+                or s_low.startswith(pat_low)
+                or f"/{pat_low}/" in padded_low
+            ):
                 return True
             # General globs (`*.tmp`, `a/*/b`) match against the full rel path.
+            # Kept case-sensitive — user globs are explicit.
             if ("*" in pat or "?" in pat or "[" in pat) and fnmatch(s, pat):
                 return True
         return False

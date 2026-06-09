@@ -154,6 +154,66 @@ def test_ingest_exclude_glob_double_star(tmp_path: Path, runner_env):
     assert not any("Whatsapp" in p for p in paths), f"whatsapp subtree leaked: {paths}"
 
 
+def test_ingest_excludes_archive_by_default(tmp_path: Path, runner_env):
+    """Archive folders are excluded WITHOUT a `.memoignore` — the exclusion is
+    a hardcoded default so it can't be lost by deleting the per-vault file."""
+    vault = _build_vault(tmp_path / "vault", {
+        "01-Projects/active.md": "# Active\n\nIndexed note.",
+        "04-Archive/old.md": "# Old\n\nArchived, must be skipped.",
+        "04-Archive/Companies/dead.md": "# Dead\n\nNested archive, skipped.",
+        "notes/sub/archive/buried.md": "# Buried\n\nArchive at depth, skipped.",
+    })
+    # No .memoignore written on purpose.
+    result = CliRunner().invoke(
+        cli, ["ingest", str(vault), "--name", "v", "--no-chunk", "--no-include-pdf",
+              "--no-include-orphan-images", "--no-ocr"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+
+    paths = [r["path"] for r in _all_rows(_open_store(runner_env))]
+    assert any("active.md" in p for p in paths), f"active note missing: {paths}"
+    assert not any("04-Archive" in p for p in paths), f"top archive leaked: {paths}"
+    assert not any("archive" in p.lower() for p in paths), f"nested archive leaked: {paths}"
+
+
+def test_ingest_excludes_archive_case_insensitive(tmp_path: Path, runner_env):
+    """A folder physically named `Archive` (any casing) is excluded — the
+    literal/segment match is case-insensitive for APFS."""
+    vault = _build_vault(tmp_path / "vault", {
+        "keep.md": "# Keep\n\nIndexed.",
+        "Archive/x.md": "# X\n\nArchived, skipped.",
+    })
+    result = CliRunner().invoke(
+        cli, ["ingest", str(vault), "--name", "v", "--no-chunk", "--no-include-pdf",
+              "--no-include-orphan-images", "--no-ocr"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+
+    paths = [r["path"] for r in _all_rows(_open_store(runner_env))]
+    assert any("keep.md" in p for p in paths), f"keep note missing: {paths}"
+    assert not any("rchive" in p for p in paths), f"Archive leaked in: {paths}"
+
+
+def test_ingest_archive_pruned_on_reingest(tmp_path: Path, runner_env):
+    """A note moved into 04-Archive/ gets its row pruned on re-ingest --prune
+    (its new path is excluded, so it isn't walked → prune drops the stale row)."""
+    vault = _build_vault(tmp_path / "vault", {"n.md": "# N\n\nNote about cats."})
+    base = ["ingest", str(vault), "--name", "v", "--no-include-pdf",
+            "--no-include-orphan-images", "--no-ocr"]
+    assert CliRunner().invoke(cli, base, env=runner_env).exit_code == 0
+    assert "v/n.md" in {r["path"] for r in _all_rows(_open_store(runner_env))}
+
+    (vault / "04-Archive").mkdir()
+    (vault / "n.md").rename(vault / "04-Archive" / "n.md")  # archived
+    result = CliRunner().invoke(cli, [*base, "--prune"], env=runner_env)
+    assert result.exit_code == 0, result.output
+
+    paths = {r["path"] for r in _all_rows(_open_store(runner_env))}
+    assert not any("n.md" in p for p in paths), f"archived note not pruned: {paths}"
+
+
 def test_ingest_skips_chunking_for_short_doc(tmp_path: Path, runner_env):
     """Short doc (< chunk_chars) stores a single row, no chunk suffix."""
     vault = _build_vault(tmp_path / "vault", {"short.md": "# Short\n\nA tiny note about cats and dogs."})
