@@ -113,10 +113,11 @@ python_version = "3.13"
 # importers guard the import, so missing-stub there is expected, not a bug.
 # mlx / mlx_lm (Apple-Silicon-only) and huggingface_hub are deferred,
 # platform-gated imports never installed on the Linux CI runner.
+# numpy is only pulled in by the optional consolidate path; absent in CI.
 module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
-          "consciousness_contracts",
+          "consciousness_contracts", "consciousness_contracts.*",
           "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "huggingface_hub",
-          "tantivy"]
+          "numpy", "tantivy"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
