@@ -14,7 +14,10 @@ Feature flag: MEMO_ENTITY_RETRIEVAL_ENABLED (default 0).
 
 from __future__ import annotations
 
+import logging
 import re
+
+_log = logging.getLogger("memo.entity_extractor")
 
 __all__ = [
     "entity_match_score",
@@ -128,7 +131,10 @@ def _extract_gliner(text: str, labels: list[str]) -> list[str]:
     """GLiNER-based extraction (requires `pip install gliner`)."""
     try:
         import gliner  # type: ignore[import]
-
+    except ImportError:
+        # Expected when the optional dependency isn't installed — regex fallback.
+        return _extract_regex(text)
+    try:
         from memo.flags import flag_str
 
         model_name = flag_str("MEMO_ENTITY_GLINER_MODEL")
@@ -140,7 +146,10 @@ def _extract_gliner(text: str, labels: list[str]) -> list[str]:
             _extract_gliner._model = _model  # type: ignore[attr-defined]
         entities = _model.predict_entities(text[:2000], labels, threshold=0.5)
         return list({e["text"] for e in entities if e.get("text")})
-    except Exception:
+    except Exception as exc:
+        # Model load / prediction failure (OOM, shape mismatch, bad model name):
+        # surface it as a warning rather than silently degrading to regex.
+        _log.warning("GLiNER extraction failed, falling back to regex: %s", exc)
         return _extract_regex(text)
 
 

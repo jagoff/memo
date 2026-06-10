@@ -18,7 +18,8 @@ CREATE TABLE events (
     record_id   TEXT NOT NULL,        -- references meta.id
     title       TEXT,                 -- snapshot of title at time of op
     type        TEXT,                 -- snapshot of type
-    delta_json  TEXT                  -- JSON-encoded {field: [old, new]} for updates
+    delta_json  TEXT,                 -- JSON-encoded {field: [old, new]} for updates
+    device_id   TEXT                  -- ID of the device that created the event
 );
 ```
 
@@ -48,11 +49,17 @@ CREATE TABLE IF NOT EXISTS events (
     record_id   TEXT NOT NULL,
     title       TEXT,
     type        TEXT,
-    delta_json  TEXT
+    delta_json  TEXT,
+    device_id   TEXT
+);
+CREATE TABLE IF NOT EXISTS sync_state (
+    device_id   TEXT PRIMARY KEY,
+    last_lsn    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_record ON events(record_id);
 CREATE INDEX IF NOT EXISTS idx_events_ts     ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_op     ON events(op);
+CREATE INDEX IF NOT EXISTS idx_events_device ON events(device_id);
 """
 
 
@@ -61,9 +68,12 @@ class HistoryStore:
     audit row is preferable to crashing a save/update/delete operation.
     """
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, device_id: str | None = None) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Unique ID for this device to distinguish its events during sync.
+        self.device_id = device_id or "unknown"
+
         self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         # WAL = concurrent readers + a writer; one shared connection across the
@@ -74,6 +84,19 @@ class HistoryStore:
             self._conn.execute("PRAGMA journal_mode=WAL")
         self._tx_lock = threading.Lock()
         with self._conn:
+            # Additive migration: an `events` table created before `device_id`
+            # existed must gain the column before _SCHEMA_DDL's
+            # `idx_events_device` index references events(device_id) — otherwise
+            # executescript raises "no such column: device_id" and Memory()
+            # construction crashes. A fresh DB has no events table yet, so the
+            # ALTER is skipped and executescript creates it with the column.
+            existing = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'"
+            ).fetchone()
+            if existing is not None:
+                cols = {row[1] for row in self._conn.execute("PRAGMA table_info(events)")}
+                if "device_id" not in cols:
+                    self._conn.execute("ALTER TABLE events ADD COLUMN device_id TEXT")
             self._conn.executescript(_SCHEMA_DDL)
         # Count of swallowed log failures. Surfaced via `error_count` and
         # `Memory.stats()` so silent audit drops don't disappear from sight.
@@ -126,9 +149,9 @@ class HistoryStore:
         try:
             with self._tx() as cx:
                 cx.execute(
-                    "INSERT INTO events (ts, op, record_id, title, type, delta_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (ts, "save", record_id, title, type_, delta_json),
+                    "INSERT INTO events (ts, op, record_id, title, type, delta_json, device_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (ts, "save", record_id, title, type_, delta_json, self.device_id),
                 )
         except sqlite3.Error as exc:
             self._error_count += 1
@@ -151,8 +174,8 @@ class HistoryStore:
             payload = {k: [v[0], v[1]] for k, v in delta.items()}
             with self._tx() as cx:
                 cx.execute(
-                    "INSERT INTO events (ts, op, record_id, title, type, delta_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO events (ts, op, record_id, title, type, delta_json, device_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         ts,
                         "update",
@@ -160,6 +183,7 @@ class HistoryStore:
                         title,
                         type_,
                         json.dumps(payload, default=str, ensure_ascii=False),
+                        self.device_id,
                     ),
                 )
         except (sqlite3.Error, TypeError, ValueError) as exc:
@@ -170,8 +194,9 @@ class HistoryStore:
         try:
             with self._tx() as cx:
                 cx.execute(
-                    "INSERT INTO events (ts, op, record_id, title, type) VALUES (?, ?, ?, ?, ?)",
-                    (ts, "delete", record_id, title, type_),
+                    "INSERT INTO events (ts, op, record_id, title, type, device_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (ts, "delete", record_id, title, type_, self.device_id),
                 )
         except sqlite3.Error as exc:
             self._error_count += 1
@@ -183,8 +208,10 @@ class HistoryStore:
         limit: int = 50,
         op: str | None = None,
         record_id: str | None = None,
+        after_lsn: int | None = None,
+        device_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        sql = "SELECT id, ts, op, record_id, title, type, delta_json FROM events"
+        sql = "SELECT id, ts, op, record_id, title, type, delta_json, device_id FROM events"
         clauses: list[str] = []
         params: list[Any] = []
         if op:
@@ -193,6 +220,13 @@ class HistoryStore:
         if record_id:
             clauses.append("record_id = ?")
             params.append(record_id)
+        if after_lsn:
+            clauses.append("id > ?")
+            params.append(after_lsn)
+        if device_id:
+            clauses.append("device_id = ?")
+            params.append(device_id)
+
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY id DESC LIMIT ?"
@@ -211,6 +245,25 @@ class HistoryStore:
             d.pop("delta_json", None)
             out.append(d)
         return out
+
+    def get_sync_state(self, device_id: str) -> int:
+        """Get the last processed LSN for a remote device."""
+        row = self._conn.execute(
+            "SELECT last_lsn FROM sync_state WHERE device_id = ?", (device_id,)
+        ).fetchone()
+        return row[0] if row else 0
+
+    def update_sync_state(self, device_id: str, lsn: int) -> None:
+        """Update the last processed LSN for a remote device."""
+        try:
+            with self._tx() as cx:
+                cx.execute(
+                    "INSERT INTO sync_state (device_id, last_lsn) VALUES (?, ?) "
+                    "ON CONFLICT(device_id) DO UPDATE SET last_lsn = excluded.last_lsn",
+                    (device_id, lsn),
+                )
+        except sqlite3.Error as exc:
+            _log.warning("history update_sync_state failed (device=%s): %s", device_id, exc)
 
     def count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]

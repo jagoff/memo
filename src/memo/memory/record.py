@@ -37,6 +37,27 @@ _log = logging.getLogger(__name__)
 # `memo.tiers`; this set is just "every type a memoria may legally carry".
 _VALID_TYPES = DURABLE_TYPES | REFERENCE_TYPES
 
+# Bulk `reference` chunks shorter than this with no heading and no link/URL
+# carry almost no semantic signal (stray punctuation, empty list items,
+# frontmatter fragments) and only add noise + embedding cost to the index. This
+# mirrors `repo_index.MIN_CHUNK_CHARS` / `_is_noise_chunk`, kept here in the
+# pure-helpers module so the write path can gate without importing repo_index
+# (which pulls in the MLX runtime at module load). Applies to the REFERENCE tier
+# only — short durable facts/preferences ("User prefers dark mode") are kept.
+MIN_REFERENCE_CHARS = 60
+_REFERENCE_LINK_RE = re.compile(r"\[\[.+?\]\]|\[.+?\]\(.+?\)|https?://\S+")
+
+
+def is_reference_noise(body: str) -> bool:
+    """True for a near-empty reference chunk with no heading and no link/URL."""
+    stripped = body.strip()
+    if len(stripped) >= MIN_REFERENCE_CHARS:
+        return False
+    if "#" in stripped and re.search(r"^#{1,6}\s+\S", stripped, re.MULTILINE):
+        return False  # markdown heading — keep
+    return not _REFERENCE_LINK_RE.search(stripped)  # link/URL → keep; else noise
+
+
 SYNAPSE_BACKEND_NATIVE_SCHEMA = "synapse.backend_native.v1"
 NATIVE_BACKEND_PROTOCOL_VERSION = "backend_native.v1"
 MEMO_BACKEND_NAME = "memo"
@@ -44,19 +65,23 @@ MEMO_BACKEND_NAME = "memo"
 # Provenance keys carried in `extra` and persisted to both `meta.extra_json`
 # and `history.events.delta_json`. Set by callers that operate as part of a
 # Synapse-orchestrated write (route_intent → remember). Each key is optional;
-# memo never invents values. Listed here so `Memory.provenance()` and
-# `MemoSynapseBackend` know exactly which fields are "provenance" vs "user
-# extra metadata" without hardcoding the prefix string in multiple places.
-_PROVENANCE_KEYS: frozenset[str] = frozenset(
-    {
-        "synapse_trace_id",
-        "synapse_route_reason",
-        "synapse_write_policy_schema",
-        "synapse_write_target",
-        "synapse_agent_id",
-        "synapse_agent_signature",
-    }
-)
+# memo never invents values. Sourced from `consciousness_contracts` so the
+# trinity shares ONE definition of "which fields are provenance"; the literal
+# below is only a fallback for CI / clean installs without the package, and is
+# guarded against drift by `tests/test_synapse_backend.py`.
+try:
+    from consciousness_contracts import PROVENANCE_KEYS as _PROVENANCE_KEYS
+except ImportError:  # pragma: no cover - optional dep, absent in CI/clean installs
+    _PROVENANCE_KEYS: frozenset[str] = frozenset(  # type: ignore[no-redef]
+        {
+            "synapse_trace_id",
+            "synapse_route_reason",
+            "synapse_write_policy_schema",
+            "synapse_write_target",
+            "synapse_agent_id",
+            "synapse_agent_signature",
+        }
+    )
 
 
 def _extract_provenance(extra: dict[str, Any] | None) -> dict[str, Any]:
@@ -337,31 +362,27 @@ def _derive_title(content: str) -> str:
 
 
 def _rrf_fuse(
-    vec_hits: list[dict[str, Any]],
-    bm_hits: list[dict[str, Any]],
-    *,
+    *lists: list[dict[str, Any]],
     limit: int,
     k: int = 60,
 ) -> list[dict[str, Any]]:
     """Reciprocal rank fusion. Each hit in each list contributes
     `1 / (k + rank)` to its id's combined score, with `k=60` per the
-    Cormack et al. paper. Records that appear in both lists naturally
+    Cormack et al. paper. Records that appear in multiple lists naturally
     get a higher fused score.
 
     Returns the top-`limit` hits by fused score, hydrated with the
-    metadata from whichever source carried the canonical fields
-    (vec wins ties — its hit dict is identical to bm25's).
+    metadata from whichever source carried the canonical fields.
     """
     fused: dict[str, float] = {}
     canon: dict[str, dict[str, Any]] = {}
-    for rank, hit in enumerate(vec_hits):
-        rid = hit["id"]
-        fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
-        canon.setdefault(rid, hit)
-    for rank, hit in enumerate(bm_hits):
-        rid = hit["id"]
-        fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
-        canon.setdefault(rid, hit)
+    for lst in lists:
+        if not lst:
+            continue
+        for rank, hit in enumerate(lst):
+            rid = hit["id"]
+            fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            canon.setdefault(rid, hit)
     ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
     out: list[dict[str, Any]] = []
     for rid, score in ranked:

@@ -7,11 +7,14 @@ in queries.py. This is the only file in memo that imports `tantivy`.
 
 from __future__ import annotations
 
+import logging
 import threading
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar
+
+_log = logging.getLogger("memo.store.tantivy")
 
 
 @lru_cache(maxsize=1)
@@ -151,12 +154,14 @@ class TantivyFTSIndex:
             if fuzzy:
                 kwargs["fuzzy_fields"] = self._FUZZY_FIELDS
             q = self._index.parse_query(query_str, ["title", "tags", "body"], **kwargs)
-        except Exception:
+        except Exception as exc:
+            _log.debug("tantivy parse_query failed for %r: %s", query_str, exc)
             return []
         searcher = self._index.searcher()
         try:
             results = searcher.search(q, limit)
-        except Exception:
+        except Exception as exc:
+            _log.debug("tantivy search failed for %r: %s", query_str, exc)
             return []
         out: list[dict[str, Any]] = []
         # tantivy ≥0.24: search() returns SearchResult with a .hits attribute

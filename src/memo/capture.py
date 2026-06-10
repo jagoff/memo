@@ -458,16 +458,11 @@ def run_capture(
 
     # Lazy heavy imports: only paid past pre-filter.
     mem = Memory(cfg)
-    if mem._chat is None:  # type: ignore[attr-defined]
-        from memo.llm import MLXChat
-
-        mem._chat = MLXChat()  # type: ignore[attr-defined]
-
     insights = extract_insights(
-        mem._chat,
+        mem._ensure_chat(),
         cfg.helper_model,
         user_text,
-        assistant_text,  # type: ignore[attr-defined]
+        assistant_text,
     )
     if debug:
         print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)

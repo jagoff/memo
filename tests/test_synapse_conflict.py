@@ -211,6 +211,80 @@ def test_save_swallows_synapse_subprocess_error(mock_memory, monkeypatch):
     assert rec.id
 
 
+# -- fail-closed seam ----------------------------------------------------
+
+
+def test_save_fails_closed_when_unreachable_and_env_set(mock_memory, monkeypatch):
+    """With MEMO_RESPECT_SYNAPSE_FREEZE=1, an unreachable synapse must refuse
+    the write rather than silently treating the outage as 'no conflicts'."""
+    monkeypatch.setenv("MEMO_RESPECT_SYNAPSE_FREEZE", "1")
+    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
+
+    def _unreachable(*_a, **_kw):
+        raise synapse_client.SynapseUnavailable("timeout after 8.0s")
+
+    monkeypatch.setattr(synapse_client, "list_conflicts", _unreachable)
+    with pytest.raises(WriteRefused) as exc_info:
+        mock_memory.save(
+            content="freeze body under outage",
+            title="outage",
+            extra=_sample_prov(),
+        )
+    assert exc_info.value.conflict["conflict_id"] == "synapse-unreachable"
+    assert exc_info.value.conflict["synapse_unreachable"] is True
+
+
+def test_save_permissive_when_unreachable_without_env(mock_memory, monkeypatch):
+    """Freeze enabled only via the per-save kwarg (no env knob) stays
+    permissive on an unreachable synapse — outages mustn't block memo."""
+    monkeypatch.delenv("MEMO_RESPECT_SYNAPSE_FREEZE", raising=False)
+    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
+
+    def _unreachable(*_a, **_kw):
+        raise synapse_client.SynapseUnavailable("timeout after 8.0s")
+
+    monkeypatch.setattr(synapse_client, "list_conflicts", _unreachable)
+    rec = mock_memory.save(
+        content="permissive body",
+        title="permissive",
+        extra=_sample_prov(),
+        respect_synapse_freeze=True,
+    )
+    assert rec.id
+
+
+# -- synapse_client strict mode -----------------------------------------
+
+
+def test_list_conflicts_strict_raises_on_backend_error(monkeypatch):
+    monkeypatch.setattr(synapse_client, "_executable", lambda: "/usr/bin/synapse")
+    from consciousness_contracts import BackendTimeoutError
+
+    def _boom(*_a, **_kw):
+        raise BackendTimeoutError(8.0, "conflicts", backend_name="synapse")
+
+    monkeypatch.setattr(synapse_client, "run_json", _boom)
+    with pytest.raises(synapse_client.SynapseUnavailable):
+        synapse_client.list_conflicts("x", strict=True)
+
+
+def test_list_conflicts_nonstrict_swallows_backend_error(monkeypatch):
+    monkeypatch.setattr(synapse_client, "_executable", lambda: "/usr/bin/synapse")
+    from consciousness_contracts import BackendProcessError
+
+    def _boom(*_a, **_kw):
+        raise BackendProcessError(1, "conflicts", stderr="boom", backend_name="synapse")
+
+    monkeypatch.setattr(synapse_client, "run_json", _boom)
+    assert synapse_client.list_conflicts("x", strict=False) == []
+
+
+def test_list_conflicts_missing_binary_never_raises_even_strict(monkeypatch):
+    """A missing binary is 'synapse not installed', not an outage — always [] ."""
+    monkeypatch.setattr(synapse_client, "_executable", lambda: None)
+    assert synapse_client.list_conflicts("x", strict=True) == []
+
+
 # -- MCP surface ---------------------------------------------------------
 
 

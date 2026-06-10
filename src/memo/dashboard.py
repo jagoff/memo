@@ -871,7 +871,7 @@ def _panel_corpus(memory: Any) -> Panel:
 
 def _panel_runtime(memory: Any) -> Panel:
     cfg = memory.cfg
-    embedder_warm = memory.embedder._model is not None  # type: ignore[attr-defined]
+    embedder_warm = bool(getattr(memory.embedder, "is_warm", False))
     chat_warm = bool(getattr(getattr(memory, "_chat", None), "_loaded", None))
     rerank_warm = False
     try:

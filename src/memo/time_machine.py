@@ -175,12 +175,9 @@ class CorpusSnapshot:
         )
 
         mem = self._memory
-        if mem._chat is None:  # type: ignore[attr-defined]
-            from memo.llm import MLXChat
-
-            mem._chat = MLXChat()  # type: ignore[attr-defined]
+        chat = mem._ensure_chat()
         try:
-            out = mem._chat.chat(  # type: ignore[attr-defined]
+            out = chat.chat(
                 model=mem.cfg.llm_model,
                 messages=[
                     {"role": "system", "content": system_msg},

@@ -106,6 +106,30 @@ def test_embed_query_caches_when_enabled(monkeypatch):
     assert len(calls) == 1  # second call served from cache
 
 
+def test_cache_size_param_overrides_off_env(monkeypatch):
+    # Explicit cache_size wins over the raw env default (which is off/0). This
+    # is how flags-aware callers (Memory facade, MCP daemon) wire the registry
+    # default into the foundation-module embedder.
+    monkeypatch.delenv("MEMO_QUERY_CACHE_SIZE", raising=False)
+    assert MLXEmbedder(expected_dims=4, cache_size=16)._query_cache is not None
+
+
+def test_cache_size_param_zero_disables_even_with_env(monkeypatch):
+    monkeypatch.setenv("MEMO_QUERY_CACHE_SIZE", "500")  # env says on...
+    assert MLXEmbedder(expected_dims=4, cache_size=0)._query_cache is None  # ...0 wins
+
+
+def test_memory_facade_enables_query_cache_by_default(tmp_cfg, monkeypatch):
+    # Regression: the embedder reads MEMO_QUERY_CACHE_SIZE raw (default off),
+    # so before the facade passed the registry default (256) the query cache
+    # was silently disabled on every Memory-backed path (recall hook, CLI).
+    monkeypatch.delenv("MEMO_QUERY_CACHE_SIZE", raising=False)
+    from memo.memory import Memory
+
+    mem = Memory(tmp_cfg)
+    assert mem.embedder._query_cache is not None
+
+
 def test_embed_query_no_cache_calls_embed_each_time(monkeypatch):
     monkeypatch.delenv("MEMO_QUERY_CACHE_SIZE", raising=False)
     emb = MLXEmbedder(expected_dims=4)

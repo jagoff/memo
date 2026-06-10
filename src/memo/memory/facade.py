@@ -103,9 +103,16 @@ class Memory(
                 state_dir=cfg.state_dir,
             )
         else:
+            # Resolve the query-cache size from the flags registry (default 256)
+            # and pass it explicitly — the embedder can't import memo.flags
+            # itself, and a raw env read there defaults to 0/off, silently
+            # disabling the cache on every Memory-backed path (recall hook, CLI).
+            from memo.flags import flag_int as _flag_int
+
             self.embedder = MLXEmbedder(
                 model_path=cfg.embedder_model,
                 expected_dims=cfg.embedder_dims,
+                cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"),
             )
         self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
         # History store — cheap to open (just sqlite); creating eagerly.
@@ -113,7 +120,7 @@ class Memory(
         # swallows its own exceptions internally.
         from memo.history import HistoryStore as _HS
 
-        self.history = _HS(cfg.history_db)
+        self.history = _HS(cfg.history_db, device_id=cfg.device_id)
         # Helper LLM is lazy — only constructed when `auto_derive=True`
         # is requested. Cold load of Qwen2.5-3B is ~2-3s; users who
         # don't opt in pay nothing.

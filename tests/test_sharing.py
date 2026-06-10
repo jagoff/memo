@@ -198,20 +198,21 @@ def test_share_manager_validate_link(share_manager):
     assert link.memoria_id == "test-id"
 
 
-def test_share_manager_validate_expired_link(share_manager):
-    """Test validating an expired link."""
-    # Create link that expires immediately
+def test_share_manager_validate_expired_link(share_manager, tmp_cfg):
+    """An expired link fails validation after the store is reloaded from disk.
+
+    Exercises the persisted expiry check (not in-memory object mutation): the
+    link is created with a past `expires_at`, persisted, then validated through
+    a FRESH ShareManager built from the same state dir.
+    """
     link = share_manager.share_store.create_share_link(
         memoria_id="test-id",
         permission="read",
-        expires_hours=0,
+        expires_hours=-1,  # already in the past, persisted to disk
     )
 
-    # Force expiration by modifying the timestamp
-    link.expires_at = "2020-01-01T00:00:00Z"
-
-    validated = share_manager.validate_link(link.link_token)
-    assert validated is None
+    fresh = ShareManager(ShareStore(tmp_cfg.state_dir))
+    assert fresh.validate_link(link.link_token) is None
 
 
 def test_share_manager_add_comment(share_manager):

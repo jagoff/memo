@@ -39,7 +39,9 @@ def briefing() -> None:
     import sys as _sys
     from datetime import timedelta
 
-    debug = _os.environ.get("MEMO_BRIEFING_DEBUG") == "1"
+    from memo.flags import flag_bool, flag_int
+
+    debug = flag_bool("MEMO_BRIEFING_DEBUG")
 
     def _bail(reason: str = "") -> None:
         if reason and debug:
@@ -47,7 +49,7 @@ def briefing() -> None:
         print("{}")
         _sys.exit(0)
 
-    if _os.environ.get("MEMO_BRIEFING_DISABLE") == "1":
+    if flag_bool("MEMO_BRIEFING_DISABLE"):
         _bail("disabled")
         return
 
@@ -60,8 +62,8 @@ def briefing() -> None:
         _bail(f"Memory init failed: {exc}")
         return
 
-    loops_n = max(1, int(_os.environ.get("MEMO_BRIEFING_LOOPS_N", "5") or 5))
-    loops_days = max(1, int(_os.environ.get("MEMO_BRIEFING_LOOPS_DAYS", "7") or 7))
+    loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
+    loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
 
     lines: list[str] = []
 
@@ -97,7 +99,7 @@ def briefing() -> None:
     # Pulls present_state (memflow handoffs/focus) + reality_conflicts from
     # `synapse packet`. No-op when synapse is not installed or unreachable —
     # the rest of the briefing is unaffected (graceful, opt-in boundary).
-    if _os.environ.get("MEMO_BRIEFING_SYNAPSE_DISABLE") != "1":
+    if not flag_bool("MEMO_BRIEFING_SYNAPSE_DISABLE"):
         try:
             from memo.briefing import synapse_briefing_lines
 
@@ -192,6 +194,9 @@ def briefing() -> None:
 
     # ── 4. Interaction guide ──────────────────────────────────────────────
     lines.append(
+        "**MEMORY-FIRST MANDATE:** Your first action should be querying the memory store "
+        "to ensure your context is up-to-date. Do not rely on internal training data for "
+        "project-specific details.\n\n"
         "_Para continuar: `dame el loop N` (retoma por número) · "
         "`/memo get <id>` · `/memo ask <pregunta>`_"
     )

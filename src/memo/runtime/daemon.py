@@ -137,6 +137,25 @@ def uninstall_watcher_cmd() -> None:
         console.print("[yellow]No plist found to remove.[/yellow]")
 
 
+@click.command(name="sleep-cycle")
+@click.option("--debug", is_flag=True, help="Print activity to stderr.")
+def sleep_cycle(debug: bool) -> None:
+    """Run autonomous background maintenance.
+
+    Monitors system activity and runs synthesize/consolidate when idle.
+    Gated by MEMO_MAINT_SLEEP_CYCLE_ENABLED.
+    """
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_MAINT_SLEEP_CYCLE_ENABLED"):
+        console.print("[yellow]Sleep cycle disabled (MEMO_MAINT_SLEEP_CYCLE_ENABLED=0).[/yellow]")
+        return
+
+    from memo.runtime.sleep_cycle import run_sleep_cycle
+
+    run_sleep_cycle(debug=debug)
+
+
 @click.command(name="prewarm")
 @click.option(
     "--download-all",

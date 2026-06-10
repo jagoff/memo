@@ -50,7 +50,9 @@ class _ConnectionMixin(_StoreBase):
         try:
             conn.enable_load_extension(True)
         except sqlite3.NotSupportedError as exc:
-            raise RuntimeError(
+            from ..errors import StorageError
+
+            raise StorageError(
                 "Python's sqlite3 was compiled without `enable_load_extension`. "
                 "Reinstall Python via Homebrew (`brew install python@3.13`) which "
                 "bundles a sqlite3 with extension support enabled."

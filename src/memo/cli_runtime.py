@@ -23,6 +23,7 @@ from memo.config import Config  # noqa: F401
 from memo.runtime.daemon import (  # noqa: F401
     install_watcher,
     prewarm,
+    sleep_cycle,
     uninstall_watcher_cmd,
     watch,
 )

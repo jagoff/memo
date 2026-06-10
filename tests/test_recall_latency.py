@@ -47,8 +47,21 @@ def test_embed_batch_chunks_and_releases_lock_between_chunks(monkeypatch) -> Non
             release_first.wait(timeout=2.0)
         return [[0.1, 0.2] for _ in texts]
 
+    # The daemon serialises embeds through a PriorityLock; wrap the test's plain
+    # lock with that interface so the per-chunk acquire/release path is exercised
+    # exactly as production runs it (the underlying `lock` is what we assert on).
+    class _PLock:
+        def __init__(self, lk: threading.Lock) -> None:
+            self._lk = lk
+
+        def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
+            return self._lk.acquire(timeout=timeout if timeout is not None else -1)
+
+        def release(self) -> None:
+            self._lk.release()
+
     server = SimpleNamespace(
-        _lock=lock,
+        _priority_lock=_PLock(lock),
         _mem=SimpleNamespace(embedder=SimpleNamespace(embed=fake_embed)),
         _cfg=SimpleNamespace(embedder_model="stub"),
     )
