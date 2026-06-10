@@ -292,3 +292,74 @@ def test_concurrent_writes_and_reads_do_not_collide(store: VecStore):
     assert store.count() == 80
     # Each worker thread saw a distinct connection object (thread-local).
     assert len(conn_ids) == 8
+
+
+def _legacy_vec_db(path: Path) -> None:
+    """Hand-build a pre-upgrade DB: vec0 tables WITHOUT the `type` metadata
+    column / `source_id` partition key, plus the companion rows the in-place
+    migration backfills from."""
+    import sqlite_vec
+    from sqlite_vec import serialize_float32
+
+    conn = sqlite3.connect(str(path))
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.executescript(
+        "CREATE TABLE meta (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, "
+        "title TEXT NOT NULL, type TEXT NOT NULL, tags TEXT NOT NULL, "
+        "created TEXT NOT NULL, updated TEXT NOT NULL, body_hash TEXT NOT NULL, "
+        "extra_json TEXT);"
+        "CREATE TABLE source_feedback (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, "
+        "query_text TEXT NOT NULL, rating INTEGER NOT NULL, created_at TEXT NOT NULL, "
+        "extra_json TEXT);"
+    )
+    conn.execute(
+        "CREATE VIRTUAL TABLE vec USING vec0(id TEXT PRIMARY KEY, "
+        "embedding FLOAT[4] distance_metric=cosine)"
+    )
+    conn.execute(
+        "CREATE VIRTUAL TABLE source_feedback_vec USING vec0("
+        "feedback_id TEXT PRIMARY KEY, query_emb FLOAT[4] distance_metric=cosine)"
+    )
+    conn.execute(
+        "INSERT INTO meta VALUES ('m1','/p1','T1','decision','[]','t','t','h',NULL)"
+    )
+    conn.execute(
+        "INSERT INTO meta VALUES ('m2','/p2','T2','reference','[]','t','t','h',NULL)"
+    )
+    conn.execute("INSERT INTO vec (id, embedding) VALUES (?, ?)", ("m1", serialize_float32([1.0, 0, 0, 0])))
+    conn.execute("INSERT INTO vec (id, embedding) VALUES (?, ?)", ("m2", serialize_float32([0, 1.0, 0, 0])))
+    conn.execute(
+        "INSERT INTO source_feedback VALUES ('f1','m1','why',1,'t',NULL)"
+    )
+    conn.execute(
+        "INSERT INTO source_feedback_vec (feedback_id, query_emb) VALUES (?, ?)",
+        ("f1", serialize_float32([1.0, 0, 0, 0])),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_legacy_vec_schema_migrates_in_place(tmp_path: Path):
+    """Opening a pre-partition-key/metadata DB auto-migrates it in place,
+    preserving vectors (no re-embed) and backfilling the new columns."""
+    db = tmp_path / "vec.db"
+    _legacy_vec_db(db)
+
+    store = VecStore(db, dims=4)  # triggers migration on open
+
+    # `type` metadata filter (the recall-hook path) now works and `m2` (the
+    # reference tier) is excludable inside the kNN.
+    hits = store.search(_emb(1, 0, 0, 0), limit=5, exclude_types={"reference"})
+    ids = {h["id"] for h in hits}
+    assert "m1" in ids and "m2" not in ids
+    # Vector preserved exactly (cosine score ~1.0 on the identical query).
+    assert next(h for h in hits if h["id"] == "m1")["score"] > 0.99
+
+    # Feedback partition key backfilled → per-source kNN returns the row.
+    fb = store.find_feedback_for_source("m1", _emb(1, 0, 0, 0), threshold=0.5)
+    assert [r["id"] for r in fb] == ["f1"]
+
+    # Idempotent: re-opening the now-migrated DB is a no-op (no raise).
+    VecStore(db, dims=4)

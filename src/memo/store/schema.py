@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
 import re
+import sqlite3
 import threading
 
 from ._base import _StoreBase
+
+_log = logging.getLogger(__name__)
 
 # Serialises first-touch schema creation across threads. VecStore uses
 # thread-local connections, so two FastMCP worker threads can hit a fresh DB
@@ -285,63 +289,45 @@ class _SchemaMixin(_StoreBase):
             self._init_schema_locked()
 
     def _init_schema_locked(self) -> None:
-        if self._schema_ready():
-            self._validate_vec_dims()
-            return
-
-        with self._conn:
-            self._conn.executescript(_SCHEMA_DDL)
-            # `vec0` is a virtual table; we can't include it in the
-            # static DDL string because the dimensionality is dynamic.
-            # `distance_metric=cosine` makes `vec.distance` a true cosine
-            # distance (1 - dot, range [0, 2]). Without it, vec0 defaults
-            # to L2 distance — the ranking is monotonic for unit vectors
-            # but the absolute values are wrong: an L2 distance of 0.80
-            # corresponds to a cosine of 0.68, so `score = 1 - distance`
-            # ends up reporting 0.20 instead of 0.68. Verified empirically
-            # 2026-05-07.
-            self._conn.execute(
-                f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0("
-                f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
-            )
-            self._conn.execute(
-                f"CREATE VIRTUAL TABLE IF NOT EXISTS repo_vec USING vec0("
-                f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
-            )
-            # Per-source feedback uses query embeddings to detect "similar"
-            # future queries. `feedback_id` mirrors `source_feedback.id` so
-            # joins are cheap; `distance_metric=cosine` lets the rank hook
-            # threshold on absolute cosine similarity (1 - distance).
-            self._conn.execute(
-                f"CREATE VIRTUAL TABLE IF NOT EXISTS source_feedback_vec USING vec0("
-                f"feedback_id TEXT PRIMARY KEY, query_emb FLOAT[{self.dims}] distance_metric=cosine)"
-            )
-            self._validate_vec_dims()
-            # FTS5 over title + tags + body for the BM25 side of hybrid
-            # search. `unindexed=id` keeps the row id queryable but not
-            # tokenised. `tokenize='unicode61 remove_diacritics 2'`
-            # handles Spanish accents (so a search for "decision" matches
-            # "decisión") and lowercases. Body is stored externally — we
-            # write it on upsert via the `Memory` layer (the store sees
-            # the body string via `body_text` arg in `upsert_text`).
-            self._conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5("
-                "id UNINDEXED, title, tags, body, "
-                "tokenize='unicode61 remove_diacritics 2'"
-                ")"
-            )
-            self._conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS repo_chunk_fts USING fts5("
-                "id UNINDEXED, repo_name, path, body, "
-                "tokenize='unicode61 remove_diacritics 2'"
-                ")"
-            )
-            self._conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS repo_line_fts USING fts5("
-                "id UNINDEXED, repo_name, path, line_no UNINDEXED, body, "
-                "tokenize='unicode61 remove_diacritics 2'"
-                ")"
-            )
+        if not self._schema_ready():
+            with self._conn:
+                self._conn.executescript(_SCHEMA_DDL)
+                # `vec0` virtual tables are created out of the static DDL string
+                # because their dimensionality is dynamic (see
+                # `_create_vec_tables`). `IF NOT EXISTS` means an existing vec
+                # table keeps its old DDL — `_validate_vec_schema` (below)
+                # migrates it.
+                self._create_vec_tables(self._conn)
+                # FTS5 over title + tags + body for the BM25 side of hybrid
+                # search. `unindexed=id` keeps the row id queryable but not
+                # tokenised. `tokenize='unicode61 remove_diacritics 2'`
+                # handles Spanish accents (so a search for "decision" matches
+                # "decisión") and lowercases. Body is stored externally — we
+                # write it on upsert via the `Memory` layer (the store sees
+                # the body string via `body_text` arg in `upsert_text`).
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5("
+                    "id UNINDEXED, title, tags, body, "
+                    "tokenize='unicode61 remove_diacritics 2'"
+                    ")"
+                )
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS repo_chunk_fts USING fts5("
+                    "id UNINDEXED, repo_name, path, body, "
+                    "tokenize='unicode61 remove_diacritics 2'"
+                    ")"
+                )
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS repo_line_fts USING fts5("
+                    "id UNINDEXED, repo_name, path, line_no UNINDEXED, body, "
+                    "tokenize='unicode61 remove_diacritics 2'"
+                    ")"
+                )
+        # Always run dims validation + the in-place partition/metadata migration,
+        # whether the DB was just created or already existed — a binary upgraded
+        # over an old DB hits the second path. Both are cheap no-ops once current.
+        self._validate_vec_dims()
+        self._validate_vec_schema()
 
     def _schema_ready(self) -> bool:
         rows = self._conn.execute(
@@ -363,6 +349,112 @@ class _SchemaMixin(_StoreBase):
         # (source_feedback_vec) alike.
         match = re.search(r"FLOAT\[(\d+)\]", str(row["sql"]))
         return int(match.group(1)) if match else None
+
+    def _create_vec_tables(self, conn: sqlite3.Connection) -> None:
+        """(Re)create the three vec0 virtual tables at the current dimensionality.
+
+        `distance_metric=cosine` makes `.distance` a true cosine distance
+        (1 - dot, range [0, 2]); without it vec0 defaults to L2 — monotonic for
+        unit vectors but the absolute values are wrong (an L2 of 0.80 is a
+        cosine of 0.68, so `score = 1 - distance` would report 0.20 not 0.68;
+        verified empirically 2026-05-07).
+
+        - `vec.type` is a METADATA column so `search()` can push a `type = ?` /
+          `type != ?` filter INTO the kNN instead of over-fetching (`k * 5`) and
+          filtering off-type rows out after the join. `id TEXT PRIMARY KEY`
+          stays for the cheap `meta` join.
+        - `repo_vec.repo_id` and `source_feedback_vec.source_id` are PARTITION
+          KEYS so repo-scoped / per-source searches run an exact pre-filtered
+          kNN — the global-kNN-then-filter shape could silently drop matches
+          that fell outside the global top-k.
+        """
+        conn.execute(
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0("
+            f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine, "
+            f"type TEXT)"
+        )
+        conn.execute(
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS repo_vec USING vec0("
+            f"id TEXT PRIMARY KEY, repo_id TEXT PARTITION KEY, "
+            f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
+        )
+        conn.execute(
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS source_feedback_vec USING vec0("
+            f"feedback_id TEXT PRIMARY KEY, source_id TEXT PARTITION KEY, "
+            f"query_emb FLOAT[{self.dims}] distance_metric=cosine)"
+        )
+
+    # vec0 round-trips the raw float32 blob on `SELECT embedding`, so a stale
+    # table can be migrated in place by copying vectors into a fresh table with
+    # the new partition/metadata column — no re-embedding, no data loss.
+    # (table, pk_col, vec_col, partition/metadata col, source table+id for the
+    # backfilled column).
+    _VEC_MIGRATIONS = (
+        ("vec", "id", "embedding", "type", "meta", "id", "type"),
+        ("repo_vec", "id", "embedding", "repo_id", "repo_chunks", "id", "repo_id"),
+        (
+            "source_feedback_vec",
+            "feedback_id",
+            "query_emb",
+            "source_id",
+            "source_feedback",
+            "id",
+            "source_id",
+        ),
+    )
+
+    def _validate_vec_schema(self) -> None:
+        """Auto-migrate any pre-upgrade vec0 table (missing PARTITION KEY /
+        metadata column) to the current layout, in place, preserving vectors.
+
+        vec tables are created `IF NOT EXISTS`, so an upgraded binary opened
+        against an old DB would otherwise keep the old DDL — and the new kNN
+        filters reference columns that don't exist yet. Rather than hard-fail
+        and force a full re-embed, copy each row's vector into a fresh table
+        and backfill the new column from its companion table (`type` from
+        `meta`, `repo_id` from `repo_chunks`, `source_id` from
+        `source_feedback`). Runs once; idempotent thereafter.
+        """
+        for (
+            table,
+            pk_col,
+            vec_col,
+            new_col,
+            src_table,
+            src_key,
+            src_col,
+        ) in self._VEC_MIGRATIONS:
+            row = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()
+            if not row or not row["sql"]:
+                continue
+            if re.search(rf"\b{new_col}\b", str(row["sql"])) is not None:
+                continue  # already migrated
+            _log.warning(
+                "migrating vec table `%s` to add `%s` (partition/metadata) — "
+                "copying vectors in place, no re-embed",
+                table,
+                new_col,
+            )
+            rows = self._conn.execute(
+                f"SELECT v.{pk_col} AS pk, v.{vec_col} AS emb, s.{src_col} AS newval "
+                f"FROM {table} v LEFT JOIN {src_table} s ON s.{src_key} = v.{pk_col}"
+            ).fetchall()
+            payload = [
+                (r["pk"], r["newval"], r["emb"]) for r in rows if r["emb"] is not None
+            ]
+            with self._conn:
+                self._conn.execute(f"DROP TABLE {table}")
+                self._create_vec_tables(self._conn)
+                if payload:
+                    self._conn.executemany(
+                        f"INSERT INTO {table} ({pk_col}, {new_col}, {vec_col}) "
+                        f"VALUES (?, ?, ?)",
+                        payload,
+                    )
+            _log.info("migrated `%s`: %d vectors preserved", table, len(payload))
 
     def _validate_vec_dims(self) -> None:
         for table, label in (

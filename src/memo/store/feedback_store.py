@@ -71,8 +71,8 @@ class _FeedbackMixin(_StoreBase):
                 ),
             )
             cx.execute(
-                "INSERT INTO source_feedback_vec (feedback_id, query_emb) VALUES (?, ?)",
-                (fid, serialize_float32(query_emb)),
+                "INSERT INTO source_feedback_vec (feedback_id, source_id, query_emb) VALUES (?, ?, ?)",
+                (fid, source_id, serialize_float32(query_emb)),
             )
         return fid
 
@@ -92,16 +92,21 @@ class _FeedbackMixin(_StoreBase):
         """
         if len(query_emb) != self.dims:
             return []
+        # `source_id` is a vec0 PARTITION KEY, so `fv.source_id = ?` pre-filters
+        # the kNN to this source's rows BEFORE picking the top-k. The previous
+        # shape (global kNN on `k`, then `fb.source_id = ?` in the join) could
+        # silently drop a source's matches when they fell outside the global
+        # top-k. The `meta`-style join still fetches the human-readable fields.
         rows = self._conn.execute(
             "SELECT fb.id, fb.rating, fb.query_text, fb.created_at, "
             "       fb.extra_json, fv.distance "
-            "FROM source_feedback fb "
-            "JOIN source_feedback_vec fv ON fb.id = fv.feedback_id "
-            "WHERE fb.source_id = ? "
-            "  AND fv.query_emb MATCH ? "
+            "FROM source_feedback_vec fv "
+            "JOIN source_feedback fb ON fb.id = fv.feedback_id "
+            "WHERE fv.query_emb MATCH ? "
             "  AND k = ? "
+            "  AND fv.source_id = ? "
             "ORDER BY fv.distance ASC",
-            (source_id, serialize_float32(query_emb), int(limit)),
+            (serialize_float32(query_emb), int(limit), source_id),
         ).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
