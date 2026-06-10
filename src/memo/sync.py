@@ -133,6 +133,76 @@ class BackupManager:
             pass
         return BackupMetadata(datetime.now(UTC).isoformat(), 0, "", archive.stat().st_size, 0)
 
+    def restore_backup(
+        self,
+        backup_name: str,
+        restore_memorias: bool = True,
+        restore_dbs: bool = True,
+    ) -> bool:
+        """Restore memoria files and/or databases from a backup."""
+        archive_path = self.backup_dir / (
+            backup_name if backup_name.endswith(".tar.gz") else f"{backup_name}.tar.gz"
+        )
+        directory_path = self.backup_dir / backup_name
+        if not archive_path.is_file() and not directory_path.is_dir():
+            return False
+
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        self.db_dir.mkdir(parents=True, exist_ok=True)
+
+        if directory_path.is_dir():
+            return self._restore_from_directory(
+                directory_path,
+                restore_memorias=restore_memorias,
+                restore_dbs=restore_dbs,
+            )
+
+        import tarfile
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir).resolve()
+            with tarfile.open(archive_path, "r:gz") as tar:
+                for member in tar.getmembers():
+                    target = (tmp_root / member.name).resolve()
+                    if not str(target).startswith(str(tmp_root)):
+                        raise ValueError(f"Unsafe path in backup archive: {member.name}")
+                tar.extractall(tmp_root)
+
+            extracted_path = tmp_root / archive_path.name.removesuffix(".tar.gz")
+            if not extracted_path.is_dir():
+                candidates = [p for p in tmp_root.iterdir() if p.is_dir()]
+                if not candidates:
+                    return False
+                extracted_path = candidates[0]
+
+            return self._restore_from_directory(
+                extracted_path,
+                restore_memorias=restore_memorias,
+                restore_dbs=restore_dbs,
+            )
+
+    def _restore_from_directory(
+        self,
+        backup_path: Path,
+        *,
+        restore_memorias: bool,
+        restore_dbs: bool,
+    ) -> bool:
+        if restore_memorias:
+            memoria_backup = backup_path / "memorias"
+            if memoria_backup.is_dir():
+                for f in memoria_backup.glob("*.md"):
+                    shutil.copy2(f, self.memory_dir / f.name)
+
+        if restore_dbs:
+            db_backup = backup_path / "db"
+            if db_backup.is_dir():
+                for db_file in db_backup.glob("*.db"):
+                    shutil.copy2(db_file, self.db_dir / db_file.name)
+
+        return True
+
 
 class SyncManager:
     """Manages incremental sync via audit log replay."""

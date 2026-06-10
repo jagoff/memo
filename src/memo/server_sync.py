@@ -7,6 +7,7 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
@@ -14,83 +15,86 @@ from fastmcp import FastMCP
 from memo.memory import Memory
 
 
+def _resolve_remote_history_db(remote: str | None) -> Path | None:
+    """Map a ``--remote`` arg to the remote machine's ``history.db``.
+
+    Accepts either a direct path to a ``.db`` file or a memo state dir that
+    contains ``history.db``. The replay sync model reads the remote audit log,
+    not a remote vault snapshot.
+    """
+    if not remote:
+        return None
+    p = Path(remote)
+    return p if p.suffix == ".db" else p / "history.db"
+
+
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memory_sync_diff(
         remote: str | None = None,
     ) -> dict[str, Any]:
-        """Compute diff between local and remote vaults.
+        """Not supported in the replay sync model.
 
-        Computes the difference between local and remote vaults,
-        identifying new, modified, deleted, and conflicted memorias.
+        Sync replays the remote audit log into the local store; there is no
+        precomputed file diff. Use ``memory_sync_pull`` to apply remote events.
 
         Args:
-            remote: Path to remote vault (optional).
+            remote: Path to remote memo state dir (unused).
         """
-        from pathlib import Path
-
-        remote_path = Path(remote) if remote else None
-
-        sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)
-        diff = sync_mgr.compute_diff()
-        return diff.__dict__
+        return {
+            "error": "replay sync model has no precomputed diff; use memory_sync_pull",
+        }
 
     @server.tool()
     def memory_sync_push(
         remote: str | None = None,
     ) -> dict[str, Any]:
-        """Push local changes to remote vault.
+        """Not supported in the replay sync model.
 
-        Pushes modified and deleted memorias from local to remote vault.
+        Sync is pull-only: each machine replays the other's audit log locally.
+        To propagate local changes, the remote machine pulls from this one.
 
         Args:
-            remote: Path to remote vault (optional).
+            remote: Path to remote memo state dir (unused).
         """
-        from pathlib import Path
-
-        remote_path = Path(remote) if remote else None
-
-        sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)
-        diff = sync_mgr.sync(direction="push")
-        return diff.__dict__
+        return {
+            "error": "replay sync model is pull-only; the remote machine pulls instead",
+        }
 
     @server.tool()
     def memory_sync_pull(
         remote: str | None = None,
     ) -> dict[str, Any]:
-        """Pull remote changes to local vault.
+        """Pull remote changes by replaying the remote audit log.
 
-        Pulls new and modified memorias from remote to local vault.
+        Applies events missing from this machine that exist in the remote
+        ``history.db``. Returns counts of applied / conflicting / errored events.
 
         Args:
-            remote: Path to remote vault (optional).
+            remote: Path to remote memo state dir (or its ``history.db``).
         """
-        from pathlib import Path
-
-        remote_path = Path(remote) if remote else None
-
-        sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)
-        diff = sync_mgr.sync(direction="pull")
+        remote_db = _resolve_remote_history_db(remote)
+        if remote_db is None:
+            return {"error": "remote is required (path to remote memo state dir)"}
+        diff = memory.sync.sync_from_remote(remote_db)
         return diff.__dict__
 
     @server.tool()
     def memory_sync_both(
         remote: str | None = None,
     ) -> dict[str, Any]:
-        """Sync both directions (bidirectional).
+        """Sync from a remote machine (replay model alias for pull).
 
-        Performs bidirectional sync, pulling new changes from remote
-        and pushing local changes to remote.
+        In the replay model "both directions" is achieved by each machine
+        pulling the other's audit log; from this side that is a pull.
 
         Args:
-            remote: Path to remote vault (optional).
+            remote: Path to remote memo state dir (or its ``history.db``).
         """
-        from pathlib import Path
-
-        remote_path = Path(remote) if remote else None
-
-        sync_mgr = memory.sync.__class__(memory, remote_path=remote_path)
-        diff = sync_mgr.sync(direction="both")
+        remote_db = _resolve_remote_history_db(remote)
+        if remote_db is None:
+            return {"error": "remote is required (path to remote memo state dir)"}
+        diff = memory.sync.sync_from_remote(remote_db)
         return diff.__dict__
 
     # -- cache-tier tools ----------------------------------------------------------

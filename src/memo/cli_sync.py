@@ -1,12 +1,17 @@
-"""`memo sync` command group — vault sync (diff/push/pull/both).
+"""`memo sync` command group — multi-machine sync via audit-log replay.
 
 Extracted from cli.py (3a god-module decomposition). Registered onto the
 root group in cli.py via `cli.add_command(sync_group)`.
+
+The sync model is pull-only: a machine replays the events missing from its
+local store that exist in a remote `history.db`. There is no file diff and no
+push (the remote machine pulls instead).
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import click
 
@@ -15,113 +20,89 @@ from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
 
 
+def _resolve_remote_history_db(remote: str | None) -> Path | None:
+    """Map a ``--remote`` arg to the remote machine's ``history.db``.
+
+    Accepts either a direct path to a ``.db`` file or a memo state dir that
+    contains ``history.db``.
+    """
+    if not remote:
+        return None
+    p = Path(remote)
+    return p if p.suffix == ".db" else p / "history.db"
+
+
 @click.group(name="sync")
 def sync_group() -> None:
-    """Multi-vault sync — sync between vaults."""
+    """Multi-machine sync — replay a remote machine's audit log locally."""
     pass
 
 
 @sync_group.command(name="diff")
-@click.option("--remote", help="Path to remote vault")
+@click.option("--remote", help="Path to remote memo state dir")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def sync_diff(remote: str | None, as_json: bool) -> None:
-    """Compute diff between local and remote vaults.
+    """Not supported in the replay sync model (no precomputed diff).
 
-    Example: memo sync diff --remote /path/to/remote/memo
+    Use `memo sync pull` to apply missing remote events.
     """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    from pathlib import Path
-
-    from memo.sync import SyncManager
-
-    remote_path = Path(remote) if remote else None
-
-    sync_mgr = SyncManager(mem, remote_path=remote_path)
-    diff = sync_mgr.compute_diff()
-
+    msg = "replay sync model has no precomputed diff; use `memo sync pull`"
     if as_json:
-        click.echo(json.dumps(diff.__dict__, indent=2))
+        click.echo(json.dumps({"error": msg}, indent=2))
         return
-
-    console.print("[bold]Sync Diff[/bold]")
-    console.print()
-    console.print(f"New: {len(diff.new)}")
-    console.print(f"Modified: {len(diff.modified)}")
-    console.print(f"Deleted: {len(diff.deleted)}")
-    console.print(f"Conflicts: {len(diff.conflicts)}")
+    console.print(f"[yellow]{msg}[/yellow]")
 
 
 @sync_group.command(name="push")
-@click.option("--remote", help="Path to remote vault")
+@click.option("--remote", help="Path to remote memo state dir")
 def sync_push(remote: str | None) -> None:
-    """Push local changes to remote vault.
+    """Not supported in the replay sync model (pull-only).
 
-    Example: memo sync push --remote /path/to/remote/memo
+    Sync is pull-only: the remote machine pulls from this one instead.
     """
-    cfg = Config.from_env()
-    mem = _get_memory(cfg)
-
-    from pathlib import Path
-
-    from memo.sync import SyncManager
-
-    remote_path = Path(remote) if remote else None
-
-    sync_mgr = SyncManager(mem, remote_path=remote_path)
-    diff = sync_mgr.sync(direction="push")
-
-    console.print("[bold]Push Sync[/bold]")
-    console.print(f"Modified: {len(diff.modified)}")
-    console.print(f"Deleted: {len(diff.deleted)}")
+    console.print(
+        "[yellow]replay sync model is pull-only; the remote machine pulls instead[/yellow]"
+    )
 
 
 @sync_group.command(name="pull")
-@click.option("--remote", help="Path to remote vault")
-def sync_pull(remote: str | None) -> None:
-    """Pull remote changes to local vault.
+@click.option("--remote", required=True, help="Path to remote memo state dir")
+def sync_pull(remote: str) -> None:
+    """Pull remote changes by replaying the remote audit log.
 
     Example: memo sync pull --remote /path/to/remote/memo
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    from pathlib import Path
-
-    from memo.sync import SyncManager
-
-    remote_path = Path(remote) if remote else None
-
-    sync_mgr = SyncManager(mem, remote_path=remote_path)
-    diff = sync_mgr.sync(direction="pull")
+    remote_db = _resolve_remote_history_db(remote)
+    assert remote_db is not None  # --remote is required
+    diff = mem.sync.sync_from_remote(remote_db)
 
     console.print("[bold]Pull Sync[/bold]")
-    console.print(f"New: {len(diff.new)}")
-    console.print(f"Modified: {len(diff.modified)}")
+    console.print(f"Applied: {diff.applied}")
+    console.print(f"Conflicts: {diff.conflicts}")
+    console.print(f"Errors: {diff.errors}")
 
 
 @sync_group.command(name="both")
-@click.option("--remote", help="Path to remote vault")
-def sync_both(remote: str | None) -> None:
-    """Sync both directions (bidirectional).
+@click.option("--remote", required=True, help="Path to remote memo state dir")
+def sync_both(remote: str) -> None:
+    """Sync from a remote machine (replay model alias for pull).
+
+    In the replay model "both directions" is achieved by each machine pulling
+    the other's audit log; from this side that is a pull.
 
     Example: memo sync both --remote /path/to/remote/memo
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    from pathlib import Path
+    remote_db = _resolve_remote_history_db(remote)
+    assert remote_db is not None  # --remote is required
+    diff = mem.sync.sync_from_remote(remote_db)
 
-    from memo.sync import SyncManager
-
-    remote_path = Path(remote) if remote else None
-
-    sync_mgr = SyncManager(mem, remote_path=remote_path)
-    diff = sync_mgr.sync(direction="both")
-
-    console.print("[bold]Bidirectional Sync[/bold]")
-    console.print(f"New: {len(diff.new)}")
-    console.print(f"Modified: {len(diff.modified)}")
-    console.print(f"Deleted: {len(diff.deleted)}")
-    console.print(f"Conflicts: {len(diff.conflicts)}")
+    console.print("[bold]Sync (replay)[/bold]")
+    console.print(f"Applied: {diff.applied}")
+    console.print(f"Conflicts: {diff.conflicts}")
+    console.print(f"Errors: {diff.errors}")
