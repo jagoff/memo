@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from memo.cli import cli
 from memo.config import Config
 from memo.memory import Memory
+from memo.store import VecStore
 
 
 @pytest.fixture
@@ -121,3 +122,164 @@ def test_migrate_refuses_same_src_and_dst(tmp_path: Path, seeded_old_layout):
     )
     assert result.exit_code == 1
     assert "same" in result.output.lower()
+
+
+def _base_env(tmp_path: Path, cfg: Config, cfg_file: Path) -> dict[str, str]:
+    return {
+        "MEMO_CONFIG_FILE": str(cfg_file),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(cfg.data_dir),
+        "MEMO_STATE_DIR": str(cfg.state_dir),
+        "MEMO_EMBEDDER_DIMS": "4",
+        "MEMO_EMBEDDER_MODEL": "stub",
+    }
+
+
+def test_migrate_preserves_db_and_access_signal(tmp_path: Path, seeded_old_layout, monkeypatch):
+    """The data-loss bug fix: migrate must NOT drop memvec.db, so user-signal
+    data (access counts) keyed on the stable id survives the migration."""
+    cfg, _ = seeded_old_layout
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    # Bump access telemetry on the first memoria.
+    store = VecStore(cfg.state_dir / "memvec.db", dims=4)
+    ids = [r["id"] for r in store._conn.execute("SELECT id FROM meta ORDER BY path").fetchall()]
+    target = ids[0]
+    store.touch([target])
+    store.touch([target])
+    assert store.get_access(target)["access_count"] == 2
+
+    new_data = tmp_path / "new"
+    cfg_file = tmp_path / "memo-config.toml"
+    result = CliRunner().invoke(
+        cli, ["migrate-vault", str(new_data), "--yes"], env=_base_env(tmp_path, cfg, cfg_file),
+    )
+    assert result.exit_code == 0, result.output
+    assert "removed stale memvec.db" not in result.output
+
+    # Same DB file, same ids, signal intact.
+    store2 = VecStore(cfg.state_dir / "memvec.db", dims=4)
+    ids2 = [r["id"] for r in store2._conn.execute("SELECT id FROM meta").fetchall()]
+    assert set(ids2) == set(ids)
+    assert store2.get_access(target)["access_count"] == 2
+
+
+def test_migrate_into_vault_sets_layout(tmp_path: Path, seeded_old_layout, monkeypatch):
+    """--into-vault moves memorias under <vault>/Obsidian/AI/memory and writes
+    memories_in_vault=1 so the vault is the source of truth."""
+    cfg, _ = seeded_old_layout
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    cfg_file = tmp_path / "memo-config.toml"
+    env = _base_env(tmp_path, cfg, cfg_file)
+    env["MEMO_VAULT_PATH"] = str(vault)
+
+    result = CliRunner().invoke(cli, ["migrate", "--into-vault", "--yes"], env=env)
+    assert result.exit_code == 0, result.output
+
+    dst = vault / "Obsidian" / "AI" / "memory"
+    assert len(sorted(dst.rglob("*.md"))) == 3
+    body = cfg_file.read_text(encoding="utf-8")
+    assert "memories_in_vault = true" in body
+    assert f'vault_path = "{vault.resolve()}"' in body
+
+
+def test_migrate_rollback_restores_config(tmp_path: Path, seeded_old_layout, monkeypatch):
+    """--rollback restores the pre-migration config snapshot."""
+    cfg, _ = seeded_old_layout
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    cfg_file = tmp_path / "memo-config.toml"
+    # Seed an initial config so there's something to snapshot + restore.
+    from memo.setup.config_io import write_config_file
+    write_config_file(data_dir=cfg.data_dir, path=cfg_file)
+    before = cfg_file.read_text(encoding="utf-8")
+
+    env = _base_env(tmp_path, cfg, cfg_file)
+    new_data = tmp_path / "new"
+    r1 = CliRunner().invoke(cli, ["migrate-vault", str(new_data), "--yes"], env=env)
+    assert r1.exit_code == 0, r1.output
+    assert cfg_file.read_text(encoding="utf-8") != before  # config changed
+
+    r2 = CliRunner().invoke(cli, ["migrate-vault", "--rollback"], env=env)
+    assert r2.exit_code == 0, r2.output
+    assert cfg_file.read_text(encoding="utf-8") == before  # restored
+
+
+def test_consolidate_db_merges_sidecars_and_is_idempotent(
+    tmp_path: Path, seeded_old_layout, monkeypatch
+):
+    """--consolidate-db merges the sidecar DBs into memvec.db, renames legacy
+    files to *.bak, flips single_db=1, and is a no-op on re-run."""
+    cfg, _ = seeded_old_layout
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    # Seeding three memorias wrote history events (+ created graph.db).
+    assert (cfg.state_dir / "history.db").is_file()
+    import sqlite3
+
+    n_events = sqlite3.connect(cfg.state_dir / "history.db").execute(
+        "SELECT count(*) FROM events"
+    ).fetchone()[0]
+    assert n_events >= 3
+
+    cfg_file = tmp_path / "memo-config.toml"
+    env = _base_env(tmp_path, cfg, cfg_file)
+    result = CliRunner().invoke(cli, ["migrate", "--consolidate-db"], env=env)
+    assert result.exit_code == 0, result.output
+
+    # Legacy renamed aside; events now live inside memvec.db.
+    assert (cfg.state_dir / "history.db.bak").is_file()
+    assert not (cfg.state_dir / "history.db").is_file()
+    merged = sqlite3.connect(cfg.state_dir / "memvec.db").execute(
+        "SELECT count(*) FROM events"
+    ).fetchone()[0]
+    assert merged == n_events
+    # Config flipped on.
+    assert "single_db = true" in cfg_file.read_text(encoding="utf-8")
+
+    # Idempotent: re-running doesn't error or duplicate.
+    r2 = CliRunner().invoke(cli, ["migrate", "--consolidate-db"], env=env)
+    assert r2.exit_code == 0, r2.output
+    merged2 = sqlite3.connect(cfg.state_dir / "memvec.db").execute(
+        "SELECT count(*) FROM events"
+    ).fetchone()[0]
+    assert merged2 == n_events
+
+
+def test_links_reindex_safe_under_single_db(tmp_path: Path, monkeypatch):
+    """`memo links reindex` must truncate the crossref table, not unlink the DB
+    file — under single_db that file IS memvec.db."""
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    data = tmp_path / "data"
+    state = tmp_path / "state"
+    data.mkdir()
+    state.mkdir()
+    cfg = Config(data_dir=data, state_dir=state, single_db=True, embedder_dims=4)
+    mem = Memory(cfg)
+    mem.save(content="links a [[Otra]] cosa", title="Con Links")
+    assert cfg.db_path.is_file()
+
+    cfg_file = tmp_path / "memo-config.toml"
+    env = _base_env(tmp_path, cfg, cfg_file)
+    env["MEMO_SINGLE_DB"] = "1"
+    result = CliRunner().invoke(cli, ["links", "reindex", "--yes"], env=env)
+    assert result.exit_code == 0, result.output
+    # The DB file (== memvec.db) must still exist with memorias intact.
+    assert cfg.db_path.is_file()
+    assert Memory(Config.from_env(**{
+        "data_dir": data, "state_dir": state, "single_db": True, "embedder_dims": 4,
+    })).store.count() == 1

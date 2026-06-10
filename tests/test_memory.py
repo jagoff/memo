@@ -105,6 +105,150 @@ def test_delete_missing_returns_false(mem_with_stub: Memory):
     assert mem_with_stub.delete("nope") is False
 
 
+def test_delete_aborts_when_md_unlink_fails(mem_with_stub: Memory, monkeypatch):
+    """Authority flip: if the canonical .md can't be removed, delete must
+    raise and leave the index intact (truth still on disk → index must agree)."""
+    from memo.errors import StorageError
+
+    rec = mem_with_stub.save(content="protegido", title="X")
+    assert mem_with_stub.store.count() == 1
+
+    real_unlink = type(mem_with_stub.cfg.memory_dir).unlink
+
+    def _boom(self, *a, **k):
+        if self.name.endswith(".md"):
+            raise OSError("permission denied")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr("pathlib.Path.unlink", _boom)
+    with pytest.raises(StorageError, match="delete refused"):
+        mem_with_stub.delete(rec.id)
+    # Index untouched — the row survives because its truth-bearing file does.
+    assert mem_with_stub.store.count() == 1
+
+
+def test_delete_proceeds_when_md_already_missing(mem_with_stub: Memory):
+    """A missing .md is a no-op, not an error: the orphaned index row is dropped."""
+    rec = mem_with_stub.save(content="huérfano", title="X")
+    (mem_with_stub.cfg.memory_dir / rec.path).unlink()  # vanish the file
+    assert mem_with_stub.delete(rec.id) is True
+    assert mem_with_stub.store.count() == 0
+
+
+def test_save_index_failure_keeps_md_and_marks_pending(mem_with_stub: Memory, monkeypatch):
+    """markdown-is-truth: if embedding fails AFTER the .md is written, the save
+    must NOT raise — the file stays on disk, stamped embed-pending so reindex
+    replays it, and is still BM25-searchable."""
+    def _explode(self, inputs):
+        raise RuntimeError("embedder down")
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _explode)
+    rec = mem_with_stub.save(content="cuerpo recuperable", title="Recuperable")
+
+    abs_path = mem_with_stub.cfg.memory_dir / rec.path
+    assert abs_path.is_file(), "canonical .md must survive an index failure"
+    text = abs_path.read_text(encoding="utf-8")
+    assert "_memo_embed_pending" in text, "on-disk frontmatter must flag embed-pending"
+    assert rec.extra.get("_memo_embed_pending") is True
+    # Text-only row exists so BM25 still surfaces it before the next reindex.
+    assert mem_with_stub.store.get(rec.id) is not None
+
+
+def test_save_index_failure_recovers_on_reindex(mem_with_stub: Memory, monkeypatch):
+    """The embed-pending memoria becomes fully vector-searchable after reindex
+    once the embedder is healthy again — proving the .md replays the index."""
+    calls = {"n": 0}
+    real_embed = type(mem_with_stub.embedder).embed
+
+    def _flaky(self, inputs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("embedder down")
+        return real_embed(self, inputs)
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _flaky)
+    rec = mem_with_stub.save(content="recupera via reindex", title="Reindexable")
+    assert not mem_with_stub.store.has_vector(rec.id)
+
+    out = mem_with_stub.reindex()
+    assert out["reindexed"] >= 1
+    assert mem_with_stub.store.has_vector(rec.id)
+
+
+def test_edit_md_then_reindex_markdown_wins(mem_with_stub: Memory):
+    """Round-trip: edit the .md by hand (as Obsidian would) → reindex → search
+    surfaces the EDITED body. markdown is the source of truth."""
+    rec = mem_with_stub.save(content="contenido original", title="Editable")
+    abs_path = mem_with_stub.cfg.memory_dir / rec.path
+    text = abs_path.read_text(encoding="utf-8")
+    abs_path.write_text(text.replace("contenido original", "contenido EDITADO a mano"), encoding="utf-8")
+
+    out = mem_with_stub.reindex()
+    assert out["reindexed"] >= 1
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert "EDITADO a mano" in fetched.body
+    assert "contenido original" not in fetched.body
+
+
+def test_reindex_rebuild_preserves_signal(mem_with_stub: Memory):
+    """reindex(rebuild=True) truncates + replays the index from disk WITHOUT
+    destroying user-signal data (access counts, health) keyed on the id."""
+    a = mem_with_stub.save(content="memoria una", title="A")
+    b = mem_with_stub.save(content="memoria dos", title="B")
+    store = mem_with_stub.store
+    store.touch([a.id])
+    store.touch([a.id])
+    store.boost_roi_batch([b.id], delta=0.3)
+    assert store.get_access(a.id)["access_count"] == 2
+    assert store.get_health_batch([b.id])[b.id]["roi_score"] > 1.0
+
+    out = mem_with_stub.reindex(rebuild=True)
+    assert out["added"] == 2  # both replayed fresh from disk
+    assert mem_with_stub.store.count() == 2
+    # Signal survived the rebuild — re-joined on the stable id.
+    assert store.get_access(a.id)["access_count"] == 2
+    assert store.get_health_batch([b.id])[b.id]["roi_score"] > 1.0
+    # Content is fully searchable again.
+    assert mem_with_stub.get(a.id) is not None
+    assert mem_with_stub.get(b.id) is not None
+
+
+def test_reindex_rebuild_drops_orphans(mem_with_stub: Memory):
+    """A memoria whose .md vanished must not survive a rebuild (orphan dropped),
+    while present memorias are retained."""
+    a = mem_with_stub.save(content="vive", title="A")
+    b = mem_with_stub.save(content="muere", title="B")
+    (mem_with_stub.cfg.memory_dir / b.path).unlink()  # vanish B's source file
+
+    out = mem_with_stub.reindex(rebuild=True)
+    assert out["added"] == 1
+    assert mem_with_stub.get(a.id) is not None
+    assert mem_with_stub.get(b.id) is None
+    assert mem_with_stub.store.count() == 1
+
+
+def test_reindex_embedding_reuse_skips_second_pass(mem_with_stub: Memory, monkeypatch):
+    """Once the content cache is warm, a force reindex of unchanged bodies
+    issues zero embedder forward passes (cache hits cover every memoria)."""
+    mem_with_stub.save(content="alpha", title="A")
+    mem_with_stub.save(content="beta", title="B")
+    # First force pass warms the content-addressed cache.
+    mem_with_stub.reindex(force=True)
+
+    calls = {"n": 0}
+    real_embed = type(mem_with_stub.embedder).embed
+
+    def _counting(self, inputs):
+        calls["n"] += 1
+        return real_embed(self, inputs)
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _counting)
+    out = mem_with_stub.reindex(force=True)
+    assert out["reindexed"] == 2
+    assert calls["n"] == 0, "warm cache must avoid all re-embedding"
+
+
 def test_tags_lower_dedup(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="x", title="X", tags=["MLX", "mlx", "Local"])
     assert rec.tags == ["mlx", "local"]

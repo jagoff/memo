@@ -62,6 +62,8 @@ def write_config_file(
     *,
     data_dir: Path,
     vault_path: Path | None = None,
+    memories_in_vault: bool = False,
+    single_db: bool = False,
     path: Path | None = None,
 ) -> Path:
     """Write `[storage]` section atomically. Creates parent dirs.
@@ -73,6 +75,10 @@ def write_config_file(
     storage: dict[str, Any] = {"data_dir": str(data_dir)}
     if vault_path is not None:
         storage["vault_path"] = str(vault_path)
+    if memories_in_vault:
+        storage["memories_in_vault"] = True
+    if single_db:
+        storage["single_db"] = True
     payload = tomli_w.dumps({"storage": storage}).encode("utf-8")
     # Write to a sibling temp then rename for atomicity. Avoids a half-
     # written file if the process is killed mid-write.

@@ -397,6 +397,34 @@ class _QueriesMixin(_StoreBase):
             out.append(d)
         return out
 
+    def clear_memoria_index(self) -> int:
+        """Truncate the markdown-DERIVABLE memoria tables (`meta`, `vec`, `fts`)
+        so they can be fully replayed from the `.md` source of truth.
+
+        Deliberately does NOT touch the user-signal tables — `access`,
+        `memory_health`, `source_feedback`/`source_feedback_vec` — because those
+        are PRIMARY data not present in markdown. They key on the stable
+        memoria `id`, so they re-join after the replay; rows whose memoria no
+        longer exists on disk become harmless orphans (cleanable by `gc`).
+        Repo corpus tables are untouched (separate ingest surface).
+
+        Returns the number of `meta` rows cleared. Use only for a full
+        `reindex(rebuild=True)` — never per-row (that path is `delete()`).
+        """
+        with self._tx() as cx:
+            n = cx.execute("SELECT COUNT(*) FROM meta").fetchone()[0]
+            cx.execute("DELETE FROM meta")
+            cx.execute("DELETE FROM vec")
+            cx.execute("DELETE FROM fts")
+        tantivy = self._get_tantivy()
+        if tantivy is not None:
+            try:
+                tantivy._writer.delete_all_documents()
+                tantivy.commit()
+            except Exception as exc:
+                _log.warning("tantivy clear failed during rebuild: %s", exc)
+        return int(n)
+
     def delete(self, id_: str) -> bool:
         with self._tx() as cx:
             cur = cx.execute("DELETE FROM meta WHERE id = ?", (id_,))

@@ -661,6 +661,94 @@ def init_cmd(force: bool) -> None:
     _run_picker_and_save()
 
 
+def _consolidate_sidecar_dbs() -> None:
+    """Merge the four sidecar DBs into the main memvec.db and flip MEMO_SINGLE_DB.
+
+    For each legacy sidecar file present in state_dir, create its tables in the
+    main DB (via the store constructors, so schemas/constraints are correct),
+    ATTACH the legacy file, copy rows with INSERT OR IGNORE, then rename the
+    legacy file to `*.db.bak`. Idempotent: absent legacy files are skipped and
+    re-running is a no-op once the renames are done.
+    """
+    import sqlite3
+
+    from memo.contradict import ContradictionStore
+    from memo.crossref import CrossReferenceIndex
+    from memo.graph import GraphStore
+    from memo.history import HistoryStore
+
+    # Read the CURRENT (pre-flip) config so the sidecar *_db properties still
+    # point at the separate legacy files.
+    cfg = Config.from_env()
+    if cfg.single_db:
+        console.print("[yellow]![/yellow] already in single_db mode — nothing to merge")
+    main_db = cfg.db_path
+
+    # Map each legacy file to the tables it owns. Listing tables dynamically
+    # from the legacy file avoids hardcoding, but an explicit map documents the
+    # contract and skips sqlite_* internals cleanly.
+    legacy_tables: dict[Path, list[str]] = {
+        cfg.state_dir / "history.db": ["events", "sync_state"],
+        cfg.state_dir / "graph.db": ["entities", "entity_memoria"],
+        cfg.state_dir / "contradictions.db": ["pairs"],
+        cfg.state_dir / "crossref.db": ["backlinks"],
+    }
+
+    # 1. Create the sidecar tables in the MAIN db with correct DDL by pointing
+    #    each store at main_db once. (Constructors run CREATE TABLE IF NOT EXISTS.)
+    HistoryStore(main_db, device_id=cfg.device_id).close()
+    GraphStore(main_db).close()
+    ContradictionStore(main_db).close()
+    CrossReferenceIndex(main_db).close()
+
+    # 2. Copy rows from each legacy file, then rename it aside.
+    merged_any = False
+    conn = sqlite3.connect(str(main_db), timeout=10.0)
+    try:
+        conn.execute("PRAGMA busy_timeout = 10000")
+        for legacy, tables in legacy_tables.items():
+            if not legacy.is_file():
+                continue
+            conn.execute("ATTACH DATABASE ? AS legacy", (str(legacy),))
+            try:
+                copied = 0
+                present = {
+                    str(r[0])
+                    for r in conn.execute(
+                        "SELECT name FROM legacy.sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                for tbl in tables:
+                    if tbl not in present:
+                        continue
+                    cur = conn.execute(
+                        f"INSERT OR IGNORE INTO main.{tbl} SELECT * FROM legacy.{tbl}"
+                    )
+                    copied += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+                conn.commit()
+            finally:
+                conn.execute("DETACH DATABASE legacy")
+            bak = legacy.with_suffix(legacy.suffix + ".bak")
+            legacy.replace(bak)
+            console.print(f"[green]✓[/green] merged {legacy.name} → memvec.db, renamed → {bak.name}")
+            merged_any = True
+    finally:
+        conn.close()
+
+    if not merged_any:
+        console.print("[dim]No legacy sidecar files found to merge.[/dim]")
+
+    # 3. Flip the config toggle so future runs use the single DB.
+    existing = Config.from_env()
+    write_config_file(
+        data_dir=existing.data_dir,
+        vault_path=existing.vault_path,
+        memories_in_vault=existing.memories_in_vault,
+        single_db=True,
+    )
+    console.print("[green]✓[/green] set single_db=1 in config — memo now uses one DB file")
+
+
 @click.command(name="migrate-vault")
 @click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
 @click.option(
@@ -670,29 +758,79 @@ def init_cmd(force: bool) -> None:
     type=click.Path(exists=True, file_okay=False, resolve_path=True),
     help="Source memory_dir. Defaults to current cfg.memory_dir.",
 )
+@click.option(
+    "--into-vault",
+    is_flag=True,
+    help="Move memorias INTO the Obsidian vault (<vault>/<SYSTEM_DIR>/AI/memory) "
+    "and set memories_in_vault=1 so the vault becomes the source of truth.",
+)
+@click.option(
+    "--rollback",
+    is_flag=True,
+    help="Restore the config snapshot taken by the last migration and exit. "
+    "Copied files are left in place (migration never deletes anything).",
+)
+@click.option(
+    "--consolidate-db",
+    is_flag=True,
+    help="Merge the sidecar DBs (history/graph/contradictions/crossref) into the "
+    "main memvec.db, set MEMO_SINGLE_DB=1 in config, and rename the legacy files "
+    "to *.db.bak (reversible). Idempotent. Does not move any .md files.",
+)
 @click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def migrate_vault(
     new_data_dir: str | None,
     from_dir: str | None,
+    into_vault: bool,
+    rollback: bool,
+    consolidate_db: bool,
     force: bool,
     yes: bool,
 ) -> None:
-    """Move memorias to a new data_dir; rewrites config + reindexes.
+    """Move memorias to a new location; rewrites config + reindexes.
 
-    Copies all `.md` files (preserving mtime via `shutil.copy2`),
-    updates `~/.config/memo/config.toml` with the new `data_dir`,
-    deletes `memvec.db`, and runs `memo reindex` from the new location.
+    Copies all `.md` files (preserving mtime via `shutil.copy2`), updates
+    `~/.config/memo/config.toml`, and runs `memo reindex` from the new
+    location. The index DB (`memvec.db`) is **preserved** — it lives in
+    `state_dir` (unchanged by this command) and memoria rows are keyed on a
+    stable `id`, so reindex updates them in place. User-signal data
+    (feedback votes, access counts, health scores) therefore survives the
+    migration. (Earlier versions deleted `memvec.db`, silently wiping that
+    signal — that data-loss bug is fixed.)
+
+    With `--into-vault`, memorias move under `<vault>/<SYSTEM_DIR>/AI/memory`
+    and `memories_in_vault=1` is written so the human-editable Obsidian vault
+    is the source of truth and sqlite stays a rebuildable index.
 
     The original `.md` files are NOT deleted — once you've verified the
     migration with `memo search`, you can `rm -rf <old-dir>` manually.
-    History DB is preserved (it's append-only audit; old paths in it
-    just become historical references).
+    A snapshot of the prior config is written so `--rollback` can restore it.
     """
     import shutil
     from pathlib import Path as _Path
 
+    from memo.config import AI_SUBDIR
     from memo.memory import Memory
+    from memo.setup.config_io import _resolve_config_path
+
+    # `--rollback`: restore the pre-migration config snapshot and stop.
+    snapshot = _resolve_config_path().with_suffix(".toml.pre-migrate.bak")
+    if rollback:
+        if not snapshot.is_file():
+            console.print(f"[red]✗[/red] no migration snapshot found at {snapshot}")
+            sys.exit(1)
+        shutil.copy2(snapshot, _resolve_config_path())
+        console.print(f"[green]✓[/green] restored config from snapshot {snapshot}")
+        console.print(
+            "[dim]Copied memoria files were left in place; remove them manually "
+            "if you no longer want them.[/dim]"
+        )
+        return
+
+    if consolidate_db:
+        _consolidate_sidecar_dbs()
+        return
 
     cfg = Config.from_env()
 
@@ -703,7 +841,16 @@ def migrate_vault(
         sys.exit(1)
 
     # 2. Resolve destination + (optional) new vault_path.
-    if new_data_dir:
+    if into_vault:
+        chosen_vault = cfg.vault_path
+        if chosen_vault is None:
+            console.print(
+                "[red]✗[/red] --into-vault needs a vault: set MEMO_VAULT_PATH or run "
+                "`memo init` and pick an Obsidian vault first."
+            )
+            sys.exit(1)
+        dst = (chosen_vault / AI_SUBDIR / "memory").resolve()
+    elif new_data_dir:
         dst = _Path(new_data_dir).resolve()
         chosen_vault = cfg.vault_path
     else:
@@ -746,12 +893,23 @@ def migrate_vault(
         n_copied += 1
     console.print(f"[green]✓[/green] copied {n_copied} files → {dst}")
 
-    # 4. Update config + drop stale DB.
-    cfg_path = write_config_file(data_dir=dst, vault_path=chosen_vault)
+    # 4. Snapshot the existing config (for --rollback), then update it.
+    #    The index DB is intentionally NOT dropped: it lives in state_dir
+    #    (unchanged) and rows are keyed on a stable id, so reindex updates
+    #    them in place and user-signal tables (feedback/access/health) survive.
+    existing_cfg = _resolve_config_path()
+    if existing_cfg.is_file():
+        shutil.copy2(existing_cfg, snapshot)
+        console.print(f"[green]✓[/green] config snapshot → {snapshot} (use --rollback to restore)")
+    if into_vault:
+        # data_dir is kept as-is; memory_dir derives from the vault when the
+        # toggle is on, so the vault layout is what reindex will read.
+        cfg_path = write_config_file(
+            data_dir=cfg.data_dir, vault_path=chosen_vault, memories_in_vault=True
+        )
+    else:
+        cfg_path = write_config_file(data_dir=dst, vault_path=chosen_vault)
     console.print(f"[green]✓[/green] config: {cfg_path}")
-    if cfg.db_path.is_file():
-        cfg.db_path.unlink()
-        console.print("[green]✓[/green] removed stale memvec.db")
 
     # 5. Reindex from new location. Re-build Config so from_env picks up
     # the freshly-written file (env vars / explicit kwargs cleared).

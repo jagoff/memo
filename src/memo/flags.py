@@ -158,6 +158,21 @@ _SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_RECALL_PRIORITY_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Daemon: enable priority lock. Recall requests jump the queue ahead of background batch embeds.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_MICRO_EMBEDDER_MODEL",
+        "str",
+        "",
+        "recall",
+        "Lightweight embedder model for cold-start fallback (e.g. 'sentence-transformers/all-MiniLM-L6-v2').",
+    ),
+    _spec(
         "MEMO_RECALL_LOCK_TIMEOUT_MS",
         "int",
         2500,
@@ -312,6 +327,13 @@ _SPECS: tuple[FlagSpec, ...] = (
         "entity",
         "GLiNER model id used when MEMO_ENTITY_GLINER=1.",
     ),
+    _spec(
+        "MEMO_GRAPH_RETRIEVAL_ENABLED",
+        "bool",
+        False,
+        "entity",
+        "Include knowledge-graph candidates in hybrid search. Memorias sharing entities with the query are fused via RRF.",
+    ),
     # session checkpoints / resume
     _spec(
         "MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."
@@ -412,6 +434,41 @@ _SPECS: tuple[FlagSpec, ...] = (
         "Cosine floor for the LLM-free fast lane in consolidation. Clusters at this threshold or above are merged as keep_latest without calling the LLM.",
         min_val=0.0,
         max_val=1.0,
+    ),
+    _spec(
+        "MEMO_MAINT_SLEEP_CYCLE_ENABLED",
+        "bool",
+        False,
+        "maintain",
+        "Enable autonomous background maintenance (sleep cycle). Runs synthesize/consolidate when the system is idle.",
+    ),
+    _spec(
+        "MEMO_MAINT_SLEEP_CYCLE_INTERVAL",
+        "int",
+        3600,
+        "maintain",
+        "Seconds between sleep cycle maintenance passes (default 1h).",
+    ),
+    _spec(
+        "MEMO_MAINT_IDLE_THRESHOLD_SECS",
+        "int",
+        300,
+        "maintain",
+        "Seconds of idle time (no recall/search activity) before a sleep cycle pass is eligible to start.",
+    ),
+    _spec(
+        "MEMO_SYNC_MEMFLOW_ENABLED",
+        "bool",
+        False,
+        "maintain",
+        "Eager Synthesis: automatically ingest .memflow session data during the sleep cycle.",
+    ),
+    _spec(
+        "MEMO_MEMFLOW_DIR",
+        "str",
+        ".memflow",
+        "maintain",
+        "Relative or absolute path to the .memflow directory (defaults to current dir/.memflow).",
     ),
     # transcript ingest
     _spec(
@@ -675,6 +732,30 @@ _SPECS: tuple[FlagSpec, ...] = (
         "Obsidian",
         "misc",
         "Vault subdir holding memo's system tree (AI/, Contacts/, Whatsapp/).",
+    ),
+    _spec(
+        "MEMO_MEMORIES_IN_VAULT",
+        "bool",
+        False,
+        "misc",
+        "Store curated memoria .md files INSIDE the Obsidian vault "
+        "(<vault>/<SYSTEM_DIR>/AI/memory) instead of data_dir, making the "
+        "vault the human-editable source of truth. Requires MEMO_VAULT_PATH. "
+        "sqlite stays a rebuildable index. Ingest already excludes AI/ and "
+        "id:-frontmatter files, so memorias are never double-ingested as "
+        "reference tier. Default off keeps existing installs untouched.",
+    ),
+    _spec(
+        "MEMO_SINGLE_DB",
+        "bool",
+        False,
+        "misc",
+        "Consolidate the sidecar sqlite stores (history, graph, contradictions, "
+        "crossref) into the single main DB file (memvec.db) instead of separate "
+        "*.db files. Each store keeps its own connection to the one file (WAL "
+        "allows it), so there's no shared-transaction risk. Run "
+        "`memo migrate --consolidate-db` once to merge existing sidecar files. "
+        "Default off keeps the historical multi-file layout.",
     ),
     # ROI accounting (memo roi)
     _spec(
