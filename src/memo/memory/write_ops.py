@@ -38,7 +38,9 @@ from memo.memory.record import (
     _normalise_tags,
     _now_iso,
     _slugify,
+    is_reference_noise,
 )
+from memo.tiers import REFERENCE_TYPES
 from memo.util import sha256_short as _sha256_short
 
 _TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -226,6 +228,17 @@ class _WriteOpsMixin(_MemoryBase):
                 f"`type_={type_!r}` not in valid set {sorted(_VALID_TYPES)}",
             )
 
+        # Reference-tier noise gate: reject near-empty bulk chunks with no
+        # heading/link (the class that accreted as dead index rows before the
+        # ingest filter existed). Durable tiers are exempt — short facts and
+        # preferences are legitimate. Mirrors the repo/vault ingest filter so
+        # this junk cannot re-enter through `memory_save`.
+        if type_ in REFERENCE_TYPES and is_reference_noise(content):
+            raise ValueError(
+                "reference content is near-empty noise (no heading/link, "
+                f"<{60} chars); refusing to index",
+            )
+
         if auto_derive:
             # Only fire the LLM if at least one field looks "default-y".
             # User-provided values always win.
@@ -406,26 +419,55 @@ class _WriteOpsMixin(_MemoryBase):
         # than the body's clinical paragraphs alone). Prepending also
         # protects the title from head-truncation when the body is
         # long — see embedder.py for the truncation rationale.
-        embedding = self.embedder.embed([self._compose_for_embed(title, content)])[0]
-        assert_valid_embedding(
-            embedding,
-            self.cfg.embedder_dims,
-            context=f"save id={record_id[:8]}",
-        )
-
-        self.store.upsert(
-            id_=record_id,
-            path=rel_path,
-            title=title,
-            type_=type_,
-            tags=norm_tags,
-            created=created_iso,
-            updated=now_iso,
-            body_hash=body_hash,
-            embedding=embedding,
-            extra=extra_for_store,
-            body_text=content,
-        )
+        #
+        # Authority contract: the `.md` is already on disk and IS the source
+        # of truth. If embed or the vector upsert fails here, we must NOT
+        # leave the memoria unrecoverable — we mark it embed-pending on disk
+        # (so `memo reindex` re-embeds it) and best-effort index it text-only
+        # so BM25 still finds it, then return the record. Never raise past a
+        # successful disk write.
+        try:
+            embedding = self.embedder.embed([self._compose_for_embed(title, content)])[0]
+            assert_valid_embedding(
+                embedding,
+                self.cfg.embedder_dims,
+                context=f"save id={record_id[:8]}",
+            )
+            self.store.upsert(
+                id_=record_id,
+                path=rel_path,
+                title=title,
+                type_=type_,
+                tags=norm_tags,
+                created=created_iso,
+                updated=now_iso,
+                body_hash=body_hash,
+                embedding=embedding,
+                extra=extra_for_store,
+                body_text=content,
+            )
+        except ValueError:
+            # A dims/norm validation failure signals a misconfigured embedder
+            # or model (e.g. wrong MEMO_EMBEDDER_DIMS) — fail loudly so it isn't
+            # masked by silently marking every save embed-pending.
+            raise
+        except Exception as exc:
+            return self._save_index_pending(
+                exc=exc,
+                record_id=record_id,
+                rel_path=rel_path,
+                abs_path=abs_path,
+                post=post,
+                title=title,
+                type_=type_,
+                norm_tags=norm_tags,
+                created_iso=created_iso,
+                now_iso=now_iso,
+                body_hash=body_hash,
+                content=content,
+                extra_for_store=extra_for_store,
+                skip_memflow_receipt=skip_memflow_receipt,
+            )
 
         self.history.log_save(
             ts=now_iso,
@@ -456,6 +498,86 @@ class _WriteOpsMixin(_MemoryBase):
                 self.cache.evict_if_needed()
             except Exception as exc:
                 _log.warning("cache eviction skipped after save: %s", exc)
+        return rec
+
+    def _save_index_pending(
+        self,
+        *,
+        exc: Exception,
+        record_id: str,
+        rel_path: str,
+        abs_path: Path,
+        post: frontmatter.Post,
+        title: str,
+        type_: str,
+        norm_tags: list[str],
+        created_iso: str,
+        now_iso: str,
+        body_hash: str,
+        content: str,
+        extra_for_store: dict[str, Any],
+        skip_memflow_receipt: bool,
+    ) -> MemoryRecord:
+        """Recovery path when indexing fails AFTER the canonical `.md` is on disk.
+
+        markdown-is-truth: a save that reached disk must never be lost just
+        because the embedder or vec upsert hiccuped. We (1) stamp
+        `_memo_embed_pending` into the on-disk frontmatter so `memo reindex`
+        re-embeds it, (2) best-effort index it text-only so BM25 still surfaces
+        it in the meantime, and (3) return the record. The exception is logged,
+        not raised.
+        """
+        _log.warning(
+            "save: indexing failed after .md write (id=%s, path=%s) — marking "
+            "embed-pending for reindex to replay: %s",
+            record_id[:8],
+            rel_path,
+            exc,
+        )
+        extra_for_store["_memo_embed_pending"] = True
+        # Re-stamp the on-disk frontmatter with the pending marker so a later
+        # `memo reindex` knows to re-embed. Best-effort: if even this rewrite
+        # fails, the original .md is still on disk and reindex picks it up by
+        # body_hash anyway.
+        with contextlib.suppress(Exception):
+            post["extra"] = extra_for_store
+            abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        # Best-effort text-only index so the memoria is at least BM25-searchable
+        # before the next reindex. A fully-down store leaves only the .md, which
+        # reindex will still recover.
+        with contextlib.suppress(Exception):
+            self.store.upsert_text_only(
+                id_=record_id,
+                path=rel_path,
+                title=title,
+                type_=type_,
+                tags=norm_tags,
+                created=created_iso,
+                updated=now_iso,
+                body_hash=body_hash,
+                extra=extra_for_store,
+                body_text=content,
+            )
+        with contextlib.suppress(Exception):
+            self.history.log_save(
+                ts=now_iso,
+                record_id=record_id,
+                title=title,
+                type_=type_,
+                provenance=_extract_provenance(extra_for_store),
+            )
+        rec = MemoryRecord(
+            id=record_id,
+            path=rel_path,
+            title=title,
+            type=type_,
+            tags=norm_tags,
+            created=created_iso,
+            updated=now_iso,
+            body=content,
+            extra=extra_for_store,
+        )
+        self._emit_save_receipt(rec, deferred=True, disabled=skip_memflow_receipt)
         return rec
 
     def _emit_save_receipt(
@@ -732,7 +854,16 @@ class _WriteOpsMixin(_MemoryBase):
     # -- delete -------------------------------------------------------------
 
     def delete(self, id_: str) -> bool:
-        """Remove from store + disk. Returns True if anything was deleted."""
+        """Remove from disk + store. Returns True if anything was deleted.
+
+        Authority contract (markdown is the source of truth): the canonical
+        `.md` is removed FIRST. If the file exists but we cannot delete it
+        (permission/IO error), we abort with `StorageError` and leave the
+        index untouched — wiping the index while the truth-bearing file
+        survives would desync the two. A *missing* file is fine: reference-tier
+        rows (vault-ingest) and already-gone files resolve to a non-existent
+        path, so we fall through and drop the orphaned index row.
+        """
         resolved = self.resolve_id(id_)
         if resolved is None:
             return False
@@ -740,10 +871,20 @@ class _WriteOpsMixin(_MemoryBase):
         r = self.store.get(id_)
         if not r:
             return False
+        # Step 1 (authoritative): remove the canonical .md. `missing_ok=True`
+        # makes a non-existent file a no-op; only a real OSError aborts.
+        md_path = self._resolve_existing(r["path"])
+        try:
+            md_path.unlink(missing_ok=True)
+        except OSError as exc:
+            from memo.errors import StorageError
+
+            raise StorageError(
+                f"delete refused: could not remove canonical .md {md_path}: {exc}. "
+                "Index left intact to stay consistent with the source of truth."
+            ) from exc
+        # Step 2: the truth is gone — now drop the derived index row + edges.
         existed = self.store.delete(id_)
-        # File deletion is best-effort; the store is the authoritative delete signal.
-        with contextlib.suppress(OSError):
-            self._resolve_existing(r["path"]).unlink(missing_ok=True)
         if existed:
             self.history.log_delete(
                 ts=_now_iso(),

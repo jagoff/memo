@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import os
 from typing import Any
 
 import frontmatter
@@ -57,11 +58,36 @@ class _MaintainOpsMixin(_MemoryBase):
         query = _build_freeze_query(title=title, content=content, tags=tags)
         if not query:
             return
+        # Fail-closed only when the env knob is explicitly set: an unreachable
+        # synapse then refuses the write instead of silently disarming the
+        # freeze gate. Without the knob (or when freeze was enabled only via the
+        # per-save kwarg) we stay permissive — synapse outages mustn't block
+        # memo's standalone writes. A missing binary is handled above and is
+        # always permissive regardless of this flag.
+        fail_closed = os.environ.get("MEMO_RESPECT_SYNAPSE_FREEZE") == "1"
         try:
             conflicts = synapse_client.list_conflicts(
                 query,
                 trace_id=trace_id,
+                strict=fail_closed,
             )
+        except synapse_client.SynapseUnavailable as exc:
+            if fail_closed:
+                raise WriteRefused(
+                    {
+                        "conflict_id": "synapse-unreachable",
+                        "summary": (
+                            f"Synapse freeze-check could not complete ({exc}); "
+                            f"refusing under MEMO_RESPECT_SYNAPSE_FREEZE=1"
+                        ),
+                        "freeze_write": True,
+                        "lifecycle_state": "unknown",
+                        "severity": "unknown",
+                        "synapse_unreachable": True,
+                    }
+                ) from exc
+            _log.debug("synapse freeze-check unavailable (permissive): %s", exc)
+            return
         except Exception as exc:  # pragma: no cover - subprocess noise
             _log.debug("synapse freeze-check failed: %s", exc)
             return
@@ -121,7 +147,40 @@ class _MaintainOpsMixin(_MemoryBase):
 
     # -- reindex / gc -------------------------------------------------------
 
-    def reindex(self, *, force: bool = False) -> dict[str, int]:
+    def _embed_cached(self, text: str, *, ctx: str) -> list[float]:
+        """Embed `text`, reusing a content-addressed cache to avoid redundant
+        forward passes on `force`/`rebuild` reindexes of unchanged content.
+
+        Keyed on `(embedder_model, embedder_dims, sha256(text))` — identical
+        content under the same model always maps to the same vector, so a hit
+        is always correct. A model/dims swap changes the key, forcing a fresh
+        embed (the right behaviour). The cache survives `clear_memoria_index()`
+        (it lives in `repo_embedding_cache`, untouched by the rebuild), so a
+        full rebuild after the cache is warm issues zero embedder calls.
+        """
+        model = self.cfg.embedder_model
+        dims = self.cfg.embedder_dims
+        input_hash = _sha256_short(text)
+        cached = self.store.get_repo_embedding_cache(
+            model=model, dims=dims, input_hashes=[input_hash]
+        )
+        hit = cached.get(input_hash)
+        if hit is not None:
+            return hit
+        emb = self.embedder.embed([text])[0]
+        assert_valid_embedding(emb, dims, context=ctx)
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self.store.upsert_repo_embedding_cache(
+                model=model,
+                dims=dims,
+                embeddings=[(input_hash, list(emb))],
+                created_at=_now_iso(),
+            )
+        return emb
+
+    def reindex(self, *, force: bool = False, rebuild: bool = False) -> dict[str, int]:
         """Scan the memory dir, re-embed entries whose on-disk body
         diverged from `body_hash`. Picks up edits the user made in
         Obsidian directly. Also indexes any `.md` with a valid `id` in
@@ -133,12 +192,27 @@ class _MaintainOpsMixin(_MemoryBase):
         change to `_compose_for_embed`, or to refresh the index after
         a corruption/incident.
 
+        With `rebuild=True`, first TRUNCATES the markdown-derivable tables
+        (`meta`/`vec`/`fts`) and replays the whole index from disk — the
+        markdown-is-truth reset. User-signal tables (`access`,
+        `memory_health`, `source_feedback*`) are preserved and re-join on the
+        stable `id`, so a rebuild never destroys feedback/telemetry. Implies
+        `force`. Embedding reuse (see `_embed_cached`) keeps it cheap once the
+        content cache is warm.
+
         Returns counts: `{"checked", "reindexed", "added", "skipped"}`.
         """
         memory_root = self.cfg.memory_dir
         checked = reindexed = added = skipped = 0
         if not memory_root.is_dir():
             return {"checked": 0, "reindexed": 0, "added": 0, "skipped": 0}
+
+        if rebuild:
+            # Wipe only the derivable tables; signal tables survive and re-join
+            # on id. Every file then takes the `existing is None` add path.
+            cleared = self.store.clear_memoria_index()
+            _log.info("reindex(rebuild): cleared %d derivable rows, replaying from disk", cleared)
+            force = True
 
         for md_path in sorted(memory_root.rglob("*.md")):
             checked += 1
@@ -195,9 +269,8 @@ class _MaintainOpsMixin(_MemoryBase):
                         md_id[:8],
                     )
                     self.store.delete(stale["id"])
-                emb = self.embedder.embed([self._compose_for_embed(title, body)])[0]
-                assert_valid_embedding(
-                    emb, self.cfg.embedder_dims, context=f"reindex add {md_id[:8]}"
+                emb = self._embed_cached(
+                    self._compose_for_embed(title, body), ctx=f"reindex add {md_id[:8]}"
                 )
                 self.store.upsert(
                     id_=md_id,
@@ -219,9 +292,8 @@ class _MaintainOpsMixin(_MemoryBase):
                 if isinstance(extra, dict):
                     extra = dict(extra)
                     extra.pop("_memo_embed_pending", None)
-                emb = self.embedder.embed([self._compose_for_embed(title, body)])[0]
-                assert_valid_embedding(
-                    emb, self.cfg.embedder_dims, context=f"reindex update {md_id[:8]}"
+                emb = self._embed_cached(
+                    self._compose_for_embed(title, body), ctx=f"reindex update {md_id[:8]}"
                 )
                 self.store.upsert(
                     id_=md_id,

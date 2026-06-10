@@ -13,9 +13,16 @@ Resolution precedence (highest first) for storage paths:
 `data_dir` and `vault_path` serve **different** roles:
 
 - `data_dir` (always set): the directory where memo's curated memorias
-  (the `.md` files this tool creates) live. Source of record.
+  (the `.md` files this tool creates) live by default. Source of record.
 - `vault_path` (optional): an Obsidian vault for the cross-vault
   `memo ingest` command. Non-Obsidian users leave it unset.
+
+The `.md` files are the source of truth; sqlite is a rebuildable index
+(`memo reindex --rebuild`). When `memories_in_vault` is set (and a
+`vault_path` exists), `memory_dir` points INTO the vault
+(`<vault>/<SYSTEM_DIR>/AI/memory`) so the human-editable Obsidian vault is
+canonical. When `single_db` is set, the sidecar `*_db` path properties
+collapse onto `db_path` (one sqlite file).
 
 Pydantic v2 used for type coercion + boundary validation.
 """
@@ -28,6 +35,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from memo.flags import flag_bool, flag_str
+
 # Default `data_dir` — visible in Finder, iCloud-syncable. The picker
 # in `memo init` lets users pick a different location (Obsidian vault,
 # custom path) on first run.
@@ -37,7 +46,10 @@ _DEFAULT_DATA_DIR = Path.home() / "Documents" / "memo"
 # subtree and the contacts notes live under `<SYSTEM_DIR>/...` inside an
 # Obsidian vault. Rename the whole subtree via MEMO_VAULT_SYSTEM_DIR or by
 # editing the one default below — don't scatter the folder name as literals.
-SYSTEM_DIR = os.environ.get("MEMO_VAULT_SYSTEM_DIR", "Obsidian")
+# Resolved through the flags registry (not raw os.environ) so `memo config
+# validate` sees it and the default lives in one place; still import-time, so
+# the constant reflects the value at first import of this module.
+SYSTEM_DIR = flag_str("MEMO_VAULT_SYSTEM_DIR") or "Obsidian"
 AI_SUBDIR = f"{SYSTEM_DIR}/AI"
 CONTACTS_SUBDIR = f"{SYSTEM_DIR}/Contacts"
 
@@ -118,6 +130,26 @@ class Config(BaseModel):
     state_dir: Path = Field(
         default=_DEFAULT_STATE_DIR,
         description="Where sqlite-vec DB + transient state live. Created if missing.",
+    )
+    memories_in_vault: bool = Field(
+        default=False,
+        description=(
+            "When True AND `vault_path` is set, curated memoria `.md` files live "
+            "INSIDE the Obsidian vault (`<vault>/<SYSTEM_DIR>/AI/memory`) rather "
+            "than in `data_dir` — the vault becomes the human-editable source of "
+            "truth and sqlite a rebuildable index. Toggled via "
+            "`MEMO_MEMORIES_IN_VAULT`. Ignored when `vault_path` is unset."
+        ),
+    )
+    single_db: bool = Field(
+        default=False,
+        description=(
+            "When True, the sidecar stores (history/graph/contradictions/"
+            "crossref) live in the single main DB file (`memvec.db`) instead of "
+            "separate `*.db` files. The `*_db` path properties collapse onto "
+            "`db_path`. Toggled via `MEMO_SINGLE_DB`; run `memo migrate "
+            "--consolidate-db` to merge any existing sidecar files first."
+        ),
     )
 
     # ── MLX models ───────────────────────────────────────────────────────
@@ -244,12 +276,42 @@ class Config(BaseModel):
     # ── Derived paths ────────────────────────────────────────────────────
 
     @property
+    def device_id(self) -> str:
+        """Unique ID for this device, persisted in state_dir."""
+        id_path = self.state_dir / ".device_id"
+        if id_path.is_file():
+            try:
+                return id_path.read_text(encoding="utf-8").strip()
+            except Exception:
+                pass
+        
+        import uuid
+        new_id = str(uuid.uuid4()).replace("-", "")[:12]
+        try:
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            id_path.write_text(new_id, encoding="utf-8")
+        except Exception:
+            # If we can't write, return a transient ID
+            return f"transient-{new_id}"
+        return new_id
+
+    @property
     def memory_dir(self) -> Path:
         """Absolute path of the directory holding memoria `.md` files.
 
-        Always equal to `data_dir`. The property exists so callers don't
-        need to track which field is authoritative as the schema evolves.
+        Default: equal to `data_dir`. When `memories_in_vault` is on AND a
+        `vault_path` is configured, memorias instead live under
+        `<vault>/<SYSTEM_DIR>/AI/memory` so the Obsidian vault is the
+        human-editable source of truth (git/iCloud synced). The property
+        exists so callers don't track which field is authoritative.
+
+        Note: `AI_SUBDIR` already includes `SYSTEM_DIR` (e.g. `Obsidian/AI`),
+        so this resolves to `<vault>/Obsidian/AI/memory`. `memo ingest`
+        excludes both `AI/` and any `id:`-frontmatter file, so memorias
+        placed here are never re-ingested as reference-tier rows.
         """
+        if self.memories_in_vault and self.vault_path is not None:
+            return self.vault_path / AI_SUBDIR / "memory"
         return self.data_dir
 
     @property
@@ -259,23 +321,27 @@ class Config(BaseModel):
 
     @property
     def history_db(self) -> Path:
-        """History/audit DB (separate file so vec writes don't share WAL)."""
-        return self.state_dir / "history.db"
+        """History/audit DB. Separate file by default (vec writes don't share
+        its WAL); collapses onto `db_path` when `single_db` is set."""
+        return self.db_path if self.single_db else self.state_dir / "history.db"
 
     @property
     def graph_db(self) -> Path:
-        """Knowledge-graph DB (entities + entity_memoria edges)."""
-        return self.state_dir / "graph.db"
+        """Knowledge-graph DB (entities + entity_memoria edges).
+        Collapses onto `db_path` when `single_db` is set."""
+        return self.db_path if self.single_db else self.state_dir / "graph.db"
 
     @property
     def crossref_db(self) -> Path:
-        """Cross-reference DB (wikilinks + backlinks)."""
-        return self.state_dir / "crossref.db"
+        """Cross-reference DB (wikilinks + backlinks).
+        Collapses onto `db_path` when `single_db` is set."""
+        return self.db_path if self.single_db else self.state_dir / "crossref.db"
 
     @property
     def contradictions_db(self) -> Path:
-        """Sidecar DB for persisted contradiction pairs + triage status."""
-        return self.state_dir / "contradictions.db"
+        """Sidecar DB for persisted contradiction pairs + triage status.
+        Collapses onto `db_path` when `single_db` is set."""
+        return self.db_path if self.single_db else self.state_dir / "contradictions.db"
 
     # ── Construction ─────────────────────────────────────────────────────
 
@@ -302,6 +368,10 @@ class Config(BaseModel):
         for fkey in ("data_dir", "vault_path", "memory_subdir", "state_dir"):
             if storage.get(fkey):
                 kwargs[fkey] = storage[fkey]
+        if storage.get("memories_in_vault") is not None:
+            kwargs["memories_in_vault"] = bool(storage["memories_in_vault"])
+        if storage.get("single_db") is not None:
+            kwargs["single_db"] = bool(storage["single_db"])
 
         # Step 2: model profile defaults. Individual env vars below
         # intentionally override profile choices.
@@ -347,6 +417,14 @@ class Config(BaseModel):
                 continue
             kwargs[field] = val
 
+        # Behavioral toggle from the flags registry: parse through flag_bool so
+        # truthy spellings (1/true/yes/on) match `memo config validate`. Env
+        # overrides any TOML value set above.
+        if os.environ.get("MEMO_MEMORIES_IN_VAULT"):
+            kwargs["memories_in_vault"] = flag_bool("MEMO_MEMORIES_IN_VAULT")
+        if os.environ.get("MEMO_SINGLE_DB"):
+            kwargs["single_db"] = flag_bool("MEMO_SINGLE_DB")
+
         # Step 4: legacy back-compat — if data_dir is still unset BUT the
         # legacy pair (vault_path + memory_subdir) is set, derive it.
         # This keeps pre-`memo init` installs working unchanged.
@@ -374,3 +452,5 @@ class Config(BaseModel):
         """
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        # When memories live in the vault, memory_dir != data_dir — create it too.
+        self.memory_dir.mkdir(parents=True, exist_ok=True)

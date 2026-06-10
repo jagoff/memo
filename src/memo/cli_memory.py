@@ -244,17 +244,26 @@ def update(
     help="Re-embed ALL indexed entries regardless of body_hash. "
     "Use after embedder swap or composition change.",
 )
+@click.option(
+    "--rebuild",
+    is_flag=True,
+    help="Truncate the markdown-derivable index (meta/vec/fts) and replay the "
+    "whole thing from disk — the markdown-is-truth reset. Preserves feedback / "
+    "access / health signal. Prefer this over `rm memvec.db`.",
+)
 @click.option("--json", "as_json", is_flag=True)
-def reindex(force: bool, as_json: bool) -> None:
+def reindex(force: bool, rebuild: bool, as_json: bool) -> None:
     """Re-scan memory dir, re-embed entries with body_hash mismatch.
 
     Run after editing memory `.md` files directly in Obsidian, or after
     restoring memories from a backup. Use `--force` to re-embed every
-    entry (slower; needed after model/composition changes).
+    entry (slower; needed after model/composition changes). Use `--rebuild`
+    to drop and replay the whole index from the `.md` source of truth
+    without losing user-signal data — the safe alternative to deleting the DB.
     """
 
     mem = _get_memory(Config.from_env())
-    counts = mem.reindex(force=force)
+    counts = mem.reindex(force=force, rebuild=rebuild)
     if as_json:
         click.echo(json.dumps(counts, indent=2))
         return

@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -95,6 +97,7 @@ from memo.cli_runtime import (
     migrate_vault,
     prewarm,
     self_update,
+    sleep_cycle,
     uninstall_watcher_cmd,
     watch,
 )
@@ -110,10 +113,34 @@ from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_version import version_group
 from memo.cli_viz import mapa_cmd
 from memo.config import Config
+from memo.flags import flag_bool, flag_float, flag_int, flag_str
 
 # Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
 # `run_picker` itself defers the heavy `questionary` import until called.
 from memo.setup import run_picker, write_config_file
+
+_log = logging.getLogger("memo.cli")
+
+# Adaptive-context intent patterns for the recall hook. Compiled once at import
+# (not rebuilt per prompt) — they don't depend on runtime state. Each entry is
+# (name, pattern, memory-types-to-boost). First match wins.
+_RECALL_CONTEXTS: tuple[tuple[str, re.Pattern[str], set[str]], ...] = (
+    (
+        "code",
+        re.compile(r"\b(implement|fix|debug|test|refactor|deploy|build|install)\b", re.I),
+        {"decision", "bug", "preference"},
+    ),
+    (
+        "decision",
+        re.compile(r"\b(should i|which|choose|decide|recommend|tradeoff|vs\.?|versus)\b", re.I),
+        {"decision", "fact"},
+    ),
+    (
+        "write",
+        re.compile(r"\b(write|document|explain|describe|summarize|draft)\b", re.I),
+        {"note", "fact", "reference"},
+    ),
+)
 
 
 @click.group()
@@ -148,12 +175,14 @@ cli.add_command(historia_cmd)
 cli.add_command(briefing)
 cli.add_command(init_cmd)
 cli.add_command(migrate_vault)
+cli.add_command(migrate_vault, name="migrate")  # alias
 cli.add_command(mcp_command)
 cli.add_command(install_slash)
 cli.add_command(self_update)
 cli.add_command(watch)
 cli.add_command(install_watcher)
 cli.add_command(uninstall_watcher_cmd)
+cli.add_command(sleep_cycle)
 cli.add_command(prewarm)
 cli.add_command(install_shell_wrapper)
 cli.add_command(config_group)
@@ -594,7 +623,7 @@ def recall_hook() -> None:
 
     # Always exit 0 — hooks must not block Claude Code on memo failures.
     def _bail(reason: str = "") -> None:
-        if reason and os.environ.get("MEMO_RECALL_DEBUG") == "1":
+        if reason and flag_bool("MEMO_RECALL_DEBUG"):
             print(f"# memo recall-hook: {reason}", file=_sys.stderr)
         # Always append to recall.log so `memo logs` surfaces bails even when
         # MEMO_RECALL_DEBUG is unset. Best-effort; swallows internal errors.
@@ -609,12 +638,12 @@ def recall_hook() -> None:
                     via="bail",
                     reason=reason,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("bail recall-log write failed: %s", exc)
         print("{}")
         _sys.exit(0)
 
-    if os.environ.get("MEMO_RECALL_DISABLE") == "1":
+    if flag_bool("MEMO_RECALL_DISABLE"):
         _bail("disabled via MEMO_RECALL_DISABLE")
         return
 
@@ -630,7 +659,7 @@ def recall_hook() -> None:
         return
 
     prompt = (payload.get("prompt") or "").strip()
-    min_chars = int(os.environ.get("MEMO_RECALL_MIN_PROMPT_CHARS", "12"))
+    min_chars = flag_int("MEMO_RECALL_MIN_PROMPT_CHARS") or 12
     if len(prompt) < min_chars:
         _bail(f"prompt too short ({len(prompt)} < {min_chars})")
         return
@@ -638,7 +667,7 @@ def recall_hook() -> None:
     # Skip slash commands by default — the user is invoking another command,
     # injecting recall context would be noise. Override with
     # MEMO_RECALL_SKIP_SLASH=0 if you want recall on /memo etc.
-    if os.environ.get("MEMO_RECALL_SKIP_SLASH", "1") == "1" and prompt.startswith("/"):
+    if flag_bool("MEMO_RECALL_SKIP_SLASH") and prompt.startswith("/"):
         _bail("slash command, skip recall")
         return
 
@@ -647,9 +676,7 @@ def recall_hook() -> None:
     # SAME turn label into the session snapshot (last_recall_turn) so Stop reads
     # it back race-free. client names the front-end for per-client value.
     _sid = (payload.get("session_id") or "").strip() or None
-    from memo.flags import flag_str as _flag_str
-
-    _client = _flag_str("MEMO_RECALL_CLIENT")
+    _client = flag_str("MEMO_RECALL_CLIENT")
     _turn: int | None = None
     if _sid:
         try:
@@ -666,7 +693,6 @@ def recall_hook() -> None:
     # format as the subprocess path, so we can print-and-exit immediately.
     _t0 = time.time()
     try:
-        from memo.flags import flag_int
         from memo.recall_server import connect_and_recall
 
         # Wait for the warm-but-slow daemon (the 3-6s tail) instead of
@@ -685,7 +711,7 @@ def recall_hook() -> None:
         )
         if _daemon_result is not None:
             _latency_ms = int((time.time() - _t0) * 1000)
-            if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+            if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: daemon hit ({_latency_ms} ms)", file=_sys.stderr)
             # Log to recall.log (daemon path already logs internally, but
             # update the 'via' field for hook-log observability)
@@ -705,19 +731,20 @@ def recall_hook() -> None:
                 via="daemon_error",
                 error=f"{type(_daemon_exc).__name__}: {_daemon_exc}",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug("daemon-error recall-log write failed: %s", exc)
 
-    from memo.flags import flag_bool
-    from memo.flags import flag_int as _flag_int
-
-    top_k = int(os.environ.get("MEMO_RECALL_TOP_K", "3"))
-    min_sim = float(os.environ.get("MEMO_RECALL_MIN_SIM", "0.5"))
-    # Source of truth is the flags registry (default 400) — not a hardcoded
-    # fallback that silently diverged from it.
-    body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
-    token_budget = int(os.environ.get("MEMO_RECALL_TOKEN_BUDGET", "0") or 0)
-    project_boost = float(os.environ.get("MEMO_RECALL_PROJECT_BOOST", "0.15"))
+    # All recall params come from the flags registry — no hardcoded fallbacks
+    # that can silently diverge from it. Flags where 0 is a meaningful user
+    # value (min_sim floor off, project boost off) use an explicit None check
+    # so the registered default only applies when the flag is unset.
+    top_k = flag_int("MEMO_RECALL_TOP_K") or 3
+    _ms = flag_float("MEMO_RECALL_MIN_SIM")
+    min_sim = 0.5 if _ms is None else _ms
+    body_chars = flag_int("MEMO_RECALL_BODY_CHARS") or 400
+    token_budget = flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
+    _pb = flag_float("MEMO_RECALL_PROJECT_BOOST")
+    project_boost = 0.15 if _pb is None else _pb
 
     # T11 — session mode adjusts recall aggressiveness via MEMFLOW_SESSION_MODE.
     # focus: tight (fewer, higher-confidence hits only)
@@ -757,14 +784,14 @@ def recall_hook() -> None:
     #   for `memo ask`/chat, not auto-recall.
     # - `bm25`: keyword-only, useful for queries with literal tag
     #   names or filenames where the embedder under-recalls.
-    mode = os.environ.get("MEMO_RECALL_MODE", "vec")
+    mode = flag_str("MEMO_RECALL_MODE") or "vec"
     if mode == "hybrid":
         # Hook latency budget is tight: cap the rerank pool unless the
         # user explicitly set MEMO_RERANK_INPUT_K elsewhere. Setdefault
         # respects an upstream override (CI bench, custom shell rc).
         os.environ.setdefault(
             "MEMO_RERANK_INPUT_K",
-            os.environ.get("MEMO_RECALL_RERANK_INPUT_K", "10"),
+            str(flag_int("MEMO_RECALL_RERANK_INPUT_K") or 10),
         )
 
     # Warm-signal check: if prewarm hasn't run recently and the requested
@@ -780,11 +807,11 @@ def recall_hook() -> None:
                 _signal.exists() and (_time_mod.time() - float(_signal.read_text().strip())) < 3600
             )
             if not _warm:
-                if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+                if flag_bool("MEMO_RECALL_DEBUG"):
                     print("# memo recall-hook: cold start — downgrading to bm25", file=_sys.stderr)
                 mode = "bm25"
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug("warm-signal read failed, staying in %s mode: %s", mode, exc)
 
     # Widen the pool when a project boost is active — we need enough
     # candidates so that off-project hits can be re-ranked below
@@ -806,13 +833,17 @@ def recall_hook() -> None:
     try:
         from memo.memory import Memory
 
-        mem = Memory(Config.from_env())
+        # Reuse the Config built at the top of the hook — re-running
+        # Config.from_env() here would reopen sqlite and re-init the schema
+        # (lock acquisition + DDL check) a second time on the hot path.
+        mem = Memory(cfg)
     except Exception as exc:
         _bail(f"search failed: {exc}")
         return
 
-    min_body_chars = int(os.environ.get("MEMO_RECALL_MIN_BODY_CHARS", "40"))
-    staleness_days = float(os.environ.get("MEMO_RECALL_STALENESS_DAYS", "0") or 0)
+    _mbc = flag_int("MEMO_RECALL_MIN_BODY_CHARS")
+    min_body_chars = 40 if _mbc is None else _mbc
+    staleness_days = flag_int("MEMO_RECALL_STALENESS_DAYS") or 0
 
     def _search_filter(query_text: str) -> list:
         """Search + project-boost + floor + stub/staleness filters + dedup.
@@ -825,7 +856,7 @@ def recall_hook() -> None:
                 query_text, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
             )
         except Exception as exc:
-            if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+            if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: search failed: {exc}", file=_sys.stderr)
             return []
         # Apply project boost — additive on the raw score, then re-sort.
@@ -885,7 +916,7 @@ def recall_hook() -> None:
         _ctx = _session_context(mem, exclude_types)
         if _ctx:
             relevant = _search_filter(f"{_ctx}\n{prompt}")
-            if relevant and os.environ.get("MEMO_RECALL_DEBUG") == "1":
+            if relevant and flag_bool("MEMO_RECALL_DEBUG"):
                 print(
                     f"# memo recall-hook: query expansion recovered {len(relevant)} hits",
                     file=_sys.stderr,
@@ -896,27 +927,6 @@ def recall_hook() -> None:
     # decision queries surface decision/fact types, code queries surface
     # bug/preference types, etc. Gated by MEMO_RECALL_ADAPTIVE_CONTEXT.
     if relevant and flag_bool("MEMO_RECALL_ADAPTIVE_CONTEXT"):
-        import re as _re
-
-        _RECALL_CONTEXTS = [
-            (
-                "code",
-                _re.compile(r"\b(implement|fix|debug|test|refactor|deploy|build|install)\b", _re.I),
-                {"decision", "bug", "preference"},
-            ),
-            (
-                "decision",
-                _re.compile(
-                    r"\b(should i|which|choose|decide|recommend|tradeoff|vs\.?|versus)\b", _re.I
-                ),
-                {"decision", "fact"},
-            ),
-            (
-                "write",
-                _re.compile(r"\b(write|document|explain|describe|summarize|draft)\b", _re.I),
-                {"note", "fact", "reference"},
-            ),
-        ]
         _boost_types: set[str] = set()
         for _ctx_name, _ctx_pat, _ctx_types in _RECALL_CONTEXTS:
             if _ctx_pat.search(prompt):
@@ -955,8 +965,8 @@ def recall_hook() -> None:
             turn=_turn,
             client=_client,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.debug("subprocess recall-log write failed: %s", exc)
 
     if not relevant:
         _bail(f"no hits above min_sim={min_sim}")
@@ -1019,7 +1029,7 @@ def recall_hook() -> None:
             break
 
     lines.append(footer)
-    if token_budget > 0 and os.environ.get("MEMO_RECALL_DEBUG") == "1":
+    if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
         approx = _est_tokens("\n".join(lines))
         print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=_sys.stderr)
 

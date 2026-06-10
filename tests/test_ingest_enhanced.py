@@ -154,6 +154,54 @@ def test_ingest_exclude_glob_double_star(tmp_path: Path, runner_env):
     assert not any("Whatsapp" in p for p in paths), f"whatsapp subtree leaked: {paths}"
 
 
+def test_ingest_never_double_indexes_vault_memorias(tmp_path: Path, runner_env):
+    """With MEMO_MEMORIES_IN_VAULT, curated memorias live at
+    `<vault>/Obsidian/AI/memory/*.md`. Ingesting that same vault must NOT
+    pick them up as reference-tier rows — guarded on two axes: the
+    `Obsidian/AI` path exclusion AND the `id:`-frontmatter skip."""
+    vault = _build_vault(tmp_path / "vault", {
+        "01-Projects/active.md": "# Active\n\nIndexed note.",
+        # A curated memoria as written by save() under the vault layout.
+        "Obsidian/AI/memory/2026/06/a-decision.md": (
+            "---\nid: abc123def456\ntitle: A Decision\ntype: decision\n"
+            "tags: [project]\n---\n\nWe chose sqlite as the rebuildable index."
+        ),
+    })
+    result = CliRunner().invoke(
+        cli, ["ingest", str(vault), "--name", "v", "--no-chunk", "--no-include-pdf",
+              "--no-include-orphan-images", "--no-ocr"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+
+    paths = [r["path"] for r in _all_rows(_open_store(runner_env))]
+    assert any("active.md" in p for p in paths), f"user note missing: {paths}"
+    assert not any("AI/memory" in p for p in paths), f"memoria double-ingested: {paths}"
+    # Only the user note was added; the memoria was excluded at the walk by the
+    # `Obsidian/AI` path prefix (defense-in-depth ahead of the id: skip).
+    assert "added=1" in result.output, result.output
+
+
+def test_ingest_skips_id_frontmatter_outside_ai_subtree(tmp_path: Path, runner_env):
+    """Second line of defense: even a memoria-shaped file OUTSIDE the excluded
+    `AI/` subtree is skipped purely on its `id:` frontmatter, never indexed."""
+    vault = _build_vault(tmp_path / "vault", {
+        "01-Projects/active.md": "# Active\n\nIndexed note.",
+        # id: frontmatter but NOT under AI/ — only the id: skip protects it.
+        "01-Projects/stray-memoria.md": (
+            "---\nid: deadbeef0001\ntitle: Stray\ntype: note\n---\n\nBody text here."
+        ),
+    })
+    result = CliRunner().invoke(
+        cli, ["ingest", str(vault), "--name", "v", "--no-chunk", "--no-include-pdf",
+              "--no-include-orphan-images", "--no-ocr"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "skipped_id=1" in result.output, result.output
+    assert "added=1" in result.output, result.output
+
+
 def test_ingest_excludes_archive_by_default(tmp_path: Path, runner_env):
     """Archive folders are excluded WITHOUT a `.memoignore` — the exclusion is
     a hardcoded default so it can't be lost by deleting the per-vault file."""

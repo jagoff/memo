@@ -20,13 +20,24 @@ from memo.config import MODEL_PROFILES, Config
 
 
 def _managed_sqlite_dbs(cfg: Config) -> list[tuple[str, Path]]:
-    return [
+    candidates = [
         ("memvec", cfg.db_path),
         ("history", cfg.history_db),
         ("graph", cfg.graph_db),
         ("crossref", cfg.crossref_db),
         ("contradictions", cfg.contradictions_db),
     ]
+    # Under single_db the sidecar paths collapse onto db_path — list each
+    # physical file once so health output isn't five identical rows.
+    seen: set[str] = set()
+    out: list[tuple[str, Path]] = []
+    for label, path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((label, path))
+    return out
 
 
 def _sqlite_table_exists(conn: Any, table: str) -> bool:

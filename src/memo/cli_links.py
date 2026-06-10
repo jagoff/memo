@@ -163,8 +163,9 @@ def links_reindex() -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    # Delete existing index
-    cfg.crossref_db.unlink(missing_ok=True)
+    # Clear existing index (truncate, not unlink — the crossref tables may
+    # share the main DB file under single_db, where unlinking would nuke it).
+    mem.crossref.reset()
 
     # Re-index all memorias
     all_records = mem.list(limit=10000)

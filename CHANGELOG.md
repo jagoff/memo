@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Obsidian-as-source-of-truth storage model.** The `.md` files are now treated
+  as canonical and sqlite as a rebuildable index. `MEMO_MEMORIES_IN_VAULT=1`
+  (with `MEMO_VAULT_PATH`) stores memorias under `<vault>/<SYSTEM_DIR>/AI/memory`
+  so the human-editable vault is the source of truth; ingest already excludes
+  that subtree so they're never double-indexed. `memo migrate --into-vault`
+  moves an existing install there (non-destructive, `--rollback` restores the
+  prior config).
+- `memo reindex --rebuild` truncates only the markdown-derivable tables
+  (`meta`/`vec`/`fts`) and replays from disk while **preserving** user-signal
+  data (`access`, `memory_health`, `source_feedback*`) keyed on the stable id —
+  the safe alternative to `rm memvec.db`. A content-addressed embedding cache
+  makes a warm rebuild issue ~zero embedder calls.
+- `MEMO_SINGLE_DB=1` consolidates the sidecar stores
+  (history/graph/contradictions/crossref) into the single `memvec.db` file.
+  `memo migrate --consolidate-db` merges existing `*.db` files (renames them
+  `*.db.bak`, idempotent).
+
+### Changed
+
+- `delete()` now removes the canonical `.md` first and aborts (`StorageError`)
+  if it can't, so the index never outlives its source file. `save()` no longer
+  loses a memoria when indexing fails after the disk write — it marks the file
+  embed-pending for `reindex` to replay.
+- **Fixed** a data-loss bug: `memo migrate-vault` previously deleted `memvec.db`,
+  silently wiping feedback/access/health signal. It now preserves the DB and
+  reindexes in place.
+
 ## [0.8.0] - 2026-05-21
 
 ### Changed

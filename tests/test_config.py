@@ -137,6 +137,87 @@ def test_ensure_dirs_creates_state_and_data(tmp_path: Path):
     assert cfg.data_dir.is_dir()
 
 
+def test_memories_in_vault_derives_memory_dir(tmp_path: Path):
+    """When the toggle is on AND a vault is set, memorias live under the vault."""
+    cfg = Config(
+        data_dir=tmp_path / "d",
+        state_dir=tmp_path / "s",
+        vault_path=tmp_path / "vault",
+        memories_in_vault=True,
+    )
+    # AI_SUBDIR already includes SYSTEM_DIR ("Obsidian/AI").
+    assert cfg.memory_dir == (tmp_path / "vault" / "Obsidian" / "AI" / "memory").resolve()
+    assert cfg.memory_dir != cfg.data_dir
+
+
+def test_memories_in_vault_without_vault_falls_back_to_data_dir(tmp_path: Path):
+    """The toggle is inert without a vault_path — no crash, no vault path."""
+    cfg = Config(
+        data_dir=tmp_path / "d", state_dir=tmp_path / "s", memories_in_vault=True
+    )
+    assert cfg.memory_dir == cfg.data_dir
+
+
+def test_memories_in_vault_default_off(tmp_path: Path):
+    """Default keeps existing installs on data_dir even with a vault configured."""
+    cfg = Config(
+        data_dir=tmp_path / "d", state_dir=tmp_path / "s", vault_path=tmp_path / "vault"
+    )
+    assert cfg.memories_in_vault is False
+    assert cfg.memory_dir == cfg.data_dir
+
+
+def test_memories_in_vault_from_env(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "none.toml"))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_path / "vault"))
+    monkeypatch.setenv("MEMO_MEMORIES_IN_VAULT", "1")
+    cfg = Config.from_env()
+    assert cfg.memories_in_vault is True
+    assert cfg.memory_dir == (tmp_path / "vault" / "Obsidian" / "AI" / "memory").resolve()
+
+
+def test_single_db_default_keeps_separate_sidecar_files(tmp_path: Path):
+    cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "s")
+    assert cfg.single_db is False
+    assert cfg.history_db == cfg.state_dir / "history.db"
+    assert cfg.graph_db == cfg.state_dir / "graph.db"
+    assert cfg.crossref_db == cfg.state_dir / "crossref.db"
+    assert cfg.contradictions_db == cfg.state_dir / "contradictions.db"
+    assert cfg.history_db != cfg.db_path
+
+
+def test_single_db_collapses_sidecars_onto_db_path(tmp_path: Path):
+    cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "s", single_db=True)
+    assert cfg.history_db == cfg.db_path
+    assert cfg.graph_db == cfg.db_path
+    assert cfg.crossref_db == cfg.db_path
+    assert cfg.contradictions_db == cfg.db_path
+
+
+def test_single_db_from_env(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "none.toml"))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
+    monkeypatch.setenv("MEMO_SINGLE_DB", "1")
+    cfg = Config.from_env()
+    assert cfg.single_db is True
+    assert cfg.history_db == cfg.db_path
+
+
+def test_ensure_dirs_creates_vault_memory_dir(tmp_path: Path):
+    """ensure_dirs must create the vault memory subtree, not just data_dir."""
+    cfg = Config(
+        data_dir=tmp_path / "d",
+        state_dir=tmp_path / "s",
+        vault_path=tmp_path / "vault",
+        memories_in_vault=True,
+    )
+    cfg.ensure_dirs()
+    assert cfg.memory_dir.is_dir()
+
+
 def test_ensure_dirs_no_longer_requires_vault_path(tmp_path: Path):
     """`vault_path` is optional now; ensure_dirs must not raise when it's None."""
     cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "s", vault_path=None)

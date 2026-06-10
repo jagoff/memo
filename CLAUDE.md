@@ -110,6 +110,36 @@ worker threadpool). Writes go through `_tx()` (`BEGIN IMMEDIATE`); vectors are
 packed float32 blobs; WAL mode + `busy_timeout` give concurrent readers + a
 writer.
 
+### Markdown is the source of truth; sqlite is a rebuildable index
+
+The `.md` files are canonical; the sqlite index is **derived and replayable**:
+
+- **Authority.** `save()` writes the `.md` first, then indexes — if indexing
+  fails, the memoria is stamped `_memo_embed_pending` on disk and `memo reindex`
+  replays it (the save never silently vanishes). `delete()` removes the `.md`
+  **first** and aborts (`StorageError`) if the file can't be removed, so the
+  index never outlives its truth-bearing file. A hand-edit in Obsidian wins on
+  the next `reindex` (body_hash mismatch → disk overwrites the index).
+- **Rebuild, don't `rm`.** Use `memo reindex --rebuild` (not `rm memvec.db`) to
+  rebuild from disk. It truncates only the markdown-derivable tables
+  (`meta`/`vec`/`fts`) and preserves the **user-signal** tables — `access`,
+  `memory_health`, `source_feedback*` — which are PRIMARY data not present in
+  markdown and re-join on the stable memoria `id`. A content-addressed embedding
+  cache (`repo_embedding_cache`, keyed on `model+dims+sha256(text)`) makes a warm
+  rebuild issue ~zero embedder calls.
+- **Memorias in the vault.** `MEMO_MEMORIES_IN_VAULT=1` (needs `MEMO_VAULT_PATH`)
+  stores memorias under `<vault>/<SYSTEM_DIR>/AI/memory` so the human-editable
+  Obsidian vault is the source of truth. Ingest already excludes `AI/` and any
+  `id:`-frontmatter file, so they're never double-ingested as reference tier.
+  `memo migrate --into-vault` moves an existing install there (non-destructive,
+  `--rollback` restores the prior config). `memo migrate` never drops `memvec.db`.
+- **One DB file (opt-in).** `MEMO_SINGLE_DB=1` folds the sidecar stores
+  (history/graph/contradictions/crossref) into `memvec.db` — each keeps its own
+  connection to the one file (WAL allows it; no shared-transaction risk). Run
+  `memo migrate --consolidate-db` once to merge existing `*.db` files (renames
+  them `*.db.bak`, idempotent). Default off keeps the historical multi-file
+  layout. The `cfg.*_db` path properties collapse onto `db_path` when on.
+
 ## Test isolation (see `tests/conftest.py`)
 
 - Use the `tmp_cfg` fixture or build an isolated `Config` — never call

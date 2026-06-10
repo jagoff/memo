@@ -230,6 +230,17 @@ class CrossReferenceIndex:
         conn.execute("DELETE FROM backlinks WHERE target_id = ?", (memoria_id,))
         conn.commit()
 
+    def reset(self) -> None:
+        """Clear the whole cross-reference index (all backlinks).
+
+        Truncates the table rather than deleting the DB file — safe when the
+        crossref tables share the main DB (`single_db`), where unlinking the
+        file would destroy everything. Used by `memo links reindex`.
+        """
+        conn = self._get_conn()
+        conn.execute("DELETE FROM backlinks")
+        conn.commit()
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:

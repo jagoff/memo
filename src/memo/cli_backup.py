@@ -43,8 +43,14 @@ def _portable_backup(out_path: str | None) -> None:
                 rel = md.relative_to(cfg.memory_dir)
                 zf.write(md, arcname=f"memory/{rel}")
                 n_md += 1
-        # 2) State DBs (vec + history). Stored at the root.
+        # 2) State DBs (vec + history). Stored at the root. Dedup by resolved
+        #    path: under single_db, history_db == db_path (one file).
+        seen_dbs: set[str] = set()
         for db in (cfg.db_path, cfg.history_db):
+            key = str(db.resolve())
+            if key in seen_dbs:
+                continue
+            seen_dbs.add(key)
             if db.is_file():
                 zf.write(db, arcname=f"state/{db.name}")
         # 3) Manifest with paths so restore can sanity-check.
