@@ -425,6 +425,27 @@ def stamp_recall_turn(state_dir: Path, session_id: str, turn: int) -> None:
         _log.debug("session: failed to checkpoint recall turn: %s", exc)
 
 
+def recent_prompts(state_dir: Path, session_id: str, n: int) -> list[str]:
+    """Last `n` user prompts from the session `prompt_trail` ring buffer.
+
+    Used by the recall-hook to re-anchor a short follow-up prompt with recent
+    conversation context before bailing. Returns the most recent `n` (oldest
+    first), or `[]` if the session is missing/has no trail. Best-effort, never
+    raises — recall must not break on a stale/absent session file.
+    """
+    if not session_id or n <= 0:
+        return []
+    try:
+        existing = _load(state_dir, session_id) or {}
+        trail = [
+            p for p in (existing.get("prompt_trail") or []) if isinstance(p, str) and p.strip()
+        ]
+        return trail[-n:]
+    except (OSError, ValueError, TypeError) as exc:
+        _log.debug("session: failed to read prompt_trail: %s", exc)
+        return []
+
+
 def list_sessions(
     state_dir: Path,
     *,
