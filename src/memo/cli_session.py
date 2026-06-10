@@ -13,7 +13,7 @@ import click
 
 from memo.cli_common import console
 from memo.config import Config
-from memo.flags import flag_bool
+from memo.flags import flag_bool, flag_int
 
 
 @click.group(name="session")
@@ -267,8 +267,8 @@ def session_refresh_summary() -> None:
 
 
 @session_group.command(name="recent")
-@click.option("--limit", default=5, type=int, show_default=True)
-def session_recent(limit: int) -> None:
+@click.option("--limit", default=None, type=int, show_default=True)
+def session_recent(limit: int | None) -> None:
     """SessionStart hook entrypoint — emit `additionalContext` markdown
     listing recent sessions. Same exit-0-silent contract as recall-hook."""
     import json as _json
@@ -279,8 +279,16 @@ def session_recent(limit: int) -> None:
         print("{}")
         _sys.exit(0)
 
+    if limit is None:
+        limit = flag_int("MEMO_SESSION_RECENT_LIMIT") or 12
+
     try:
-        from memo.session import format_relative, list_sessions
+        from memo.session import (
+            _strip_command_wrappers,
+            format_relative,
+            is_command_noise,
+            list_sessions,
+        )
 
         cfg = Config.from_env()
         rows = list_sessions(cfg.state_dir, limit=limit)
@@ -300,6 +308,17 @@ def session_recent(limit: int) -> None:
     same_cwd = [r for r in rows if (r.get("cwd") or "") == cur_cwd]
     top = same_cwd[0] if same_cwd else None
 
+    def _clean_summary(r: dict, width: int) -> str:
+        """First non-noise candidate among stored summary / last prompt /
+        running-summary — heals junk persisted by pre-fix checkpoints."""
+        for cand in (r.get("summary"), r.get("last_user_msg")):
+            if not is_command_noise(cand):
+                return _strip_command_wrappers(cand or "").replace("\n", " ")[:width]
+        rs = r.get("running_summary")
+        if rs and not is_command_noise(rs):
+            return rs.strip().replace("\n", " ")[:width]
+        return "—"
+
     lines: list[str] = []
 
     if top:
@@ -309,7 +328,7 @@ def session_recent(limit: int) -> None:
         turns = top.get("turn_count") or 0
         # Prefer running_summary (LLM-generated arc) over plain last_user_msg.
         running_summary = top.get("running_summary")
-        summary = (top.get("summary") or top.get("last_user_msg") or "—").replace("\n", " ")[:120]
+        summary = _clean_summary(top, 120)
         lines.extend(
             [
                 "## Sesión anterior detectada — ¿continuar?",
@@ -346,30 +365,39 @@ def session_recent(limit: int) -> None:
             ]
         )
 
-    if len(rows) > (1 if top else 0):
-        others = [r for r in rows if r is not top][:5]
+    def _render_table(title: str, items: list[dict]) -> None:
+        if not items:
+            return
         lines.extend(
             [
-                "### Otras sesiones recientes",
+                f"### {title}",
                 "",
                 "| cuándo | proyecto | branch | resumen | id |",
                 "|--------|----------|--------|---------|----|",
             ]
         )
-        for r in others:
-            s = (
-                (r.get("summary") or r.get("last_user_msg") or "—")
-                .replace("|", "·")
-                .replace("\n", " ")
-            )
+        for r in items:
+            s = _clean_summary(r, 55).replace("|", "·")
             lines.append(
                 f"| {format_relative(r.get('updated'))} | "
                 f"{(r.get('project') or '—')[:18]} | "
                 f"{(r.get('branch') or '—')[:14]} | "
-                f"{s[:55]} | "
+                f"{s} | "
                 f"`{(r.get('session_id') or '')[:8]}` |"
             )
         lines.append("")
+
+    remaining = [r for r in rows if r is not top]
+    if remaining:
+        cur_project = _Path(cur_cwd).name
+        this_project = [
+            r
+            for r in remaining
+            if (r.get("cwd") or "") == cur_cwd or (r.get("project") or "") == cur_project
+        ]
+        others = [r for r in remaining if r not in this_project][:8]
+        _render_table("Sesiones recientes en este proyecto", this_project)
+        _render_table("Otros proyectos", others)
         lines.append("_`memo resume <id>` para ver detalles. `claude --resume <id>` para retomar._")
 
     output = {

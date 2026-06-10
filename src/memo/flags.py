@@ -339,6 +339,20 @@ _SPECS: tuple[FlagSpec, ...] = (
         "MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."
     ),
     _spec("MEMO_SESSION_DEBUG", "bool", False, "session", "Verbose session-hook diagnostics."),
+    _spec(
+        "MEMO_SESSION_RECENT_LIMIT",
+        "int",
+        12,
+        "session",
+        "Rows fetched/shown by `memo session recent` (the SessionStart resume panel).",
+    ),
+    _spec(
+        "MEMO_SESSION_LRU_CAP",
+        "int",
+        250,
+        "session",
+        "Max session checkpoint files retained (shared across all agents/projects).",
+    ),
     # turn capture
     _spec("MEMO_CAPTURE_DISABLE", "bool", False, "capture", "Disable Stop-hook turn capture."),
     _spec(
@@ -650,27 +664,45 @@ _SPECS: tuple[FlagSpec, ...] = (
         "MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True
     ),
     _spec(
-        "MEMO_OCR_MIN_CONFIDENCE", "float", 0.4, "ingest",
+        "MEMO_OCR_MIN_CONFIDENCE",
+        "float",
+        0.4,
+        "ingest",
         "Per-line OCR confidence floor: drop mojibake lines below this before indexing.",
-        min_val=0.0, max_val=1.0,
+        min_val=0.0,
+        max_val=1.0,
     ),
     _spec(
-        "MEMO_OCR_LOW_CONF_THRESHOLD", "float", 0.6, "ingest",
+        "MEMO_OCR_LOW_CONF_THRESHOLD",
+        "float",
+        0.6,
+        "ingest",
         "Mean OCR confidence below which an image is down-weighted (memory_health.confidence).",
-        min_val=0.0, max_val=1.0,
+        min_val=0.0,
+        max_val=1.0,
     ),
     _spec(
-        "MEMO_TEXT_QUALITY", "bool", True, "ingest",
+        "MEMO_TEXT_QUALITY",
+        "bool",
+        True,
+        "ingest",
         "Universal text-quality gate: down-weight garbled records (mojibake) from any source.",
         opt_out=True,
     ),
     _spec(
-        "MEMO_TEXT_QUALITY_THRESHOLD", "float", 0.02, "ingest",
+        "MEMO_TEXT_QUALITY_THRESHOLD",
+        "float",
+        0.02,
+        "ingest",
         "Replacement/control-char ratio at/above which a record is down-weighted.",
-        min_val=0.0, max_val=1.0,
+        min_val=0.0,
+        max_val=1.0,
     ),
     _spec(
-        "MEMO_RETRIEVAL_BOOST", "bool", True, "retrieval",
+        "MEMO_RETRIEVAL_BOOST",
+        "bool",
+        True,
+        "retrieval",
         "Apply filename/title/heading/tag curatorial boost to memory-surface "
         "search ranking (a note whose metadata is the answer wins decisively). "
         "Measured: precision@5 +0.04..+0.08 across configs, noise unchanged.",
