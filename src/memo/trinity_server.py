@@ -93,6 +93,8 @@ class TrinityServer(socketserver.ThreadingUnixStreamServer):
 class TrinityHandler(socketserver.StreamRequestHandler):
     """JSON-RPC handler for Trinity operations."""
 
+    server: TrinityServer  # narrow socketserver's BaseServer-typed attr
+
     def handle(self) -> None:
         for line in self.rfile:
             if len(line) > _MAX_LINE_BYTES:

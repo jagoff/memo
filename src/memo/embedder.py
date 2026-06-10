@@ -34,7 +34,7 @@ import os
 import threading
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 try:
     from consciousness_contracts.cache import get_default_cache
@@ -147,7 +147,7 @@ class MicroEmbedder:
             row = mx.mean(hidden, axis=1)
             norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
             emb = row / norm
-            out.append([float(x) for x in emb[0].tolist()])
+            out.append([float(x) for x in cast(list[Any], emb[0].tolist())])
         return out
 
     def embed_query(self, query: str) -> list[float]:
