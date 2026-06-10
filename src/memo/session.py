@@ -60,14 +60,17 @@ import contextlib
 import json
 import logging
 import os
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from memo.flags import flag_int
+
 _log = logging.getLogger(__name__)
 
-_LRU_CAP_DEFAULT = 50
+_LRU_CAP_DEFAULT = 250
 _LAST_USER_MSG_CHARS = 240
 _SUMMARY_FALLBACK_CHARS = 80
 _MODIFIED_FILES_CAP = 30
@@ -147,10 +150,59 @@ def gather_git_state(cwd: Path) -> dict[str, Any]:
     }
 
 
+# User "turns" in a Claude Code transcript include slash-command plumbing
+# (the wrapper tags below), tool_result echoes, and harness-injected blocks
+# (task notifications, system reminders) — none of which are a real typed
+# prompt. Surfacing them as the session "resumen" produces garbage like
+# `<local-command-stdout>Enabled plan mode</local-command-stdout>`.
+_COMMAND_WRAPPER_PREFIXES = (
+    "<command-name>",
+    "<command-message>",
+    "<command-args>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<user-prompt-submit-hook>",
+    "<task-notification>",
+    "<task-output>",
+    "<system-reminder>",
+)
+_COMMAND_WRAPPER_TAG_RE = re.compile(
+    r"<(command-[a-z]+|local-command-[a-z]+|bash-std[a-z]+|user-prompt-submit-hook)>"
+    r".*?</\1>",
+    re.DOTALL,
+)
+
+
+def _strip_command_wrappers(text: str) -> str:
+    """Remove slash-command / local-command / bash wrapper tag pairs so a turn
+    that mixes a wrapper with a real prompt still yields the real text."""
+    if not text:
+        return ""
+    return _COMMAND_WRAPPER_TAG_RE.sub("", text).strip()
+
+
+def is_command_noise(text: str | None) -> bool:
+    """True when `text` is slash-command / local-command plumbing rather than a
+    real prompt — including a value truncated mid-tag (e.g. an old stored
+    summary like `<local-command-stdout>Enabled plan mode</local-command-`),
+    which the tag-pair stripper can't repair. Used to heal persisted junk
+    summaries at display time and to stop them sticking across checkpoints."""
+    if not text:
+        return True
+    stripped = text.lstrip()
+    if stripped.startswith(_COMMAND_WRAPPER_PREFIXES):
+        return True
+    return not _strip_command_wrappers(stripped)
+
+
 def read_last_user_msg(transcript_path: Path) -> str | None:
-    """Walk the JSONL transcript backwards, return the latest user
-    message text. Mirrors `capture._read_last_exchange` but only
-    needs the user side, so we can stop scanning earlier.
+    """Walk the JSONL transcript backwards, return the latest real user
+    prompt. Mirrors `capture._read_last_exchange` but only needs the user
+    side, so we can stop scanning earlier. Skips meta/compact-summary records
+    and tool_result echoes; slash-command wrappers are stripped, and a turn
+    that is *only* plumbing (empty after stripping) is skipped.
     """
     if not transcript_path.is_file():
         return None
@@ -169,11 +221,16 @@ def read_last_user_msg(transcript_path: Path) -> str | None:
         role = obj.get("type") or obj.get("role")
         if role != "user":
             continue
+        if obj.get("isMeta") is True or obj.get("isCompactSummary") is True:
+            continue
         msg = obj.get("message", obj)
         content = msg.get("content") if isinstance(msg, dict) else None
         text = _extract_text(content)
-        if text:
-            return text[:_LAST_USER_MSG_CHARS]
+        if not text:
+            continue
+        cleaned = _strip_command_wrappers(text)
+        if cleaned and not cleaned.startswith(_COMMAND_WRAPPER_PREFIXES):
+            return cleaned[:_LAST_USER_MSG_CHARS]
     return None
 
 
@@ -259,7 +316,7 @@ def checkpoint(
     cwd: str,
     transcript_path: str | None = None,
     prompt: str | None = None,
-    lru_cap: int = _LRU_CAP_DEFAULT,
+    lru_cap: int | None = None,
 ) -> dict[str, Any]:
     """Idempotent upsert keyed by `session_id`. Returns the persisted
     snapshot dict.
@@ -288,11 +345,14 @@ def checkpoint(
         last_assistant_tail = read_last_assistant_tail(tp)
 
     # prompt_trail: ring buffer of last N user prompts, crash-resilient
-    # because it's updated on UserPromptSubmit (not just Stop).
+    # because it's updated on UserPromptSubmit (not just Stop). Slash-command
+    # plumbing is stripped so "Loops abiertos" never lists wrapper noise.
     trail = list(existing.get("prompt_trail") or [])
     if prompt:
-        trail.append(prompt.strip()[:_PROMPT_TRAIL_CHARS])
-        trail = trail[-_PROMPT_TRAIL_MAX:]
+        clean_prompt = _strip_command_wrappers(prompt.strip())
+        if clean_prompt and not clean_prompt.startswith(_COMMAND_WRAPPER_PREFIXES):
+            trail.append(clean_prompt[:_PROMPT_TRAIL_CHARS])
+            trail = trail[-_PROMPT_TRAIL_MAX:]
 
     now = _now_iso()
     snapshot: dict[str, Any] = {
@@ -311,9 +371,14 @@ def checkpoint(
         "running_summary": existing.get("running_summary"),
         "summary_turn": int(existing.get("summary_turn") or 0),
         # Default summary to last user msg head; an external enricher
-        # (e.g. capture-stop with MLX warm) may overwrite later.
-        "summary": existing.get("summary")
-        or ((last_user_msg or "")[:_SUMMARY_FALLBACK_CHARS] or None),
+        # (e.g. capture-stop with MLX warm) may overwrite later. A previously
+        # stored command-noise summary is NOT preserved — recompute so old junk
+        # heals on the next checkpoint.
+        "summary": (
+            existing.get("summary")
+            if existing.get("summary") and not is_command_noise(existing.get("summary"))
+            else ((last_user_msg or "")[:_SUMMARY_FALLBACK_CHARS] or None)
+        ),
         "created": existing.get("created") or now,
         "updated": now,
         "turn_count": int(existing.get("turn_count") or 0) + 1,
@@ -324,7 +389,8 @@ def checkpoint(
     }
 
     _write(state_dir, session_id, snapshot)
-    prune_lru(state_dir, cap=lru_cap)
+    cap = lru_cap if lru_cap is not None else (flag_int("MEMO_SESSION_LRU_CAP") or _LRU_CAP_DEFAULT)
+    prune_lru(state_dir, cap=cap)
     return snapshot
 
 
