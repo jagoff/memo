@@ -10,7 +10,6 @@ import json
 import math
 from typing import Any
 
-
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 def _unit_vec(dims: int) -> list[float]:

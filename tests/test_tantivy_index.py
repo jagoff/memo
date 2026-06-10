@@ -7,7 +7,6 @@ so it runs in all environments.
 
 from __future__ import annotations
 
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 

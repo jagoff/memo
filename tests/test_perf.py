@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 
@@ -45,9 +46,6 @@ def test_timer_logs_even_when_wrapped_raises(caplog) -> None:
     def boom() -> None:
         raise ValueError("nope")
 
-    with caplog.at_level(logging.WARNING, logger="memo.perf"):
-        try:
-            boom()
-        except ValueError:
-            pass
+    with caplog.at_level(logging.WARNING, logger="memo.perf"), contextlib.suppress(ValueError):
+        boom()
     assert any("boom took" in r.message for r in caplog.records)
