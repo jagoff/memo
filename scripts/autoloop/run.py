@@ -25,7 +25,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +80,7 @@ ALWAYS_ON_ENV = {"SYNAPSE_STATE_DIR": str(SYNAPSE_STATE)}
 
 
 def now_ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def log(msg: str) -> None:
@@ -154,7 +154,7 @@ def memo_list_ids(seen: set[str]) -> list[str]:
     if res.returncode != 0:
         raise RuntimeError(f"memo list failed: {res.stderr[:500]}")
     rows = json.loads(res.stdout)
-    eligible = [r for r in rows if r.get("id") and r["id"] not in seen and len((r.get("body") or "")) >= 200]
+    eligible = [r for r in rows if r.get("id") and r["id"] not in seen and len(r.get("body") or "") >= 200]
     return [r["id"] for r in eligible]
 
 
@@ -221,7 +221,7 @@ def write_corpus(pairs: list[tuple[str, str]]) -> None:
             "notes": "autoloop seed",
             "source": "autoloop",
             "chat_session_id": "",
-            "labeled_at": datetime.now(timezone.utc).isoformat(),
+            "labeled_at": datetime.now(UTC).isoformat(),
             "rating": "",
             "auto_labeled": True,
             "needs_review": False,
@@ -290,7 +290,6 @@ def ids_match(actual_id: str, expected_id: str) -> bool:
 def score_run(run_path: Path, seed_pairs: list[tuple[str, str]]) -> list[dict]:
     data = json.loads(run_path.read_text(encoding="utf-8"))
     by_q = {r["question"]: r for r in data.get("per_query", [])}
-    seed_by_q = {q: nid for nid, q in seed_pairs}
     out: list[dict] = []
     for q, nid in [(q, nid) for nid, q in seed_pairs]:
         r = by_q.get(q)
@@ -586,7 +585,7 @@ def main() -> int:
                 reason = f"hard-cap-hours ({args.hard_cap_hours})"
                 break
             if s.consec_success >= 2:
-                reason = "success (Recall@10≥0.85 ×2)"
+                reason = "success (Recall@10>=0.85 x2)"
                 break
             if s.consec_plateau >= 3:
                 reason = "plateau (3 rounds, ladders exhausted)"

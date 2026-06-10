@@ -3,14 +3,10 @@ adaptive recall, synthesis default, smarter capture, memory_health_report."""
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
-from memo.config import Config
 from memo.flags import flag_bool
 from memo.memory.write_ops import _infer_type_from_content
-
 
 # ---------------------------------------------------------------------------
 # Initiative 6 — Smarter Capture: regex type inference
@@ -133,7 +129,6 @@ class TestMemoryHealthStore:
 
     def test_decay_roi_updates_rows(self, mock_memory):
         # Insert rows with a past timestamp by directly setting updated_at.
-        import sqlite3
         mock_memory.store.boost_roi_batch(["abc", "def"])
         # Backdate the rows so they match the older_than_days filter.
         with mock_memory.store._tx() as cx:
@@ -198,7 +193,9 @@ class TestDreamCli:
     def test_dream_run_dry_run(self, tmp_cfg, monkeypatch):
         """memo dream run --dry-run should exit 0 without modifying state."""
         import json as _json
+
         from click.testing import CliRunner
+
         from memo.cli_dream import dream_cmd
 
         runner = CliRunner()
@@ -218,6 +215,7 @@ class TestDreamCli:
 
     def test_dream_status_never_run(self, tmp_cfg, monkeypatch):
         from click.testing import CliRunner
+
         from memo.cli_dream import dream_cmd
 
         monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_cfg.state_dir))
@@ -238,8 +236,9 @@ class TestDreamCli:
 
 class TestMemoryHealthReport:
     def test_returns_empty_on_fresh_corpus(self, mock_memory):
-        from memo.server_health import register
         from unittest.mock import MagicMock
+
+        from memo.server_health import register
         server = MagicMock()
         captured = {}
 
@@ -258,8 +257,9 @@ class TestMemoryHealthReport:
         assert result["total_tracked"] == 0
 
     def test_shows_boosted_record(self, mock_memory):
-        from memo.server_health import register
         from unittest.mock import MagicMock
+
+        from memo.server_health import register
 
         rec = mock_memory.save(content="important recalled fact", title="Top ROI")
         for _ in range(5):
@@ -281,8 +281,9 @@ class TestMemoryHealthReport:
         assert rec.id in high_ids
 
     def test_shows_penalized_record(self, mock_memory):
-        from memo.server_health import register
         from unittest.mock import MagicMock
+
+        from memo.server_health import register
 
         rec = mock_memory.save(content="contradicted old belief", title="Low Conf")
         mock_memory.store.penalize_confidence_batch([rec.id])
