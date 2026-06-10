@@ -423,13 +423,30 @@ def _doctor_report(
     fix: bool,
 ) -> dict[str, Any]:
     def check_sqlite_vec() -> None:
-
+        # Probe that the extension loads AND supports the PARTITION KEY /
+        # metadata-column kNN filtering the store now relies on (alpha vec0
+        # API) — a too-old sqlite-vec would load but fail these, so a plain
+        # `import + load` check would pass while real queries break.
         import sqlite_vec  # type: ignore[import-untyped]
+        from sqlite_vec import serialize_float32
 
         conn = sqlite3.connect(":memory:")
         try:
             conn.enable_load_extension(True)
             sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+            conn.execute(
+                "CREATE VIRTUAL TABLE probe USING vec0("
+                "id TEXT PRIMARY KEY, part TEXT PARTITION KEY, "
+                "emb FLOAT[2] distance_metric=cosine, kind TEXT)"
+            )
+            blob = serialize_float32([1.0, 0.0])
+            conn.execute("INSERT INTO probe(id, part, emb, kind) VALUES (?,?,?,?)", ("a", "p", blob, "n"))
+            conn.execute(
+                "SELECT id FROM probe WHERE emb MATCH ? AND k=1 AND part=? AND kind!=?",
+                (blob, "p", "x"),
+            ).fetchall()
+            conn.execute("DROP TABLE probe")
         finally:
             conn.close()
 

@@ -78,8 +78,8 @@ class _QueriesMixin(_StoreBase):
             # then insert. Within the same transaction this is atomic.
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
             cx.execute(
-                "INSERT INTO vec (id, embedding) VALUES (?, ?)",
-                (id_, serialize_float32(embedding)),
+                "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+                (id_, serialize_float32(embedding), type_),
             )
             # Same dance for the FTS index — no upsert support.
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
@@ -367,11 +367,29 @@ class _QueriesMixin(_StoreBase):
             raise ValueError(
                 f"Query embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
             )
-        # Pull a wider candidate set when filtering by type (in or out) so
-        # the final top-k still returns `limit` results after the join
-        # filters out off-type rows. 5x is generous for sane type
-        # distributions; degenerates gracefully when type is uncommon.
-        candidate_k = limit * 5 if (type_ or exclude_types) else limit
+        # `type` is a vec0 metadata column, so an include filter (`type = ?`)
+        # and a single-value exclude (`type != ?` — the recall hook dropping
+        # the bulk `reference` tier) are pushed INTO the kNN: the candidate
+        # pool is already on-type, so no over-fetch is needed. Only a
+        # multi-value `exclude_types` (rare) can't be a single vec0 predicate,
+        # so it stays a post-join `NOT IN` and keeps the 5x over-fetch so the
+        # final top-k still fills after off-type rows drop out.
+        push_clauses: list[str] = []
+        push_params: list[Any] = []
+        join_clauses: list[str] = []
+        join_params: list[Any] = []
+        if type_:
+            push_clauses.append("vec.type = ?")
+            push_params.append(type_)
+        if exclude_types:
+            ex = sorted(exclude_types)
+            if len(ex) == 1:
+                push_clauses.append("vec.type != ?")
+                push_params.append(ex[0])
+            else:
+                join_clauses.append(f"meta.type NOT IN ({','.join('?' for _ in ex)})")
+                join_params.extend(ex)
+        candidate_k = limit * 5 if join_clauses else limit
         sql = (
             "SELECT vec.id AS id, vec.distance AS distance, "
             "       meta.path, meta.title, meta.type, meta.tags, "
@@ -381,12 +399,12 @@ class _QueriesMixin(_StoreBase):
             "WHERE embedding MATCH ? AND k = ? "
         )
         params: list[Any] = [serialize_float32(embedding), candidate_k]
-        if type_:
-            sql += "AND meta.type = ? "
-            params.append(type_)
-        if exclude_types:
-            sql += f"AND meta.type NOT IN ({','.join('?' for _ in exclude_types)}) "
-            params.extend(sorted(exclude_types))
+        for clause in push_clauses:
+            sql += f"AND {clause} "
+        params.extend(push_params)
+        for clause in join_clauses:
+            sql += f"AND {clause} "
+        params.extend(join_params)
         sql += "ORDER BY distance ASC LIMIT ?"
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()

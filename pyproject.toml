@@ -25,7 +25,10 @@ dependencies = [
     "click>=8.1.7",
     "rich>=13.7",
     "pydantic>=2.6",
-    "sqlite-vec>=0.1.6",
+    # Pinned to a tested range: the vec0 PARTITION KEY / metadata-column
+    # filtering the store relies on is alpha API — cap below 0.2 to avoid
+    # silent breakage on an upstream change. Tested against 0.1.9.
+    "sqlite-vec>=0.1.9,<0.2",
     "fastmcp>=0.5",
     "python-frontmatter>=1.1",
     # First-run interactive picker (pure Python; cross-platform).

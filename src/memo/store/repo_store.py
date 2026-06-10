@@ -189,8 +189,8 @@ class _RepoStoreMixin(_StoreBase):
         with self._tx() as cx:
             cx.executemany("DELETE FROM repo_vec WHERE id = ?", [(cid,) for cid, _ in embeddings])
             cx.executemany(
-                "INSERT INTO repo_vec (id, embedding) VALUES (?, ?)",
-                [(cid, serialize_float32(emb)) for cid, emb in embeddings],
+                "INSERT INTO repo_vec (id, repo_id, embedding) VALUES (?, ?, ?)",
+                [(cid, repo_id, serialize_float32(emb)) for cid, emb in embeddings],
             )
             if status is not None:
                 if indexed_at is None:
@@ -543,7 +543,10 @@ class _RepoStoreMixin(_StoreBase):
             raise ValueError(
                 f"Repo query embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
             )
-        candidate_k = limit * 5 if (repo_id or path_glob) else limit
+        # `repo_id` is a vec0 PARTITION KEY → `repo_vec.repo_id = ?` pre-filters
+        # the kNN to that repo (exact, no over-fetch). Only `path_glob` (a GLOB,
+        # not vec0-filterable) still needs the `k * 5` over-fetch + post-filter.
+        candidate_k = limit * 5 if path_glob else limit
         sql = (
             "SELECT repo_chunks.id AS id, repo_vec.distance AS distance, "
             "       repo_chunks.repo_id, repo_sources.name AS repo_name, repo_sources.url, "
@@ -558,7 +561,7 @@ class _RepoStoreMixin(_StoreBase):
         )
         params: list[Any] = [serialize_float32(embedding), candidate_k]
         if repo_id:
-            sql += "AND repo_chunks.repo_id = ? "
+            sql += "AND repo_vec.repo_id = ? "
             params.append(repo_id)
         if path_glob:
             sql += "AND repo_chunks.path GLOB ? "
