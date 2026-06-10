@@ -121,6 +121,25 @@ class _FeedbackMixin(_StoreBase):
             )
         return out
 
+    def sources_with_feedback(self, source_ids: list[str]) -> set[str]:
+        """Return the subset of `source_ids` that have >=1 feedback row.
+
+        Cheap existence check on `idx_source_feedback_source` so the kNN vec
+        scan in `find_feedback_for_source` only runs for sources that actually
+        have feedback. Most memorias have none, so this collapses a per-hit
+        N+1 of kNN queries into a single IN-list lookup.
+        """
+        ids = list(source_ids)
+        if not ids:
+            return set()
+        placeholders = ",".join("?" * len(ids))
+        rows = self._conn.execute(
+            "SELECT DISTINCT source_id FROM source_feedback "
+            f"WHERE source_id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return {r["source_id"] for r in rows}
+
     def list_source_feedback(
         self,
         *,

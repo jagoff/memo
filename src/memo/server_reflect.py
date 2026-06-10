@@ -54,6 +54,6 @@ def register(server: FastMCP, memory: Memory) -> None:
                 }
 
         # Thread-safe lazy init — concurrent reflect calls share one wrapper.
-        memory._ensure_chat()  # type: ignore[attr-defined]
+        memory._ensure_chat()
 
         return _reflect_session(target_id, memory, cfg, dry_run=dry_run)

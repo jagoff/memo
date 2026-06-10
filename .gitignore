@@ -46,3 +46,9 @@ web/health.html
 
 # Local memflow runtime state (events, sync state)
 .memflow/
+
+# Codegraph MCP index + runtime (sqlite db, wal, socket, pid)
+.codegraph/
+
+# Local backup archives
+memo-backup-*.zip

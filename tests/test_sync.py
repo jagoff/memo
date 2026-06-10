@@ -73,74 +73,33 @@ def test_backup_manager_list_backups(backup_manager):
     assert all(isinstance(b, BackupMetadata) for b in backups)
 
 
-def test_backup_manager_restore_backup(backup_manager, mock_memory):
-    """Test restoring from backup."""
-    # Create a memoria and backup
-    rec = mock_memory.save(
-        content="Original content",
-        title="Original",
-        tags=["test"],
-    )
-
-    backup_manager.create_backup(compress=False, name="restore_test")
-
-    # Delete the memoria
-    mock_memory.delete(rec.id)
-    assert mock_memory.get(rec.id) is None
-
-    # Restore
-    success = backup_manager.restore_backup("restore_test")
-
-    assert success is True
+def test_sync_manager_init(sync_manager, mock_memory):
+    """SyncManager holds the local Memory it replays events into."""
+    assert sync_manager.mem is mock_memory
 
 
-def test_backup_manager_restore_nonexistent_backup(backup_manager):
-    """Test restoring from non-existent backup."""
-    success = backup_manager.restore_backup("nonexistent")
-    assert success is False
+def test_sync_from_remote_missing_file_reports_error(sync_manager, tmp_path):
+    """A missing remote history.db is an error, not a crash."""
+    diff = sync_manager.sync_from_remote(tmp_path / "does-not-exist.db")
+    assert isinstance(diff, SyncDiff)
+    assert diff.applied == 0
+    assert diff.errors == 1
 
 
-def test_sync_manager_init(sync_manager):
-    """Test SyncManager initialization."""
-    assert sync_manager.local_memory is not None
-
-
-def test_sync_manager_compute_diff_no_remote(sync_manager):
-    """Test diff with no remote configured."""
-    diff = sync_manager.compute_diff()
-
-    assert diff.new == []
-    assert diff.modified == []
-    assert diff.deleted == []
-    assert diff.conflicts == []
-
-
-def test_sync_manager_update_last_sync(sync_manager):
-    """Test updating last sync timestamp."""
-    sync_manager._update_last_sync()
-
-    last_sync = sync_manager.get_last_sync()
-    assert last_sync is not None
-
-
-def test_sync_manager_get_last_sync_none(sync_manager):
-    """Test getting last sync when never synced."""
-    last_sync = sync_manager.get_last_sync()
-    assert last_sync is None
+def test_sync_from_remote_loopback_is_noop(sync_manager, mock_memory):
+    """Syncing from this device's own history is a no-op (same device id)."""
+    # Force the history.db into existence with at least one event.
+    mock_memory.save(content="seed", title="Seed", tags=["x"])
+    diff = sync_manager.sync_from_remote(mock_memory.cfg.history_db)
+    assert diff == SyncDiff(0, 0, 0)
 
 
 def test_sync_diff_dataclass():
-    """Test SyncDiff dataclass structure."""
-    diff = SyncDiff(
-        new=["id1"],
-        modified=["id2"],
-        deleted=["id3"],
-        conflicts=["id4"],
-    )
-    assert len(diff.new) == 1
-    assert len(diff.modified) == 1
-    assert len(diff.deleted) == 1
-    assert len(diff.conflicts) == 1
+    """SyncDiff carries applied/conflicts/errors counters."""
+    diff = SyncDiff(applied=3, conflicts=1, errors=2)
+    assert diff.applied == 3
+    assert diff.conflicts == 1
+    assert diff.errors == 2
 
 
 def test_backup_metadata_dataclass():

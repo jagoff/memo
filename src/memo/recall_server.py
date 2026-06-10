@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import signal
 import socketserver
@@ -70,6 +71,10 @@ from memo.daemon_common import serve_until_shutdown as _serve_until_shutdown
 
 # Back-compat alias: tests import `recall_server._is_pid_alive`.
 _is_pid_alive = is_pid_alive
+
+# Named `_LOG` (not `_log`) because `_recall_logic` defines a local `_log()`
+# thunk that would otherwise shadow this module logger.
+_LOG = logging.getLogger("memo.recall_server")
 
 _STATS_SAMPLE_CAP = 1024
 _STATS_DEFAULT_PERSIST_INTERVAL_S = 60.0
@@ -299,6 +304,7 @@ def _recall_logic(
     session_id: str | None = None,
     turn: int | None = None,
     client: str | None = None,
+    micro_embedder: Any | None = None,
 ) -> tuple[str, Callable[[], None] | None]:
     """Run recall search; return (json_response, log_thunk).
 
@@ -310,19 +316,25 @@ def _recall_logic(
     Mirrors the logic in cli.py:recall_hook but operates on a pre-loaded
     Memory instance (the daemon's persistent one).
     """
-    import os as _os
-
+    from memo.flags import flag_bool
     from memo.flags import flag_float as _flag_float
     from memo.flags import flag_int as _flag_int
+    from memo.flags import flag_str as _flag_str
 
-    top_k = int(_os.environ.get("MEMO_RECALL_TOP_K", "3"))
-    min_sim = float(_os.environ.get("MEMO_RECALL_MIN_SIM", "0.5"))
-    # Source of truth is the flags registry (default 400).
+    # Source of truth is the flags registry — not hardcoded fallbacks that can
+    # silently diverge from it. Flags where 0 is a meaningful user value
+    # (min_sim floor off, project boost off, body-char floor off) use an
+    # explicit None check so the registered default only applies when unset.
+    top_k = _flag_int("MEMO_RECALL_TOP_K") or 3
+    _ms = _flag_float("MEMO_RECALL_MIN_SIM")
+    min_sim = 0.5 if _ms is None else _ms
     body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
-    token_budget = int(_os.environ.get("MEMO_RECALL_TOKEN_BUDGET", "0") or 0)
-    project_boost = float(_os.environ.get("MEMO_RECALL_PROJECT_BOOST", "0.15"))
-    mode = _os.environ.get("MEMO_RECALL_MODE", "vec")
-    min_body_chars = int(_os.environ.get("MEMO_RECALL_MIN_BODY_CHARS", "40"))
+    token_budget = _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
+    _pb = _flag_float("MEMO_RECALL_PROJECT_BOOST")
+    project_boost = 0.15 if _pb is None else _pb
+    mode = _flag_str("MEMO_RECALL_MODE") or "vec"
+    _mbc = _flag_int("MEMO_RECALL_MIN_BODY_CHARS")
+    min_body_chars = 40 if _mbc is None else _mbc
 
     # Project boost
     project_tag = None
@@ -331,12 +343,12 @@ def _recall_logic(
             from memo.project import current_project_tag
 
             project_tag = current_project_tag(cwd)
-        except Exception:
+        except Exception as exc:
+            _LOG.debug("project-tag lookup failed, project boost disabled: %s", exc)
             project_tag = None
 
     # Feedback loop: when on (default), widen the pool so learned type
     # preferences can re-rank, and record what surfaced afterwards.
-    from memo.flags import flag_bool
 
     contextual = flag_bool("MEMO_RECALL_CONTEXTUAL")
     search_k = top_k * 3 if (project_tag or contextual) else top_k
@@ -347,6 +359,23 @@ def _recall_logic(
     from memo.tiers import REFERENCE_TYPES
 
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
+
+    # Check if we should use the micro-embedder fallback (cold start).
+    # Defensive: a Memory without an `embedder` (test stubs) or an embedder
+    # that doesn't track warmth is treated as warm — no fallback, original path.
+    use_fallback = False
+    _embedder = getattr(mem, "embedder", None)
+    embedder_warm = bool(getattr(_embedder, "is_warm", True))
+    if not embedder_warm:
+        if micro_embedder:
+            use_fallback = True
+            if debug:
+                print("# recall-daemon: main embedder cold, using micro-embedder", file=sys.stderr)
+        elif not flag_bool("MEMO_RECALL_FORCE_MODE"):
+            # If no micro-embedder, fallback to BM25
+            mode = "bm25"
+            if debug:
+                print("# recall-daemon: main embedder cold, falling back to BM25", file=sys.stderr)
 
     def _passes(h: Any) -> bool:
         if h.score is not None and h.score < min_sim:
@@ -366,9 +395,42 @@ def _recall_logic(
         return [h for h in dedup_hits(raw) if _passes(h)]
 
     try:
-        qualifying = _rank(
-            mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
-        )
+        if use_fallback and micro_embedder:
+            # Micro-embedder fallback: BM25 + Micro-Rerank
+            # 1. BM25 to get candidates
+            candidates = mem.search(
+                prompt, limit=top_k * 5, mode="bm25", recency=True, exclude_types=exclude_types
+            )
+            if not candidates:
+                qualifying = []
+            else:
+                # 2. Rerank with micro-embedder
+                q_vec = micro_embedder.embed_query(prompt)
+
+                # Fetch bodies for candidates
+                candidate_bodies = []
+                for h in candidates:
+                    body = ""
+                    with contextlib.suppress(Exception):
+                        # mem._read_body is available on the facade
+                        body = mem._read_body(h.path)
+                    # Prepend title to body for better rerank
+                    candidate_bodies.append(f"{h.title}\n{body}")
+
+                doc_vecs = micro_embedder.embed(candidate_bodies)
+
+                # Compute cosine similarity
+                for h, d_vec in zip(candidates, doc_vecs, strict=True):
+                    # Manual dot product (both vectors are L2-normalised)
+                    sim = sum(x * y for x, y in zip(q_vec, d_vec, strict=True))
+                    h.score = sim
+
+                candidates.sort(key=lambda x: x.score or 0.0, reverse=True)
+                qualifying = _rank(candidates)
+        else:
+            qualifying = _rank(
+                mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
+            )
     except Exception as exc:
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return "{}", None
@@ -548,8 +610,9 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         text = str(req.get("text") or "")
         if not text.strip():
             return json.dumps({"error": "embed_query: empty text"})
-        with self.server._lock:
-            vec = self.server._mem.embedder.embed_query(text)
+        # The dispatch in `handle()` already holds `_priority_lock` for this op;
+        # don't re-acquire (there is no separate `_lock` on the server).
+        vec = self.server._mem.embedder.embed_query(text)
         # Emit both `dim` and `dims` per embed_protocol — clients may read either.
         return json.dumps(
             {
@@ -585,8 +648,13 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         chunk = max(1, flag_int("MEMO_EMBED_BATCH_CHUNK") or 32)
         vectors: list[Any] = []
         for i in range(0, len(texts), chunk):
-            with self.server._lock:
-                vectors.extend(self.server._mem.embedder.embed(texts[i : i + chunk]))
+            if self.server._priority_lock.acquire(priority=0, timeout=60.0):
+                try:
+                    vectors.extend(self.server._mem.embedder.embed(texts[i : i + chunk]))
+                finally:
+                    self.server._priority_lock.release()
+            else:
+                return json.dumps({"error": "embed_batch: timeout acquiring lock"})
         dim = len(vectors[0]) if vectors else 0
         return json.dumps(
             {
@@ -648,6 +716,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             # Default `op` to "recall" so legacy clients (no `op` field) keep
             # the original prompt/cwd contract working.
             op = str(req.get("op") or "recall").strip()
+            priority = 1 if op == "recall" else 0
 
             # For recall, the actual recall.log write is deferred until we know
             # the response reached the client (see _write_response) — so an
@@ -671,7 +740,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     from memo.flags import flag_int
 
                     timeout_s = max(0.1, (flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS") or 2500) / 1000.0)
-                    if not self.server._lock.acquire(timeout=timeout_s):
+                    if not self.server._priority_lock.acquire(priority=priority, timeout=timeout_s):
                         if debug:
                             print(
                                 f"# recall-daemon: lock busy >{timeout_s:.1f}s, bailing empty",
@@ -690,11 +759,19 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                             session_id=_sid,
                             turn=_turn,
                             client=_client,
+                            micro_embedder=self.server._micro_embedder,
                         )
                     finally:
-                        self.server._lock.release()
+                        self.server._priority_lock.release()
                 elif op == "embed_query":
-                    result = self._embed_query(req)
+                    # embed_query also gets priority 1 as it's often on the recall path
+                    if self.server._priority_lock.acquire(priority=1, timeout=5.0):
+                        try:
+                            result = self._embed_query(req)
+                        finally:
+                            self.server._priority_lock.release()
+                    else:
+                        result = json.dumps({"error": "embed_query: timeout acquiring lock"})
                 elif op == "embed_batch":
                     result = self._embed_batch(req)
                 elif op == "ping":
@@ -722,13 +799,86 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                 stats.record(op, latency_ms, error=error)
 
 
+class PriorityLock:
+    """A lock that prioritizes high-priority waiters.
+
+    Allows 'recall' operations to jump ahead of 'embed_batch' background tasks
+    when the shared Memory/embedder lock is contested.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+        self._high_priority_waiters = 0
+        self._busy = False
+
+    def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
+        """Acquire the lock. priority=1 is high, priority=0 is low.
+        Returns True if acquired, False on timeout.
+        """
+        end_time = (time.time() + timeout) if timeout is not None else None
+
+        with self._lock:
+            if priority > 0:
+                self._high_priority_waiters += 1
+
+            try:
+                while self._busy or (priority == 0 and self._high_priority_waiters > 0):
+                    wait_timeout = None
+                    if end_time is not None:
+                        wait_timeout = max(0, end_time - time.time())
+                        if wait_timeout <= 0:
+                            return False
+                    if not self._cond.wait(timeout=wait_timeout):
+                        return False
+                self._busy = True
+                return True
+            finally:
+                if priority > 0:
+                    self._high_priority_waiters -= 1
+
+    def release(self) -> None:
+        with self._lock:
+            self._busy = False
+            self._cond.notify_all()
+
+
 class _RecallServer(socketserver.ThreadingUnixStreamServer):
     """Unix domain socket server with persistent Memory."""
 
     def __init__(self, sock_path: str, cfg: Any, mem: Any) -> None:
         self._cfg = cfg
         self._mem = mem
-        self._lock = threading.Lock()
+        # PriorityLock replaces the standard Lock to prevent starvation
+        # of user recall requests by long-running background embeds.
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_RECALL_PRIORITY_ENABLED"):
+            self._priority_lock = PriorityLock()
+        else:
+            # Fallback to standard lock behavior if disabled
+            class FakePriorityLock:
+                def __init__(self, lock: threading.Lock):
+                    self._lock = lock
+
+                def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
+                    return self._lock.acquire(timeout=timeout if timeout is not None else -1)
+
+                def release(self) -> None:
+                    self._lock.release()
+
+            self._priority_lock = FakePriorityLock(threading.Lock())  # type: ignore[assignment]
+
+        self._micro_embedder = None
+        from memo.flags import flag_str
+        micro_model = flag_str("MEMO_MICRO_EMBEDDER_MODEL")
+        if micro_model:
+            try:
+                from memo.embedder import MicroEmbedder
+                self._micro_embedder = MicroEmbedder(micro_model)
+            except Exception as exc:
+                print(f"# recall-daemon: failed to init micro-embedder: {exc}", file=sys.stderr)
+
         self._stats = _DaemonStats(
             started_at=time.time(),
             model=cfg.embedder_model,

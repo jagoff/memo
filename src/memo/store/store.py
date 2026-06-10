@@ -125,7 +125,9 @@ class VecStore(
             return None
         if not _tantivy_available():
             if backend == "tantivy":
-                raise RuntimeError(
+                from ..errors import StorageError
+
+                raise StorageError(
                     "MEMO_FTS_BACKEND=tantivy but the `tantivy` package is not installed. "
                     "Run: pip install tantivy"
                 )

@@ -264,7 +264,7 @@ def _reflect_session(
     try:
         from memo.memory.record import _REFLECT_SYSTEM_PROMPT, strip_llm_output
 
-        result = mem._chat.chat(
+        result = mem._ensure_chat().chat(
             cfg.llm_model,
             [
                 {"role": "system", "content": _REFLECT_SYSTEM_PROMPT},
@@ -460,12 +460,8 @@ def reflect(
     # Load Memory with LLM warmed.
     from memo.memory import Memory
 
+    # `_reflect_session` lazily warms the chat model via `mem._ensure_chat()`.
     mem = Memory(cfg)
-    if mem._chat is None:  # type: ignore[attr-defined]
-        from memo.llm import MLXChat
-
-        mem._chat = MLXChat()  # type: ignore[attr-defined]
-
     result = _reflect_session(target_id, mem, cfg, dry_run=dry_run, debug=debug)
 
     if quiet:

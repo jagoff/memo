@@ -11,6 +11,7 @@ import builtins
 import os
 import sqlite3
 from dataclasses import replace
+from typing import Any
 
 from memo.flags import flag_bool, flag_float, flag_int
 from memo.lifecycle import IS_FORGOTTEN_KEY
@@ -111,7 +112,16 @@ class _SearchOpsMixin(_MemoryBase):
             bm_hits = self.store.search_bm25(
                 query, limit=k_each, type_=type_, exclude_types=exclude_types
             )
-            rows = _rrf_fuse(vec_hits, bm_hits, limit=input_k)
+
+            # Graph-based candidates (Entity-aware retrieval)
+            graph_hits = []
+            if flag_bool("MEMO_GRAPH_RETRIEVAL_ENABLED"):
+                graph_hits = self._fetch_graph_candidates(
+                    query, limit=k_each, type_=type_, exclude_types=exclude_types
+                )
+
+            # Fuse all sources. RRF supports multiple ranked lists.
+            rows = _rrf_fuse(vec_hits, bm_hits, graph_hits, limit=input_k)
         out: list[MemoryRecord] = []
         for r in rows:
             body = self._read_body(r["path"]) if load_bodies else ""
@@ -211,6 +221,56 @@ class _SearchOpsMixin(_MemoryBase):
             out = self._apply_health_scores(out)
         self._record_access([r.id for r in out])
         return out
+
+    def _fetch_graph_candidates(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        type_: str | None = None,
+        exclude_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch memorias sharing entities with the query via the knowledge graph.
+        Returns a ranked list for RRF fusion.
+        """
+        try:
+            from memo.entity_extractor import extract_entities
+            query_entities = extract_entities(query)
+            if not query_entities:
+                return []
+
+            # Find memorias sharing these entities
+            # Score them by how many distinct query entities they match
+            memoria_counts: dict[str, int] = {}
+            for ent_name in query_entities:
+                for mid in self.graph.entity_memorias(ent_name):
+                    memoria_counts[mid] = memoria_counts.get(mid, 0) + 1
+
+            if not memoria_counts:
+                return []
+
+            # Sort by count desc, then by updated desc (tie-breaker)
+            sorted_mids = sorted(memoria_counts.keys(), key=lambda x: memoria_counts[x], reverse=True)
+
+            # Fetch batch from store
+            rows = self.store.get_batch(sorted_mids[: limit * 3])
+
+            # Filter by type + exclude_types
+            out = []
+            for r in rows:
+                if type_ and r.get("type") != type_:
+                    continue
+                if exclude_types and r.get("type") in exclude_types:
+                    continue
+                # Assign a pseudo-score for RRF (position is what matters)
+                r["score"] = float(memoria_counts[r["id"]])
+                out.append(r)
+                if len(out) >= limit:
+                    break
+            return out
+        except Exception as exc:
+            _log.debug("graph_candidates failed: %s", exc)
+            return []
 
     def _apply_graph_expansion(
         self,

@@ -152,10 +152,7 @@ def mine_transcripts(
         return {"status": "no_files", "root": str(root), "files": 0}
 
     mem = Memory(cfg)
-    if mem._chat is None:  # type: ignore[attr-defined]
-        from memo.llm import MLXChat
-
-        mem._chat = MLXChat()  # type: ignore[attr-defined]
+    chat = mem._ensure_chat()
 
     total_candidates = 0
     total_saved: list[str] = []
@@ -191,7 +188,7 @@ def mine_transcripts(
             turn_hashes.add(h)
 
             insights = extract_insights(
-                mem._chat,  # type: ignore[attr-defined]
+                chat,
                 cfg.helper_model,
                 user_text,
                 assist_text,

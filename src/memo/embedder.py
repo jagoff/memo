@@ -93,6 +93,71 @@ _QUERY_INSTRUCTION_PREFIX = (
 )
 
 
+class MicroEmbedder:
+    """Lightweight fallback embedder.
+
+    Used for cold-start recall when the main MLX model is still loading.
+    Typically a very small model (e.g. <100M params) that loads in <500ms.
+    """
+
+    def __init__(self, model_path: str, expected_dims: int = 384) -> None:
+        self.model_path = model_path
+        self.expected_dims = expected_dims
+        self._model: Any = None
+        self._tokenizer: Any = None
+        self._load_lock = threading.Lock()
+
+    def _ensure_loaded(self) -> None:
+        if self._model is not None:
+            return
+        with self._load_lock:
+            if self._model is not None:
+                return
+            try:
+                from mlx_lm import load as _mlx_load
+
+                # Load with very conservative settings for speed
+                loaded = _mlx_load(self.model_path)
+                self._model = loaded[0]
+                self._tokenizer = loaded[1]
+            except Exception as exc:
+                # If micro-load fails, we just won't have a micro-fallback.
+                # Don't let it crash the whole daemon.
+                import sys
+
+                print(f"# MicroEmbedder: load failed: {exc}", file=sys.stderr)
+
+    def embed(self, inputs: Sequence[str]) -> list[list[float]]:
+        self._ensure_loaded()
+        if self._model is None or not inputs:
+            return [[0.0] * self.expected_dims for _ in inputs]
+
+        import mlx.core as mx
+
+        # Simplified embedding logic for the micro-model (usually not instruction-tuned)
+        out = []
+        for text in inputs:
+            if not text:
+                out.append([0.0] * self.expected_dims)
+                continue
+            ids = self._tokenizer.encode(text, add_special_tokens=False)
+            arr = mx.array([ids])
+            hidden = self._model.model(arr)
+            # Simple mean pooling for micro-models
+            row = mx.mean(hidden, axis=1)
+            norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
+            emb = row / norm
+            out.append([float(x) for x in emb[0].tolist()])
+        return out
+
+    def embed_query(self, query: str) -> list[float]:
+        return self.embed([query])[0]
+
+    @property
+    def is_warm(self) -> bool:
+        return self._model is not None
+
+
 class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
     """In-process MLX embedder. Drop-in for any code that needs a
     `embed(list[str]) -> list[list[float]]` callable.
@@ -114,6 +179,7 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         model_path: str = "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
         expected_dims: int = 1024,
         max_seq_len: int = 512,
+        cache_size: int | None = None,
     ) -> None:
         self.model_path = model_path
         self.expected_dims = expected_dims
@@ -122,11 +188,14 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         self._tokenizer: Any = None
         self._load_lock = threading.Lock()
         self._last_use: float = 0.0
-        # Query embedding cache (LRU, opt-in via MEMO_QUERY_CACHE_SIZE)
-        # Uses shared cache from consciousness-contracts if available
-        # Raw env read (no memo.flags import — embedder is a foundation module
-        # that must not import other memo modules; see architecture-boundary test).
-        cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
+        # Query embedding cache (LRU). Uses the shared consciousness-contracts
+        # cache when available. The embedder is a foundation module that must not
+        # import memo.flags (see the architecture-boundary test), so flags-aware
+        # callers (Memory facade, recall daemon) pass the registry default via
+        # `cache_size`. When that is None we fall back to the raw env read — which
+        # defaults to 0/off — so a bare `MLXEmbedder()` stays opt-in.
+        if cache_size is None:
+            cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
         # Either the shared consciousness-contracts cache or the local _SimpleLRU
         # fallback — both expose get(str)/put(str, value).
         self._query_cache: Any
@@ -301,6 +370,12 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
     def dims(self) -> int:
         """EmbedderBase contract: returns expected_dims."""
         return self.expected_dims
+
+    @property
+    def is_warm(self) -> bool:
+        """EmbedderBase contract: True once the MLX model is resident in RAM
+        (after the first `embed()` triggers the lazy load)."""
+        return self._model is not None
 
     @property
     def last_use(self) -> float:

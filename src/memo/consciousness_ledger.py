@@ -14,23 +14,27 @@ from __future__ import annotations
 
 import logging
 import secrets
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from memo.util import utc_now_iso as _utc_now_iso
 
 _log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from consciousness_contracts import ConsciousnessEvent, LedgerWriter
 
 try:
     from consciousness_contracts import ConsciousnessEvent, LedgerWriter
 
     _CONTRACTS_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dep
-    ConsciousnessEvent = None  # type: ignore[assignment,misc]
-    LedgerWriter = None  # type: ignore[assignment,misc]
+    # Names stay undefined at runtime; every use below is guarded by
+    # _CONTRACTS_AVAILABLE, and the TYPE_CHECKING import above gives mypy the
+    # real types without a None-fallback that would need `type: ignore`.
     _CONTRACTS_AVAILABLE = False
 
 
-_writer: LedgerWriter | None = None  # type: ignore[valid-type]
+_writer: LedgerWriter | None = None
 
 
 def _enabled() -> bool:
@@ -70,7 +74,7 @@ def emit_event(
     if writer is None:
         return False
     try:
-        event = ConsciousnessEvent(  # type: ignore[misc]
+        event = ConsciousnessEvent(
             event_id=secrets.token_hex(16),
             ts=_utc_now_iso(),
             source="memo",

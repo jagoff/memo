@@ -24,6 +24,7 @@ Or programmatically:
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from typing import Any, cast
 
@@ -56,6 +57,8 @@ from memo import server_version as _srv_version
 from memo._trace import TRACE_HEADER, trace_scope
 from memo.config import Config
 from memo.memory import AmbiguousIdError, Memory
+
+_log = logging.getLogger("memo.server")
 
 
 def _make_trace_middleware() -> Any:
@@ -122,8 +125,8 @@ def _log_consult(
             source=(source or "").strip().lower() or None,
             latency_ms=_now_ms() - t0_ms,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("consult recall-log write failed for %s: %s", tool, exc)
 
 
 def build_server(memory: Memory | None = None) -> FastMCP:
@@ -898,20 +901,25 @@ def main() -> None:
     127.0.0.1:18768). One ``Memory`` instance is built here and reused across
     every request, so the embedder / reranker / synthesis LLM stay resident.
     """
-    server = build_server()
-    transport = os.environ.get("MEMO_MCP_TRANSPORT", "stdio").strip().lower()
+    from memo.flags import flag_int, flag_str
+
+    transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
-        # Enable prompt cache + query embedding cache for long-lived daemon
+        # Long-lived daemon: enable the prompt cache + a larger query-embedding
+        # cache BEFORE building Memory, so the embedder constructed inside
+        # build_server() actually picks them up (it reads the cache size at
+        # construction time).
         os.environ.setdefault("MEMO_PROMPT_CACHE", "1")
         os.environ.setdefault("MEMO_QUERY_CACHE_SIZE", "500")
-        host = os.environ.get("MEMO_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-        try:
-            port = int(os.environ.get("MEMO_MCP_PORT", "18768").strip() or "18768")
-        except ValueError:
-            port = 18768  # malformed env → default rather than crash the daemon
+        server = build_server()
+        host = flag_str("MEMO_MCP_HOST") or "127.0.0.1"
+        # flag_int falls back to the registered default (18768) on a malformed
+        # value, so no try/except is needed here.
+        port = flag_int("MEMO_MCP_PORT") or 18768
         # transport is validated against the allowed set just above.
         server.run(transport=cast(Any, transport), host=host, port=port)
     else:
+        server = build_server()
         server.run()
 
 

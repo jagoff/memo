@@ -214,6 +214,11 @@ class SocketEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
     def dims(self) -> int:
         return self.expected_dims
 
+    @property
+    def is_warm(self) -> bool:
+        """Warm iff the recall daemon (which holds the model) answers a ping."""
+        return ping(state_dir=self._state_dir) is not None
+
     def embed(self, inputs: Sequence[str]) -> list[list[float]]:
         return embed(inputs, state_dir=self._state_dir)
 

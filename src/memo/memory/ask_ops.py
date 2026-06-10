@@ -443,8 +443,9 @@ class _AskOpsMixin(_MemoryBase):
             if len(h.body or "") > snippet_chars:
                 snippet = snippet.rstrip() + "…"
             tags = ", ".join(h.tags) or "—"
+            graph_info = "  |  context: related-via-graph" if h.extra.get("graph_expanded") else ""
             snippet_lines.append(
-                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}\n{snippet}\n"
+                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}{graph_info}\n{snippet}\n"
             )
             sources.append(
                 {
@@ -455,6 +456,7 @@ class _AskOpsMixin(_MemoryBase):
                     "type": h.type,
                     "score": h.score,
                     "snippet": snippet,
+                    "graph_expanded": bool(h.extra.get("graph_expanded")),
                 }
             )
             seen_paths.update(_vault_dedup_keys(h))

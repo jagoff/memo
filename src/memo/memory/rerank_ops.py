@@ -149,8 +149,18 @@ class _RerankOpsMixin(_MemoryBase):
         sim_threshold = float(os.environ.get("MEMO_FEEDBACK_SIM_THRESHOLD") or sim_threshold)
         boost_per_vote = float(os.environ.get("MEMO_FEEDBACK_BOOST_PER_VOTE") or boost_per_vote)
         boost_cap = float(os.environ.get("MEMO_FEEDBACK_BOOST_CAP") or boost_cap)
+        # Existence pre-filter: most memorias have zero feedback rows, so a
+        # single IN-list lookup tells us which hits are even worth the kNN vec
+        # scan below. Collapses a per-hit N+1 into 1 query for the common case.
+        try:
+            with_feedback = self.store.sources_with_feedback([h.id for h in hits])
+        except sqlite3.Error:
+            with_feedback = {h.id for h in hits}  # degrade to per-hit scan
         out: list[MemoryRecord] = []
         for h in hits:
+            if h.id not in with_feedback:
+                out.append(h)
+                continue
             try:
                 fb = self.store.find_feedback_for_source(
                     h.id,

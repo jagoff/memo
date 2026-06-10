@@ -10,7 +10,10 @@ ellipsis-body stubs are never executed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from memo.llm import MLXChat
 
 
 class _MemoryBase:
@@ -77,7 +80,7 @@ class _MemoryBase:
     def _emit_ledger(self, *a: Any, **k: Any) -> Any: ...
     def _emit_save_receipt(self, *a: Any, **k: Any) -> Any: ...
     def _enforce_synapse_freeze(self, *a: Any, **k: Any) -> Any: ...
-    def _ensure_chat(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _ensure_chat(self, *a: Any, **k: Any) -> MLXChat: ...  # type: ignore[empty-body]
     def _ensure_reranker(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _generate_contextual_summary(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _mark_dirty(self, *a: Any, **k: Any) -> Any: ...
