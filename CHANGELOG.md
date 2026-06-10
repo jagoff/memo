@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Auto-recall fires on more real prompts (less wasted coverage).** The
+  `recall-hook` previously bailed on ~50% of prompts (slash commands +
+  short prompts), so memo's context never reached those turns. Now: a slash
+  command **with substantive args** recalls on the arg text
+  (`/plan how does memo work` → recalls on `how does memo work`), gated by
+  `MEMO_RECALL_SLASH_MIN_ARG_CHARS` (default 8) and a
+  `MEMO_RECALL_SLASH_DENYLIST` of pure-UI/noise verbs; and a **short follow-up
+  inside an active session** ("y eso?") is re-anchored with the last N
+  `prompt_trail` prompts via `MEMO_RECALL_SHORT_EXPAND_TURNS` (default 2,
+  gated on `MEMO_RECALL_EXPAND_CONTEXT`) instead of bailing. All gating/rewrite
+  happens once in `cli.py` before dispatch, so both the daemon and subprocess
+  recall paths see the rewritten query. Defaults are backward-safe (bare and
+  denylisted slash commands still bail). The recall directive now also asks the
+  model to cite the `[id]` of any memoria it relies on, so grounded use is
+  traceable. New `session.recent_prompts()` helper.
+
 - **Obsidian-as-source-of-truth storage model.** The `.md` files are now treated
   as canonical and sqlite as a rebuildable index. `MEMO_MEMORIES_IN_VAULT=1`
   (with `MEMO_VAULT_PATH`) stores memorias under `<vault>/<SYSTEM_DIR>/AI/memory`

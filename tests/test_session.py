@@ -35,6 +35,7 @@ from memo.session import (
     list_sessions,
     prune_lru,
     read_last_user_msg,
+    recent_prompts,
     update_summary,
 )
 
@@ -66,6 +67,27 @@ def test_checkpoint_creates_new_session(tmp_cfg, fake_git):
 
     p = tmp_cfg.state_dir / "sessions" / "sid-aaaa-1111.json"
     assert p.is_file()
+
+
+def test_recent_prompts_returns_last_n_oldest_first(tmp_cfg, fake_git):
+    """recent_prompts feeds the recall-hook short-prompt expansion: it returns
+    the most recent N prompt_trail entries, oldest first."""
+    sid = "sid-trail-1"
+    for p in ("primer prompt largo", "segundo prompt largo", "tercer prompt largo"):
+        checkpoint(tmp_cfg.state_dir, session_id=sid, cwd=str(tmp_cfg.state_dir), prompt=p)
+    assert recent_prompts(tmp_cfg.state_dir, sid, 2) == [
+        "segundo prompt largo",
+        "tercer prompt largo",
+    ]
+    # n larger than the trail returns the whole trail.
+    assert len(recent_prompts(tmp_cfg.state_dir, sid, 99)) == 3
+
+
+def test_recent_prompts_missing_session_or_zero_n(tmp_cfg):
+    """No session, empty id, or n<=0 → [] (never raises — recall must not break)."""
+    assert recent_prompts(tmp_cfg.state_dir, "does-not-exist", 2) == []
+    assert recent_prompts(tmp_cfg.state_dir, "", 2) == []
+    assert recent_prompts(tmp_cfg.state_dir, "x", 0) == []
 
 
 def test_checkpoint_idempotent_upsert(tmp_cfg, fake_git):

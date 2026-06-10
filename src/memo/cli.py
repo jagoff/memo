@@ -659,23 +659,65 @@ def recall_hook() -> None:
         return
 
     prompt = (payload.get("prompt") or "").strip()
+    _sid = (payload.get("session_id") or "").strip() or None
     min_chars = flag_int("MEMO_RECALL_MIN_PROMPT_CHARS") or 12
-    if len(prompt) < min_chars:
-        _bail(f"prompt too short ({len(prompt)} < {min_chars})")
-        return
 
-    # Skip slash commands by default — the user is invoking another command,
-    # injecting recall context would be noise. Override with
-    # MEMO_RECALL_SKIP_SLASH=0 if you want recall on /memo etc.
+    # INVARIANT: all prompt gating + rewriting happens here, BEFORE the daemon
+    # dispatch (connect_and_recall below) and the subprocess search. `prompt` is
+    # reassigned in place, so both paths recall on the rewritten query and the
+    # rewrite stays single-source. Do NOT move the daemon dispatch above this.
+
+    # Slash commands: by default the user is invoking another command, so raw
+    # recall is noise — but a slash command WITH substantive args carries real
+    # intent ("/plan how does memo work" → recall on "how does memo work").
+    # Strip the leading /command token and recall on the args; still bail on
+    # bare commands and a denylist of pure-UI/noise verbs. Disable the whole
+    # gate with MEMO_RECALL_SKIP_SLASH=0. Bail reasons keep the substring
+    # "slash command" so dashboard._bail_breakdown classifies them.
     if flag_bool("MEMO_RECALL_SKIP_SLASH") and prompt.startswith("/"):
-        _bail("slash command, skip recall")
-        return
+        head, _, rest = prompt[1:].partition(" ")
+        rest = rest.strip()
+        slash_min = flag_int("MEMO_RECALL_SLASH_MIN_ARG_CHARS") or 8
+        denylist = {
+            c.strip().lower()
+            for c in (flag_str("MEMO_RECALL_SLASH_DENYLIST") or "").split(",")
+            if c.strip()
+        }
+        if len(rest) < slash_min:
+            _bail("slash command (no args)")
+            return
+        if head.lower() in denylist:
+            _bail(f"slash command (noise: {head.lower()})")
+            return
+        prompt = rest
+
+    # Short prompts skip recall — but a short follow-up inside an active session
+    # ("y eso?", "seguimos") still has intent. When a session is active and
+    # MEMO_RECALL_EXPAND_CONTEXT is on, prepend the last few session prompts
+    # (prompt_trail) to re-anchor before bailing. Bail reasons keep "too short".
+    if len(prompt) < min_chars:
+        expanded = ""
+        n_turns = flag_int("MEMO_RECALL_SHORT_EXPAND_TURNS") or 0
+        if _sid and n_turns > 0 and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
+            try:
+                from memo import session as _session_mod
+
+                prior = _session_mod.recent_prompts(cfg.state_dir, _sid, n_turns)
+                prior = [p.strip() for p in prior if p.strip() and p.strip() != prompt]
+                if prior:
+                    expanded = "\n".join([*prior, prompt]).strip()
+            except Exception:
+                expanded = ""
+        if len(expanded) >= min_chars:
+            prompt = expanded
+        else:
+            _bail(f"prompt too short ({len(prompt)} < {min_chars})")
+            return
 
     # Correlation keys (P0): tag this recall with the session + turn so the
     # Stop-hook grounding detector can match the answer back to it. Stamp the
     # SAME turn label into the session snapshot (last_recall_turn) so Stop reads
     # it back race-free. client names the front-end for per-client value.
-    _sid = (payload.get("session_id") or "").strip() or None
     _client = flag_str("MEMO_RECALL_CLIENT")
     _turn: int | None = None
     if _sid:
