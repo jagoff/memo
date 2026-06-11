@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from memo.daemon_common import cleanup, is_pid_alive, read_pid
+from memo.daemon_common import cleanup, daemon_paths, is_pid_alive, read_pid
 
 
 def test_is_pid_alive_self() -> None:
@@ -42,3 +42,23 @@ def test_cleanup_unlinks_missing_ok(tmp_path: Path) -> None:
     cleanup(a, b)
     assert not a.exists()
     assert not b.exists()
+
+
+def test_daemon_paths_keep_pid_in_state_dir_for_short_paths(tmp_path: Path) -> None:
+    state_dir = Path("/tmp") / f"memo-daemon-common-{os.getpid()}"
+    sock, pid = daemon_paths(state_dir, "recall")
+    assert sock == state_dir / "recall.sock"
+    assert pid == state_dir / "recall-daemon.pid"
+
+
+def test_daemon_paths_use_short_socket_for_deep_state_dir(tmp_path: Path) -> None:
+    deep = tmp_path
+    for n in range(12):
+        deep = deep / f"very-long-directory-name-{n:02d}"
+
+    sock, pid = daemon_paths(deep, "ingest")
+
+    assert pid == deep / "ingest-daemon.pid"
+    assert sock.name.endswith(".sock")
+    assert sock != deep / "ingest.sock"
+    assert len(str(sock)) < 104

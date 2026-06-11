@@ -49,6 +49,7 @@ frozen here: memo passes a ``Config``-derived path; memflow uses the env-based
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket as _socket
 from pathlib import Path
@@ -78,6 +79,20 @@ DEFAULT_TIMEOUT_S = 5.0
 PING_TIMEOUT_S = 0.5
 
 _RECV_CHUNK = 65536
+_AF_UNIX_SAFE_PATH_LEN = 103
+
+
+def _socket_path_for_state_dir(state_dir: Path, name: str = "recall") -> Path:
+    local = state_dir / f"{name}.sock"
+    if len(str(local)) < _AF_UNIX_SAFE_PATH_LEN:
+        return local
+
+    import os
+    import tempfile
+
+    digest = hashlib.sha256(str(state_dir.expanduser()).encode("utf-8")).hexdigest()[:16]
+    uid = os.getuid() if hasattr(os, "getuid") else "nouid"
+    return Path(tempfile.gettempdir()) / f"memo-{uid}" / f"{name}-{digest}.sock"
 
 
 def default_socket_path() -> Path:
@@ -97,8 +112,8 @@ def default_socket_path() -> Path:
         return Path(explicit).expanduser()
     state_dir = os.environ.get("MEMO_STATE_DIR", "").strip()
     if state_dir:
-        return Path(state_dir).expanduser() / "recall.sock"
-    return Path.home() / ".local" / "share" / "memo" / "recall.sock"
+        return _socket_path_for_state_dir(Path(state_dir).expanduser())
+    return _socket_path_for_state_dir(Path.home() / ".local" / "share" / "memo")
 
 
 def encode_request(op: str, **fields: Any) -> bytes:

@@ -8,11 +8,15 @@ verbatim across the three daemon modules. This consolidates them. Socket/PID
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
+import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+_AF_UNIX_SAFE_PATH_LEN = 103
 
 
 def daemon_paths(state_dir: Path, name: str) -> tuple[Path, Path]:
@@ -22,7 +26,26 @@ def daemon_paths(state_dir: Path, name: str) -> tuple[Path, Path]:
     daemons: ``<name>.sock`` + ``<name>-daemon.pid`` under ``state_dir``. The
     per-daemon ``_socket_path`` / ``_pid_file`` wrappers delegate here.
     """
-    return state_dir / f"{name}.sock", state_dir / f"{name}-daemon.pid"
+    return socket_path_for(state_dir, name), state_dir / f"{name}-daemon.pid"
+
+
+def socket_path_for(state_dir: Path, name: str) -> Path:
+    """Return a Unix socket path short enough for macOS AF_UNIX.
+
+    macOS limits sockaddr_un paths to roughly 104 bytes. Pytest and some
+    launchd/runtime setups can place ``state_dir`` deep under ``/private/var``;
+    in that case keep PID/state files in ``state_dir`` but bind the socket in a
+    stable per-user temp directory keyed by the absolute state path.
+    """
+    local = state_dir / f"{name}.sock"
+    if len(str(local)) < _AF_UNIX_SAFE_PATH_LEN:
+        return local
+
+    digest = hashlib.sha256(str(state_dir.expanduser()).encode("utf-8")).hexdigest()[:16]
+    uid = os.getuid() if hasattr(os, "getuid") else "nouid"
+    root = Path(tempfile.gettempdir()) / f"memo-{uid}"
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return root / f"{name}-{digest}.sock"
 
 
 def is_pid_alive(pid: int) -> bool:

@@ -9,8 +9,10 @@ of this test fails. Keep this file identical across repos alongside the module.
 from __future__ import annotations
 
 import json
+import os
 import socketserver
 import threading
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -72,7 +74,7 @@ def test_encode_request_is_newline_terminated_utf8_json() -> None:
 def echo_socket(tmp_path: Path) -> Iterator[tuple[Path, dict]]:
     """A real AF_UNIX server that records the request and replies with a
     canned JSON line. Exercises the actual send/recv framing path."""
-    sock_path = tmp_path / "recall.sock"
+    sock_path = Path("/tmp") / f"memo-ep-{os.getpid()}-{uuid.uuid4().hex}.sock"
     captured: dict = {}
 
     class Handler(socketserver.StreamRequestHandler):
@@ -90,6 +92,7 @@ def echo_socket(tmp_path: Path) -> Iterator[tuple[Path, dict]]:
     finally:
         server.shutdown()
         server.server_close()
+        sock_path.unlink(missing_ok=True)
 
 
 def test_send_request_parses_dict(echo_socket: tuple[Path, dict]) -> None:
@@ -113,6 +116,22 @@ def test_missing_socket_returns_none(tmp_path: Path) -> None:
     missing = tmp_path / "nope.sock"
     assert ep.send_request(missing, {"op": "ping"}, timeout=0.5) is None
     assert ep.send_request_line(missing, {"op": "ping"}, timeout=0.5) is None
+
+
+def test_default_socket_path_uses_short_path_for_deep_state_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deep = tmp_path
+    for n in range(12):
+        deep = deep / f"very-long-directory-name-{n:02d}"
+    monkeypatch.delenv("MEMFLOW_EMBED_SOCKET", raising=False)
+    monkeypatch.setenv("MEMO_STATE_DIR", str(deep))
+
+    sock = ep.default_socket_path()
+
+    assert sock.name.endswith(".sock")
+    assert sock != deep / "recall.sock"
+    assert len(str(sock)) < 104
 
 
 def test_non_json_response_returns_none(echo_socket: tuple[Path, dict]) -> None:

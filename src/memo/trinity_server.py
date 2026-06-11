@@ -171,8 +171,38 @@ class TrinityHandler(socketserver.StreamRequestHandler):
             self.server._priority_lock.release()
 
     def _delegate_to_embedder(self, op: str, req: dict[str, Any]) -> str:
-        # logic for embed_query, embed_batch etc.
-        return json.dumps({"error": f"op {op} delegation TODO"})
+        if op == "embed_query":
+            text = str(req.get("text") or "")
+            if not text.strip():
+                return json.dumps({"error": "embed_query: empty text"})
+            vec = self.server._mem.embedder.embed_query(text)
+            return json.dumps(
+                {
+                    "vector": vec,
+                    "dim": len(vec),
+                    "dims": len(vec),
+                    "model": self.server._cfg.embedder_model,
+                },
+                ensure_ascii=False,
+            )
+        if op == "embed_batch":
+            texts = req.get("texts")
+            if not isinstance(texts, list):
+                return json.dumps({"error": "embed_batch: `texts` must be a list"})
+            if not all(isinstance(t, str) for t in texts):
+                return json.dumps({"error": "embed_batch: every element of `texts` must be a string"})
+            vectors = self.server._mem.embedder.embed(texts) if texts else []
+            dim = len(vectors[0]) if vectors else 0
+            return json.dumps(
+                {
+                    "vectors": vectors,
+                    "dim": dim,
+                    "dims": dim,
+                    "model": self.server._cfg.embedder_model,
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps({"error": f"unknown op: {op!r}"})
 
     def _write_response(self, text: str) -> None:
         self.wfile.write(text.encode("utf-8") + b"\n")

@@ -1,8 +1,9 @@
-"""DEPRECATED — Memory encryption module.
+"""EXPERIMENTAL — file-level encryption primitives and in-process key manager.
 
-AES-256 encryption of sensitive memorias (not integrated into Memory yet).
-This module is not covered by tests and not exposed via MCP.
-Do not use in production. Kept for reference only.
+The primitives are tested and the CLI/MCP lock/status surface is gated behind
+``MEMO_ENCRYPTION_ENABLED``. Automatic save/search encryption is not wired into
+the memory pipeline yet; keep this vertical opt-in until that integration is
+complete.
 
 Enables:
 - Encrypt sensitive memorias with AES-256-GCM
