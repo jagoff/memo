@@ -154,6 +154,9 @@ class Memory(
         self._temporal: TemporalAnalyzer | None = None
         # Memoized ContextualRecall (its ContextStore reads disk on init).
         self._contextual: ContextualRecall | None = None
+        # Encryption manager carries unlock state in memory, so it must be
+        # stable across accesses within a long-lived MCP process.
+        self._encryption: EncryptionManager | None = None
         # Serialises unique-path allocation + .md creation in save() so two
         # concurrent same-title saves can't race the path probe (see write_ops).
         self._save_path_lock = threading.Lock()
@@ -312,9 +315,11 @@ class Memory(
     @property
     def encryption(self) -> EncryptionManager:
         """Lazy accessor for EncryptionManager."""
-        key_manager = KeyManager(self.cfg.state_dir)
-        encryptor = Encryptor(key_manager)
-        return EncryptionManager(key_manager, encryptor)
+        if self._encryption is None:
+            key_manager = KeyManager(self.cfg.state_dir)
+            encryptor = Encryptor(key_manager)
+            self._encryption = EncryptionManager(key_manager, encryptor)
+        return self._encryption
 
     @property
     def sharing(self) -> ShareManager:

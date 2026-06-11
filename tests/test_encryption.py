@@ -2,6 +2,7 @@
 
 import pytest
 
+from memo.config import Config
 from memo.encryption import (
     EncryptionManager,
     EncryptionMetadata,
@@ -9,6 +10,7 @@ from memo.encryption import (
     KeyDerivation,
     KeyManager,
 )
+from memo.memory import Memory
 
 
 @pytest.fixture
@@ -206,6 +208,28 @@ def test_encryption_manager_is_unlocked(encryption_manager):
 
     encryption_manager.unlock("testpassword")
     assert encryption_manager.is_unlocked()
+
+
+def test_memory_reuses_encryption_manager(tmp_cfg, monkeypatch):
+    """Unlock state must survive across Memory.encryption accesses."""
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    mem = Memory(
+        Config(
+            data_dir=tmp_cfg.data_dir,
+            vault_path=tmp_cfg.vault_path,
+            state_dir=tmp_cfg.state_dir,
+            embedder_dims=4,
+        )
+    )
+
+    first = mem.encryption
+    assert first.unlock("testpassword") is True
+
+    assert mem.encryption is first
+    assert mem.encryption.is_unlocked()
 
 
 def test_encryption_manager_encrypt_memoria(encryption_manager):

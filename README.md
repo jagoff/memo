@@ -13,7 +13,7 @@
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
-`memo` gives any MCP-aware agent (Claude Code, Claude Desktop, Cursor, Cline, Continue, Paperclip, …) a long-term memory that **runs entirely on your Mac**. It stores each memory as a plain Markdown file inside an Obsidian-friendly folder, indexes embeddings in a single sqlite file, and runs the LLM + embedder + reranker **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys.
+`memo` gives any MCP-aware agent (Claude Code, Claude Desktop, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your Mac**. It stores each memory as a plain Markdown file inside an Obsidian-friendly folder, indexes embeddings in a single sqlite file, and runs the LLM + embedder + reranker **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys.
 
 > Your prompts and memorias never leave the machine.
 
@@ -414,10 +414,6 @@ a stdio server pointing at the `memo-mcp` binary. To print a portable
 ```bash
 memo mcp-command --client json
 ```
-
-### Paperclip
-
-A first-party plugin under [`integrations/paperclip-plugin-memo/`](./integrations/paperclip-plugin-memo) exposes five tools (`memo_search`, `memo_save`, `memo_list`, `memo_get`, `memo_ask`) to any agent running in a Paperclip company.
 
 ## Tools exposed over MCP
 
@@ -1042,7 +1038,7 @@ A handful of projects sit in the same neighbourhood. They diverge on the things 
 
 4. **Ambient recall + session awareness as a first-class feature.** With the bundled Claude Code plugin, `SessionStart` starts the **recall daemon** (keeps embedder in RAM for <200 ms recall), fires **El Briefing** (open loops, memory of the day, crash recovery), and `UserPromptSubmit` queries the daemon on every prompt (8 s budget, top-3 above cosine 0.6, injected as `additionalContext`). A `Stop` hook extracts insights from every exchange automatically through a quality gate. The agent sees the right memorias *before* it answers, the session starts with a structured recap of where you left off, and the corpus grows without you lifting a finger. No alternative ships this as a turnkey hook bundle.
 
-5. **MCP is a primary interface, not an afterthought.** memo exposes 13 tools over stdio so Claude Code, Cursor, Cline, Continue, Paperclip, and any future MCP client get the same contract on day one. mem0 and letta have no MCP server; mem-vault has one but isn't published in the registry; the official MCP `memory` reference is entity-graph-only and stores in JSON.
+5. **MCP is a primary interface, not an afterthought.** memo exposes 13 tools over stdio so Claude Code, Cursor, Cline, Continue, and any future MCP client get the same contract on day one. mem0 and letta have no MCP server; mem-vault has one but isn't published in the registry; the official MCP `memory` reference is entity-graph-only and stores in JSON.
 
 6. **Apple Silicon is a target, not a footnote.** Embedder, reranker, and chat are 4-bit MLX builds tuned for unified memory: ~50 ms/embed on 0.6B, sub-second first recall after prewarm, ~4 GB RAM ceiling for the default 7B chat tier. Other projects "work" on M-series Macs because Python runs there — they aren't tuned for it.
 
@@ -1099,7 +1095,6 @@ Ship-ready today:
 - [x] **Transcript miner** (`memo mine-history` over `~/.claude/projects/`)
 - [x] **File-watcher daemon** (`memo watch` / `install-watcher` launchd plist)
 - [x] First-run picker + migration tooling
-- [x] Paperclip plugin (5 tools)
 
 Post-v0:
 
@@ -1127,7 +1122,7 @@ tools directly.
 | `multimodal` | Cross-modal semantic search over images, audio, and text |
 | `collaborative` | Shared knowledge graph across multiple users |
 | `sharing` | Per-memoria sharing links and permission grants |
-| `encryption` | AES-256-GCM at-rest encryption for sensitive memories (EXPERIMENTAL — gated OFF; set `MEMO_ENCRYPTION_ENABLED=1` to enable the `memo encrypt` CLI group + `memory_encrypt_*` MCP tools) |
+| `encryption` | AES-256-GCM file-level primitives and lock/status control (EXPERIMENTAL — gated OFF; set `MEMO_ENCRYPTION_ENABLED=1` to enable the `memo encrypt` CLI group + `memory_encrypt_*` MCP tools; automatic save/search encryption is not enabled yet) |
 | `contradict` | Contradiction and staleness radar with triage workflow |
 | `chunker` | Heading-aware sub-document chunking for long memories |
 | `crossref` | Obsidian `[[wikilink]]` backlink index and multi-hop traversal |

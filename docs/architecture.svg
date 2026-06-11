@@ -52,8 +52,8 @@
   <text x="465" y="170" class="meta">MCP stdio</text>
 
   <rect x="555" y="130" width="150" height="55" class="box box-client"/>
-  <text x="630" y="153" class="label">Paperclip agents</text>
-  <text x="630" y="170" class="meta">plugin · 5 tools</text>
+  <text x="630" y="153" class="label">MCP clients</text>
+  <text x="630" y="170" class="meta">stdio contract</text>
 
   <rect x="720" y="130" width="180" height="55" class="box box-client"/>
   <text x="810" y="153" class="label">your shell</text>
