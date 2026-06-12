@@ -98,24 +98,48 @@ def consolidate_propose(
     "--max-clusters", type=int, default=20, help="Maximum clusters to process (default: 20)"
 )
 @click.option("--type", "type_", help="Filter by memoria type")
-@click.option("--dry-run", is_flag=True, help="Show what would happen without applying changes")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Actually merge and archive. Without it, runs a read-only dry-run preview (the safe default).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip the interactive confirmation prompt (only meaningful with --force).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-@click.confirmation_option(prompt="This will merge memorias and archive old ones. Continue?")
 def consolidate_apply(
     threshold: float,
     auto_threshold: float | None,
     max_clusters: int,
     type_: str | None,
-    dry_run: bool,
+    force: bool,
+    yes: bool,
     as_json: bool,
 ) -> None:
     """Apply merge proposals to consolidate the corpus.
 
     Runs a two-pass pipeline: fast lane (cosine ≥ auto_threshold, no LLM) then
-    LLM pass (cosine ≥ threshold). Use --dry-run to preview first.
+    LLM pass (cosine ≥ threshold).
 
-    Example: memo consolidate apply --dry-run
+    SAFE DEFAULT: previews changes (dry-run) unless --force is passed.
+    Merging archives the originals — a data-loss operation — so --force is
+    gated by an interactive confirmation unless --yes is also given.
+
+    Example: memo consolidate apply           # preview only
+             memo consolidate apply --force   # apply (with confirmation)
     """
+    # dry-run is the default; mutation requires an explicit --force, and
+    # --force without --yes must clear an interactive confirmation first.
+    dry_run = not force
+    if force and not yes:
+        click.confirm(
+            "This will merge memorias and archive the originals. Continue?",
+            abort=True,
+        )
+
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
@@ -136,7 +160,10 @@ def consolidate_apply(
     results = result.get("results", [])
 
     if dry_run:
-        console.print("[yellow]Dry run mode - no changes applied[/yellow]")
+        console.print(
+            "[yellow]Dry run (default) — no changes applied. "
+            "Pass --force to merge and archive.[/yellow]"
+        )
         console.print()
 
     console.print(f"[bold]Processed {len(results)} consolidations[/bold]")

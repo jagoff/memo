@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS meta (
 
 CREATE INDEX IF NOT EXISTS idx_meta_type    ON meta(type);
 CREATE INDEX IF NOT EXISTS idx_meta_updated ON meta(updated);
+-- Exact + prefix-LIKE path lookups (queries.py filters by path) and
+-- type-filtered recency scans. Added by _ensure_secondary_indices() on
+-- existing DBs too — see that method.
+CREATE INDEX IF NOT EXISTS idx_meta_path         ON meta(path);
+CREATE INDEX IF NOT EXISTS idx_meta_type_updated ON meta(type, updated);
 
 CREATE TABLE IF NOT EXISTS repo_sources (
     id          TEXT PRIMARY KEY,
@@ -328,6 +333,34 @@ class _SchemaMixin(_StoreBase):
         # over an old DB hits the second path. Both are cheap no-ops once current.
         self._validate_vec_dims()
         self._validate_vec_schema()
+        self._ensure_secondary_indices()
+
+    # Secondary B-tree indices on `meta` that older DBs predate. Kept out of
+    # the `_schema_ready()`-gated DDL block (which only runs on fresh DBs) so a
+    # binary upgraded over an existing corpus still gets them. The existence
+    # pre-check is a read (no schema lock); we only take a write lock when an
+    # index is actually missing, so the common already-current case is free.
+    _SECONDARY_INDICES: tuple[tuple[str, str], ...] = (
+        ("idx_meta_path", "CREATE INDEX IF NOT EXISTS idx_meta_path ON meta(path)"),
+        (
+            "idx_meta_type_updated",
+            "CREATE INDEX IF NOT EXISTS idx_meta_type_updated ON meta(type, updated)",
+        ),
+    )
+
+    def _ensure_secondary_indices(self) -> None:
+        present = {
+            str(row["name"])
+            for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            ).fetchall()
+        }
+        missing = [ddl for name, ddl in self._SECONDARY_INDICES if name not in present]
+        if not missing:
+            return
+        with self._conn:
+            for ddl in missing:
+                self._conn.execute(ddl)
 
     def _schema_ready(self) -> bool:
         rows = self._conn.execute(

@@ -21,7 +21,6 @@ from typing import Any
 import frontmatter
 
 from memo._trace import current_trace
-from memo.embedder import assert_valid_embedding
 from memo.lifecycle import (
     FORGET_AFTER_KEY,
     FORGET_REASON_KEY,
@@ -427,11 +426,14 @@ class _WriteOpsMixin(_MemoryBase):
         # so BM25 still finds it, then return the record. Never raise past a
         # successful disk write.
         try:
-            embedding = self.embedder.embed([self._compose_for_embed(title, content)])[0]
-            assert_valid_embedding(
-                embedding,
-                self.cfg.embedder_dims,
-                context=f"save id={record_id[:8]}",
+            # Content-addressed embed cache (keyed model+dims+sha256(text)):
+            # re-saving identical content — or reverting an edit — reuses the
+            # stored vector instead of a fresh forward pass. Same cache the
+            # reindex path uses; a model swap changes the key, so a stale
+            # vector is never served.
+            embedding = self._embed_cached(
+                self._compose_for_embed(title, content),
+                ctx=f"save id={record_id[:8]}",
             )
             self.store.upsert(
                 id_=record_id,
@@ -730,9 +732,11 @@ class _WriteOpsMixin(_MemoryBase):
         # embed input now (see `_compose_for_embed`). Pure retag/type
         # changes still skip the embedder.
         if body_changed or title_changed:
-            embedding = self.embedder.embed([self._compose_for_embed(new_title, new_body)])[0]
-            assert_valid_embedding(
-                embedding, self.cfg.embedder_dims, context=f"update id={id_[:8]}"
+            # Reuse the content-addressed embed cache (see save()): an edit
+            # that restores previously-embedded content skips the embedder.
+            embedding = self._embed_cached(
+                self._compose_for_embed(new_title, new_body),
+                ctx=f"update id={id_[:8]}",
             )
             self.store.upsert(
                 id_=id_,

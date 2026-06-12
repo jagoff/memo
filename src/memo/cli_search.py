@@ -25,9 +25,10 @@ from memo.config import Config
 @click.option(
     "--mode",
     default="hybrid",
-    type=click.Choice(["hybrid", "vec", "bm25"]),
+    type=click.Choice(["hybrid", "vec", "bm25", "exact"]),
     show_default=True,
-    help="hybrid = RRF fusion of vec + bm25 (default). vec = semantic only. bm25 = keyword only.",
+    help="hybrid = RRF fusion of vec + bm25 (default). vec = semantic only. "
+    "bm25 = keyword only. exact = strict keyword AND with tag/title boost.",
 )
 @click.option("--json", "as_json", is_flag=True)
 def search(query: str, limit: int, type_: str | None, mode: str, as_json: bool) -> None:

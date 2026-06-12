@@ -44,18 +44,23 @@ def register(server: FastMCP, memory: Memory) -> None:
         threshold: float = 0.85,
         max_clusters: int = 20,
         type: str | None = None,
-        dry_run: bool = False,
+        dry_run: bool = True,
     ) -> dict[str, Any]:
         """Apply merge proposals to consolidate the corpus.
 
         Executes the consolidation pipeline: detect clusters, propose merges,
         and apply them. Archives old memorias to an `archived/` subdirectory.
 
+        SAFE DEFAULT: `dry_run=True` — this previews the merges without
+        mutating the corpus. Pass `dry_run=False` to actually merge and
+        archive (data-loss operation).
+
         Args:
             threshold: Cosine similarity threshold (default 0.85).
             max_clusters: Maximum clusters to process (default 20).
             type: Optional filter by memoria type.
-            dry_run: If True, show what would happen without applying changes.
+            dry_run: If True (default), show what would happen without
+                applying changes. Set False to apply.
         """
         return memory.consolidator.consolidate_all(
             threshold=threshold,
