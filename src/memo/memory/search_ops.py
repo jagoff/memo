@@ -87,6 +87,17 @@ class _SearchOpsMixin(_MemoryBase):
             rows = self.store.search_bm25(
                 query, limit=limit, type_=type_, exclude_types=exclude_types
             )
+        elif mode == "exact":
+            # Precise keyword lookup: strict AND (no OR loosening) with an
+            # elevated tag/title field boost so a term in curated metadata
+            # outranks the same term buried in a body. See search_bm25.
+            rows = self.store.search_bm25(
+                query,
+                limit=limit,
+                type_=type_,
+                exclude_types=exclude_types,
+                field_boost="exact",
+            )
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
                 query, limit=limit, type_=type_, exclude_types=exclude_types

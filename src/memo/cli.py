@@ -46,7 +46,6 @@ from memo.cli_common import _short, console
 from memo.cli_common import get_memory as _get_memory
 from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
-from memo.cli_health import health as health_cmd
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
 from memo.cli_crossdedup import cross_dedup_cmd
@@ -59,6 +58,7 @@ from memo.cli_eval import eval_group
 from memo.cli_export import export_group
 from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
+from memo.cli_health import health as health_cmd
 from memo.cli_history import diff_cmd, historia_cmd
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
