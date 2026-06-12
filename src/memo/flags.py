@@ -285,7 +285,25 @@ _SPECS: tuple[FlagSpec, ...] = (
         "int",
         0,
         "search",
-        "Recency-decay half-life in days (0 = off).",
+        "Recency-decay half-life in days (0 = off). Consumer paths (recall/ask/chat) "
+        "default to 90 when unset; raw search() stays decay-free.",
+    ),
+    _spec(
+        "MEMO_RRF_K",
+        "int",
+        60,
+        "search",
+        "Reciprocal-rank-fusion k constant for hybrid search (Cormack default 60). "
+        "Higher k softens rank dominance; lower k sharpens toward top hits.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_RRF_ADAPTIVE",
+        "bool",
+        False,
+        "search",
+        "Adapt RRF k to result density: shrink k when ranked lists agree, grow it "
+        "when they diverge. Off by default to keep the eval baseline comparable.",
     ),
     _spec(
         "MEMO_HEALTH_SCORES_DISABLED",
