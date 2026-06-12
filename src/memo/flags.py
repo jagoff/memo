@@ -331,6 +331,15 @@ _SPECS: tuple[FlagSpec, ...] = (
         min_val=0,
     ),
     _spec(
+        "MEMO_FEEDBACK_HALFLIFE_DAYS",
+        "float",
+        180.0,
+        "search",
+        "Half-life (days) for temporal decay of positive feedback boosts (👍/click). "
+        "0 disables decay. thumbs_down/ignore are never decayed.",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_HEALTH_SCORES_DISABLED",
         "bool",
         False,
