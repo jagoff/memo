@@ -379,9 +379,12 @@ def test_update_rejects_invalid_type(mem_with_stub: Memory):
         mem_with_stub.update(rec.id, type_="bogus")
 
 
-def test_reindex_force_reembeds_unchanged(mem_with_stub: Memory, monkeypatch):
-    """`reindex(force=True)` re-embeds even when body_hash matches —
-    used after embedder swap or composition change."""
+def test_reindex_force_reuses_warm_embed_cache(mem_with_stub: Memory, monkeypatch):
+    """`reindex(force=True)` re-processes every entry, but a content-addressed
+    embed-cache hit (same content + model) reuses the stored vector — only a
+    cold cache (e.g. after an embedder/composition swap that changes the key)
+    triggers a real forward pass. save() pre-warms the cache, so a forced
+    rebuild of unchanged content issues zero embedder calls."""
     rec = mem_with_stub.save(content="cuerpo", title="X")
     calls: list[int] = []
     orig = mem_with_stub.embedder.embed
@@ -396,6 +399,16 @@ def test_reindex_force_reembeds_unchanged(mem_with_stub: Memory, monkeypatch):
     assert counts["reindexed"] == 0
     assert calls == []
 
+    # Warm cache (save() populated it): force re-processes but reuses vectors.
+    counts = mem_with_stub.reindex(force=True)
+    assert counts["reindexed"] == 1
+    assert calls == [], "warm content cache should avoid the forward pass"
+
+    # Cold cache (simulates a model/composition swap invalidating keys):
+    # force genuinely re-embeds.
+    with mem_with_stub.store._conn:
+        mem_with_stub.store._conn.execute("DELETE FROM repo_embedding_cache")
+    calls.clear()
     counts = mem_with_stub.reindex(force=True)
     assert counts["reindexed"] == 1
     assert calls == [1]

@@ -54,7 +54,17 @@ class _AskOpsMixin(_MemoryBase):
             history=clean_history,
             context=clean_context,
         )
-        rag = self.ask(retrieval_question, k=k, type_=type_, intent_text=question)
+        # Session-scoped RAG context caching: a session_id in the chat context
+        # lets repeated asks in the same thread reuse retrieval (see
+        # _build_ask_context / RagContextCache).
+        session_id = clean_context.get("session_id") if isinstance(clean_context, dict) else None
+        rag = self.ask(
+            retrieval_question,
+            k=k,
+            type_=type_,
+            intent_text=question,
+            session_id=session_id if isinstance(session_id, str) else None,
+        )
         total_ms = int((time.perf_counter() - started) * 1000)
         answer = str(rag.get("answer") or "").strip()
         sources = [item for item in (rag.get("sources") or []) if isinstance(item, dict)]
@@ -303,6 +313,7 @@ class _AskOpsMixin(_MemoryBase):
         include_repos: bool,
         disable_reranker: bool = True,
         intent_text: str | None = None,
+        session_id: str | None = None,
     ) -> tuple[str, list[dict[str, Any]], str, list[MemoryRecord]]:
         """Retrieval half of ask()/ask_stream().
 
@@ -319,6 +330,35 @@ class _AskOpsMixin(_MemoryBase):
         """
         if not question or not question.strip():
             return question, [], "", []
+        # Session-scoped RAG context cache. Opt-in: only engages when the
+        # caller supplies a session_id (chat threads pass one), so the default
+        # path is byte-for-byte unchanged. Invalidated by corpus_version +
+        # TTL inside the cache. See rag_cache.RagContextCache.
+        cache_key = None
+        if session_id:
+            cache_key = "|".join(
+                str(p)
+                for p in (
+                    session_id,
+                    k,
+                    type_,
+                    snippet_chars,
+                    include_repos,
+                    disable_reranker,
+                    intent_text or "",
+                    question.strip(),
+                )
+            )
+            cache = self._get_rag_cache()
+            hit = cache.get(
+                cache_key, corpus_version=self._corpus_version(), now=time.time()
+            )
+            if hit is not None:
+                norm_q, sources, user_msg, hits = hit
+                # Return copies of the list containers so a caller mutating its
+                # result can't corrupt the cached entry (elements are treated
+                # read-only by ask()/ask_stream()).
+                return norm_q, list(sources), user_msg, list(hits)
         _MAX_QUESTION_CHARS = 4000
         if len(question) > _MAX_QUESTION_CHARS:
             _log.warning(
@@ -503,7 +543,39 @@ class _AskOpsMixin(_MemoryBase):
             f"Contexto relevante ({len(hits)} memorias, {len(repo_hits)} snippets de repo):\n\n"
             + "\n---\n".join(snippet_lines)
         )
+        if cache_key is not None and sources:
+            # Only cache non-empty retrievals — an empty result is cheap to
+            # recompute and may reflect a transient cold embedder.
+            self._get_rag_cache().put(
+                cache_key,
+                (question, sources, user_msg, hits),
+                corpus_version=self._corpus_version(),
+                now=time.time(),
+            )
         return question, sources, user_msg, hits
+
+    def _get_rag_cache(self) -> Any:
+        """Lazily build the process-local RAG context cache (TTL via
+        MEMO_RAG_CACHE_TTL_S, default 300s)."""
+        cache = getattr(self, "_rag_cache", None)
+        if cache is None:
+            from memo.flags import flag_int
+            from memo.rag_cache import RagContextCache
+
+            cache = RagContextCache(ttl_s=float(flag_int("MEMO_RAG_CACHE_TTL_S") or 300))
+            self._rag_cache = cache
+        return cache
+
+    def _corpus_version(self) -> str:
+        """Cheap corpus fingerprint: row count + latest update timestamp.
+        Any save/update/delete moves it, invalidating cached retrievals."""
+        try:
+            row = self.store._conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(updated), '') FROM meta"
+            ).fetchone()
+            return f"{row[0]}:{row[1]}"
+        except Exception:
+            return ""
 
     def _verbatim_short_circuit(
         self,
@@ -547,6 +619,7 @@ class _AskOpsMixin(_MemoryBase):
         snippet_chars: int = 2000,
         include_repos: bool = True,
         intent_text: str | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Synthesised Q&A over the memory archive (RAG).
 
@@ -575,6 +648,7 @@ class _AskOpsMixin(_MemoryBase):
             snippet_chars=snippet_chars,
             include_repos=include_repos,
             intent_text=intent_text,
+            session_id=session_id,
         )
         if not sources:
             from memo.flags import flag_str
@@ -628,6 +702,7 @@ class _AskOpsMixin(_MemoryBase):
         snippet_chars: int = 2000,
         include_repos: bool = True,
         intent_text: str | None = None,
+        session_id: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Streaming variant of `ask()` — yields token-level events.
 
@@ -650,6 +725,7 @@ class _AskOpsMixin(_MemoryBase):
             snippet_chars=snippet_chars,
             include_repos=include_repos,
             intent_text=intent_text,
+            session_id=session_id,
         )
         if not sources:
             yield {

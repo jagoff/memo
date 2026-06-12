@@ -414,9 +414,10 @@ class ContradictionScanner:
         Returns:
             ScanResult with counters.
         """
-        records = self.memory.list(limit=max_memorias, type_=type_)
-        if since:
-            records = [r for r in records if r.updated >= since]
+        # Incremental: push `since` into the DB so the freshest anchors are
+        # returned within `max_memorias`, instead of paging older rows and
+        # filtering client-side (which dropped new anchors past the limit).
+        records = self.memory.list(limit=max_memorias, type_=type_, updated_since=since)
 
         scanned = 0
         examined = 0

@@ -392,6 +392,38 @@ def _rrf_fuse(
     return out
 
 
+def _adaptive_rrf_k(lists: list[list[dict[str, Any]]], *, base_k: int) -> int:
+    """Density-adaptive RRF `k`.
+
+    The fixed Cormack k=60 is a one-size constant. When the ranked lists
+    strongly agree (an id appears across multiple lists), shrink k to
+    sharpen fusion toward that consensus; when they barely overlap, grow k
+    to soften single-list rank dominance. Bounded to `[base_k/2, base_k*2]`
+    so it can never run away. Returns `base_k` unchanged when fewer than two
+    non-empty lists exist (overlap is undefined).
+
+    Opt-in via `MEMO_RRF_ADAPTIVE` — the default path keeps `base_k` so the
+    eval baseline stays comparable.
+    """
+    from collections import Counter
+
+    nonempty = [lst for lst in lists if lst]
+    if len(nonempty) < 2:
+        return base_k
+    counts: Counter[str] = Counter()
+    for lst in nonempty:
+        for hit in lst:
+            counts[hit["id"]] += 1
+    total = len(counts)
+    if total == 0:
+        return base_k
+    shared = sum(1 for c in counts.values() if c >= 2)
+    overlap = shared / total  # 0 (disjoint) .. 1 (identical)
+    # overlap 0 → factor 1.5 (grow); overlap 1 → factor 0.5 (shrink).
+    k = round(base_k * (1.5 - overlap))
+    return max(base_k // 2, min(base_k * 2, k))
+
+
 def _compose_for_embed(title: str, body: str) -> str:
     """Combine title + body into the string passed to the embedder.
 
@@ -411,11 +443,12 @@ def _compose_for_embed(title: str, body: str) -> str:
     return f"{title}\n\n{body}"
 
 
-# Default recency halflife (days) applied when a consumer path requests
-# `search(recency=True)` without an explicit MEMO_SEARCH_DECAY_HALFLIFE. ~6
-# months: a fact stays at full weight for weeks, then gently yields to fresher
-# memorias rather than being crowded out forever.
-_RECALL_DECAY_HALFLIFE_DEFAULT = 180.0
+# Default recency half-life (days) applied when a consumer path requests
+# `search(recency=True)` without an explicit MEMO_SEARCH_DECAY_HALFLIFE. At
+# one half-life a memory's freshness term is exactly 0.5; ~90 days keeps a
+# fact at full weight for weeks, then lets it yield to fresher memorias
+# rather than being crowded out forever.
+_RECALL_DECAY_HALFLIFE_DEFAULT = 90.0
 
 
 def _apply_decay(
@@ -424,17 +457,17 @@ def _apply_decay(
     halflife_days: float,
     alpha: float,
 ) -> list[MemoryRecord]:
-    """Blend a freshness bonus into search scores using exponential decay.
+    """Blend a freshness bonus into search scores using half-life decay.
 
-    For each record: `decay = exp(-days_since_updated / halflife_days)`.
+    For each record: `decay = 0.5 ** (days_since_updated / halflife_days)`,
+    a true half-life — at exactly `halflife_days` the freshness term is 0.5,
+    at 2× half-life it is 0.25, and so on.
     Final score: `(1 - alpha) * original_score + alpha * decay`.
 
-    A halflife of 30 days means a 30-day-old memory retains 50% of the
-    freshness bonus, a 90-day-old retains ~5%. Results are re-sorted by
+    A half-life of 90 days means a 90-day-old memory retains 50% of the
+    freshness bonus and a 180-day-old retains 25%. Results are re-sorted by
     final score so the caller always gets a monotonically ranked list.
     """
-    import math
-
     now = datetime.now(tz=UTC)
     out: list[MemoryRecord] = []
     for r in records:
@@ -449,7 +482,7 @@ def _apply_decay(
         except Exception:
             out.append(r)
             continue
-        decay = math.exp(-days / halflife_days)
+        decay = 0.5 ** (days / halflife_days)
         final = (1.0 - alpha) * r.score + alpha * decay
         out.append(replace(r, score=round(final, 6)))
     out.sort(key=lambda r: r.score or 0.0, reverse=True)

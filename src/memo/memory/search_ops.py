@@ -20,6 +20,7 @@ from memo.memory.record import (
     _RECALL_DECAY_HALFLIFE_DEFAULT,
     AmbiguousIdError,
     MemoryRecord,
+    _adaptive_rrf_k,
     _apply_decay,
     _log,
     _rrf_fuse,
@@ -86,6 +87,17 @@ class _SearchOpsMixin(_MemoryBase):
             rows = self.store.search_bm25(
                 query, limit=limit, type_=type_, exclude_types=exclude_types
             )
+        elif mode == "exact":
+            # Precise keyword lookup: strict AND (no OR loosening) with an
+            # elevated tag/title field boost so a term in curated metadata
+            # outranks the same term buried in a body. See search_bm25.
+            rows = self.store.search_bm25(
+                query,
+                limit=limit,
+                type_=type_,
+                exclude_types=exclude_types,
+                field_boost="exact",
+            )
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
                 query, limit=limit, type_=type_, exclude_types=exclude_types
@@ -120,8 +132,17 @@ class _SearchOpsMixin(_MemoryBase):
                     query, limit=k_each, type_=type_, exclude_types=exclude_types
                 )
 
-            # Fuse all sources. RRF supports multiple ranked lists.
-            rows = _rrf_fuse(vec_hits, bm_hits, graph_hits, limit=input_k)
+            # Fuse all sources. RRF supports multiple ranked lists. `k` is
+            # configurable (MEMO_RRF_K, default 60); MEMO_RRF_ADAPTIVE opts
+            # into density-driven k (sharper on agreement, softer when the
+            # lists diverge) — off by default so the eval baseline holds.
+            base_k = flag_int("MEMO_RRF_K") or 60
+            rrf_k = (
+                _adaptive_rrf_k([vec_hits, bm_hits, graph_hits], base_k=base_k)
+                if flag_bool("MEMO_RRF_ADAPTIVE")
+                else base_k
+            )
+            rows = _rrf_fuse(vec_hits, bm_hits, graph_hits, limit=input_k, k=rrf_k)
         out: list[MemoryRecord] = []
         for r in rows:
             body = self._read_body(r["path"]) if load_bodies else ""
@@ -572,13 +593,17 @@ class _SearchOpsMixin(_MemoryBase):
         limit: int = 20,
         type_: str | None = None,
         include_forgotten: bool = False,
+        updated_since: str | None = None,
     ) -> list[MemoryRecord]:
         """Recent entries by `updated` desc. Body included for each.
 
         Soft-forgotten memorias (see `forget`) are excluded unless
-        `include_forgotten=True`.
+        `include_forgotten=True`. `updated_since` (ISO-8601) filters at the
+        DB level — incremental callers (e.g. contradiction scans) get the
+        freshest anchors within `limit` instead of post-filtering a page of
+        older rows.
         """
-        rows = self.store.list_recent(limit=limit, type_=type_)
+        rows = self.store.list_recent(limit=limit, type_=type_, updated_since=updated_since)
         if not include_forgotten:
             rows = [r for r in rows if not (r.get("extra") or {}).get(IS_FORGOTTEN_KEY)]
         return [

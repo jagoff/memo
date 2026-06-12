@@ -285,7 +285,59 @@ _SPECS: tuple[FlagSpec, ...] = (
         "int",
         0,
         "search",
-        "Recency-decay half-life in days (0 = off).",
+        "Recency-decay half-life in days (0 = off). Consumer paths (recall/ask/chat) "
+        "default to 90 when unset; raw search() stays decay-free.",
+    ),
+    _spec(
+        "MEMO_RRF_K",
+        "int",
+        60,
+        "search",
+        "Reciprocal-rank-fusion k constant for hybrid search (Cormack default 60). "
+        "Higher k softens rank dominance; lower k sharpens toward top hits.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_RRF_ADAPTIVE",
+        "bool",
+        False,
+        "search",
+        "Adapt RRF k to result density: shrink k when ranked lists agree, grow it "
+        "when they diverge. Off by default to keep the eval baseline comparable.",
+    ),
+    _spec(
+        "MEMO_EXACT_TITLE_WEIGHT",
+        "float",
+        10.0,
+        "search",
+        "BM25 title field weight in `mode=exact` (default 10, vs 5 in normal bm25).",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_EXACT_TAGS_WEIGHT",
+        "float",
+        8.0,
+        "search",
+        "BM25 tags field weight in `mode=exact` (default 8, vs 3 in normal bm25).",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_RAG_CACHE_TTL_S",
+        "int",
+        300,
+        "search",
+        "TTL (seconds) for the session-scoped RAG context cache used by ask()/chat_ask "
+        "when a session_id is supplied. Invalidated early on any corpus change.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_FEEDBACK_HALFLIFE_DAYS",
+        "float",
+        180.0,
+        "search",
+        "Half-life (days) for temporal decay of positive feedback boosts (👍/click). "
+        "0 disables decay. thumbs_down/ignore are never decayed.",
+        min_val=0.0,
     ),
     _spec(
         "MEMO_HEALTH_SCORES_DISABLED",
