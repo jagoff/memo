@@ -593,13 +593,17 @@ class _SearchOpsMixin(_MemoryBase):
         limit: int = 20,
         type_: str | None = None,
         include_forgotten: bool = False,
+        updated_since: str | None = None,
     ) -> list[MemoryRecord]:
         """Recent entries by `updated` desc. Body included for each.
 
         Soft-forgotten memorias (see `forget`) are excluded unless
-        `include_forgotten=True`.
+        `include_forgotten=True`. `updated_since` (ISO-8601) filters at the
+        DB level — incremental callers (e.g. contradiction scans) get the
+        freshest anchors within `limit` instead of post-filtering a page of
+        older rows.
         """
-        rows = self.store.list_recent(limit=limit, type_=type_)
+        rows = self.store.list_recent(limit=limit, type_=type_, updated_since=updated_since)
         if not include_forgotten:
             rows = [r for r in rows if not (r.get("extra") or {}).get(IS_FORGOTTEN_KEY)]
         return [

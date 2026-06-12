@@ -322,6 +322,15 @@ _SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
     ),
     _spec(
+        "MEMO_RAG_CACHE_TTL_S",
+        "int",
+        300,
+        "search",
+        "TTL (seconds) for the session-scoped RAG context cache used by ask()/chat_ask "
+        "when a session_id is supplied. Invalidated early on any corpus change.",
+        min_val=0,
+    ),
+    _spec(
         "MEMO_HEALTH_SCORES_DISABLED",
         "bool",
         False,
