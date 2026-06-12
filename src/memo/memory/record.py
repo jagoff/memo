@@ -420,7 +420,7 @@ def _adaptive_rrf_k(lists: list[list[dict[str, Any]]], *, base_k: int) -> int:
     shared = sum(1 for c in counts.values() if c >= 2)
     overlap = shared / total  # 0 (disjoint) .. 1 (identical)
     # overlap 0 → factor 1.5 (grow); overlap 1 → factor 0.5 (shrink).
-    k = int(round(base_k * (1.5 - overlap)))
+    k = round(base_k * (1.5 - overlap))
     return max(base_k // 2, min(base_k * 2, k))
 
 

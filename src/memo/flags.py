@@ -306,6 +306,22 @@ _SPECS: tuple[FlagSpec, ...] = (
         "when they diverge. Off by default to keep the eval baseline comparable.",
     ),
     _spec(
+        "MEMO_EXACT_TITLE_WEIGHT",
+        "float",
+        10.0,
+        "search",
+        "BM25 title field weight in `mode=exact` (default 10, vs 5 in normal bm25).",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_EXACT_TAGS_WEIGHT",
+        "float",
+        8.0,
+        "search",
+        "BM25 tags field weight in `mode=exact` (default 8, vs 3 in normal bm25).",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_HEALTH_SCORES_DISABLED",
         "bool",
         False,

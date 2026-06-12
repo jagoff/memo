@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
@@ -19,6 +20,22 @@ from .schema import (
 )
 
 _log = logging.getLogger(__name__)
+
+
+def _env_float(name: str, default: float) -> float:
+    """Parse a float env var, falling back to `default` when unset/blank/bad.
+
+    The store layer is a foundation module and cannot import memo.flags, so
+    these tuning knobs (registered there for `memo config validate`) are read
+    directly from the environment here.
+    """
+    raw = os.environ.get(name)
+    if not raw or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 class _QueriesMixin(_StoreBase):
@@ -660,14 +677,23 @@ class _QueriesMixin(_StoreBase):
         limit: int = 10,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        field_boost: str | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 keyword search. Dispatches to tantivy when available, FTS5 otherwise.
 
         Returns rows shaped like `search()` (vec) — metadata dict with `score`
         in [0,1] where higher = more relevant.
+
+        `field_boost="exact"` forces the FTS5 path (so the elevated tag/title
+        weights apply deterministically regardless of backend) and runs a
+        strict AND with no OR fallback.
         """
         if not query or not query.strip():
             return []
+        if field_boost == "exact":
+            return self._search_bm25_fts5(
+                query, limit, type_, exclude_types, field_boost="exact"
+            )
         t = self._get_tantivy()
         if t is not None:
             return self._search_bm25_tantivy(query, limit, type_, exclude_types, t)
@@ -716,6 +742,7 @@ class _QueriesMixin(_StoreBase):
         limit: int,
         type_: str | None,
         exclude_types: set[str] | None,
+        field_boost: str | None = None,
     ) -> list[dict[str, Any]]:
         # FTS5 needs an explicit MATCH expression. Pre-2026-05-07 we wrapped
         # the whole query in `"..."` (phrase match) to dodge FTS5 syntax
@@ -741,6 +768,20 @@ class _QueriesMixin(_StoreBase):
         _filtered = [t for t in _raw_tokens if t.lower() not in _BM25_ES_STOPWORDS]
         _tokens = _filtered if len(_filtered) >= 2 else _raw_tokens
 
+        # `exact` mode applies a preconfigured field boost favouring curated
+        # metadata (title/tags) over body prose. Weights are tunable via
+        # MEMO_EXACT_TITLE_WEIGHT / MEMO_EXACT_TAGS_WEIGHT (registered in
+        # flags.py for `memo config validate`; read here via os.environ because
+        # the store layer is a foundation module and cannot import memo.flags).
+        if field_boost == "exact":
+            title_w = _env_float("MEMO_EXACT_TITLE_WEIGHT", 10.0)
+            tags_w = _env_float("MEMO_EXACT_TAGS_WEIGHT", 8.0)
+            body_w = _BM25_FTS_BODY_WEIGHT
+        else:
+            title_w = _BM25_FTS_TITLE_WEIGHT
+            tags_w = _BM25_FTS_TAGS_WEIGHT
+            body_w = _BM25_FTS_BODY_WEIGHT
+
         def _run(tokens: list[str], joiner: str) -> list[Any]:
             expr = joiner.join(f'"{t}"' for t in tokens)
             candidate_k = limit * 5 if (type_ or exclude_types) else limit
@@ -754,9 +795,9 @@ class _QueriesMixin(_StoreBase):
             )
             params: list[Any] = [
                 _BM25_UNINDEXED_WEIGHT,
-                _BM25_FTS_TITLE_WEIGHT,
-                _BM25_FTS_TAGS_WEIGHT,
-                _BM25_FTS_BODY_WEIGHT,
+                title_w,
+                tags_w,
+                body_w,
                 expr,
             ]
             if type_:
@@ -784,7 +825,9 @@ class _QueriesMixin(_StoreBase):
         # demote the AND-matched correct doc once fused with the vec
         # leg. Triggering only on zero is the safe floor: it cannot
         # make a successful AND query worse.
-        if not rows and len(_tokens) >= 2:
+        # exact mode is strict: never loosen AND into OR. A missing term means
+        # no match, by design.
+        if not rows and len(_tokens) >= 2 and field_boost != "exact":
             rows = _run(_tokens, " OR ")
         out: list[dict[str, Any]] = []
         for r in rows:

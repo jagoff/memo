@@ -38,7 +38,7 @@ def _max_text(conn, table: str, column: str) -> str | None:
         return None
 
 
-def _vec_dims(memory: "Memory") -> int | None:
+def _vec_dims(memory: Memory) -> int | None:
     try:
         return memory.store._vec_table_dims("vec")
     except Exception:
@@ -55,7 +55,7 @@ def _fts_ready(conn) -> bool:
         return False
 
 
-def _db_size_bytes(memory: "Memory") -> int | None:
+def _db_size_bytes(memory: Memory) -> int | None:
     try:
         path = memory.cfg.db_path
         return int(path.stat().st_size) if path.exists() else None
@@ -63,7 +63,7 @@ def _db_size_bytes(memory: "Memory") -> int | None:
         return None
 
 
-def _archived_count(memory: "Memory") -> int | None:
+def _archived_count(memory: Memory) -> int | None:
     try:
         archival_dir = memory.cfg.memory_dir / "archived"
         if not archival_dir.is_dir():
@@ -73,7 +73,7 @@ def _archived_count(memory: "Memory") -> int | None:
         return None
 
 
-def _probe_embedder_ms(memory: "Memory") -> float | None:
+def _probe_embedder_ms(memory: Memory) -> float | None:
     """Time a single query embedding (warms the model if cold)."""
     try:
         start = time.perf_counter()
@@ -83,7 +83,7 @@ def _probe_embedder_ms(memory: "Memory") -> float | None:
         return None
 
 
-def build_health_report(memory: "Memory", *, probe_embedder: bool = False) -> dict[str, Any]:
+def build_health_report(memory: Memory, *, probe_embedder: bool = False) -> dict[str, Any]:
     """Aggregate a read-only operational health snapshot.
 
     Args:
