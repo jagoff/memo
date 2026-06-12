@@ -347,6 +347,7 @@ class _QueriesMixin(_StoreBase):
         limit: int = 20,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        updated_since: str | None = None,
     ) -> list[dict[str, Any]]:
         sql = (
             "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json FROM meta "
@@ -360,6 +361,12 @@ class _QueriesMixin(_StoreBase):
             placeholders = ",".join("?" for _ in exclude_types)
             clauses.append(f"type NOT IN ({placeholders})")
             params.extend(sorted(exclude_types))
+        if updated_since:
+            # ISO-8601 timestamps sort lexicographically, so a string >=
+            # compares chronologically. Indexed by idx_meta_updated /
+            # idx_meta_type_updated so incremental scans stay cheap.
+            clauses.append("updated >= ?")
+            params.append(updated_since)
         if clauses:
             sql += "WHERE " + " AND ".join(clauses) + " "
         sql += "ORDER BY updated DESC LIMIT ?"
