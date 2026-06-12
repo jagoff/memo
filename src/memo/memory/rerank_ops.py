@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from memo.memory._base import _MemoryBase
@@ -18,6 +19,28 @@ from memo.memory.record import (
     MemoryRecord,
     _log,
 )
+
+
+def _feedback_recency_weight(
+    created_at: str, *, halflife_days: float, now: datetime | None = None
+) -> float:
+    """Half-life weight for a feedback vote based on its age.
+
+    `0.5 ** (age_days / halflife_days)` — a vote at one half-life counts half.
+    Returns 1.0 (no decay) when `halflife_days <= 0` or `created_at` can't be
+    parsed, so a malformed timestamp never silently zeroes a vote.
+    """
+    if halflife_days <= 0:
+        return 1.0
+    try:
+        ts = datetime.fromisoformat(created_at)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return 1.0
+    current = now or datetime.now(tz=UTC)
+    age_days = max(0.0, (current - ts).total_seconds() / 86400.0)
+    return 0.5 ** (age_days / halflife_days)
 
 
 class _RerankOpsMixin(_MemoryBase):
@@ -149,6 +172,13 @@ class _RerankOpsMixin(_MemoryBase):
         sim_threshold = float(os.environ.get("MEMO_FEEDBACK_SIM_THRESHOLD") or sim_threshold)
         boost_per_vote = float(os.environ.get("MEMO_FEEDBACK_BOOST_PER_VOTE") or boost_per_vote)
         boost_cap = float(os.environ.get("MEMO_FEEDBACK_BOOST_CAP") or boost_cap)
+        # Temporal decay: a positive vote's boost fades with its age (half-life
+        # MEMO_FEEDBACK_HALFLIFE_DAYS, default 180; 0 disables). Keeps recent
+        # feedback authoritative without letting a year-old 👍 pin a stale
+        # source. thumbs_down (exclusion) and ignore are NOT decayed — an
+        # explicit rejection shouldn't quietly expire.
+        halflife_days = float(os.environ.get("MEMO_FEEDBACK_HALFLIFE_DAYS") or 180.0)
+        _now = datetime.now(tz=UTC)
         # Existence pre-filter: most memorias have zero feedback rows, so a
         # single IN-list lookup tells us which hits are even worth the kNN vec
         # scan below. Collapses a per-hit N+1 into 1 query for the common case.
@@ -193,7 +223,12 @@ class _RerankOpsMixin(_MemoryBase):
                     ignore_factor = min(ignore_factor, self._SIGNAL_IGNORE_FACTOR)
                 else:
                     per = self._SIGNAL_BOOST.get(signal, boost_per_vote)
-                    total_boost += per
+                    weight = _feedback_recency_weight(
+                        str(r.get("created_at") or ""),
+                        halflife_days=halflife_days,
+                        now=_now,
+                    )
+                    total_boost += per * weight
             if hard_exclude:
                 continue
             score = score * ignore_factor
