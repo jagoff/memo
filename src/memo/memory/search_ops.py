@@ -20,6 +20,7 @@ from memo.memory.record import (
     _RECALL_DECAY_HALFLIFE_DEFAULT,
     AmbiguousIdError,
     MemoryRecord,
+    _adaptive_rrf_k,
     _apply_decay,
     _log,
     _rrf_fuse,
@@ -120,8 +121,17 @@ class _SearchOpsMixin(_MemoryBase):
                     query, limit=k_each, type_=type_, exclude_types=exclude_types
                 )
 
-            # Fuse all sources. RRF supports multiple ranked lists.
-            rows = _rrf_fuse(vec_hits, bm_hits, graph_hits, limit=input_k)
+            # Fuse all sources. RRF supports multiple ranked lists. `k` is
+            # configurable (MEMO_RRF_K, default 60); MEMO_RRF_ADAPTIVE opts
+            # into density-driven k (sharper on agreement, softer when the
+            # lists diverge) — off by default so the eval baseline holds.
+            base_k = flag_int("MEMO_RRF_K") or 60
+            rrf_k = (
+                _adaptive_rrf_k([vec_hits, bm_hits, graph_hits], base_k=base_k)
+                if flag_bool("MEMO_RRF_ADAPTIVE")
+                else base_k
+            )
+            rows = _rrf_fuse(vec_hits, bm_hits, graph_hits, limit=input_k, k=rrf_k)
         out: list[MemoryRecord] = []
         for r in rows:
             body = self._read_body(r["path"]) if load_bodies else ""
