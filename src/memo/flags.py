@@ -441,6 +441,32 @@ _SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    _spec(
+        "MEMO_SEARCH_VEC_WEIGHT",
+        "float",
+        0.5,
+        "search",
+        "RRF fusion weight for the semantic (vec) leg in hybrid search (0.0–1.0). "
+        "Default 0.5 gives equal weight to vec and BM25. Raise toward 1.0 for "
+        "semantic-heavy queries; lower for precise keyword queries. "
+        "If both MEMO_SEARCH_VEC_WEIGHT and MEMO_SEARCH_BM25_WEIGHT are set but "
+        "do not sum to 1.0 (within 0.05), a warning is emitted.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_SEARCH_BM25_WEIGHT",
+        "float",
+        0.5,
+        "search",
+        "RRF fusion weight for the keyword (BM25) leg in hybrid search (0.0–1.0). "
+        "Default 0.5 gives equal weight to vec and BM25. Raise toward 1.0 for "
+        "precise technical/keyword queries; lower for semantic queries. "
+        "If both MEMO_SEARCH_VEC_WEIGHT and MEMO_SEARCH_BM25_WEIGHT are set but "
+        "do not sum to 1.0 (within 0.05), a warning is emitted.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
     # entity-aware retrieval + knowledge-graph expansion
     _spec(
         "MEMO_ENTITY_RETRIEVAL_ENABLED",
