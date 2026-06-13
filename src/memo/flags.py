@@ -412,6 +412,16 @@ _SPECS: tuple[FlagSpec, ...] = (
         opt_out=False,
     ),
     _spec(
+        "MEMO_RERANK_ADAPTIVE_POOL",
+        "bool",
+        False,
+        "search",
+        "Dynamically size the rerank candidate pool based on vec-score standard deviation. "
+        "High-variance results (stddev > 0.15) expand the pool to min(rerank_input_k * 1.5, 200); "
+        "low-variance tight clusters (stddev < 0.05) shrink to max(limit + 5, 15). "
+        "Default off keeps the fixed rerank_input_k pool for a stable eval baseline.",
+    ),
+    _spec(
         "MEMO_GRAPH_EXPANSION_ENABLED",
         "bool",
         False,
