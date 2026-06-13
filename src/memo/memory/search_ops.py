@@ -190,12 +190,25 @@ class _SearchOpsMixin(_MemoryBase):
                 mode,
             )
 
+        # Health scores (pre-rerank): multiply candidate scores by
+        # (confidence × roi_score) BEFORE passing to the cross-encoder so
+        # low-confidence hits (open contradictions, low-ROI) don't waste
+        # reranker compute by surfacing them as strong candidates.
+        # _health_applied tracks whether we already ran this pass; the
+        # post-pipeline gate below skips a redundant second application.
+        _reranker_will_run = (
+            mode == "hybrid" and self.cfg.reranker_enabled and not disable_reranker and out
+        )
+        _health_applied = False
+        if _reranker_will_run and not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
+            out = self._apply_health_scores(out)
+            _health_applied = True
         # Cross-encoder rerank on hybrid mode only. Skipped for vec/bm25
         # since those callers explicitly opted out of fusion entirely;
         # adding rerank to single-mode searches would surprise users
         # benchmarking the raw bi-encoder or BM25 surfaces.
         # Also skipped when disable_reranker=True (e.g., chat synthesis).
-        if mode == "hybrid" and self.cfg.reranker_enabled and not disable_reranker and out:
+        if _reranker_will_run:
             out = self._rerank(query, out, top_n=limit)
         # Recency decay: blend a freshness bonus into the score so older
         # memories don't crowd out recent ones. MEMO_SEARCH_DECAY_HALFLIFE
@@ -243,7 +256,7 @@ class _SearchOpsMixin(_MemoryBase):
             )
         if out and flag_bool("MEMO_RETRIEVAL_BOOST"):
             out = self._apply_retrieval_boost(query, out)
-        if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
+        if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED") and not _health_applied:
             out = self._apply_health_scores(out)
         self._record_access([r.id for r in out])
         return out

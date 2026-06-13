@@ -203,9 +203,19 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_DAEMON_TIMEOUT_MS",
         "int",
-        3500,
+        2000,
         "recall",
-        "Client (recall-hook): ms to wait for the daemon socket before falling back to in-process subprocess search. Must sit under the hooks.json budget (12s) yet above the warm-but-slow daemon tail (~3-6s) so a slow daemon is waited on, not double-fired via subprocess.",
+        "Client (recall-hook): ms to wait for the daemon socket before falling back to in-process subprocess search. Default 2000 ms: worst-case daemon response is ~1-2s; 2s timeout + ~1-2s subprocess fallback stays within the 5s hook budget.",
+        min_val=100,
+    ),
+    _spec(
+        "MEMO_RECALL_DAEMON_TIMEOUT",
+        "float",
+        2.0,
+        "recall",
+        "Client (recall-hook): seconds to wait for the daemon socket (float alias for MEMO_RECALL_DAEMON_TIMEOUT_MS). When both are set, this takes precedence.",
+        min_val=0.1,
+        max_val=4.9,
     ),
     _spec(
         "MEMO_EMBED_BATCH_CHUNK",
