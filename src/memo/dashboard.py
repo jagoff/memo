@@ -152,7 +152,15 @@ def recall_health(state_dir: Path, *, limit: int = 200) -> dict[str, Any]:
 # that never appears in the consult log is a silent gap, not "no data" —
 # surface it explicitly so "nobody reads memo" can't hide behind an empty
 # table. (See CLAUDE.md "Source of truth — role & contract".)
-EXPECTED_CONSUMERS = ("claude-code", "synapse", "memflow", "codex", "devin", "windsurf")
+EXPECTED_CONSUMERS = (
+    "claude-code",
+    "synapse",
+    "memflow",
+    "codex",
+    "devin",
+    "opencode",
+    "windsurf",
+)
 
 
 def consumer_label(row: dict[str, Any]) -> str:

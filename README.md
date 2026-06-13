@@ -27,7 +27,18 @@
 - **El Briefing** — on session start, surfaces your open loops (recently updated memories), a daily memory rotation, and crash-recovery for the last session in the current project — all before the first prompt.
 - **El Mapa** — generates an interactive 2D semantic canvas of your entire corpus via UMAP/PCA projection + Plotly, with timeline animation, search filter, and hover previews.
 - **Speaks MCP** over stdio so any compliant client picks it up with one line of config.
-- **Speaks shell** too: the same API ships as a `memo` CLI with ~30 commands.
+- **Speaks shell** too: the same API ships as a `memo` CLI.
+
+## Stable Core
+
+The stable, supported path is intentionally narrow:
+
+- **Capture and retrieve durable knowledge** with `memo save`, `search`, `ask`, `list`, `get`, `update`, `delete`.
+- **Keep the store healthy** with `memo reindex`, `doctor`, `prewarm`, and `recall-daemon`.
+- **Use ambient memory in agents** via `memo briefing`, `memo recall-hook`, and the bundled hooks/plugin assets.
+- **Rewind and inspect history** with `memo history`, `memo as-of ...`, and `memo diff`.
+
+Everything else in the repo should be read as advanced or experimental unless the docs for that surface say otherwise.
 
 ## 🕰️ The unique feature: **time-machine**
 
@@ -73,7 +84,7 @@ Under the hood: `history.db` is an append-only audit log of every save/update/de
 
 ![memo install flow](docs/install-flow.svg)
 
-The installer handles everything: Python check → pipx install → model download → doctor validation → MCP registration for Claude Code, Codex, and Windsurf. On first install the model download step takes 5-15 minutes depending on your connection (~7 GB). Subsequent installs skip the download (HuggingFace Hub cache hit).
+The installer handles everything: Python check → pipx install → model download → doctor validation → MCP registration for Claude Code, Codex, OpenCode, and Windsurf. On first install the model download step takes 5-15 minutes depending on your connection (~7 GB). Subsequent installs skip the download (HuggingFace Hub cache hit).
 
 ## How it fits in your stack
 
@@ -97,6 +108,10 @@ With the Claude Code plugin installed, six hooks plug in automatically:
 | `Stop` | `memo session checkpoint` | async | 5 s | Snapshots session state for crash recovery |
 
 ![ambient memory loop](docs/ambient-loop.svg)
+
+## Experimental Surface
+
+`memo` also ships broader corpus-level and workflow experiments. Some already have CLI or MCP entrypoints, but they are not the product's stable core contract yet. Treat them as faster-moving surfaces with narrower guarantees. The current inventory lives in [`src/memo/experimental_index.md`](src/memo/experimental_index.md).
 
 ## Stack
 
@@ -124,7 +139,7 @@ sqlite state, and CLI should move together as one subsystem.
 
 ```bash
 # One-line installer (uses pipx under the hood, installs GitHub main,
-# and configures Claude Code + Codex + Windsurf when available)
+# and configures Claude Code + Codex + OpenCode + Windsurf when available)
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
 # or install the latest published PyPI release explicitly
 pipx install mlx-memo
@@ -201,10 +216,10 @@ For a fresh Apple Silicon Mac, run the one-line installer first, then bring over
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
 memo doctor --strict-runtime
-memo install-slash --client claude-code --client codex --client windsurf
+memo install-slash --client claude-code --client codex --client opencode --client windsurf
 ```
 
-The installer already runs the `install-slash` command in best-effort mode. Re-run it manually after installing or updating Claude Code, Codex, or Windsurf so each client reloads the absolute `memo-mcp` path from the new machine.
+The installer already runs the `install-slash` command in best-effort mode. Re-run it manually after installing or updating Claude Code, Codex, OpenCode, or Windsurf so each client reloads the absolute `memo-mcp` path from the new machine.
 
 To move existing data:
 

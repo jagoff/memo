@@ -148,7 +148,11 @@ _RECALL_CONTEXTS: tuple[tuple[str, re.Pattern[str], set[str]], ...] = (
 @click.version_option(package_name="mlx-memo")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """memo — local MCP memory backed by markdown vault, MLX-native."""
+    """memo — local MLX memory.
+
+    Stable core: save/search/ask CRUD, briefing/recall-hook, reindex/doctor,
+    and history/as-of flows. Many other commands are advanced or experimental.
+    """
     _first_run_gate(ctx)
 
 

@@ -147,35 +147,41 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     if _trace_mw is not None:
         server.add_middleware(_trace_mw)
 
-    # Domain tool modules register their @server.tool() closures here.
-    _srv_repo.register(server, memory)
-    _srv_entities.register(server, memory)
-    _srv_temporal.register(server, memory)
-    _srv_contradict.register(server, memory)
-    _srv_consolidate.register(server, memory)
-    _srv_synthesis.register(server, memory)
-    _srv_reflect.register(server, memory)
-    _srv_graph.register(server, memory)
-    _srv_health.register(server, memory)
-    _srv_contextual.register(server, memory)
-    _srv_links.register(server, memory)
-    _srv_version.register(server, memory)
-    _srv_query.register(server, memory)
-    _srv_backup.register(server, memory)
-    _srv_sync.register(server, memory)
-    _srv_cache.register(server, memory)
-    _srv_encrypt.register(server, memory)
-    _srv_share.register(server, memory)
-    _srv_analytics.register(server, memory)
-    _srv_import_export.register(server, memory)
-    _srv_feedback.register(server, memory)
-    _srv_multimodal.register(server, memory)
-    _srv_collaborative.register(server, memory)
-    _srv_asof.register(server, memory)
-    # ToolSpec-registry tools (new pattern — see mcp_tools.py)
-    from memo.mcp_tools import register_all as _register_mcp_tools
+    # Stable and advanced domain tool modules register their @server.tool()
+    # closures here. Presence on the MCP surface does not by itself mean a
+    # feature is part of memo's stable core contract; see experimental_index.md.
+    # Skip when MEMO_MCP_SLIM=1 — reduces ~116 tools to ~26 core inline tools
+    # for local/constrained LLMs where tool-definition tokens are expensive.
+    from memo.flags import flag_bool as _flag_bool
+    if not _flag_bool("MEMO_MCP_SLIM"):
+        _srv_repo.register(server, memory)
+        _srv_entities.register(server, memory)
+        _srv_temporal.register(server, memory)
+        _srv_contradict.register(server, memory)
+        _srv_consolidate.register(server, memory)
+        _srv_synthesis.register(server, memory)
+        _srv_reflect.register(server, memory)
+        _srv_graph.register(server, memory)
+        _srv_health.register(server, memory)
+        _srv_contextual.register(server, memory)
+        _srv_links.register(server, memory)
+        _srv_version.register(server, memory)
+        _srv_query.register(server, memory)
+        _srv_backup.register(server, memory)
+        _srv_sync.register(server, memory)
+        _srv_cache.register(server, memory)
+        _srv_encrypt.register(server, memory)
+        _srv_share.register(server, memory)
+        _srv_analytics.register(server, memory)
+        _srv_import_export.register(server, memory)
+        _srv_feedback.register(server, memory)
+        _srv_multimodal.register(server, memory)
+        _srv_collaborative.register(server, memory)
+        _srv_asof.register(server, memory)
+        # ToolSpec-registry tools (new pattern — see mcp_tools.py)
+        from memo.mcp_tools import register_all as _register_mcp_tools
 
-    _register_mcp_tools(server, memory)
+        _register_mcp_tools(server, memory)
 
     @server.tool()
     def memory_save(
