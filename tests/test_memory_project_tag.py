@@ -21,7 +21,9 @@ def mem_stub(tmp_cfg: Config, monkeypatch) -> Memory:
         return [[0.0, 0.0, 0.0, 1.0]] * len(inputs)
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _embed)
-    return Memory(cfg)
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
 
 
 def test_auto_project_tag_from_env(

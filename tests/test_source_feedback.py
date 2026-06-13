@@ -35,7 +35,9 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch) -> Memory:
         return out
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
-    return Memory(cfg)
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
 
 
 def test_record_creates_row(mem_with_stub: Memory):

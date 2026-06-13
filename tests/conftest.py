@@ -79,7 +79,8 @@ def mock_memory(tmp_cfg):
     mem.embedder.embed = lambda inputs: [_fake_embedding(text) for text in inputs]
     mem.embedder.embed_query = lambda query: _fake_embedding(query)
     mem._chat = _FakeChat()
-    return mem
+    yield mem
+    mem.close()
 
 
 @pytest.fixture
