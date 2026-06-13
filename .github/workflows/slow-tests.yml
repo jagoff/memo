@@ -26,3 +26,22 @@ jobs:
         # No -n auto: some slow tests (socket servers, daemon lifecycle)
         # are sensitive to parallel teardown races.
         run: .venv/bin/python -m pytest -m "slow" --timeout=300 -v
+
+      # ---------------------------------------------------------------------------
+      # Retrieval regression eval — MANUAL GATE (cannot run in CI)
+      # ---------------------------------------------------------------------------
+      # The live-index eval in eval/regression_labels.json requires the developer's
+      # memo vault (MLX embeddings + sqlite-vec index). It CANNOT run in GitHub
+      # Actions because no vault is present and MLX needs Apple Silicon.
+      #
+      # What CI DOES run (test.yml + slow-tests.yml):
+      #   tests/test_eval_regression_labels.py — schema/format validation only,
+      #   no MLX, no vault access. Verifies 25+ prompts, correct field types,
+      #   Spanish coverage, noise probes, etc.
+      #
+      # To run the LIVE retrieval eval locally (after a retrieval/ingest change):
+      #   memo eval recall --labels eval/regression_labels.json --k 5 --force
+      #
+      # A retrieval change MUST keep precision@K high and noise@K low across ALL
+      # prompts before merging. Baseline: prec@5=0.2, noise@5=0.0.
+      # See CLAUDE.md §Retrieval-regression discipline for the full protocol.
