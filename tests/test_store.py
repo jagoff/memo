@@ -117,6 +117,32 @@ def test_search_filters_by_type(store: VecStore):
     assert [h["id"] for h in hits] == ["d1"]
 
 
+def test_search_exclude_types_multi_value(store: VecStore):
+    """Multi-value exclude_types must exclude ALL named types without 5x over-fetch.
+
+    sqlite-vec supports chained `AND vec.type != ?` predicates as KNN push-down
+    filters, so exclude_types={"decision", "reference"} must return zero rows of
+    either type even when limit=1 (no over-fetch needed to fill the result set).
+    """
+    for id_, type_ in [
+        ("n1", "note"),
+        ("d1", "decision"),
+        ("r1", "reference"),
+        ("f1", "fact"),
+    ]:
+        store.upsert(
+            id_=id_, path=f"memory/{id_}.md", title=id_, type_=type_, tags=[],
+            created="t", updated="t", body_hash="h", embedding=_emb(1, 0, 0, 0),
+        )
+    hits = store.search(_emb(1, 0, 0, 0), limit=10, exclude_types={"decision", "reference"})
+    hit_types = {h["type"] for h in hits}
+    assert "decision" not in hit_types, "decision should be excluded"
+    assert "reference" not in hit_types, "reference should be excluded"
+    hit_ids = {h["id"] for h in hits}
+    assert "n1" in hit_ids, "note should survive"
+    assert "f1" in hit_ids, "fact should survive"
+
+
 def test_delete_removes_from_both_tables(store: VecStore):
     store.upsert(
         id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
