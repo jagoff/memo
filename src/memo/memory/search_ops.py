@@ -8,6 +8,7 @@ the former `memory.py` god-file.
 from __future__ import annotations
 
 import builtins
+import math
 import os
 import sqlite3
 from dataclasses import replace
@@ -121,6 +122,32 @@ class _SearchOpsMixin(_MemoryBase):
             vec_hits = self.store.search(
                 emb, limit=k_each, type_=type_, exclude_types=exclude_types
             )
+            # Adaptive rerank pool: resize input_k based on the score spread of
+            # vec candidates.  High variance → results are diverse, widen the pool
+            # so the reranker can pick the best from a richer set.  Low variance
+            # → tight cluster, shrink to avoid wasted cross-encoder calls.
+            # Thresholds and multiplier are intentionally hardcoded (not flags) to
+            # avoid flag proliferation; the outer MEMO_RERANK_ADAPTIVE_POOL gate
+            # keeps the eval baseline stable when disabled.
+            if (
+                self.cfg.reranker_enabled
+                and flag_bool("MEMO_RERANK_ADAPTIVE_POOL")
+                and vec_hits
+            ):
+                _STDDEV_HIGH = 0.15  # above this → high diversity
+                _STDDEV_LOW = 0.05   # below this → tight cluster
+                _POOL_MULT = 1.5
+                _POOL_CAP = 200
+                scores = [h.get("score") or 0.0 for h in vec_hits]
+                if len(scores) > 1:
+                    _mean = sum(scores) / len(scores)
+                    _var = sum((s - _mean) ** 2 for s in scores) / len(scores)
+                    _stddev = math.sqrt(_var)
+                    if _stddev > _STDDEV_HIGH:
+                        input_k = min(int(input_k * _POOL_MULT), _POOL_CAP)
+                    elif _stddev < _STDDEV_LOW:
+                        input_k = max(limit + 5, 15)
+                    # else: medium diversity → keep input_k unchanged
             bm_hits = self.store.search_bm25(
                 query, limit=k_each, type_=type_, exclude_types=exclude_types
             )
