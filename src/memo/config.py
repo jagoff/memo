@@ -29,9 +29,12 @@ Pydantic v2 used for type coercion + boundary validation.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -292,7 +295,14 @@ class Config(BaseModel):
             id_path.write_text(new_id, encoding="utf-8")
         except Exception:
             # If we can't write, return a transient ID
-            return f"transient-{new_id}"
+            device_id = f"transient-{new_id}"
+            _log.warning(
+                "state_dir %s not writable — device_id is transient (%s). "
+                "Sync and federation will not work correctly.",
+                self.state_dir,
+                device_id,
+            )
+            return device_id
         return new_id
 
     @property

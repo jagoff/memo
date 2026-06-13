@@ -184,6 +184,11 @@ class _SearchOpsMixin(_MemoryBase):
                 out = self._apply_source_feedback(out, fb_emb)
             except Exception as exc:
                 _log.warning("source_feedback failed: %s", exc, exc_info=True)
+        elif out and fb_emb is None:
+            _log.debug(
+                "Source feedback boost skipped: query embedding unavailable in mode=%s",
+                mode,
+            )
 
         # Cross-encoder rerank on hybrid mode only. Skipped for vec/bm25
         # since those callers explicitly opted out of fusion entirely;
