@@ -191,7 +191,9 @@ _SPECS: tuple[FlagSpec, ...] = (
         "str",
         "",
         "recall",
-        "Lightweight embedder model for cold-start fallback (e.g. 'sentence-transformers/all-MiniLM-L6-v2').",
+        # DEPRECATED: not wired — MicroEmbedder stub is not integrated in the production recall path.
+        # Kept for backward compat; setting this has no effect.
+        "DEPRECATED (no effect): Lightweight embedder model for cold-start fallback. Not wired in production.",
     ),
     _spec(
         "MEMO_RECALL_LOCK_TIMEOUT_MS",
@@ -490,7 +492,9 @@ _SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "entity",
-        "Use the GLiNER zero-shot NER model for entity extraction instead of the LLM (higher recall, extra dependency).",
+        # DEPRECATED: not wired — GLiNER is not integrated; entity extraction always uses the LLM path.
+        # Kept for backward compat; setting this has no effect.
+        "DEPRECATED (no effect): Use GLiNER for entity extraction. GLiNER not wired; LLM path always used.",
     ),
     _spec(
         "MEMO_ENTITY_GLINER_MODEL",
@@ -823,7 +827,10 @@ _SPECS: tuple[FlagSpec, ...] = (
         "str",
         "off",
         "cache",
-        "Cache tier mode: off | read_through | write_through | write_back. `off` (default) keeps memo a durable source-of-truth store with no eviction. Any other value treats the local vault as a derived cache in front of MEMO_CACHE_BACKEND.",
+        # DEPRECATED: only 'off' is tested/used; smart/prefetch/aggressive modes are dead code.
+        # Kept for backward compat. Any value other than 'off' has no effect.
+        "Cache tier mode: off (default, durable store). Other values (read_through/write_through/write_back) "
+        "are DEPRECATED and have no effect — only 'off' is wired.",
     ),
     _spec(
         "MEMO_CACHE_MAX_ENTRIES",

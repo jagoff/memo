@@ -29,12 +29,20 @@ from typing import Any
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
-DEFAULT_BRIDGE_DB = Path(
-    os.environ.get(
-        "MEMO_WHATSAPP_DB",
-        "~/repos/whatsapp-mcp/whatsapp-bridge/store/messages.db",
-    )
-).expanduser()
+_DEFAULT_BRIDGE_DB_RAW = "~/repos/whatsapp-mcp/whatsapp-bridge/store/messages.db"
+
+
+def _resolve_bridge_db() -> Path:
+    """Return the WhatsApp bridge DB path from MEMO_WHATSAPP_DB flag or the
+    compiled-in default. Reading through the flags registry ensures the path
+    appears in `memo config validate` and `memo config flags`."""
+    from memo.flags import flag_str
+
+    raw = flag_str("MEMO_WHATSAPP_DB") or _DEFAULT_BRIDGE_DB_RAW
+    return Path(raw).expanduser()
+
+
+DEFAULT_BRIDGE_DB = _resolve_bridge_db()
 
 DEFAULT_RETENTION_DAYS = 180
 
@@ -279,8 +287,15 @@ def run(
             "(no ingesto todos los chats por defecto)"
         )
 
-    db = bridge_db or DEFAULT_BRIDGE_DB
+    from memo.flags import flag_str
+
+    db = bridge_db or _resolve_bridge_db()
     if not db.is_file():
+        if bridge_db is None and flag_str("MEMO_WHATSAPP_DB") == "":
+            raise ValueError(
+                f"WhatsApp DB not found: {db}. "
+                "Set MEMO_WHATSAPP_DB env var to the path of your whatsapp-mcp messages.db."
+            )
         raise FileNotFoundError(f"bridge DB no encontrada: {db}")
 
     out_dir = notes_dir or resolve_notes_dir(mem)

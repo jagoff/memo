@@ -285,8 +285,8 @@ class Config(BaseModel):
         if id_path.is_file():
             try:
                 return id_path.read_text(encoding="utf-8").strip()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("config: failed to read device_id from %s: %s", id_path, exc)
         
         import uuid
         new_id = str(uuid.uuid4()).replace("-", "")[:12]

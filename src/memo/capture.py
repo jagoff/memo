@@ -158,7 +158,8 @@ def _parse_transcript(transcript_path: Path) -> list[tuple[str, str]]:
         return []
     try:
         lines = transcript_path.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except Exception as exc:
+        _log.debug("capture: transcript read failed (%s): %s", transcript_path, exc)
         return []
     parsed: list[tuple[str, str]] = []
     for line in lines:
@@ -333,7 +334,8 @@ def extract_insights(
             options={"temperature": 0.0, "seed": 42, "num_predict": 800},
         )
         raw = (resp.get("message") or {}).get("content") or ""
-    except Exception:
+    except Exception as exc:
+        _log.warning("capture: helper LLM call failed: %s", exc)
         return []
 
     raw = raw.strip()

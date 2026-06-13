@@ -11,6 +11,7 @@ as `memo chat ask` — a more natural command hierarchy.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 
 import click
@@ -19,6 +20,8 @@ from rich.panel import Panel
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+
+_log = logging.getLogger(__name__)
 
 
 @click.group(name="chat")
@@ -79,7 +82,8 @@ def chat_ask(
             raw = json.load(history_json)
             if isinstance(raw, list):
                 history = [h for h in raw if isinstance(h, dict)]
-        except Exception:
+        except Exception as exc:
+            _log.warning("chat ask: failed to load history JSON: %s", exc)
             history = []
 
     context: dict = {}
@@ -88,7 +92,8 @@ def chat_ask(
             ctx = json.load(context_json)
             if isinstance(ctx, dict):
                 context = ctx
-        except Exception:
+        except Exception as exc:
+            _log.warning("chat ask: failed to load context JSON: %s", exc)
             context = {}
 
     mem = _get_memory(Config.from_env())
