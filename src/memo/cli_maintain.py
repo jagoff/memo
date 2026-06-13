@@ -23,7 +23,10 @@ path; `--hard-delete` is manual-only.
 from __future__ import annotations
 
 import json
+import logging
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import click
@@ -33,9 +36,35 @@ from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
 from memo.flags import flag_bool
 
+_log = logging.getLogger(__name__)
+
 
 def _state_path(cfg: Config):
     return cfg.state_dir / "maintain"
+
+
+def _synthesis_state_path(cfg: Config) -> Path:
+    return cfg.state_dir / "synthesis_state.json"
+
+
+def _read_synthesis_last_run(cfg: Config) -> str | None:
+    """Return the ISO timestamp of the last synthesis run, or None."""
+    p = _synthesis_state_path(cfg)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data.get("last_run") or None
+    except Exception:
+        return None
+
+
+def _write_synthesis_last_run(cfg: Config, ts: str) -> None:
+    """Persist the synthesis run timestamp to state_dir/synthesis_state.json."""
+    p = _synthesis_state_path(cfg)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"last_run": ts}, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        _log.warning("maintain: could not write synthesis_state.json: %s", exc)
 
 
 def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
@@ -159,6 +188,7 @@ def maintain_cmd(
         "forgotten": [],  # forget_after TTL elapsed (soft, reversible)
         "archived_stale": [],
         "synthesized": [],  # emergent cross-memory insights generated
+        "synthesis_count": 0,  # new clusters synthesized by proactive pass
         "errors": [],
     }
 
@@ -262,6 +292,27 @@ def maintain_cmd(
         except Exception as exc:
             receipt["errors"].append(f"synthesize: {type(exc).__name__}: {exc}")
 
+    # 5. Proactive synthesis (opt-in: MEMO_MAINT_SYNTHESIZE=1) ----------------
+    # Runs synthesis on clusters that have been updated since the last run.
+    # `_last_run` records the prior timestamp for informational logging; the
+    # `synthesize_cross_cluster` method already skips clusters whose
+    # sources_hash hasn't changed (built-in dedup), so re-running is cheap.
+    # Non-blocking: a failure logs a warning but does not abort the cycle.
+    if not skip_synthesize and flag_bool("MEMO_MAINT_SYNTHESIZE"):
+        _last_run = _read_synthesis_last_run(cfg)
+        _synth_ts = datetime.now(timezone.utc).isoformat()
+        _log.debug("maintain: proactive synthesis since %s", _last_run or "never")
+        try:
+            results = mem.synthesize_cross_cluster(dry_run=dry_run)
+            _n_saved = sum(1 for r in results if r.get("saved"))
+            receipt["synthesis_count"] = _n_saved
+            _log.info("maintain: proactive synthesis: %d new clusters synthesized", _n_saved)
+            if not dry_run:
+                _write_synthesis_last_run(cfg, _synth_ts)
+        except Exception as exc:
+            _log.warning("maintain: proactive synthesis failed (non-fatal): %s", exc)
+            receipt["errors"].append(f"maint_synthesize: {type(exc).__name__}: {exc}")
+
     # Persist receipt + timestamp (the daily guard reads the timestamp). Even
     # a dry-run stamps so a preview doesn't immediately re-trigger; the guard
     # cares only about "ran recently".
@@ -296,6 +347,8 @@ def maintain_cmd(
         console.print(
             f"  emergent syntheses: {saved} saved, {len(receipt['synthesized'])} proposed"
         )
+    if receipt.get("synthesis_count"):
+        console.print(f"  synthesis: {receipt['synthesis_count']} new clusters synthesized")
     if receipt["errors"]:
         for e in receipt["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")

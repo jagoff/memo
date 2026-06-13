@@ -2,18 +2,27 @@
 
 Unit-covers the older-side picker and the daily `--if-due` guard, plus a
 dry-run on an empty isolated corpus (no MLX needed — nothing to embed).
+Includes tests for the proactive synthesis pass (MEMO_MAINT_SYNTHESIZE=1).
 """
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
 from memo.cli import cli
-from memo.cli_maintain import _older_id
+from memo.cli_maintain import (
+    _older_id,
+    _read_synthesis_last_run,
+    _synthesis_state_path,
+    _write_synthesis_last_run,
+)
+from memo.config import Config
 
 
 def _env(tmp_path: Path) -> dict[str, str]:
@@ -111,3 +120,104 @@ def test_lint_clean_memoria_has_no_issues(mock_memory):
     out = mock_memory.lint()
     flagged = {e["id"] for cat in out.values() for e in cat}
     assert rec.id not in flagged
+
+
+# -- Proactive synthesis (MEMO_MAINT_SYNTHESIZE) --------------------------------
+
+
+def test_synthesis_state_helpers_round_trip(tmp_path: Path):
+    """_write / _read synthesis_state.json persist and return the ISO timestamp."""
+    state = tmp_path / "state"
+    state.mkdir()
+    cfg = Config(data_dir=tmp_path / "data", state_dir=state, reranker_enabled=False)
+
+    assert _read_synthesis_last_run(cfg) is None  # no file yet
+
+    ts = "2026-06-13T12:00:00+00:00"
+    _write_synthesis_last_run(cfg, ts)
+
+    assert _synthesis_state_path(cfg).is_file()
+    stored = json.loads(_synthesis_state_path(cfg).read_text(encoding="utf-8"))
+    assert stored["last_run"] == ts
+    assert _read_synthesis_last_run(cfg) == ts
+
+
+def test_maint_synthesize_flag_off_no_state_file(tmp_path: Path):
+    """When MEMO_MAINT_SYNTHESIZE is not set, synthesis_state.json is never created."""
+    env = _env(tmp_path)
+    # Do NOT set MEMO_MAINT_SYNTHESIZE
+    result = CliRunner().invoke(cli, ["maintain", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    state_file = tmp_path / "state" / "synthesis_state.json"
+    assert not state_file.exists()
+
+
+def test_maint_synthesize_flag_on_creates_state_file(tmp_path: Path):
+    """With MEMO_MAINT_SYNTHESIZE=1, maintain creates synthesis_state.json and
+    includes synthesis_count in the JSON receipt.
+
+    The corpus is empty (no memorias to cluster), so synthesis_count=0,
+    but the timestamp file must still be written after a real (non-dry-run) run.
+    """
+    env = {
+        **_env(tmp_path),
+        "MEMO_MAINT_SYNTHESIZE": "1",
+        "MEMO_SYNTHESIS_ENABLED": "0",  # disable step-4 synthesis to avoid double-run
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+    result = CliRunner().invoke(cli, ["maintain", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+
+    receipt = json.loads(result.output)
+    assert "synthesis_count" in receipt
+    assert receipt["synthesis_count"] == 0  # empty corpus → no clusters
+
+    state_file = tmp_path / "state" / "synthesis_state.json"
+    assert state_file.is_file(), "synthesis_state.json must be written after the maintain run"
+    data = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "last_run" in data
+    assert data["last_run"]  # non-empty ISO timestamp
+
+
+def test_maint_synthesize_dry_run_does_not_write_state(tmp_path: Path):
+    """A --dry-run maintain with MEMO_MAINT_SYNTHESIZE=1 must NOT persist the state file."""
+    env = {
+        **_env(tmp_path),
+        "MEMO_MAINT_SYNTHESIZE": "1",
+        "MEMO_SYNTHESIS_ENABLED": "0",
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+    result = CliRunner().invoke(cli, ["maintain", "--dry-run", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+
+    state_file = tmp_path / "state" / "synthesis_state.json"
+    assert not state_file.exists(), "dry-run must not write synthesis_state.json"
+
+
+def test_maint_synthesize_non_fatal_on_error(tmp_path: Path):
+    """If synthesize_cross_cluster raises, maintain logs a warning and continues."""
+    from memo.cli_maintain import _synthesis_state_path
+
+    env = {
+        **_env(tmp_path),
+        "MEMO_MAINT_SYNTHESIZE": "1",
+        "MEMO_SYNTHESIS_ENABLED": "0",
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+
+    # Patch Memory.synthesize_cross_cluster to raise.
+    with patch("memo.memory.Memory.synthesize_cross_cluster", side_effect=RuntimeError("boom")):
+        result = CliRunner().invoke(cli, ["maintain", "--json"], env=env)
+
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.output)
+    # Error should be recorded but not fatal.
+    assert any("maint_synthesize" in e for e in receipt.get("errors", []))
+    # State file should NOT be written when synthesis crashed.
+    assert not _synthesis_state_path(
+        Config(
+            data_dir=tmp_path / "data",
+            state_dir=tmp_path / "state",
+            reranker_enabled=False,
+        )
+    ).exists()
