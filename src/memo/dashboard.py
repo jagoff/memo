@@ -31,6 +31,7 @@ import subprocess
 import threading
 import time
 from collections import Counter
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -745,6 +746,64 @@ def reask_stats(
     }
 
 
+# -------------------- TTL caches (reduce I/O on hot refresh path) --------------------
+
+
+@dataclass
+class _TTLCache:
+    """Generic single-slot TTL cache.
+
+    Holds one cached value per unique ``key`` (an arbitrary hashable).
+    ``get(key)`` returns the cached value if fresh (within ``ttl_s``
+    seconds), else ``None``.  ``set(key, value)`` stores it.  Designed
+    for low-frequency dashboard refresh cadences — NOT thread-safe on
+    purpose (single UI thread drives renders; fast enough without a lock).
+    """
+
+    ttl_s: float
+    _key: Any = field(default=None, init=False, repr=False)
+    _value: Any = field(default=None, init=False, repr=False)
+    _ts: float = field(default=0.0, init=False, repr=False)
+
+    def get(self, key: Any = None) -> Any:
+        if self._key == key and (time.monotonic() - self._ts) < self.ttl_s:
+            return self._value
+        return None
+
+    def set(self, value: Any, key: Any = None) -> None:
+        self._key = key
+        self._value = value
+        self._ts = time.monotonic()
+
+
+# Corpus rows: heavy list_recent(10_000) — 10s TTL.
+_corpus_cache: _TTLCache = _TTLCache(ttl_s=10.0)
+
+# Recall-quality metrics (reads recall.log + grounding.log): 30s TTL.
+_recall_quality_cache: _TTLCache = _TTLCache(ttl_s=30.0)
+
+# Consumer breakdown (reads recall.log + grounding.log): 30s TTL.
+_consumers_cache: _TTLCache = _TTLCache(ttl_s=30.0)
+
+
+def _get_corpus_rows(memory: Any) -> list[dict[str, Any]]:
+    """Return ``memory.store.list_recent(limit=10_000)``, cached for 10 s.
+
+    Both ``_panel_corpus`` and ``_panel_top_tags`` need the same expensive
+    full-corpus scan.  Sharing one cached result means a 1-second TUI
+    refresh only re-fetches every 10 seconds instead of twice per tick.
+    The cache key is the memory object identity so different Memory
+    instances (tests, multi-instance) never share a stale snapshot.
+    """
+    key = id(memory)
+    cached = _corpus_cache.get(key)
+    if cached is not None:
+        return cached  # type: ignore[return-value]
+    rows = memory.store.list_recent(limit=10_000)
+    _corpus_cache.set(rows, key)
+    return rows
+
+
 # -------------------- helpers --------------------
 
 
@@ -858,7 +917,9 @@ def _panel_corpus(memory: Any) -> Panel:
     projects: set[str] = set()
     # Avoid loading every body — list_recent yields meta-only rows from
     # the store layer (path/title/type/tags/created/updated).
-    rows = memory.store.list_recent(limit=10_000)
+    # Uses the 10-second TTL cache shared with _panel_top_tags to avoid
+    # two expensive full-corpus scans per refresh tick.
+    rows = _get_corpus_rows(memory)
     for r in rows:
         types_counter[r["type"]] += 1
         for t in r["tags"] or []:
@@ -989,7 +1050,7 @@ def _panel_recent_recalls(state_dir: Path, limit: int = 8) -> Panel:
 
 
 def _panel_top_tags(memory: Any, limit: int = 8) -> Panel:
-    rows = memory.store.list_recent(limit=10_000)
+    rows = _get_corpus_rows(memory)  # 10-second TTL shared with _panel_corpus
     counter: Counter[str] = Counter()
     for r in rows:
         for t in r["tags"] or []:
@@ -1053,6 +1114,124 @@ def _panel_activity(memory: Any, state_dir: Path) -> Panel:
     return Panel(body, title="[bold]activity[/bold]", border_style="bright_black")
 
 
+def _panel_recall_quality(state_dir: Path) -> Panel:
+    """Show grounded_rate, hit_rate, and re-ask avoidance stats.
+
+    Reads recall.log + grounding.log via a 30-second TTL cache so the
+    log scan doesn't run on every 1-second TUI refresh.  All fields
+    degrade gracefully to "—" when data is unavailable.
+    """
+    key = str(state_dir)
+    cached = _recall_quality_cache.get(key)
+    if cached is None:
+        try:
+            health = recall_health(state_dir, limit=200)
+            reask = reask_stats(state_dir, limit=500)
+        except Exception as exc:
+            _log.debug("dashboard: recall_quality fetch failed: %s", exc)
+            health = {}
+            reask = {}
+        cached = {"health": health, "reask": reask}
+        _recall_quality_cache.set(cached, key)
+
+    health = cached.get("health") or {}
+    reask = cached.get("reask") or {}
+
+    def _pct(v: Any) -> str:
+        if v is None:
+            return "—"
+        return f"{v * 100:.0f}%"
+
+    def _val(v: Any, fmt: str = "{}") -> str:
+        return "—" if v is None else fmt.format(v)
+
+    tbl = Table.grid(padding=(0, 2))
+    tbl.add_column(style="dim", width=18)
+    tbl.add_column(style="bold")
+
+    grounded = _pct(health.get("grounded_rate"))
+    hit = _pct(health.get("hit_rate"))
+    strong = _pct(health.get("strong_hit_rate"))
+    median_score = _val(health.get("median_top_score"), "{:.2f}")
+    p50_lat = _val(health.get("p50_latency_ms"), "{}ms")
+    sampled = _val(health.get("sampled"))
+    fired = _val(health.get("fired"))
+
+    reask_avoided = _val(reask.get("reask_avoided"))
+    considered = _val(reask.get("considered"))
+    reask_rate = _pct(reask.get("reask_rate"))
+
+    tbl.add_row("grounded", f"[bold green]{grounded}[/bold green]  [dim](primary)[/dim]")
+    tbl.add_row("hit / strong", f"{hit}  /  {strong}")
+    tbl.add_row("median score", f"{median_score}  [dim]p50 lat[/dim] {p50_lat}")
+    tbl.add_row("sampled/fired", f"{sampled} / {fired}")
+    tbl.add_row("reask avoided", f"{reask_avoided} [dim]of[/dim] {considered}  [dim]reask%[/dim] {reask_rate}")
+
+    return Panel(
+        tbl,
+        title="[bold green]recall quality[/bold green]",
+        border_style="green",
+    )
+
+
+def _panel_consumers(state_dir: Path) -> Panel:
+    """Show per-agent recall breakdown from consult_breakdown().
+
+    Reads recall.log + grounding.log via a 30-second TTL cache.  Silent
+    expected consumers are flagged explicitly.  All columns degrade to
+    "—" gracefully.
+    """
+    key = str(state_dir)
+    cached = _consumers_cache.get(key)
+    if cached is None:
+        try:
+            data = consult_breakdown(state_dir, limit=500)
+        except Exception as exc:
+            _log.debug("dashboard: consult_breakdown fetch failed: %s", exc)
+            data = {}
+        cached = data
+        _consumers_cache.set(cached, key)
+
+    consumers = cached.get("consumers") or []
+    silent = cached.get("silent") or []
+
+    tbl = Table.grid(padding=(0, 1))
+    tbl.add_column(style="cyan", width=14)      # consumer
+    tbl.add_column(justify="right", width=7)    # consults
+    tbl.add_column(justify="right", width=7)    # hit%
+    tbl.add_column(justify="right", width=7)    # grounded%
+    tbl.add_column(style="dim", width=10)       # last seen
+
+    if not consumers:
+        tbl.add_row(
+            Text("(no recall log data)", style="dim italic"), "", "", "", ""
+        )
+    for c in consumers[:6]:  # cap at 6 rows to fit the panel height
+        name = (c.get("consumer") or "?")[:13]
+        consults = str(c.get("consults") or "—")
+        hit = c.get("hit_rate")
+        hit_s = f"{hit * 100:.0f}%" if hit is not None else "—"
+        grounded = c.get("grounded_rate")
+        gr_s = f"{grounded * 100:.0f}%" if grounded is not None else "—"
+        last = _human_age(c.get("last_seen"))
+        tbl.add_row(name, consults, hit_s, gr_s, last)
+
+    if silent:
+        silent_line = Text.assemble(
+            ("silent: ", "dim"),
+            (", ".join(silent), "yellow"),
+        )
+        body = Group(tbl, silent_line)
+    else:
+        body = tbl  # type: ignore[assignment]
+
+    return Panel(
+        body,
+        title="[bold cyan]consumers[/bold cyan]",
+        border_style="cyan",
+    )
+
+
 # -------------------- main loop --------------------
 
 
@@ -1062,11 +1241,13 @@ def render(memory: Any, state_dir: Path) -> Layout:
         Layout(name="top", size=3),
         Layout(name="mid", size=8),
         Layout(name="bot", size=6),
+        Layout(name="ext", size=9),
         Layout(name="footer", size=1),
     )
     layout["top"].split_row(Layout(name="corpus"), Layout(name="runtime"))
     layout["mid"].split_row(Layout(name="saves"), Layout(name="recalls"))
     layout["bot"].split_row(Layout(name="tags"), Layout(name="activity"))
+    layout["ext"].split_row(Layout(name="recall_quality"), Layout(name="consumers"))
 
     layout["corpus"].update(_panel_corpus(memory))
     layout["runtime"].update(_panel_runtime(memory))
@@ -1074,6 +1255,8 @@ def render(memory: Any, state_dir: Path) -> Layout:
     layout["recalls"].update(_panel_recent_recalls(state_dir, limit=4))
     layout["tags"].update(_panel_top_tags(memory, limit=4))
     layout["activity"].update(_panel_activity(memory, state_dir))
+    layout["recall_quality"].update(_panel_recall_quality(state_dir))
+    layout["consumers"].update(_panel_consumers(state_dir))
     now = datetime.now().strftime("%H:%M:%S")
     footer = Text.from_markup(
         f"[dim]memo · live  ·  {memory.cfg.memory_dir}  ·  [/dim][cyan]{now}[/cyan]"
