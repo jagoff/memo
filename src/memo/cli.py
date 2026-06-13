@@ -40,6 +40,7 @@ from memo.cli_as_of import as_of_group
 from memo.cli_backend_native import backend_native_group
 from memo.cli_backup import backup_group
 from memo.cli_briefing import briefing
+from memo.cli_chat import chat_group
 from memo.cli_capture import capture_stop, resume
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import _short, console
@@ -196,6 +197,7 @@ cli.add_command(search)
 cli.add_command(ask)
 cli.add_command(embed_cmd)
 cli.add_command(chat_ask)
+cli.add_command(chat_group)
 cli.add_command(rerank_cmd)
 cli.add_command(list_cmd)
 cli.add_command(get)
