@@ -282,4 +282,5 @@ def test_links_reindex_safe_under_single_db(tmp_path: Path, monkeypatch):
     assert cfg.db_path.is_file()
     assert Memory(Config.from_env(**{
         "data_dir": data, "state_dir": state, "single_db": True, "embedder_dims": 4,
+        "embedder_model": cfg.embedder_model,
     })).store.count() == 1

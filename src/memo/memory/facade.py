@@ -114,7 +114,7 @@ class Memory(
                 expected_dims=cfg.embedder_dims,
                 cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"),
             )
-        self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
+        self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
         # History store — cheap to open (just sqlite); creating eagerly.
         # Audit failures never propagate to the caller — HistoryStore
         # swallows its own exceptions internally.

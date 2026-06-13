@@ -175,7 +175,7 @@ class RepoCorpus:
     ) -> None:
         self.cfg = cfg
         cfg.ensure_dirs()
-        self.store = store or VecStore(cfg.db_path, dims=cfg.embedder_dims)
+        self.store = store or VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
         self.embedder = embedder or MLXEmbedder(
             model_path=cfg.embedder_model,
             expected_dims=cfg.embedder_dims,
