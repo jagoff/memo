@@ -16,6 +16,7 @@ from typing import Any
 import frontmatter
 
 from memo.embedder import assert_valid_embedding
+from memo.flags import flag_bool
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -200,12 +201,21 @@ class _MaintainOpsMixin(_MemoryBase):
         `force`. Embedding reuse (see `_embed_cached`) keeps it cheap once the
         content cache is warm.
 
+        When `MEMO_CHUNK_INGEST=1`, long notes (> chunker DEFAULT_TARGET_CHARS)
+        are additionally split into heading-aware chunk records. Each chunk is
+        stored with type='reference', extra.parent_id pointing to the parent
+        memoria id, and a path of `<rel>#chunk-<n>`. The parent record itself
+        is always indexed whole-note for semantic coherence. Default off
+        (MEMO_CHUNK_INGEST=0) preserves existing whole-note behaviour.
+
         Returns counts: `{"checked", "reindexed", "added", "skipped"}`.
         """
         memory_root = self.cfg.memory_dir
         checked = reindexed = added = skipped = 0
         if not memory_root.is_dir():
             return {"checked": 0, "reindexed": 0, "added": 0, "skipped": 0}
+
+        chunk_ingest = flag_bool("MEMO_CHUNK_INGEST")
 
         if rebuild:
             # Wipe only the derivable tables; signal tables survive and re-join
@@ -286,6 +296,17 @@ class _MaintainOpsMixin(_MemoryBase):
                     body_text=body,
                 )
                 added += 1
+                if chunk_ingest:
+                    added += self._reindex_emit_chunks(
+                        parent_id=md_id,
+                        parent_rel=rel,
+                        title=title,
+                        body=body,
+                        tags=tags,
+                        created=created,
+                        updated=updated,
+                        force=force,
+                    )
                 continue
             missing_vector = not self.store.has_vector(md_id)
             if force or existing["body_hash"] != new_hash or missing_vector:
@@ -309,6 +330,17 @@ class _MaintainOpsMixin(_MemoryBase):
                     body_text=body,
                 )
                 reindexed += 1
+                if chunk_ingest:
+                    reindexed += self._reindex_emit_chunks(
+                        parent_id=md_id,
+                        parent_rel=rel,
+                        title=title,
+                        body=body,
+                        tags=tags,
+                        created=created,
+                        updated=updated,
+                        force=force,
+                    )
         # Successful reindex: every meta.path now uses the current
         # memory_dir-relative layout, so future startups can skip the
         # legacy-path probe in `_maybe_warn_legacy_paths`.
@@ -332,6 +364,94 @@ class _MaintainOpsMixin(_MemoryBase):
                 },
             )
         return counts
+
+    def _reindex_emit_chunks(
+        self,
+        *,
+        parent_id: str,
+        parent_rel: str,
+        title: str,
+        body: str,
+        tags: builtins.list[str],
+        created: str,
+        updated: str,
+        force: bool,
+    ) -> int:
+        """Split `body` into heading-aware chunks and upsert each as a
+        reference-tier record with `extra.parent_id` pointing back.
+
+        Only called when `MEMO_CHUNK_INGEST=1`. Returns the number of
+        chunk rows that were written (added or updated). Short bodies
+        that produce a single chunk are skipped — the parent already
+        covers them.
+        """
+        from memo.chunker import DEFAULT_TARGET_CHARS, chunk_markdown
+
+        chunks = chunk_markdown(body, target_chars=DEFAULT_TARGET_CHARS)
+        if len(chunks) <= 1:
+            # Body is short or structurally unsplittable — no extra records.
+            return 0
+
+        now = _now_iso()
+        written = 0
+        valid_chunk_ids: builtins.list[str] = []
+
+        for chunk in chunks:
+            seq = chunk["seq"]
+            heading = chunk["heading"]
+            chunk_body = chunk["body"]
+            chunk_id = f"{parent_id}_chunk_{seq}"
+            chunk_path = f"{parent_rel}#chunk-{seq}"
+            valid_chunk_ids.append(chunk_id)
+
+            chunk_hash = _sha256_short(chunk_body)
+            existing_chunk = self.store.get(chunk_id)
+            if existing_chunk and existing_chunk["body_hash"] == chunk_hash and not force:
+                # Unchanged since last reindex — skip.
+                continue
+
+            chunk_title = f"{title} § {heading}" if heading else f"{title} (§{seq + 1}/{len(chunks)})"
+            chunk_extra: dict[str, Any] = {
+                "parent_id": parent_id,
+                "chunk_index": seq,
+                "chunk_count": len(chunks),
+                "chunk_heading": heading,
+                "parent_path": parent_rel,
+            }
+            emb = self._embed_cached(
+                self._compose_for_embed(chunk_title, chunk_body),
+                ctx=f"chunk {parent_id[:8]}#{seq}",
+            )
+            self.store.upsert(
+                id_=chunk_id,
+                path=chunk_path,
+                title=chunk_title,
+                type_="reference",
+                tags=tags,
+                created=existing_chunk["created"] if existing_chunk else created,
+                updated=now,
+                body_hash=chunk_hash,
+                embedding=emb,
+                extra=chunk_extra,
+                body_text=chunk_body,
+            )
+            written += 1
+
+        # Prune stale chunks from a previous reindex that had more chunks
+        # (e.g. note was shortened or restructured into fewer sections).
+        for row in self.store.list_recent(limit=100_000):
+            row_extra = row.get("extra") or {}
+            if (
+                isinstance(row_extra, dict)
+                and row_extra.get("parent_id") == parent_id
+                and row["id"] not in valid_chunk_ids
+            ):
+                self.store.delete(row["id"])
+                _log.debug(
+                    "reindex: pruned stale chunk %s (parent %s)", row["id"][:12], parent_id[:8]
+                )
+
+        return written
 
     def lint(self) -> dict[str, builtins.list[dict[str, Any]]]:
         """Surface memorias with quality issues.
