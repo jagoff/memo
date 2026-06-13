@@ -350,6 +350,59 @@ _SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
     ),
     _spec(
+        "MEMO_DECAY_HALFLIFE_DECISION",
+        "float",
+        365.0,
+        "search",
+        "Per-type recency-decay half-life (days) for type='decision'. "
+        "Decisions persist longer than the global default. "
+        "Overrides MEMO_SEARCH_DECAY_HALFLIFE for this type when set. "
+        "Ignored when MEMO_SEARCH_DECAY_HALFLIFE=0 (decay disabled globally).",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_DECAY_HALFLIFE_FEEDBACK",
+        "float",
+        90.0,
+        "search",
+        "Per-type recency-decay half-life (days) for type='feedback'. "
+        "Overrides MEMO_SEARCH_DECAY_HALFLIFE for this type when set. "
+        "Ignored when MEMO_SEARCH_DECAY_HALFLIFE=0 (decay disabled globally).",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_DECAY_HALFLIFE_NOTE",
+        "float",
+        30.0,
+        "search",
+        "Per-type recency-decay half-life (days) for type='note'. "
+        "Notes are ephemeral and decay faster than the global default. "
+        "Overrides MEMO_SEARCH_DECAY_HALFLIFE for this type when set. "
+        "Ignored when MEMO_SEARCH_DECAY_HALFLIFE=0 (decay disabled globally).",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_DECAY_HALFLIFE_FACT",
+        "float",
+        180.0,
+        "search",
+        "Per-type recency-decay half-life (days) for type='fact'. "
+        "Overrides MEMO_SEARCH_DECAY_HALFLIFE for this type when set. "
+        "Ignored when MEMO_SEARCH_DECAY_HALFLIFE=0 (decay disabled globally).",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_DECAY_HALFLIFE_REFERENCE",
+        "float",
+        None,
+        "search",
+        "Per-type recency-decay half-life (days) for type='reference'. "
+        "None (default) means references do not decay. "
+        "Overrides MEMO_SEARCH_DECAY_HALFLIFE for this type when set. "
+        "Ignored when MEMO_SEARCH_DECAY_HALFLIFE=0 (decay disabled globally).",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_HEALTH_SCORES_DISABLED",
         "bool",
         False,

@@ -10,6 +10,7 @@ from memo.memory.record import (
     MemoryRecord,
     _adaptive_rrf_k,
     _apply_decay,
+    _halflife_for_type,
     _rrf_fuse,
 )
 
@@ -61,11 +62,16 @@ def test_default_halflife_is_90_days():
 
 
 def test_decay_is_true_half_life():
-    """A memory updated exactly one half-life ago retains 50% freshness."""
+    """A memory updated exactly one half-life ago retains 50% freshness.
+
+    Uses type='preference' which has no per-type default, so it falls back to
+    the global halflife_days argument. At exactly one global halflife the decay
+    term is 0.5 and (with alpha=1.0) the final score equals 0.5.
+    """
     hl = _RECALL_DECAY_HALFLIFE_DEFAULT
     old = (datetime.now(tz=UTC) - timedelta(days=hl)).isoformat()
     rec = MemoryRecord(
-        id="a", path="a", title="t", type="note", tags=[],
+        id="a", path="a", title="t", type="preference", tags=[],
         created=old, updated=old, body="", score=1.0,
     )
     # alpha=1.0 isolates the decay term: final == decay == 0.5 at one half-life.
@@ -162,3 +168,116 @@ def test_graph_candidates_with_old_raw_score_would_be_on_wrong_scale():
     new_graph_scores = [1.0 / (k + rank + 1) for rank in range(3)]
     for s in new_graph_scores:
         assert 0.0 < s <= 1.0, f"Post-fix: score {s} must be in (0, 1]"
+
+
+# ── #12 Per-type recency decay ─────────────────────────────────────────────
+
+
+def _make_record(id_: str, type_: str, age_days: float, score: float = 1.0) -> MemoryRecord:
+    """Build a MemoryRecord updated `age_days` ago."""
+    updated = (datetime.now(tz=UTC) - timedelta(days=age_days)).isoformat()
+    return MemoryRecord(
+        id=id_,
+        path=f"{id_}.md",
+        title=id_,
+        type=type_,
+        tags=[],
+        created=updated,
+        updated=updated,
+        body="",
+        score=score,
+    )
+
+
+def test_halflife_for_type_decision_uses_registered_default(monkeypatch):
+    """decision type uses its registered default (365 days) not the global."""
+    # Ensure per-type env var is unset so we get the registered default.
+    monkeypatch.delenv("MEMO_DECAY_HALFLIFE_DECISION", raising=False)
+    hl = _halflife_for_type("decision", global_halflife=90.0)
+    assert hl == 365.0, f"decision should use 365-day default, got {hl}"
+
+
+def test_halflife_for_type_note_uses_registered_default(monkeypatch):
+    """note type uses its registered default (30 days) not the global."""
+    monkeypatch.delenv("MEMO_DECAY_HALFLIFE_NOTE", raising=False)
+    hl = _halflife_for_type("note", global_halflife=90.0)
+    assert hl == 30.0, f"note should use 30-day default, got {hl}"
+
+
+def test_halflife_for_type_reference_no_decay(monkeypatch):
+    """reference type has None default — returns 0.0 (no decay)."""
+    monkeypatch.delenv("MEMO_DECAY_HALFLIFE_REFERENCE", raising=False)
+    hl = _halflife_for_type("reference", global_halflife=90.0)
+    assert hl == 0.0, f"reference should not decay (0.0), got {hl}"
+
+
+def test_halflife_for_type_env_override(monkeypatch):
+    """Setting MEMO_DECAY_HALFLIFE_DECISION overrides the registered default."""
+    monkeypatch.setenv("MEMO_DECAY_HALFLIFE_DECISION", "500")
+    hl = _halflife_for_type("decision", global_halflife=90.0)
+    assert hl == 500.0, f"env var should override default, got {hl}"
+
+
+def test_halflife_for_type_unknown_type_uses_global():
+    """An unregistered type falls back to the global half-life."""
+    hl = _halflife_for_type("synthesis", global_halflife=120.0)
+    assert hl == 120.0, f"unknown type should use global halflife, got {hl}"
+
+
+def test_decision_decays_slower_than_note(monkeypatch):
+    """A decision from 30 days ago should retain more score than a note of
+    the same age because decision half-life (365d) >> note half-life (30d).
+
+    With alpha=1.0 the final score equals the decay term:
+      decay_decision = 0.5 ** (30 / 365) ≈ 0.944
+      decay_note     = 0.5 ** (30 /  30) = 0.5
+
+    The decision should therefore rank ABOVE the note in the output list.
+    """
+    monkeypatch.delenv("MEMO_DECAY_HALFLIFE_DECISION", raising=False)
+    monkeypatch.delenv("MEMO_DECAY_HALFLIFE_NOTE", raising=False)
+
+    age_days = 30.0
+    decision_rec = _make_record("d1", "decision", age_days, score=1.0)
+    note_rec = _make_record("n1", "note", age_days, score=1.0)
+
+    # global halflife = 90 (would give 0.794 for both if per-type were ignored)
+    out = _apply_decay([decision_rec, note_rec], halflife_days=90.0, alpha=1.0)
+
+    ids = [r.id for r in out]
+    assert ids[0] == "d1", (
+        f"decision should outrank note after per-type decay (got order {ids})"
+    )
+    d_score = next(r.score for r in out if r.id == "d1")
+    n_score = next(r.score for r in out if r.id == "n1")
+    assert d_score > n_score, (
+        f"decision score ({d_score}) should exceed note score ({n_score})"
+    )
+    # Verify the note is actually at ~0.5 (one half-life at 30d default)
+    assert abs(n_score - 0.5) < 0.02, f"note at one halflife should be ~0.5, got {n_score}"
+    # Verify the decision is well above 0.5 (far from its 365d halflife)
+    assert d_score > 0.9, f"decision at 30d should retain >0.9 freshness, got {d_score}"
+
+
+def test_reference_not_decayed(monkeypatch):
+    """References pass through _apply_decay unchanged (no decay by default)."""
+    monkeypatch.delenv("MEMO_DECAY_HALFLIFE_REFERENCE", raising=False)
+
+    age_days = 180.0
+    ref_rec = _make_record("ref1", "reference", age_days, score=0.8)
+    note_rec = _make_record("n1", "note", age_days, score=0.8)
+
+    out = _apply_decay([ref_rec, note_rec], halflife_days=90.0, alpha=1.0)
+
+    ref_out = next(r for r in out if r.id == "ref1")
+    note_out = next(r for r in out if r.id == "n1")
+
+    # note at 2× halflife (180/30) should be 0.5^6 ≈ 0.016 final with alpha=1
+    # actually 0.5**(180/30) = 0.5**6 = 0.015625 → rounded to 0.015625
+    assert note_out.score < 0.1, (
+        f"note at 6 halflives should be nearly zero, got {note_out.score}"
+    )
+    # reference should be unchanged (score passed through)
+    assert abs((ref_out.score or 0.0) - 0.8) < 1e-6, (
+        f"reference score should be unchanged (0.8), got {ref_out.score}"
+    )
