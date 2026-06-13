@@ -391,29 +391,21 @@ class _QueriesMixin(_StoreBase):
             raise ValueError(
                 f"Query embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
             )
-        # `type` is a vec0 metadata column, so an include filter (`type = ?`)
-        # and a single-value exclude (`type != ?` — the recall hook dropping
-        # the bulk `reference` tier) are pushed INTO the kNN: the candidate
-        # pool is already on-type, so no over-fetch is needed. Only a
-        # multi-value `exclude_types` (rare) can't be a single vec0 predicate,
-        # so it stays a post-join `NOT IN` and keeps the 5x over-fetch so the
-        # final top-k still fills after off-type rows drop out.
+        # `type` is a vec0 METADATA column, so type filters are pushed INTO
+        # the kNN — the candidate pool is already filtered before the JOINed
+        # meta row is read. sqlite-vec supports chained `AND type != ?`
+        # predicates, so multi-value exclude_types becomes N individual push
+        # predicates rather than a post-join `NOT IN` that required 5x
+        # over-fetch to fill the top-k after off-type rows were discarded.
         push_clauses: list[str] = []
         push_params: list[Any] = []
-        join_clauses: list[str] = []
-        join_params: list[Any] = []
         if type_:
             push_clauses.append("vec.type = ?")
             push_params.append(type_)
         if exclude_types:
-            ex = sorted(exclude_types)
-            if len(ex) == 1:
+            for ex_type in sorted(exclude_types):
                 push_clauses.append("vec.type != ?")
-                push_params.append(ex[0])
-            else:
-                join_clauses.append(f"meta.type NOT IN ({','.join('?' for _ in ex)})")
-                join_params.extend(ex)
-        candidate_k = limit * 5 if join_clauses else limit
+                push_params.append(ex_type)
         sql = (
             "SELECT vec.id AS id, vec.distance AS distance, "
             "       meta.path, meta.title, meta.type, meta.tags, "
@@ -422,13 +414,10 @@ class _QueriesMixin(_StoreBase):
             "JOIN meta ON meta.id = vec.id "
             "WHERE embedding MATCH ? AND k = ? "
         )
-        params: list[Any] = [serialize_float32(embedding), candidate_k]
+        params: list[Any] = [serialize_float32(embedding), limit]
         for clause in push_clauses:
             sql += f"AND {clause} "
         params.extend(push_params)
-        for clause in join_clauses:
-            sql += f"AND {clause} "
-        params.extend(join_params)
         sql += "ORDER BY distance ASC LIMIT ?"
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
