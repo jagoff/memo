@@ -87,9 +87,10 @@ class VecStore(
     instantiate their own `VecStore` (cheap — ~1ms cold open).
     """
 
-    def __init__(self, db_path: Path, dims: int = 1024) -> None:
+    def __init__(self, db_path: Path, dims: int = 1024, embedder_model: str = "") -> None:
         self.db_path = db_path
         self.dims = dims
+        self.embedder_model = embedder_model
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         # One sqlite connection PER THREAD. A single shared connection is
         # unsafe under the FastMCP HTTP transport, which dispatches sync

@@ -924,6 +924,15 @@ _SPECS: tuple[FlagSpec, ...] = (
         "whatsapp",
         "Override output dir for ingested WhatsApp notes (default <SYSTEM_DIR>/Whatsapp).",
     ),
+    # schema / embedding version check
+    _spec(
+        "MEMO_SKIP_MODEL_VERSION_CHECK",
+        "bool",
+        False,
+        "misc",
+        "Skip the embedder model/dims version check on VecStore open. "
+        "Set to 1 in tests that use stub embedders with non-production dims/model names.",
+    ),
 )
 
 REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}

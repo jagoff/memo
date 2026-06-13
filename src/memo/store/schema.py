@@ -15,6 +15,11 @@ _log = logging.getLogger(__name__)
 _SCHEMA_INIT_LOCK = threading.Lock()
 
 _SCHEMA_DDL = """
+CREATE TABLE IF NOT EXISTS schema_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     id          TEXT PRIMARY KEY,
     path        TEXT UNIQUE NOT NULL,
@@ -139,6 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_health_conf ON memory_health(confidence);
 
 _REQUIRED_SCHEMA_OBJECTS = frozenset(
     {
+        "schema_meta",
         "meta",
         "vec",
         "fts",
@@ -334,6 +340,11 @@ class _SchemaMixin(_StoreBase):
         self._validate_vec_dims()
         self._validate_vec_schema()
         self._ensure_secondary_indices()
+        # Ensure schema_meta exists (older DBs predate it) then stamp/verify
+        # the embedder model + dims so a model swap is caught at open time
+        # rather than producing a confusing dim-mismatch error at query time.
+        self._ensure_schema_meta_table()
+        self._check_embedder_version()
 
     # Secondary B-tree indices on `meta` that older DBs predate. Kept out of
     # the `_schema_ready()`-gated DDL block (which only runs on fresh DBs) so a
@@ -503,3 +514,95 @@ class _SchemaMixin(_StoreBase):
                     f"Fix: rm {self.db_path} && memo reindex\n"
                     f"Or check: MEMO_MODEL_PROFILE={self.dims}D or MEMO_EMBEDDER_DIMS={self.dims}"
                 )
+
+    def _ensure_schema_meta_table(self) -> None:
+        """Create schema_meta if it does not exist (existing DBs predate it).
+
+        The DDL block in _init_schema_locked only runs on fresh DBs (when
+        _schema_ready() returns False). Existing corpora skip it, so we must
+        ensure schema_meta is present via an idempotent CREATE IF NOT EXISTS
+        outside that block.
+        """
+        row = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'"
+        ).fetchone()
+        if row is None:
+            with self._conn:
+                self._conn.execute(
+                    "CREATE TABLE IF NOT EXISTS schema_meta ("
+                    "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
+
+    def _check_embedder_version(self) -> None:
+        """Stamp or verify embedder_model + embedder_dims in schema_meta.
+
+        On first open: INSERT OR IGNORE writes the current model/dims.
+        On subsequent opens: SELECT and compare. A mismatch raises StorageError
+        with a clear instruction to run 'memo reindex --rebuild'.
+
+        Bypassed when:
+        - MEMO_SKIP_MODEL_VERSION_CHECK=1  (tests with stub embedders)
+        - The stored model name is 'stub'  (legacy test DBs)
+        - The current model name is 'stub' (test stub embedded inline)
+        """
+        import os
+
+        # Fast path: bypass for tests / CI
+        if os.environ.get("MEMO_SKIP_MODEL_VERSION_CHECK", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return
+
+        # The store layer cannot import memo.flags (circular dep risk), so
+        # read the env var directly (same pattern as _env_float above).
+        current_model: str = getattr(self, "embedder_model", "") or ""
+        current_dims: int = self.dims
+
+        # Skip check when using a test stub model (by convention, model=""
+        # or model contains "stub").
+        if not current_model or "stub" in current_model.lower():
+            return
+
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?, ?)",
+                ("embedder_model", current_model),
+            )
+            self._conn.execute(
+                "INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?, ?)",
+                ("embedder_dims", str(current_dims)),
+            )
+
+        stored_model_row = self._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'embedder_model'"
+        ).fetchone()
+        stored_dims_row = self._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'embedder_dims'"
+        ).fetchone()
+
+        if stored_model_row is None or stored_dims_row is None:
+            return
+
+        stored_model = str(stored_model_row["value"])
+        stored_dims_str = str(stored_dims_row["value"])
+
+        # Skip check if stored model is a test stub
+        if "stub" in stored_model.lower():
+            return
+
+        try:
+            stored_dims = int(stored_dims_str)
+        except ValueError:
+            return  # malformed stored dims, don't block startup
+
+        if stored_model != current_model or stored_dims != current_dims:
+            from ..errors import StorageError
+
+            raise StorageError(
+                f"Embedder model mismatch: index was built with {stored_model} "
+                f"({stored_dims}d) but current config is {current_model} "
+                f"({current_dims}d). Run 'memo reindex --rebuild' to rebuild the index."
+            )
