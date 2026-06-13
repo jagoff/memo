@@ -30,12 +30,35 @@ from memo.config import Config
     help="hybrid = RRF fusion of vec + bm25 (default). vec = semantic only. "
     "bm25 = keyword only. exact = strict keyword AND with tag/title boost.",
 )
+@click.option(
+    "--rerank/--no-rerank",
+    "use_rerank",
+    default=None,
+    help="Force enable (--rerank) or disable (--no-rerank) cross-encoder reranking "
+    "for this invocation, overriding MEMO_RERANKER_ENABLED. Only meaningful with "
+    "--mode hybrid.",
+)
 @click.option("--json", "as_json", is_flag=True)
-def search(query: str, limit: int, type_: str | None, mode: str, as_json: bool) -> None:
+def search(
+    query: str,
+    limit: int,
+    type_: str | None,
+    mode: str,
+    use_rerank: bool | None,
+    as_json: bool,
+) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
+    import os
+
+    # Apply --rerank / --no-rerank override before Config.from_env() reads it.
+    if use_rerank is True:
+        os.environ["MEMO_RERANKER_ENABLED"] = "1"
+    elif use_rerank is False:
+        os.environ["MEMO_RERANKER_ENABLED"] = "0"
 
     mem = _get_memory(Config.from_env())
-    hits = mem.search(query, limit=limit, type_=type_, mode=mode)
+    disable_reranker = use_rerank is False
+    hits = mem.search(query, limit=limit, type_=type_, mode=mode, disable_reranker=disable_reranker)
     if as_json:
         click.echo(json.dumps([h.to_dict() for h in hits], ensure_ascii=False, indent=2))
         return
