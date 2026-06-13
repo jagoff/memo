@@ -174,8 +174,8 @@ def maintain_cmd(
                 start_new_session=True,
                 env={**_os.environ, "MEMO_NONINTERACTIVE": "1"},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("maintain --if-due: failed to spawn background maintain: %s", exc)
         return
 
     mem = _get_memory(cfg)
