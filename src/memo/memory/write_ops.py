@@ -536,6 +536,11 @@ class _WriteOpsMixin(_MemoryBase):
             rel_path,
             exc,
         )
+        _log.warning(
+            "Memory %s saved to disk but embedding failed — run 'memo reindex' to index it. Error: %s",
+            record_id[:8],
+            exc,
+        )
         extra_for_store["_memo_embed_pending"] = True
         # Re-stamp the on-disk frontmatter with the pending marker so a later
         # `memo reindex` knows to re-embed. Best-effort: if even this rewrite
