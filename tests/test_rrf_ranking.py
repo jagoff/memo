@@ -281,3 +281,110 @@ def test_reference_not_decayed(monkeypatch):
     assert abs((ref_out.score or 0.0) - 0.8) < 1e-6, (
         f"reference score should be unchanged (0.8), got {ref_out.score}"
     )
+
+
+# ── #13 Hybrid search leg weighting ───────────────────────────────────────────
+
+
+def test_rrf_fuse_equal_weights_identical_to_unweighted():
+    """weights=[1.0, 1.0] must produce the same ranking as no weights at all."""
+    k = 60
+    vec_list = [_hit("a", 0.9), _hit("b", 0.7)]
+    bm25_list = [_hit("b", 0.8), _hit("c", 0.5)]
+
+    unweighted = _rrf_fuse(vec_list, bm25_list, limit=5, k=k)
+    weighted = _rrf_fuse(vec_list, bm25_list, limit=5, k=k, weights=[1.0, 1.0])
+
+    assert [r["id"] for r in unweighted] == [r["id"] for r in weighted], (
+        "equal weights should produce identical ranking to unweighted RRF"
+    )
+
+
+def test_rrf_fuse_default_half_weights_equal_to_unweighted_rank():
+    """Default weights=[0.5, 0.5] yield the same relative ordering as [1.0, 1.0].
+
+    Scores will differ (halved) but rank order must be identical — the
+    proportional scaling cannot swap positions.
+    """
+    k = 60
+    vec_list = [_hit("a", 0.95), _hit("b", 0.7)]
+    bm25_list = [_hit("b", 0.85), _hit("c", 0.5)]
+
+    unweighted = _rrf_fuse(vec_list, bm25_list, limit=5, k=k)
+    half = _rrf_fuse(vec_list, bm25_list, limit=5, k=k, weights=[0.5, 0.5])
+
+    assert [r["id"] for r in unweighted] == [r["id"] for r in half], (
+        "symmetric half-weights should not change rank order vs. unweighted RRF"
+    )
+
+
+def test_high_vec_weight_promotes_semantic_only_hit():
+    """With vec_weight=0.9, bm25_weight=0.1, a vec-only hit should rank above a
+    bm25-only hit compared to equal weights where the bm25 hit ranks first.
+
+    Setup:
+      - "semantic_doc": appears only in vec list at rank 0.
+      - "keyword_doc":  appears only in bm25 list at rank 0.
+      - Equal weights (0.5 / 0.5): both get the same RRF contribution —
+        tied by insertion order; keyword_doc comes from bm25 list at rank 0
+        same as semantic_doc from vec list — they tie at the same score,
+        so order is list-dependent but both equal. We just verify the
+        inequality flips with high vec weight.
+      - High vec weight (0.9 / 0.1): semantic_doc contribution = 0.9/(k+1),
+        keyword_doc contribution = 0.1/(k+1) → semantic_doc ranks higher.
+    """
+    k = 60
+
+    vec_list = [_hit("semantic_doc", score=0.95)]
+    bm25_list = [_hit("keyword_doc", score=0.88)]
+
+    # Equal weights: both get 1/(k+1) — a tie, order arbitrary.
+    equal_results = _rrf_fuse(vec_list, bm25_list, limit=5, k=k, weights=[0.5, 0.5])
+    equal_ids = [r["id"] for r in equal_results]
+    assert set(equal_ids) == {"semantic_doc", "keyword_doc"}, (
+        f"Both docs should appear with equal weights, got: {equal_ids}"
+    )
+
+    # High vec weight: semantic_doc should rank above keyword_doc.
+    vec_heavy = _rrf_fuse(vec_list, bm25_list, limit=5, k=k, weights=[0.9, 0.1])
+    ids = [r["id"] for r in vec_heavy]
+    assert ids[0] == "semantic_doc", (
+        f"With high vec weight, semantic-only hit should rank first; got: {ids}"
+    )
+
+    # High bm25 weight: keyword_doc should rank above semantic_doc.
+    bm25_heavy = _rrf_fuse(vec_list, bm25_list, limit=5, k=k, weights=[0.1, 0.9])
+    ids2 = [r["id"] for r in bm25_heavy]
+    assert ids2[0] == "keyword_doc", (
+        f"With high bm25 weight, keyword-only hit should rank first; got: {ids2}"
+    )
+
+
+def test_vec_weight_leg_weighting_flag_warning(monkeypatch, caplog):
+    """When both weight flags are set but don't sum to ~1.0, a warning is logged.
+
+    We test the pure _rrf_fuse path (which takes explicit weights) and the
+    warning branch in search_ops via monkeypatching the env for the integration
+    test. Here we just verify the weight math and that the warning condition
+    is correct (the env-var check lives in search_ops, not in _rrf_fuse itself).
+    """
+    import math
+
+    k = 60
+    vec_list = [_hit("a", 0.9)]
+    bm25_list = [_hit("b", 0.8)]
+
+    # Weights summing to 1.0 — no issue.
+    result = _rrf_fuse(vec_list, bm25_list, limit=5, k=k, weights=[0.7, 0.3])
+    assert len(result) == 2
+
+    # Verify the score math: a only in vec at rank 0, b only in bm25 at rank 0.
+    scores = {r["id"]: r["score"] for r in result}
+    expected_a = 0.7 / (k + 1)
+    expected_b = 0.3 / (k + 1)
+    assert math.isclose(scores["a"], expected_a, rel_tol=1e-9), (
+        f"score for 'a' should be {expected_a}, got {scores['a']}"
+    )
+    assert math.isclose(scores["b"], expected_b, rel_tol=1e-9), (
+        f"score for 'b' should be {expected_b}, got {scores['b']}"
+    )

@@ -365,23 +365,29 @@ def _rrf_fuse(
     *lists: list[dict[str, Any]],
     limit: int,
     k: int = 60,
+    weights: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Reciprocal rank fusion. Each hit in each list contributes
-    `1 / (k + rank)` to its id's combined score, with `k=60` per the
+    `w * (1 / (k + rank))` to its id's combined score, with `k=60` per the
     Cormack et al. paper. Records that appear in multiple lists naturally
     get a higher fused score.
+
+    `weights` must be the same length as `lists` when provided. Each weight
+    scales the RRF contribution of the corresponding list. When omitted (or
+    None), all lists are weighted equally at 1.0 (standard unweighted RRF).
 
     Returns the top-`limit` hits by fused score, hydrated with the
     metadata from whichever source carried the canonical fields.
     """
     fused: dict[str, float] = {}
     canon: dict[str, dict[str, Any]] = {}
-    for lst in lists:
+    for i, lst in enumerate(lists):
         if not lst:
             continue
+        w = weights[i] if weights is not None and i < len(weights) else 1.0
         for rank, hit in enumerate(lst):
             rid = hit["id"]
-            fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            fused[rid] = fused.get(rid, 0.0) + w / (k + rank + 1)
             canon.setdefault(rid, hit)
     ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
     out: list[dict[str, Any]] = []

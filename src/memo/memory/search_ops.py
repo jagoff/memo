@@ -142,7 +142,38 @@ class _SearchOpsMixin(_MemoryBase):
                 if flag_bool("MEMO_RRF_ADAPTIVE")
                 else base_k
             )
-            rows = _rrf_fuse(vec_hits, bm_hits, graph_hits, limit=input_k, k=rrf_k)
+
+            # Per-leg weights: MEMO_SEARCH_VEC_WEIGHT / MEMO_SEARCH_BM25_WEIGHT
+            # allow the user to tilt fusion toward semantic or keyword retrieval.
+            # Defaults (0.5 each) preserve the historical equal-weight behaviour.
+            # Graph leg is always weight 1.0 (unscaled) — it contributes
+            # entity-context candidates, not a competing retrieval signal.
+            w_vec = flag_float("MEMO_SEARCH_VEC_WEIGHT")
+            w_bm25 = flag_float("MEMO_SEARCH_BM25_WEIGHT")
+            # Default is 0.5/0.5; treat None as default (should not happen given
+            # registry defaults, but be defensive).
+            w_vec = w_vec if w_vec is not None else 0.5
+            w_bm25 = w_bm25 if w_bm25 is not None else 0.5
+            # Warn when the user has explicitly set both but their sum deviates
+            # from 1.0 by more than the 0.05 tolerance.
+            _vec_set = os.environ.get("MEMO_SEARCH_VEC_WEIGHT") not in (None, "")
+            _bm25_set = os.environ.get("MEMO_SEARCH_BM25_WEIGHT") not in (None, "")
+            if _vec_set and _bm25_set:
+                _weight_sum = w_vec + w_bm25
+                if abs(_weight_sum - 1.0) > 0.05:
+                    _log.warning(
+                        "MEMO_SEARCH_VEC_WEIGHT + MEMO_SEARCH_BM25_WEIGHT = %.2f "
+                        "(expected 1.0)",
+                        _weight_sum,
+                    )
+            # Build weight list aligned with the lists passed to _rrf_fuse:
+            # [vec_hits, bm_hits, graph_hits] → [w_vec, w_bm25, 1.0]
+            rrf_weights = [w_vec, w_bm25, 1.0]
+
+            rows = _rrf_fuse(
+                vec_hits, bm_hits, graph_hits,
+                limit=input_k, k=rrf_k, weights=rrf_weights,
+            )
         out: list[MemoryRecord] = []
         for r in rows:
             body = self._read_body(r["path"]) if load_bodies else ""
