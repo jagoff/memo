@@ -661,6 +661,14 @@ _SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
     _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),
     _spec("MEMO_MCP_PORT", "int", 18768, "mcp", "Bind port for the HTTP MCP transport."),
+    _spec(
+        "MEMO_MCP_SLIM",
+        "bool",
+        False,
+        "mcp",
+        "Expose only the 26 core inline tools (skip domain modules). "
+        "Reduces tool count from ~116 to 26 for local/constrained LLMs.",
+    ),
     # synapse / memflow integration
     _spec(
         "MEMO_RESPECT_SYNAPSE_FREEZE",

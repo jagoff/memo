@@ -185,7 +185,7 @@ def _mcp_server_env() -> dict[str, str]:
 
 
 def _env_flags(client: str, env: dict[str, str]) -> list[str]:
-    opt = "--env" if client == "codex" else "-e"
+    opt = "--env" if client in {"codex", "opencode"} else "-e"
     flags: list[str] = []
     for key, val in env.items():
         flags.extend([opt, f"{key}={val}"])
@@ -275,6 +275,8 @@ def _run_agent_command(
 def _mcp_add_command(client: str, memo_mcp: Path, env: dict[str, str]) -> list[str | Path]:
     if client == "codex":
         return ["codex", "mcp", "add", "memo", *_env_flags("codex", env), "--", memo_mcp]
+    if client == "opencode":
+        return ["opencode", "mcp", "add", "memo", *_env_flags("opencode", env), "--", memo_mcp]
     if client == "devin":
         return [
             "devin",
@@ -930,7 +932,9 @@ def migrate_vault(
 @click.command(name="mcp-command")
 @click.option(
     "--client",
-    type=click.Choice(["claude-code", "claude-desktop", "codex", "devin", "windsurf", "json"]),
+    type=click.Choice(
+        ["claude-code", "claude-desktop", "codex", "devin", "opencode", "windsurf", "json"]
+    ),
     default="claude-code",
     show_default=True,
     help="Emit a client-specific MCP registration command or raw JSON config.",
@@ -995,6 +999,9 @@ def mcp_command(client: str) -> None:
     if client == "devin":
         click.echo(_format_command(_mcp_add_command("devin", memo_mcp, env)))
         return
+    if client == "opencode":
+        click.echo(_format_command(_mcp_add_command("opencode", memo_mcp, env)))
+        return
     click.echo(_format_command(_mcp_add_command("claude-code", memo_mcp, env)))
 
 
@@ -1003,7 +1010,7 @@ def mcp_command(client: str) -> None:
     "--client",
     "clients",
     multiple=True,
-    type=click.Choice(["all", "claude-code", "codex", "devin", "windsurf"]),
+    type=click.Choice(["all", "claude-code", "codex", "devin", "opencode", "windsurf"]),
     help="Client to configure. Repeatable. Defaults to all supported agent clients.",
 )
 @click.option(
@@ -1033,7 +1040,7 @@ def install_slash(
     selected = set(clients or ("all",))
     if "all" in selected:
         selected.remove("all")
-        selected.update({"claude-code", "codex", "devin", "windsurf"})
+        selected.update({"claude-code", "codex", "devin", "opencode", "windsurf"})
 
     needs_assets = bool(selected & {"claude-code", "codex", "devin"})
     root = _agent_asset_root(repo) if needs_assets else None
@@ -1117,12 +1124,18 @@ def install_slash(
         _install_windsurf_mcp(memo_mcp, env, dry_run=dry_run)
         console.print("[dim]Refresh MCP servers in Windsurf Cascade after editing config.[/dim]")
 
+    def install_opencode() -> None:
+        console.print("[bold]OpenCode[/bold]")
+        _run_agent_command(_mcp_add_command("opencode", memo_mcp, env), dry_run=dry_run)
+
     if "codex" in selected:
         run_client("Codex", install_codex)
     if "claude-code" in selected:
         run_client("Claude Code", install_claude_code)
     if "devin" in selected:
         run_client("Devin", install_devin)
+    if "opencode" in selected:
+        run_client("OpenCode", install_opencode)
     if "windsurf" in selected:
         run_client("Windsurf", install_windsurf)
 
@@ -1133,7 +1146,7 @@ def install_slash(
         )
         console.print(
             "[dim]Install those clients, then rerun: "
-            "memo install-slash --client claude-code --client codex --client windsurf[/dim]"
+            "memo install-slash --client claude-code --client codex --client opencode --client windsurf[/dim]"
         )
     else:
         console.print(

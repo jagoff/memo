@@ -1,9 +1,19 @@
 # Experimental Modules
 
 These modules still ship in the `memo` package but are **not** part of the
-stable API. They are not exposed via MCP tools, and their interfaces may
-change without notice. They are provided as starting points for contributors
-who want to extend Memo's corpus-level capabilities.
+stable core product contract. Some already have CLI or MCP entrypoints; that
+does not make them part of the supported core path. Their interfaces and
+behavior may still change without notice.
+
+The stable core is:
+
+- durable memory CRUD and retrieval
+- ambient recall / briefing / recall-daemon
+- reindex / doctor / runtime health
+- history, diff, and `as-of` time-machine flows
+
+Use this file as the boundary marker for corpus-level experiments and
+faster-moving advanced features.
 
 Memo no longer ships autonomous-agent or cognitive-state modules. Those
 experiments crossed the product boundary: Synapse owns orchestration and
