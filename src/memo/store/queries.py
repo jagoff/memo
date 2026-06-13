@@ -66,6 +66,14 @@ class _QueriesMixin(_StoreBase):
                 f"Embedding norm {norm:.4f} out of L2-normalised range (expected ≈ 1.0) "
                 f"[id={id_[:8]}] — re-embed or check MLX model output."
             )
+        if not (0.95 < norm < 1.05):
+            _log.warning(
+                "Embedding norm %.4f outside expected [0.95, 1.05] for id=%s"
+                " — possible model mismatch or quantization issue; "
+                "search quality may be degraded.",
+                norm,
+                id_[:8],
+            )
         with self._tx() as cx:
             cx.execute(
                 "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "

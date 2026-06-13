@@ -743,11 +743,15 @@ def recall_hook() -> None:
     try:
         from memo.recall_server import connect_and_recall
 
-        # Wait for the warm-but-slow daemon (the 3-6s tail) instead of
-        # abandoning it at 1s and ALSO running the subprocess path — that
-        # double-fired and logged the same prompt twice. Budget sits under the
-        # 12s hooks.json timeout, leaving room for subprocess as last resort.
-        _daemon_timeout = max(0.2, (flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS") or 3500) / 1000.0)
+        # Daemon socket timeout: float flag takes precedence; fall back to
+        # the int-ms flag; default 2.0 s. 2s gives warm daemon ample time
+        # (typical p95 < 500 ms) while leaving headroom for subprocess
+        # fallback (~1-2s) within the 5s recall-hook budget.
+        _raw_float = flag_float("MEMO_RECALL_DAEMON_TIMEOUT")
+        if _raw_float is not None and _raw_float >= 0.1:
+            _daemon_timeout = _raw_float
+        else:
+            _daemon_timeout = max(0.2, (flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS") or 2000) / 1000.0)
         _daemon_result = connect_and_recall(
             cfg.state_dir,
             prompt=prompt,
