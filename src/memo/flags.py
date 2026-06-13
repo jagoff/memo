@@ -622,6 +622,15 @@ _SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_MAINT_SYNTHESIZE",
+        "bool",
+        False,
+        "maintain",
+        "When set, `memo maintain` runs an emergent-synthesis pass on clusters of memorias "
+        "added/updated since the last synthesis. Tracks state in <state_dir>/synthesis_state.json. "
+        "Non-blocking: a synthesis failure logs a warning but does not abort the maintain cycle.",
+    ),
+    _spec(
         "MEMO_MAINT_SLEEP_CYCLE_ENABLED",
         "bool",
         False,
