@@ -277,17 +277,31 @@ class _SearchOpsMixin(_MemoryBase):
             rows = self.store.get_batch(sorted_mids[: limit * 3])
 
             # Filter by type + exclude_types
-            out = []
+            filtered = []
             for r in rows:
                 if type_ and r.get("type") != type_:
                     continue
                 if exclude_types and r.get("type") in exclude_types:
                     continue
-                # Assign a pseudo-score for RRF (position is what matters)
-                r["score"] = float(memoria_counts[r["id"]])
-                out.append(r)
-                if len(out) >= limit:
-                    break
+                filtered.append(r)
+
+            # Sort by entity match count descending so that _rrf_fuse, which
+            # uses list position as rank, places high-match candidates first.
+            # get_batch() returns rows in storage order (not insertion order),
+            # so we must re-sort here to get the correct rank ordering.
+            filtered.sort(key=lambda r: memoria_counts[r["id"]], reverse=True)
+            out = filtered[:limit]
+
+            # Assign a synthetic RRF score so the graph list is on the same
+            # scale as vec and BM25 lists.  _rrf_fuse() uses rank (position),
+            # not the raw score value, for its own fusion sum; but other
+            # post-RRF steps (health multipliers, decay blending) operate on
+            # the fused score, so having pre-fusion scores that are integers
+            # (1, 2, 3...) rather than [0,1] floats would corrupt any path
+            # that inspects the score BEFORE _rrf_fuse runs.
+            rrf_k = flag_int("MEMO_RRF_K") or 60
+            for rank, r in enumerate(out):
+                r["score"] = 1.0 / (rrf_k + rank + 1)
             return out
         except Exception as exc:
             _log.debug("graph_candidates failed: %s", exc)
