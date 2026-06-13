@@ -36,7 +36,9 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch) -> Memory:
         return out
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
-    return Memory(cfg)
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
 
 
 def test_save_writes_md_and_indexes(mem_with_stub: Memory):

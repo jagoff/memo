@@ -35,7 +35,9 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> Memory:
         return out
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
-    return Memory(cfg)
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
 
 
 def _stub_stream(deltas: list[str]):

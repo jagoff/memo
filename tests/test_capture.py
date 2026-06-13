@@ -191,7 +191,9 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch) -> Memory:
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed_query", _stub_embed_query)
-    return Memory(cfg)
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
 
 
 def test_is_near_duplicate_flags_existing(mem_with_stub):

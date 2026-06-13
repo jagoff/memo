@@ -15,7 +15,9 @@ from memo.navigation import (
 def mock_graph_store(tmp_cfg):
     """Fixture providing a mock GraphStore instance."""
     from memo.graph import GraphStore
-    return GraphStore(tmp_cfg.graph_db)
+    gs = GraphStore(tmp_cfg.graph_db)
+    yield gs
+    gs.close()
 
 
 @pytest.fixture

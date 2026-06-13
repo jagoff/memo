@@ -16,8 +16,10 @@ from memo.store import VecStore
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> VecStore:
-    return VecStore(tmp_path / "vec.db", dims=4)
+def store(tmp_path: Path):
+    s = VecStore(tmp_path / "vec.db", dims=4)
+    yield s
+    s.close()
 
 
 def _emb(*xs: float) -> list[float]:

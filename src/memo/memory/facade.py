@@ -397,6 +397,24 @@ class Memory(
         Delegates to the manager's lazy, memoized builder."""
         return self.cache.ensure_backend()
 
+    def close(self) -> None:
+        """Close all open SQLite connections held by this Memory instance.
+
+        Call in teardown (e.g. pytest fixture finalizers) to release file
+        descriptors.  Each sub-store closes only the calling-thread's
+        connection; other threads' connections are released when those
+        threads end.  Idempotent — safe to call multiple times.
+        """
+        with contextlib.suppress(Exception):
+            self.store.close()
+        with contextlib.suppress(Exception):
+            self.history.close()
+        with contextlib.suppress(Exception):
+            self.graph.close()
+        if self._contradict_store is not None:
+            with contextlib.suppress(Exception):
+                self._contradict_store.close()
+
     def _mark_dirty(self, id_: str) -> None:
         """Flag a memoria as written-locally-but-not-yet-on-backing-store
         (write-back). Metadata-only update — no re-embed."""
