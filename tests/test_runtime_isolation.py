@@ -219,6 +219,23 @@ def test_install_slash_dry_run(monkeypatch):
     assert "devin mcp add -s user -e MEMO_NONINTERACTIVE=1 memo --" in result.output
 
 
+def test_install_slash_opencode_dry_run(monkeypatch):
+    _clear_memo_env(monkeypatch)
+    monkeypatch.setattr(
+        install_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["install-slash", "--client", "opencode", "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    assert "opencode mcp add memo --env MEMO_NONINTERACTIVE=1 --" in result.output
+
+
 def test_install_slash_codex_installs_plugin_and_mcp(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setenv("CODEX_HOME", "/tmp/codex-home")
@@ -287,6 +304,22 @@ def test_install_slash_windsurf_writes_mcp_config(monkeypatch, tmp_path):
     assert memo["env"]["MEMO_NONINTERACTIVE"] == "1"
     assert memo["env"]["MEMO_EMBEDDER_DIMS"] == "2560"
     assert "type" not in memo
+
+
+def test_mcp_command_opencode(monkeypatch):
+    _clear_memo_env(monkeypatch)
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
+    monkeypatch.setattr(
+        install_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+
+    result = CliRunner().invoke(cli, ["mcp-command", "--client", "opencode"])
+
+    assert result.exit_code == 0
+    assert "opencode mcp add memo --env MEMO_NONINTERACTIVE=1" in result.output
+    assert "--env MEMO_EMBEDDER_DIMS=2560" in result.output
 
 
 def _clear_memo_env(monkeypatch):

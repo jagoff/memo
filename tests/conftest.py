@@ -61,6 +61,33 @@ from memo.config import Config
 
 
 @pytest.fixture
+def mem_with_stub(tmp_cfg: Config, monkeypatch):
+    """`Memory` with a deterministic 4-dim embedder for high-level tests."""
+    from memo.memory import Memory
+
+    cfg = Config(
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+    )
+
+    def _stub_embed(self, inputs):
+        out = []
+        for s in inputs:
+            h = sum(ord(c) for c in s) % 4
+            v = [0.0] * 4
+            v[h] = 1.0
+            out.append(v)
+        return out
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
+
+
+@pytest.fixture
 def mock_memory(tmp_cfg):
     """Real `Memory` instance isolated under `tmp_cfg`. Shared across all test modules."""
     from memo.memory import Memory
@@ -78,8 +105,9 @@ def mock_memory(tmp_cfg):
 
     mem.embedder.embed = lambda inputs: [_fake_embedding(text) for text in inputs]
     mem.embedder.embed_query = lambda query: _fake_embedding(query)
-    mem._chat = _FakeChat()
-    return mem
+    mem._chat = _FakeChat()  # type: ignore[assignment]
+    yield mem
+    mem.close()
 
 
 @pytest.fixture

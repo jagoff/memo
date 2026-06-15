@@ -10,6 +10,8 @@ import json
 import math
 from typing import Any
 
+import pytest
+
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 def _unit_vec(dims: int) -> list[float]:
@@ -311,3 +313,166 @@ def test_gc_no_stale_synthesis_when_sources_intact(mock_memory):
 
     report = mock_memory.gc(fix=False)
     assert report.get("stale_synthesis", []) == []
+
+
+# ── 3.3a: memory_synthesize_list confidence filter ──────────────────────────
+
+def _get_synth_tool_fn(mock_memory, tool_name: str):
+    """Register server_synthesis and return the named tool's underlying function."""
+    import asyncio
+    from memo import server_synthesis
+    from fastmcp import FastMCP
+
+    server = FastMCP("test")
+    server_synthesis.register(server, mock_memory)
+    tool = asyncio.run(server._get_tool(tool_name))
+    assert tool is not None, f"{tool_name!r} not registered in server_synthesis"
+    return tool.fn
+
+
+def test_synthesize_list_confidence_filter_returns_matching(mock_memory):
+    """memory_synthesize_list(confidence='medium') returns only medium-confidence entries."""
+    _force_close_embeddings(mock_memory)
+    mock_memory._chat = _SynthesisChat()  # returns confidence="medium"
+
+    for i in range(3):
+        mock_memory.save(content=f"Filterable content {i}", type_="note")
+
+    mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
+
+    tool_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_list")
+
+    all_results = tool_fn()
+    assert any(r["confidence"] == "medium" for r in all_results)
+
+    filtered = tool_fn(confidence="medium")
+    assert all(r["confidence"] == "medium" for r in filtered)
+    assert len(filtered) <= len(all_results)
+
+
+def test_synthesize_list_confidence_filter_excludes_non_matching(mock_memory):
+    """Filtering by 'high' excludes 'medium' synthesis memorias."""
+    _force_close_embeddings(mock_memory)
+    mock_memory._chat = _SynthesisChat()  # returns confidence="medium"
+
+    for i in range(3):
+        mock_memory.save(content=f"Filter exclude content {i}", type_="note")
+
+    mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
+
+    tool_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_list")
+
+    # Filter by "high" should return nothing (we only have "medium")
+    filtered = tool_fn(confidence="high")
+    assert filtered == []
+
+
+def test_synthesize_list_invalid_confidence_raises(mock_memory):
+    """memory_synthesize_list with invalid confidence raises ValueError."""
+    tool_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_list")
+
+    with pytest.raises(ValueError, match="confidence must be one of"):
+        tool_fn(confidence="invalid")
+
+
+def test_synthesize_list_no_filter_returns_all(mock_memory):
+    """memory_synthesize_list() with no filter returns all synthesis memorias."""
+    _force_close_embeddings(mock_memory)
+    mock_memory._chat = _SynthesisChat()
+
+    for i in range(3):
+        mock_memory.save(content=f"All results content {i}", type_="note")
+
+    mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
+
+    tool_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_list")
+    results = tool_fn()
+    assert len(results) >= 1
+
+
+# ── 3.3b: memory_synthesize_delete MCP tool ─────────────────────────────────
+
+
+def test_synthesize_delete_removes_synthesis(mock_memory):
+    """memory_synthesize_delete deletes an existing synthesis memoria."""
+    _force_close_embeddings(mock_memory)
+    mock_memory._chat = _SynthesisChat()
+
+    for i in range(3):
+        mock_memory.save(content=f"Delete candidate content {i}", type_="note")
+
+    results = mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
+    saved = [r for r in results if r.get("saved")]
+    assert len(saved) >= 1
+    synth_id = saved[0]["id"]
+
+    delete_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_delete")
+    result = delete_fn(id=synth_id)
+
+    assert result["deleted"] is True
+    assert result["id"] == synth_id
+    assert mock_memory.get(synth_id) is None
+
+
+def test_synthesize_delete_refuses_non_synthesis(mock_memory):
+    """memory_synthesize_delete refuses to delete a non-synthesis memoria."""
+    rec = mock_memory.save(content="Regular note", type_="note")
+
+    delete_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_delete")
+    result = delete_fn(id=rec.id)
+
+    assert result["deleted"] is False
+    assert "synthesis" in result["reason"].lower()
+    # The original nota should still exist
+    assert mock_memory.get(rec.id) is not None
+
+
+def test_synthesize_delete_nonexistent_id(mock_memory):
+    """memory_synthesize_delete returns deleted=False for unknown ID."""
+    delete_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_delete")
+    result = delete_fn(id="00000000-0000-0000-0000-000000000000")
+
+    assert result["deleted"] is False
+    assert "reason" in result
+
+
+# ── 3.3c: dedup on re-run (synthesis_sources_hash) ──────────────────────────
+
+def test_synthesize_dedup_uses_source_hash(mock_memory):
+    """Re-running synthesize on unchanged cluster produces no new saves (hash dedup)."""
+    _force_close_embeddings(mock_memory)
+    mock_memory._chat = _SynthesisChat()
+
+    for i in range(3):
+        mock_memory.save(content=f"Dedup hash content {i}", type_="note")
+
+    first_run = mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
+    assert any(r.get("saved") for r in first_run), "First run should save at least one synthesis"
+
+    second_run = mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
+    assert not any(r.get("saved") for r in second_run), "Second run should save nothing (hash already exists)"
+
+
+def test_synthesize_dedup_hash_stored_in_frontmatter(mock_memory):
+    """Saved synthesis has synthesis_sources_hash in extra frontmatter."""
+    import frontmatter as fm
+
+    _force_close_embeddings(mock_memory)
+    mock_memory._chat = _SynthesisChat()
+
+    for i in range(3):
+        mock_memory.save(content=f"Hash frontmatter content {i}", type_="note")
+
+    results = mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
+    saved = [r for r in results if r.get("saved")]
+    assert len(saved) >= 1
+
+    synth_rec = mock_memory.get(saved[0]["id"])
+    assert synth_rec is not None
+
+    md_path = mock_memory._resolve_existing(synth_rec.path)
+    post = fm.loads(md_path.read_text(encoding="utf-8"))
+    ex = post.get("extra") or {}
+    assert ex.get("synthesis_sources_hash"), "synthesis_sources_hash must be stored in extra"
+    # Hash should match what was returned in the result
+    assert ex["synthesis_sources_hash"] == saved[0]["sources_hash"]

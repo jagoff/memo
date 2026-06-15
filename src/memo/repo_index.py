@@ -8,159 +8,65 @@ one note-shaped Markdown file per record.
 
 from __future__ import annotations
 
-import contextlib
-import fnmatch
 import hashlib
 import os
-import re
 import shutil
-import subprocess
-from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from memo.config import AI_SUBDIR, Config
+from memo.config import Config
 from memo.embedder import MLXEmbedder, assert_valid_embedding
 from memo.ingest_helpers import enrich_with_ocr
 from memo.ocr import ocr_enabled_via_env
-from memo.retrieval_boost import boost_for as _retrieval_boost_for
+from memo.repo_index_helpers import (
+    DEFAULT_EXCLUDE_GLOBS,
+    DEFAULT_MAX_FILE_BYTES,
+    MIN_EMBED_BATCH,
+    ProgressCallback,
+    RepoEmbedInput,  # noqa: F401 — re-exported for backward compat
+    STATUS_INDEXING,
+    _chunk_lines,
+    _derive_repo_name,
+    _embed_cache_model,
+    _emit,
+    _git,
+    _git_timeout,  # noqa: F401 — re-exported for backward compat
+    _is_excluded,
+    _is_noise_chunk,
+    _language_for_path,
+    _looks_binary,
+    _now_iso,
+    _repo_embed_batch_size,
+    _repo_embed_input,
+    _repo_flush_batch_size,
+    _safe_repo_name,
+    _semantic_status,
+    _stable_id,
+    _tracked_files,
+)
+from memo.repo_index_search import (
+    RepoSearchHit,  # noqa: F401 — re-exported for backward compat
+    _boost_and_resort,
+    _extract_query_terms,
+    _hits_from_rows,
+    _path_name_boost,  # noqa: F401 — re-exported for backward compat
+    _rrf_fuse_repo,
+)
 from memo.store import VecStore
 from memo.util import sha256_short as _short_hash
 
-DEFAULT_EXCLUDE_DIRS = frozenset(
-    {
-        ".git",
-        ".hg",
-        ".svn",
-        ".claude",
-        ".codex",
-        ".devin",
-        ".venv",
-        "venv",
-        "env",
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        "node_modules",
-        ".next",
-        ".nuxt",
-        ".turbo",
-        "dist",
-        "build",
-        "target",
-        "coverage",
-        ".idea",
-        ".vscode",
-    }
+# Re-export constants so external callers that import them from this module
+# still work without changes.
+from memo.repo_index_helpers import (  # noqa: F401
+    DEFAULT_CHUNK_OVERLAP_LINES,
+    DEFAULT_CHUNK_TARGET_CHARS,
+    DEFAULT_EMBED_BATCH,
+    DEFAULT_EXCLUDE_DIRS,
+    DEFAULT_FLUSH_BATCH,
+    MIN_CHUNK_CHARS,
+    MIN_EMBED_BATCH as _MIN_EMBED_BATCH,
+    MIN_FLUSH_BATCH,
 )
-
-DEFAULT_EXCLUDE_GLOBS = (
-    "*.png",
-    "*.jpg",
-    "*.jpeg",
-    "*.gif",
-    "*.webp",
-    "*.ico",
-    "*.pdf",
-    "*.zip",
-    "*.gz",
-    "*.bz2",
-    "*.xz",
-    "*.7z",
-    "*.tar",
-    "*.sqlite",
-    "*.sqlite3",
-    "*.db",
-    "*.dylib",
-    "*.so",
-    "*.a",
-    "*.pyc",
-    "*.class",
-    "*.o",
-    "*.wasm",
-)
-
-DEFAULT_MAX_FILE_BYTES = 2_000_000
-DEFAULT_CHUNK_TARGET_CHARS = 3500
-DEFAULT_CHUNK_OVERLAP_LINES = 8
-# Chunks shorter than this with no heading/link carry almost no semantic
-# signal (stray punctuation, empty list items, frontmatter fragments) and
-# only add noise + cost to the embedding index. They are dropped at build
-# time. Lines are still kept in full in repo_lines for keyword search.
-MIN_CHUNK_CHARS = 60
-_LINK_RE = re.compile(r"\[\[.+?\]\]|\[.+?\]\(.+?\)|https?://\S+")
-
-
-def _is_noise_chunk(body: str) -> bool:
-    """True for near-empty chunks with no heading and no link/URL."""
-    stripped = body.strip()
-    if len(stripped) >= MIN_CHUNK_CHARS:
-        return False
-    if "#" in stripped and re.search(r"^#{1,6}\s+\S", stripped, re.MULTILINE):
-        return False  # markdown heading — keep
-    # wikilink / md link / URL — keep; otherwise it's noise
-    return not _LINK_RE.search(stripped)
-
-
-DEFAULT_EMBED_BATCH = 64
-MIN_EMBED_BATCH = 1
-DEFAULT_FLUSH_BATCH = 25
-MIN_FLUSH_BATCH = 1
-STATUS_INDEXING = "indexing"
-
-ProgressCallback = Callable[[str, dict[str, Any]], None]
-
-
-@dataclass(frozen=True)
-class RepoSearchHit:
-    id: str
-    repo_id: str
-    repo_name: str
-    url: str
-    ref: str
-    commit_sha: str
-    file_id: str
-    path: str
-    language: str
-    line_start: int
-    line_end: int
-    text: str
-    score: float | None
-    match_type: str
-
-    @property
-    def locator(self) -> str:
-        commit = self.commit_sha[:8] if self.commit_sha else "unknown"
-        return f"repo:{self.repo_name}:{self.path}:{self.line_start}-{self.line_end}@{commit}"
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "repo_id": self.repo_id,
-            "repo_name": self.repo_name,
-            "url": self.url,
-            "ref": self.ref,
-            "commit_sha": self.commit_sha,
-            "file_id": self.file_id,
-            "path": self.path,
-            "language": self.language,
-            "line_start": self.line_start,
-            "line_end": self.line_end,
-            "text": self.text,
-            "score": self.score,
-            "match_type": self.match_type,
-            "locator": self.locator,
-        }
-
-
-@dataclass(frozen=True)
-class RepoEmbedInput:
-    chunk: dict[str, Any]
-    text: str
-    input_hash: str
 
 
 class RepoCorpus:
@@ -175,7 +81,7 @@ class RepoCorpus:
     ) -> None:
         self.cfg = cfg
         cfg.ensure_dirs()
-        self.store = store or VecStore(cfg.db_path, dims=cfg.embedder_dims)
+        self.store = store or VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
         self.embedder = embedder or MLXEmbedder(
             model_path=cfg.embedder_model,
             expected_dims=cfg.embedder_dims,
@@ -851,371 +757,3 @@ class RepoCorpus:
             return None
         source = self.store.get_repo_source(key)
         return source["id"] if source else None
-
-
-def _git_timeout(default: float) -> float:
-    """Cap for `subprocess.run` of git commands.
-
-    Why: a network-flaky `git clone` or `ls-files` would otherwise hang
-    indefinitely, blocking the indexer thread (and any caller awaiting it).
-    Configurable via MEMO_REPO_GIT_TIMEOUT_S (seconds, 0 disables).
-    """
-    raw = os.environ.get("MEMO_REPO_GIT_TIMEOUT_S")
-    if not raw:
-        return default
-    try:
-        v = float(raw)
-    except ValueError:
-        return default
-    return v if v > 0 else 0.0
-
-
-def _git(args: list[str], *, check: bool = True, timeout: float | None = None) -> str:
-    t = _git_timeout(120.0 if timeout is None else timeout)
-    try:
-        proc = subprocess.run(
-            args,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=t if t > 0 else None,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("`git` not found on PATH") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"git timed out after {t:.0f}s: {' '.join(args)} "
-            f"(raise MEMO_REPO_GIT_TIMEOUT_S to extend)"
-        ) from exc
-    if check and proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise RuntimeError(f"git command failed ({proc.returncode}): {' '.join(args)}\n{detail}")
-    return proc.stdout
-
-
-def _emit(progress: ProgressCallback | None, event: str, **data: Any) -> None:
-    if progress is not None:
-        progress(event, data)
-
-
-def _repo_embed_input(chunk: dict[str, Any]) -> RepoEmbedInput:
-    text = (
-        f"repo: {chunk['repo_name']}\npath: {chunk['path']}\n"
-        f"lines: {chunk['line_start']}-{chunk['line_end']}\n\n{chunk['body_text']}"
-    )
-    return RepoEmbedInput(
-        chunk=chunk,
-        text=text,
-        input_hash=hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest(),
-    )
-
-
-def _repo_embed_batch_size() -> int:
-    raw = os.environ.get("MEMO_REPO_EMBED_BATCH")
-    if raw:
-        with contextlib.suppress(ValueError):
-            return max(MIN_EMBED_BATCH, int(raw))
-    return DEFAULT_EMBED_BATCH
-
-
-def _repo_flush_batch_size() -> int:
-    """Number of files to accumulate before flushing to the store.
-
-    Lower values trade write overhead for finer-grained resume
-    granularity if the run is interrupted.
-    """
-    raw = os.environ.get("MEMO_REPO_FLUSH_BATCH")
-    if raw:
-        with contextlib.suppress(ValueError):
-            return max(MIN_FLUSH_BATCH, int(raw))
-    return DEFAULT_FLUSH_BATCH
-
-
-def _embed_cache_model(embedder: MLXEmbedder, cfg: Config) -> str:
-    model = getattr(embedder, "model_path", None)
-    return str(model or cfg.embedder_model)
-
-
-def _tracked_files(clone_path: Path) -> list[str]:
-    """Return Git-tracked files without walking generated/untracked trees."""
-    t = _git_timeout(60.0)
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(clone_path), "ls-files", "-z"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=t if t > 0 else None,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("`git` not found on PATH") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"git ls-files timed out after {t:.0f}s on {clone_path} "
-            f"(raise MEMO_REPO_GIT_TIMEOUT_S to extend)"
-        ) from exc
-    if proc.returncode == 0:
-        paths = [p for p in proc.stdout.split("\0") if p]
-        return sorted(paths)
-    return sorted(
-        p.relative_to(clone_path).as_posix() for p in clone_path.rglob("*") if p.is_file()
-    )
-
-
-def _semantic_status(current: str | None, counts: dict[str, int]) -> str:
-    if counts["chunks"] == counts["embedded_chunks"]:
-        return "semantic_ready"
-    if current == "semantic_indexing":
-        return "semantic_indexing"
-    return "semantic_pending"
-
-
-def _derive_repo_name(url: str) -> str:
-    s = url.rstrip("/").removesuffix(".git")
-    return re.split(r"[/:\s]+", s)[-1] or "repo"
-
-
-def _safe_repo_name(name: str) -> str:
-    name = name.strip().lower()
-    name = re.sub(r"[^a-z0-9._-]+", "-", name)
-    return name.strip("-._")[:80]
-
-
-def _stable_id(*parts: str) -> str:
-    h = hashlib.sha256()
-    for part in parts:
-        h.update(part.encode("utf-8", errors="replace"))
-        h.update(b"\0")
-    return h.hexdigest()[:32]
-
-
-def _now_iso() -> str:
-    return datetime.now(tz=UTC).astimezone().isoformat(timespec="milliseconds")
-
-
-def _looks_binary(raw: bytes) -> bool:
-    sample = raw[:8192]
-    return b"\0" in sample
-
-
-def _is_excluded(rel: Path, rel_posix: str, include: list[str], exclude: list[str]) -> bool:
-    if any(part in DEFAULT_EXCLUDE_DIRS for part in rel.parts):
-        return True
-    if include and not any(fnmatch.fnmatch(rel_posix, pat) for pat in include):
-        return True
-    return any(fnmatch.fnmatch(rel_posix, pat) for pat in exclude)
-
-
-def _chunk_lines(
-    lines: list[str],
-    *,
-    target_chars: int = DEFAULT_CHUNK_TARGET_CHARS,
-    overlap_lines: int = DEFAULT_CHUNK_OVERLAP_LINES,
-) -> list[tuple[int, int, int, str]]:
-    if not lines:
-        return []
-
-    chunks: list[tuple[int, int, int, str]] = []
-    seq = 0
-    start = 0
-    while start < len(lines):
-        # Minified/generated files often contain one very long line. Keep
-        # the exact full line in repo_lines, but never hand that whole
-        # line to the embedder as one sequence.
-        if len(lines[start]) > target_chars:
-            for part in _split_long_line(lines[start], target_chars):
-                chunks.append((seq, start + 1, start + 1, part))
-                seq += 1
-            start += 1
-            continue
-
-        end = start
-        chars = 0
-        while end < len(lines) and chars < target_chars:
-            if len(lines[end]) > target_chars:
-                break
-            chars += len(lines[end]) + 1
-            end += 1
-        if end == start:
-            # Defensive: the long-line branch above should handle this,
-            # but guarantee forward progress if target_chars is tiny.
-            end += 1
-        body = "\n".join(lines[start:end])
-        chunks.append((seq, start + 1, end, body))
-        seq += 1
-        if end >= len(lines):
-            break
-        start = max(start + 1, end - overlap_lines)
-    return chunks
-
-
-def _split_long_line(line: str, target_chars: int) -> list[str]:
-    target = max(1, target_chars)
-    return [line[i : i + target] for i in range(0, len(line), target)]
-
-
-def _language_for_path(path: str) -> str:
-    suffix = Path(path).suffix.lower().lstrip(".")
-    return suffix or "text"
-
-
-def _hits_from_rows(rows: list[dict[str, Any]]) -> list[RepoSearchHit]:
-    return [
-        RepoSearchHit(
-            id=r["id"],
-            repo_id=r["repo_id"],
-            repo_name=r["repo_name"],
-            url=r["url"],
-            ref=r["ref"],
-            commit_sha=r["commit_sha"],
-            file_id=r["file_id"],
-            path=r["path"],
-            language=r.get("language") or "",
-            line_start=int(r["line_start"]),
-            line_end=int(r["line_end"]),
-            text=r.get("body_text") or "",
-            score=r.get("score"),
-            match_type=r.get("match_type") or "chunk",
-        )
-        for r in rows
-    ]
-
-
-def _boost_and_resort(
-    hits: list[RepoSearchHit],
-    *,
-    query: str,
-    limit: int,
-) -> list[RepoSearchHit]:
-    """Apply filename/title/heading boost to each hit's score, re-sort,
-    and truncate to ``limit``. Hits with ``None`` score keep their order
-    (no boost applied to unknown scores).
-
-    Boost is multiplicative on the existing hybrid score, so callers
-    that compare scores across queries still get monotonic-by-query
-    ordering. The boost field is not surfaced on the dataclass — it's
-    folded into ``score`` so downstream consumers see a unified number.
-    """
-    if not hits or not query:
-        return hits[:limit]
-    from dataclasses import replace
-
-    boosted: list[tuple[RepoSearchHit, float]] = []
-    for h in hits:
-        if h.score is None:
-            boosted.append((h, -1.0))
-            continue
-        b = _retrieval_boost_for(
-            query=query,
-            filename=h.path,
-            title="",
-            headings=[],
-            tags=[],
-        )
-        new_score = float(h.score) * b
-        boosted.append((replace(h, score=new_score), new_score))
-    boosted.sort(key=lambda pair: pair[1], reverse=True)
-    return [pair[0] for pair in boosted[:limit]]
-
-
-# Paths that should NEVER get a filename boost — these are ingest dumps
-# (e.g. raw Claude/agent transcripts) that mention canonical names many
-# times but are not themselves the canonical source. Boosting them
-# defeats the purpose of preferring `Contacts/Grecia.md` over a dump
-# whose filename happens to also include "Grecia".
-_INGEST_PATH_MARKERS = (
-    f"{AI_SUBDIR}/external-ingest/",
-    "external-ingest/",
-)
-
-# Lightweight stopword + token-min-length guard. We strip puncuation,
-# lowercase, and drop tokens shorter than 3 chars so noise like "es",
-# "de", or "?" doesn't trigger spurious path-name boosts.
-_QUERY_TERM_MIN_LEN = 3
-_QUERY_TERM_STOPWORDS = frozenset(
-    {
-        "the",
-        "and",
-        "for",
-        "with",
-        "que",
-        "los",
-        "las",
-        "una",
-        "del",
-        "como",
-        "qué",
-        "cuál",
-        "quién",
-        "donde",
-        "cuando",
-        "este",
-        "esta",
-    }
-)
-
-
-def _extract_query_terms(query: str) -> list[str]:
-    """Tokenize a query into significant terms for path-name boosting.
-
-    Lowercased, punctuation-stripped, stopwords + short tokens removed.
-    Used to compare query intent against path basenames in the post-RRF
-    boost — not used for FTS5 matching (FTS5 has its own tokenizer).
-    """
-    if not query:
-        return []
-    raw = re.split(r"[^\w]+", query.lower(), flags=re.UNICODE)
-    return [
-        tok for tok in raw if len(tok) >= _QUERY_TERM_MIN_LEN and tok not in _QUERY_TERM_STOPWORDS
-    ]
-
-
-def _path_name_boost(path: str, terms: list[str]) -> float:
-    """Compute a boost in [0.0, 1.0] for filename-match relevance.
-
-    1.0: basename (sans extension) matches a query term exactly.
-    0.5: basename contains a query term as substring.
-    0.0: no match, OR path lies under an ingest-dump prefix (noisy).
-    """
-    if not path or not terms:
-        return 0.0
-    if any(marker in path for marker in _INGEST_PATH_MARKERS):
-        return 0.0
-    basename = Path(path).stem.lower()  # strips dir + extension
-    if not basename:
-        return 0.0
-    for term in terms:
-        if basename == term:
-            return 1.0
-    for term in terms:
-        if term in basename:
-            return 0.5
-    return 0.0
-
-
-def _rrf_fuse_repo(
-    hit_lists: list[list[dict[str, Any]]],
-    *,
-    limit: int,
-    k: int = 60,
-    query_terms: list[str] | None = None,
-) -> list[dict[str, Any]]:
-    fused: dict[str, float] = {}
-    canon: dict[str, dict[str, Any]] = {}
-    for hits in hit_lists:
-        for rank, hit in enumerate(hits):
-            rid = hit["id"]
-            fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
-            canon.setdefault(rid, hit)
-    if query_terms:
-        for rid, score in list(fused.items()):
-            boost = _path_name_boost(canon[rid].get("path") or "", query_terms)
-            if boost:
-                fused[rid] = score * (1.0 + boost)
-    ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
-    out: list[dict[str, Any]] = []
-    for rid, score in ranked:
-        d = dict(canon[rid])
-        d["score"] = score
-        out.append(d)
-    return out

@@ -260,7 +260,7 @@ def ingest(
         return
 
     embedder = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
-    store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
+    store = VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
 
     skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0
     skipped_pdf_empty = pdf_added = orphan_added = orphan_skipped = 0

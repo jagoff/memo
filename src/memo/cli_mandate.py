@@ -1,6 +1,6 @@
 """`memo mandate` — the cross-client inevitability lever (P4, lever a).
 
-Clients without an ambient recall hook (Codex, Devin, Windsurf, Cursor) won't
+Clients without an ambient recall hook (Codex, Devin, OpenCode, Windsurf, Cursor) won't
 read memo unless instructed to. This command emits the canonical "consult memo
 first" mandate and, with --write, drops it into the project-local instruction
 file each client actually reads — so memo becomes a mandated first step, and the
@@ -39,6 +39,7 @@ consult memo FIRST:
 _CLIENT_FILES: dict[str, str] = {
     "codex": "AGENTS.md",
     "devin": "AGENTS.md",
+    "opencode": "AGENTS.md",
     "windsurf": ".windsurfrules",
     "cursor": ".cursor/rules/memo.md",
 }
@@ -65,7 +66,7 @@ def _write_mandate(target: Path, *, dry_run: bool) -> str:
 @click.option(
     "--client",
     "client",
-    type=click.Choice(["all", "codex", "devin", "windsurf", "cursor"]),
+    type=click.Choice(["all", "codex", "devin", "opencode", "windsurf", "cursor"]),
     default=None,
     help="Write the mandate into this client's project-local instruction file.",
 )
@@ -79,7 +80,7 @@ def mandate(*, client: str | None = None, do_write: bool = False, dry_run: bool 
         click.echo(MANDATE_TEXT)
         click.echo(
             "\n# Paste into the client's instruction file, or run with "
-            "--client <codex|devin|windsurf|cursor|all> --write (project-local)."
+            "--client <codex|devin|opencode|windsurf|cursor|all> --write (project-local)."
         )
         return
 

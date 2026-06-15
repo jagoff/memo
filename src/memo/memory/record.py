@@ -365,23 +365,29 @@ def _rrf_fuse(
     *lists: list[dict[str, Any]],
     limit: int,
     k: int = 60,
+    weights: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Reciprocal rank fusion. Each hit in each list contributes
-    `1 / (k + rank)` to its id's combined score, with `k=60` per the
+    `w * (1 / (k + rank))` to its id's combined score, with `k=60` per the
     Cormack et al. paper. Records that appear in multiple lists naturally
     get a higher fused score.
+
+    `weights` must be the same length as `lists` when provided. Each weight
+    scales the RRF contribution of the corresponding list. When omitted (or
+    None), all lists are weighted equally at 1.0 (standard unweighted RRF).
 
     Returns the top-`limit` hits by fused score, hydrated with the
     metadata from whichever source carried the canonical fields.
     """
     fused: dict[str, float] = {}
     canon: dict[str, dict[str, Any]] = {}
-    for lst in lists:
+    for i, lst in enumerate(lists):
         if not lst:
             continue
+        w = weights[i] if weights is not None and i < len(weights) else 1.0
         for rank, hit in enumerate(lst):
             rid = hit["id"]
-            fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            fused[rid] = fused.get(rid, 0.0) + w / (k + rank + 1)
             canon.setdefault(rid, hit)
     ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
     out: list[dict[str, Any]] = []
@@ -451,6 +457,58 @@ def _compose_for_embed(title: str, body: str) -> str:
 _RECALL_DECAY_HALFLIFE_DEFAULT = 90.0
 
 
+# Per-type decay half-life flag names. Values are the MEMO_* env var names
+# that override the global MEMO_SEARCH_DECAY_HALFLIFE for a given memory type.
+# None as the mapped flag name means the type carries its own default of None
+# (no decay), e.g. 'reference'. Unknown types fall back to the global halflife.
+_PER_TYPE_HALFLIFE_FLAGS: dict[str, str | None] = {
+    "decision": "MEMO_DECAY_HALFLIFE_DECISION",
+    "feedback": "MEMO_DECAY_HALFLIFE_FEEDBACK",
+    "note": "MEMO_DECAY_HALFLIFE_NOTE",
+    "fact": "MEMO_DECAY_HALFLIFE_FACT",
+    "reference": "MEMO_DECAY_HALFLIFE_REFERENCE",
+}
+
+
+def _halflife_for_type(memory_type: str | None, global_halflife: float) -> float:
+    """Return the effective half-life (days) for *memory_type*.
+
+    Resolution order:
+    1. Per-type flag (e.g. MEMO_DECAY_HALFLIFE_DECISION) — when set in env,
+       this overrides the global for that type.
+    2. Per-type default (the registered default in flags.py) — applied when
+       the env var is NOT set, overriding the global default.
+    3. Global `global_halflife` — for types not in `_PER_TYPE_HALFLIFE_FLAGS`.
+
+    Special case: `reference` has a registered default of None, meaning
+    references do not decay unless MEMO_DECAY_HALFLIFE_REFERENCE is set.
+    Returns 0.0 (no decay) in that case.
+    """
+    if not memory_type:
+        return global_halflife
+    flag_name = _PER_TYPE_HALFLIFE_FLAGS.get(memory_type)
+    if flag_name is None and memory_type in _PER_TYPE_HALFLIFE_FLAGS:
+        # Type is registered but flag_name entry itself is None — reserved for
+        # future extension; treat as no-decay.
+        return 0.0
+    if flag_name is None:
+        # Type not in per-type registry; use global halflife.
+        return global_halflife
+
+    # Defer flags import here — record.py must not import from memo.flags at
+    # module level (circular risk; also flags depends on nothing, but keep
+    # the dependency direction clean).
+    from memo.flags import flag_float
+
+    v = flag_float(flag_name)
+    # v is None when the flag is not registered (shouldn't happen given our
+    # registry entries), or when the env var is absent AND the registered
+    # default is None (e.g. MEMO_DECAY_HALFLIFE_REFERENCE default=None).
+    if v is None:
+        return 0.0  # None default means "no decay"
+    return v
+
+
 def _apply_decay(
     records: list[MemoryRecord],
     *,
@@ -467,11 +525,23 @@ def _apply_decay(
     A half-life of 90 days means a 90-day-old memory retains 50% of the
     freshness bonus and a 180-day-old retains 25%. Results are re-sorted by
     final score so the caller always gets a monotonically ranked list.
+
+    Per-type half-life: when per-type MEMO_DECAY_HALFLIFE_<TYPE> flags are
+    set (or carry non-None defaults), they override `halflife_days` for that
+    record's type. `halflife_days` acts as the global fallback for types not
+    covered by per-type flags. When a per-type effective half-life resolves
+    to 0, that individual record is not decayed (score passed through as-is).
     """
     now = datetime.now(tz=UTC)
     out: list[MemoryRecord] = []
     for r in records:
         if r.score is None:
+            out.append(r)
+            continue
+        # Resolve the effective half-life for this record's type.
+        eff_halflife = _halflife_for_type(r.type, global_halflife=halflife_days)
+        if eff_halflife <= 0:
+            # No decay for this type (e.g. reference tier or explicitly zero).
             out.append(r)
             continue
         try:
@@ -482,7 +552,7 @@ def _apply_decay(
         except Exception:
             out.append(r)
             continue
-        decay = 0.5 ** (days / halflife_days)
+        decay = 0.5 ** (days / eff_halflife)
         final = (1.0 - alpha) * r.score + alpha * decay
         out.append(replace(r, score=round(final, 6)))
     out.sort(key=lambda r: r.score or 0.0, reverse=True)

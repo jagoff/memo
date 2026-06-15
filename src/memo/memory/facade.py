@@ -38,6 +38,8 @@ from memo.memory.replay_ops import _ReplayOpsMixin
 from memo.memory.repo_ops import _RepoOpsMixin
 from memo.memory.rerank_ops import _RerankOpsMixin
 from memo.memory.search_ops import _SearchOpsMixin
+from memo.memory.delete_ops import _DeleteOpsMixin
+from memo.memory.update_ops import _UpdateOpsMixin
 from memo.memory.write_ops import _WriteOpsMixin
 from memo.multimodal import CrossModalSearch, MultiModalManager, MultiModalStore, UniversalEmbedder
 from memo.navigation import GraphNavigator
@@ -52,6 +54,8 @@ from memo.versioning import VersionManager
 
 class Memory(
     _WriteOpsMixin,
+    _UpdateOpsMixin,
+    _DeleteOpsMixin,
     _SearchOpsMixin,
     _AskOpsMixin,
     _RerankOpsMixin,
@@ -114,7 +118,7 @@ class Memory(
                 expected_dims=cfg.embedder_dims,
                 cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"),
             )
-        self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims)
+        self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
         # History store — cheap to open (just sqlite); creating eagerly.
         # Audit failures never propagate to the caller — HistoryStore
         # swallows its own exceptions internally.
@@ -396,6 +400,24 @@ class Memory(
         """The configured cache backend (or None when cache mode is off).
         Delegates to the manager's lazy, memoized builder."""
         return self.cache.ensure_backend()
+
+    def close(self) -> None:
+        """Close all open SQLite connections held by this Memory instance.
+
+        Call in teardown (e.g. pytest fixture finalizers) to release file
+        descriptors.  Each sub-store closes only the calling-thread's
+        connection; other threads' connections are released when those
+        threads end.  Idempotent — safe to call multiple times.
+        """
+        with contextlib.suppress(Exception):
+            self.store.close()
+        with contextlib.suppress(Exception):
+            self.history.close()
+        with contextlib.suppress(Exception):
+            self.graph.close()
+        if self._contradict_store is not None:
+            with contextlib.suppress(Exception):
+                self._contradict_store.close()
 
     def _mark_dirty(self, id_: str) -> None:
         """Flag a memoria as written-locally-but-not-yet-on-backing-store

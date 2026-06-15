@@ -8,6 +8,7 @@ the former `memory.py` god-file.
 from __future__ import annotations
 
 import builtins
+import math
 import os
 import sqlite3
 from dataclasses import replace
@@ -121,6 +122,32 @@ class _SearchOpsMixin(_MemoryBase):
             vec_hits = self.store.search(
                 emb, limit=k_each, type_=type_, exclude_types=exclude_types
             )
+            # Adaptive rerank pool: resize input_k based on the score spread of
+            # vec candidates.  High variance → results are diverse, widen the pool
+            # so the reranker can pick the best from a richer set.  Low variance
+            # → tight cluster, shrink to avoid wasted cross-encoder calls.
+            # Thresholds and multiplier are intentionally hardcoded (not flags) to
+            # avoid flag proliferation; the outer MEMO_RERANK_ADAPTIVE_POOL gate
+            # keeps the eval baseline stable when disabled.
+            if (
+                self.cfg.reranker_enabled
+                and flag_bool("MEMO_RERANK_ADAPTIVE_POOL")
+                and vec_hits
+            ):
+                _STDDEV_HIGH = 0.15  # above this → high diversity
+                _STDDEV_LOW = 0.05   # below this → tight cluster
+                _POOL_MULT = 1.5
+                _POOL_CAP = 200
+                scores = [h.get("score") or 0.0 for h in vec_hits]
+                if len(scores) > 1:
+                    _mean = sum(scores) / len(scores)
+                    _var = sum((s - _mean) ** 2 for s in scores) / len(scores)
+                    _stddev = math.sqrt(_var)
+                    if _stddev > _STDDEV_HIGH:
+                        input_k = min(int(input_k * _POOL_MULT), _POOL_CAP)
+                    elif _stddev < _STDDEV_LOW:
+                        input_k = max(limit + 5, 15)
+                    # else: medium diversity → keep input_k unchanged
             bm_hits = self.store.search_bm25(
                 query, limit=k_each, type_=type_, exclude_types=exclude_types
             )
@@ -142,7 +169,38 @@ class _SearchOpsMixin(_MemoryBase):
                 if flag_bool("MEMO_RRF_ADAPTIVE")
                 else base_k
             )
-            rows = _rrf_fuse(vec_hits, bm_hits, graph_hits, limit=input_k, k=rrf_k)
+
+            # Per-leg weights: MEMO_SEARCH_VEC_WEIGHT / MEMO_SEARCH_BM25_WEIGHT
+            # allow the user to tilt fusion toward semantic or keyword retrieval.
+            # Defaults (0.5 each) preserve the historical equal-weight behaviour.
+            # Graph leg is always weight 1.0 (unscaled) — it contributes
+            # entity-context candidates, not a competing retrieval signal.
+            w_vec = flag_float("MEMO_SEARCH_VEC_WEIGHT")
+            w_bm25 = flag_float("MEMO_SEARCH_BM25_WEIGHT")
+            # Default is 0.5/0.5; treat None as default (should not happen given
+            # registry defaults, but be defensive).
+            w_vec = w_vec if w_vec is not None else 0.5
+            w_bm25 = w_bm25 if w_bm25 is not None else 0.5
+            # Warn when the user has explicitly set both but their sum deviates
+            # from 1.0 by more than the 0.05 tolerance.
+            _vec_set = os.environ.get("MEMO_SEARCH_VEC_WEIGHT") not in (None, "")
+            _bm25_set = os.environ.get("MEMO_SEARCH_BM25_WEIGHT") not in (None, "")
+            if _vec_set and _bm25_set:
+                _weight_sum = w_vec + w_bm25
+                if abs(_weight_sum - 1.0) > 0.05:
+                    _log.warning(
+                        "MEMO_SEARCH_VEC_WEIGHT + MEMO_SEARCH_BM25_WEIGHT = %.2f "
+                        "(expected 1.0)",
+                        _weight_sum,
+                    )
+            # Build weight list aligned with the lists passed to _rrf_fuse:
+            # [vec_hits, bm_hits, graph_hits] → [w_vec, w_bm25, 1.0]
+            rrf_weights = [w_vec, w_bm25, 1.0]
+
+            rows = _rrf_fuse(
+                vec_hits, bm_hits, graph_hits,
+                limit=input_k, k=rrf_k, weights=rrf_weights,
+            )
         out: list[MemoryRecord] = []
         for r in rows:
             body = self._read_body(r["path"]) if load_bodies else ""
@@ -184,13 +242,31 @@ class _SearchOpsMixin(_MemoryBase):
                 out = self._apply_source_feedback(out, fb_emb)
             except Exception as exc:
                 _log.warning("source_feedback failed: %s", exc, exc_info=True)
+        elif out and fb_emb is None:
+            _log.debug(
+                "Source feedback boost skipped: query embedding unavailable in mode=%s",
+                mode,
+            )
 
+        # Health scores (pre-rerank): multiply candidate scores by
+        # (confidence × roi_score) BEFORE passing to the cross-encoder so
+        # low-confidence hits (open contradictions, low-ROI) don't waste
+        # reranker compute by surfacing them as strong candidates.
+        # _health_applied tracks whether we already ran this pass; the
+        # post-pipeline gate below skips a redundant second application.
+        _reranker_will_run = (
+            mode == "hybrid" and self.cfg.reranker_enabled and not disable_reranker and out
+        )
+        _health_applied = False
+        if _reranker_will_run and not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
+            out = self._apply_health_scores(out)
+            _health_applied = True
         # Cross-encoder rerank on hybrid mode only. Skipped for vec/bm25
         # since those callers explicitly opted out of fusion entirely;
         # adding rerank to single-mode searches would surprise users
         # benchmarking the raw bi-encoder or BM25 surfaces.
         # Also skipped when disable_reranker=True (e.g., chat synthesis).
-        if mode == "hybrid" and self.cfg.reranker_enabled and not disable_reranker and out:
+        if _reranker_will_run:
             out = self._rerank(query, out, top_n=limit)
         # Recency decay: blend a freshness bonus into the score so older
         # memories don't crowd out recent ones. MEMO_SEARCH_DECAY_HALFLIFE
@@ -238,7 +314,7 @@ class _SearchOpsMixin(_MemoryBase):
             )
         if out and flag_bool("MEMO_RETRIEVAL_BOOST"):
             out = self._apply_retrieval_boost(query, out)
-        if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
+        if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED") and not _health_applied:
             out = self._apply_health_scores(out)
         self._record_access([r.id for r in out])
         return out
@@ -277,17 +353,31 @@ class _SearchOpsMixin(_MemoryBase):
             rows = self.store.get_batch(sorted_mids[: limit * 3])
 
             # Filter by type + exclude_types
-            out = []
+            filtered = []
             for r in rows:
                 if type_ and r.get("type") != type_:
                     continue
                 if exclude_types and r.get("type") in exclude_types:
                     continue
-                # Assign a pseudo-score for RRF (position is what matters)
-                r["score"] = float(memoria_counts[r["id"]])
-                out.append(r)
-                if len(out) >= limit:
-                    break
+                filtered.append(r)
+
+            # Sort by entity match count descending so that _rrf_fuse, which
+            # uses list position as rank, places high-match candidates first.
+            # get_batch() returns rows in storage order (not insertion order),
+            # so we must re-sort here to get the correct rank ordering.
+            filtered.sort(key=lambda r: memoria_counts[r["id"]], reverse=True)
+            out = filtered[:limit]
+
+            # Assign a synthetic RRF score so the graph list is on the same
+            # scale as vec and BM25 lists.  _rrf_fuse() uses rank (position),
+            # not the raw score value, for its own fusion sum; but other
+            # post-RRF steps (health multipliers, decay blending) operate on
+            # the fused score, so having pre-fusion scores that are integers
+            # (1, 2, 3...) rather than [0,1] floats would corrupt any path
+            # that inspects the score BEFORE _rrf_fuse runs.
+            rrf_k = flag_int("MEMO_RRF_K") or 60
+            for rank, r in enumerate(out):
+                r["score"] = 1.0 / (rrf_k + rank + 1)
             return out
         except Exception as exc:
             _log.debug("graph_candidates failed: %s", exc)
