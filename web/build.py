@@ -38,7 +38,13 @@ from memo.cli_diag import (  # noqa: E402
 )
 from memo.cli_runtime import _runtime_install_report  # noqa: E402
 from memo.config import Config  # noqa: E402
-from memo.dashboard import read_recall_log, recall_health, verdict  # noqa: E402
+from memo.dashboard import (  # noqa: E402
+    consult_breakdown,
+    read_recall_log,
+    reask_stats,
+    recall_health,
+    verdict,
+)
 from memo.dashboard_panels import _fetch_memflow_utility  # noqa: E402
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -450,13 +456,36 @@ def _render_html(data: dict[str, Any]) -> str:
     return _HTML_TEMPLATE.replace("__DATA_JSON__", payload)
 
 
-def build(
-    *,
-    output: Path | None = None,
-    limit: int = 1500,
-    open_browser: bool = False,
-) -> Path:
-    cfg = Config.from_env()
+def _usefulness(cfg: Config) -> dict[str, Any]:
+    """Simple, cheap reader-impact metrics — who reads memo and whether it helps.
+
+    Mirrors what `memo usefulness` / `memo roi` print, surfaced as plain numbers
+    so the dashboard can show them without re-deriving anything heavy."""
+    state_dir = cfg.state_dir
+    try:
+        breakdown = consult_breakdown(state_dir, limit=500)
+    except Exception:
+        breakdown = {"sampled": 0, "consumers": []}
+    try:
+        reask = reask_stats(state_dir, limit=500)
+    except Exception:
+        reask = {}
+    return {
+        "sampled": breakdown.get("sampled", 0),
+        "consumers": breakdown.get("consumers", []),
+        "silent": breakdown.get("silent", []),
+        "reask_avoided": reask.get("reask_avoided"),
+        "reask_considered": reask.get("considered"),
+    }
+
+
+def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1500) -> dict[str, Any]:
+    """Gather every metric the dashboard renders, as a JSON-serializable dict.
+
+    ``include_projection`` gates the only expensive step (reading all vectors +
+    PCA): the static build wants it, but the live-refresh endpoint skips it so a
+    poll stays cheap.
+    """
     doctor = {
         "schema": "memo.doctor.v1",
         "runtime": _runtime_install_report(),
@@ -473,17 +502,33 @@ def build(
         "db": _db_health_report(cfg),
     }
 
-    rows = _read_vectors(cfg.db_path, limit=limit)
-    if len(rows) >= 3:
-        xs, ys, zs, method = _project_3d([r["vec"] for r in rows])
-    else:
-        xs, ys, zs, method = [], [], [], "n/a (need ≥ 3 memorias with vectors)"
-
     drift = _body_hash_drift(cfg)
     recall_log = read_recall_log(cfg.state_dir, limit=200)
     recall_health_data = recall_health(cfg.state_dir, limit=500)
     history = _history_recent(cfg, limit=50)
     contradictions = _contradictions_stats(cfg)
+
+    # Heavy step (read every vector + PCA) — only on a full build, not per poll.
+    if include_projection:
+        rows = _read_vectors(cfg.db_path, limit=limit)
+        if len(rows) >= 3:
+            xs, ys, zs, method = _project_3d([r["vec"] for r in rows])
+        else:
+            xs, ys, zs, method = [], [], [], "n/a (need ≥ 3 memorias with vectors)"
+        projection = {
+            "method": method,
+            "xs": xs, "ys": ys, "zs": zs,
+            "ids": [r["id"][:8] for r in rows],
+            "titles": [r["title"] for r in rows],
+            "types": [r["type"] for r in rows],
+            "tags": [", ".join(r["tags"]) for r in rows],
+            "created": [r["created"] for r in rows],
+        }
+        type_counts: dict[str, int] = dict(Counter(r["type"] for r in rows))
+    else:
+        rows = []
+        projection = None
+        type_counts = {}
 
     pillars = [
         _pillar_vector_db(doctor, drift),
@@ -492,26 +537,15 @@ def build(
         _pillar_corpus(doctor, rows, history, contradictions),
     ]
 
-    type_counts = Counter(r["type"] for r in rows)
     growth = _growth_by_day(history, days=30)
 
     data = {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "memo_version": doctor["runtime"].get("memo_version"),
         "pillars": pillars,
-        "projection": {
-            "method": method,
-            "xs": xs,
-            "ys": ys,
-            "zs": zs,
-            "ids": [r["id"][:8] for r in rows],
-            "titles": [r["title"] for r in rows],
-            "types": [r["type"] for r in rows],
-            "tags": [", ".join(r["tags"]) for r in rows],
-            "created": [r["created"] for r in rows],
-        },
+        "projection": projection,
         "type_palette": _TYPE_COLORS,
-        "type_counts": dict(type_counts),
+        "type_counts": type_counts,
         "growth": growth,
         "history": history[:20],
         "recall_log": recall_log[:20],
@@ -522,13 +556,29 @@ def build(
             "sampled": recall_health_data["sampled"],
             "strong_hit_rate": recall_health_data["strong_hit_rate"],
             "median_top_score": recall_health_data["median_top_score"],
+            "grounded_rate": recall_health_data["grounded_rate"],
+            "grounded": recall_health_data["grounded"],
+            "grounded_surfaced": recall_health_data["grounded_surfaced"],
+            "referenced_rate": recall_health_data["referenced_rate"],
         },
+        "bail_breakdown": recall_health_data["bail_breakdown"],
+        "usefulness": _usefulness(cfg),
         "doctor_raw": doctor,
         "contradictions": contradictions or {},
         "verdict": verdict(cfg.state_dir, limit=500),
         "memflow_util": _fetch_memflow_utility(),
     }
+    return data
 
+
+def build(
+    *,
+    output: Path | None = None,
+    limit: int = 1500,
+    open_browser: bool = False,
+) -> Path:
+    cfg = Config.from_env()
+    data = collect_data(cfg, include_projection=True, limit=limit)
     out_path = output if output else REPO_ROOT / "web" / "health.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(_render_html(data), encoding="utf-8")
@@ -638,6 +688,18 @@ _HTML_TEMPLATE = r"""<!doctype html>
   .row2 { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; }
   @media (max-width: 800px) { .row2 { grid-template-columns: 1fr; } }
 
+  .statcards { display: grid; gap: 12px;
+               grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .statcard { background: var(--panel); border: 1px solid var(--border);
+              border-radius: 10px; padding: 14px 16px; }
+  .statcard .num { font-size: 1.9rem; font-weight: 800; line-height: 1.1;
+                   letter-spacing: -1px; }
+  .statcard .cap { color: var(--fg-mute); font-size: 0.74rem; margin-top: 4px;
+                   text-transform: uppercase; letter-spacing: 0.5px; }
+  .live-badge { font-size: 11px; color: var(--fg-mute); display: inline-flex;
+                align-items: center; gap: 5px; }
+  .live-badge .dot { width: 7px; height: 7px; }
+
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
   th { color: var(--fg-mute); font-weight: 500; }
@@ -658,6 +720,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <header>
   <h1>memo · health</h1>
   <span class="meta" id="meta-stamp"></span>
+  <span class="live-badge" id="live-badge"></span>
   <span class="overall" id="overall-lights"></span>
 </header>
 
@@ -683,6 +746,33 @@ _HTML_TEMPLATE = r"""<!doctype html>
         <tr><td style="color:var(--fg-mute);">re_explain</td><td id="mf-reexplain" style="text-align:right;font-weight:600;">—</td></tr>
       </tbody></table>
     </div>
+  </div>
+
+  <section class="statcards" id="statcards"></section>
+
+  <div class="panel" id="utility-panel" style="border-width:2px;">
+    <h2>Utilidad — respuestas CON memo vs SIN memo</h2>
+    <div style="display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;">
+      <div id="utility-pct" style="font-size:3.2rem;font-weight:800;line-height:1;letter-spacing:-1px;">—</div>
+      <div id="utility-sub" style="color:var(--fg-mute);font-size:0.9rem;">—</div>
+    </div>
+    <div style="background:var(--border);border-radius:6px;height:16px;overflow:hidden;display:flex;margin-top:0.7rem;">
+      <div id="utility-seg-con" style="height:100%;background:var(--green);width:0%;transition:width .4s;" title="respondió con memo"></div>
+      <div id="utility-seg-sin" style="height:100%;background:#f8717155;width:0%;transition:width .4s;" title="respondió sin memo"></div>
+    </div>
+    <div style="font-size:0.78rem;color:var(--fg-mute);margin-top:0.45rem;">
+      <span id="utility-leg-con" style="color:var(--green);font-weight:600;">—</span> con memo ·
+      <span id="utility-leg-sin" style="font-weight:600;">—</span> sin memo
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Quién lee memo</h2>
+    <table id="readers-table">
+      <thead><tr><th>capa</th><th>consultas</th><th>hit%</th><th>grounded%</th><th>última</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="readers-silent" style="margin-top:0.6rem;font-size:0.8rem;color:var(--fg-mute);"></div>
   </div>
 
   <div class="grid">
@@ -747,175 +837,280 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <script id="payload" type="application/json">__DATA_JSON__</script>
 <script>
 (() => {
-  const DATA = JSON.parse(document.getElementById("payload").textContent);
-  const PAL = DATA.type_palette;
-
-  document.getElementById("meta-stamp").textContent =
-    "generated " + DATA.generated_at;
-  document.getElementById("memo-version").textContent = DATA.memo_version || "?";
-
-  // -- pillars + overall lights ------------------------------------------
-  const order = ["red", "yellow", "green", "blue"];
-  const pillars = DATA.pillars.sort((a,b) => order.indexOf(a.status) - order.indexOf(b.status));
-  const pillarsEl = document.getElementById("pillars");
-  for (const p of pillars) {
-    const card = document.createElement("div");
-    card.className = "card " + p.status;
-    card.innerHTML = `
-      <div class="label"><span class="dot ${p.status}"></span>${p.label}</div>
-      <div class="summary">${p.summary}</div>
-      <details><summary>details</summary><pre></pre></details>
-    `;
-    card.querySelector("pre").textContent = p.detail.join("\n");
-    pillarsEl.appendChild(card);
-  }
-  const lights = document.getElementById("overall-lights");
-  for (const p of pillars) {
-    const d = document.createElement("span");
-    d.className = "dot " + p.status;
-    d.title = p.label + " — " + p.summary;
-    lights.appendChild(d);
-  }
-
-  // -- 3-D scatter -------------------------------------------------------
-  document.getElementById("map-method").textContent = DATA.projection.method;
-  const proj = DATA.projection;
-  const colors = proj.types.map(t => PAL[t] || "#94a3b8");
-  const hover = proj.ids.map((id, i) =>
-    `${proj.titles[i]}<br><b>${proj.types[i]}</b> · ${id}<br>${proj.tags[i] || ""}<br>${proj.created[i]}`
-  );
-  Plotly.newPlot("map3d", [{
-    type: "scatter3d", mode: "markers",
-    x: proj.xs, y: proj.ys, z: proj.zs,
-    marker: { size: 4, color: colors, opacity: 0.85,
-              line: { width: 0 } },
-    text: hover, hoverinfo: "text",
-  }], {
-    paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-    margin: { l: 0, r: 0, t: 0, b: 0 },
-    font: { color: "#e6edf7", size: 11 },
-    scene: {
-      xaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
-      yaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
-      zaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
-      bgcolor: "transparent",
-    },
-  }, { displaylogo: false, responsive: true });
-
-  // -- type donut --------------------------------------------------------
-  const tc = DATA.type_counts;
-  Plotly.newPlot("types", [{
-    type: "pie", hole: 0.55,
-    labels: Object.keys(tc),
-    values: Object.values(tc),
-    marker: { colors: Object.keys(tc).map(k => PAL[k] || "#94a3b8") },
-    textinfo: "label+percent", textfont: { color: "#0b0f17" },
-  }], {
-    paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-    font: { color: "#e6edf7", size: 11 }, showlegend: false,
-    margin: { l: 0, r: 0, t: 0, b: 0 },
-  }, { displaylogo: false, responsive: true });
-
-  // -- growth bar --------------------------------------------------------
-  Plotly.newPlot("growth", [{
-    type: "bar",
-    x: DATA.growth.map(g => g.date),
-    y: DATA.growth.map(g => g.count),
-    marker: { color: "#4f8ef7" },
-  }], {
-    paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-    font: { color: "#e6edf7", size: 11 },
-    margin: { l: 30, r: 10, t: 4, b: 30 },
-    xaxis: { tickangle: -45, automargin: true, color: "#94a3b8" },
-    yaxis: { gridcolor: "#243049", color: "#94a3b8" },
-  }, { displaylogo: false, responsive: true });
-
-  // -- recall utilization -----------------------------------------------
-  const ru = DATA.recall_util;
-  if (ru && ru.fired > 0) {
-    const hits   = Math.round((ru.hit_rate || 0) * ru.fired);
-    const misses = ru.fired - hits;
-    const total  = ru.fired + ru.bailed;
-    const pct    = Math.round((ru.hit_rate || 0) * 100);
-    const color  = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--yellow)' : 'var(--red)';
-    document.getElementById('util-pct').style.color = color;
-    document.getElementById('util-pct').textContent = pct + '%';
-    document.getElementById('util-seg-hits').style.width = (hits   / total * 100).toFixed(1) + '%';
-    document.getElementById('util-seg-miss').style.width = (misses / total * 100).toFixed(1) + '%';
-    document.getElementById('util-seg-bail').style.width = (ru.bailed / total * 100).toFixed(1) + '%';
-    document.getElementById('util-leg-hits').textContent = hits;
-    document.getElementById('util-leg-miss').textContent = misses;
-    document.getElementById('util-leg-bail').textContent = ru.bailed;
-    const strong = ru.strong_hit_rate != null ? Math.round(ru.strong_hit_rate * 100) + '% strong' : '';
-    const score  = ru.median_top_score != null ? 'score mediano ' + ru.median_top_score : '';
-    document.getElementById('util-sub').textContent = [strong, score, total + ' totales'].filter(Boolean).join(' · ');
-  } else {
-    document.getElementById('util-pct').textContent = 'sin datos';
-    document.getElementById('util-sub').textContent = ru && ru.bailed > 0
-      ? ru.bailed + ' omitidas (prompts cortos / slash commands)'
-      : 'recall.log vacío';
-  }
-
-  // -- verdict (¿funciona memo?) ----------------------------------------
-  const V = DATA.verdict || {};
-  const vColors = { ok: 'var(--green)', weak: 'var(--yellow)', unused: 'var(--red)' };
-  const vColor = vColors[V.status] || 'var(--red)';
-  const vPanel = document.getElementById('verdict-panel');
-  if (vPanel) vPanel.style.borderColor = vColor;
-  document.getElementById('verdict-label').textContent = V.label || '❌ NO SE USA';
-  document.getElementById('verdict-label').style.color = vColor;
-  const gr = V.grounded_rate == null ? '—' : Math.round(V.grounded_rate * 100) + '%';
-  document.getElementById('verdict-sub').textContent = `grounded ${gr} · ${V.consults || 0} consultas`;
-  const per = V.per_consumer || [];
-  const readers = per.filter(p => p.reads).map(p => p.name + ' ✅');
-  const silent  = per.filter(p => !p.reads).map(p => p.name + ' ❌');
-  document.getElementById('verdict-readers').textContent = readers.length ? readers.join('  ') : '—';
-  document.getElementById('verdict-silent').textContent  = silent.length  ? silent.join('  ')  : 'ninguno';
-
-  // -- memflow utility ---------------------------------------------------
-  const MF = DATA.memflow_util || {};
-  const cons = MF.consumption || {}, outc = MF.outcome || {};
-  const reads = cons.total_read_calls || 0;
-  const reexp = outc.re_explain || 0;
-  const used  = outc.memory_used_rate;
-  let mfEstado, mfColor;
-  if (!MF.consumption) { mfEstado = 'no disponible'; mfColor = 'var(--fg-mute)'; }
-  else if (reads < 5)  { mfEstado = '❌ casi no se lee'; mfColor = 'var(--red)'; }
-  else if (used == null) { mfEstado = '⚠️ sin outcomes aún'; mfColor = 'var(--yellow)'; }
-  else if (used >= 0.10 && reexp < 10) { mfEstado = '✅ útil'; mfColor = 'var(--green)'; }
-  else { mfEstado = '⚠️ poco útil'; mfColor = 'var(--yellow)'; }
-  const mfEl = document.getElementById('memflow-estado');
-  mfEl.textContent = mfEstado; mfEl.style.color = mfColor;
-  const mfp = document.getElementById('memflow-panel');
-  if (mfp) mfp.style.borderColor = mfColor;
-  document.getElementById('mf-reads').textContent = reads;
-  document.getElementById('mf-used').textContent = used == null ? '—' : Math.round(used * 100) + '%';
-  const reEl = document.getElementById('mf-reexplain');
-  reEl.textContent = reexp; if (reexp >= 10) reEl.style.color = 'var(--red)';
-
-  // -- tables ------------------------------------------------------------
-  const histBody = document.querySelector("#history-table tbody");
-  for (const h of DATA.history) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${h.ts}</td><td class="op-${h.op}">${h.op}</td>
-                    <td><code>${h.id}</code></td><td>${escapeHTML(h.title || "")}</td>
-                    <td><span class="pill">${h.type || ""}</span></td>`;
-    histBody.appendChild(tr);
-  }
-  const recBody = document.querySelector("#recall-table tbody");
-  for (const r of DATA.recall_log) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${r.ts || ""}</td>
-                    <td>${escapeHTML((r.prompt || "").slice(0, 80))}</td>
-                    <td>${(r.hits || []).length}</td>
-                    <td>${r.latency_ms ?? ""}</td>`;
-    recBody.appendChild(tr);
-  }
+  const PAYLOAD = JSON.parse(document.getElementById("payload").textContent);
 
   function escapeHTML(s) {
     return String(s).replace(/[&<>"]/g, c => ({
       "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"
     })[c]);
+  }
+  const asPct = x => (x == null ? "—" : Math.round(x * 100) + "%");
+  const shortTs = v => (v ? String(v).slice(0, 16).replace("T", " ") : "—");
+  function dbRecords(DATA) {
+    const db = (DATA.doctor_raw && DATA.doctor_raw.db) || [];
+    const mv = db.find(d => d.label === "memvec");
+    return mv && typeof mv.records === "number" ? mv.records : null;
+  }
+
+  // Single idempotent render — safe to call repeatedly with fresh data.
+  function render(DATA) {
+    const PAL = DATA.type_palette || {};
+    document.getElementById("meta-stamp").textContent = "generated " + DATA.generated_at;
+    document.getElementById("memo-version").textContent = DATA.memo_version || "?";
+
+    // -- pillars + overall lights ----------------------------------------
+    const order = ["red", "yellow", "green", "blue"];
+    const pillars = (DATA.pillars || []).slice()
+      .sort((a,b) => order.indexOf(a.status) - order.indexOf(b.status));
+    const pillarsEl = document.getElementById("pillars");
+    pillarsEl.innerHTML = "";
+    for (const p of pillars) {
+      const card = document.createElement("div");
+      card.className = "card " + p.status;
+      card.innerHTML = `
+        <div class="label"><span class="dot ${p.status}"></span>${p.label}</div>
+        <div class="summary">${p.summary}</div>
+        <details><summary>details</summary><pre></pre></details>
+      `;
+      card.querySelector("pre").textContent = (p.detail || []).join("\n");
+      pillarsEl.appendChild(card);
+    }
+    const lights = document.getElementById("overall-lights");
+    lights.innerHTML = "";
+    for (const p of pillars) {
+      const d = document.createElement("span");
+      d.className = "dot " + p.status;
+      d.title = p.label + " — " + p.summary;
+      lights.appendChild(d);
+    }
+
+    // -- stat cards (simple at-a-glance metrics) -------------------------
+    const ru = DATA.recall_util || {};
+    const uf = DATA.usefulness || {};
+    const contra = DATA.contradictions || {};
+    const cards = [
+      { num: dbRecords(DATA) ?? "—", cap: "memorias" },
+      { num: asPct(ru.hit_rate), cap: "recall hit" },
+      { num: asPct(ru.grounded_rate), cap: "grounded" },
+      { num: asPct(ru.referenced_rate), cap: "referenced" },
+      { num: uf.reask_avoided ?? "—", cap: "repreguntas evitadas" },
+      { num: (uf.consumers || []).length, cap: "lectores activos" },
+      { num: contra.open ?? 0, cap: "contradicciones" },
+      { num: uf.sampled ?? "—", cap: "consultas (muestra)" },
+    ];
+    const scEl = document.getElementById("statcards");
+    scEl.innerHTML = "";
+    for (const c of cards) {
+      const d = document.createElement("div");
+      d.className = "statcard";
+      d.innerHTML = `<div class="num">${c.num}</div><div class="cap">${c.cap}</div>`;
+      scEl.appendChild(d);
+    }
+
+    // -- utility: answers WITH memo vs WITHOUT (grounded outcome) --------
+    const grounded = ru.grounded || 0;
+    const groundedSurfaced = ru.grounded_surfaced || 0;
+    const withoutMemo = Math.max(0, groundedSurfaced - grounded);
+    const utilRate = groundedSurfaced > 0 ? grounded / groundedSurfaced : null;
+    const utilColor = utilRate == null ? "var(--fg-mute)"
+      : utilRate >= 0.5 ? "var(--green)" : utilRate >= 0.2 ? "var(--yellow)" : "var(--red)";
+    const utilPanel = document.getElementById("utility-panel");
+    if (utilPanel) utilPanel.style.borderColor = utilColor;
+    const utilPct = document.getElementById("utility-pct");
+    utilPct.textContent = utilRate == null ? "sin datos" : asPct(utilRate);
+    utilPct.style.color = utilColor;
+    document.getElementById("utility-sub").textContent = utilRate == null
+      ? "todavía no hay respuestas medidas"
+      : "de las respuestas que usaron una memoria surgida, esta fracción la aprovechó";
+    if (groundedSurfaced > 0) {
+      document.getElementById("utility-seg-con").style.width = (grounded / groundedSurfaced * 100).toFixed(1) + "%";
+      document.getElementById("utility-seg-sin").style.width = (withoutMemo / groundedSurfaced * 100).toFixed(1) + "%";
+    }
+    document.getElementById("utility-leg-con").textContent = grounded;
+    document.getElementById("utility-leg-sin").textContent = withoutMemo;
+
+    // -- who reads memo (per-consumer) -----------------------------------
+    const rdBody = document.querySelector("#readers-table tbody");
+    rdBody.innerHTML = "";
+    for (const c of (uf.consumers || [])) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${escapeHTML(c.consumer)}</td>
+                      <td>${c.consults}</td>
+                      <td>${asPct(c.hit_rate)}</td>
+                      <td>${asPct(c.grounded_rate)}</td>
+                      <td>${shortTs(c.last_seen)}</td>`;
+      rdBody.appendChild(tr);
+    }
+    const silentLayers = uf.silent || [];
+    document.getElementById("readers-silent").textContent = silentLayers.length
+      ? "NO leen memo: " + silentLayers.join(", ")
+      : "todas las capas esperadas leen memo ✅";
+
+    // -- 3-D scatter (only present on a full build / first load) ----------
+    if (DATA.projection) {
+      const proj = DATA.projection;
+      document.getElementById("map-method").textContent = proj.method;
+      const colors = proj.types.map(t => PAL[t] || "#94a3b8");
+      const hover = proj.ids.map((id, i) =>
+        `${proj.titles[i]}<br><b>${proj.types[i]}</b> · ${id}<br>${proj.tags[i] || ""}<br>${proj.created[i]}`
+      );
+      Plotly.react("map3d", [{
+        type: "scatter3d", mode: "markers",
+        x: proj.xs, y: proj.ys, z: proj.zs,
+        marker: { size: 4, color: colors, opacity: 0.85, line: { width: 0 } },
+        text: hover, hoverinfo: "text",
+      }], {
+        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
+        margin: { l: 0, r: 0, t: 0, b: 0 },
+        font: { color: "#e6edf7", size: 11 },
+        scene: {
+          xaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
+          yaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
+          zaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
+          bgcolor: "transparent",
+        },
+      }, { displaylogo: false, responsive: true });
+    }
+
+    // -- type donut (only when type_counts present) ----------------------
+    const tc = DATA.type_counts || {};
+    if (Object.keys(tc).length) {
+      Plotly.react("types", [{
+        type: "pie", hole: 0.55,
+        labels: Object.keys(tc),
+        values: Object.values(tc),
+        marker: { colors: Object.keys(tc).map(k => PAL[k] || "#94a3b8") },
+        textinfo: "label+percent", textfont: { color: "#0b0f17" },
+      }], {
+        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
+        font: { color: "#e6edf7", size: 11 }, showlegend: false,
+        margin: { l: 0, r: 0, t: 0, b: 0 },
+      }, { displaylogo: false, responsive: true });
+    }
+
+    // -- growth bar ------------------------------------------------------
+    if (DATA.growth) {
+      Plotly.react("growth", [{
+        type: "bar",
+        x: DATA.growth.map(g => g.date),
+        y: DATA.growth.map(g => g.count),
+        marker: { color: "#4f8ef7" },
+      }], {
+        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
+        font: { color: "#e6edf7", size: 11 },
+        margin: { l: 30, r: 10, t: 4, b: 30 },
+        xaxis: { tickangle: -45, automargin: true, color: "#94a3b8" },
+        yaxis: { gridcolor: "#243049", color: "#94a3b8" },
+      }, { displaylogo: false, responsive: true });
+    }
+
+    // -- recall utilization ----------------------------------------------
+    if (ru && ru.fired > 0) {
+      const hits   = Math.round((ru.hit_rate || 0) * ru.fired);
+      const misses = ru.fired - hits;
+      const total  = ru.fired + ru.bailed;
+      const p      = Math.round((ru.hit_rate || 0) * 100);
+      const color  = p >= 70 ? 'var(--green)' : p >= 40 ? 'var(--yellow)' : 'var(--red)';
+      document.getElementById('util-pct').style.color = color;
+      document.getElementById('util-pct').textContent = p + '%';
+      document.getElementById('util-seg-hits').style.width = (hits   / total * 100).toFixed(1) + '%';
+      document.getElementById('util-seg-miss').style.width = (misses / total * 100).toFixed(1) + '%';
+      document.getElementById('util-seg-bail').style.width = (ru.bailed / total * 100).toFixed(1) + '%';
+      document.getElementById('util-leg-hits').textContent = hits;
+      document.getElementById('util-leg-miss').textContent = misses;
+      document.getElementById('util-leg-bail').textContent = ru.bailed;
+      const strong = ru.strong_hit_rate != null ? Math.round(ru.strong_hit_rate * 100) + '% strong' : '';
+      const score  = ru.median_top_score != null ? 'score mediano ' + ru.median_top_score : '';
+      document.getElementById('util-sub').textContent = [strong, score, total + ' totales'].filter(Boolean).join(' · ');
+    } else {
+      document.getElementById('util-pct').textContent = 'sin datos';
+      document.getElementById('util-sub').textContent = ru && ru.bailed > 0
+        ? ru.bailed + ' omitidas (prompts cortos / slash commands)'
+        : 'recall.log vacío';
+    }
+
+    // -- verdict (¿funciona memo?) ---------------------------------------
+    const V = DATA.verdict || {};
+    const vColors = { ok: 'var(--green)', weak: 'var(--yellow)', unused: 'var(--red)' };
+    const vColor = vColors[V.status] || 'var(--red)';
+    const vPanel = document.getElementById('verdict-panel');
+    if (vPanel) vPanel.style.borderColor = vColor;
+    document.getElementById('verdict-label').textContent = V.label || '❌ NO SE USA';
+    document.getElementById('verdict-label').style.color = vColor;
+    const gr = V.grounded_rate == null ? '—' : Math.round(V.grounded_rate * 100) + '%';
+    document.getElementById('verdict-sub').textContent = `grounded ${gr} · ${V.consults || 0} consultas`;
+    const per = V.per_consumer || [];
+    const readers = per.filter(x => x.reads).map(x => x.name + ' ✅');
+    const silent  = per.filter(x => !x.reads).map(x => x.name + ' ❌');
+    document.getElementById('verdict-readers').textContent = readers.length ? readers.join('  ') : '—';
+    document.getElementById('verdict-silent').textContent  = silent.length  ? silent.join('  ')  : 'ninguno';
+
+    // -- memflow utility -------------------------------------------------
+    const MF = DATA.memflow_util || {};
+    const cons = MF.consumption || {}, outc = MF.outcome || {};
+    const reads = cons.total_read_calls || 0;
+    const reexp = outc.re_explain || 0;
+    const used  = outc.memory_used_rate;
+    let mfEstado, mfColor;
+    if (!MF.consumption) { mfEstado = 'no disponible'; mfColor = 'var(--fg-mute)'; }
+    else if (reads < 5)  { mfEstado = '❌ casi no se lee'; mfColor = 'var(--red)'; }
+    else if (used == null) { mfEstado = '⚠️ sin outcomes aún'; mfColor = 'var(--yellow)'; }
+    else if (used >= 0.10 && reexp < 10) { mfEstado = '✅ útil'; mfColor = 'var(--green)'; }
+    else { mfEstado = '⚠️ poco útil'; mfColor = 'var(--yellow)'; }
+    const mfEl = document.getElementById('memflow-estado');
+    mfEl.textContent = mfEstado; mfEl.style.color = mfColor;
+    const mfp = document.getElementById('memflow-panel');
+    if (mfp) mfp.style.borderColor = mfColor;
+    document.getElementById('mf-reads').textContent = reads;
+    document.getElementById('mf-used').textContent = used == null ? '—' : Math.round(used * 100) + '%';
+    const reEl = document.getElementById('mf-reexplain');
+    reEl.textContent = reexp; reEl.style.color = reexp >= 10 ? 'var(--red)' : '';
+
+    // -- tables (idempotent) ---------------------------------------------
+    const histBody = document.querySelector("#history-table tbody");
+    histBody.innerHTML = "";
+    for (const h of (DATA.history || [])) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${h.ts}</td><td class="op-${h.op}">${h.op}</td>
+                      <td><code>${h.id}</code></td><td>${escapeHTML(h.title || "")}</td>
+                      <td><span class="pill">${h.type || ""}</span></td>`;
+      histBody.appendChild(tr);
+    }
+    const recBody = document.querySelector("#recall-table tbody");
+    recBody.innerHTML = "";
+    for (const r of (DATA.recall_log || [])) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${r.ts || ""}</td>
+                      <td>${escapeHTML((r.prompt || "").slice(0, 80))}</td>
+                      <td>${(r.hits || []).length}</td>
+                      <td>${r.latency_ms ?? ""}</td>`;
+      recBody.appendChild(tr);
+    }
+  }
+
+  render(PAYLOAD);
+
+  // -- live auto-refresh (only when served over http; file:// is static) -
+  const badge = document.getElementById("live-badge");
+  const setBadge = (state, txt) => {
+    badge.innerHTML = `<span class="dot ${state}"></span>${txt}`;
+  };
+  if (location.protocol.startsWith("http")) {
+    const intervalS = PAYLOAD.refresh_interval_s || 5;
+    setBadge("green", "en vivo · " + intervalS + "s");
+    const poll = async () => {
+      try {
+        const r = await fetch("/api/data.json", { cache: "no-store" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        render(await r.json());
+        setBadge("green", "actualizado " + new Date().toLocaleTimeString());
+      } catch (e) {
+        setBadge("yellow", "sin conexión · reintentando");
+      }
+    };
+    setInterval(poll, intervalS * 1000);
+  } else {
+    setBadge("blue", "snapshot estático · usar `memo dashboard` para tiempo real");
   }
 })();
 </script>
