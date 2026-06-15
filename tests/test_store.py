@@ -154,12 +154,32 @@ def test_delete_removes_from_both_tables(store: VecStore):
 
 
 def test_dim_mismatch_raises(store: VecStore):
-    with pytest.raises(ValueError, match="dim mismatch"):
+    with pytest.raises(ValueError, match="dimension mismatch"):
         store.upsert(
             id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
             created="t", updated="t", body_hash="h",
             embedding=[1.0, 0.0],  # 2-dim, store expects 4
         )
+
+
+def test_unit_norm_wrong_dims_still_rejected_at_write(store: VecStore):
+    """A wrong-dims vector that is perfectly unit-norm must still fail fast.
+
+    The norm check (≈1.0) cannot catch a model/dims swap: a 2-dim unit vector
+    passes the norm guard but corrupts a 4-dim store. The length guard must
+    reject it, name both dims, and point at `memo reindex`.
+    """
+    unit_2d = _emb(0.6, 0.8)  # length 2, L2-norm exactly 1.0
+    assert abs(sum(x * x for x in unit_2d) ** 0.5 - 1.0) < 1e-9
+    with pytest.raises(ValueError) as excinfo:
+        store.upsert(
+            id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
+            created="t", updated="t", body_hash="h",
+            embedding=unit_2d,
+        )
+    msg = str(excinfo.value)
+    assert "2" in msg and "4" in msg  # names both got + expected
+    assert "reindex" in msg
 
 
 def test_existing_vec_table_dim_mismatch_fails_fast(tmp_path: Path):

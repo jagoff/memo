@@ -171,6 +171,67 @@ def _format_watch_line(sig: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Daemon snapshot (no MLX) — queries the warm recall-daemon over its socket
+# ---------------------------------------------------------------------------
+
+
+def _collect_daemon_snapshot(cfg: Config) -> dict[str, Any]:
+    """Return the recall-daemon's live state, or {'running': False}.
+
+    Asks the daemon for its `stats` snapshot over the unix socket. Surfaces
+    last-request timestamp, whether the embedder is warm, request/error counts.
+    Never raises.
+    """
+    if _check_daemon(cfg) != "running":
+        return {"running": False}
+    try:
+        from memo.recall_client import connect_and_send
+
+        raw = connect_and_send(cfg.state_dir, {"op": "stats"}, timeout=2.0)
+        if not raw:
+            return {"running": True, "reachable": False}
+        snap = _json.loads(raw)
+    except Exception:
+        return {"running": True, "reachable": False}
+
+    last_ts = snap.get("last_request_ts")
+    last_age = round(time.time() - last_ts, 1) if isinstance(last_ts, (int, float)) else None
+    return {
+        "running": True,
+        "reachable": True,
+        # An embedder op that has completed at least once means the model is
+        # loaded (warm). recall ops also drive embeds, so any served request
+        # past startup implies warmth.
+        "embedder_warm": bool(snap.get("total_requests")),
+        "last_request_ts": last_ts,
+        "last_request_age_s": last_age,
+        "total_requests": snap.get("total_requests"),
+        "error_count": snap.get("total_errors"),
+        "uptime_s": snap.get("uptime_s"),
+        "model": snap.get("model"),
+        "dims": snap.get("dims"),
+    }
+
+
+def _format_daemon_snapshot(snap: dict[str, Any]) -> str:
+    if not snap.get("running"):
+        return "  recall-daemon : [yellow]stopped[/yellow]"
+    if not snap.get("reachable"):
+        return "  recall-daemon : [yellow]running but unreachable[/yellow]"
+    warm = "[green]warm[/green]" if snap.get("embedder_warm") else "[yellow]cold[/yellow]"
+    age = snap.get("last_request_age_s")
+    last = f"{age}s ago" if age is not None else "—"
+    errs = snap.get("error_count")
+    err_str = f"[red]{errs}[/red]" if errs else "0"
+    return (
+        f"  recall-daemon : [green]running[/green], embedder {warm}\n"
+        f"  last request  : {last} ({snap.get('total_requests') or 0} total, {err_str} errors)\n"
+        f"  uptime        : {snap.get('uptime_s') or 0}s "
+        f"({snap.get('model')} {snap.get('dims')}d)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -178,6 +239,12 @@ def _format_watch_line(sig: dict[str, Any]) -> str:
 @click.command(name="health")
 @click.option("--probe", is_flag=True, help="Time one embed_query call (loads the embedder).")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+@click.option(
+    "--daemon",
+    "daemon_only",
+    is_flag=True,
+    help="Show the warm recall-daemon's live state (no MLX).",
+)
 @click.option(
     "--watch",
     is_flag=True,
@@ -190,14 +257,27 @@ def _format_watch_line(sig: dict[str, Any]) -> str:
     show_default=True,
     help="Seconds between checks when --watch is active.",
 )
-def health(probe: bool, as_json: bool, watch: bool, interval: int) -> None:
+def health(probe: bool, as_json: bool, daemon_only: bool, watch: bool, interval: int) -> None:
     """Report corpus/index/embedder health and warnings.
 
     Read-only. Example: memo health   |   memo health --probe --json
 
+    Daemon snapshot: memo health --daemon [--json]
     Continuous mode: memo health --watch [--interval 10] [--json]
     """
     cfg = Config.from_env()
+
+    # ------------------------------------------------------------------
+    # Daemon snapshot — lightweight, no MLX
+    # ------------------------------------------------------------------
+    if daemon_only:
+        snap = _collect_daemon_snapshot(cfg)
+        if as_json:
+            click.echo(_json.dumps(snap, indent=2))
+        else:
+            console.print("[bold]memo recall-daemon[/bold]")
+            console.print(_format_daemon_snapshot(snap))
+        return
 
     # ------------------------------------------------------------------
     # Watch mode — lightweight, no MLX
