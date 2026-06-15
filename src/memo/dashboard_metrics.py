@@ -6,10 +6,14 @@ from typing import Any
 from memo.dashboard_logs import read_grounding_log, read_recall_log, read_usage_log
 
 STRONG_SCORE = 0.85
-# "Clearly used in the answer", not merely marginally present. The lexical
-# detector saturates ~0.7-0.8, so 0.5 passed almost everything; 0.6 is the
-# "actually used" bar (borderline 0.5-0.6 containment no longer counts).
+# Reask/grounding-turn bar (kept moderate — used by reask_stats).
 GROUNDED_SCORE = 0.6
+# Utility bar: "the answer actually USED this memoria", not just topical overlap.
+# answer↔memoria similarity is a continuum dominated by shared topic (same-topic
+# cosine ~0.7 is baseline), so a low bar marks ~everything "used" (the 100%
+# artifact). 0.8 requires a match well above topical baseline; a downstream
+# action (the turn opened/ran what the memoria named) always counts as used.
+USED_SCORE_STRONG = 0.8
 # Verdict thresholds — drive the "¿funciona memo?" panel. memo is judged USEFUL
 # only when it is both read enough (volume) and actually helping (grounded).
 VERDICT_MIN_CONSULTS = 20
@@ -145,7 +149,10 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
         scored_turns.add((sid, turn))
         rid = g.get("recall_id")
         score = g.get("used_score")
-        if rid and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+        # "Used" = strong match OR a real downstream action on what memo surfaced
+        # (acted-on always counts even if the text overlap was modest).
+        strong = isinstance(score, (int, float)) and float(score) >= USED_SCORE_STRONG
+        if rid and (strong or g.get("downstream_action")):
             grounded_keys.add((sid, turn, rid))
 
     total_surfaced = sum(len(ids) for ids in surfaced_by_turn.values())

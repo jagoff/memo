@@ -929,7 +929,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
     const unmeasured = ru.unmeasured_surfaced || 0;
     document.getElementById("utility-sub").textContent = utilRate == null
       ? "todavía no hay respuestas medidas (Stop hook)"
-      : `${answersTotal} respuestas medidas · ${unmeasured} memorias surgidas sin medir (otras capas / sin Stop)`;
+      : `usó fuertemente memo (similitud ≥0.8 o acción) · ${answersTotal} respuestas medidas · ${unmeasured} surgidas sin medir`;
     if (answersTotal > 0) {
       document.getElementById("utility-seg-con").style.width = (answersGrounded / answersTotal * 100).toFixed(1) + "%";
       document.getElementById("utility-seg-sin").style.width = (withoutMemo / answersTotal * 100).toFixed(1) + "%";
