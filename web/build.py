@@ -559,6 +559,10 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
             "grounded_rate": recall_health_data["grounded_rate"],
             "grounded": recall_health_data["grounded"],
             "grounded_surfaced": recall_health_data["grounded_surfaced"],
+            "answer_rate": recall_health_data["answer_rate"],
+            "answers_total": recall_health_data["answers_total"],
+            "answers_grounded": recall_health_data["answers_grounded"],
+            "unmeasured_surfaced": recall_health_data["unmeasured_surfaced"],
             "referenced_rate": recall_health_data["referenced_rate"],
         },
         "bail_breakdown": recall_health_data["bail_breakdown"],
@@ -907,26 +911,30 @@ _HTML_TEMPLATE = r"""<!doctype html>
       scEl.appendChild(d);
     }
 
-    // -- utility: answers WITH memo vs WITHOUT (grounded outcome) --------
-    const grounded = ru.grounded || 0;
-    const groundedSurfaced = ru.grounded_surfaced || 0;
-    const withoutMemo = Math.max(0, groundedSurfaced - grounded);
-    const utilRate = groundedSurfaced > 0 ? grounded / groundedSurfaced : null;
+    // -- utility: answers WITH memo vs WITHOUT (per-answer, measured only) -
+    // Denominator = answers actually grounding-scored (Stop hook ran). Surfaced
+    // memorias on un-scored turns are "not measured", not "not used", so they
+    // are reported as coverage rather than counted as misses.
+    const answersTotal = ru.answers_total || 0;
+    const answersGrounded = ru.answers_grounded || 0;
+    const withoutMemo = Math.max(0, answersTotal - answersGrounded);
+    const utilRate = ru.answer_rate;
     const utilColor = utilRate == null ? "var(--fg-mute)"
-      : utilRate >= 0.5 ? "var(--green)" : utilRate >= 0.2 ? "var(--yellow)" : "var(--red)";
+      : utilRate >= 0.8 ? "var(--green)" : utilRate >= 0.5 ? "var(--yellow)" : "var(--red)";
     const utilPanel = document.getElementById("utility-panel");
     if (utilPanel) utilPanel.style.borderColor = utilColor;
     const utilPct = document.getElementById("utility-pct");
     utilPct.textContent = utilRate == null ? "sin datos" : asPct(utilRate);
     utilPct.style.color = utilColor;
+    const unmeasured = ru.unmeasured_surfaced || 0;
     document.getElementById("utility-sub").textContent = utilRate == null
-      ? "todavía no hay respuestas medidas"
-      : "de las respuestas que usaron una memoria surgida, esta fracción la aprovechó";
-    if (groundedSurfaced > 0) {
-      document.getElementById("utility-seg-con").style.width = (grounded / groundedSurfaced * 100).toFixed(1) + "%";
-      document.getElementById("utility-seg-sin").style.width = (withoutMemo / groundedSurfaced * 100).toFixed(1) + "%";
+      ? "todavía no hay respuestas medidas (Stop hook)"
+      : `${answersTotal} respuestas medidas · ${unmeasured} memorias surgidas sin medir (otras capas / sin Stop)`;
+    if (answersTotal > 0) {
+      document.getElementById("utility-seg-con").style.width = (answersGrounded / answersTotal * 100).toFixed(1) + "%";
+      document.getElementById("utility-seg-sin").style.width = (withoutMemo / answersTotal * 100).toFixed(1) + "%";
     }
-    document.getElementById("utility-leg-con").textContent = grounded;
+    document.getElementById("utility-leg-con").textContent = answersGrounded;
     document.getElementById("utility-leg-sin").textContent = withoutMemo;
 
     // -- who reads memo (per-consumer) -----------------------------------
