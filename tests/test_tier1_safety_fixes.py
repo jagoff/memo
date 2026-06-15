@@ -11,9 +11,7 @@ Fix 1.5 — search_ops: DEBUG log when source-feedback boost is skipped
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
 
 # ── Fix 1.3 ─────────────────────────────────────────────────────────────────
 

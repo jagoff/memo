@@ -320,8 +320,10 @@ def test_gc_no_stale_synthesis_when_sources_intact(mock_memory):
 def _get_synth_tool_fn(mock_memory, tool_name: str):
     """Register server_synthesis and return the named tool's underlying function."""
     import asyncio
-    from memo import server_synthesis
+
     from fastmcp import FastMCP
+
+    from memo import server_synthesis
 
     server = FastMCP("test")
     server_synthesis.register(server, mock_memory)

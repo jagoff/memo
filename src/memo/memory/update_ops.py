@@ -16,8 +16,8 @@ from memo.memory.record import (
     _VALID_TYPES,
     MemoryRecord,
     _extract_provenance,
-    _now_iso,
     _normalise_tags,
+    _now_iso,
 )
 from memo.util import sha256_short as _sha256_short
 

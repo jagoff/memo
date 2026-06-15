@@ -34,11 +34,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-_log = logging.getLogger(__name__)
-
 from pydantic import BaseModel, Field, field_validator
 
 from memo.flags import flag_bool, flag_str
+
+_log = logging.getLogger(__name__)
 
 # Default `data_dir` — visible in Finder, iCloud-syncable. The picker
 # in `memo init` lets users pick a different location (Obsidian vault,

@@ -6,7 +6,6 @@ indirectly via the WAMessage dataclass these build on.
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -110,8 +109,8 @@ def test_run_uses_memo_whatsapp_db_env(tmp_path: Path, monkeypatch: pytest.Monke
 def test_recall_server_sigterm_handler_only_sets_event() -> None:
     """The SIGTERM handler in recall_server.run_server only sets a threading.Event
     (no logging, no lock acquisition) — async-signal-safe."""
-    import threading
     import inspect
+
     from memo import recall_server
 
     # Inspect the run_server source to confirm the handler is signal-safe:

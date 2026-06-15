@@ -8,10 +8,7 @@ Default behaviour (flag off) is unchanged.
 
 from __future__ import annotations
 
-import pytest
-
 from memo.chunker import DEFAULT_TARGET_CHARS
-
 
 # ---------------------------------------------------------------------------
 # Helpers

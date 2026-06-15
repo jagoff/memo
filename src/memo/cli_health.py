@@ -12,7 +12,6 @@ and DB connectivity.
 from __future__ import annotations
 
 import json as _json
-import os
 import sqlite3
 import time
 from datetime import UTC, datetime
@@ -137,9 +136,7 @@ def _collect_watch_signals(cfg: Config) -> dict[str, Any]:
     db = _check_db(cfg)
 
     # Derive overall status
-    if daemon == "stopped" or db in ("error", "missing") or sync == "stale":
-        status = "degraded"
-    elif daemon == "unknown" or fds < 0 or sync == "unknown":
+    if daemon == "stopped" or db in ("error", "missing") or sync == "stale" or daemon == "unknown" or fds < 0 or sync == "unknown":
         status = "degraded"
     else:
         status = "healthy"

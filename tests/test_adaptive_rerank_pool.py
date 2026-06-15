@@ -17,9 +17,6 @@ import math
 from typing import Any
 from unittest.mock import patch
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helper: build a list of fake vec-hit dicts with controlled scores
 # ---------------------------------------------------------------------------
