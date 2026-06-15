@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memo.flags_base import FlagSpec, _spec  # noqa: F401
+from memo.flags_base import FlagSpec, _spec
 
 SPECS: tuple[FlagSpec, ...] = (
     # feedback boosting
@@ -29,6 +29,13 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
     _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),
     _spec("MEMO_MCP_PORT", "int", 18768, "mcp", "Bind port for the HTTP MCP transport."),
+    _spec(
+        "MEMO_DASHBOARD_PORT",
+        "int",
+        8787,
+        "mcp",
+        "Bind port for the local health dashboard server (memo dashboard).",
+    ),
     _spec(
         "MEMO_MCP_SLIM",
         "bool",
