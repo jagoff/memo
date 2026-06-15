@@ -7,6 +7,10 @@ from memo.dashboard_logs import read_grounding_log, read_recall_log, read_usage_
 
 STRONG_SCORE = 0.85
 GROUNDED_SCORE = 0.5
+# Verdict thresholds — drive the "¿funciona memo?" panel. memo is judged USEFUL
+# only when it is both read enough (volume) and actually helping (grounded).
+VERDICT_MIN_CONSULTS = 20
+VERDICT_MIN_GROUNDED = 0.10
 EXPECTED_CONSUMERS = (
     "claude-code",
     "synapse",
@@ -254,6 +258,42 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
     consumers.sort(key=lambda c: c["consults"], reverse=True)
     silent = [c for c in EXPECTED_CONSUMERS if c not in by]
     return {"sampled": len(rows), "consumers": consumers, "silent": silent}
+
+
+def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
+    """One-glance answer: does memo work, and who actually reads it?
+
+    Combines read volume (consults) with outcome (grounded_rate) into a single
+    status, plus a per-expected-consumer read/silent breakdown. Pure derivation
+    over the recall + grounding logs — no side effects.
+    """
+    health = recall_health(state_dir, limit=min(limit, 200))
+    cb = consult_breakdown(state_dir, limit=limit)
+    consults = int(cb.get("sampled") or 0)
+    grounded = health.get("grounded_rate")
+
+    if consults < VERDICT_MIN_CONSULTS:
+        status, label = "unused", "❌ NO SE USA"
+    elif (grounded or 0.0) < VERDICT_MIN_GROUNDED:
+        status, label = "weak", "⚠️ SE LEE PERO NO AYUDA"
+    else:
+        status, label = "ok", "✅ ÚTIL"
+
+    readers = [str(c.get("consumer")) for c in cb.get("consumers", [])]
+    silent = list(cb.get("silent") or [])
+    per_consumer = [
+        {"name": name, "reads": name in readers} for name in EXPECTED_CONSUMERS
+    ]
+    return {
+        "status": status,
+        "label": label,
+        "consults": consults,
+        "grounded_rate": grounded,
+        "hit_rate": health.get("hit_rate"),
+        "readers": readers,
+        "silent": silent,
+        "per_consumer": per_consumer,
+    }
 
 
 _REASK_TOKEN_RE = re.compile(r"[a-z0-9]{3,}")

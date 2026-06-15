@@ -35,6 +35,7 @@ from memo.dashboard_metrics import (
     reask_stats,
     recall_health,
     referenced_rate,
+    verdict,
 )
 from memo.dashboard_panels import _human_age, _human_bytes, sparkline
 from memo.dashboard_tui import render, run_tui
@@ -70,4 +71,5 @@ __all__ = [
     "run_tui",
     "sparkline",
     "usage_log_path",
+    "verdict",
 ]
