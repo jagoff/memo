@@ -91,3 +91,41 @@ def test_no_measured_turns_returns_none(tmp_path: Path):
     assert g["grounded_rate"] is None
     assert g["answer_rate"] is None
     assert g["unmeasured_surfaced"] == 1
+
+
+def test_specific_score_recovers_paraphrase(tmp_path: Path):
+    sd = tmp_path
+    _surface(sd, "s1", 1, ["aaaa1111"])
+    # Modest absolute match (0.5 < 0.8 bar) but clearly above the question's
+    # topical baseline -> real (paraphrased) use, must count.
+    append_grounding_log(
+        sd, session_id="s1", turn=1, recall_id="aaaa1111", used_score=0.5,
+        method="both", specific_score=0.12,
+    )
+    g = grounded_rate(sd, read_recall_log(sd, limit=100))
+    assert g["grounded"] == 1
+    assert g["grounded_rate"] == 1.0
+
+
+def test_knowledge_segmentation(tmp_path: Path):
+    sd = tmp_path
+    # Knowledge-seeking prompt (question) that used memo.
+    append_recall_log(
+        sd, prompt="¿qué decidimos sobre el backend de auth?",
+        hits=[{"id": "kkkk1111", "title": "x", "score": 0.9, "snippet": "x"}],
+        via="daemon", session_id="s1", turn=1,
+    )
+    # Mechanical prompt that did NOT use memo (excluded from knowledge rate).
+    append_recall_log(
+        sd, prompt="arregla el typo en cli.py",
+        hits=[{"id": "mmmm2222", "title": "y", "score": 0.9, "snippet": "y"}],
+        via="daemon", session_id="s1", turn=2,
+    )
+    append_grounding_log(sd, session_id="s1", turn=1, recall_id="kkkk1111", used_score=0.9, method="both")
+    append_grounding_log(sd, session_id="s1", turn=2, recall_id="mmmm2222", used_score=0.3, method="both")
+
+    g = grounded_rate(sd, read_recall_log(sd, limit=100))
+    # Overall: 1/2 answers. Knowledge-only: 1/1 (mechanical turn excluded).
+    assert g["answer_rate"] == 0.5
+    assert g["answers_knowledge_total"] == 1
+    assert g["answer_rate_knowledge"] == 1.0

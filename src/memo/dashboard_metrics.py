@@ -14,6 +14,11 @@ GROUNDED_SCORE = 0.6
 # artifact). 0.8 requires a match well above topical baseline; a downstream
 # action (the turn opened/ran what the memoria named) always counts as used.
 USED_SCORE_STRONG = 0.8
+# Paraphrase recovery: the answer matches the memoria at least this much MORE
+# than the question already did (cos(answer,mem) - cos(question,mem)). Catches
+# real use that paraphrases (modest absolute cosine, but clearly above the
+# topical baseline the prompt set), without crediting same-topic overlap.
+SPECIFIC_MARGIN = 0.06
 # Verdict thresholds — drive the "¿funciona memo?" panel. memo is judged USEFUL
 # only when it is both read enough (volume) and actually helping (grounded).
 VERDICT_MIN_CONSULTS = 20
@@ -113,6 +118,33 @@ def referenced_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+_INTERROGATIVE = (
+    "?", "¿", "qué", "que ", "cómo", "como ", "por qué", "porqué", "cuál", "cual",
+    "cuándo", "cuando", "quién", "quien", "dónde", "donde", "what", "how", "why",
+    "which", "when", "who", "where", "recordá", "recorda", "acordá", "sabés", "sabes",
+    "explica", "explicá", "explain", "decidimos", "prefer",
+)
+# Leading verbs that mark a mechanical/coding turn unlikely to draw on durable
+# memory (it draws on the codebase / current context instead).
+_MECHANICAL_LEAD = (
+    "arregla", "arreglá", "implementa", "implementá", "corré", "corre ", "ejecuta",
+    "edita", "editá", "agrega", "agregá", "fix", "add ", "run ", "build", "refactor",
+    "commit", "push", "test", "crea ", "creá", "borra", "borrá", "delete", "rename",
+)
+
+
+def _is_knowledge_prompt(prompt: str) -> bool:
+    """Heuristic: would this turn plausibly draw on durable memory? Knowledge-
+    seeking (questions, "what did we decide", recall) -> yes; slash commands and
+    mechanical coding imperatives -> no. Used to segment the utility metric."""
+    p = (prompt or "").strip().lower()
+    if not p or p.startswith("/"):
+        return False
+    if any(p.startswith(v) for v in _MECHANICAL_LEAD):
+        return False
+    return any(tok in p for tok in _INTERROGATIVE) or len(p) >= 60
+
+
 def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Did surfaced memorias actually get USED in the answer?
 
@@ -128,11 +160,14 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
     matching the "answers WITH memo vs WITHOUT" framing.
     """
     surfaced_by_turn: dict[tuple[str, int], set[str]] = {}
+    prompt_by_turn: dict[tuple[str, int], str] = {}
     for r in rows:
         sid = r.get("session_id")
         turn = r.get("turn")
         if not sid or not isinstance(turn, int):
             continue
+        if r.get("prompt"):
+            prompt_by_turn.setdefault((sid, turn), str(r.get("prompt")))
         for h in r.get("hits") or []:
             hid = h.get("id")
             if hid:
@@ -149,10 +184,12 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
         scored_turns.add((sid, turn))
         rid = g.get("recall_id")
         score = g.get("used_score")
-        # "Used" = strong match OR a real downstream action on what memo surfaced
-        # (acted-on always counts even if the text overlap was modest).
+        spec = g.get("specific_score")
+        # "Used" = strong absolute match, OR clearly above the question's topical
+        # baseline (paraphrase), OR a real downstream action on what memo surfaced.
         strong = isinstance(score, (int, float)) and float(score) >= USED_SCORE_STRONG
-        if rid and (strong or g.get("downstream_action")):
+        specific = isinstance(spec, (int, float)) and float(spec) >= SPECIFIC_MARGIN
+        if rid and (strong or specific or g.get("downstream_action")):
             grounded_keys.add((sid, turn, rid))
 
     total_surfaced = sum(len(ids) for ids in surfaced_by_turn.values())
@@ -162,6 +199,8 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "grounded_rate": None, "surfaced": 0, "grounded": 0,
             "answer_rate": None, "answers_total": 0, "answers_grounded": 0,
+            "answer_rate_knowledge": None, "answers_knowledge_total": 0,
+            "answers_knowledge_grounded": 0,
             "unmeasured_surfaced": total_surfaced,
         }
 
@@ -173,6 +212,14 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
         1 for (sid, turn), ids in measured.items()
         if any((sid, turn, hid) in grounded_keys for hid in ids)
     )
+    # Segment: of answers that COULD plausibly use memo (knowledge-seeking, not
+    # mechanical edits/commands), how many did? Mechanical turns dilute the
+    # overall rate, so this is the truer "is memo being used when it matters".
+    knowledge = {k: ids for k, ids in measured.items() if _is_knowledge_prompt(prompt_by_turn.get(k, ""))}
+    knowledge_grounded = sum(
+        1 for (sid, turn), ids in knowledge.items()
+        if any((sid, turn, hid) in grounded_keys for hid in ids)
+    )
     return {
         "grounded_rate": round(grounded / measured_surfaced, 3),
         "surfaced": measured_surfaced,
@@ -180,6 +227,9 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
         "answer_rate": round(answers_grounded / len(measured), 3),
         "answers_total": len(measured),
         "answers_grounded": answers_grounded,
+        "answer_rate_knowledge": round(knowledge_grounded / len(knowledge), 3) if knowledge else None,
+        "answers_knowledge_total": len(knowledge),
+        "answers_knowledge_grounded": knowledge_grounded,
         "unmeasured_surfaced": total_surfaced - measured_surfaced,
     }
 
@@ -221,6 +271,9 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
         "answer_rate": grounded["answer_rate"],
         "answers_total": grounded["answers_total"],
         "answers_grounded": grounded["answers_grounded"],
+        "answer_rate_knowledge": grounded["answer_rate_knowledge"],
+        "answers_knowledge_total": grounded["answers_knowledge_total"],
+        "answers_knowledge_grounded": grounded["answers_knowledge_grounded"],
         "unmeasured_surfaced": grounded["unmeasured_surfaced"],
         "referenced_rate": ref["referenced_rate"],
         "referenced": ref["referenced"],
