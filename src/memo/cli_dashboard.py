@@ -78,16 +78,52 @@ def _make_handler(builder: Any, cfg: Config, shell_html: str, interval: int) -> 
     return _Handler
 
 
+def _spawn_background(port: int, interval: int, log_path: Path) -> int:
+    """Re-exec this command detached so the server outlives the terminal.
+
+    Returns the child PID. Keeps the dashboard up across shells (the recurring
+    "web server must start manually" pain), without a launchd plist."""
+    import subprocess
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log = open(log_path, "ab")  # noqa: SIM115 - handed to the child, closed on exit
+    args = [
+        sys.argv[0], "dashboard",
+        "--no-open", "--foreground-only",
+        "--port", str(port), "--interval", str(interval),
+    ]
+    proc = subprocess.Popen(
+        args, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+        start_new_session=True,  # detach from the controlling terminal
+    )
+    return proc.pid
+
+
 @click.command("dashboard")
 @click.option("--port", type=int, default=None, help="Bind port (default MEMO_DASHBOARD_PORT or 8787).")
 @click.option("--interval", type=int, default=5, show_default=True, help="Live-refresh interval (seconds).")
 @click.option("--open/--no-open", "open_browser", default=True, show_default=True, help="Open the dashboard in a browser.")
-def dashboard_cmd(port: int | None, interval: int, open_browser: bool) -> None:
+@click.option("--background", "-b", is_flag=True, help="Run detached so it stays up after you close the terminal.")
+@click.option("--foreground-only", is_flag=True, hidden=True, help="Internal: serve without re-spawning (used by --background).")
+def dashboard_cmd(
+    port: int | None, interval: int, open_browser: bool, background: bool, foreground_only: bool
+) -> None:
     """Serve the health dashboard on localhost with live auto-refresh."""
     builder = _load_builder()
     cfg = Config.from_env()
     resolved_port = port if port is not None else (flag_int("MEMO_DASHBOARD_PORT") or 8787)
     interval = max(1, interval)
+    url = f"http://127.0.0.1:{resolved_port}"
+
+    if background and not foreground_only:
+        log_path = cfg.state_dir / "dashboard.log"
+        pid = _spawn_background(resolved_port, interval, log_path)
+        click.echo(f"memo dashboard (background, pid {pid}) → {url}")
+        click.echo(f"  log:  {log_path}")
+        click.echo(f"  stop: kill {pid}")
+        if open_browser:
+            threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+        return
 
     click.echo("Building dashboard (initial snapshot + 3-D projection)…")
     data = builder.collect_data(cfg, include_projection=True)
@@ -96,7 +132,6 @@ def dashboard_cmd(port: int | None, interval: int, open_browser: bool) -> None:
 
     handler = _make_handler(builder, cfg, shell_html, interval)
     server = ThreadingHTTPServer(("127.0.0.1", resolved_port), handler)
-    url = f"http://127.0.0.1:{resolved_port}"
     click.echo(f"memo dashboard → {url}  (refresh {interval}s · Ctrl-C to stop)")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
