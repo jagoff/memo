@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
@@ -121,7 +120,6 @@ def test_check_sync_ok_when_history_db_fresh(tmp_cfg):
 
 def test_check_sync_stale_when_history_db_old(tmp_cfg, monkeypatch):
     """Sync reports 'stale' when history.db mtime is beyond the threshold."""
-    import memo.cli_health as ch
 
     history_db = tmp_cfg.history_db
     history_db.parent.mkdir(parents=True, exist_ok=True)
@@ -244,7 +242,7 @@ def test_cli_health_watch_json_single_iteration(monkeypatch, tmp_cfg):
 
     result = CliRunner().invoke(cli, ["health", "--watch", "--json", "--interval", "5"])
     # May exit 0 or 1 depending on how Click handles KeyboardInterrupt
-    lines = [l.strip() for l in result.output.strip().splitlines() if l.strip()]
+    lines = [ln.strip() for ln in result.output.strip().splitlines() if ln.strip()]
     assert len(lines) >= 1, f"expected at least one JSON line, got: {result.output!r}"
     data = json.loads(lines[0])
     for key in ("timestamp", "status", "daemon", "sync", "db", "fds"):
@@ -263,7 +261,7 @@ def test_cli_health_watch_plain_single_iteration(monkeypatch, tmp_cfg):
     })())
 
     result = CliRunner().invoke(cli, ["health", "--watch", "--interval", "30"])
-    lines = [l.strip() for l in result.output.strip().splitlines() if l.strip()]
+    lines = [ln.strip() for ln in result.output.strip().splitlines() if ln.strip()]
     assert len(lines) >= 1, f"expected at least one status line, got: {result.output!r}"
     line = lines[0]
     assert "daemon=" in line

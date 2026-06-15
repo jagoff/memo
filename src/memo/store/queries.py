@@ -6,7 +6,6 @@ from typing import Any
 
 from sqlite_vec import serialize_float32
 
-from ._base import _StoreBase
 from .bm25_queries import _BM25QueriesMixin
 from .rows import _row_to_dict
 from .signal_queries import _SignalQueriesMixin

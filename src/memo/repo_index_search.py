@@ -14,7 +14,6 @@ from typing import Any
 from memo.config import AI_SUBDIR
 from memo.retrieval_boost import boost_for as _retrieval_boost_for
 
-
 # ---------------------------------------------------------------------------
 # Public data class (re-exported from repo_index for backward compat)
 # ---------------------------------------------------------------------------

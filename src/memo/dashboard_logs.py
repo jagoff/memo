@@ -142,6 +142,7 @@ def append_grounding_log(
     recall_top_score: float | None = None,
     downstream_action: str | None = None,
     action_evidence: str | None = None,
+    specific_score: float | None = None,
     cap: int = 1000,
 ) -> None:
     entry: dict[str, Any] = {
@@ -158,6 +159,8 @@ def append_grounding_log(
         entry["answer_len"] = int(answer_len)
     if recall_top_score is not None:
         entry["recall_top_score"] = round(float(recall_top_score), 4)
+    if specific_score is not None:
+        entry["specific_score"] = round(float(specific_score), 4)
     if downstream_action is not None:
         entry["downstream_action"] = downstream_action
     if action_evidence is not None:

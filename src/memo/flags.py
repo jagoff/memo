@@ -26,7 +26,7 @@ import os
 from typing import Any
 
 # Re-export base types so existing `from memo.flags import FlagSpec` imports still work.
-from memo.flags_base import FlagKind, FlagSpec, _TRUE, _FALSE, _spec  # noqa: F401
+from memo.flags_base import _FALSE, _TRUE, FlagKind, FlagSpec, _spec  # noqa: F401
 from memo.flags_behavior import SPECS as _behavior_specs
 from memo.flags_ingest import SPECS as _ingest_specs
 from memo.flags_misc import SPECS as _misc_specs

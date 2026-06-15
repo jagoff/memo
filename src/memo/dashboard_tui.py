@@ -18,28 +18,34 @@ from memo.dashboard_panels import (
     _panel_activity,
     _panel_consumers,
     _panel_corpus,
+    _panel_memflow,
     _panel_recall_quality,
     _panel_recent_recalls,
     _panel_recent_saves,
     _panel_runtime,
     _panel_top_tags,
+    _panel_verdict,
 )
 
 
 def render(memory: Any, state_dir: Path) -> Layout:
     layout = Layout()
     layout.split_column(
+        Layout(name="verdict", size=8),
         Layout(name="top", size=3),
         Layout(name="mid", size=8),
         Layout(name="bot", size=6),
         Layout(name="ext", size=9),
         Layout(name="footer", size=1),
     )
+    layout["verdict"].split_row(Layout(name="verdict_memo"), Layout(name="verdict_memflow"))
     layout["top"].split_row(Layout(name="corpus"), Layout(name="runtime"))
     layout["mid"].split_row(Layout(name="saves"), Layout(name="recalls"))
     layout["bot"].split_row(Layout(name="tags"), Layout(name="activity"))
     layout["ext"].split_row(Layout(name="recall_quality"), Layout(name="consumers"))
 
+    layout["verdict_memo"].update(_panel_verdict(state_dir))
+    layout["verdict_memflow"].update(_panel_memflow(state_dir))
     layout["corpus"].update(_panel_corpus(memory))
     layout["runtime"].update(_panel_runtime(memory))
     layout["saves"].update(_panel_recent_saves(memory, limit=5))

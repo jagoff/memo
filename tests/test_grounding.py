@@ -138,7 +138,8 @@ def test_grounding_embed_catches_paraphrase(tmp_path: Path, monkeypatch) -> None
     # No lexical overlap → embedding pass; canned high-cosine vectors → grounded.
     monkeypatch.setattr(
         "memo.embedder_client.embed",
-        lambda texts, state_dir=None: [[1.0, 0.0], [1.0, 0.0]],  # answer & snippet aligned
+        # batch = [answer, question, snippet]; answer & snippet aligned, question off-axis
+        lambda texts, state_dir=None: [[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]],
     )
     payload = _setup_turn(
         tmp_path,
@@ -155,7 +156,8 @@ def test_grounding_embed_catches_paraphrase(tmp_path: Path, monkeypatch) -> None
 def test_grounding_unrelated_not_used(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "memo.embedder_client.embed",
-        lambda texts, state_dir=None: [[1.0, 0.0], [0.0, 1.0]],  # orthogonal → cosine 0
+        # batch = [answer, question, snippet]; snippet orthogonal to answer → cosine 0
+        lambda texts, state_dir=None: [[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
     )
     payload = _setup_turn(
         tmp_path,

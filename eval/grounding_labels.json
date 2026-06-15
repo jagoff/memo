@@ -1,0 +1,48 @@
+{
+  "schema": "memo.eval_grounding.labels.v1",
+  "_comment": "SEED auto-derived from grounding.log (high-confidence only). REVIEW BY HAND: correct used=true/false per real answer, add ambiguous mid-band cases. Then: memo eval grounding --labels eval/grounding_labels.json",
+  "labels": [
+    {
+      "session_id": "91b1f740-fc4f-4f7c-95f4-7323fb240f51",
+      "turn": 6,
+      "recall_id": "dced5af5",
+      "used": true,
+      "note": "auto: very high similarity"
+    },
+    {
+      "session_id": "96974588-1d95-4022-8481-3eb5961d83a3",
+      "turn": 7,
+      "recall_id": "d6e8da31",
+      "used": true,
+      "note": "auto: downstream action (opened_file)"
+    },
+    {
+      "session_id": "605c0955-45e0-4076-bec2-84e6a7320164",
+      "turn": 1,
+      "recall_id": "b5fcc6b1",
+      "used": true,
+      "note": "auto: downstream action (ran_command)"
+    },
+    {
+      "session_id": "76f231c7-eb6c-493b-b997-0171c1144a97",
+      "turn": 1,
+      "recall_id": "20dccfbd",
+      "used": true,
+      "note": "auto: downstream action (ran_command)"
+    },
+    {
+      "session_id": "4f96079e-71b2-4823-a028-fece6312b87e",
+      "turn": 24,
+      "recall_id": "1621f91c",
+      "used": true,
+      "note": "auto: downstream action (opened_file)"
+    },
+    {
+      "session_id": "4f96079e-71b2-4823-a028-fece6312b87e",
+      "turn": 24,
+      "recall_id": "4be1ef1c",
+      "used": true,
+      "note": "auto: downstream action (opened_file)"
+    }
+  ]
+}

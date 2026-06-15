@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memo.flags_base import FlagSpec, _spec  # noqa: F401
+from memo.flags_base import FlagSpec, _spec
 
 SPECS: tuple[FlagSpec, ...] = (
     # search ranking
@@ -186,7 +186,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "float",
         0.5,
         "search",
-        "RRF fusion weight for the semantic (vec) leg in hybrid search (0.0–1.0). "
+        "RRF fusion weight for the semantic (vec) leg in hybrid search (0.0-1.0). "
         "Default 0.5 gives equal weight to vec and BM25. Raise toward 1.0 for "
         "semantic-heavy queries; lower for precise keyword queries. "
         "If both MEMO_SEARCH_VEC_WEIGHT and MEMO_SEARCH_BM25_WEIGHT are set but "
@@ -199,7 +199,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "float",
         0.5,
         "search",
-        "RRF fusion weight for the keyword (BM25) leg in hybrid search (0.0–1.0). "
+        "RRF fusion weight for the keyword (BM25) leg in hybrid search (0.0-1.0). "
         "Default 0.5 gives equal weight to vec and BM25. Raise toward 1.0 for "
         "precise technical/keyword queries; lower for semantic queries. "
         "If both MEMO_SEARCH_VEC_WEIGHT and MEMO_SEARCH_BM25_WEIGHT are set but "
