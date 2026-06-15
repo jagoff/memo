@@ -13,23 +13,22 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Install uv
-        run: python -m pip install uv
+      - name: Install Python 3.13 + uv via Homebrew
+        # actions/setup-python ships a CPython whose sqlite3 lacks
+        # enable_load_extension, so sqlite-vec (core to memo) cannot load.
+        # Homebrew's python@3.13 has extension loading enabled.
+        run: brew install python@3.13 uv
       - name: Cache Hugging Face models
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
           key: macos-hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
       - name: Create virtualenv
-        run: uv venv .venv
+        run: uv venv --python "$(brew --prefix python@3.13)/bin/python3.13" .venv
       - name: Install package + dev deps
         run: uv pip install --python .venv/bin/python -e '.[dev]'
       - name: Confirm Apple Silicon runner
-        run: python -c "import platform; assert platform.machine() == 'arm64', platform.machine()"
+        run: .venv/bin/python -c "import platform; assert platform.machine() == 'arm64', platform.machine()"
       - name: Lint (ruff)
         run: .venv/bin/ruff check src/ tests/
       - name: Type check (mypy)
