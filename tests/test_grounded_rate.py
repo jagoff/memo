@@ -57,16 +57,31 @@ def test_per_answer_rate(tmp_path: Path):
     assert g["answer_rate"] == 0.5
 
 
-def test_below_threshold_not_grounded(tmp_path: Path):
+def test_topical_overlap_below_strong_bar_not_grounded(tmp_path: Path):
     sd = tmp_path
     _surface(sd, "s1", 1, ["aaaa1111"])
-    # 0.55 is below the GROUNDED_SCORE=0.6 "clearly used" bar.
-    append_grounding_log(sd, session_id="s1", turn=1, recall_id="aaaa1111", used_score=0.55, method="lexical")
+    # 0.72 = typical same-topic cosine (topical overlap, not real use): must NOT
+    # count, since the utility bar is USED_SCORE_STRONG=0.8.
+    append_grounding_log(sd, session_id="s1", turn=1, recall_id="aaaa1111", used_score=0.72, method="both")
 
     g = grounded_rate(sd, read_recall_log(sd, limit=100))
     assert g["surfaced"] == 1       # measured (turn was scored)
-    assert g["grounded"] == 0       # but not used above the bar
+    assert g["grounded"] == 0       # topical overlap alone is not "used"
     assert g["grounded_rate"] == 0.0
+
+
+def test_downstream_action_counts_even_with_low_score(tmp_path: Path):
+    sd = tmp_path
+    _surface(sd, "s1", 1, ["aaaa1111"])
+    # Weak text overlap, but the turn acted on what the memoria named -> used.
+    append_grounding_log(
+        sd, session_id="s1", turn=1, recall_id="aaaa1111", used_score=0.3,
+        method="lexical", downstream_action="opened_file", action_evidence="foo.py",
+    )
+
+    g = grounded_rate(sd, read_recall_log(sd, limit=100))
+    assert g["grounded"] == 1
+    assert g["grounded_rate"] == 1.0
 
 
 def test_no_measured_turns_returns_none(tmp_path: Path):
