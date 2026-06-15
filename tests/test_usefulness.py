@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from memo import dashboard
-from memo.server import _log_consult
+from memo.server_common import log_consult as _log_consult
 
 
 def test_consumer_label_classifies_each_source() -> None:
