@@ -18,19 +18,29 @@ from memo.config import Config
 from memo.embedder import MLXEmbedder, assert_valid_embedding
 from memo.ingest_helpers import enrich_with_ocr
 from memo.ocr import ocr_enabled_via_env
-from memo.repo_index_helpers import (
+
+# Re-export constants so external callers that import them from this module
+# still work without changes.
+from memo.repo_index_helpers import (  # noqa: F401
+    DEFAULT_CHUNK_OVERLAP_LINES,
+    DEFAULT_CHUNK_TARGET_CHARS,
+    DEFAULT_EMBED_BATCH,
+    DEFAULT_EXCLUDE_DIRS,
     DEFAULT_EXCLUDE_GLOBS,
+    DEFAULT_FLUSH_BATCH,
     DEFAULT_MAX_FILE_BYTES,
+    MIN_CHUNK_CHARS,
     MIN_EMBED_BATCH,
-    ProgressCallback,
-    RepoEmbedInput,  # noqa: F401 — re-exported for backward compat
+    MIN_FLUSH_BATCH,
     STATUS_INDEXING,
+    ProgressCallback,
+    RepoEmbedInput,
     _chunk_lines,
     _derive_repo_name,
     _embed_cache_model,
     _emit,
     _git,
-    _git_timeout,  # noqa: F401 — re-exported for backward compat
+    _git_timeout,
     _is_excluded,
     _is_noise_chunk,
     _language_for_path,
@@ -45,7 +55,7 @@ from memo.repo_index_helpers import (
     _tracked_files,
 )
 from memo.repo_index_search import (
-    RepoSearchHit,  # noqa: F401 — re-exported for backward compat
+    RepoSearchHit,
     _boost_and_resort,
     _extract_query_terms,
     _hits_from_rows,
@@ -54,19 +64,6 @@ from memo.repo_index_search import (
 )
 from memo.store import VecStore
 from memo.util import sha256_short as _short_hash
-
-# Re-export constants so external callers that import them from this module
-# still work without changes.
-from memo.repo_index_helpers import (  # noqa: F401
-    DEFAULT_CHUNK_OVERLAP_LINES,
-    DEFAULT_CHUNK_TARGET_CHARS,
-    DEFAULT_EMBED_BATCH,
-    DEFAULT_EXCLUDE_DIRS,
-    DEFAULT_FLUSH_BATCH,
-    MIN_CHUNK_CHARS,
-    MIN_EMBED_BATCH as _MIN_EMBED_BATCH,
-    MIN_FLUSH_BATCH,
-)
 
 
 class RepoCorpus:

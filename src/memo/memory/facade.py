@@ -32,13 +32,13 @@ from memo.lifecycle import LifecycleManager
 from memo.llm import MLXChat
 from memo.memory.ask_ops import _AskOpsMixin
 from memo.memory.consolidate_ops import _ConsolidateOpsMixin
+from memo.memory.delete_ops import _DeleteOpsMixin
 from memo.memory.maintain_ops import _MaintainOpsMixin
 from memo.memory.record import _compose_for_embed
 from memo.memory.replay_ops import _ReplayOpsMixin
 from memo.memory.repo_ops import _RepoOpsMixin
 from memo.memory.rerank_ops import _RerankOpsMixin
 from memo.memory.search_ops import _SearchOpsMixin
-from memo.memory.delete_ops import _DeleteOpsMixin
 from memo.memory.update_ops import _UpdateOpsMixin
 from memo.memory.write_ops import _WriteOpsMixin
 from memo.multimodal import CrossModalSearch, MultiModalManager, MultiModalStore, UniversalEmbedder
