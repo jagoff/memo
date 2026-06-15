@@ -6,7 +6,10 @@ from typing import Any
 from memo.dashboard_logs import read_grounding_log, read_recall_log, read_usage_log
 
 STRONG_SCORE = 0.85
-GROUNDED_SCORE = 0.5
+# "Clearly used in the answer", not merely marginally present. The lexical
+# detector saturates ~0.7-0.8, so 0.5 passed almost everything; 0.6 is the
+# "actually used" bar (borderline 0.5-0.6 containment no longer counts).
+GROUNDED_SCORE = 0.6
 # Verdict thresholds — drive the "¿funciona memo?" panel. memo is judged USEFUL
 # only when it is both read enough (volume) and actually helping (grounded).
 VERDICT_MIN_CONSULTS = 20
@@ -107,7 +110,20 @@ def referenced_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
-    surfaced: set[tuple[str, int, str]] = set()
+    """Did surfaced memorias actually get USED in the answer?
+
+    Honest denominator: a surfaced memoria only counts if its turn was actually
+    grounding-scored (the Stop hook ran for it). Surfaced memorias on un-scored
+    turns — other consumers / bails / turns the Stop hook never reached — are
+    "not measured", NOT "not used", so they are excluded rather than counted as
+    misses (which would crush the rate). Coverage is reported alongside so the
+    exclusion is transparent.
+
+    Returns both the per-memoria rate (`grounded_rate`) and the per-answer rate
+    (`answer_rate` = turns that used ≥1 memoria / turns measured), the latter
+    matching the "answers WITH memo vs WITHOUT" framing.
+    """
+    surfaced_by_turn: dict[tuple[str, int], set[str]] = {}
     for r in rows:
         sid = r.get("session_id")
         turn = r.get("turn")
@@ -116,22 +132,48 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
         for h in r.get("hits") or []:
             hid = h.get("id")
             if hid:
-                surfaced.add((sid, turn, hid))
-    if not surfaced:
-        return {"grounded_rate": None, "surfaced": 0, "grounded": 0}
+                surfaced_by_turn.setdefault((sid, turn), set()).add(hid)
+
+    # Turns the grounding detector actually scored, and the grounded keys.
+    scored_turns: set[tuple[str, int]] = set()
     grounded_keys: set[tuple[str, int, str]] = set()
     for g in read_grounding_log(state_dir):
         sid = g.get("session_id")
         turn = g.get("turn")
+        if not sid or not isinstance(turn, int):
+            continue
+        scored_turns.add((sid, turn))
         rid = g.get("recall_id")
         score = g.get("used_score")
-        if sid and isinstance(turn, int) and rid and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+        if rid and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
             grounded_keys.add((sid, turn, rid))
-    grounded = sum(1 for k in surfaced if k in grounded_keys)
+
+    total_surfaced = sum(len(ids) for ids in surfaced_by_turn.values())
+    measured = {k: ids for k, ids in surfaced_by_turn.items() if k in scored_turns}
+    measured_surfaced = sum(len(ids) for ids in measured.values())
+    if not measured_surfaced:
+        return {
+            "grounded_rate": None, "surfaced": 0, "grounded": 0,
+            "answer_rate": None, "answers_total": 0, "answers_grounded": 0,
+            "unmeasured_surfaced": total_surfaced,
+        }
+
+    grounded = sum(
+        1 for (sid, turn), ids in measured.items() for hid in ids
+        if (sid, turn, hid) in grounded_keys
+    )
+    answers_grounded = sum(
+        1 for (sid, turn), ids in measured.items()
+        if any((sid, turn, hid) in grounded_keys for hid in ids)
+    )
     return {
-        "grounded_rate": round(grounded / len(surfaced), 3),
-        "surfaced": len(surfaced),
+        "grounded_rate": round(grounded / measured_surfaced, 3),
+        "surfaced": measured_surfaced,
         "grounded": grounded,
+        "answer_rate": round(answers_grounded / len(measured), 3),
+        "answers_total": len(measured),
+        "answers_grounded": answers_grounded,
+        "unmeasured_surfaced": total_surfaced - measured_surfaced,
     }
 
 
@@ -169,6 +211,10 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
         "grounded_rate": grounded["grounded_rate"],
         "grounded": grounded["grounded"],
         "grounded_surfaced": grounded["surfaced"],
+        "answer_rate": grounded["answer_rate"],
+        "answers_total": grounded["answers_total"],
+        "answers_grounded": grounded["answers_grounded"],
+        "unmeasured_surfaced": grounded["unmeasured_surfaced"],
         "referenced_rate": ref["referenced_rate"],
         "referenced": ref["referenced"],
         "surfaced": ref["surfaced"],
