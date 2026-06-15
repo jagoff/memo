@@ -38,7 +38,8 @@ from memo.cli_diag import (  # noqa: E402
 )
 from memo.cli_runtime import _runtime_install_report  # noqa: E402
 from memo.config import Config  # noqa: E402
-from memo.dashboard import read_recall_log, recall_health  # noqa: E402
+from memo.dashboard import read_recall_log, recall_health, verdict  # noqa: E402
+from memo.dashboard_panels import _fetch_memflow_utility  # noqa: E402
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -524,6 +525,8 @@ def build(
         },
         "doctor_raw": doctor,
         "contradictions": contradictions or {},
+        "verdict": verdict(cfg.state_dir, limit=500),
+        "memflow_util": _fetch_memflow_utility(),
     }
 
     out_path = output if output else REPO_ROOT / "web" / "health.html"
@@ -660,6 +663,27 @@ _HTML_TEMPLATE = r"""<!doctype html>
 
 <main>
   <section class="pillars" id="pillars"></section>
+
+  <div class="row2">
+    <div class="panel" id="verdict-panel" style="border-width:2px;">
+      <h2>¿Funciona memo?</h2>
+      <div id="verdict-label" style="font-size:1.8rem;font-weight:800;line-height:1.2;">—</div>
+      <div id="verdict-sub" style="color:var(--fg-mute);font-size:0.85rem;margin:0.3rem 0 0.8rem;">—</div>
+      <div style="font-size:0.82rem;line-height:1.8;">
+        <div><span style="color:var(--fg-mute);">lee:&nbsp;</span><span id="verdict-readers" style="color:var(--green);">—</span></div>
+        <div><span style="color:var(--fg-mute);">NO lee:&nbsp;</span><span id="verdict-silent" style="color:var(--red);font-weight:600;">—</span></div>
+      </div>
+    </div>
+    <div class="panel" id="memflow-panel">
+      <h2>memflow utility</h2>
+      <div id="memflow-estado" style="font-size:1.1rem;font-weight:700;margin-bottom:0.6rem;">—</div>
+      <table><tbody>
+        <tr><td style="color:var(--fg-mute);">reads 7d</td><td id="mf-reads" style="text-align:right;font-weight:600;">—</td></tr>
+        <tr><td style="color:var(--fg-mute);">memory_used</td><td id="mf-used" style="text-align:right;font-weight:600;">—</td></tr>
+        <tr><td style="color:var(--fg-mute);">re_explain</td><td id="mf-reexplain" style="text-align:right;font-weight:600;">—</td></tr>
+      </tbody></table>
+    </div>
+  </div>
 
   <div class="grid">
     <div class="panel">
@@ -831,6 +855,43 @@ _HTML_TEMPLATE = r"""<!doctype html>
       ? ru.bailed + ' omitidas (prompts cortos / slash commands)'
       : 'recall.log vacío';
   }
+
+  // -- verdict (¿funciona memo?) ----------------------------------------
+  const V = DATA.verdict || {};
+  const vColors = { ok: 'var(--green)', weak: 'var(--yellow)', unused: 'var(--red)' };
+  const vColor = vColors[V.status] || 'var(--red)';
+  const vPanel = document.getElementById('verdict-panel');
+  if (vPanel) vPanel.style.borderColor = vColor;
+  document.getElementById('verdict-label').textContent = V.label || '❌ NO SE USA';
+  document.getElementById('verdict-label').style.color = vColor;
+  const gr = V.grounded_rate == null ? '—' : Math.round(V.grounded_rate * 100) + '%';
+  document.getElementById('verdict-sub').textContent = `grounded ${gr} · ${V.consults || 0} consultas`;
+  const per = V.per_consumer || [];
+  const readers = per.filter(p => p.reads).map(p => p.name + ' ✅');
+  const silent  = per.filter(p => !p.reads).map(p => p.name + ' ❌');
+  document.getElementById('verdict-readers').textContent = readers.length ? readers.join('  ') : '—';
+  document.getElementById('verdict-silent').textContent  = silent.length  ? silent.join('  ')  : 'ninguno';
+
+  // -- memflow utility ---------------------------------------------------
+  const MF = DATA.memflow_util || {};
+  const cons = MF.consumption || {}, outc = MF.outcome || {};
+  const reads = cons.total_read_calls || 0;
+  const reexp = outc.re_explain || 0;
+  const used  = outc.memory_used_rate;
+  let mfEstado, mfColor;
+  if (!MF.consumption) { mfEstado = 'no disponible'; mfColor = 'var(--fg-mute)'; }
+  else if (reads < 5)  { mfEstado = '❌ casi no se lee'; mfColor = 'var(--red)'; }
+  else if (used == null) { mfEstado = '⚠️ sin outcomes aún'; mfColor = 'var(--yellow)'; }
+  else if (used >= 0.10 && reexp < 10) { mfEstado = '✅ útil'; mfColor = 'var(--green)'; }
+  else { mfEstado = '⚠️ poco útil'; mfColor = 'var(--yellow)'; }
+  const mfEl = document.getElementById('memflow-estado');
+  mfEl.textContent = mfEstado; mfEl.style.color = mfColor;
+  const mfp = document.getElementById('memflow-panel');
+  if (mfp) mfp.style.borderColor = mfColor;
+  document.getElementById('mf-reads').textContent = reads;
+  document.getElementById('mf-used').textContent = used == null ? '—' : Math.round(used * 100) + '%';
+  const reEl = document.getElementById('mf-reexplain');
+  reEl.textContent = reexp; if (reexp >= 10) reEl.style.color = 'var(--red)';
 
   // -- tables ------------------------------------------------------------
   const histBody = document.querySelector("#history-table tbody");
