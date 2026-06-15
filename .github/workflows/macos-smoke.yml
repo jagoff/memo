@@ -35,7 +35,14 @@ jobs:
       - name: Type check (mypy)
         run: .venv/bin/mypy src/memo
       - name: Runtime smoke
-        run: .venv/bin/memo doctor --strict-runtime
+        # CI legitimately runs from the project .venv, so `--strict-runtime`
+        # (which flags any project-venv install) is unsatisfiable here. Drop it
+        # and point at a throwaway data_dir the runner can create.
+        env:
+          MEMO_DATA_DIR: ${{ runner.temp }}/memo-data
+        run: |
+          mkdir -p "$MEMO_DATA_DIR"
+          .venv/bin/memo doctor
       - name: Real-MLX smoke tests
         run: .venv/bin/python -m pytest tests/test_smoke_mlx.py::test_embedder_produces_unit_vectors tests/test_smoke_mlx.py::test_save_and_search_roundtrip -m requires_mlx --timeout=300 -v
       - name: Installer smoke
