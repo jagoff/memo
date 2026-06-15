@@ -8,9 +8,11 @@ from pathlib import Path
 from memo.dashboard import (
     _human_age,
     _human_bytes,
+    append_grounding_log,
     append_recall_log,
     read_recall_log,
     sparkline,
+    verdict,
 )
 
 
@@ -127,3 +129,63 @@ def test_human_bytes_units() -> None:
     assert _human_bytes(2048) == "2.0 KB"
     assert _human_bytes(3 * 1024 * 1024) == "3.0 MB"
     assert _human_bytes(2 * 1024 ** 3) == "2.00 GB"
+
+
+def test_verdict_unused_when_too_few_consults(tmp_path: Path) -> None:
+    for i in range(5):
+        append_recall_log(tmp_path, prompt=f"q{i}", hits=[], via="daemon", client="claude-code")
+    v = verdict(tmp_path)
+    assert v["status"] == "unused"
+    assert v["label"].startswith("❌")
+
+
+def test_verdict_weak_when_read_but_not_grounded(tmp_path: Path) -> None:
+    # Enough reads with hits, but nothing grounded → read but not helping.
+    for i in range(25):
+        append_recall_log(
+            tmp_path,
+            prompt=f"q{i}",
+            hits=[{"id": f"id{i:04d}", "score": 0.9, "title": "t"}],
+            via="daemon",
+            client="claude-code",
+            session_id="s1",
+            turn=i,
+        )
+    v = verdict(tmp_path)
+    assert v["status"] == "weak"
+    assert v["consults"] >= 20
+
+
+def test_verdict_ok_when_read_and_grounded(tmp_path: Path) -> None:
+    for i in range(25):
+        append_recall_log(
+            tmp_path,
+            prompt=f"q{i}",
+            hits=[{"id": f"id{i:04d}", "score": 0.9, "title": "t"}],
+            via="daemon",
+            client="claude-code",
+            session_id="s1",
+            turn=i,
+        )
+        # Ground every recall so grounded_rate is ~1.0 (>= 10% threshold).
+        append_grounding_log(
+            tmp_path,
+            session_id="s1",
+            turn=i,
+            recall_id=f"id{i:04d}",
+            used_score=0.9,
+            method="overlap",
+        )
+    v = verdict(tmp_path)
+    assert v["status"] == "ok"
+    assert v["label"].startswith("✅")
+
+
+def test_verdict_marks_expected_consumers_silent(tmp_path: Path) -> None:
+    for i in range(3):
+        append_recall_log(tmp_path, prompt=f"q{i}", hits=[], via="daemon", client="claude-code")
+    v = verdict(tmp_path)
+    by_name = {p["name"]: p["reads"] for p in v["per_consumer"]}
+    assert by_name["claude-code"] is True
+    assert by_name["memflow"] is False
+    assert "memflow" in v["silent"]
