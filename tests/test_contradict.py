@@ -24,7 +24,9 @@ from memo.temporal import Contradiction, TemporalAnalyzer
 
 @pytest.fixture
 def store(tmp_path):
-    return ContradictionStore(tmp_path / "contradictions.db")
+    s = ContradictionStore(tmp_path / "contradictions.db")
+    yield s
+    s.close()
 
 
 def test_canonical_pair_is_order_independent():
@@ -176,7 +178,9 @@ def mem_with_stub_embed(tmp_cfg: Config, monkeypatch) -> Memory:
         return out
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
-    return Memory(cfg)
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
 
 
 def _stage_classify_pair(monkeypatch, verdict: Contradiction | None):

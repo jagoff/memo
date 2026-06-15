@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from memo.memory import Memory
+
+
+def test_save_index_failure_recovers_on_reindex(mem_with_stub: Memory, monkeypatch):
+    calls = {"n": 0}
+    real_embed = type(mem_with_stub.embedder).embed
+
+    def _flaky(self, inputs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("embedder down")
+        return real_embed(self, inputs)
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _flaky)
+    rec = mem_with_stub.save(content="recupera via reindex", title="Reindexable")
+    assert not mem_with_stub.store.has_vector(rec.id)
+
+    out = mem_with_stub.reindex()
+    assert out["reindexed"] >= 1
+    assert mem_with_stub.store.has_vector(rec.id)
+
+
+def test_edit_md_then_reindex_markdown_wins(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="contenido original", title="Editable")
+    abs_path = mem_with_stub.cfg.memory_dir / rec.path
+    text = abs_path.read_text(encoding="utf-8")
+    abs_path.write_text(text.replace("contenido original", "contenido EDITADO a mano"), encoding="utf-8")
+
+    out = mem_with_stub.reindex()
+    assert out["reindexed"] >= 1
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert "EDITADO a mano" in fetched.body
+    assert "contenido original" not in fetched.body
+
+
+def test_reindex_rebuild_preserves_signal(mem_with_stub: Memory):
+    a = mem_with_stub.save(content="memoria una", title="A")
+    b = mem_with_stub.save(content="memoria dos", title="B")
+    store = mem_with_stub.store
+    store.touch([a.id])
+    store.touch([a.id])
+    store.boost_roi_batch([b.id], delta=0.3)
+    assert store.get_access(a.id)["access_count"] == 2
+    assert store.get_health_batch([b.id])[b.id]["roi_score"] > 1.0
+
+    out = mem_with_stub.reindex(rebuild=True)
+    assert out["added"] == 2
+    assert mem_with_stub.store.count() == 2
+    assert store.get_access(a.id)["access_count"] == 2
+    assert store.get_health_batch([b.id])[b.id]["roi_score"] > 1.0
+    assert mem_with_stub.get(a.id) is not None
+    assert mem_with_stub.get(b.id) is not None
+
+
+def test_reindex_rebuild_drops_orphans(mem_with_stub: Memory):
+    a = mem_with_stub.save(content="vive", title="A")
+    b = mem_with_stub.save(content="muere", title="B")
+    (mem_with_stub.cfg.memory_dir / b.path).unlink()
+
+    out = mem_with_stub.reindex(rebuild=True)
+    assert out["added"] == 1
+    assert mem_with_stub.get(a.id) is not None
+    assert mem_with_stub.get(b.id) is None
+    assert mem_with_stub.store.count() == 1
+
+
+def test_reindex_embedding_reuse_skips_second_pass(mem_with_stub: Memory, monkeypatch):
+    mem_with_stub.save(content="alpha", title="A")
+    mem_with_stub.save(content="beta", title="B")
+    mem_with_stub.reindex(force=True)
+
+    calls = {"n": 0}
+    real_embed = type(mem_with_stub.embedder).embed
+
+    def _counting(self, inputs):
+        calls["n"] += 1
+        return real_embed(self, inputs)
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _counting)
+    out = mem_with_stub.reindex(force=True)
+    assert out["reindexed"] == 2
+    assert calls["n"] == 0
+
+
+def test_reindex_force_reuses_warm_embed_cache(mem_with_stub: Memory, monkeypatch):
+    rec = mem_with_stub.save(content="cuerpo", title="X")
+    calls: list[int] = []
+    orig = mem_with_stub.embedder.embed
+
+    def _spy(inputs):
+        calls.append(len(inputs))
+        return orig(inputs)
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _spy)
+
+    counts = mem_with_stub.reindex()
+    assert counts["reindexed"] == 0
+    assert calls == []
+
+    counts = mem_with_stub.reindex(force=True)
+    assert counts["reindexed"] == 1
+    assert calls == []
+
+    with mem_with_stub.store._conn:
+        mem_with_stub.store._conn.execute("DELETE FROM repo_embedding_cache")
+    calls.clear()
+    counts = mem_with_stub.reindex(force=True)
+    assert counts["reindexed"] == 1
+    assert calls == [1]
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert fetched.title == "X"
+
+
+def test_reindex_picks_up_external_edit(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="primero", title="X")
+    abs_path = mem_with_stub.cfg.memory_dir / rec.path
+    import frontmatter as fm
+
+    post = fm.loads(abs_path.read_text())
+    post.content = "cuerpo editado a mano"
+    abs_path.write_text(fm.dumps(post), encoding="utf-8")
+
+    counts = mem_with_stub.reindex()
+    assert counts["reindexed"] == 1
+    assert counts["added"] == 0
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert "editado a mano" in fetched.body
+
+
+def test_reindex_adds_orphan_disk_file(mem_with_stub: Memory):
+    import frontmatter as fm
+
+    md = mem_with_stub.cfg.memory_dir / "2026-05-06-restored.md"
+    post = fm.Post(
+        "memo restaurado de un backup",
+        id="ffeeddccbbaa00112233445566778899",
+        title="Restored",
+        type="note",
+        tags=["backup"],
+        created="2026-05-06T19:00:00-03:00",
+        updated="2026-05-06T19:00:00-03:00",
+    )
+    md.write_text(fm.dumps(post), encoding="utf-8")
+    counts = mem_with_stub.reindex()
+    assert counts["added"] == 1
+    fetched = mem_with_stub.get("ffeeddccbbaa00112233445566778899")
+    assert fetched is not None
+    assert fetched.title == "Restored"
+
+
+def test_gc_reports_and_fixes_orphans(mem_with_stub: Memory):
+    a = mem_with_stub.save(content="vivo", title="A")
+    b = mem_with_stub.save(content="vivo", title="B")
+    (mem_with_stub.cfg.memory_dir / b.path).unlink()
+    report = mem_with_stub.gc(fix=False)
+    assert b.id in report["orphan_store"]
+    assert a.id not in report["orphan_store"]
+    assert mem_with_stub.store.get(b.id) is not None
+    mem_with_stub.gc(fix=True)
+    assert mem_with_stub.store.get(b.id) is None

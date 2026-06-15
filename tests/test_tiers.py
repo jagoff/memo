@@ -15,7 +15,9 @@ from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES, is_reference_candidate
 
 @pytest.fixture
 def store(tmp_path):
-    return VecStore(tmp_path / "test.db", dims=4)
+    s = VecStore(tmp_path / "test.db", dims=4)
+    yield s
+    s.close()
 
 
 def _emb(*vals: float) -> list[float]:

@@ -49,12 +49,23 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.synthesize_cross_cluster(**kwargs)
 
     @server.tool()
-    def memory_synthesize_list() -> list[dict[str, Any]]:
+    def memory_synthesize_list(
+        confidence: str | None = None,
+    ) -> list[dict[str, Any]]:
         """List all existing synthesis memorias with their provenance.
 
         Returns synthesis memories (type=synthesis) including the source
         memory IDs that contributed to each insight.
+
+        Args:
+            confidence: Optional filter by confidence level: "low", "medium",
+                or "high". When None (default), all synthesis memorias are
+                returned regardless of confidence.
         """
+        _valid_conf = {"low", "medium", "high"}
+        if confidence is not None and confidence not in _valid_conf:
+            raise ValueError(f"confidence must be one of {sorted(_valid_conf)} or None, got {confidence!r}")
+
         store_conn = memory.store._conn
         rows = store_conn.execute(
             "SELECT meta.id, meta.title, meta.path, meta.created, meta.updated "
@@ -84,5 +95,50 @@ def register(server: FastMCP, memory: Memory) -> None:
                         entry["body"] = post.content[:300] if post.content else ""
                     except Exception:
                         pass
+            if confidence is not None and entry["confidence"] != confidence:
+                continue
             results.append(entry)
         return results
+
+    @server.tool()
+    def memory_synthesize_delete(id: str) -> dict[str, Any]:
+        """Delete a synthesis memoria by ID.
+
+        Only deletes memories of type=synthesis. Raises an error if the
+        given ID belongs to a non-synthesis memoria, preventing accidental
+        deletion of regular memories through this tool.
+
+        Args:
+            id: The ID (or unambiguous prefix) of the synthesis memoria to delete.
+
+        Returns:
+            {"deleted": True, "id": "<full-id>"} on success, or
+            {"deleted": False, "reason": "<reason>"} on failure.
+        """
+        from memo.errors import MemoError
+
+        resolved = memory.resolve_id(id)
+        if resolved is None:
+            return {"deleted": False, "reason": f"No memoria found with id {id!r}"}
+
+        rec = memory.get(resolved)
+        if rec is None:
+            return {"deleted": False, "reason": f"No memoria found with id {id!r}"}
+
+        if rec.type != "synthesis":
+            return {
+                "deleted": False,
+                "reason": (
+                    f"Memoria {resolved!r} has type={rec.type!r}, not 'synthesis'. "
+                    "Use memory_delete to delete non-synthesis memories."
+                ),
+            }
+
+        try:
+            ok = memory.delete(resolved)
+        except MemoError as exc:
+            return {"deleted": False, "reason": str(exc)}
+
+        if ok:
+            return {"deleted": True, "id": resolved}
+        return {"deleted": False, "reason": f"Delete returned False for {resolved!r}"}

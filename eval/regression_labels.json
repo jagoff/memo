@@ -7,12 +7,177 @@
       "relevant": true,
       "expect_ids": ["231d4534"],
       "_note": "2026-06-08 incident: garbled AWS-console OCR screenshots (99-Attachments) outranked the real note 'Deploy nuevas lambda' (work/03-Resources), causing a fabricated answer (us-east-1, lambda-athena-billing-report). Fixed by the OCR confidence gate (6a7fcaa). This prompt guards the whole class."
+    },
+
+    {
+      "text": "what did I decide about the MLX embedder model",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Decision lookup — should surface preference/decision memories about Qwen3-Embedding model selection (0.6B vs 4B vs 8B)."
+    },
+    {
+      "text": "qué decidí sobre el modelo de embedding de MLX",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Spanish variant of the MLX embedder decision query."
+    },
+    {
+      "text": "what is sqlite-vec and how does memo use it",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Technology lookup — should surface architecture/stack notes about sqlite-vec integration."
+    },
+    {
+      "text": "how does Qwen3 embedding work in memo",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Technology lookup — Qwen3-Embedding model usage, asymmetric retrieval prefix."
+    },
+    {
+      "text": "what is my MacBook model and specs",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Short fact query — should surface hardware/machine fact memory (M3 Max, 36GB)."
+    },
+    {
+      "text": "cuál es mi laptop y sus especificaciones",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Spanish variant of hardware fact query."
+    },
+    {
+      "text": "what do I know about Fernando Ferrari",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Entity lookup — identity/profile memory. Should surface contact or self-description notes."
+    },
+    {
+      "text": "what did I work on last month",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Time-based query — recent work activity. Should NOT surface very old/archived entries."
+    },
+    {
+      "text": "what are the ports and daemons running in the stack",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "System topology — should surface daemon/port registry notes (memo-mcp, synapse, memflow)."
+    },
+    {
+      "text": "qué puertos y daemons corren en el stack",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Spanish variant of ports/daemons query."
+    },
+    {
+      "text": "how does the memo recall hook work",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Architecture query — should surface recall hook / UserPromptSubmit hook notes."
+    },
+    {
+      "text": "cómo funciona el recall hook de memo",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Spanish variant of recall hook architecture query."
+    },
+    {
+      "text": "what did I decide about memory storage location",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Decision lookup — should surface MEMO_MEMORIES_IN_VAULT or vault path decisions."
+    },
+    {
+      "text": "how does memflow work with memo",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Integration architecture — memo/memflow role split, cross-agent consciousness."
+    },
+    {
+      "text": "qué decidí sobre la separación de roles entre memo y memflow",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Spanish decision query — memo vs memflow role split decision."
+    },
+    {
+      "text": "what is the synapse dashboard URL",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Short fact — synapse dashboard address (localhost:8765)."
+    },
+    {
+      "text": "what does BM25 do in memo search",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Technology lookup — BM25/FTS5 hybrid retrieval in memo."
+    },
+    {
+      "text": "what Obsidian vaults do I have",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Entity/fact lookup — should surface vault registry (notes, work, finances)."
+    },
+    {
+      "text": "cuántas bóvedas de Obsidian tengo y cuáles son",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Spanish variant of Obsidian vaults query."
+    },
+    {
+      "text": "what is RRF and how is it used in retrieval",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Technology lookup — Reciprocal Rank Fusion used in memo hybrid search."
+    },
+    {
+      "text": "what did I decide about the graph knowledge layer in memo",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Decision lookup — knowledge graph design decisions."
+    },
+    {
+      "text": "what is memo's MCP server port",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Short fact — memo-mcp server configuration."
+    },
+    {
+      "text": "qué stack de herramientas de IA uso en este Mac",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Spanish entity query — AI tools stack (memo, memflow, synapse, obsidian-rag)."
+    },
+    {
+      "text": "what is the uv tool and how do I use it in memo",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Tooling lookup — uv package manager usage in memo dev workflow."
+    },
+
+    {
+      "text": "best pasta recipe for tonight",
+      "relevant": false,
+      "_note": "Noise probe — culinary content not in the developer's vault."
+    },
+    {
+      "text": "what is the weather tomorrow",
+      "relevant": false,
+      "_note": "Noise probe — real-time query with no stored answer."
+    },
+    {
+      "text": "explain quantum entanglement",
+      "relevant": false,
+      "_note": "Noise probe — general physics, not stored as a personal memory."
     }
   ],
   "relevant_terms": [
-    "lambda", "deploy", "dev-publiccloudinfrastructure", "publiccloudinfrastructure"
+    "lambda", "deploy", "dev-publiccloudinfrastructure", "publiccloudinfrastructure",
+    "mlx", "sqlite-vec", "qwen3", "embedding", "embedder",
+    "memo", "memflow", "synapse", "obsidian",
+    "recall", "hook", "daemon", "bm25", "rrf",
+    "macbook", "m3", "vault", "uv"
   ],
-  "noise_tags": ["standalone-image"],
-  "noise_path_fragments": ["99-Attachments/", "/99-Attachments/"],
+  "noise_tags": ["standalone-image", "04-archive", "garbled-ocr"],
+  "noise_path_fragments": ["99-Attachments/", "/99-Attachments/", "/04-archive/", "04-archive/", "/old/", "/companies/"],
   "session_context": "trabajo: deploy de lambdas en el entorno dev-PublicCloudInfrastructure"
 }

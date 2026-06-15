@@ -16,8 +16,10 @@ from memo.store import VecStore
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> VecStore:
-    return VecStore(tmp_path / "vec.db", dims=4)
+def store(tmp_path: Path):
+    s = VecStore(tmp_path / "vec.db", dims=4)
+    yield s
+    s.close()
 
 
 def _emb(*xs: float) -> list[float]:
@@ -115,6 +117,32 @@ def test_search_filters_by_type(store: VecStore):
     assert [h["id"] for h in hits] == ["d1"]
 
 
+def test_search_exclude_types_multi_value(store: VecStore):
+    """Multi-value exclude_types must exclude ALL named types without 5x over-fetch.
+
+    sqlite-vec supports chained `AND vec.type != ?` predicates as KNN push-down
+    filters, so exclude_types={"decision", "reference"} must return zero rows of
+    either type even when limit=1 (no over-fetch needed to fill the result set).
+    """
+    for id_, type_ in [
+        ("n1", "note"),
+        ("d1", "decision"),
+        ("r1", "reference"),
+        ("f1", "fact"),
+    ]:
+        store.upsert(
+            id_=id_, path=f"memory/{id_}.md", title=id_, type_=type_, tags=[],
+            created="t", updated="t", body_hash="h", embedding=_emb(1, 0, 0, 0),
+        )
+    hits = store.search(_emb(1, 0, 0, 0), limit=10, exclude_types={"decision", "reference"})
+    hit_types = {h["type"] for h in hits}
+    assert "decision" not in hit_types, "decision should be excluded"
+    assert "reference" not in hit_types, "reference should be excluded"
+    hit_ids = {h["id"] for h in hits}
+    assert "n1" in hit_ids, "note should survive"
+    assert "f1" in hit_ids, "fact should survive"
+
+
 def test_delete_removes_from_both_tables(store: VecStore):
     store.upsert(
         id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
@@ -126,12 +154,32 @@ def test_delete_removes_from_both_tables(store: VecStore):
 
 
 def test_dim_mismatch_raises(store: VecStore):
-    with pytest.raises(ValueError, match="dim mismatch"):
+    with pytest.raises(ValueError, match="dimension mismatch"):
         store.upsert(
             id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
             created="t", updated="t", body_hash="h",
             embedding=[1.0, 0.0],  # 2-dim, store expects 4
         )
+
+
+def test_unit_norm_wrong_dims_still_rejected_at_write(store: VecStore):
+    """A wrong-dims vector that is perfectly unit-norm must still fail fast.
+
+    The norm check (≈1.0) cannot catch a model/dims swap: a 2-dim unit vector
+    passes the norm guard but corrupts a 4-dim store. The length guard must
+    reject it, name both dims, and point at `memo reindex`.
+    """
+    unit_2d = _emb(0.6, 0.8)  # length 2, L2-norm exactly 1.0
+    assert abs(sum(x * x for x in unit_2d) ** 0.5 - 1.0) < 1e-9
+    with pytest.raises(ValueError) as excinfo:
+        store.upsert(
+            id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
+            created="t", updated="t", body_hash="h",
+            embedding=unit_2d,
+        )
+    msg = str(excinfo.value)
+    assert "2" in msg and "4" in msg  # names both got + expected
+    assert "reindex" in msg
 
 
 def test_existing_vec_table_dim_mismatch_fails_fast(tmp_path: Path):
@@ -363,3 +411,112 @@ def test_legacy_vec_schema_migrates_in_place(tmp_path: Path):
 
     # Idempotent: re-opening the now-migrated DB is a no-op (no raise).
     VecStore(db, dims=4)
+
+
+# ── Embedder version-check tests ──────────────────────────────────────────
+
+
+def test_embedder_version_stamped_on_first_open(tmp_path: Path):
+    """First open with a real model name stamps schema_meta rows."""
+    db = tmp_path / "v.db"
+    s = VecStore(db, dims=8, embedder_model="vendor/Model-A")
+    rows = {
+        r["key"]: r["value"]
+        for r in s._conn.execute("SELECT key, value FROM schema_meta").fetchall()
+    }
+    assert rows.get("embedder_model") == "vendor/Model-A"
+    assert rows.get("embedder_dims") == "8"
+    s.close()
+
+
+def test_embedder_version_reopen_same_model_is_ok(tmp_path: Path):
+    """Reopening with the same model/dims does not raise."""
+    db = tmp_path / "v.db"
+    s = VecStore(db, dims=8, embedder_model="vendor/Model-A")
+    s.close()
+    # Should not raise
+    s2 = VecStore(db, dims=8, embedder_model="vendor/Model-A")
+    s2.close()
+
+
+def test_embedder_version_mismatch_raises(tmp_path: Path):
+    """Opening with a different model raises StorageError with a clear message."""
+    from memo.errors import StorageError
+
+    db = tmp_path / "v.db"
+    s = VecStore(db, dims=8, embedder_model="vendor/Model-A")
+    s.close()
+
+    with pytest.raises(StorageError, match="Embedder model mismatch"):
+        VecStore(db, dims=8, embedder_model="vendor/Model-B")
+
+
+def test_embedder_version_dims_mismatch_raises(tmp_path: Path):
+    """Storing dims=8 then reopening with dims=8 but schema_meta says 4 raises StorageError.
+
+    We manipulate schema_meta directly to test the dims-check path without
+    triggering the earlier vec-table dims check (which fires when the vec0 table
+    was created with different dims).
+    """
+    import sqlite3
+    from memo.errors import StorageError
+
+    db = tmp_path / "v.db"
+    # Create with model-A / 8 dims
+    s = VecStore(db, dims=8, embedder_model="vendor/Model-A")
+    # Overwrite stored dims to simulate an old DB built with a different dims
+    with s._conn:
+        s._conn.execute(
+            "UPDATE schema_meta SET value = '4' WHERE key = 'embedder_dims'"
+        )
+    s.close()
+
+    # Reopen with same vec dims (so _validate_vec_dims is happy) but schema_meta disagrees
+    with pytest.raises(StorageError, match="Embedder model mismatch"):
+        VecStore(db, dims=8, embedder_model="vendor/Model-A")
+
+
+def test_embedder_version_bypass_empty_model(tmp_path: Path):
+    """Empty embedder_model (test stub) skips version check — no schema_meta written."""
+    db = tmp_path / "v.db"
+    # First open with empty (stub) model
+    s = VecStore(db, dims=4)
+    # schema_meta should have no embedder_model row (bypass was triggered)
+    rows = s._conn.execute("SELECT key FROM schema_meta").fetchall()
+    keys = {r["key"] for r in rows}
+    assert "embedder_model" not in keys
+    # Reopen with same dims but a different empty model — no error (bypass active)
+    s.close()
+    s2 = VecStore(db, dims=4)
+    s2.close()
+
+
+def test_embedder_version_bypass_env_flag(tmp_path: Path, monkeypatch):
+    """MEMO_SKIP_MODEL_VERSION_CHECK=1 bypasses the check."""
+    from memo.errors import StorageError
+
+    db = tmp_path / "v.db"
+    s = VecStore(db, dims=8, embedder_model="vendor/Model-A")
+    s.close()
+
+    monkeypatch.setenv("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
+    # Would normally raise, but env bypass prevents it
+    s2 = VecStore(db, dims=8, embedder_model="vendor/Model-B")
+    s2.close()
+
+
+def test_embedder_version_error_message_is_actionable(tmp_path: Path):
+    """StorageError message names both models and instructs the user."""
+    from memo.errors import StorageError
+
+    db = tmp_path / "v.db"
+    VecStore(db, dims=8, embedder_model="vendor/OldModel").close()
+
+    # Reopen with same dims (so vec table is compatible) but different model name
+    with pytest.raises(StorageError) as exc_info:
+        VecStore(db, dims=8, embedder_model="vendor/NewModel")
+
+    msg = str(exc_info.value)
+    assert "vendor/OldModel" in msg
+    assert "vendor/NewModel" in msg
+    assert "memo reindex --rebuild" in msg

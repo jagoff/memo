@@ -33,7 +33,9 @@ def mem(tmp_cfg: Config, monkeypatch) -> Memory:
         "memo.embedder.MLXEmbedder.embed",
         lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
     )
-    return Memory(cfg)
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
 
 
 def _tool(server, name):

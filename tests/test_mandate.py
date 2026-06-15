@@ -8,7 +8,7 @@ from memo.cli_mandate import _MARKER, MANDATE_TEXT, _write_mandate
 
 
 def test_expected_consumers_covers_non_hook_clients() -> None:
-    for c in ("claude-code", "synapse", "memflow", "codex", "devin", "windsurf"):
+    for c in ("claude-code", "synapse", "memflow", "codex", "devin", "opencode", "windsurf"):
         assert c in dashboard.EXPECTED_CONSUMERS
 
 

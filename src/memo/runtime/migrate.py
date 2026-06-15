@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+import shutil
+import sqlite3
+import sys
+from pathlib import Path
+
+import click
+
+from memo.cli_common import console
+from memo.config import Config
+from memo.setup import run_picker, write_config_file
+
+
+def _consolidate_sidecar_dbs() -> None:
+    from memo.contradict import ContradictionStore
+    from memo.crossref import CrossReferenceIndex
+    from memo.graph import GraphStore
+    from memo.history import HistoryStore
+
+    cfg = Config.from_env()
+    if cfg.single_db:
+        console.print("[yellow]![/yellow] already in single_db mode — nothing to merge")
+    main_db = cfg.db_path
+
+    legacy_tables: dict[Path, list[str]] = {
+        cfg.state_dir / "history.db": ["events", "sync_state"],
+        cfg.state_dir / "graph.db": ["entities", "entity_memoria"],
+        cfg.state_dir / "contradictions.db": ["pairs"],
+        cfg.state_dir / "crossref.db": ["backlinks"],
+    }
+
+    HistoryStore(main_db, device_id=cfg.device_id).close()
+    GraphStore(main_db).close()
+    ContradictionStore(main_db).close()
+    CrossReferenceIndex(main_db).close()
+
+    merged_any = False
+    conn = sqlite3.connect(str(main_db), timeout=10.0)
+    try:
+        conn.execute("PRAGMA busy_timeout = 10000")
+        for legacy, tables in legacy_tables.items():
+            if not legacy.is_file():
+                continue
+            conn.execute("ATTACH DATABASE ? AS legacy", (str(legacy),))
+            try:
+                present = {
+                    str(r[0])
+                    for r in conn.execute(
+                        "SELECT name FROM legacy.sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                for tbl in tables:
+                    if tbl not in present:
+                        continue
+                    conn.execute(f"INSERT OR IGNORE INTO main.{tbl} SELECT * FROM legacy.{tbl}")
+                conn.commit()
+            finally:
+                conn.execute("DETACH DATABASE legacy")
+            bak = legacy.with_suffix(legacy.suffix + ".bak")
+            legacy.replace(bak)
+            console.print(f"[green]✓[/green] merged {legacy.name} → memvec.db, renamed → {bak.name}")
+            merged_any = True
+    finally:
+        conn.close()
+
+    if not merged_any:
+        console.print("[dim]No legacy sidecar files found to merge.[/dim]")
+
+    existing = Config.from_env()
+    write_config_file(
+        data_dir=existing.data_dir,
+        vault_path=existing.vault_path,
+        memories_in_vault=existing.memories_in_vault,
+        single_db=True,
+    )
+    console.print("[green]✓[/green] set single_db=1 in config — memo now uses one DB file")
+
+
+@click.command(name="migrate-vault")
+@click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
+@click.option("--from", "from_dir", default=None, type=click.Path(exists=True, file_okay=False, resolve_path=True), help="Source memory_dir. Defaults to current cfg.memory_dir.")
+@click.option("--into-vault", is_flag=True, help="Move memorias INTO the Obsidian vault (<vault>/<SYSTEM_DIR>/AI/memory) and set memories_in_vault=1 so the vault becomes the source of truth.")
+@click.option("--rollback", is_flag=True, help="Restore the config snapshot taken by the last migration and exit. Copied files are left in place (migration never deletes anything).")
+@click.option("--consolidate-db", is_flag=True, help="Merge the sidecar DBs (history/graph/contradictions/crossref) into the main memvec.db, set MEMO_SINGLE_DB=1 in config, and rename the legacy files to *.db.bak (reversible). Idempotent. Does not move any .md files.")
+@click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
+@click.option("--yes", is_flag=True, help="Skip confirmation.")
+def migrate_vault(
+    new_data_dir: str | None,
+    from_dir: str | None,
+    into_vault: bool,
+    rollback: bool,
+    consolidate_db: bool,
+    force: bool,
+    yes: bool,
+) -> None:
+    from memo.config import AI_SUBDIR
+    from memo.memory import Memory
+    from memo.setup.config_io import _resolve_config_path
+
+    snapshot = _resolve_config_path().with_suffix(".toml.pre-migrate.bak")
+    if rollback:
+        if not snapshot.is_file():
+            console.print(f"[red]✗[/red] no migration snapshot found at {snapshot}")
+            sys.exit(1)
+        shutil.copy2(snapshot, _resolve_config_path())
+        console.print(f"[green]✓[/green] restored config from snapshot {snapshot}")
+        console.print(
+            "[dim]Copied memoria files were left in place; remove them manually "
+            "if you no longer want them.[/dim]"
+        )
+        return
+
+    if consolidate_db:
+        _consolidate_sidecar_dbs()
+        return
+
+    cfg = Config.from_env()
+    src = Path(from_dir).resolve() if from_dir else cfg.memory_dir
+    if not src.is_dir():
+        console.print(f"[red]✗[/red] source dir does not exist: {src}")
+        sys.exit(1)
+
+    if into_vault:
+        chosen_vault = cfg.vault_path
+        if chosen_vault is None:
+            console.print(
+                "[red]✗[/red] --into-vault needs a vault: set MEMO_VAULT_PATH or run "
+                "`memo init` and pick an Obsidian vault first."
+            )
+            sys.exit(1)
+        dst = (chosen_vault / AI_SUBDIR / "memory").resolve()
+    elif new_data_dir:
+        dst = Path(new_data_dir).resolve()
+        chosen_vault = cfg.vault_path
+    else:
+        try:
+            result = run_picker()
+        except KeyboardInterrupt:
+            console.print("[yellow]aborted[/yellow]")
+            sys.exit(130)
+        dst = result.data_dir
+        chosen_vault = result.vault_path
+
+    if dst == src:
+        console.print(f"[red]✗[/red] source and destination are the same: {src}")
+        sys.exit(1)
+
+    md_files = sorted(src.rglob("*.md"))
+    if dst.exists() and any(dst.iterdir()) and not force:
+        console.print(
+            f"[red]✗[/red] destination is non-empty: {dst}\n  Use --force to overwrite.",
+        )
+        sys.exit(1)
+
+    if not yes:
+        click.confirm(
+            f"Copy {len(md_files)} memorias from\n  {src}\n→ {dst}\n"
+            "and rebuild memvec.db. Source files will be left in place. "
+            "Proceed?",
+            abort=True,
+        )
+
+    dst.mkdir(parents=True, exist_ok=True)
+    n_copied = 0
+    for md in md_files:
+        rel = md.relative_to(src)
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(md, target)
+        n_copied += 1
+    console.print(f"[green]✓[/green] copied {n_copied} files → {dst}")
+
+    existing_cfg = _resolve_config_path()
+    if existing_cfg.is_file():
+        shutil.copy2(existing_cfg, snapshot)
+        console.print(f"[green]✓[/green] config snapshot → {snapshot} (use --rollback to restore)")
+    if into_vault:
+        cfg_path = write_config_file(data_dir=cfg.data_dir, vault_path=chosen_vault, memories_in_vault=True)
+    else:
+        cfg_path = write_config_file(data_dir=dst, vault_path=chosen_vault)
+    console.print(f"[green]✓[/green] config: {cfg_path}")
+
+    new_cfg = Config.from_env()
+    mem = Memory(new_cfg)
+    counts = mem.reindex()
+    console.print(
+        f"[green]✓[/green] reindex: checked {counts['checked']}  "
+        f"added {counts['added']}  reindexed {counts['reindexed']}  "
+        f"skipped {counts['skipped']}"
+    )
+    console.print(
+        f"\n[dim]Source files at {src} were left untouched. "
+        "After verifying the migration with `memo search`, you can rm them.[/dim]"
+    )

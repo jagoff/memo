@@ -52,3 +52,6 @@ web/health.html
 
 # Local backup archives
 memo-backup-*.zip
+
+# graphify tool output (local analysis cache)
+graphify-out/

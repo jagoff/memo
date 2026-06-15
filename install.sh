@@ -189,16 +189,17 @@ main() {
   MEMO_NONINTERACTIVE=1 "$memo_bin" doctor --strict-runtime
 
   if [[ "${MEMO_INSTALL_SKIP_AGENT_CONFIG:-0}" != "1" ]]; then
-    say "configuring MCP clients: Claude Code, Codex, Windsurf"
+    say "configuring MCP clients: Claude Code, Codex, OpenCode, Windsurf"
     if MEMO_NONINTERACTIVE=1 "$memo_bin" install-slash \
       --client claude-code \
       --client codex \
+      --client opencode \
       --client windsurf \
       --best-effort; then
       say "agent clients configured"
     else
       warn "agent client configuration did not complete."
-      warn "Re-run after installing clients: memo install-slash --client claude-code --client codex --client windsurf"
+      warn "Re-run after installing clients: memo install-slash --client claude-code --client codex --client opencode --client windsurf"
     fi
   else
     say "skipping agent client configuration (MEMO_INSTALL_SKIP_AGENT_CONFIG=1)"

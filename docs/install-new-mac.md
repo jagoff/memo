@@ -32,13 +32,14 @@ available:
 
 - Claude Code via `claude plugin ...` and `claude mcp add-json`.
 - Codex via the memo skill/plugin plus `codex mcp add`.
+- OpenCode via `opencode mcp add`.
 - Windsurf/Cascade by editing `~/.codeium/windsurf/mcp_config.json`.
 
 If one of the CLIs is not installed yet, the installer warns and continues.
 After installing that client, rerun:
 
 ```bash
-memo install-slash --client claude-code --client codex --client windsurf
+memo install-slash --client claude-code --client codex --client opencode --client windsurf
 ```
 
 To install the latest PyPI release instead of GitHub `master`:
@@ -101,7 +102,7 @@ settings:
 ```bash
 export MEMO_MODEL_PROFILE=quality
 export MEMO_EMBEDDER_DIMS=2560
-memo install-slash --client claude-code --client codex --client windsurf
+memo install-slash --client claude-code --client codex --client opencode --client windsurf
 rm -f ~/.local/share/memo/memvec.db
 memo reindex
 ```
@@ -118,10 +119,11 @@ which -a memo-mcp
 memo doctor --strict-runtime
 memo mcp-command --client claude-code
 memo mcp-command --client codex
+memo mcp-command --client opencode
 memo mcp-command --client windsurf
 ```
 
-Open a new Claude Code or Codex session after installing. In Windsurf, refresh
+Open a new Claude Code, Codex, or OpenCode session after installing. In Windsurf, refresh
 Cascade MCP servers after `~/.codeium/windsurf/mcp_config.json` changes.
 Windsurf documents that config path and refresh flow in its MCP docs:
 <https://docs.windsurf.com/windsurf/cascade/mcp>.

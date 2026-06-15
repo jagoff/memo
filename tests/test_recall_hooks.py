@@ -174,3 +174,90 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     nudge_line = context.split("relacionado):", 1)[1]
     assert "hit 3" in nudge_line and "hit 4" in nudge_line
     assert "hit 0" not in nudge_line  # top hits stay in the main block
+
+
+class _StubMicroEmbedder:
+    """Deterministic 2-dim embedder for the cold-embedder fallback path."""
+
+    def __init__(self, query_vec: list[float], doc_vecs: list[list[float]]) -> None:
+        self._query_vec = query_vec
+        self._doc_vecs = doc_vecs
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._query_vec
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self._doc_vecs[: len(texts)]
+
+
+def test_fallback_scoring_does_not_mutate_shared_hits(monkeypatch, tmp_path) -> None:
+    """The micro-embedder fallback must score into NEW records, never mutate
+    the shared frozen hits returned by `search`."""
+    def _body_rec(id_: str, title: str) -> MemoryRecord:
+        # distinct bodies so dedup doesn't collapse them as near-identical
+        return MemoryRecord(
+            id=id_, path=f"notes/{id_}.md", title=title, type="note", tags=[],
+            created="2026-05-21T00:00:00+00:00", updated="2026-05-21T00:00:00+00:00",
+            body=f"unique body for {title} " * 8, extra={}, score=0.0,
+        )
+
+    a = _body_rec("aaaa0001", "Alpha")
+    b = _body_rec("bbbb0001", "Beta")
+    candidates = [a, b]
+
+    class StubMemory:
+        embedder = SimpleNamespace(is_warm=False)
+
+        def search(self, query, limit, mode, recency=False, exclude_types=None):
+            return candidates
+
+        def _read_body(self, path):
+            return "body"
+
+    # query closer to Beta (doc index 1) than Alpha → Beta must rank first
+    micro = _StubMicroEmbedder(query_vec=[0.0, 1.0], doc_vecs=[[1.0, 0.0], [0.0, 1.0]])
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")
+    # neutralise dev-env trimming so both hits surface deterministically
+    monkeypatch.setenv("MEMO_RECALL_GAP_THRESHOLD", "0")
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+
+    result, _log = _recall_logic(
+        "q", cwd=None, mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
+        micro_embedder=micro,
+    )
+    context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
+    assert context.index("Beta") < context.index("Alpha")  # rescored + resorted
+    # the shared frozen hits keep their original (None-equivalent 0.0) score
+    assert a.score == 0.0 and b.score == 0.0
+    # original list order is untouched (we sorted a NEW list)
+    assert [h.id for h in candidates] == ["aaaa0001", "bbbb0001"]
+
+
+def test_project_tag_failure_is_logged_not_silent(monkeypatch, tmp_path, caplog) -> None:
+    """A failing project_tag resolution must be swallowed but observable."""
+    import memo.recall_logic as rl
+
+    def _boom(cwd):
+        raise RuntimeError("project resolution blew up")
+
+    monkeypatch.setattr("memo.project.current_project_tag", _boom)
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+
+    class StubMemory:
+        def search(self, query, limit, mode, recency=False, exclude_types=None):
+            return [_rec("ok000001", "Surfaced", 0.9)]
+
+    with caplog.at_level("DEBUG", logger=rl._logger.name):
+        result, _log = _recall_logic(
+            "q", cwd=str(tmp_path), mem=StubMemory(),
+            cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
+        )
+    # control flow preserved: recall still succeeds
+    assert "Surfaced" in json.loads(result)["hookSpecificOutput"]["additionalContext"]
+    # but the failure is now observable
+    assert any("project_tag resolution failed" in r.message for r in caplog.records)

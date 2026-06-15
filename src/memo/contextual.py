@@ -108,14 +108,20 @@ class ContextStore:
                     (PromptContext(**item) for item in data),
                     maxlen=self.max_context_length,
                 )
-            except Exception:
+            except Exception as exc:
+                _log.debug("contextual: failed to load context from %s: %s", self.context_file, exc)
                 self._context = deque(maxlen=self.max_context_length)
 
         if self.preferences_file.is_file():
             try:
                 data = json.loads(self.preferences_file.read_text(encoding="utf-8"))
                 self._preferences = UserPreferences(**data)
-            except Exception:
+            except Exception as exc:
+                _log.debug(
+                    "contextual: failed to load preferences from %s: %s",
+                    self.preferences_file,
+                    exc,
+                )
                 self._preferences = UserPreferences()
 
     def _sync_context_maxlen(self) -> None:
