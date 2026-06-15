@@ -229,6 +229,19 @@ def _recalled_for_turn(state_dir: Path, session_id: str, turn: int) -> list[dict
     return list(out.values())
 
 
+def _prompt_for_turn(state_dir: Path, session_id: str, turn: int) -> str:
+    """The user prompt recorded for (session_id, turn) in recall.log, for the
+    topical-baseline embedding. '' when not found."""
+    from memo.dashboard import read_recall_log
+
+    for row in read_recall_log(state_dir, limit=400):
+        if row.get("session_id") == session_id and row.get("turn") == turn:
+            p = row.get("prompt")
+            if p:
+                return str(p)
+    return ""
+
+
 def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | None:
     """Score grounding for the just-finished exchange. Returns a small summary
     dict (for tests/logging) or None when nothing was scored. Never raises."""
@@ -260,35 +273,36 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
             return None
         answer_tokens = _salient_tokens(answer)
         client = snap.get("client") or "claude-code"
+        question = _prompt_for_turn(state_dir, session_id, turn)
         # Downstream-action targets for this turn (Claude Code only; [] elsewhere).
         tool_targets = collect_recent_tool_targets(transcript_path)
 
         # Stage 1 — lexical (free).
         scored: list[dict[str, Any]] = []
-        ambiguous: list[int] = []
-        for i, m in enumerate(recalled):
+        for m in recalled:
             lex = _lexical_containment(m.get("snippet") or "", answer_tokens)
-            entry = {"m": m, "lexical": lex, "embed": None, "method": "lexical"}
-            scored.append(entry)
-            if lex < _LEXICAL_HIGH and lex > _LEXICAL_LOW:
-                ambiguous.append(i)
-            elif lex <= _LEXICAL_LOW:
-                # Still embed the near-zero band IF budget allows — paraphrase
-                # can ground with little lexical overlap.
-                ambiguous.append(i)
+            scored.append({"m": m, "lexical": lex, "embed": None, "specific": None, "method": "lexical"})
 
-        # Stage 2 — embedding, only on the ambiguous band, single batch.
-        if ambiguous and (time.time() - t0) < budget_s:
+        # Stage 2 — embedding, single batch: answer + question + ALL snippets.
+        # `specific = cos(answer, mem) - cos(question, mem)` separates real use
+        # (answer matches the memoria MORE than the topical baseline the question
+        # already set) from same-topic overlap — the cause of the inflated rate.
+        if (time.time() - t0) < budget_s:
             try:
                 from memo import embedder_client
 
-                texts = [answer] + [recalled[i].get("snippet") or "" for i in ambiguous]
+                snips = [recalled[i].get("snippet") or "" for i in range(len(recalled))]
+                texts = [answer, question or "", *snips]
                 vectors = embedder_client.embed(texts, state_dir=state_dir)
                 if vectors and len(vectors) == len(texts):
-                    avec = vectors[0]
-                    for j, i in enumerate(ambiguous):
-                        cos = _cosine(avec, vectors[j + 1])
-                        scored[i]["embed"] = cos
+                    avec, qvec = vectors[0], vectors[1]
+                    has_q = bool(question and any(qvec))
+                    for i in range(len(recalled)):
+                        svec = vectors[i + 2]
+                        cos_a = _cosine(avec, svec)
+                        scored[i]["embed"] = cos_a
+                        if has_q:
+                            scored[i]["specific"] = max(0.0, cos_a - _cosine(qvec, svec))
                         scored[i]["method"] = "both" if scored[i]["lexical"] > 0 else "embed"
             except Exception:
                 pass  # lexical-only fallback; never fail the turn
@@ -306,6 +320,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
             lex = float(lex_v) if isinstance(lex_v, (int, float)) else 0.0
             emb = entry["embed"]
             used = max(lex, float(emb)) if isinstance(emb, (int, float)) else lex
+            spec = entry["specific"]
             snippet = rec.get("snippet") if isinstance(rec, dict) else ""
             action = _action_for_snippet(str(snippet or ""), tool_targets)
             append_grounding_log(
@@ -318,6 +333,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                 client=str(client),
                 answer_len=len(answer),
                 recall_top_score=float(top) if isinstance(top, (int, float)) else None,
+                specific_score=float(spec) if isinstance(spec, (int, float)) else None,
                 downstream_action=action["downstream_action"] if action else None,
                 action_evidence=action["action_evidence"] if action else None,
             )

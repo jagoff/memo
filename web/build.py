@@ -562,6 +562,9 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
             "answer_rate": recall_health_data["answer_rate"],
             "answers_total": recall_health_data["answers_total"],
             "answers_grounded": recall_health_data["answers_grounded"],
+            "answer_rate_knowledge": recall_health_data["answer_rate_knowledge"],
+            "answers_knowledge_total": recall_health_data["answers_knowledge_total"],
+            "answers_knowledge_grounded": recall_health_data["answers_knowledge_grounded"],
             "unmeasured_surfaced": recall_health_data["unmeasured_surfaced"],
             "referenced_rate": recall_health_data["referenced_rate"],
         },
@@ -915,26 +918,33 @@ _HTML_TEMPLATE = r"""<!doctype html>
     // Denominator = answers actually grounding-scored (Stop hook ran). Surfaced
     // memorias on un-scored turns are "not measured", not "not used", so they
     // are reported as coverage rather than counted as misses.
+    // Headline = utility among knowledge-seeking answers (the ones that COULD
+    // use memo); overall (incl. mechanical turns) shown as context.
+    const kTotal = ru.answers_knowledge_total || 0;
+    const kGrounded = ru.answers_knowledge_grounded || 0;
     const answersTotal = ru.answers_total || 0;
     const answersGrounded = ru.answers_grounded || 0;
-    const withoutMemo = Math.max(0, answersTotal - answersGrounded);
-    const utilRate = ru.answer_rate;
-    const utilColor = utilRate == null ? "var(--fg-mute)"
-      : utilRate >= 0.8 ? "var(--green)" : utilRate >= 0.5 ? "var(--yellow)" : "var(--red)";
+    const headRate = kTotal > 0 ? ru.answer_rate_knowledge : ru.answer_rate;
+    const headTotal = kTotal > 0 ? kTotal : answersTotal;
+    const headGrounded = kTotal > 0 ? kGrounded : answersGrounded;
+    const withoutMemo = Math.max(0, headTotal - headGrounded);
+    const utilColor = headRate == null ? "var(--fg-mute)"
+      : headRate >= 0.7 ? "var(--green)" : headRate >= 0.4 ? "var(--yellow)" : "var(--red)";
     const utilPanel = document.getElementById("utility-panel");
     if (utilPanel) utilPanel.style.borderColor = utilColor;
     const utilPct = document.getElementById("utility-pct");
-    utilPct.textContent = utilRate == null ? "sin datos" : asPct(utilRate);
+    utilPct.textContent = headRate == null ? "sin datos" : asPct(headRate);
     utilPct.style.color = utilColor;
     const unmeasured = ru.unmeasured_surfaced || 0;
-    document.getElementById("utility-sub").textContent = utilRate == null
+    const overallTxt = ru.answer_rate == null ? "—" : asPct(ru.answer_rate);
+    document.getElementById("utility-sub").textContent = headRate == null
       ? "todavía no hay respuestas medidas (Stop hook)"
-      : `usó fuertemente memo (similitud ≥0.8 o acción) · ${answersTotal} respuestas medidas · ${unmeasured} surgidas sin medir`;
-    if (answersTotal > 0) {
-      document.getElementById("utility-seg-con").style.width = (answersGrounded / answersTotal * 100).toFixed(1) + "%";
-      document.getElementById("utility-seg-sin").style.width = (withoutMemo / answersTotal * 100).toFixed(1) + "%";
+      : `en preguntas de conocimiento (${headTotal}) · global ${overallTxt} sobre ${answersTotal} · usó memo ≥0.8 / paráfrasis / acción`;
+    if (headTotal > 0) {
+      document.getElementById("utility-seg-con").style.width = (headGrounded / headTotal * 100).toFixed(1) + "%";
+      document.getElementById("utility-seg-sin").style.width = (withoutMemo / headTotal * 100).toFixed(1) + "%";
     }
-    document.getElementById("utility-leg-con").textContent = answersGrounded;
+    document.getElementById("utility-leg-con").textContent = headGrounded;
     document.getElementById("utility-leg-sin").textContent = withoutMemo;
 
     // -- who reads memo (per-consumer) -----------------------------------
