@@ -458,7 +458,6 @@ def test_embedder_version_dims_mismatch_raises(tmp_path: Path):
     triggering the earlier vec-table dims check (which fires when the vec0 table
     was created with different dims).
     """
-    import sqlite3
     from memo.errors import StorageError
 
     db = tmp_path / "v.db"
@@ -493,7 +492,6 @@ def test_embedder_version_bypass_empty_model(tmp_path: Path):
 
 def test_embedder_version_bypass_env_flag(tmp_path: Path, monkeypatch):
     """MEMO_SKIP_MODEL_VERSION_CHECK=1 bypasses the check."""
-    from memo.errors import StorageError
 
     db = tmp_path / "v.db"
     s = VecStore(db, dims=8, embedder_model="vendor/Model-A")

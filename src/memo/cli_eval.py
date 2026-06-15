@@ -141,3 +141,41 @@ def eval_recall_cmd(
                 for h in d["top"]:
                     flag = "NOISE" if h["noise"] else ("rel" if h["relevant"] else "—")
                     console.print(f"      {h['score']:>5}  {flag:<5}  {h['title']}")
+
+
+@eval_group.command(name="grounding")
+@click.option(
+    "--labels",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Ground-truth label set (memo.eval_grounding.labels.v1).",
+)
+@click.option("--as-json", is_flag=True, help="Emit raw JSON.")
+def grounding_eval_cmd(labels: Path, as_json: bool) -> None:
+    """Score the grounding detector's 'used memo' decision against hand labels."""
+    from memo import eval_grounding
+    from memo.dashboard import read_grounding_log
+
+    cfg = Config.from_env()
+    label_set = eval_grounding.load_labels(labels)
+    rows = read_grounding_log(cfg.state_dir, limit=4000)
+    result = eval_grounding.evaluate(rows, label_set)
+
+    if as_json:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    console.print(
+        f"grounding detector vs {result['scored']}/{result['labels']} labels "
+        f"({result['missing']} not in grounding.log)\n"
+    )
+    console.print(
+        f"  precision {result['precision']}  recall {result['recall']}  f1 {result['f1']}"
+    )
+    console.print(
+        f"  tp={result['tp']} fp={result['fp']} fn={result['fn']} tn={result['tn']}"
+    )
+    if result["false_positives"]:
+        console.print(f"\n  [yellow]false positives (detector said used, label says no):[/yellow] {len(result['false_positives'])}")
+    if result["false_negatives"]:
+        console.print(f"  [yellow]false negatives (detector missed a real use):[/yellow] {len(result['false_negatives'])}")

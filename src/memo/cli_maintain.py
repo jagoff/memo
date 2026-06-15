@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -300,7 +300,7 @@ def maintain_cmd(
     # Non-blocking: a failure logs a warning but does not abort the cycle.
     if not skip_synthesize and flag_bool("MEMO_MAINT_SYNTHESIZE"):
         _last_run = _read_synthesis_last_run(cfg)
-        _synth_ts = datetime.now(timezone.utc).isoformat()
+        _synth_ts = datetime.now(UTC).isoformat()
         _log.debug("maintain: proactive synthesis since %s", _last_run or "never")
         try:
             results = mem.synthesize_cross_cluster(dry_run=dry_run)

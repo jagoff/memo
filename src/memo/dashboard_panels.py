@@ -16,7 +16,7 @@ from rich.table import Table
 from rich.text import Text
 
 from memo.dashboard_logs import read_recall_log
-from memo.dashboard_metrics import consult_breakdown, reask_stats, recall_health
+from memo.dashboard_metrics import consult_breakdown, reask_stats, recall_health, verdict
 
 _log = logging.getLogger(__name__)
 _SPARK = "▁▂▃▄▅▆▇█"
@@ -44,6 +44,8 @@ class _TTLCache:
 _corpus_cache: _TTLCache = _TTLCache(ttl_s=10.0)
 _recall_quality_cache: _TTLCache = _TTLCache(ttl_s=30.0)
 _consumers_cache: _TTLCache = _TTLCache(ttl_s=30.0)
+_verdict_cache: _TTLCache = _TTLCache(ttl_s=30.0)
+_memflow_cache: _TTLCache = _TTLCache(ttl_s=60.0)
 
 
 def _get_corpus_rows(memory: Any) -> list[dict[str, Any]]:
@@ -331,6 +333,118 @@ def _panel_recall_quality(state_dir: Path) -> Panel:
     return Panel(tbl, title="[bold green]recall quality[/bold green]", border_style="green")
 
 
+_VERDICT_STYLE = {
+    "ok": ("green", "bold green"),
+    "weak": ("yellow", "bold yellow"),
+    "unused": ("red", "bold red"),
+}
+
+
+def _panel_verdict(state_dir: Path) -> Panel:
+    """Top-of-dashboard answer to '¿funciona memo y quién lo lee?'."""
+    key = str(state_dir)
+    data = _verdict_cache.get(key)
+    if data is None:
+        try:
+            data = verdict(state_dir, limit=500)
+        except Exception as exc:
+            _log.debug("dashboard: verdict fetch failed: %s", exc)
+            data = {}
+        _verdict_cache.set(data, key)
+
+    status = str(data.get("status") or "unused")
+    border, label_style = _VERDICT_STYLE.get(status, ("red", "bold red"))
+    label = str(data.get("label") or "❌ NO SE USA")
+    grounded = data.get("grounded_rate")
+    gr = "—" if grounded is None else f"{grounded * 100:.0f}%"
+    consults = data.get("consults") or 0
+
+    body = Text()
+    body.append(f"memo: {label}\n", style=label_style)
+    body.append(f"grounded {gr} · {consults} consultas\n", style="dim")
+
+    reads = [p["name"] for p in data.get("per_consumer", []) if p.get("reads")]
+    silent = [p["name"] for p in data.get("per_consumer", []) if not p.get("reads")]
+    if reads:
+        body.append("lee:  ", style="dim")
+        body.append("  ".join(f"{n} ✅" for n in reads) + "\n", style="green")
+    if silent:
+        body.append("NO lee:  ", style="dim")
+        body.append("  ".join(f"{n} ❌" for n in silent), style="bold red")
+    return Panel(body, title="[bold]¿FUNCIONA memo?[/bold]", border_style=border, padding=(0, 1))
+
+
+def _memflow_bin() -> str | None:
+    for cand in (
+        os.path.expanduser("~/.memflow/bin/memflow"),
+        os.path.expanduser("~/repos/memflow/.venv/bin/memflow"),
+    ):
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    from shutil import which
+
+    return which("memflow")
+
+
+def _fetch_memflow_utility() -> dict[str, Any]:
+    cached = _memflow_cache.get("u")
+    if cached is not None:
+        return cached
+    data: dict[str, Any] = {}
+    bin_path = _memflow_bin()
+    if bin_path:
+        try:
+            out = subprocess.run(
+                [bin_path, "utility", "--since-days", "7", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                import json
+
+                data = json.loads(out.stdout)
+        except Exception as exc:
+            _log.debug("dashboard: memflow utility fetch failed: %s", exc)
+            data = {}
+    _memflow_cache.set(data, "u")
+    return data
+
+
+def _panel_memflow(_state_dir: Path) -> Panel:
+    """memflow's own utility report (B) — does the layer above memo work?"""
+    data = _fetch_memflow_utility()
+    if not data:
+        body = Text("memflow no disponible", style="dim italic")
+        return Panel(body, title="[bold]memflow[/bold]", border_style="bright_black", padding=(0, 1))
+
+    cons = data.get("consumption") or {}
+    out = data.get("outcome") or {}
+    reads = int(cons.get("total_read_calls") or 0)
+    re_explain = int(out.get("re_explain") or 0)
+    used_rate = out.get("memory_used_rate")
+
+    # Verdict: useful only when read and not drowning in re-explains.
+    if reads < 5:
+        border, head = "red", "❌ casi no se lee"
+    elif used_rate is None:
+        border, head = "yellow", "⚠️ sin outcomes aún"
+    elif used_rate >= 0.10 and re_explain < 10:
+        border, head = "green", "✅ útil"
+    else:
+        border, head = "yellow", "⚠️ poco útil"
+
+    ur = "—" if used_rate is None else f"{used_rate * 100:.0f}%"
+    tbl = Table.grid(padding=(0, 2))
+    tbl.add_column(style="dim", width=14)
+    tbl.add_column(style="bold")
+    tbl.add_row("estado", Text(head, style=border if border != "bright_black" else "dim"))
+    tbl.add_row("reads 7d", str(reads))
+    tbl.add_row("memory_used", ur)
+    tbl.add_row("re_explain", f"[red]{re_explain}[/red]" if re_explain >= 10 else str(re_explain))
+    return Panel(tbl, title="[bold]memflow utility[/bold]", border_style=border, padding=(0, 1))
+
+
 def _panel_consumers(state_dir: Path) -> Panel:
     key = str(state_dir)
     cached = _consumers_cache.get(key)
@@ -362,5 +476,9 @@ def _panel_consumers(state_dir: Path) -> Panel:
         gr_s = f"{grounded * 100:.0f}%" if grounded is not None else "—"
         last = _human_age(c.get("last_seen"))
         tbl.add_row(name, consults, hit_s, gr_s, last)
-    body = Group(tbl, Text.assemble(("silent: ", "dim"), (", ".join(silent), "yellow"))) if silent else tbl
+    body = (
+        Group(tbl, Text.assemble(("NO leen memo: ", "dim"), (", ".join(silent), "bold red")))
+        if silent
+        else tbl
+    )
     return Panel(body, title="[bold cyan]consumers[/bold cyan]", border_style="cyan")

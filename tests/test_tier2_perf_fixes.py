@@ -12,21 +12,13 @@ Fix 2.5 — store/queries: tightened norm warning range (0.5,1.5) → warn at
 
 from __future__ import annotations
 
-import logging
-import os
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
-
-
 # ── Fix 2.2 ─────────────────────────────────────────────────────────────────
-
-
 import hashlib
+import logging
 
 
 def _make_reranker_memory(tmp_path, monkeypatch):
     """Build an isolated Memory with reranker_enabled=True and a stub embedder."""
-    import os
 
     from memo.config import Config
     from memo.memory import Memory

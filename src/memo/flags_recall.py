@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memo.flags_base import FlagSpec, _spec  # noqa: F401
+from memo.flags_base import FlagSpec, _spec
 
 SPECS: tuple[FlagSpec, ...] = (
     # recall hook / daemon (UserPromptSubmit hot path — 5s budget)

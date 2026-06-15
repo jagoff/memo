@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from memo.config import AI_SUBDIR, Config
+from memo.config import Config
 from memo.embedder import MLXEmbedder
 
 # ---------------------------------------------------------------------------

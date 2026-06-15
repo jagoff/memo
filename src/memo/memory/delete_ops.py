@@ -7,7 +7,6 @@ Extracted from `_WriteOpsMixin` to keep each file under 800 lines.
 from __future__ import annotations
 
 import contextlib
-from typing import Any
 
 from memo.lifecycle import (
     FORGET_AFTER_KEY,
