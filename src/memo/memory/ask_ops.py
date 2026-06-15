@@ -354,11 +354,11 @@ class _AskOpsMixin(_MemoryBase):
                 cache_key, corpus_version=self._corpus_version(), now=time.time()
             )
             if hit is not None:
-                norm_q, sources, user_msg, hits = hit
+                norm_q, cached_sources, user_msg, cached_hits = hit
                 # Return copies of the list containers so a caller mutating its
                 # result can't corrupt the cached entry (elements are treated
                 # read-only by ask()/ask_stream()).
-                return norm_q, list(sources), user_msg, list(hits)
+                return norm_q, list(cached_sources), user_msg, list(cached_hits)
         _MAX_QUESTION_CHARS = 4000
         if len(question) > _MAX_QUESTION_CHARS:
             _log.warning(
