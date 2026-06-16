@@ -7,7 +7,6 @@ verbatim from the former `memory.py` god-file.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -169,15 +168,24 @@ class _RerankOpsMixin(_MemoryBase):
         """
         import json
 
-        sim_threshold = float(os.environ.get("MEMO_FEEDBACK_SIM_THRESHOLD") or sim_threshold)
-        boost_per_vote = float(os.environ.get("MEMO_FEEDBACK_BOOST_PER_VOTE") or boost_per_vote)
-        boost_cap = float(os.environ.get("MEMO_FEEDBACK_BOOST_CAP") or boost_cap)
+        from memo.flags import flag_float
+
+        # Knobs live in the flags registry (typed + validated by `memo config
+        # validate`); the kwargs above are the in-code defaults the registry
+        # mirrors. `flag_float` returns env-or-registry-default — never raw
+        # os.environ (CLAUDE.md rule). The `or <kwarg>` guard keeps a caller's
+        # explicit override winning over a 0/None.
+        sim_threshold = flag_float("MEMO_FEEDBACK_SIM_THRESHOLD") or sim_threshold
+        boost_per_vote = flag_float("MEMO_FEEDBACK_BOOST_PER_VOTE") or boost_per_vote
+        boost_cap = flag_float("MEMO_FEEDBACK_BOOST_CAP") or boost_cap
         # Temporal decay: a positive vote's boost fades with its age (half-life
         # MEMO_FEEDBACK_HALFLIFE_DAYS, default 180; 0 disables). Keeps recent
         # feedback authoritative without letting a year-old 👍 pin a stale
         # source. thumbs_down (exclusion) and ignore are NOT decayed — an
         # explicit rejection shouldn't quietly expire.
-        halflife_days = float(os.environ.get("MEMO_FEEDBACK_HALFLIFE_DAYS") or 180.0)
+        halflife_days = flag_float("MEMO_FEEDBACK_HALFLIFE_DAYS")
+        if halflife_days is None:
+            halflife_days = 180.0
         _now = datetime.now(tz=UTC)
         # Existence pre-filter: most memorias have zero feedback rows, so a
         # single IN-list lookup tells us which hits are even worth the kNN vec
