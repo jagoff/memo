@@ -38,6 +38,51 @@ def sync_group() -> None:
     pass
 
 
+@sync_group.command(name="export-signal")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_export_signal(as_json: bool) -> None:
+    """Dump local signal (access/health/feedback) to `signal/*.json` for git.
+
+    The `.md` memorias sync via git; this snapshots the signal tables that
+    live only in the rebuildable `memvec.db` so a peer can restore ranking.
+    """
+    from memo.sync_signal import export_signal, signal_dir_for
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    sig = signal_dir_for(cfg)
+    counts = export_signal(mem.store, sig)
+
+    if as_json:
+        click.echo(json.dumps({"signal_dir": str(sig), "counts": counts}, indent=2))
+        return
+    console.print(f"[bold]Exported signal[/bold] → {sig}")
+    for table, n in counts.items():
+        console.print(f"  {table}: {n}")
+
+
+@sync_group.command(name="import-signal")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_import_signal(as_json: bool) -> None:
+    """Merge a peer's `signal/*.json` snapshot into the local store.
+
+    Idempotent: access = max, health = newer wins, feedback = union by id.
+    """
+    from memo.sync_signal import import_signal, signal_dir_for
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    sig = signal_dir_for(cfg)
+    counts = import_signal(mem.store, sig)
+
+    if as_json:
+        click.echo(json.dumps({"signal_dir": str(sig), "merged": counts}, indent=2))
+        return
+    console.print(f"[bold]Imported signal[/bold] ← {sig}")
+    for table, n in counts.items():
+        console.print(f"  {table}: {n}")
+
+
 @sync_group.command(name="diff")
 @click.option("--remote", help="Path to remote memo state dir")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
@@ -54,35 +99,103 @@ def sync_diff(remote: str | None, as_json: bool) -> None:
 
 
 @sync_group.command(name="push")
-@click.option("--remote", help="Path to remote memo state dir")
-def sync_push(remote: str | None) -> None:
-    """Not supported in the replay sync model (pull-only).
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+@click.option("--quiet", is_flag=True, help="Soft-fail (exit 0) if not a git clone — for hooks")
+def sync_push(as_json: bool, quiet: bool) -> None:
+    """Export signal + commit + git push the memo-sync repo (Stop hook).
 
-    Sync is pull-only: the remote machine pulls from this one instead.
+    Requires the memorias dir to live inside a git clone (see `memo sync clone`).
     """
-    console.print(
-        "[yellow]replay sync model is pull-only; the remote machine pulls instead[/yellow]"
-    )
+    from memo.sync_git import SyncGitError
+    from memo.sync_git import sync_push as _git_push
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    try:
+        out = _git_push(cfg, mem.store)
+    except SyncGitError as e:
+        if quiet:
+            console.print(f"[dim]sync push skipped: {e}[/dim]")
+            return
+        raise
+
+    if as_json:
+        click.echo(json.dumps(out, indent=2))
+        return
+    if out.get("pushed"):
+        console.print(f"[bold green]Pushed[/bold green] {out['committed_files']} files → {out['branch']}")
+    else:
+        console.print(f"[dim]Nothing to push ({out.get('reason')})[/dim]")
 
 
 @sync_group.command(name="pull")
-@click.option("--remote", required=True, help="Path to remote memo state dir")
-def sync_pull(remote: str) -> None:
-    """Pull remote changes by replaying the remote audit log.
+@click.option("--remote", help="Legacy: path to a remote memo state dir (audit-log replay)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+@click.option("--quiet", is_flag=True, help="Soft-fail (exit 0) if not a git clone — for hooks")
+def sync_pull(remote: str | None, as_json: bool, quiet: bool) -> None:
+    """Git pull the memo-sync repo + merge remote signal + reindex (SessionStart hook).
 
-    Example: memo sync pull --remote /path/to/remote/memo
+    With --remote <path>, falls back to the legacy audit-log replay model.
+
+    Example: memo sync pull
+             memo sync pull --remote /path/to/remote/memo   # legacy replay
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    remote_db = _resolve_remote_history_db(remote)
-    assert remote_db is not None  # --remote is required
-    diff = mem.sync.sync_from_remote(remote_db)
+    if remote:  # legacy audit-log replay
+        remote_db = _resolve_remote_history_db(remote)
+        assert remote_db is not None
+        diff = mem.sync.sync_from_remote(remote_db)
+        console.print("[bold]Pull Sync (replay)[/bold]")
+        console.print(f"Applied: {diff.applied}")
+        console.print(f"Conflicts: {diff.conflicts}")
+        console.print(f"Errors: {diff.errors}")
+        return
 
-    console.print("[bold]Pull Sync[/bold]")
-    console.print(f"Applied: {diff.applied}")
-    console.print(f"Conflicts: {diff.conflicts}")
-    console.print(f"Errors: {diff.errors}")
+    from memo.sync_git import SyncGitError
+    from memo.sync_git import sync_pull as _git_pull
+
+    try:
+        out = _git_pull(cfg, mem.store, mem)
+    except SyncGitError as e:
+        if quiet:
+            console.print(f"[dim]sync pull skipped: {e}[/dim]")
+            return
+        raise
+
+    if as_json:
+        click.echo(json.dumps(out, indent=2))
+        return
+    console.print(f"[bold green]Pulled[/bold green] {out['branch']}")
+    console.print(f"Reindexed: {out['reindexed']}")
+
+
+@sync_group.command(name="clone")
+@click.argument("url")
+@click.option("--dest", default=None, help="Clone destination (default ~/repos/memo-sync)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_clone(url: str, dest: str | None, as_json: bool) -> None:
+    """Bootstrap a new machine: clone the memo-sync repo (F6).
+
+    Prints the next steps (point MEMO_DATA_DIR at the cloned memorias dir, then
+    `memo reindex --rebuild && memo sync import-signal`). Does not touch config.
+    """
+    from pathlib import Path
+
+    from memo.sync_git import clone_bootstrap
+
+    dest_path = Path(dest).expanduser() if dest else Path.home() / "repos" / "memo-sync"
+    out = clone_bootstrap(url, dest_path)
+
+    if as_json:
+        click.echo(json.dumps(out, indent=2))
+        return
+    console.print(f"[bold green]Cloned[/bold green] → {out['cloned']} ({out['memorias']} memorias)")
+    console.print("\n[bold]Next steps on this machine:[/bold]")
+    console.print(f"  1. Set [cyan]MEMO_DATA_DIR={out['memorias_dir']}[/cyan] in your config / MCP env")
+    console.print("  2. [cyan]memo reindex --rebuild[/cyan]   # build the index from the .md")
+    console.print("  3. [cyan]memo sync import-signal[/cyan]  # restore access/health/feedback")
 
 
 @sync_group.command(name="both")
