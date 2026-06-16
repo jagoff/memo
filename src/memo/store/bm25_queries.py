@@ -17,6 +17,12 @@ from .schema import (
 
 _log = logging.getLogger(__name__)
 
+# When a type filter is active, BM25/fuzzy candidates are over-fetched so the
+# post-filter against the meta table can still honour `limit`. A heavy filter
+# (e.g. one type out of a dense, diverse top-K) can drop most candidates, so the
+# multiplier is generous to avoid silently under-filling below `limit`.
+_TYPE_FILTER_CANDIDATE_MULT = 20
+
 
 def _env_float(name: str, default: float) -> float:
     """Parse a float env var, falling back to `default` when unset/blank/bad.
@@ -79,7 +85,7 @@ class _BM25QueriesMixin(_StoreBase):
     ) -> list[dict[str, Any]]:
         # Fetch more candidates when filtering by type so we can honour `limit`
         # after post-filtering against the meta table.
-        candidate_k = limit * 5 if (type_ or exclude_types) else limit
+        candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
         hits = t.search_bm25(query, candidate_k)
         if not hits:
             return []
@@ -154,7 +160,7 @@ class _BM25QueriesMixin(_StoreBase):
 
         def _run(tokens: list[str], joiner: str) -> list[Any]:
             expr = joiner.join(f'"{t}"' for t in tokens)
-            candidate_k = limit * 5 if (type_ or exclude_types) else limit
+            candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
             sql = (
                 "SELECT fts.id AS id, "
                 "       bm25(fts, ?, ?, ?, ?) AS bm25_score, "
@@ -227,7 +233,7 @@ class _BM25QueriesMixin(_StoreBase):
         t = self._get_tantivy()
         if t is None:
             return self._search_bm25_fts5(query, limit, type_, exclude_types)
-        candidate_k = limit * 5 if (type_ or exclude_types) else limit
+        candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
         hits = t.search_fuzzy(query, candidate_k)
         if not hits:
             return []
