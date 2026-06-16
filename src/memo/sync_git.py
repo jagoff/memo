@@ -93,6 +93,42 @@ def clone_bootstrap(url: str, dest: Path) -> dict:
     return {"cloned": str(dest), "memorias_dir": str(memorias), "memorias": n_md}
 
 
+def bootstrap_clone(url: str, dest: Path, *, config_path: Path | None = None) -> dict:
+    """One-step new-machine bootstrap: clone the memo-sync repo (or reuse an
+    existing clone at `dest`) and point `config.toml`'s `data_dir` at its
+    `memorias/`.
+
+    Idempotent: if `dest` is already a git clone with a `memorias/` dir, it is
+    reused (no re-clone, no pull — ongoing sync is `memo sync pull`'s job).
+    Existing `[storage]` keys (`vault_path`, `memories_in_vault`, `single_db`)
+    are preserved; only `data_dir` is repointed.
+
+    Does NOT reindex or import signal — that needs a `Memory` and is the
+    caller's next step (see the `memo sync bootstrap` CLI command).
+    """
+    from memo.setup.config_io import load_config_file, write_config_file
+
+    memorias = dest / "memorias"
+    if (dest / ".git").exists() and memorias.exists():
+        n_md = len(list(memorias.rglob("*.md")))
+        summary = {"cloned": str(dest), "memorias_dir": str(memorias), "memorias": n_md, "reused": True}
+    else:
+        summary = clone_bootstrap(url, dest)
+        summary["reused"] = False
+
+    existing = (load_config_file(config_path) or {}).get("storage", {})
+    vault_path = existing.get("vault_path")
+    written = write_config_file(
+        data_dir=memorias,
+        vault_path=Path(vault_path) if vault_path else None,
+        memories_in_vault=bool(existing.get("memories_in_vault")),
+        single_db=bool(existing.get("single_db")),
+        path=config_path,
+    )
+    summary["config"] = str(written)
+    return summary
+
+
 def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
     """Export signal, commit any changes, and push. Returns a summary dict."""
     root = git_root_for(cfg)

@@ -198,6 +198,42 @@ def sync_clone(url: str, dest: str | None, as_json: bool) -> None:
     console.print("  3. [cyan]memo sync import-signal[/cyan]  # restore access/health/feedback")
 
 
+@sync_group.command(name="bootstrap")
+@click.argument("url")
+@click.option("--dest", default=None, help="Clone destination (default ~/repos/memo-sync)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
+    """One-shot new-machine setup: clone the memo-sync repo, point config at it,
+    rebuild the index, and import signal. Idempotent (re-run reuses the clone).
+
+    Unlike `clone`, this wires everything end-to-end — after it, memo reads the
+    git-synced corpus and the SessionStart/Stop hooks keep it in sync.
+
+    Example: memo sync bootstrap https://github.com/jagoff/memo-sync.git
+    """
+    from memo.sync_git import bootstrap_clone
+    from memo.sync_signal import import_signal, signal_dir_for
+
+    dest_path = Path(dest).expanduser() if dest else Path.home() / "repos" / "memo-sync"
+    out = bootstrap_clone(url, dest_path)
+
+    # Reindex + import signal against the freshly-pointed data_dir.
+    cfg = Config.from_env(data_dir=Path(out["memorias_dir"]))
+    mem = _get_memory(cfg)
+    out["reindexed"] = mem.reindex(rebuild=True)
+    out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
+
+    if as_json:
+        click.echo(json.dumps(out, indent=2))
+        return
+    verb = "Reused" if out.get("reused") else "Cloned"
+    console.print(f"[bold green]{verb}[/bold green] → {out['cloned']} ({out['memorias']} memorias)")
+    console.print(f"config → [cyan]{out['config']}[/cyan] (data_dir = {out['memorias_dir']})")
+    console.print(f"reindexed: {out['reindexed']}")
+    console.print(f"signal merged: {out['signal']}")
+    console.print("[bold green]Ready.[/bold green] memo now reads the git-synced corpus.")
+
+
 @sync_group.command(name="both")
 @click.option("--remote", required=True, help="Path to remote memo state dir")
 def sync_both(remote: str) -> None:

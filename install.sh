@@ -205,6 +205,20 @@ main() {
     say "skipping agent client configuration (MEMO_INSTALL_SKIP_AGENT_CONFIG=1)"
   fi
 
+  # Cross-Mac corpus: clone the git-synced memo-sync repo and point this
+  # install at it (opt-in, mirrors memflow's MEMFLOW_DATA_REMOTE cutover).
+  # Idempotent — re-running reuses the existing clone.
+  if [[ -n "${MEMO_SYNC_REMOTE:-}" ]]; then
+    local sync_dest="${MEMO_SYNC_DEST:-$HOME/repos/memo-sync}"
+    say "wiring git-synced corpus: $MEMO_SYNC_REMOTE → $sync_dest"
+    if MEMO_NONINTERACTIVE=1 "$memo_bin" sync bootstrap "$MEMO_SYNC_REMOTE" --dest "$sync_dest"; then
+      say "corpus wired; SessionStart pull / Stop push hooks keep it in sync"
+    else
+      warn "sync bootstrap failed — private repo needs git creds (SSH key/PAT) on this Mac."
+      warn "Re-run after auth: memo sync bootstrap $MEMO_SYNC_REMOTE --dest $sync_dest"
+    fi
+  fi
+
   say "MCP registration command (manual fallback):"
   MEMO_NONINTERACTIVE=1 "$memo_bin" mcp-command
 }
