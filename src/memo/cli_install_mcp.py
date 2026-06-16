@@ -111,11 +111,19 @@ def install_mcp(
     with_mandate: bool,
 ) -> None:
     """Register the memo MCP server into one or more agents."""
-    from consciousness_contracts import (
-        SUPPORTED_AGENTS,
-        generic_preset,
-        register_agent_mcp,
-    )
+    try:
+        from consciousness_contracts import (
+            SUPPORTED_AGENTS,
+            generic_preset,
+            register_agent_mcp,
+        )
+    except ImportError as exc:
+        raise click.ClickException(
+            "consciousness-contracts not installed in memo's runtime. Install it "
+            "into the isolated env: `pipx inject mlx-memo -e "
+            "<path>/consciousness-contracts` (or `uv tool install mlx-memo --with "
+            "<path>/consciousness-contracts`)."
+        ) from exc
 
     server = _build_server()
 
