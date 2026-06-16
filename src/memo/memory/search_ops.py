@@ -401,7 +401,11 @@ class _SearchOpsMixin(_MemoryBase):
         try:
             existing_ids = {r.id for r in results}
             min_score = min((r.score or 0.0) for r in results)
-            expansion_score = round(min_score * 0.6, 6)
+            # Floor at a small positive epsilon: when the primaries carry no /
+            # zero / negative score (rerank or feedback can push scores ≤ 0), a
+            # 0.6× multiplier yields 0.0 and the graph-expanded candidates become
+            # unrankable. Keep them strictly positive but below the weakest primary.
+            expansion_score = round(max(min_score, 0.01) * 0.6, 6)
 
             # Collect entity names from top-3 primary results.
             entity_names: list[str] = []
