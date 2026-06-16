@@ -100,16 +100,24 @@ def sync_diff(remote: str | None, as_json: bool) -> None:
 
 @sync_group.command(name="push")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def sync_push(as_json: bool) -> None:
+@click.option("--quiet", is_flag=True, help="Soft-fail (exit 0) if not a git clone — for hooks")
+def sync_push(as_json: bool, quiet: bool) -> None:
     """Export signal + commit + git push the memo-sync repo (Stop hook).
 
     Requires the memorias dir to live inside a git clone (see `memo sync clone`).
     """
+    from memo.sync_git import SyncGitError
     from memo.sync_git import sync_push as _git_push
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
-    out = _git_push(cfg, mem.store)
+    try:
+        out = _git_push(cfg, mem.store)
+    except SyncGitError as e:
+        if quiet:
+            console.print(f"[dim]sync push skipped: {e}[/dim]")
+            return
+        raise
 
     if as_json:
         click.echo(json.dumps(out, indent=2))
@@ -123,7 +131,8 @@ def sync_push(as_json: bool) -> None:
 @sync_group.command(name="pull")
 @click.option("--remote", help="Legacy: path to a remote memo state dir (audit-log replay)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def sync_pull(remote: str | None, as_json: bool) -> None:
+@click.option("--quiet", is_flag=True, help="Soft-fail (exit 0) if not a git clone — for hooks")
+def sync_pull(remote: str | None, as_json: bool, quiet: bool) -> None:
     """Git pull the memo-sync repo + merge remote signal + reindex (SessionStart hook).
 
     With --remote <path>, falls back to the legacy audit-log replay model.
@@ -144,9 +153,17 @@ def sync_pull(remote: str | None, as_json: bool) -> None:
         console.print(f"Errors: {diff.errors}")
         return
 
+    from memo.sync_git import SyncGitError
     from memo.sync_git import sync_pull as _git_pull
 
-    out = _git_pull(cfg, mem.store, mem)
+    try:
+        out = _git_pull(cfg, mem.store, mem)
+    except SyncGitError as e:
+        if quiet:
+            console.print(f"[dim]sync pull skipped: {e}[/dim]")
+            return
+        raise
+
     if as_json:
         click.echo(json.dumps(out, indent=2))
         return
