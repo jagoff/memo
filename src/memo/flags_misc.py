@@ -15,15 +15,26 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_FEEDBACK_SIM_THRESHOLD",
         "float",
-        None,
+        0.85,
         "feedback",
         "Similarity threshold for feedback matching.",
+        min_val=0.0,
     ),
     _spec(
-        "MEMO_FEEDBACK_BOOST_PER_VOTE", "float", None, "feedback", "Score boost added per upvote."
+        "MEMO_FEEDBACK_BOOST_PER_VOTE",
+        "float",
+        0.15,
+        "feedback",
+        "Score boost added per upvote.",
+        min_val=0.0,
     ),
     _spec(
-        "MEMO_FEEDBACK_BOOST_CAP", "float", None, "feedback", "Maximum cumulative feedback boost."
+        "MEMO_FEEDBACK_BOOST_CAP",
+        "float",
+        0.6,
+        "feedback",
+        "Maximum cumulative feedback boost.",
+        min_val=0.0,
     ),
     # MCP transport
     _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),

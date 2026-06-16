@@ -1,13 +1,89 @@
 """Tests for sync & backup module."""
 
+import hashlib
+import shutil
+
 import pytest
 
+from memo.config import Config
+from memo.memory import Memory
 from memo.sync import (
     BackupManager,
     BackupMetadata,
     SyncDiff,
     SyncManager,
 )
+
+
+def _build_remote_memory(root) -> Memory:
+    """An isolated `Memory` (own data/state dir → distinct device id) with a
+    deterministic stub embedder, standing in for another machine."""
+    data = root / "data"
+    state = root / "state"
+    data.mkdir(parents=True)
+    state.mkdir(parents=True)
+    cfg = Config(data_dir=data, state_dir=state, reranker_enabled=False)
+    mem = Memory(cfg)
+
+    def _fake_embedding(text: str) -> list[float]:
+        digest = hashlib.sha256((text or "").encode("utf-8")).digest()
+        values = [((digest[i % len(digest)] / 255.0) * 2.0) - 1.0 for i in range(cfg.embedder_dims)]
+        norm = sum(v * v for v in values) ** 0.5
+        return [v / norm for v in values]
+
+    mem.embedder.embed = lambda inputs: [_fake_embedding(t) for t in inputs]
+    mem.embedder.embed_query = lambda q: _fake_embedding(q)
+    return mem
+
+
+def _copy_md(remote: Memory, local: Memory, rel_path: str) -> None:
+    """Copy a memoria's .md from remote → local memory dir, preserving subdirs
+    (stands in for the file-sync layer, e.g. iCloud)."""
+    src = remote.cfg.memory_dir / rel_path
+    dst = local.cfg.memory_dir / rel_path
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(src, dst)
+
+
+def test_sync_replay_save_preserves_record_id_no_duplicate(sync_manager, mock_memory, tmp_path):
+    """Replaying a remote `save` must index the existing `{id}.md` under its
+    own id — not mint a fresh uuid (which forks a duplicate memoria). B1."""
+    remote = _build_remote_memory(tmp_path / "remote")
+    try:
+        rec = remote.save(content="A durable fact about the trinity.", title="Fact", tags=["t"])
+        # Simulate the .md having already synced to the local machine (iCloud).
+        _copy_md(remote, mock_memory, rec.path)
+
+        diff = sync_manager.sync_from_remote(remote.cfg.history_db)
+
+        assert diff.applied == 1
+        assert mock_memory.get(rec.id) is not None, "synced record must keep its id"
+        rows = mock_memory.store.list_recent(limit=100)
+        assert len(rows) == 1, "must not create a duplicate under a new uuid"
+        assert rows[0]["id"] == rec.id
+    finally:
+        remote.close()
+
+
+def test_sync_cursor_not_wedged_by_missing_then_present_file(sync_manager, mock_memory, tmp_path):
+    """A remote save whose file hasn't synced yet must defer (cursor stays put,
+    order preserved) and apply on a later pass — never permanently skipped. B2."""
+    remote = _build_remote_memory(tmp_path / "remote")
+    try:
+        rec = remote.save(content="Deferred fact.", title="Deferred", tags=["t"])
+
+        # File not present locally yet → first pass applies nothing, advances nothing.
+        diff1 = sync_manager.sync_from_remote(remote.cfg.history_db)
+        assert diff1.applied == 0
+        assert mock_memory.get(rec.id) is None
+
+        # File arrives; a second pass must still see and apply the event.
+        _copy_md(remote, mock_memory, rec.path)
+        diff2 = sync_manager.sync_from_remote(remote.cfg.history_db)
+        assert diff2.applied == 1
+        assert mock_memory.get(rec.id) is not None
+    finally:
+        remote.close()
 
 
 @pytest.fixture

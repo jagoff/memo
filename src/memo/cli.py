@@ -58,6 +58,7 @@ from memo.cli_history import diff_cmd, historia_cmd
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
 from memo.cli_ingest_daemon import ingest_daemon_group
+from memo.cli_install_mcp import install_mcp
 from memo.cli_links import links_group
 from memo.cli_maint_daemon import maint_daemon_group
 from memo.cli_maintain import maintain_cmd
@@ -155,6 +156,7 @@ cli.add_command(migrate_vault)
 cli.add_command(migrate_vault, name="migrate")  # alias
 cli.add_command(mcp_command)
 cli.add_command(install_slash)
+cli.add_command(install_mcp)
 cli.add_command(self_update)
 cli.add_command(watch)
 cli.add_command(install_watcher)
@@ -228,6 +230,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "migrate-vault",
     "mcp-command",
     "install-slash",
+    "install-mcp",
     "prewarm",
     "recall-hook",
     "recall-daemon",
