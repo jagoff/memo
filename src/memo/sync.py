@@ -219,7 +219,18 @@ class SyncManager:
         # 1. Open remote history
         try:
             remote_store = HistoryStore(remote_history_db)
+            # A foreign history.db opened by path alone reports device_id
+            # "unknown" (the id is constructor-supplied, persisted only per-row).
+            # Resolve the real remote device from its own events, otherwise the
+            # `device_id=` filter below matches nothing and sync silently no-ops.
             remote_device_id = remote_store.device_id
+            if remote_device_id == "unknown":
+                sample = remote_store.list_recent(limit=1)
+                if sample:
+                    remote_device_id = sample[0].get("device_id") or "unknown"
+            if remote_device_id == "unknown":
+                _log.info("sync: remote history has no attributable device events")
+                return SyncDiff(0, 0, 0)
             if remote_device_id == self.mem.history.device_id:
                 _log.info("sync: remote device id matches local, skipping loopback sync")
                 return SyncDiff(0, 0, 0)
@@ -237,61 +248,50 @@ class SyncManager:
             applied = 0
             conflicts = 0
             errors = 0
+            reindexed = False
 
             for ev in new_events:
+                op = ev["op"]
+                record_id = ev["record_id"]
                 try:
-                    success = self._apply_event(ev)
-                    if success:
+                    if op == "delete":
+                        self.mem.delete(record_id)
+                        applied += 1
+                        self.mem.history.update_sync_state(remote_device_id, ev["id"])
+                        continue
+
+                    # save/update: the canonical `.md` (named `<date>-<slug>.md`,
+                    # carrying `id: <record_id>` in frontmatter) is assumed to have
+                    # arrived via the file-sync layer (iCloud/git). `reindex()`
+                    # indexes any unknown `.md` UNDER ITS FRONTMATTER ID and re-embeds
+                    # edited ones — so it never mints a fresh uuid (the old `save()`
+                    # path forked a duplicate on every replay). Run it once per batch.
+                    if not reindexed:
+                        self.mem.reindex()
+                        reindexed = True
+
+                    if self.mem.get(record_id) is not None:
                         applied += 1
                         self.mem.history.update_sync_state(remote_device_id, ev["id"])
                     else:
-                        conflicts += 1
+                        # File not synced to this machine yet — transient. Stop here
+                        # WITHOUT advancing the cursor so the event is retried next
+                        # pass, and later events stay in order (no permanent skip).
+                        _log.info(
+                            "sync: record %s not present locally yet; deferring to next pass",
+                            record_id,
+                        )
+                        break
                 except Exception as exc:
                     _log.error("sync: failed to apply event %s: %s", ev["id"], exc)
                     errors += 1
+                    # Preserve replay order: don't advance past a failing event.
+                    break
 
             return SyncDiff(applied, conflicts, errors)
         except Exception as exc:
             _log.error("sync: global failure: %s", exc)
             return SyncDiff(0, 0, 1)
-
-    def _apply_event(self, ev: dict[str, Any]) -> bool:
-        """Apply a single history event to the local state."""
-        op = ev["op"]
-        record_id = ev["record_id"]
-
-        # If it's a delete, just apply it
-        if op == "delete":
-            self.mem.delete(record_id)
-            return True
-
-        # For save/update, we need the actual file content.
-        # We assume the file is already synced (e.g. via iCloud).
-        # We resolve the record_id to a path and re-index it.
-        try:
-            # We can't use mem.get() because it only works if it's already in the store.
-            # But for a remote 'save', it's NOT in our store yet.
-            # However, the record_id IS the filename (id.md).
-            path = self.mem.cfg.data_dir / f"{record_id}.md"
-            if not path.is_file():
-                _log.warning("sync: file for record %s not found at %s", record_id, path)
-                return False
-
-            # Read and index
-            content = path.read_text(encoding="utf-8")
-            # save() with auto_derive=False is fast and idempotent if title/tags match.
-            # Using save() ensures the vector index is updated.
-            self.mem.save(
-                content=content,
-                title=ev.get("title") or "",
-                type_=ev.get("type") or "note",
-                # Note: we don't have the tags in the history.db 'save' event normally,
-                # but if we use reindex() logic it's safer.
-            )
-            return True
-        except Exception as exc:
-            _log.error("sync: apply_event failed for %s: %s", record_id, exc)
-            return False
 
 
 __all__ = [
