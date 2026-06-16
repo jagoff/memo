@@ -52,6 +52,97 @@ class _SignalQueriesMixin(_StoreBase):
             return {"access_count": 0, "last_accessed": None}
         return {"access_count": int(row["access_count"]), "last_accessed": row["last_accessed"]}
 
+    # -- cross-machine signal export/import (F3) ---------------------------
+    #
+    # The `.md` memorias sync via git; the signal tables (access, health,
+    # source_feedback) are local-only PRIMARY data not present in markdown.
+    # `dump_signal` snapshots them for `memo sync export-signal`; `merge_signal`
+    # folds a peer's snapshot back in, keyed on the stable memoria id. Merge is
+    # idempotent on re-pull: access = max, health = newer updated_at wins,
+    # feedback = union by id. (source_feedback_vec embeddings are NOT synced —
+    # they are re-derivable from query_text by a future re-embed pass.)
+
+    def dump_signal(self) -> dict[str, list[dict[str, Any]]]:
+        """Return every signal row, grouped by table, as plain dicts."""
+        access = [
+            {"id": r["id"], "access_count": int(r["access_count"]), "last_accessed": r["last_accessed"]}
+            for r in self._conn.execute(
+                "SELECT id, access_count, last_accessed FROM access"
+            ).fetchall()
+        ]
+        health = [
+            {
+                "id": r["id"],
+                "confidence": float(r["confidence"]),
+                "roi_score": float(r["roi_score"]),
+                "updated_at": r["updated_at"],
+            }
+            for r in self._conn.execute(
+                "SELECT id, confidence, roi_score, updated_at FROM memory_health"
+            ).fetchall()
+        ]
+        feedback = [
+            dict(r)
+            for r in self._conn.execute(
+                "SELECT id, source_id, query_text, rating, created_at, extra_json "
+                "FROM source_feedback"
+            ).fetchall()
+        ]
+        return {"access": access, "memory_health": health, "source_feedback": feedback}
+
+    def merge_signal(self, payload: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+        """Merge a peer's signal snapshot into the local tables.
+
+        Returns the count of rows applied per table. Idempotent: re-merging the
+        same payload (or the local store's own export) never inflates counts.
+        """
+        access = payload.get("access") or []
+        health = payload.get("memory_health") or []
+        feedback = payload.get("source_feedback") or []
+        with self._tx() as cx:
+            if access:
+                cx.executemany(
+                    "INSERT INTO access (id, access_count, last_accessed) VALUES (?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "access_count = max(access_count, excluded.access_count), "
+                    "last_accessed = nullif("
+                    "  max(coalesce(last_accessed, ''), coalesce(excluded.last_accessed, '')), '')",
+                    [(r["id"], int(r["access_count"]), r.get("last_accessed")) for r in access],
+                )
+            if health:
+                cx.executemany(
+                    "INSERT INTO memory_health (id, confidence, roi_score, updated_at) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "confidence = excluded.confidence, "
+                    "roi_score = excluded.roi_score, "
+                    "updated_at = excluded.updated_at "
+                    "WHERE coalesce(excluded.updated_at, '') > coalesce(memory_health.updated_at, '')",
+                    [
+                        (r["id"], float(r["confidence"]), float(r["roi_score"]), r.get("updated_at"))
+                        for r in health
+                    ],
+                )
+            if feedback:
+                # union by id (and by the secondary UNIQUE(source_id,query_text,rating))
+                cx.executemany(
+                    "INSERT OR IGNORE INTO source_feedback "
+                    "(id, source_id, query_text, rating, created_at, extra_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            r["id"],
+                            r["source_id"],
+                            r["query_text"],
+                            int(r["rating"]),
+                            r["created_at"],
+                            r.get("extra_json"),
+                        )
+                        for r in feedback
+                    ],
+                )
+        return {"access": len(access), "memory_health": len(health), "source_feedback": len(feedback)}
+
     # -- memory health (confidence + roi_score) ----------------------------
 
     def get_health_batch(self, ids: list[str]) -> dict[str, dict[str, float]]:

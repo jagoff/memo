@@ -38,6 +38,51 @@ def sync_group() -> None:
     pass
 
 
+@sync_group.command(name="export-signal")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_export_signal(as_json: bool) -> None:
+    """Dump local signal (access/health/feedback) to `signal/*.json` for git.
+
+    The `.md` memorias sync via git; this snapshots the signal tables that
+    live only in the rebuildable `memvec.db` so a peer can restore ranking.
+    """
+    from memo.sync_signal import export_signal, signal_dir_for
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    sig = signal_dir_for(cfg)
+    counts = export_signal(mem.store, sig)
+
+    if as_json:
+        click.echo(json.dumps({"signal_dir": str(sig), "counts": counts}, indent=2))
+        return
+    console.print(f"[bold]Exported signal[/bold] → {sig}")
+    for table, n in counts.items():
+        console.print(f"  {table}: {n}")
+
+
+@sync_group.command(name="import-signal")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_import_signal(as_json: bool) -> None:
+    """Merge a peer's `signal/*.json` snapshot into the local store.
+
+    Idempotent: access = max, health = newer wins, feedback = union by id.
+    """
+    from memo.sync_signal import import_signal, signal_dir_for
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    sig = signal_dir_for(cfg)
+    counts = import_signal(mem.store, sig)
+
+    if as_json:
+        click.echo(json.dumps({"signal_dir": str(sig), "merged": counts}, indent=2))
+        return
+    console.print(f"[bold]Imported signal[/bold] ← {sig}")
+    for table, n in counts.items():
+        console.print(f"  {table}: {n}")
+
+
 @sync_group.command(name="diff")
 @click.option("--remote", help="Path to remote memo state dir")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
