@@ -199,4 +199,21 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
                 for sid in report.get("stale_synthesis", [])[:20]:
                     console.print(f"  · {sid[:8]}")
 
+    # Memory-first adoption: the "always consult memo first" guarantee is only as
+    # good as adoption, so surface any expected consumer that reads memo zero
+    # times (wired but silent). A warning, not a hard failure.
+    try:
+        from memo.dashboard_metrics import consult_breakdown
+
+        gap = consult_breakdown(cfg.state_dir).get("silent") or []
+        if gap:
+            console.print(
+                f"[yellow]![/yellow] memo-first gap: {', '.join(gap)} not consulting "
+                "memo — wire with `memo install-mcp` / `memo mandate`"
+            )
+        else:
+            console.print("[green]✓[/green] memo-first: all expected consumers active")
+    except Exception as exc:
+        console.print(f"[dim]•[/dim] memo-first adoption check skipped: {exc}")
+
     sys.exit(0 if ok else 1)
