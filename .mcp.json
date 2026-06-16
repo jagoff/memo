@@ -6,7 +6,7 @@
       "args": [],
       "env": {
         "MEMO_NONINTERACTIVE": "1",
-        "MEMO_DATA_DIR": "/Users/USER/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes/Obsidian/AI/memory"
+        "MEMO_DATA_DIR": "/Users/USER/repos/memo-sync/memorias"
       }
     },
     "sqlite-explorer": {
