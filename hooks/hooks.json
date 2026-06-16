@@ -3,6 +3,19 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo sync pull --quiet",
+            "timeout": 90000,
+            "async": true,
+            "statusMessage": "memo: pulling cross-Mac memories…",
+            "comment": "Cross-Mac git pull + signal merge + reindex (F5). --quiet soft-fails (exit 0) when the memorias dir isn't a git clone, so non-synced installs are unaffected. Async so startup isn't blocked."
+          }
+        ]
+      },
+      {
         "matcher": "startup|clear",
         "hooks": [
           {
@@ -96,6 +109,14 @@
             "timeout": 20,
             "async": true,
             "statusMessage": "memo: actualizando resumen de sesión…"
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo sync push --quiet",
+            "timeout": 60000,
+            "async": true,
+            "statusMessage": "memo: pushing memories cross-Mac…",
+            "comment": "Cross-Mac git push of memorias + signal (F5). Listed last so this session's capture-stop write is more likely already on disk. --quiet soft-fails (exit 0) on non-git installs. A just-captured memoria that loses the race syncs on the next Stop."
           }
         ]
       }
