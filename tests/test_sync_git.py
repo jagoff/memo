@@ -149,6 +149,32 @@ def test_clone_refuses_nonempty_dest(remote: Path, tmp_path: Path):
         clone_bootstrap(str(remote), dest)
 
 
+def test_cli_pull_quiet_softfails_on_non_git(tmp_path: Path):
+    """The SessionStart hook calls `memo sync pull --quiet`; a non-git install
+    must exit 0 (not break the session)."""
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    data = tmp_path / "data"
+    data.mkdir()
+    env = {
+        "MEMO_CONFIG_FILE": str(tmp_path / "memo-config.toml"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(data),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_EMBEDDER_DIMS": "4",
+        "MEMO_EMBEDDER_MODEL": "stub",
+    }
+    r = CliRunner().invoke(cli, ["sync", "pull", "--quiet"], env=env)
+    assert r.exit_code == 0, r.output
+    assert "skipped" in r.output.lower()
+
+    # without --quiet it surfaces the error (non-zero)
+    r2 = CliRunner().invoke(cli, ["sync", "pull"], env=env)
+    assert r2.exit_code != 0
+
+
 def test_pull_aborts_on_memoria_conflict(remote: Path, tmp_path: Path, monkeypatch):
     """Same memoria path edited divergently on A and B → rebase aborts + reports."""
     # Both clone from the shared seed FIRST so they truly diverge.
