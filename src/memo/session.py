@@ -747,3 +747,43 @@ def update_summary(
     existing["summary"] = summary[:200]
     _write(state_dir, session_id, existing)
     return True
+
+
+def render_continuity(rows: list[dict[str, Any]], cwd: str) -> str:
+    """Render "¿qué venía haciendo?" for the latest session in `cwd`.
+
+    Native-to-memo parity with memflow's flow_continuity, built on memo's own
+    session snapshots (cwd / branch / running_summary / open-loop prompt_trail).
+    Pure: takes the session rows + cwd, returns markdown. Returns a short
+    "no prior session" line when none match.
+    """
+    same = [r for r in rows if (r.get("cwd") or "") == cwd]
+    if not same:
+        return "Sin sesión previa en este directorio."
+    top = same[0]
+
+    def _clean(width: int) -> str:
+        for cand in (top.get("summary"), top.get("last_user_msg")):
+            if not is_command_noise(cand):
+                return _strip_command_wrappers(cand or "").replace("\n", " ")[:width]
+        rs = top.get("running_summary")
+        if rs and not is_command_noise(rs):
+            return rs.strip().replace("\n", " ")[:width]
+        return "—"
+
+    lines = [
+        f"## Venías haciendo ({format_relative(top.get('updated'))})",
+        "",
+        f"- **Resumen**: {_clean(160)}",
+        f"- **Branch**: `{top.get('branch') or '—'}`  |  **Turnos**: {top.get('turn_count') or 0}",
+        f"- **Retomar**: `claude --resume {top.get('session_id') or ''}`",
+    ]
+    running_summary = top.get("running_summary")
+    if running_summary and not is_command_noise(running_summary):
+        lines += ["", "### El hilo", "", running_summary.strip()]
+    trail = top.get("prompt_trail") or []
+    if trail:
+        lines += ["", "### Loops abiertos"]
+        for i, p in enumerate(reversed(trail[-5:]), 1):
+            lines.append(f"{i}. {str(p).strip()[:120]}")
+    return "\n".join(lines)

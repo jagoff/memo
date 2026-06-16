@@ -98,7 +98,7 @@ from memo.cli_runtime import (
     watch,
 )
 from memo.cli_search import ask, chat_ask, embed_cmd, rerank_cmd, search
-from memo.cli_session import session_group
+from memo.cli_session import continuity_cmd, session_group
 from memo.cli_share import share_group
 from memo.cli_stats import stats
 from memo.cli_sync import sync_group
@@ -196,6 +196,7 @@ cli.add_command(maint_daemon_group)
 cli.add_command(embed_daemon_group)
 cli.add_command(as_of_group)
 cli.add_command(session_group)
+cli.add_command(continuity_cmd)
 cli.add_command(temporal_group)
 cli.add_command(consolidate_group)
 cli.add_command(health_cmd)
@@ -231,6 +232,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "mcp-command",
     "install-slash",
     "install-mcp",
+    "continuity",
     "prewarm",
     "recall-hook",
     "recall-daemon",

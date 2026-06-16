@@ -16,6 +16,30 @@ from memo.config import Config
 from memo.flags import flag_bool, flag_int
 
 
+@click.command(name="continuity")
+@click.option("--limit", default=12, show_default=True, help="Sessions to scan for this cwd.")
+def continuity_cmd(limit: int) -> None:
+    """¿Qué venía haciendo? — resume the latest session for this directory.
+
+    Native-to-memo parity with memflow's flow_continuity, rendered from memo's
+    own session snapshots (cwd / branch / running summary / open loops). Reads
+    only; the data is captured by the Stop-hook checkpoint.
+    """
+    import os
+    from pathlib import Path
+
+    from memo.session import list_sessions, render_continuity
+
+    cfg = Config.from_env()
+    try:
+        rows = list_sessions(cfg.state_dir, limit=limit)
+    except Exception as exc:
+        console.print(f"[red]continuity failed:[/red] {exc}")
+        sys.exit(1)
+    cwd = str(Path(os.getcwd()).resolve())
+    console.print(render_continuity(rows, cwd))
+
+
 @click.group(name="session")
 def session_group() -> None:
     """Internal session-snapshot ops — hook targets, not user-facing.
