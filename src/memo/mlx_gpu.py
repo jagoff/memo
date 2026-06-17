@@ -1,50 +1,140 @@
 """Process-global GPU serialization for MLX forward passes.
 
 MLX runs every array op on a single process-global Metal command stream
-(`mlx.core`'s default stream). Two Python threads that force
-materialization (`mx.eval`, `.tolist()`, `float(mx_scalar)`)
-concurrently race that one command queue. When the race corrupts a
-command buffer, Metal reports the error from inside its **async**
-completion handler: `mlx::core::gpu::check_error` throws there, the
-exception can't unwind back into Python, the C++ runtime calls
-`std::terminate` -> `abort()`. The whole interpreter dies with SIGABRT
-— not a catchable Python exception. (Observed crash: thread
-`com.Metal.CompletionQueueDispatch` aborting while a
-`ThreadPoolExecutor` thread was inside `mlx::core::eval`.)
+(`mlx.core`'s default stream). Two threads that force materialization
+(`mx.eval`, `.tolist()`, `float(mx_scalar)`) concurrently race that one
+command queue. When the race corrupts a command buffer, Metal reports the
+error from inside its **async** completion handler:
+`mlx::core::gpu::check_error` throws there, the exception can't unwind back
+into Python, the C++ runtime calls `std::terminate` -> `abort()`. The whole
+interpreter dies with SIGABRT — not a catchable Python exception. (Observed
+crash: thread `com.Metal.CompletionQueueDispatch` aborting while a worker was
+inside `mlx::core::eval`.)
 
-memo hits this because the FastMCP HTTP server runs sync tool handlers
-on a worker threadpool, so a `memory_search` (embed) and a
-`memory_ask` (chat), or two concurrent searches, can enter MLX at once.
-The recall daemon already serializes with its own priority lock, but
-the MCP/CLI paths had no equivalent. This guard is that equivalent,
-applied at the MLX boundary so **every** caller — MCP, CLI, daemon —
-shares one serialization point.
+There are **two** ways memo provokes this, and they need two locks:
 
-Reentrant (`RLock`): `embed_query`->`embed` and `rerank`->`score`
-re-enter on the same thread. The guard is a leaf — never acquire
-another lock while holding it — so it cannot deadlock.
+1. *Intra-process* — the FastMCP HTTP server runs sync tool handlers on a
+   worker threadpool, so a `memory_search` (embed) and a `memory_ask` (chat),
+   or two concurrent searches, enter MLX at once. A process-global
+   `threading.RLock` serializes those.
+
+2. *Inter-process* — memo runs several independent MLX processes against the
+   one physical GPU: the warm `memo-mcp` HTTP server, the recall daemon, and
+   short-lived `memo` CLI / recall-hook invocations. They submit to the same
+   Metal device concurrently and corrupt each other's command buffers exactly
+   the same way. A `threading.Lock` cannot span processes; an advisory
+   **file lock** (`flock`) can. We layer one over the RLock so the GPU has a
+   single serialization point across every memo process on the machine.
+
+Reentrant: `embed_query`->`embed` and `rerank`->`score` re-enter on the same
+thread. The RLock allows that; the `flock` (which is *not* reentrant at the fd
+level) is taken only on the outermost entry per process and released on the
+outermost exit, tracked by a depth counter under the RLock.
+
+This module is a pure-stdlib leaf (`threading`, `os`, `fcntl`) — it imports
+nothing from `memo`, so every MLX caller can depend on it without a cycle, and
+it stays safe under the deferred-MLX-import invariant.
 """
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
+
+try:
+    import fcntl  # POSIX only; macOS (the only MLX platform) always has it.
+
+    _HAVE_FLOCK = True
+except ImportError:  # pragma: no cover - non-POSIX has no MLX/GPU to guard
+    _HAVE_FLOCK = False
 
 _GPU_LOCK = threading.RLock()
+
+# Cross-process flock state, only ever touched while holding `_GPU_LOCK`.
+_depth = 0
+_lock_fd: int | None = None
+
+_LOCK_FILENAME = "memo-mlx-gpu.lock"
+_FALSE = {"0", "false", "no", "off"}
+
+
+def _lock_path() -> Path:
+    """Filesystem path of the cross-process GPU lock.
+
+    The GPU is machine-global, so the lock must be too: every memo process for
+    a user — any runtime, any data dir, shell or launchd — has to resolve the
+    **same** path or they stop coordinating. So it is a fixed user-global path
+    (`~/.cache/memo/`), deliberately NOT tied to `MEMO_STATE_DIR`/`TMPDIR`
+    (which can differ between a shell and a launchd daemon and silently split
+    the lock). `MEMO_GPU_LOCK_PATH` overrides it (test isolation / edge setups).
+    Read at call time so the override takes effect per call.
+    """
+    override = os.environ.get("MEMO_GPU_LOCK_PATH", "").strip()
+    if override:
+        return Path(override)
+    return Path.home() / ".cache" / "memo" / _LOCK_FILENAME
+
+
+def _xproc_lock_enabled() -> bool:
+    """Whether the cross-process file lock is active (MEMO_GPU_XPROC_LOCK)."""
+    if not _HAVE_FLOCK:
+        return False
+    return os.environ.get("MEMO_GPU_XPROC_LOCK", "").strip().lower() not in _FALSE
+
+
+def _acquire_flock() -> None:
+    """Take the exclusive cross-process lock (outermost entry only)."""
+    global _lock_fd
+    path = _lock_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        # If we can't even open the lock file, degrade to intra-process only
+        # rather than block every MLX call — correctness-best-effort.
+        _lock_fd = None
+        return
+    fcntl.flock(fd, fcntl.LOCK_EX)  # blocks until other processes release
+    _lock_fd = fd
+
+
+def _release_flock() -> None:
+    """Release the cross-process lock (outermost exit only)."""
+    global _lock_fd
+    fd = _lock_fd
+    _lock_fd = None
+    if fd is None:
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 @contextmanager
 def gpu_guard() -> Iterator[None]:
-    """Serialize an MLX forward pass against all other GPU work in this process.
+    """Serialize an MLX forward pass against all other GPU work on the machine.
 
-    Wrap the smallest region that builds and materializes MLX arrays
-    (from `mx.array(...)` through the `.tolist()` / `float(...)` that
-    forces evaluation). CPU-only tokenization/pooling setup can stay
-    outside to keep the held window short.
+    Holds a process-global reentrant lock (threads) and, on the outermost
+    entry, an advisory file lock (other memo processes). Wrap the smallest
+    region that builds and materializes MLX arrays (from `mx.array(...)`
+    through the `.tolist()` / `float(...)` that forces evaluation). CPU-only
+    tokenization/pooling setup can stay outside to keep the held window short.
     """
+    global _depth
     _GPU_LOCK.acquire()
     try:
-        yield
+        if _depth == 0 and _xproc_lock_enabled():
+            _acquire_flock()
+        _depth += 1
+        try:
+            yield
+        finally:
+            _depth -= 1
+            if _depth == 0:
+                _release_flock()
     finally:
         _GPU_LOCK.release()

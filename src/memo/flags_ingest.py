@@ -93,4 +93,22 @@ SPECS: tuple[FlagSpec, ...] = (
         "embedder",
         "Embed-daemon stats log interval (s).",
     ),
+    _spec(
+        "MEMO_GPU_XPROC_LOCK",
+        "bool",
+        True,
+        "embedder",
+        "Serialize MLX GPU work across memo processes via a file lock "
+        "(prevents the cross-process Metal SIGABRT). Set 0 to disable.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_GPU_LOCK_PATH",
+        "str",
+        "",
+        "embedder",
+        "Override the cross-process GPU lock file path. Default is the "
+        "user-global ~/.cache/memo/memo-mlx-gpu.lock; every memo process "
+        "must agree on this path to coordinate. Mainly for test isolation.",
+    ),
 )
