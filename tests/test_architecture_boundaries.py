@@ -18,6 +18,10 @@ SRC = REPO_ROOT / "src" / "memo"
 # it's intentionally excluded from this strict leaf set.)
 FOUNDATION_MODULES = ["util", "store", "embedder", "graph"]
 
+# Pure-stdlib leaves at the very bottom of the stack. Foundation modules may
+# depend on these (they import nothing from memo, so no cycle is possible).
+PURE_LEAF_MODULES = {"util", "mlx_gpu"}
+
 
 def _memo_imports(module_file: Path) -> set[str]:
     """Top-level memo submodules imported by `module_file` (via AST)."""
@@ -81,6 +85,7 @@ def test_foundation_modules_import_no_other_memo_module(module: str) -> None:
     """Foundation modules stay leaf-level — no memo->memo imports, no cycles."""
     imports = _module_imports(module)
     imports.discard(module)
+    imports -= PURE_LEAF_MODULES  # depending on a pure-stdlib leaf can't cycle
     assert imports == set(), (
         f"{module}.py must not import other memo modules, found: {sorted(imports)}"
     )
@@ -94,6 +99,13 @@ def test_store_never_imports_memory() -> None:
 def test_util_is_pure_stdlib_leaf() -> None:
     """memo.util is the bottom of the stack — it depends on nothing in memo."""
     assert _memo_imports(SRC / "util.py") == set()
+
+
+def test_mlx_gpu_is_pure_stdlib_leaf() -> None:
+    """memo.mlx_gpu is a bottom-of-stack GPU-serialization leaf (threading
+    only) — it must import nothing from memo so every MLX caller can depend
+    on it without risking a cycle."""
+    assert _memo_imports(SRC / "mlx_gpu.py") == set()
 
 
 # Optional Memory subsystems that MUST stay behind lazy @property accessors —

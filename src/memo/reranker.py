@@ -55,6 +55,8 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from memo.mlx_gpu import gpu_guard
+
 _log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -178,11 +180,15 @@ class MLXReranker:
         # the prefix + query + early doc which carries the most signal.
         if len(ids) > self.max_seq_len:
             ids = ids[: self.max_seq_len]
-        arr = mx.array([ids])
-        logits = model(arr)
-        last = logits[:, -1, :]  # [1, V]
-        y = float(last[0, yes_id])
-        n = float(last[0, no_id])
+        # Serialize the GPU forward+materialization against all other MLX
+        # work in this process; the Metal default stream is global and
+        # concurrent eval aborts the interpreter (see memo.mlx_gpu).
+        with gpu_guard():
+            arr = mx.array([ids])
+            logits = model(arr)
+            last = logits[:, -1, :]  # [1, V]
+            y = float(last[0, yes_id])
+            n = float(last[0, no_id])
         # Softmax over the (no, yes) pair only — we don't care about
         # the rest of the vocab. Numerical-stable form.
         m = max(y, n)
