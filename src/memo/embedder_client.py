@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from collections.abc import Sequence
 from pathlib import Path
@@ -68,18 +67,18 @@ def _resolve_state_dir(state_dir: Path | None) -> Path:
 
 
 def _timeout() -> float:
-    raw = os.environ.get("MEMO_EMBEDDER_CLIENT_TIMEOUT")
-    if not raw:
-        return _DEFAULT_TIMEOUT_S
-    try:
-        value = float(raw)
-    except ValueError:
+    from memo.flags import flag_float
+
+    value = flag_float("MEMO_EMBEDDER_CLIENT_TIMEOUT")
+    if value is None:
         return _DEFAULT_TIMEOUT_S
     return value if value > 0 else _DEFAULT_TIMEOUT_S
 
 
 def _require_daemon() -> bool:
-    return os.environ.get("MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON") == "1"
+    from memo.flags import flag_bool
+
+    return flag_bool("MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON")
 
 
 def _try_socket(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | None:

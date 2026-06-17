@@ -135,6 +135,31 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
             "[dim](`memo recall-daemon start` to enable warm recall)[/dim]"
         )
 
+    # GitHub sync health — surfaces the silent no-op (data_dir not a git clone)
+    # and stranded commits (committed locally but never pushed).
+    from memo.sync_git import sync_status as _sync_status
+
+    sync = _sync_status(cfg)
+    if not sync.get("is_git_clone"):
+        console.print(
+            "[dim]•[/dim] github sync: OFF "
+            "[dim](data_dir not a git clone — `memo sync bootstrap <url>` to enable)[/dim]"
+        )
+    elif sync.get("pending"):
+        console.print(
+            f"[red]✗[/red] github sync: STRANDED — local commit(s) not pushed "
+            f"(ahead {sync['ahead']}); offline/auth? next `memo sync push` retries"
+        )
+    elif sync.get("ahead") or sync.get("dirty_files"):
+        console.print(
+            f"[yellow]![/yellow] github sync: {sync['ahead']} unpushed, "
+            f"{sync['dirty_files']} uncommitted (auto-syncs in-session / on Stop)"
+        )
+    else:
+        console.print(
+            f"[green]✓[/green] github sync: up to date ({sync.get('remote') or 'no remote'})"
+        )
+
     if check_db:
         for db in _db_health_report(cfg):
             marker = "[green]✓[/green]" if db["ok"] else "[red]✗[/red]"

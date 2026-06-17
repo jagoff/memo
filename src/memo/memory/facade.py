@@ -11,26 +11,18 @@ public + private member of the original god-class.
 from __future__ import annotations
 
 import contextlib
-import os
 import threading
 from typing import Any
 
-from memo.analytics import AnalyticsEngine, Dashboard
-from memo.collaborative import CollaborativeFilter, CollaborativeGraph, CollaborativeManager
 from memo.config import Config
 from memo.consolidation import AdvancedConsolidator
-from memo.contextual import ContextStore, ContextualRecall
 from memo.contextual_retrieval import get_or_generate_context, prepend_context
 from memo.contradict import ContradictionScanner, ContradictionStore
-from memo.crossref import CrossReferenceIndex, LinkSuggester
 from memo.embedder import MLXEmbedder
-from memo.encryption import EncryptionManager, Encryptor, KeyManager
-from memo.federation import FederationConfig, FederationSearcher
 from memo.graph import GraphStore
-from memo.import_export import ImportExportManager
-from memo.lifecycle import LifecycleManager
 from memo.llm import MLXChat
 from memo.memory.ask_ops import _AskOpsMixin
+from memo.memory.capabilities import OPTIONAL_CAPABILITIES
 from memo.memory.consolidate_ops import _ConsolidateOpsMixin
 from memo.memory.delete_ops import _DeleteOpsMixin
 from memo.memory.maintain_ops import _MaintainOpsMixin
@@ -41,15 +33,8 @@ from memo.memory.rerank_ops import _RerankOpsMixin
 from memo.memory.search_ops import _SearchOpsMixin
 from memo.memory.update_ops import _UpdateOpsMixin
 from memo.memory.write_ops import _WriteOpsMixin
-from memo.multimodal import CrossModalSearch, MultiModalManager, MultiModalStore, UniversalEmbedder
-from memo.navigation import GraphNavigator
-from memo.proactive import ProactiveSuggester
-from memo.saved_queries import QueryComposer, QueryStore
-from memo.sharing import ShareManager, ShareStore
 from memo.store import VecStore
-from memo.sync import BackupManager, SyncManager
 from memo.temporal import TemporalAnalyzer
-from memo.versioning import VersionManager
 
 
 class Memory(
@@ -94,12 +79,9 @@ class Memory(
         # the warm memo-mcp chat daemon so its resident footprint is just the
         # synthesis model — the recall daemon already holds the embedder warm.
         # Falls back in-process automatically if the socket is down.
-        if os.environ.get("MEMO_EMBEDDER_VIA_DAEMON", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_EMBEDDER_VIA_DAEMON"):
             from memo.embedder_client import SocketEmbedder
 
             self.embedder: Any = SocketEmbedder(
@@ -143,6 +125,7 @@ class Memory(
         # `cache`, memoized here. Construction triggers no cold-start and the
         # backend is built lazily on first use (see CacheManager.ensure_backend).
         self._cache: Any | None = None
+        self._capabilities: dict[str, Any] = {}
         # Reranker is lazy — first hybrid `search()` triggers the load
         # if `cfg.reranker_enabled`. Cold load of Qwen3-Reranker-0.6B
         # is ~1-2s; users who disable it (CI, vec-only mode) pay zero.
@@ -156,11 +139,6 @@ class Memory(
         self._maybe_warn_legacy_paths()
         # Temporal analyzer for contradiction detection and timeline analysis
         self._temporal: TemporalAnalyzer | None = None
-        # Memoized ContextualRecall (its ContextStore reads disk on init).
-        self._contextual: ContextualRecall | None = None
-        # Encryption manager carries unlock state in memory, so it must be
-        # stable across accesses within a long-lived MCP process.
-        self._encryption: EncryptionManager | None = None
         # Serialises unique-path allocation + .md creation in save() so two
         # concurrent same-title saves can't race the path probe (see write_ops).
         self._save_path_lock = threading.Lock()
@@ -238,35 +216,35 @@ class Memory(
         return ContradictionScanner(self, self.contradict_store, self.temporal)
 
     @property
-    def navigator(self) -> GraphNavigator:
+    def navigator(self) -> Any:
         """Lazy accessor for GraphNavigator."""
+        from memo.navigation import GraphNavigator
+
         return GraphNavigator(self.graph)
 
     @property
-    def contextual(self) -> ContextualRecall:
+    def contextual(self) -> Any:
         """Lazy, memoized accessor for ContextualRecall.
 
         Memoized because ContextStore() reads JSON state from disk on init —
         re-creating it on every access (e.g. twice per recall) is wasted I/O.
         """
-        if self._contextual is None:
-            self._contextual = ContextualRecall(self, ContextStore(self.cfg.state_dir))
-        return self._contextual
+        return self.capability("contextual")
 
     @property
-    def crossref(self) -> CrossReferenceIndex:
+    def crossref(self) -> Any:
         """Lazy accessor for CrossReferenceIndex."""
-        return CrossReferenceIndex(self.cfg.crossref_db)
+        return self.capability("crossref")
 
     @property
-    def link_suggester(self) -> LinkSuggester:
+    def link_suggester(self) -> Any:
         """Lazy accessor for LinkSuggester."""
-        return LinkSuggester(self, self.crossref)
+        return self.capability("link_suggester")
 
     @property
-    def lifecycle(self) -> LifecycleManager:
+    def lifecycle(self) -> Any:
         """Lazy accessor for LifecycleManager."""
-        return LifecycleManager(self)
+        return self.capability("lifecycle")
 
     @property
     def cache(self):
@@ -283,82 +261,77 @@ class Memory(
         return self._cache
 
     @property
-    def proactive(self) -> ProactiveSuggester:
+    def proactive(self) -> Any:
         """Lazy accessor for ProactiveSuggester."""
-        return ProactiveSuggester(self, self._ensure_chat())
+        return self.capability("proactive")
 
     @property
-    def versioning(self) -> VersionManager:
+    def versioning(self) -> Any:
         """Lazy accessor for VersionManager."""
-        return VersionManager(self)
+        return self.capability("versioning")
 
     @property
-    def query_composer(self) -> QueryComposer:
+    def query_composer(self) -> Any:
         """Lazy accessor for QueryComposer."""
-        return QueryComposer(self, QueryStore(self.cfg.state_dir))
+        return self.capability("query_composer")
 
     @property
-    def federation(self) -> FederationSearcher:
+    def federation(self) -> Any:
         """Lazy accessor for FederationSearcher."""
-        return FederationSearcher(FederationConfig(self.cfg.state_dir / "federation.json"))
+        return self.capability("federation")
 
     @property
-    def backup(self) -> BackupManager:
+    def backup(self) -> Any:
         """Lazy accessor for BackupManager."""
-        return BackupManager(
-            memory_dir=self.cfg.memory_dir,
-            db_dir=self.cfg.state_dir,
-            backup_dir=self.cfg.state_dir / "backups",
-        )
+        return self.capability("backup")
 
     @property
-    def sync(self) -> SyncManager:
+    def sync(self) -> Any:
         """Lazy accessor for SyncManager."""
-        return SyncManager(self)
+        return self.capability("sync")
 
     @property
-    def encryption(self) -> EncryptionManager:
+    def encryption(self) -> Any:
         """Lazy accessor for EncryptionManager."""
-        if self._encryption is None:
-            key_manager = KeyManager(self.cfg.state_dir)
-            encryptor = Encryptor(key_manager)
-            self._encryption = EncryptionManager(key_manager, encryptor)
-        return self._encryption
+        return self.capability("encryption")
 
     @property
-    def sharing(self) -> ShareManager:
+    def sharing(self) -> Any:
         """Lazy accessor for ShareManager."""
-        return ShareManager(ShareStore(self.cfg.state_dir))
+        return self.capability("sharing")
 
     @property
-    def analytics(self) -> AnalyticsEngine:
+    def analytics(self) -> Any:
         """Lazy accessor for AnalyticsEngine."""
-        return AnalyticsEngine(self)
+        return self.capability("analytics")
 
     @property
-    def dashboard(self) -> Dashboard:
+    def dashboard(self) -> Any:
         """Lazy accessor for Dashboard."""
-        return Dashboard(self.analytics)
+        return self.capability("dashboard")
 
     @property
-    def import_export(self) -> ImportExportManager:
+    def import_export(self) -> Any:
         """Lazy accessor for ImportExportManager."""
-        return ImportExportManager(self)
+        return self.capability("import_export")
 
     @property
-    def multimodal(self) -> MultiModalManager:
+    def multimodal(self) -> Any:
         """Lazy accessor for MultiModalManager."""
-        store = MultiModalStore(self.cfg.state_dir)
-        embedder = UniversalEmbedder()
-        search = CrossModalSearch(store, embedder)
-        return MultiModalManager(store, embedder, search)
+        return self.capability("multimodal")
 
     @property
-    def collaborative(self) -> CollaborativeManager:
+    def collaborative(self) -> Any:
         """Lazy accessor for CollaborativeManager."""
-        graph = CollaborativeGraph(self.cfg.state_dir)
-        filter = CollaborativeFilter(graph)
-        return CollaborativeManager(graph, filter)
+        return self.capability("collaborative")
+
+    def capability(self, name: str) -> Any:
+        """Build and memoize an optional subsystem by registry name."""
+        if name not in OPTIONAL_CAPABILITIES:
+            raise KeyError(f"unknown Memory capability: {name}")
+        if name not in self._capabilities:
+            self._capabilities[name] = OPTIONAL_CAPABILITIES[name](self)
+        return self._capabilities[name]
 
     def _maybe_warn_legacy_paths(self) -> None:
         """Stderr warning when stored `meta.path` rows don't resolve.
@@ -375,12 +348,13 @@ class Memory(
                 return
             missing = sum(1 for r in sample if not self._resolve_existing(r["path"]).is_file())
             if missing == len(sample):
-                import os as _os
                 import sys
+
+                from memo.flags import flag_bool
 
                 # Suppressible — TUI sets MEMO_SUPPRESS_LEGACY_WARN=1 because
                 # the message is moot while in alt-screen mode.
-                if _os.environ.get("MEMO_SUPPRESS_LEGACY_WARN") == "1":
+                if flag_bool("MEMO_SUPPRESS_LEGACY_WARN"):
                     return
                 print(
                     f"[memo] heads-up: tu índice apunta a paths antiguos "

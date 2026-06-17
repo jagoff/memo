@@ -147,3 +147,103 @@ def test_lazy_property_caches_after_access(mock_memory) -> None:
     first = mock_memory.temporal
     assert mock_memory._temporal is first
     assert mock_memory.temporal is first
+
+
+def test_optional_memory_capabilities_live_in_registry(mock_memory) -> None:
+    """Experimental/advanced Memory subsystems are declared in one registry."""
+    from memo.memory.capabilities import OPTIONAL_CAPABILITIES
+
+    expected = {
+        "analytics",
+        "backup",
+        "collaborative",
+        "dashboard",
+        "federation",
+        "import_export",
+        "lifecycle",
+        "multimodal",
+        "proactive",
+        "query_composer",
+        "sharing",
+        "sync",
+        "versioning",
+    }
+
+    assert expected.issubset(OPTIONAL_CAPABILITIES)
+    assert mock_memory.capability("analytics") is mock_memory.analytics
+    assert mock_memory.capability("lifecycle") is mock_memory.lifecycle
+
+
+def test_behavior_flags_are_not_read_directly_from_environ() -> None:
+    """Behavioral MEMO_* reads go through memo.flags, not ad-hoc env parsing."""
+    allowed_modules = {
+        SRC / "config.py",
+        SRC / "flags.py",
+        SRC / "flags_base.py",
+        SRC / "flags_behavior.py",
+        SRC / "flags_ingest.py",
+        SRC / "flags_misc.py",
+        SRC / "flags_recall.py",
+        SRC / "flags_search.py",
+    }
+    config_owned = {
+        "MEMO_CONFIG_FILE",
+        "MEMO_DATA_DIR",
+        "MEMO_EMBEDDER_DIMS",
+        "MEMO_EMBEDDER_MODEL",
+        "MEMO_HELPER_MODEL",
+        "MEMO_LLM_MODEL",
+        "MEMO_MAX_CONTENT_CHARS",
+        "MEMO_MEMORY_SUBDIR",
+        "MEMO_MODEL_PROFILE",
+        "MEMO_RERANKER_ENABLED",
+        "MEMO_RERANKER_MODEL",
+        "MEMO_RERANKER_REVISION",
+        "MEMO_RERANK_FUSION_ALPHA",
+        "MEMO_RERANK_INPUT_K",
+        "MEMO_SEARCH_DEFAULT_LIMIT",
+        "MEMO_SINGLE_DB",
+        "MEMO_STATE_DIR",
+        "MEMO_VAULT_PATH",
+    }
+    pure_leaf_owned = {
+        SRC / "embedder.py": {"MEMO_QUERY_CACHE_SIZE"},
+        SRC / "mlx_gpu.py": {"MEMO_GPU_LOCK_PATH", "MEMO_GPU_XPROC_LOCK"},
+        SRC / "store" / "schema.py": {"MEMO_SKIP_MODEL_VERSION_CHECK"},
+    }
+    violations: list[str] = []
+
+    for path in sorted(SRC.rglob("*.py")):
+        if path in allowed_modules:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            is_env_get = (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "environ"
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id in {"os", "_os", "_os_min"}
+            )
+            is_getenv = (
+                isinstance(func, ast.Attribute)
+                and func.attr == "getenv"
+                and isinstance(func.value, ast.Name)
+                and func.value.id in {"os", "_os", "_os_min"}
+            )
+            if (
+                (is_env_get or is_getenv)
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and node.args[0].value.startswith("MEMO_")
+                and node.args[0].value not in config_owned
+                and node.args[0].value not in pure_leaf_owned.get(path, set())
+            ):
+                violations.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {node.args[0].value}")
+
+    assert violations == []

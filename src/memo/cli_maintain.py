@@ -34,7 +34,7 @@ import click
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
-from memo.flags import flag_bool
+from memo.flags import flag_bool, flag_int
 
 _log = logging.getLogger(__name__)
 
@@ -189,6 +189,8 @@ def maintain_cmd(
         "archived_stale": [],
         "synthesized": [],  # emergent cross-memory insights generated
         "synthesis_count": 0,  # new clusters synthesized by proactive pass
+        "outcome_reconciled": 0,  # memorias whose roi_score was re-derived from outcomes
+        "dead_archived": [],  # surfaced-never-grounded memorias soft-forgotten
         "errors": [],
     }
 
@@ -313,6 +315,32 @@ def maintain_cmd(
             _log.warning("maintain: proactive synthesis failed (non-fatal): %s", exc)
             receipt["errors"].append(f"maint_synthesize: {type(exc).__name__}: {exc}")
 
+    # 6. Outcome loop (opt-in: MEMO_OUTCOME_RANKING_ENABLED=1) ----------------
+    # Self-tuning recall: re-derive roi_score from real grounding outcomes (was
+    # the surfaced memoria USED in the answer?) so ranking promotes what helps,
+    # and reversibly archive dead weight (surfaced often, never grounded). Pure
+    # derivation over the recall/grounding logs + one roi write.
+    if flag_bool("MEMO_OUTCOME_RANKING_ENABLED"):
+        try:
+            from memo.outcome import compute_utilities, dead_weight, reconcile_roi
+
+            min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 0
+            dead = dead_weight(mem, min_surfaced=min_surfaced)
+            if dry_run:
+                receipt["outcome_reconciled"] = len(
+                    compute_utilities(cfg.state_dir)["by_prefix"]
+                )
+                receipt["dead_archived"] = [d["id"] for d in dead]
+            else:
+                receipt["outcome_reconciled"] = reconcile_roi(mem).get("updated", 0)
+                for d in dead:
+                    if mem.forget(
+                        d["id"], reason=f"outcome: surfaced {d['surfaced']}x sin grounding"
+                    ) is not None:
+                        receipt["dead_archived"].append(d["id"])
+        except Exception as exc:
+            receipt["errors"].append(f"outcome: {type(exc).__name__}: {exc}")
+
     # Persist receipt + timestamp (the daily guard reads the timestamp). Even
     # a dry-run stamps so a preview doesn't immediately re-trigger; the guard
     # cares only about "ran recently".
@@ -349,6 +377,11 @@ def maintain_cmd(
         )
     if receipt.get("synthesis_count"):
         console.print(f"  synthesis: {receipt['synthesis_count']} new clusters synthesized")
+    if receipt.get("outcome_reconciled") or receipt.get("dead_archived"):
+        console.print(
+            f"  outcome loop: roi_score re-derived for {receipt['outcome_reconciled']} "
+            f"memorias, {len(receipt['dead_archived'])} dead-weight archived"
+        )
     if receipt["errors"]:
         for e in receipt["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")

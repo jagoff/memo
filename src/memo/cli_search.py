@@ -13,9 +13,26 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
-from memo.cli_common import console
+from memo.cli_common import console, log_cli_consult
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+
+
+def _sources_as_hits(out: dict) -> list[dict]:
+    """Map an ask/chat-ask answer envelope's ``sources`` to recall-log hit dicts
+    so the consult records which memorias backed the answer."""
+    hits: list[dict] = []
+    for s in out.get("sources") or []:
+        if not isinstance(s, dict):
+            continue
+        hits.append(
+            {
+                "id": s.get("id") or s.get("id_short") or "",
+                "score": s.get("score"),
+                "title": s.get("title") or "",
+            }
+        )
+    return hits
 
 
 @click.command()
@@ -39,6 +56,12 @@ from memo.config import Config
     "--mode hybrid.",
 )
 @click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--source",
+    default=None,
+    help="Identify the calling layer (synapse / memflow / …) so the consult is "
+    "attributed in `memo usefulness`. Falls back to the MEMO_SOURCE env var.",
+)
 def search(
     query: str,
     limit: int,
@@ -46,9 +69,11 @@ def search(
     mode: str,
     use_rerank: bool | None,
     as_json: bool,
+    source: str | None,
 ) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
     import os
+    import time
 
     # Apply --rerank / --no-rerank override before Config.from_env() reads it.
     if use_rerank is True:
@@ -56,11 +81,15 @@ def search(
     elif use_rerank is False:
         os.environ["MEMO_RERANKER_ENABLED"] = "0"
 
-    mem = _get_memory(Config.from_env())
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
     disable_reranker = use_rerank is False
+    t0 = int(time.time() * 1000)
     hits = mem.search(query, limit=limit, type_=type_, mode=mode, disable_reranker=disable_reranker)
+    hit_dicts = [h.to_dict() for h in hits]
+    log_cli_consult(cfg, verb="search", query=query, hits=hit_dicts, t0_ms=t0, source=source)
     if as_json:
-        click.echo(json.dumps([h.to_dict() for h in hits], ensure_ascii=False, indent=2))
+        click.echo(json.dumps(hit_dicts, ensure_ascii=False, indent=2))
         return
     if not hits:
         console.print("[dim]no results[/dim]")
@@ -87,13 +116,25 @@ def search(
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option("--json", "as_json", is_flag=True)
-def ask(question: str, k: int, type_: str | None, as_json: bool) -> None:
+@click.option(
+    "--source",
+    default=None,
+    help="Identify the calling layer so the consult is attributed in "
+    "`memo usefulness` (falls back to MEMO_SOURCE).",
+)
+def ask(question: str, k: int, type_: str | None, as_json: bool, source: str | None) -> None:
     """RAG over the memory archive — synthesises a prose answer with
     inline `[id]` citations using MLXChat 7B over the top-K hybrid hits.
     """
+    import time
 
-    mem = _get_memory(Config.from_env())
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    t0 = int(time.time() * 1000)
     out = mem.ask(question, k=k, type_=type_)
+    log_cli_consult(
+        cfg, verb="ask", query=question, hits=_sources_as_hits(out), t0_ms=t0, source=source
+    )
     if as_json:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
         return
@@ -193,6 +234,12 @@ def embed_cmd(text: str | None, batch_json) -> None:
         "immediately. Forces JSON output and disables the panel."
     ),
 )
+@click.option(
+    "--source",
+    default=None,
+    help="Identify the calling layer so the consult is attributed in "
+    "`memo usefulness` (falls back to MEMO_SOURCE).",
+)
 def chat_ask(
     question: str,
     k: int,
@@ -201,6 +248,7 @@ def chat_ask(
     context_json,
     as_json: bool,
     as_stream: bool,
+    source: str | None,
 ) -> None:
     """Chat-shaped RAG over memo."""
 
@@ -222,11 +270,16 @@ def chat_ask(
         except Exception:
             context = {}
 
-    mem = _get_memory(Config.from_env())
+    import time
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    t0 = int(time.time() * 1000)
 
     if as_stream:
         import sys
 
+        stream_hits: list[dict] = []
         for event in mem.chat_ask_stream(
             question,
             k=k,
@@ -234,8 +287,13 @@ def chat_ask(
             history=history,
             context=context,
         ):
+            if isinstance(event, dict) and event.get("sources") and not stream_hits:
+                stream_hits = _sources_as_hits(event)
             sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
             sys.stdout.flush()
+        log_cli_consult(
+            cfg, verb="chat_ask", query=question, hits=stream_hits, t0_ms=t0, source=source
+        )
         return
 
     envelope = mem.chat_ask(
@@ -244,6 +302,14 @@ def chat_ask(
         type_=type_,
         history=history,
         context=context,
+    )
+    log_cli_consult(
+        cfg,
+        verb="chat_ask",
+        query=question,
+        hits=_sources_as_hits(envelope),
+        t0_ms=t0,
+        source=source,
     )
     if as_json:
         click.echo(json.dumps(envelope, ensure_ascii=False, indent=2))
@@ -262,6 +328,52 @@ def chat_ask(
                 f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "
                 f"[dim](score {s.get('score', 0):.3f})[/dim]"
             )
+
+
+@click.command(name="recall")
+@click.argument("query")
+@click.option("--limit", default=5, type=int, show_default=True)
+@click.option("--type", "type_", default=None, help="Filter by record type.")
+@click.option("--json", "as_json", is_flag=True, help='Emit {"results": [...]} for callers.')
+@click.option(
+    "--source",
+    default=None,
+    help="Identify the calling layer so the consult is attributed in "
+    "`memo usefulness` (falls back to MEMO_SOURCE).",
+)
+def recall(query: str, limit: int, type_: str | None, as_json: bool, source: str | None) -> None:
+    """Hybrid recall for programmatic callers (synapse / memflow bridge).
+
+    Same retrieval as ``memo search`` but emits ``{"results": [...]}`` — the
+    shape the memflow memo-bridge parses — and attributes the consult so the
+    layer stops showing as silent in ``memo usefulness``.
+    """
+    import time
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    t0 = int(time.time() * 1000)
+    hits = mem.search(query, limit=limit, type_=type_, mode="hybrid")
+    results = []
+    for h in hits:
+        d = h.to_dict()
+        d["kind"] = d.get("type")  # memflow reads `kind`; memo stores `type`
+        results.append(d)
+    log_cli_consult(cfg, verb="recall", query=query, hits=results, t0_ms=t0, source=source)
+    if as_json:
+        click.echo(json.dumps({"results": results}, ensure_ascii=False))
+        return
+    if not results:
+        console.print("[dim]no results[/dim]")
+        return
+    for d in results:
+        score = d.get("score")
+        console.print(
+            f"  [dim][{(d.get('id') or '')[:8]}][/dim] {(d.get('title') or '')[:60]}  "
+            f"[dim](score {score:.3f})[/dim]"
+            if isinstance(score, (int, float))
+            else f"  [dim][{(d.get('id') or '')[:8]}][/dim] {(d.get('title') or '')[:60]}"
+        )
 
 
 @click.command(name="rerank")

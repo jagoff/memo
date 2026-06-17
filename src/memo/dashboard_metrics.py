@@ -23,6 +23,12 @@ SPECIFIC_MARGIN = 0.06
 # only when it is both read enough (volume) and actually helping (grounded).
 VERDICT_MIN_CONSULTS = 20
 VERDICT_MIN_GROUNDED = 0.10
+# Layers we EXPECT to read memo (flagged as "silent" if absent). "windsurf" was
+# retired — that IDE is now Devin Desktop (Cognition), which reads
+# ~/.codeium/windsurf/mcp_config.json with MEMO_SOURCE=devin-desktop, so it is
+# labelled "devin-desktop" when it consults. It is NOT in this expected set: it's
+# a GUI app that can't be driven headless, so flagging it silent is just noise —
+# it appears as a reader if/when Cascade actually queries memo.
 EXPECTED_CONSUMERS = (
     "claude-code",
     "synapse",
@@ -30,7 +36,6 @@ EXPECTED_CONSUMERS = (
     "codex",
     "devin",
     "opencode",
-    "windsurf",
 )
 
 

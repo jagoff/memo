@@ -197,8 +197,8 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         # cache when available. The embedder is a foundation module that must not
         # import memo.flags (see the architecture-boundary test), so flags-aware
         # callers (Memory facade, recall daemon) pass the registry default via
-        # `cache_size`. When that is None we fall back to the raw env read — which
-        # defaults to 0/off — so a bare `MLXEmbedder()` stays opt-in.
+        # `cache_size`. When that is None we keep the legacy bare-embedder env
+        # fallback for tests and standalone use.
         if cache_size is None:
             cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
         # Either the shared consciousness-contracts cache or the local _SimpleLRU

@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import builtins
 import math
-import os
 import sqlite3
 from dataclasses import replace
 from typing import Any
 
-from memo.flags import flag_bool, flag_float, flag_int
+from memo.flags import active_flags, flag_bool, flag_float, flag_int
 from memo.lifecycle import IS_FORGOTTEN_KEY
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -47,6 +46,7 @@ class _SearchOpsMixin(_MemoryBase):
         include_forgotten: bool = False,
         read_through: bool = False,
         entity_boost: bool | None = None,
+        _trace: list[dict[str, Any]] | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
 
@@ -80,7 +80,13 @@ class _SearchOpsMixin(_MemoryBase):
                 (see `memo.tiers`) so bulk vault material stays searchable on
                 demand but never drowns durable knowledge in the prompt.
         """
+        def _add_trace(stage: str, **data: Any) -> None:
+            if _trace is not None:
+                _trace.append({"stage": stage, **data})
+
         if not query or not query.strip():
+            _add_trace("candidate_generation", mode=mode, output_count=0)
+            _add_trace("final", output_count=0)
             return []
         limit = limit or self.cfg.search_default_limit
 
@@ -88,6 +94,7 @@ class _SearchOpsMixin(_MemoryBase):
             rows = self.store.search_bm25(
                 query, limit=limit, type_=type_, exclude_types=exclude_types
             )
+            _add_trace("candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows))
         elif mode == "exact":
             # Precise keyword lookup: strict AND (no OR loosening) with an
             # elevated tag/title field boost so a term in curated metadata
@@ -99,10 +106,12 @@ class _SearchOpsMixin(_MemoryBase):
                 exclude_types=exclude_types,
                 field_boost="exact",
             )
+            _add_trace("candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows))
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
                 query, limit=limit, type_=type_, exclude_types=exclude_types
             )
+            _add_trace("candidate_generation", mode=mode, fuzzy_count=len(rows), output_count=len(rows))
         elif mode == "vec":
             # Asymmetric retrieval: queries are embedded WITH the
             # instruction prefix; documents are embedded RAW (in
@@ -110,6 +119,7 @@ class _SearchOpsMixin(_MemoryBase):
             # in `embedder.py` for the why.
             emb = self.embedder.embed_query(query)
             rows = self.store.search(emb, limit=limit, type_=type_, exclude_types=exclude_types)
+            _add_trace("candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows))
         else:
             # hybrid — fetch a wider candidate set from each side and
             # fuse with reciprocal rank fusion (RRF). When the reranker
@@ -183,8 +193,9 @@ class _SearchOpsMixin(_MemoryBase):
             w_bm25 = w_bm25 if w_bm25 is not None else 0.5
             # Warn when the user has explicitly set both but their sum deviates
             # from 1.0 by more than the 0.05 tolerance.
-            _vec_set = os.environ.get("MEMO_SEARCH_VEC_WEIGHT") not in (None, "")
-            _bm25_set = os.environ.get("MEMO_SEARCH_BM25_WEIGHT") not in (None, "")
+            _active = active_flags()
+            _vec_set = "MEMO_SEARCH_VEC_WEIGHT" in _active
+            _bm25_set = "MEMO_SEARCH_BM25_WEIGHT" in _active
             if _vec_set and _bm25_set:
                 _weight_sum = w_vec + w_bm25
                 if abs(_weight_sum - 1.0) > 0.05:
@@ -200,6 +211,16 @@ class _SearchOpsMixin(_MemoryBase):
             rows = _rrf_fuse(
                 vec_hits, bm_hits, graph_hits,
                 limit=input_k, k=rrf_k, weights=rrf_weights,
+            )
+            _add_trace(
+                "candidate_generation",
+                mode="hybrid",
+                vec_count=len(vec_hits),
+                bm25_count=len(bm_hits),
+                graph_count=len(graph_hits),
+                output_count=len(rows),
+                rrf_k=rrf_k,
+                input_k=input_k,
             )
         out: list[MemoryRecord] = []
         for r in rows:
@@ -218,12 +239,15 @@ class _SearchOpsMixin(_MemoryBase):
                     score=r.get("score"),
                 ),
             )
+        _add_trace("materialize", input_count=len(rows), output_count=len(out), load_bodies=load_bodies)
         # Drop soft-forgotten memorias (forget_after TTL elapsed, see
         # lifecycle.py) before feedback/rerank so they never reach the
         # consumer — recall, ask, chat all route through here. Reversible
         # via `unforget`; pass include_forgotten=True to surface them.
         if out and not include_forgotten:
+            before = len(out)
             out = [r for r in out if not (r.extra or {}).get(IS_FORGOTTEN_KEY)]
+            _add_trace("forget_filter", input_count=before, output_count=len(out))
         # Source-level feedback (👍 / 👎) — applied AFTER RRF/vec retrieval
         # but BEFORE cross-encoder rerank so the reranker doesn't waste
         # cycles on hits the user already vetoed. Embeds the query once
@@ -237,9 +261,11 @@ class _SearchOpsMixin(_MemoryBase):
         # is itself vector-based, so applying it only when a query vector already
         # exists is consistent.
         fb_emb = locals().get("emb")
-        if out and fb_emb is not None and os.environ.get("MEMO_FEEDBACK_DISABLED") != "1":
+        if out and fb_emb is not None and not flag_bool("MEMO_FEEDBACK_DISABLED"):
             try:
+                before = len(out)
                 out = self._apply_source_feedback(out, fb_emb)
+                _add_trace("feedback", input_count=before, output_count=len(out))
             except Exception as exc:
                 _log.warning("source_feedback failed: %s", exc, exc_info=True)
         elif out and fb_emb is None:
@@ -259,15 +285,19 @@ class _SearchOpsMixin(_MemoryBase):
         )
         _health_applied = False
         if _reranker_will_run and not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
+            before = len(out)
             out = self._apply_health_scores(out)
             _health_applied = True
+            _add_trace("health_pre_rerank", input_count=before, output_count=len(out))
         # Cross-encoder rerank on hybrid mode only. Skipped for vec/bm25
         # since those callers explicitly opted out of fusion entirely;
         # adding rerank to single-mode searches would surprise users
         # benchmarking the raw bi-encoder or BM25 surfaces.
         # Also skipped when disable_reranker=True (e.g., chat synthesis).
         if _reranker_will_run:
+            before = len(out)
             out = self._rerank(query, out, top_n=limit)
+            _add_trace("rerank", input_count=before, output_count=len(out))
         # Recency decay: blend a freshness bonus into the score so older
         # memories don't crowd out recent ones. MEMO_SEARCH_DECAY_HALFLIFE
         # (days) sets the halflife explicitly; if unset, the consumer paths
@@ -278,14 +308,24 @@ class _SearchOpsMixin(_MemoryBase):
         if halflife_days <= 0 and recency:
             halflife_days = _RECALL_DECAY_HALFLIFE_DEFAULT
         if halflife_days > 0 and out:
+            before = len(out)
             alpha = min(max(flag_float("MEMO_SEARCH_DECAY_ALPHA") or 0.15, 0.0), 1.0)
             out = _apply_decay(out, halflife_days=halflife_days, alpha=alpha)
+            _add_trace(
+                "recency_decay",
+                input_count=before,
+                output_count=len(out),
+                halflife_days=halflife_days,
+                alpha=alpha,
+            )
         # Cache-tier read-through: on a local miss/under-fill, pull from the
         # backing store and materialize locally. OPT-IN per call — only the
         # consumer paths (ask/chat) pass read_through=True. The recall hook
         # never does: a backend subprocess (≤5s) would blow its 5s budget.
         if read_through and self.cache.policy.read_through and len(out) < limit:
+            before = len(out)
             out = self._cache_read_through(query, out, limit)
+            _add_trace("cache_read_through", input_count=before, output_count=len(out))
         # Entity-aware score boost: if query mentions known entities (persons,
         # technologies, projects), boost chunks whose extra["entities"] overlaps.
         # Gated by MEMO_ENTITY_RETRIEVAL_ENABLED. Best-effort: any failure is
@@ -296,7 +336,9 @@ class _SearchOpsMixin(_MemoryBase):
             entity_boost if entity_boost is not None else flag_bool("MEMO_ENTITY_RETRIEVAL_ENABLED")
         )
         if out and _entity_on:
+            before = len(out)
             out = self._apply_entity_boost(query, out)
+            _add_trace("entity_boost", input_count=before, output_count=len(out))
 
         # Contradiction penalty: penalise the older side of open contradiction
         # pairs among the retrieved results so stale/superseded memories don't
@@ -305,19 +347,34 @@ class _SearchOpsMixin(_MemoryBase):
         # least once). Only the recall/ask/chat consumer paths benefit; the eval
         # harness and recall-hook budget make this opt-in.
         if out and flag_bool("MEMO_CONTRADICT_PENALTY_ENABLED"):
+            before = len(out)
             out = self._apply_contradict_penalty(out)
+            _add_trace("contradiction_penalty", input_count=before, output_count=len(out))
         if out and flag_bool("MEMO_GRAPH_EXPANSION_ENABLED"):
+            before = len(out)
             out = self._apply_graph_expansion(
                 out,
                 load_bodies=load_bodies,
                 exclude_types=exclude_types,
             )
+            _add_trace("graph_expansion", input_count=before, output_count=len(out))
         if out and flag_bool("MEMO_RETRIEVAL_BOOST"):
+            before = len(out)
             out = self._apply_retrieval_boost(query, out)
+            _add_trace("retrieval_boost", input_count=before, output_count=len(out))
         if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED") and not _health_applied:
+            before = len(out)
             out = self._apply_health_scores(out)
+            _add_trace("health", input_count=before, output_count=len(out))
         self._record_access([r.id for r in out])
+        _add_trace("final", output_count=len(out), limit=limit)
         return out
+
+    def search_with_trace(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        """Run `search()` and return the same hits plus structured pipeline trace."""
+        trace: list[dict[str, Any]] = []
+        hits = self.search(query, _trace=trace, **kwargs)
+        return {"hits": hits, "trace": trace}
 
     def _fetch_graph_candidates(
         self,
@@ -625,7 +682,14 @@ class _SearchOpsMixin(_MemoryBase):
             return
         try:
             self.store.touch(ids)
-            if not flag_bool("MEMO_HEALTH_SCORES_DISABLED"):
+            # roi_score boost on access is the LEGACY signal (rewards mere
+            # surfacing). When the outcome loop owns roi_score
+            # (MEMO_OUTCOME_RANKING_ENABLED), skip it so `reconcile_roi` —
+            # driven by real grounding outcomes — stays authoritative instead of
+            # being washed out by every-surfacing increments.
+            if not flag_bool("MEMO_HEALTH_SCORES_DISABLED") and not flag_bool(
+                "MEMO_OUTCOME_RANKING_ENABLED"
+            ):
                 self.store.boost_roi_batch(ids)
         except sqlite3.Error as exc:  # never let access tracking break a read
             _log.debug("access tracking skipped: %s", exc)

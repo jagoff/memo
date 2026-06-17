@@ -3,7 +3,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import sys
 import time
 from collections.abc import Callable
@@ -60,7 +59,9 @@ def _session_context(mem: Any, exclude_types: set[str] | None, *, max_titles: in
         titles = [t for t in titles if t][:max_titles]
         return " ; ".join(titles)
     except Exception as exc:
-        if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_RECALL_DEBUG"):
             print(f"# recall-daemon: session_context failed: {exc}", file=sys.stderr)
         return ""
 

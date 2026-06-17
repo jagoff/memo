@@ -62,7 +62,7 @@ SPECS: tuple[FlagSpec, ...] = (
     ),
     _spec("MEMO_REPO_FLUSH_BATCH", "int", None, "repo", "Rows per DB flush during repo index."),
     _spec(
-        "MEMO_REPO_GIT_TIMEOUT_S", "int", None, "repo", "Timeout (s) for git operations on clone."
+        "MEMO_REPO_GIT_TIMEOUT_S", "float", None, "repo", "Timeout (s) for git operations on clone."
     ),
     # embedder daemon / client
     _spec(

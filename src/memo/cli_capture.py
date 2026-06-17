@@ -93,6 +93,102 @@ def capture_stop() -> None:
     _sys.exit(0)
 
 
+@click.command(name="capture-tick")
+@click.option(
+    "--session-id",
+    default=None,
+    help="Override session_id (default: read from the hook stdin payload).",
+)
+@click.option(
+    "--transcript-path",
+    default=None,
+    help="Override transcript path (default: read from the hook stdin payload).",
+)
+def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
+    """UserPromptSubmit hook — incremental mid-session ambient capture.
+
+    The Stop hook (`memo capture-stop`) only fires at session end, so a long
+    or crashed session's durable insight never reaches `.md` (and thus the
+    local index + git sync) until Stop. This mines the NEW turns since a
+    per-session watermark into memorias — reusing capture-stop's
+    extract/dedup/save pipeline — so durable knowledge lands on disk
+    mid-session, not only at the end.
+
+    Hook input (stdin, JSON): Claude Code passes
+    `{"session_id", "transcript_path", ...}` on UserPromptSubmit. Falls back
+    to the flags for manual runs.
+
+    Hook output (stdout): `{}` — always. Capture is silent.
+
+    Self-throttled per session via ``MEMO_CAPTURE_INTERVAL_S`` (default 600s),
+    measured off the watermark's ``updated`` stamp — so firing on every prompt
+    is a cheap no-op when not due (a small JSON read, no transcript parse and
+    no MLX). Bounded: each due pass processes only the turns added since the
+    previous pass; the watermark guarantees old turns are never reprocessed.
+
+    Intended hook wiring (UserPromptSubmit, async, soft-fail):
+
+        MEMO_NONINTERACTIVE=1 memo capture-tick
+
+    Env vars:
+      MEMO_CAPTURE_DISABLE     — "1" → no-op (shared with capture-stop).
+      MEMO_CAPTURE_INTERVAL_S  — min seconds between ticks per session
+                                 (default 600; 0 = every prompt, no throttle).
+      MEMO_CAPTURE_DEBUG       — "1" → print progress to stderr.
+
+    Failure modes are absorbed: the hook never blocks or breaks the session.
+    """
+    import json as _json
+    import sys as _sys
+
+    from memo.flags import flag_bool, flag_int
+
+    if flag_bool("MEMO_CAPTURE_DISABLE"):
+        print("{}")
+        _sys.exit(0)
+
+    debug = flag_bool("MEMO_CAPTURE_DEBUG")
+
+    payload: dict = {}
+    # Stdin is a TTY when run interactively → don't block on a read.
+    if not _sys.stdin.isatty():
+        try:
+            raw = _sys.stdin.read()
+            if raw.strip():
+                payload = _json.loads(raw)
+        except _json.JSONDecodeError:
+            payload = {}
+
+    sid = session_id or payload.get("session_id")
+    transcript = transcript_path or payload.get("transcript_path")
+    if not sid or not transcript:
+        # Without both we can't key the watermark or read the turns — no-op.
+        print("{}")
+        _sys.exit(0)
+
+    try:
+        from memo.capture import incremental_tick_due, run_capture_incremental
+
+        cfg = Config.from_env()
+        interval_s = flag_int("MEMO_CAPTURE_INTERVAL_S")
+        if interval_s is None:
+            interval_s = 600
+
+        if not incremental_tick_due(cfg.state_dir, sid, interval_s):
+            if debug:
+                print("# memo capture-tick: throttled (not due)", file=_sys.stderr)
+        else:
+            out = run_capture_incremental(Path(transcript), sid, debug=debug)
+            if debug:
+                print(f"# memo capture-tick: {out}", file=_sys.stderr)
+    except Exception as exc:
+        if debug:
+            print(f"# memo capture-tick failed: {exc}", file=_sys.stderr)
+
+    print("{}")
+    _sys.exit(0)
+
+
 # ── Session reflection (v0.5.0) ─────────────────────────────────────────────
 #
 # `memo reflect` — read a full session transcript, extract durable insights

@@ -130,7 +130,6 @@ def ingest(
     pattern per line, `#` comments allowed) — the durable way to drop a
     folder like `04-Archive/` without editing the launchd ingest command.
     """
-    import os as _os_min
     from pathlib import Path
 
     import frontmatter
@@ -280,9 +279,11 @@ def ingest(
             if row["path"] not in valid_paths and store.delete(row["id"]):
                 pruned += 1
 
-    min_chars = int(_os_min.environ.get("MEMO_INGEST_MIN_CHARS", "200"))
-    strict_mode = _os_min.environ.get("MEMO_INGEST_STRICT") == "1"
-    debug_mode = _os_min.environ.get("MEMO_INGEST_DEBUG") == "1"
+    from memo.flags import flag_bool, flag_int
+
+    min_chars = flag_int("MEMO_INGEST_MIN_CHARS") or 200
+    strict_mode = flag_bool("MEMO_INGEST_STRICT")
+    debug_mode = flag_bool("MEMO_INGEST_DEBUG")
 
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 

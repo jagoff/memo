@@ -6,10 +6,8 @@ intended for direct use outside the repo-indexing subsystem.
 
 from __future__ import annotations
 
-import contextlib
 import fnmatch
 import hashlib
-import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -135,12 +133,10 @@ def _git_timeout(default: float) -> float:
     indefinitely, blocking the indexer thread (and any caller awaiting it).
     Configurable via MEMO_REPO_GIT_TIMEOUT_S (seconds, 0 disables).
     """
-    raw = os.environ.get("MEMO_REPO_GIT_TIMEOUT_S")
-    if not raw:
-        return default
-    try:
-        v = float(raw)
-    except ValueError:
+    from memo.flags import flag_float
+
+    v = flag_float("MEMO_REPO_GIT_TIMEOUT_S")
+    if v is None:
         return default
     return v if v > 0 else 0.0
 
@@ -216,11 +212,10 @@ def _repo_embed_input(chunk: dict[str, Any]) -> RepoEmbedInput:
 
 
 def _repo_embed_batch_size() -> int:
-    raw = os.environ.get("MEMO_REPO_EMBED_BATCH")
-    if raw:
-        with contextlib.suppress(ValueError):
-            return max(MIN_EMBED_BATCH, int(raw))
-    return DEFAULT_EMBED_BATCH
+    from memo.flags import flag_int
+
+    value = flag_int("MEMO_REPO_EMBED_BATCH")
+    return DEFAULT_EMBED_BATCH if value is None else max(MIN_EMBED_BATCH, value)
 
 
 def _repo_flush_batch_size() -> int:
@@ -229,11 +224,10 @@ def _repo_flush_batch_size() -> int:
     Lower values trade write overhead for finer-grained resume
     granularity if the run is interrupted.
     """
-    raw = os.environ.get("MEMO_REPO_FLUSH_BATCH")
-    if raw:
-        with contextlib.suppress(ValueError):
-            return max(MIN_FLUSH_BATCH, int(raw))
-    return DEFAULT_FLUSH_BATCH
+    from memo.flags import flag_int
+
+    value = flag_int("MEMO_REPO_FLUSH_BATCH")
+    return DEFAULT_FLUSH_BATCH if value is None else max(MIN_FLUSH_BATCH, value)
 
 
 def _embed_cache_model(embedder: MLXEmbedder, cfg: Config) -> str:

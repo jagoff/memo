@@ -66,19 +66,19 @@ def _executable() -> str | None:
     Override with `MEMO_SYNAPSE_EXECUTABLE=/path/to/synapse` (useful in
     tests and for non-PATH installs).
     """
-    override = os.environ.get("MEMO_SYNAPSE_EXECUTABLE")
+    from memo.flags import flag_str
+
+    override = flag_str("MEMO_SYNAPSE_EXECUTABLE")
     if override:
         return override if os.path.exists(override) else None
     return shutil.which("synapse")
 
 
 def _timeout() -> float:
-    raw = os.environ.get("MEMO_SYNAPSE_CLIENT_TIMEOUT")
-    if not raw:
-        return _DEFAULT_TIMEOUT_S
-    try:
-        value = float(raw)
-    except ValueError:
+    from memo.flags import flag_float
+
+    value = flag_float("MEMO_SYNAPSE_CLIENT_TIMEOUT")
+    if value is None:
         return _DEFAULT_TIMEOUT_S
     return value if value > 0 else _DEFAULT_TIMEOUT_S
 

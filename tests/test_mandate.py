@@ -8,8 +8,12 @@ from memo.cli_mandate import _MARKER, MANDATE_TEXT, _write_mandate
 
 
 def test_expected_consumers_covers_non_hook_clients() -> None:
-    for c in ("claude-code", "synapse", "memflow", "codex", "devin", "opencode", "windsurf"):
+    for c in ("claude-code", "synapse", "memflow", "codex", "devin", "opencode"):
         assert c in dashboard.EXPECTED_CONSUMERS
+    # "windsurf" retired (now Devin Desktop); devin-desktop is a GUI app that
+    # can't be driven headless, so it's not flagged as a silent gap.
+    assert "windsurf" not in dashboard.EXPECTED_CONSUMERS
+    assert "devin-desktop" not in dashboard.EXPECTED_CONSUMERS
 
 
 def test_write_mandate_creates_and_is_idempotent(tmp_path: Path) -> None:

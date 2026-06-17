@@ -21,7 +21,6 @@ garbage the OCR/PDF layer already cleaned. Validate any change against
 
 from __future__ import annotations
 
-import os
 import unicodedata
 
 __all__ = [
@@ -38,22 +37,19 @@ _REPLACEMENT_CHARS = "�￼"
 def text_quality_enabled() -> bool:
     """Whether ingest stamps a text-quality confidence on records. Default on;
     ``MEMO_TEXT_QUALITY=0`` disables."""
-    return os.environ.get("MEMO_TEXT_QUALITY", "1").strip().lower() not in {
-        "0", "false", "off", "no",
-    }
+    from memo.flags import flag_bool
+
+    return flag_bool("MEMO_TEXT_QUALITY")
 
 
 def _threshold() -> float:
     """Garbage ratio at/above which a record is down-weighted. Default 0.02
     (2% replacement/control chars — far above any clean text, which is ~0).
     ``MEMO_TEXT_QUALITY_THRESHOLD`` overrides; 0 disables."""
-    raw = os.environ.get("MEMO_TEXT_QUALITY_THRESHOLD", "").strip()
-    if not raw:
-        return 0.02
-    try:
-        return max(0.0, min(1.0, float(raw)))
-    except ValueError:
-        return 0.02
+    from memo.flags import flag_float
+
+    value = flag_float("MEMO_TEXT_QUALITY_THRESHOLD")
+    return 0.02 if value is None else max(0.0, min(1.0, value))
 
 
 def garbage_ratio(text: str) -> float:

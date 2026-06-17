@@ -20,6 +20,7 @@ from typing import Any
 import frontmatter
 
 from memo._trace import current_trace
+from memo.flags import flag_bool
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _DERIVE_SYSTEM_PROMPT,
@@ -74,7 +75,7 @@ _TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 def _infer_type_from_content(content: str) -> str | None:
     """Zero-cost regex-based type inference. Returns a type string or None."""
-    if os.environ.get("MEMO_CAPTURE_PATTERN_TYPES", "1") == "0":
+    if not flag_bool("MEMO_CAPTURE_PATTERN_TYPES"):
         return None
     snippet = content[:600]
     for type_name, pattern in _TYPE_PATTERNS:
@@ -204,7 +205,7 @@ class _WriteOpsMixin(_MemoryBase):
         # save carries provenance (otherwise we have no agent context
         # to reason about), and (c) synapse is on PATH.
         if respect_synapse_freeze is None:
-            respect_synapse_freeze = os.environ.get("MEMO_RESPECT_SYNAPSE_FREEZE") == "1"
+            respect_synapse_freeze = flag_bool("MEMO_RESPECT_SYNAPSE_FREEZE")
         if respect_synapse_freeze and extra and extra.get("synapse_trace_id"):
             self._enforce_synapse_freeze(
                 title=title,
@@ -264,7 +265,7 @@ class _WriteOpsMixin(_MemoryBase):
         # MEMO_PROJECT_TAG) so per-repo recall can boost the right
         # memorias. Skipped when the caller already passed any
         # `project:` tag — explicit always wins.
-        if auto_project and os.environ.get("MEMO_AUTO_PROJECT_TAG", "1") == "1":
+        if auto_project and flag_bool("MEMO_AUTO_PROJECT_TAG"):
             try:
                 from memo.project import current_project_tag, has_project_tag
 
@@ -291,7 +292,7 @@ class _WriteOpsMixin(_MemoryBase):
         # Near-duplicate check: quick vec search before committing. Best-effort
         # — never blocks the save. Gated on MEMO_SAVE_DEDUP_CHECK (default on).
         # Skipped on an empty corpus (no embed cost, no duplicates possible).
-        from memo.flags import flag_bool, flag_float
+        from memo.flags import flag_float
 
         if flag_bool("MEMO_SAVE_DEDUP_CHECK") and not defer_embed:
             try:

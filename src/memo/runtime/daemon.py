@@ -179,11 +179,12 @@ def prewarm(download_all: bool) -> None:
     Failures are silent when run as a hook — a hook crash must never block
     Claude Code's prompt submission.
     """
-    import os
     import sys as _sys
     import time as _time
 
-    if os.environ.get("MEMO_RECALL_DISABLE") == "1":
+    from memo.flags import flag_bool
+
+    if flag_bool("MEMO_RECALL_DISABLE"):
         _sys.exit(0)
     try:
         from memo.embedder import MLXEmbedder
@@ -221,6 +222,6 @@ def prewarm(download_all: bool) -> None:
             except Exception as dl_exc:
                 click.echo(f"[memo] chat model download failed: {dl_exc}", err=True)
     except Exception as exc:
-        if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+        if flag_bool("MEMO_RECALL_DEBUG"):
             print(f"# memo prewarm failed: {exc}", file=_sys.stderr)
     _sys.exit(0)
