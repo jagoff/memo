@@ -127,6 +127,90 @@ def test_derived_paths_compose(tmp_path: Path):
     cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "state")
     assert cfg.memory_dir == cfg.data_dir
     assert cfg.db_path == cfg.state_dir / "memvec.db"
+
+
+def _write_index_meta(
+    db_path: Path, *, model: str | None, dims: int | None, vec_ddl: str | None = None
+) -> None:
+    """Plant a minimal self-describing index at `db_path` for adoption tests."""
+    import sqlite3
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        if model is not None and dims is not None:
+            conn.execute(
+                "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            conn.executemany(
+                "INSERT INTO schema_meta (key, value) VALUES (?, ?)",
+                [("embedder_model", model), ("embedder_dims", str(dims))],
+            )
+        if vec_ddl is not None:
+            conn.execute(vec_ddl)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_from_env_adopts_index_embedder_profile(monkeypatch, tmp_path: Path):
+    """A bare launch (no embedder env) adopts the profile the index was built
+    with, instead of defaulting to 0.6B/1024 and crashing on a 2560 index.
+
+    This is the systemic fix for the opaque MCP "connection closed" handshake
+    failure: MCP clients don't inherit the shell env, so the embedder must be
+    recoverable from the self-describing index.
+    """
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent.toml"))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
+    for var in ("MEMO_EMBEDDER_MODEL", "MEMO_EMBEDDER_DIMS", "MEMO_MODEL_PROFILE"):
+        monkeypatch.delenv(var, raising=False)
+
+    db_path = Config.from_env().db_path  # default profile (balanced/1024)
+    _write_index_meta(
+        db_path, model="mlx-community/Qwen3-Embedding-4B-4bit-DWQ", dims=2560
+    )
+
+    cfg = Config.from_env()
+    assert cfg.embedder_dims == 2560
+    assert cfg.embedder_model == "mlx-community/Qwen3-Embedding-4B-4bit-DWQ"
+
+
+def test_explicit_embedder_env_blocks_index_adoption(monkeypatch, tmp_path: Path):
+    """An explicit `MEMO_EMBEDDER_DIMS` is honoured even when it conflicts with
+    the index — the operator's pin wins, preserving the reindex-or-fix signal."""
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent.toml"))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "1024")
+
+    db_path = Config.from_env().db_path
+    _write_index_meta(
+        db_path, model="mlx-community/Qwen3-Embedding-4B-4bit-DWQ", dims=2560
+    )
+
+    cfg = Config.from_env()
+    assert cfg.embedder_dims == 1024  # pin respected, no adoption
+
+
+def test_index_adoption_falls_back_to_vec_table_dims(monkeypatch, tmp_path: Path):
+    """A pre-`schema_meta` index (only the vec0 table records dims) still heals:
+    the model is derived from the dims via MODEL_PROFILES."""
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent.toml"))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
+    for var in ("MEMO_EMBEDDER_MODEL", "MEMO_EMBEDDER_DIMS", "MEMO_MODEL_PROFILE"):
+        monkeypatch.delenv(var, raising=False)
+
+    db_path = Config.from_env().db_path
+    _write_index_meta(
+        db_path, model=None, dims=None, vec_ddl="CREATE TABLE vec (embedding FLOAT[2560])"
+    )
+
+    cfg = Config.from_env()
+    assert cfg.embedder_dims == 2560
+    assert cfg.embedder_model == "mlx-community/Qwen3-Embedding-4B-4bit-DWQ"
     assert cfg.history_db == cfg.state_dir / "history.db"
 
 
