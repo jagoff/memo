@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 import threading
 import time
@@ -91,5 +90,7 @@ def _stats_persister(state_dir: Path, stats: _DaemonStats, interval_s: float) ->
             tmp.write_text(json.dumps(snap, indent=2))
             tmp.replace(target)
         except (OSError, ValueError, TypeError) as exc:
-            if os.environ.get("MEMO_RECALL_DEBUG") == "1":
+            from memo.flags import flag_bool
+
+            if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# recall-daemon: stats persist failed: {exc}", file=sys.stderr)

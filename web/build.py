@@ -479,6 +479,197 @@ def _usefulness(cfg: Config) -> dict[str, Any]:
     }
 
 
+def _consult_trend(state_dir: Path, *, days: int = 14, limit: int = 1000) -> list[dict[str, Any]]:
+    """Consults per calendar day (last ``days``), split activated vs total.
+
+    Pure read over recall.log — shows whether memo is being asked MORE over time
+    (adoption) or going quiet. ``activado`` = the hook actually searched (fired);
+    the rest were skipped (slash commands / short prompts / no match)."""
+    by_day: dict[str, dict[str, int]] = defaultdict(lambda: {"consultas": 0, "activado": 0})
+    for r in read_recall_log(state_dir, limit=limit):
+        day = (r.get("ts") or "")[:10]
+        if not day:
+            continue
+        by_day[day]["consultas"] += 1
+        if r.get("via") in ("daemon", "subprocess"):
+            by_day[day]["activado"] += 1
+    today = datetime.now(UTC).date()
+    out: list[dict[str, Any]] = []
+    for i in range(days - 1, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        b = by_day.get(d, {"consultas": 0, "activado": 0})
+        out.append({"date": d, "consultas": b["consultas"], "activado": b["activado"]})
+    return out
+
+
+def _fmt_tokens_compact(tokens: float) -> str:
+    tokens = int(tokens)
+    if tokens < 1000:
+        return str(tokens)
+    if tokens < 1_000_000:
+        return f"{tokens / 1000:.1f}k"
+    return f"{tokens / 1_000_000:.2f}M"
+
+
+def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
+    """Detailed token-savings breakdown for the dashboard graph.
+
+    Two honest drivers, each a clearly-labeled estimate:
+      - "hechos reutilizados" — a surfaced memoria the answer actually used
+        (grounding.log, used_score ≥ GROUNDED_SCORE, deduped by sid+turn+id) ×
+        ``MEMO_ROI_TOKENS_PER_GROUNDED``: tokens the model didn't spend
+        re-deriving the fact. This one is DATED, so it drives the daily series.
+      - "repreguntas evitadas" — grounded recalls the user did not have to ask
+        again × ``MEMO_ROI_TOKENS_PER_REASK``: a saved answer-regeneration
+        round-trip. A session-level metric (no clean per-day bucket), shown only
+        in the composition total, not the daily bars.
+    """
+    from memo.dashboard import GROUNDED_SCORE, read_grounding_log
+    from memo.flags import flag_int
+
+    tok_grounded = flag_int("MEMO_ROI_TOKENS_PER_GROUNDED") or 350
+    tok_reask = flag_int("MEMO_ROI_TOKENS_PER_REASK") or 900
+
+    seen: set[tuple[str, int, str]] = set()
+    by_day: dict[str, int] = defaultdict(int)
+    answer_lens: list[int] = []
+    for g in read_grounding_log(state_dir):
+        if g.get("answer_len"):
+            answer_lens.append(int(g["answer_len"]))
+        sid, turn, rid = g.get("session_id"), g.get("turn"), g.get("recall_id")
+        score = g.get("used_score")
+        day = (g.get("ts") or "")[:10]
+        if not (
+            sid and isinstance(turn, int) and rid and day
+            and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE
+        ):
+            continue
+        key = (sid, turn, rid)
+        if key in seen:
+            continue
+        seen.add(key)
+        by_day[day] += 1
+
+    today = datetime.now(UTC).date()
+    daily: list[dict[str, Any]] = []
+    for i in range(days - 1, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        g = by_day.get(d, 0)
+        daily.append({"date": d, "grounded": g, "tokens": g * tok_grounded})
+
+    grounded_total = sum(by_day.values())
+    try:
+        reask = reask_stats(state_dir, limit=500)
+    except Exception:
+        reask = {}
+    reask_avoided = int(reask.get("reask_avoided") or 0)
+    grounded_tokens = grounded_total * tok_grounded
+    reask_tokens = reask_avoided * tok_reask
+    return {
+        "daily": daily,
+        "grounded": grounded_total,
+        "grounded_tokens": grounded_tokens,
+        "reask_avoided": reask_avoided,
+        "reask_tokens": reask_tokens,
+        "total": grounded_tokens + reask_tokens,
+        "tok_grounded": tok_grounded,
+        "tok_reask": tok_reask,
+        "avg_answer_tokens": (
+            round(sum(answer_lens) / len(answer_lens) / 4) if answer_lens else None
+        ),
+    }
+
+
+def _sync_health(cfg: Config) -> dict[str, Any]:
+    """GitHub sync health for the dashboard — is durable knowledge reaching the
+    shared repo so other sessions/Macs can read it? Cheap read; [] on error."""
+    try:
+        from memo.sync_git import sync_status
+
+        st = sync_status(cfg)
+        if not st.get("is_git_clone"):
+            return {"state": "off", "label": "Sin sync (data_dir no es repo git)"}
+        if st.get("pending"):
+            return {"state": "bad", "label": "Commits varados — push falló", **st}
+        if st.get("ahead") or st.get("dirty_files"):
+            return {"state": "warn",
+                    "label": f"{st['ahead']} sin pushear · {st['dirty_files']} sin commitear", **st}
+        return {"state": "ok", "label": "Al día con GitHub", **st}
+    except Exception:
+        return {"state": "off", "label": "Sync no disponible"}
+
+
+def _gaps(cfg: Config, *, top: int = 12) -> list[dict[str, Any]]:
+    """Knowledge gaps — what memo could NOT answer (The Outcome Loop). Cheap
+    read; degrades to [] if the outcome module/logs are unavailable."""
+    try:
+        from memo.outcome import detect_gaps
+
+        return detect_gaps(cfg.state_dir)[:top]
+    except Exception:
+        return []
+
+
+def _gerencial(cfg: Config) -> dict[str, Any]:
+    """Management-grade rollup: the consult funnel, the value numbers, the
+    per-tool reader breakdown, and the adoption trend — everything the gerencial
+    dashboard needs in plain numbers, no re-derivation in the browser."""
+    state_dir = cfg.state_dir
+    try:
+        health = recall_health(state_dir, limit=500)
+    except Exception:
+        health = {}
+    try:
+        from memo.cli_roi import compute_roi
+
+        roi = compute_roi(state_dir, limit=500)
+    except Exception:
+        roi = {}
+
+    fired = int(health.get("fired") or 0)
+    sampled = int(health.get("sampled") or 0)
+    hit_rate = float(health.get("hit_rate") or 0.0)
+    with_hits = round(hit_rate * fired) if fired else 0
+
+    # Funnel stages that share ONE honest denominator (sampled). "Used in the
+    # answer" is deliberately NOT a 4th bar — it is measured on a smaller scored
+    # subset, so it lives as its own KPI to avoid implying a false collapse.
+    funnel = [
+        {"key": "preguntas", "label": "Preguntas hechas", "value": sampled},
+        {"key": "activado", "label": "memo se activó", "value": fired},
+        {"key": "encontro", "label": "Encontró información útil", "value": with_hits},
+    ]
+
+    k_total = int(health.get("answers_knowledge_total") or 0)
+    used_rate = health.get("answer_rate_knowledge") if k_total else health.get("answer_rate")
+    used_total = k_total if k_total else int(health.get("answers_total") or 0)
+    used_grounded = (
+        int(health.get("answers_knowledge_grounded") or 0)
+        if k_total
+        else int(health.get("answers_grounded") or 0)
+    )
+
+    reask = roi.get("reask") if isinstance(roi.get("reask"), dict) else {}
+    # Detailed token-savings (full grounding.log, daily series + composition).
+    # The KPI reads from this too so the headline number == the panel total.
+    token_detail = _token_savings(state_dir)
+    return {
+        "funnel": funnel,
+        "coverage_rate": round(fired / sampled, 3) if sampled else None,
+        "hit_rate": health.get("hit_rate"),
+        "used_rate": used_rate,
+        "used_total": used_total,
+        "used_grounded": used_grounded,
+        "time_saved_human": roi.get("time_saved_human"),
+        "reask_avoided": reask.get("reask_avoided"),
+        "tokens_saved": token_detail["total"],
+        "tokens_saved_human": _fmt_tokens_compact(token_detail["total"]),
+        "avg_answer_tokens": token_detail["avg_answer_tokens"],
+        "token_detail": token_detail,
+        "trend": _consult_trend(state_dir),
+    }
+
+
 def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1500) -> dict[str, Any]:
     """Gather every metric the dashboard renders, as a JSON-serializable dict.
 
@@ -574,6 +765,9 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
         "contradictions": contradictions or {},
         "verdict": verdict(cfg.state_dir, limit=500),
         "memflow_util": _fetch_memflow_utility(),
+        "gerencial": _gerencial(cfg),
+        "gaps": _gaps(cfg),
+        "sync": _sync_health(cfg),
     }
     return data
 
@@ -626,509 +820,465 @@ def _probe_mlx() -> None:
 # ── HTML / JS template ───────────────────────────────────────────────────
 
 _HTML_TEMPLATE = r"""<!doctype html>
-<html lang="en">
+<html lang="es">
 <head>
 <meta charset="utf-8" />
-<title>Memo · Health Dashboard</title>
+<title>memo · ¿funciona como memoria?</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <style>
   :root {
-    --bg: #0b0f17;
-    --panel: #131a26;
-    --panel-soft: #1a2231;
+    --bg: #0a0e16;
+    --bg-soft: #0e1320;
+    --panel: #131a28;
+    --panel-soft: #1a2233;
     --border: #243049;
-    --fg: #e6edf7;
-    --fg-mute: #94a3b8;
-    --green: #34d399;
+    --fg: #eef3fb;
+    --fg-mute: #93a1b8;
+    --fg-dim: #5d6b85;
+    --green: #2ee6a6;
     --yellow: #fbbf24;
-    --red:    #f87171;
-    --blue:   #4f8ef7;
+    --red:    #fb7185;
+    --blue:   #5b9dff;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
-               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                            "Helvetica Neue", Arial, sans-serif; }
-  header { padding: 18px 24px; border-bottom: 1px solid var(--border);
-           display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
-  header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.5px; }
-  header .meta { color: var(--fg-mute); font-size: 12px; }
-  header .overall { margin-left: auto; display: flex; gap: 6px; align-items: center; }
-  .dot { width: 10px; height: 10px; border-radius: 50%;
-         box-shadow: 0 0 8px currentColor; display: inline-block; }
-  .dot.green  { background: var(--green); color: var(--green); }
+  html, body { margin: 0; padding: 0; background:
+      radial-gradient(1200px 600px at 80% -10%, #16203a 0%, var(--bg) 55%); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+
+  header { padding: 22px 28px 18px; display: flex; align-items: baseline;
+           gap: 14px; flex-wrap: wrap; max-width: 1180px; margin: 0 auto; }
+  header h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: .3px; }
+  header h1 .sub { color: var(--fg-mute); font-weight: 400; }
+  header .meta { color: var(--fg-dim); font-size: 12px; }
+  .live-badge { margin-left: auto; font-size: 12px; color: var(--fg-mute);
+                display: inline-flex; align-items: center; gap: 6px;
+                background: var(--panel); border: 1px solid var(--border);
+                padding: 5px 11px; border-radius: 999px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+         box-shadow: 0 0 8px currentColor; }
+  .dot.green  { background: var(--green);  color: var(--green); }
   .dot.yellow { background: var(--yellow); color: var(--yellow); }
-  .dot.red    { background: var(--red); color: var(--red); }
-  .dot.blue   { background: var(--blue); color: var(--blue); }
+  .dot.red    { background: var(--red);    color: var(--red); }
+  .dot.blue   { background: var(--blue);   color: var(--blue); }
+  .dot.live { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
-  main { padding: 18px 24px; display: grid; gap: 18px; }
-  .pillars { display: grid; gap: 14px;
-             grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-  .card { background: var(--panel); border: 1px solid var(--border);
-          border-radius: 10px; padding: 14px 16px; }
-  .card.green  { border-left: 4px solid var(--green); }
-  .card.yellow { border-left: 4px solid var(--yellow); }
-  .card.red    { border-left: 4px solid var(--red); }
-  .card.blue   { border-left: 4px solid var(--blue); }
-  .card .label { font-size: 12px; color: var(--fg-mute); text-transform: uppercase;
-                 letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }
-  .card .summary { font-size: 20px; font-weight: 600; margin-top: 6px; }
-  .card details { margin-top: 10px; }
-  .card details summary { cursor: pointer; color: var(--fg-mute); font-size: 12px;
-                          list-style: none; }
-  .card details summary::-webkit-details-marker { display: none; }
-  .card details summary::before { content: "▸ "; }
-  .card details[open] summary::before { content: "▾ "; }
-  .card details pre { background: var(--panel-soft); border-radius: 6px;
-                      padding: 10px 12px; font-size: 12px; line-height: 1.5;
-                      white-space: pre-wrap; word-break: break-word;
-                      margin: 8px 0 0; color: var(--fg); }
-
-  .grid { display: grid; gap: 18px;
-          grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
-  @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+  main { padding: 4px 28px 48px; display: grid; gap: 18px;
+         max-width: 1180px; margin: 0 auto; }
   .panel { background: var(--panel); border: 1px solid var(--border);
-           border-radius: 10px; padding: 14px 16px; }
-  .panel h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600;
-              color: var(--fg-mute); text-transform: uppercase;
-              letter-spacing: 0.5px; }
-  .row2 { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; }
-  @media (max-width: 800px) { .row2 { grid-template-columns: 1fr; } }
+           border-radius: 16px; padding: 20px 22px; box-shadow: var(--shadow); }
+  .panel > h2 { margin: 0 0 4px; font-size: 12px; font-weight: 600;
+                color: var(--fg-mute); text-transform: uppercase; letter-spacing: .8px; }
+  .panel .hint { color: var(--fg-dim); font-size: 12.5px; margin: 0 0 16px; line-height: 1.5; }
 
-  .statcards { display: grid; gap: 12px;
-               grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-  .statcard { background: var(--panel); border: 1px solid var(--border);
-              border-radius: 10px; padding: 14px 16px; }
-  .statcard .num { font-size: 1.9rem; font-weight: 800; line-height: 1.1;
-                   letter-spacing: -1px; }
-  .statcard .cap { color: var(--fg-mute); font-size: 0.74rem; margin-top: 4px;
-                   text-transform: uppercase; letter-spacing: 0.5px; }
-  .live-badge { font-size: 11px; color: var(--fg-mute); display: inline-flex;
-                align-items: center; gap: 5px; }
-  .live-badge .dot { width: 7px; height: 7px; }
+  /* ── verdict hero ── */
+  .verdict { position: relative; overflow: hidden; border-width: 1px;
+             display: flex; align-items: center; gap: 26px; padding: 30px 30px; }
+  .verdict .glyph { font-size: 56px; line-height: 1; filter: drop-shadow(0 2px 8px rgba(0,0,0,.4)); }
+  .verdict .vmain { flex: 1; min-width: 0; }
+  .verdict .vlabel { font-size: clamp(26px, 4vw, 40px); font-weight: 800;
+                     letter-spacing: -.5px; line-height: 1.05; }
+  .verdict .vexplain { color: var(--fg-mute); font-size: 15px; margin-top: 8px; line-height: 1.5; }
+  .verdict .vstat { text-align: right; }
+  .verdict .vstat b { display: block; font-size: 30px; font-weight: 800; letter-spacing: -1px; }
+  .verdict .vstat span { color: var(--fg-dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; }
+  @media (max-width: 720px) { .verdict { flex-wrap: wrap; } .verdict .vstat { text-align: left; } }
 
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  th { color: var(--fg-mute); font-weight: 500; }
-  tr:last-child td { border-bottom: none; }
-  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px;
-          font-size: 11px; background: var(--panel-soft); color: var(--fg-mute); }
-  .op-save   { color: var(--green); }
-  .op-update { color: var(--yellow); }
-  .op-delete { color: var(--red); }
+  /* ── funnel ── */
+  .funnel { display: grid; gap: 10px; }
+  .fstage { display: grid; grid-template-columns: 190px 1fr auto; align-items: center;
+            gap: 14px; }
+  .fstage .fname { font-size: 13.5px; color: var(--fg); }
+  .fstage .fname small { display: block; color: var(--fg-dim); font-size: 11px; margin-top: 1px; }
+  .fbar { height: 34px; background: var(--panel-soft); border-radius: 9px; overflow: hidden; }
+  .fbar > div { height: 100%; border-radius: 9px; transition: width .6s cubic-bezier(.16,1,.3,1);
+                display: flex; align-items: center; padding-left: 12px;
+                font-weight: 700; font-size: 13px; color: #06121f; }
+  .fstage .fval { font-weight: 800; font-size: 17px; min-width: 84px; text-align: right; }
+  .fstage .fval small { color: var(--fg-dim); font-weight: 600; font-size: 11.5px; }
+  @media (max-width: 620px) { .fstage { grid-template-columns: 1fr; gap: 4px; } .fstage .fval { text-align: left; } }
 
-  footer { padding: 12px 24px; color: var(--fg-mute); font-size: 11px;
-           text-align: center; border-top: 1px solid var(--border); }
-  code { background: var(--panel-soft); padding: 1px 5px; border-radius: 4px;
-         font-size: 11px; }
+  /* ── KPI cards ── */
+  .kpis { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+         padding: 18px 20px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+  .kpi::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--accent, var(--blue)); }
+  .kpi .knum { font-size: 2.5rem; font-weight: 800; line-height: 1; letter-spacing: -1.5px; }
+  .kpi .kcap { color: var(--fg); font-size: 13px; font-weight: 600; margin-top: 10px; }
+  .kpi .ksub { color: var(--fg-dim); font-size: 11.5px; margin-top: 3px; line-height: 1.4; }
+
+  /* ── readers (per-tool) ── */
+  .tools { display: grid; gap: 9px; }
+  .tool { display: grid; grid-template-columns: 150px 1fr 130px; align-items: center; gap: 14px; }
+  .tool .tname { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+  .tbar { height: 26px; background: var(--panel-soft); border-radius: 7px; overflow: hidden; }
+  .tbar > div { height: 100%; border-radius: 7px; transition: width .6s cubic-bezier(.16,1,.3,1); }
+  .tool .tstate { font-size: 11.5px; font-weight: 600; text-align: right; }
+  .tool .tstate small { display:block; color: var(--fg-dim); font-weight: 500; }
+  @media (max-width: 620px) { .tool { grid-template-columns: 1fr auto; } .tool .tbar { display:none; } }
+  .badge-silent { margin-top: 16px; font-size: 12.5px; padding: 11px 14px; border-radius: 10px;
+                  background: rgba(251,113,133,.08); border: 1px solid rgba(251,113,133,.25); color: #ffb3c0; line-height: 1.5; }
+  .badge-silent.ok { background: rgba(46,230,166,.07); border-color: rgba(46,230,166,.22); color: #9af0d0; }
+
+  /* ── token savings detail ── */
+  .tok-top { display: grid; grid-template-columns: 220px 1fr; gap: 26px; align-items: center; }
+  @media (max-width: 620px) { .tok-top { grid-template-columns: 1fr; gap: 16px; } }
+  .tok-total .tnum { font-size: 3rem; font-weight: 800; letter-spacing: -1.5px; line-height: 1; color: var(--green); }
+  .tok-total .tcap { color: var(--fg); font-size: 13px; font-weight: 600; margin-top: 8px; }
+  .tok-total .tassump { color: var(--fg-dim); font-size: 11px; margin-top: 6px; line-height: 1.5; }
+  .tok-compbar { height: 30px; background: var(--panel-soft); border-radius: 9px; overflow: hidden; display: flex; }
+  .tok-compbar > div { height: 100%; transition: width .6s cubic-bezier(.16,1,.3,1); }
+  #tok-seg-grounded { background: var(--green); }
+  #tok-seg-reask { background: var(--blue); }
+  .tok-legend { display: flex; gap: 22px; margin-top: 12px; flex-wrap: wrap; font-size: 13px; color: var(--fg-mute); }
+  .tok-legend b { color: var(--fg); }
+  .tok-legend small { color: var(--fg-dim); }
+  .tok-legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+  .tok-subh { margin: 22px 0 6px; font-size: 12px; font-weight: 600; color: var(--fg-mute); }
+
+  /* ── knowledge gaps ── */
+  .gap-row { display: grid; grid-template-columns: 44px 1fr auto; align-items: center;
+             gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .gap-row:last-child { border-bottom: none; }
+  .gap-n { font-weight: 800; color: var(--yellow); font-size: 14px; text-align: right; }
+  .gap-q { font-size: 13.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gap-why { font-size: 11.5px; color: var(--fg-dim); white-space: nowrap; }
+  @media (max-width: 620px) { .gap-row { grid-template-columns: 36px 1fr; } .gap-why { display: none; } }
+
+  footer { padding: 18px 28px 28px; color: var(--fg-dim); font-size: 11.5px;
+           text-align: center; max-width: 1180px; margin: 0 auto; }
+  code { background: var(--panel-soft); padding: 1px 6px; border-radius: 5px; font-size: 11px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>memo · health</h1>
+  <h1>memo · <span class="sub">¿está funcionando como memoria?</span></h1>
   <span class="meta" id="meta-stamp"></span>
   <span class="live-badge" id="live-badge"></span>
-  <span class="overall" id="overall-lights"></span>
 </header>
 
 <main>
-  <section class="pillars" id="pillars"></section>
+  <!-- VEREDICTO -->
+  <section class="panel verdict" id="verdict-panel">
+    <div class="glyph" id="verdict-glyph">⏳</div>
+    <div class="vmain">
+      <div class="vlabel" id="verdict-label">—</div>
+      <div class="vexplain" id="verdict-explain">—</div>
+    </div>
+    <div class="vstat">
+      <b id="verdict-consults">—</b>
+      <span>consultas analizadas</span>
+    </div>
+  </section>
 
-  <div class="row2">
-    <div class="panel" id="verdict-panel" style="border-width:2px;">
-      <h2>¿Funciona memo?</h2>
-      <div id="verdict-label" style="font-size:1.8rem;font-weight:800;line-height:1.2;">—</div>
-      <div id="verdict-sub" style="color:var(--fg-mute);font-size:0.85rem;margin:0.3rem 0 0.8rem;">—</div>
-      <div style="font-size:0.82rem;line-height:1.8;">
-        <div><span style="color:var(--fg-mute);">lee:&nbsp;</span><span id="verdict-readers" style="color:var(--green);">—</span></div>
-        <div><span style="color:var(--fg-mute);">NO lee:&nbsp;</span><span id="verdict-silent" style="color:var(--red);font-weight:600;">—</span></div>
+  <!-- EMBUDO -->
+  <section class="panel">
+    <h2>De cada pregunta, ¿cuánto aporta memo?</h2>
+    <p class="hint">Por cada cosa que se le pregunta al asistente, memo decide si activarse, busca, y entrega información. Esto muestra cuántas llegan a cada paso.</p>
+    <div class="funnel" id="funnel"></div>
+  </section>
+
+  <!-- KPIs -->
+  <section class="kpis" id="kpis"></section>
+
+  <!-- AHORRO DE TOKENS (detalle) -->
+  <section class="panel">
+    <h2>Ahorro de tokens — detalle</h2>
+    <p class="hint">Tokens que el modelo NO tuvo que gastar porque la respuesta usó información que memo ya tenía, en vez de re-generarla o repreguntar. Estimación con supuestos explícitos.</p>
+    <div class="tok-top">
+      <div class="tok-total">
+        <div class="tnum" id="tok-total">—</div>
+        <div class="tcap">tokens ahorrados (acumulado)</div>
+        <div class="tassump" id="tok-assump">—</div>
       </div>
-    </div>
-    <div class="panel" id="memflow-panel">
-      <h2>memflow utility</h2>
-      <div id="memflow-estado" style="font-size:1.1rem;font-weight:700;margin-bottom:0.6rem;">—</div>
-      <table><tbody>
-        <tr><td style="color:var(--fg-mute);">reads 7d</td><td id="mf-reads" style="text-align:right;font-weight:600;">—</td></tr>
-        <tr><td style="color:var(--fg-mute);">memory_used</td><td id="mf-used" style="text-align:right;font-weight:600;">—</td></tr>
-        <tr><td style="color:var(--fg-mute);">re_explain</td><td id="mf-reexplain" style="text-align:right;font-weight:600;">—</td></tr>
-      </tbody></table>
-    </div>
-  </div>
-
-  <section class="statcards" id="statcards"></section>
-
-  <div class="panel" id="utility-panel" style="border-width:2px;">
-    <h2>Utilidad — respuestas CON memo vs SIN memo</h2>
-    <div style="display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;">
-      <div id="utility-pct" style="font-size:3.2rem;font-weight:800;line-height:1;letter-spacing:-1px;">—</div>
-      <div id="utility-sub" style="color:var(--fg-mute);font-size:0.9rem;">—</div>
-    </div>
-    <div style="background:var(--border);border-radius:6px;height:16px;overflow:hidden;display:flex;margin-top:0.7rem;">
-      <div id="utility-seg-con" style="height:100%;background:var(--green);width:0%;transition:width .4s;" title="respondió con memo"></div>
-      <div id="utility-seg-sin" style="height:100%;background:#f8717155;width:0%;transition:width .4s;" title="respondió sin memo"></div>
-    </div>
-    <div style="font-size:0.78rem;color:var(--fg-mute);margin-top:0.45rem;">
-      <span id="utility-leg-con" style="color:var(--green);font-weight:600;">—</span> con memo ·
-      <span id="utility-leg-sin" style="font-weight:600;">—</span> sin memo
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>Quién lee memo</h2>
-    <table id="readers-table">
-      <thead><tr><th>capa</th><th>consultas</th><th>hit%</th><th>grounded%</th><th>última</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div id="readers-silent" style="margin-top:0.6rem;font-size:0.8rem;color:var(--fg-mute);"></div>
-  </div>
-
-  <div class="grid">
-    <div class="panel">
-      <h2>3-D memory map <span id="map-method" class="pill"></span></h2>
-      <div id="map3d" style="height: 520px;"></div>
-    </div>
-    <div class="panel">
-      <h2>Type distribution</h2>
-      <div id="types" style="height: 240px;"></div>
-      <h2 style="margin-top:14px">Saves · last 30 days</h2>
-      <div id="growth" style="height: 220px;"></div>
-    </div>
-  </div>
-
-  <div class="row2" style="grid-template-columns:1fr;">
-    <div class="panel">
-      <h2>Utilización de consultas</h2>
-      <div style="display:flex;align-items:center;gap:2.5rem;padding:1.2rem 0 0.6rem;">
-        <div id="util-pct" style="font-size:6rem;font-weight:800;line-height:1;color:var(--fg);min-width:8rem;letter-spacing:-2px;">—</div>
-        <div style="flex:1;">
-          <div id="util-sub" style="margin-bottom:1rem;color:var(--fg-mute);font-size:0.9rem;line-height:1.6;">—</div>
-          <div style="background:var(--border);border-radius:6px;height:18px;overflow:hidden;display:flex;">
-            <div id="util-seg-hits"  style="height:100%;background:var(--green);width:0%;transition:width 0.4s;" title="con hits"></div>
-            <div id="util-seg-miss"  style="height:100%;background:#f8717166;width:0%;transition:width 0.4s;" title="sin hits"></div>
-            <div id="util-seg-bail"  style="height:100%;background:#94a3b833;width:0%;transition:width 0.4s;" title="omitidas"></div>
-          </div>
-          <div style="display:flex;gap:1.2rem;margin-top:0.5rem;font-size:0.78rem;color:var(--fg-mute);">
-            <span><span style="display:inline-block;width:10px;height:10px;background:var(--green);border-radius:2px;margin-right:4px;vertical-align:middle;"></span><span id="util-leg-hits">—</span> con hits</span>
-            <span><span style="display:inline-block;width:10px;height:10px;background:#f8717166;border-radius:2px;margin-right:4px;vertical-align:middle;"></span><span id="util-leg-miss">—</span> sin hits</span>
-            <span><span style="display:inline-block;width:10px;height:10px;background:#94a3b833;border-radius:2px;margin-right:4px;vertical-align:middle;"></span><span id="util-leg-bail">—</span> omitidas</span>
-          </div>
+      <div class="tok-comp">
+        <div class="tok-compbar">
+          <div id="tok-seg-grounded" title="hechos reutilizados"></div>
+          <div id="tok-seg-reask" title="repreguntas evitadas"></div>
+        </div>
+        <div class="tok-legend">
+          <span><span class="sw" style="background:var(--green)"></span><b id="tok-leg-grounded">—</b> hechos reutilizados <small id="tok-leg-grounded-n"></small></span>
+          <span><span class="sw" style="background:var(--blue)"></span><b id="tok-leg-reask">—</b> repreguntas evitadas <small id="tok-leg-reask-n"></small></span>
         </div>
       </div>
     </div>
-  </div>
+    <h3 class="tok-subh">Por día — tokens ahorrados por hechos reutilizados (14 días)</h3>
+    <div id="token-trend" style="height: 220px;"></div>
+  </section>
 
-  <div class="row2">
-    <div class="panel">
-      <h2>Recent history</h2>
-      <table id="history-table">
-        <thead><tr><th>when</th><th>op</th><th>id</th><th>title</th><th>type</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="panel">
-      <h2>Recent recalls</h2>
-      <table id="recall-table">
-        <thead><tr><th>when</th><th>prompt</th><th>hits</th><th>ms</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </div>
+  <!-- QUIÉN USA MEMO -->
+  <section class="panel">
+    <h2>¿Quién usa memo?</h2>
+    <p class="hint">memo es la memoria compartida de todas las herramientas (Claude Code, Codex, Devin…). Cada barra es cuántas veces esa herramienta consultó memo.</p>
+    <div class="tools" id="tools"></div>
+    <div class="badge-silent" id="silent-callout"></div>
+  </section>
+
+  <!-- VACÍOS DE CONOCIMIENTO -->
+  <section class="panel">
+    <h2>¿Qué le falta saber a memo?</h2>
+    <p class="hint">Preguntas de conocimiento que memo no pudo responder (no encontró nada, o lo que mostró no se usó). Capturar estos temas hace que memo deje de fallar ahí.</p>
+    <div id="gaps-body"></div>
+  </section>
+
+  <!-- TENDENCIA -->
+  <section class="panel">
+    <h2>Uso en el tiempo · últimos 14 días</h2>
+    <p class="hint">¿Se consulta memo cada vez más, o se está quedando en silencio?</p>
+    <div id="trend" style="height: 240px;"></div>
+  </section>
 </main>
 
 <footer>
-  Generated by <code>python web/build.py</code> ·
-  v<span id="memo-version"></span> ·
-  refresh by re-running the script.
+  memo <span id="memo-version"></span> · <span id="sys-status">—</span> ·
+  <span id="sync-status">—</span> ·
+  en vivo con <code>memo dashboard</code>
 </footer>
 
 <script id="payload" type="application/json">__DATA_JSON__</script>
 <script>
 (() => {
   const PAYLOAD = JSON.parse(document.getElementById("payload").textContent);
-
-  function escapeHTML(s) {
-    return String(s).replace(/[&<>"]/g, c => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"
-    })[c]);
-  }
-  const asPct = x => (x == null ? "—" : Math.round(x * 100) + "%");
+  const asPct = (x, d=0) => (x == null ? "—" : (x * 100).toFixed(d) + "%");
   const shortTs = v => (v ? String(v).slice(0, 16).replace("T", " ") : "—");
-  function dbRecords(DATA) {
-    const db = (DATA.doctor_raw && DATA.doctor_raw.db) || [];
-    const mv = db.find(d => d.label === "memvec");
-    return mv && typeof mv.records === "number" ? mv.records : null;
-  }
+  const ago = v => {
+    if (!v) return "nunca";
+    const ms = Date.now() - new Date(v).getTime();
+    if (isNaN(ms)) return "—";
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return "recién"; if (m < 60) return "hace " + m + "m";
+    const h = Math.floor(m / 60); if (h < 24) return "hace " + h + "h";
+    return "hace " + Math.floor(h / 24) + "d";
+  };
 
-  // Single idempotent render — safe to call repeatedly with fresh data.
+  const VERDICT_COPY = {
+    ok:     { glyph: "✅", color: "var(--green)",
+              explain: "memo se consulta seguido y la información que entrega termina usándose en las respuestas. Está cumpliendo su rol de memoria primaria." },
+    weak:   { glyph: "⚠️", color: "var(--yellow)",
+              explain: "Las herramientas leen memo, pero lo que entrega casi no termina usándose en las respuestas. Funciona como búsqueda, todavía no como memoria de verdad." },
+    unused: { glyph: "❌", color: "var(--red)",
+              explain: "Casi no hay consultas registradas. Sin uso no se puede saber si memo ayuda — hay que conectar y ejercitar las herramientas." },
+  };
+
   function render(DATA) {
-    const PAL = DATA.type_palette || {};
-    document.getElementById("meta-stamp").textContent = "generated " + DATA.generated_at;
+    const G = DATA.gerencial || {};
+    const V = DATA.verdict || {};
+    const uf = DATA.usefulness || {};
+
+    document.getElementById("meta-stamp").textContent = "datos al " + shortTs(DATA.generated_at);
     document.getElementById("memo-version").textContent = DATA.memo_version || "?";
 
-    // -- pillars + overall lights ----------------------------------------
-    const order = ["red", "yellow", "green", "blue"];
-    const pillars = (DATA.pillars || []).slice()
-      .sort((a,b) => order.indexOf(a.status) - order.indexOf(b.status));
-    const pillarsEl = document.getElementById("pillars");
-    pillarsEl.innerHTML = "";
-    for (const p of pillars) {
-      const card = document.createElement("div");
-      card.className = "card " + p.status;
-      card.innerHTML = `
-        <div class="label"><span class="dot ${p.status}"></span>${p.label}</div>
-        <div class="summary">${p.summary}</div>
-        <details><summary>details</summary><pre></pre></details>
-      `;
-      card.querySelector("pre").textContent = (p.detail || []).join("\n");
-      pillarsEl.appendChild(card);
-    }
-    const lights = document.getElementById("overall-lights");
-    lights.innerHTML = "";
-    for (const p of pillars) {
-      const d = document.createElement("span");
-      d.className = "dot " + p.status;
-      d.title = p.label + " — " + p.summary;
-      lights.appendChild(d);
-    }
+    // ── VEREDICTO ──
+    const vc = VERDICT_COPY[V.status] || VERDICT_COPY.unused;
+    const vPanel = document.getElementById("verdict-panel");
+    vPanel.style.borderColor = vc.color;
+    vPanel.style.background = "linear-gradient(120deg, color-mix(in srgb, " + vc.color + " 9%, var(--panel)) 0%, var(--panel) 60%)";
+    document.getElementById("verdict-glyph").textContent = vc.glyph;
+    const vl = document.getElementById("verdict-label");
+    vl.textContent = (V.label || "❌ NO SE USA").replace(/^[^ ]+ /, "");
+    vl.style.color = vc.color;
+    document.getElementById("verdict-explain").textContent = vc.explain;
+    document.getElementById("verdict-consults").textContent = (V.consults ?? 0).toLocaleString("es");
 
-    // -- stat cards (simple at-a-glance metrics) -------------------------
-    const ru = DATA.recall_util || {};
-    const uf = DATA.usefulness || {};
-    const contra = DATA.contradictions || {};
-    const cards = [
-      { num: dbRecords(DATA) ?? "—", cap: "memorias" },
-      { num: asPct(ru.hit_rate), cap: "recall hit" },
-      { num: asPct(ru.grounded_rate), cap: "grounded" },
-      { num: asPct(ru.referenced_rate), cap: "referenced" },
-      { num: uf.reask_avoided ?? "—", cap: "repreguntas evitadas" },
-      { num: (uf.consumers || []).length, cap: "lectores activos" },
-      { num: contra.open ?? 0, cap: "contradicciones" },
-      { num: uf.sampled ?? "—", cap: "consultas (muestra)" },
+    // ── EMBUDO ──
+    const funnel = G.funnel || [];
+    const top = funnel.length ? (funnel[0].value || 0) : 0;
+    const fcolors = ["var(--blue)", "var(--green)", "var(--green)"];
+    const fnotes = ["lo que se le preguntó al asistente",
+                    "decidió que valía la pena buscar",
+                    "devolvió algo relevante"];
+    const fEl = document.getElementById("funnel");
+    fEl.innerHTML = "";
+    funnel.forEach((s, i) => {
+      const pct = top > 0 ? (s.value / top * 100) : 0;
+      const ofTop = (i > 0 && top > 0) ? `<small>${Math.round(pct)}% del total</small>` : "";
+      const row = document.createElement("div");
+      row.className = "fstage";
+      row.innerHTML =
+        `<div class="fname">${s.label}<small>${fnotes[i] || ""}</small></div>
+         <div class="fbar"><div style="width:${Math.max(pct, 3)}%;background:${fcolors[i] || 'var(--blue)'};"></div></div>
+         <div class="fval">${(s.value ?? 0).toLocaleString("es")} ${ofTop}</div>`;
+      fEl.appendChild(row);
+    });
+
+    // ── KPIs ──
+    const usedRate = G.used_rate;
+    const usedColor = usedRate == null ? "var(--fg-mute)"
+      : usedRate >= 0.6 ? "var(--green)" : usedRate >= 0.35 ? "var(--yellow)" : "var(--red)";
+    const covColor = (G.coverage_rate ?? 0) >= 0.7 ? "var(--green)" : "var(--yellow)";
+    const kpis = [
+      { num: asPct(G.coverage_rate), accent: covColor, cap: "Preguntas donde memo se activó",
+        sub: "del total de consultas" },
+      { num: asPct(G.hit_rate), accent: "var(--green)", cap: "Encontró info al buscar",
+        sub: "de las veces que se activó" },
+      { num: usedRate == null ? "sin datos" : asPct(usedRate), accent: usedColor,
+        cap: "Sus datos se usaron en la respuesta",
+        sub: G.used_total ? `${G.used_grounded}/${G.used_total} respuestas medidas` : "aún sin medir" },
+      { num: G.time_saved_human || "—", accent: "var(--blue)", cap: "Tiempo ahorrado estimado",
+        sub: (G.reask_avoided != null ? G.reask_avoided + " repreguntas evitadas" : "estimación conservadora") },
+      { num: G.tokens_saved_human || "—", accent: "var(--blue)", cap: "Tokens ahorrados al modelo",
+        sub: "info traída de memo, no re-generada" + (G.avg_answer_tokens ? " · ~" + G.avg_answer_tokens + " tok/resp" : "") },
     ];
-    const scEl = document.getElementById("statcards");
-    scEl.innerHTML = "";
-    for (const c of cards) {
+    const kEl = document.getElementById("kpis");
+    kEl.innerHTML = "";
+    for (const k of kpis) {
       const d = document.createElement("div");
-      d.className = "statcard";
-      d.innerHTML = `<div class="num">${c.num}</div><div class="cap">${c.cap}</div>`;
-      scEl.appendChild(d);
+      d.className = "kpi";
+      d.style.setProperty("--accent", k.accent);
+      d.innerHTML = `<div class="knum" style="color:${k.accent}">${k.num}</div>
+                     <div class="kcap">${k.cap}</div><div class="ksub">${k.sub}</div>`;
+      kEl.appendChild(d);
     }
 
-    // -- utility: answers WITH memo vs WITHOUT (per-answer, measured only) -
-    // Denominator = answers actually grounding-scored (Stop hook ran). Surfaced
-    // memorias on un-scored turns are "not measured", not "not used", so they
-    // are reported as coverage rather than counted as misses.
-    // Headline = utility among knowledge-seeking answers (the ones that COULD
-    // use memo); overall (incl. mechanical turns) shown as context.
-    const kTotal = ru.answers_knowledge_total || 0;
-    const kGrounded = ru.answers_knowledge_grounded || 0;
-    const answersTotal = ru.answers_total || 0;
-    const answersGrounded = ru.answers_grounded || 0;
-    const headRate = kTotal > 0 ? ru.answer_rate_knowledge : ru.answer_rate;
-    const headTotal = kTotal > 0 ? kTotal : answersTotal;
-    const headGrounded = kTotal > 0 ? kGrounded : answersGrounded;
-    const withoutMemo = Math.max(0, headTotal - headGrounded);
-    const utilColor = headRate == null ? "var(--fg-mute)"
-      : headRate >= 0.7 ? "var(--green)" : headRate >= 0.4 ? "var(--yellow)" : "var(--red)";
-    const utilPanel = document.getElementById("utility-panel");
-    if (utilPanel) utilPanel.style.borderColor = utilColor;
-    const utilPct = document.getElementById("utility-pct");
-    utilPct.textContent = headRate == null ? "sin datos" : asPct(headRate);
-    utilPct.style.color = utilColor;
-    const unmeasured = ru.unmeasured_surfaced || 0;
-    const overallTxt = ru.answer_rate == null ? "—" : asPct(ru.answer_rate);
-    document.getElementById("utility-sub").textContent = headRate == null
-      ? "todavía no hay respuestas medidas (Stop hook)"
-      : `en preguntas de conocimiento (${headTotal}) · global ${overallTxt} sobre ${answersTotal} · usó memo ≥0.8 / paráfrasis / acción`;
-    if (headTotal > 0) {
-      document.getElementById("utility-seg-con").style.width = (headGrounded / headTotal * 100).toFixed(1) + "%";
-      document.getElementById("utility-seg-sin").style.width = (withoutMemo / headTotal * 100).toFixed(1) + "%";
-    }
-    document.getElementById("utility-leg-con").textContent = headGrounded;
-    document.getElementById("utility-leg-sin").textContent = withoutMemo;
-
-    // -- who reads memo (per-consumer) -----------------------------------
-    const rdBody = document.querySelector("#readers-table tbody");
-    rdBody.innerHTML = "";
-    for (const c of (uf.consumers || [])) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${escapeHTML(c.consumer)}</td>
-                      <td>${c.consults}</td>
-                      <td>${asPct(c.hit_rate)}</td>
-                      <td>${asPct(c.grounded_rate)}</td>
-                      <td>${shortTs(c.last_seen)}</td>`;
-      rdBody.appendChild(tr);
-    }
-    const silentLayers = uf.silent || [];
-    document.getElementById("readers-silent").textContent = silentLayers.length
-      ? "NO leen memo: " + silentLayers.join(", ")
-      : "todas las capas esperadas leen memo ✅";
-
-    // -- 3-D scatter (only present on a full build / first load) ----------
-    if (DATA.projection) {
-      const proj = DATA.projection;
-      document.getElementById("map-method").textContent = proj.method;
-      const colors = proj.types.map(t => PAL[t] || "#94a3b8");
-      const hover = proj.ids.map((id, i) =>
-        `${proj.titles[i]}<br><b>${proj.types[i]}</b> · ${id}<br>${proj.tags[i] || ""}<br>${proj.created[i]}`
-      );
-      Plotly.react("map3d", [{
-        type: "scatter3d", mode: "markers",
-        x: proj.xs, y: proj.ys, z: proj.zs,
-        marker: { size: 4, color: colors, opacity: 0.85, line: { width: 0 } },
-        text: hover, hoverinfo: "text",
+    // ── AHORRO DE TOKENS (detalle) ──
+    const td = G.token_detail || {};
+    const fmtTok = n => n == null ? "—" : (n < 1000 ? String(n)
+      : n < 1e6 ? (n/1000).toFixed(1) + "k" : (n/1e6).toFixed(2) + "M");
+    const gTok = td.grounded_tokens || 0, rTok = td.reask_tokens || 0, tTot = td.total || 0;
+    document.getElementById("tok-total").textContent = fmtTok(tTot);
+    document.getElementById("tok-assump").textContent =
+      `${td.tok_grounded || 0} tok/hecho · ${td.tok_reask || 0} tok/repregunta`
+      + (td.avg_answer_tokens ? ` · ~${td.avg_answer_tokens} tok/respuesta medido` : "");
+    const segG = tTot > 0 ? (gTok / tTot * 100) : 0;
+    document.getElementById("tok-seg-grounded").style.width = segG.toFixed(1) + "%";
+    document.getElementById("tok-seg-reask").style.width = (100 - segG).toFixed(1) + "%";
+    document.getElementById("tok-leg-grounded").textContent = fmtTok(gTok);
+    document.getElementById("tok-leg-reask").textContent = fmtTok(rTok);
+    document.getElementById("tok-leg-grounded-n").textContent = `(${td.grounded || 0} hechos)`;
+    document.getElementById("tok-leg-reask-n").textContent = `(${td.reask_avoided || 0} evitadas)`;
+    const tdaily = td.daily || [];
+    if (tdaily.length) {
+      Plotly.react("token-trend", [{
+        type: "bar", x: tdaily.map(d => d.date.slice(5)), y: tdaily.map(d => d.tokens),
+        marker: { color: "#2ee6a6" },
+        hovertemplate: "%{x}<br>%{y} tokens (%{customdata} hechos)<extra></extra>",
+        customdata: tdaily.map(d => d.grounded),
       }], {
         paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-        margin: { l: 0, r: 0, t: 0, b: 0 },
-        font: { color: "#e6edf7", size: 11 },
-        scene: {
-          xaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
-          yaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
-          zaxis: { showgrid: true, gridcolor: "#243049", zeroline: false, title: "" },
-          bgcolor: "transparent",
-        },
-      }, { displaylogo: false, responsive: true });
+        font: { color: "#93a1b8", size: 11 },
+        margin: { l: 44, r: 10, t: 8, b: 34 },
+        xaxis: { type: "category", color: "#5d6b85", tickangle: 0, automargin: true },
+        yaxis: { gridcolor: "#243049", color: "#5d6b85", rangemode: "tozero" },
+      }, { displaylogo: false, responsive: true, displayModeBar: false });
     }
 
-    // -- type donut (only when type_counts present) ----------------------
-    const tc = DATA.type_counts || {};
-    if (Object.keys(tc).length) {
-      Plotly.react("types", [{
-        type: "pie", hole: 0.55,
-        labels: Object.keys(tc),
-        values: Object.values(tc),
-        marker: { colors: Object.keys(tc).map(k => PAL[k] || "#94a3b8") },
-        textinfo: "label+percent", textfont: { color: "#0b0f17" },
-      }], {
-        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-        font: { color: "#e6edf7", size: 11 }, showlegend: false,
-        margin: { l: 0, r: 0, t: 0, b: 0 },
-      }, { displaylogo: false, responsive: true });
+    // ── QUIÉN USA MEMO ──
+    const consumers = (uf.consumers || []).slice().sort((a,b) => b.consults - a.consults);
+    const maxC = consumers.reduce((m,c) => Math.max(m, c.consults || 0), 1);
+    const tEl = document.getElementById("tools");
+    tEl.innerHTML = "";
+    for (const c of consumers) {
+      const helping = c.grounded_rate != null && c.grounded_rate >= 0.10;
+      let color, state, sub;
+      if (c.consults < 5) { color = "var(--yellow)"; state = "uso esporádico"; }
+      else if (helping)   { color = "var(--green)";  state = "uso activo"; }
+      else                { color = "var(--green)";  state = "uso activo"; }
+      sub = (c.grounded_rate != null ? "usa " + asPct(c.grounded_rate) : "hit " + asPct(c.hit_rate)) + " · " + ago(c.last_seen);
+      const pct = Math.max(c.consults / maxC * 100, 3);
+      const row = document.createElement("div");
+      row.className = "tool";
+      row.innerHTML =
+        `<div class="tname"><span class="dot" style="background:${color};color:${color}"></span>${c.consumer}</div>
+         <div class="tbar"><div style="width:${pct}%;background:${color}"></div></div>
+         <div class="tstate" style="color:${color}">${c.consults.toLocaleString("es")} consultas<small>${sub}</small></div>`;
+      tEl.appendChild(row);
     }
-
-    // -- growth bar ------------------------------------------------------
-    if (DATA.growth) {
-      Plotly.react("growth", [{
-        type: "bar",
-        x: DATA.growth.map(g => g.date),
-        y: DATA.growth.map(g => g.count),
-        marker: { color: "#4f8ef7" },
-      }], {
-        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
-        font: { color: "#e6edf7", size: 11 },
-        margin: { l: 30, r: 10, t: 4, b: 30 },
-        xaxis: { tickangle: -45, automargin: true, color: "#94a3b8" },
-        yaxis: { gridcolor: "#243049", color: "#94a3b8" },
-      }, { displaylogo: false, responsive: true });
-    }
-
-    // -- recall utilization ----------------------------------------------
-    if (ru && ru.fired > 0) {
-      const hits   = Math.round((ru.hit_rate || 0) * ru.fired);
-      const misses = ru.fired - hits;
-      const total  = ru.fired + ru.bailed;
-      const p      = Math.round((ru.hit_rate || 0) * 100);
-      const color  = p >= 70 ? 'var(--green)' : p >= 40 ? 'var(--yellow)' : 'var(--red)';
-      document.getElementById('util-pct').style.color = color;
-      document.getElementById('util-pct').textContent = p + '%';
-      document.getElementById('util-seg-hits').style.width = (hits   / total * 100).toFixed(1) + '%';
-      document.getElementById('util-seg-miss').style.width = (misses / total * 100).toFixed(1) + '%';
-      document.getElementById('util-seg-bail').style.width = (ru.bailed / total * 100).toFixed(1) + '%';
-      document.getElementById('util-leg-hits').textContent = hits;
-      document.getElementById('util-leg-miss').textContent = misses;
-      document.getElementById('util-leg-bail').textContent = ru.bailed;
-      const strong = ru.strong_hit_rate != null ? Math.round(ru.strong_hit_rate * 100) + '% strong' : '';
-      const score  = ru.median_top_score != null ? 'score mediano ' + ru.median_top_score : '';
-      document.getElementById('util-sub').textContent = [strong, score, total + ' totales'].filter(Boolean).join(' · ');
+    const silent = uf.silent || [];
+    const sc = document.getElementById("silent-callout");
+    if (silent.length) {
+      sc.className = "badge-silent";
+      sc.innerHTML = "<b>No están usando memo:</b> " + silent.join(", ") +
+        " — estas herramientas están conectadas pero no consultan la memoria.";
     } else {
-      document.getElementById('util-pct').textContent = 'sin datos';
-      document.getElementById('util-sub').textContent = ru && ru.bailed > 0
-        ? ru.bailed + ' omitidas (prompts cortos / slash commands)'
-        : 'recall.log vacío';
+      sc.className = "badge-silent ok";
+      sc.textContent = "✅ Todas las herramientas esperadas están consultando memo.";
     }
 
-    // -- verdict (¿funciona memo?) ---------------------------------------
-    const V = DATA.verdict || {};
-    const vColors = { ok: 'var(--green)', weak: 'var(--yellow)', unused: 'var(--red)' };
-    const vColor = vColors[V.status] || 'var(--red)';
-    const vPanel = document.getElementById('verdict-panel');
-    if (vPanel) vPanel.style.borderColor = vColor;
-    document.getElementById('verdict-label').textContent = V.label || '❌ NO SE USA';
-    document.getElementById('verdict-label').style.color = vColor;
-    const gr = V.grounded_rate == null ? '—' : Math.round(V.grounded_rate * 100) + '%';
-    document.getElementById('verdict-sub').textContent = `grounded ${gr} · ${V.consults || 0} consultas`;
-    const per = V.per_consumer || [];
-    const readers = per.filter(x => x.reads).map(x => x.name + ' ✅');
-    const silent  = per.filter(x => !x.reads).map(x => x.name + ' ❌');
-    document.getElementById('verdict-readers').textContent = readers.length ? readers.join('  ') : '—';
-    document.getElementById('verdict-silent').textContent  = silent.length  ? silent.join('  ')  : 'ninguno';
-
-    // -- memflow utility -------------------------------------------------
-    const MF = DATA.memflow_util || {};
-    const cons = MF.consumption || {}, outc = MF.outcome || {};
-    const reads = cons.total_read_calls || 0;
-    const reexp = outc.re_explain || 0;
-    const used  = outc.memory_used_rate;
-    let mfEstado, mfColor;
-    if (!MF.consumption) { mfEstado = 'no disponible'; mfColor = 'var(--fg-mute)'; }
-    else if (reads < 5)  { mfEstado = '❌ casi no se lee'; mfColor = 'var(--red)'; }
-    else if (used == null) { mfEstado = '⚠️ sin outcomes aún'; mfColor = 'var(--yellow)'; }
-    else if (used >= 0.10 && reexp < 10) { mfEstado = '✅ útil'; mfColor = 'var(--green)'; }
-    else { mfEstado = '⚠️ poco útil'; mfColor = 'var(--yellow)'; }
-    const mfEl = document.getElementById('memflow-estado');
-    mfEl.textContent = mfEstado; mfEl.style.color = mfColor;
-    const mfp = document.getElementById('memflow-panel');
-    if (mfp) mfp.style.borderColor = mfColor;
-    document.getElementById('mf-reads').textContent = reads;
-    document.getElementById('mf-used').textContent = used == null ? '—' : Math.round(used * 100) + '%';
-    const reEl = document.getElementById('mf-reexplain');
-    reEl.textContent = reexp; reEl.style.color = reexp >= 10 ? 'var(--red)' : '';
-
-    // -- tables (idempotent) ---------------------------------------------
-    const histBody = document.querySelector("#history-table tbody");
-    histBody.innerHTML = "";
-    for (const h of (DATA.history || [])) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${h.ts}</td><td class="op-${h.op}">${h.op}</td>
-                      <td><code>${h.id}</code></td><td>${escapeHTML(h.title || "")}</td>
-                      <td><span class="pill">${h.type || ""}</span></td>`;
-      histBody.appendChild(tr);
+    // ── VACÍOS DE CONOCIMIENTO ──
+    const gaps = DATA.gaps || [];
+    const gapsBody = document.getElementById("gaps-body");
+    if (gapsBody) {
+      if (!gaps.length) {
+        gapsBody.innerHTML = `<div class="badge-silent ok">✅ Sin vacíos detectados — memo respondió lo que se le preguntó.</div>`;
+      } else {
+        const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+        gapsBody.innerHTML = `<div class="tools">` + gaps.map(g => {
+          const reason = (g.reasons || []).join(", ");
+          const n = g.count || 1;
+          return `<div class="gap-row">
+            <span class="gap-n">${n}&times;</span>
+            <span class="gap-q">${esc((g.prompt || "").slice(0, 90))}</span>
+            <span class="gap-why">${esc(reason)}</span>
+          </div>`;
+        }).join("") + `</div>`;
+      }
     }
-    const recBody = document.querySelector("#recall-table tbody");
-    recBody.innerHTML = "";
-    for (const r of (DATA.recall_log || [])) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${r.ts || ""}</td>
-                      <td>${escapeHTML((r.prompt || "").slice(0, 80))}</td>
-                      <td>${(r.hits || []).length}</td>
-                      <td>${r.latency_ms ?? ""}</td>`;
-      recBody.appendChild(tr);
+
+    // ── TENDENCIA ──
+    const tr = G.trend || [];
+    if (tr.length) {
+      const x = tr.map(d => d.date.slice(5));
+      Plotly.react("trend", [
+        { type: "bar", name: "consultadas", x, y: tr.map(d => d.activado),
+          marker: { color: "#2ee6a6" } },
+        { type: "bar", name: "omitidas", x,
+          y: tr.map(d => Math.max(0, (d.consultas||0) - (d.activado||0))),
+          marker: { color: "#3a4a68" } },
+      ], {
+        barmode: "stack",
+        paper_bgcolor: "transparent", plot_bgcolor: "transparent",
+        font: { color: "#93a1b8", size: 11 },
+        margin: { l: 34, r: 10, t: 8, b: 34 },
+        legend: { orientation: "h", y: 1.16, x: 0, font: { size: 11 } },
+        xaxis: { type: "category", color: "#5d6b85", tickangle: 0, automargin: true },
+        yaxis: { gridcolor: "#243049", color: "#5d6b85", rangemode: "tozero" },
+      }, { displaylogo: false, responsive: true, displayModeBar: false });
+    }
+
+    // ── system status (footer) ──
+    const pillars = DATA.pillars || [];
+    const bad = pillars.filter(p => p.status === "red");
+    const warn = pillars.filter(p => p.status === "yellow");
+    const ss = document.getElementById("sys-status");
+    if (bad.length)      { ss.textContent = "⚠ " + bad.length + " problema(s) de sistema"; ss.style.color = "var(--red)"; }
+    else if (warn.length){ ss.textContent = "sistema con avisos"; ss.style.color = "var(--yellow)"; }
+    else                 { ss.textContent = "sistema sano"; ss.style.color = "var(--green)"; }
+
+    // ── GitHub sync chip ──
+    const sync = DATA.sync || {};
+    const syncEl = document.getElementById("sync-status");
+    if (syncEl) {
+      const sc = { ok: "var(--green)", warn: "var(--yellow)", bad: "var(--red)", off: "var(--fg-dim)" };
+      syncEl.textContent = "GitHub: " + (sync.label || "—");
+      syncEl.style.color = sc[sync.state] || "var(--fg-dim)";
     }
   }
 
   render(PAYLOAD);
 
-  // -- live auto-refresh (only when served over http; file:// is static) -
+  // ── live auto-refresh (http only; file:// is a static snapshot) ──
   const badge = document.getElementById("live-badge");
-  const setBadge = (state, txt) => {
-    badge.innerHTML = `<span class="dot ${state}"></span>${txt}`;
-  };
+  const setBadge = (state, txt, live=false) =>
+    badge.innerHTML = `<span class="dot ${state}${live ? " live" : ""}"></span>${txt}`;
   if (location.protocol.startsWith("http")) {
     const intervalS = PAYLOAD.refresh_interval_s || 5;
-    setBadge("green", "en vivo · " + intervalS + "s");
+    setBadge("green", "en vivo", true);
     const poll = async () => {
       try {
         const r = await fetch("/api/data.json", { cache: "no-store" });
         if (!r.ok) throw new Error("HTTP " + r.status);
         render(await r.json());
-        setBadge("green", "actualizado " + new Date().toLocaleTimeString());
+        setBadge("green", "en vivo · " + new Date().toLocaleTimeString("es"), true);
       } catch (e) {
-        setBadge("yellow", "sin conexión · reintentando");
+        setBadge("yellow", "reconectando…");
       }
     };
     setInterval(poll, intervalS * 1000);
   } else {
-    setBadge("blue", "snapshot estático · usar `memo dashboard` para tiempo real");
+    setBadge("blue", "snapshot · usá `memo dashboard` para tiempo real");
   }
 })();
 </script>

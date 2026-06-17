@@ -28,6 +28,49 @@ def get_memory(cfg: Config) -> Any:
     return Memory(cfg)
 
 
+def log_cli_consult(
+    cfg: Config,
+    *,
+    verb: str,
+    query: str,
+    hits: list[dict[str, Any]] | None,
+    t0_ms: int,
+    source: str | None = None,
+) -> None:
+    """Attribute a CLI read (search / ask / chat-ask / recall) to a consumer.
+
+    Mirrors the MCP server's ``log_consult`` for the subprocess path: trinity
+    layers (synapse, memflow, …) shell out to the ``memo`` CLI, so without this
+    their consults never reach the recall ring buffer and they show up as
+    "silent" in ``memo usefulness`` even though they DO read memo.
+
+    Logs ONLY when a source is provided — via ``--source`` or the ``MEMO_SOURCE``
+    env var. A bare interactive ``memo search`` by the developer carries no
+    source and is intentionally NOT counted, so the usefulness stats stay clean.
+    """
+    from memo.flags import flag_str
+
+    src = (source or flag_str("MEMO_SOURCE") or "").strip().lower()
+    if not src:
+        return
+    try:
+        import time
+
+        from memo.dashboard import append_recall_log
+
+        append_recall_log(
+            cfg.state_dir,
+            prompt=query or "",
+            hits=hits or [],
+            via=f"cli:{verb}",
+            source=src,
+            latency_ms=int(time.time() * 1000) - t0_ms,
+        )
+    except Exception:
+        # Telemetry must never break a read command.
+        pass
+
+
 def _short(text: str, n: int = 120) -> str:
     """Collapse whitespace and truncate `text` to `n` chars with an ellipsis."""
     text = (text or "").strip().replace("\n", " ")

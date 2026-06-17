@@ -9,7 +9,6 @@ one note-shaped Markdown file per record.
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -192,7 +191,9 @@ class RepoCorpus:
 
         max_bytes = max_file_bytes
         if max_bytes is None:
-            max_bytes = int(os.environ.get("MEMO_REPO_MAX_FILE_BYTES", DEFAULT_MAX_FILE_BYTES))
+            from memo.flags import flag_int
+
+            max_bytes = flag_int("MEMO_REPO_MAX_FILE_BYTES") or DEFAULT_MAX_FILE_BYTES
         include_globs = list(include or [])
         exclude_globs = [*DEFAULT_EXCLUDE_GLOBS, *(exclude or [])]
 

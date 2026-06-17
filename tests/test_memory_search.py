@@ -125,3 +125,17 @@ def test_apply_decay_lets_fresher_memory_win_a_tie():
     assert [r.id for r in out] == ["fresh", "old"]
     assert out[0].score is not None and out[1].score is not None
     assert out[0].score > out[1].score
+
+
+def test_search_with_trace_reports_retrieval_stages(mem_with_stub: Memory) -> None:
+    mem_with_stub.save(content="alpha body", title="Alpha")
+    mem_with_stub.save(content="beta body", title="Beta")
+
+    envelope = mem_with_stub.search_with_trace("alpha", limit=2, mode="hybrid")
+
+    assert envelope["hits"]
+    stages = [item["stage"] for item in envelope["trace"]]
+    assert stages[0] == "candidate_generation"
+    assert "materialize" in stages
+    assert stages[-1] == "final"
+    assert envelope["trace"][-1]["output_count"] == len(envelope["hits"])

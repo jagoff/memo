@@ -77,6 +77,18 @@ def test_search_full_body_when_chars_huge(mem: Memory):
     assert "body_truncated" not in out[0]
 
 
+def test_search_trace_returns_hits_and_pipeline(mem: Memory):
+    mem.save(content="alpha body", title="Alpha")
+    server = build_server(memory=mem)
+    search_trace = _tool(server, "memory_search_trace")
+
+    out = search_trace(query="alpha", limit=3)
+
+    assert out["hits"]
+    assert out["trace"][0]["stage"] == "candidate_generation"
+    assert out["trace"][-1]["stage"] == "final"
+
+
 def test_get_returns_ambiguous_shape(mem: Memory, monkeypatch):
     fixed = iter([
         uuid.UUID("aaaaaaaa1111000000000000000000ff"),

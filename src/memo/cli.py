@@ -32,7 +32,7 @@ from memo.cli_as_of import as_of_group
 from memo.cli_backend_native import backend_native_group
 from memo.cli_backup import backup_group
 from memo.cli_briefing import briefing
-from memo.cli_capture import capture_stop, resume
+from memo.cli_capture import capture_stop, capture_tick, resume
 from memo.cli_chat import chat_group
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
@@ -77,6 +77,8 @@ from memo.cli_memory import (
     update,
 )
 from memo.cli_multimodal import multimodal_group
+from memo.cli_outcome import gaps as gaps_cmd
+from memo.cli_outcome import outcome as outcome_cmd
 from memo.cli_profile import profile_group
 from memo.cli_query import query_group
 from memo.cli_recall_daemon import recall_daemon_group
@@ -97,7 +99,7 @@ from memo.cli_runtime import (
     uninstall_watcher_cmd,
     watch,
 )
-from memo.cli_search import ask, chat_ask, embed_cmd, rerank_cmd, search
+from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
 from memo.cli_session import continuity_cmd, session_group
 from memo.cli_share import share_group
 from memo.cli_stats import stats
@@ -115,7 +117,23 @@ from memo.cli_viz import mapa_cmd
 from memo.setup import run_picker, write_config_file
 
 
-@click.group()
+class SurfaceGroup(click.Group):
+    """Root Click group that filters commands by the configured surface profile."""
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        from memo.surface import cli_command_visible
+
+        return [name for name in super().list_commands(ctx) if cli_command_visible(name)]
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        from memo.surface import cli_command_visible
+
+        if not cli_command_visible(cmd_name):
+            return None
+        return super().get_command(ctx, cmd_name)
+
+
+@click.group(cls=SurfaceGroup)
 @click.version_option(package_name="mlx-memo")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
@@ -136,6 +154,8 @@ cli.add_command(synthesize_cmd)
 cli.add_command(retier_cmd)
 cli.add_command(usefulness_cmd)
 cli.add_command(roi_cmd)
+cli.add_command(gaps_cmd)
+cli.add_command(outcome_cmd)
 cli.add_command(mandate_cmd)
 cli.add_command(mapa_cmd)
 cli.add_command(tui)
@@ -144,6 +164,7 @@ cli.add_command(logs)
 cli.add_command(mine_history)
 cli.add_command(ingest)
 cli.add_command(capture_stop)
+cli.add_command(capture_tick)
 cli.add_command(reflect)
 cli.add_command(resume)
 cli.add_command(diff_cmd)
@@ -168,6 +189,7 @@ cli.add_command(install_shell_wrapper)
 cli.add_command(config_group)
 cli.add_command(save)
 cli.add_command(search)
+cli.add_command(recall)
 cli.add_command(ask)
 cli.add_command(embed_cmd)
 cli.add_command(chat_ask)
@@ -237,6 +259,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "recall-hook",
     "recall-daemon",
     "capture-stop",
+    "capture-tick",
     "session",
     "ingest",
     "historia",
@@ -258,9 +281,11 @@ def _first_run_gate(ctx: click.Context) -> None:
     """
     import sys as _sys
 
+    from memo.flags import flag_bool
+
     if ctx.invoked_subcommand in (None, *_FIRST_RUN_GATE_SKIP_COMMANDS):
         return
-    if os.environ.get("MEMO_NONINTERACTIVE") == "1":
+    if flag_bool("MEMO_NONINTERACTIVE"):
         return
     # Both stdin and stdout must be a TTY for the picker to make sense.
     if not (_sys.stdin.isatty() and _sys.stdout.isatty()):

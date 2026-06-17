@@ -30,7 +30,6 @@ monkeypatch `MLXChat.chat` directly to skip the load.
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
@@ -52,12 +51,9 @@ def _prompt_cache_enabled() -> bool:
     keep it off unless `MEMO_PROMPT_CACHE` is set — the daemon turns it on.
     Output is byte-identical either way (greedy/temp=0).
     """
-    return os.environ.get("MEMO_PROMPT_CACHE", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    from memo.flags import flag_bool
+
+    return flag_bool("MEMO_PROMPT_CACHE")
 
 
 def _apply_chat_template(tok: Any, **kw: Any) -> Any:

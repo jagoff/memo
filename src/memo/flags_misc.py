@@ -55,6 +55,20 @@ SPECS: tuple[FlagSpec, ...] = (
         "Expose only the 26 core inline tools (skip domain modules). "
         "Reduces tool count from ~116 to 26 for local/constrained LLMs.",
     ),
+    _spec(
+        "MEMO_MCP_PROFILE",
+        "str",
+        "default",
+        "mcp",
+        "MCP surface profile: default/full expose advanced tools; core/slim expose only stable core tools.",
+    ),
+    _spec(
+        "MEMO_CLI_PROFILE",
+        "str",
+        "default",
+        "cli",
+        "CLI surface profile: default/full expose every command; core/slim hide advanced and experimental commands.",
+    ),
     # synapse / memflow integration
     _spec(
         "MEMO_RESPECT_SYNAPSE_FREEZE",
@@ -274,6 +288,127 @@ SPECS: tuple[FlagSpec, ...] = (
         120,
         "roi",
         "Estimated seconds cost per re-ask.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_SOURCE",
+        "str",
+        "",
+        "roi",
+        "Identity of the calling layer (synapse / memflow / devin / devin-desktop "
+        "/ opencode …) used to attribute memo consults in `memo usefulness` when a "
+        "read does not pass an explicit source. Set it in that tool's CLI/MCP "
+        "environment; a bare developer consult leaves it empty and is not counted.",
+    ),
+    # The Outcome Loop — recall self-tunes from real grounding outcomes.
+    _spec(
+        "MEMO_OUTCOME_RANKING_ENABLED",
+        "bool",
+        False,
+        "roi",
+        "Drive memory_health.roi_score from real grounding OUTCOMES (was the "
+        "surfaced memoria actually used in the answer?) instead of mere access "
+        "frequency. When on, `memo maintain` / `memo outcome` reconcile roi_score "
+        "from recall.log+grounding.log, and the blind per-access roi boost is "
+        "skipped so the outcome signal stays authoritative. Default off = legacy "
+        "access-driven behaviour.",
+    ),
+    _spec(
+        "MEMO_OUTCOME_PRIOR_N",
+        "float",
+        3.0,
+        "roi",
+        "Bayesian prior strength for per-memoria utility = (grounded + "
+        "prior_mean*prior_n) / (surfaced + prior_n). Higher = more surfacings "
+        "needed before a memoria's utility moves off the global baseline.",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_OUTCOME_ROI_FLOOR",
+        "float",
+        0.6,
+        "roi",
+        "Lowest roi_score the outcome loop assigns (utility 0 → floor). Demotes "
+        "but never zeroes a memoria that surfaces a lot yet never grounds.",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_OUTCOME_ROI_CAP",
+        "float",
+        1.5,
+        "roi",
+        "Highest roi_score the outcome loop assigns (utility 1 → cap).",
+        min_val=1.0,
+    ),
+    _spec(
+        "MEMO_OUTCOME_DEAD_MIN_SURFACED",
+        "int",
+        8,
+        "roi",
+        "Dead-weight archival: a memoria must have been surfaced at least this "
+        "many times (and never grounded) before `memo maintain` proposes "
+        "archiving it as recall noise. 0 disables dead-weight archival.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_ROI_TOKENS_PER_GROUNDED",
+        "int",
+        350,
+        "roi",
+        "Estimated model tokens saved per grounded answer — the tokens the model "
+        "would have spent re-deriving the fact memo surfaced instead of being "
+        "given it directly.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_ROI_TOKENS_PER_REASK",
+        "int",
+        900,
+        "roi",
+        "Estimated model tokens saved per re-ask avoided — a full answer "
+        "regeneration round-trip the user did NOT have to repeat.",
+        min_val=0,
+    ),
+    # Git sync (memo-sync repo ↔ GitHub)
+    _spec(
+        "MEMO_SYNC_AUTO",
+        "bool",
+        True,
+        "sync",
+        "Enable the debounced in-session auto-sync (`memo sync auto`, wired as an "
+        "async per-prompt hook). Default on; set 0 to fall back to push-on-Stop / "
+        "pull-on-SessionStart only.",
+    ),
+    _spec(
+        "MEMO_SYNC_PUSH_DEBOUNCE_S",
+        "int",
+        120,
+        "sync",
+        "Minimum seconds between auto-pushes (coalesces rapid saves into one "
+        "commit+push so git isn't thrashed every prompt).",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_SYNC_PULL_INTERVAL_S",
+        "int",
+        300,
+        "sync",
+        "Minimum seconds between background auto-pulls — lets a long-running "
+        "session converge on another Mac's pushes without a restart.",
+        min_val=0,
+    ),
+    # Durable incremental capture (memo capture-tick)
+    _spec(
+        "MEMO_CAPTURE_INTERVAL_S",
+        "int",
+        600,
+        "capture",
+        "Minimum seconds between incremental in-session captures (`memo "
+        "capture-tick`, wired as an async per-prompt hook). Mines NEW turns "
+        "since a per-session watermark into durable memorias so a long/crashed "
+        "session's insight reaches .md mid-session instead of only at Stop. "
+        "Self-throttled per session off the capture watermark; a cheap no-op "
+        "when not due. 0 disables the throttle (capture every prompt).",
         min_val=0,
     ),
     # WhatsApp ingest

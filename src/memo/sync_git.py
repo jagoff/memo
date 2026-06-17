@@ -21,6 +21,7 @@ the rebase aborts and reports rather than guessing.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 from pathlib import Path
@@ -129,6 +130,140 @@ def bootstrap_clone(url: str, dest: Path, *, config_path: Path | None = None) ->
     return summary
 
 
+def sync_tier(cfg: Config) -> str:
+    """Which sync model applies. ``"local"`` = intra-machine only (sessions share
+    ``data_dir``/``memvec.db``; visibility is via the shared index, no git).
+    ``"remote"`` = a git remote is configured, so cross-machine sync is in play.
+
+    Makes the today-implicit local-vs-cloud decision explicit and single-sourced.
+    """
+    try:
+        root = git_root_for(cfg)
+    except SyncGitError:
+        return "local"
+    has_remote = bool(_git(root, "remote", check=False).stdout.strip())
+    return "remote" if has_remote else "local"
+
+
+def _lock_path(cfg: Config) -> Path:
+    return cfg.state_dir / ".sync.lock"
+
+
+def sync_once(
+    cfg: Config,
+    store: VecStore,
+    mem: Memory,
+    *,
+    remote: str = "origin",
+    do_pull: bool = True,
+    do_push: bool = True,
+) -> dict:
+    """The single, machine-level git step — pull-rebase-before-push, lock-guarded.
+
+    ONE owner per machine: whoever grabs the ``.sync.lock`` flock does the git;
+    concurrent same-machine sessions skip (``locked``) because their writes are
+    already in the shared store — the lock holder's push carries them. The
+    pull-before-push ordering means a remote that advanced (another Mac) rebases
+    cleanly instead of rejecting the push.
+
+    No-op (``tier='local'``) when no remote is configured. Never raises for the
+    expected cases (not a clone, lock held, offline) — returns a status dict so
+    triggers (hooks/daemon) stay quiet; only a genuine `.md` rebase conflict
+    surfaces as a ``pending`` marker.
+    """
+    import fcntl
+
+    if sync_tier(cfg) != "remote":
+        return {"tier": "local", "skipped": "no remote"}
+
+    lock_file = _lock_path(cfg)
+    try:
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        fh = lock_file.open("w")
+    except OSError as exc:
+        return {"tier": "remote", "skipped": f"lock open failed: {exc}"}
+    try:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            # Another process on this machine owns the git step right now. Our
+            # writes are already in the shared store; the holder will carry them.
+            return {"tier": "remote", "skipped": "locked"}
+
+        result: dict = {"tier": "remote", "pulled": False, "pushed": False}
+        if do_pull:
+            try:
+                pull_out = sync_pull(cfg, store, mem, remote=remote)
+                result["pulled"] = bool(pull_out.get("pulled"))
+            except SyncGitError as exc:
+                result["pull_error"] = str(exc)
+        if do_push:
+            try:
+                push_out = sync_push(cfg, store, remote=remote)
+                result["pushed"] = bool(push_out.get("pushed"))
+            except SyncGitError as exc:
+                result["push_error"] = str(exc)
+        return result
+    finally:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
+
+
+def _pending_marker(cfg: Config) -> Path:
+    """Sentinel file written when a push fails (offline / auth / remote down) so
+    `sync status` / `doctor` can surface stranded local commits and the next
+    trigger knows to retry. Lives in the state dir (not the synced repo)."""
+    return cfg.state_dir / "sync_pending"
+
+
+def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = False) -> dict:
+    """Read-only health of the git-sync repo — never raises, never mutates.
+
+    Surfaces the silent no-op (data_dir not a git clone) and stranded commits
+    (committed locally but not pushed: offline/auth). ``ahead``/``behind`` are
+    relative to the LAST fetch unless ``check_remote`` (then a network
+    ``ls-remote`` probe runs — slower, used by `doctor`, not the hot path).
+    """
+    try:
+        root = git_root_for(cfg)
+    except SyncGitError as exc:
+        return {"is_git_clone": False, "reason": str(exc)}
+
+    branch = _current_branch(root)
+    porcelain = _git(root, "status", "--porcelain", check=False).stdout.strip()
+    dirty = len(porcelain.split("\n")) if porcelain else 0
+    remote_url = _git(root, "remote", "get-url", remote, check=False).stdout.strip()
+    ahead = behind = 0
+    counts = _git(
+        root, "rev-list", "--left-right", "--count", f"{remote}/{branch}...HEAD", check=False
+    )
+    if counts.returncode == 0 and counts.stdout.strip():
+        parts = counts.stdout.split()
+        if len(parts) == 2:
+            behind, ahead = int(parts[0]), int(parts[1])
+    last = _git(root, "log", "-1", "--format=%cI", check=False).stdout.strip()
+
+    remote_reachable: bool | None = None
+    if check_remote and remote_url:
+        probe = _git(root, "ls-remote", "--exit-code", remote, "HEAD", check=False)
+        remote_reachable = probe.returncode == 0
+
+    return {
+        "is_git_clone": True,
+        "root": str(root),
+        "branch": branch,
+        "remote": remote_url,
+        "dirty_files": dirty,
+        "ahead": ahead,
+        "behind": behind,
+        "last_commit": last,
+        "pending": _pending_marker(cfg).is_file(),
+        "remote_reachable": remote_reachable,
+    }
+
+
 def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
     """Export signal, commit any changes, and push. Returns a summary dict."""
     root = git_root_for(cfg)
@@ -137,18 +272,38 @@ def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
 
     _git(root, "add", "-A")
     staged = _git(root, "diff", "--cached", "--name-only").stdout.strip()
-    if not staged:
-        return {"pushed": False, "reason": "nothing to commit", "branch": branch}
+    n_files = len(staged.splitlines()) if staged else 0
+    if staged:
+        from memo.identity import current as _identity
 
-    n_files = len(staged.splitlines())
-    _git(root, "commit", "-m", f"sync: memo signal + memorias ({n_files} files)")
+        who = _identity(cfg).label
+        _git(root, "commit", "-m", f"sync: memo signal + memorias ({n_files} files) [{who}]")
+
+    # Stranded-commit retry: a prior push may have failed AFTER committing
+    # (offline/auth), leaving local commits unpushed. Detect that and push even
+    # when there's nothing new to commit this round — otherwise the early return
+    # would strand the work until the next save.
+    unpushed = _git(
+        root, "rev-list", "--count", f"{remote}/{branch}..HEAD", check=False
+    ).stdout.strip()
+    has_unpushed = unpushed.isdigit() and int(unpushed) > 0
+    if not staged and not has_unpushed and not _pending_marker(cfg).is_file():
+        return {"pushed": False, "reason": "nothing to commit", "branch": branch}
 
     # push; set upstream on first push
     push = _git(root, "push", remote, branch, check=False)
     if push.returncode != 0:
         push = _git(root, "push", "-u", remote, branch, check=False)
         if push.returncode != 0:
-            raise SyncGitError(f"git push failed: {push.stderr.strip()}")
+            # Commit landed locally but didn't reach the remote (offline / auth /
+            # remote down). Stamp a pending marker so `sync status` / `doctor`
+            # flag the stranded commit and the next trigger retries — the work is
+            # NOT lost, just not yet shared.
+            with contextlib.suppress(OSError):
+                _pending_marker(cfg).write_text(branch, encoding="utf-8")
+            raise SyncGitError(f"git push failed (commit kept locally, will retry): {push.stderr.strip()}")
+    # Pushed — clear any prior pending marker.
+    _pending_marker(cfg).unlink(missing_ok=True)
     return {"pushed": True, "committed_files": n_files, "branch": branch}
 
 

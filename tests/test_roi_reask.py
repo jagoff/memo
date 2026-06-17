@@ -99,7 +99,24 @@ def test_compute_roi_time_saved_and_table(tmp_path: Path, monkeypatch) -> None:
     assert data["actions_by_client"]["claude-code"]["actions"] == 1
 
 
+def test_compute_roi_tokens_saved(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_ROI_TOKENS_PER_GROUNDED", "350")
+    monkeypatch.setenv("MEMO_ROI_TOKENS_PER_REASK", "900")
+    _recall(tmp_path, "s", 1, "configure the deploy pipeline yaml settings now", "mem00001")
+    # answer_len anchors the measured avg-answer-tokens transparency number.
+    _grounded(tmp_path, "s", 1, "mem00001", answer_len=800)
+    data = compute_roi(tmp_path)
+    # 1 grounded + 1 reask_avoided → 1*350 + 1*900 = 1250 tokens.
+    assert data["grounded"] == 1
+    assert data["reask"]["reask_avoided"] == 1
+    assert data["tokens_saved"] == 1250
+    assert data["tokens_saved_human"] == "1.2k"
+    assert data["avg_answer_tokens"] == 200  # 800 chars / 4
+
+
 def test_compute_roi_empty(tmp_path: Path) -> None:
     data = compute_roi(tmp_path)
     assert data["by_consumer"] == []
     assert data["time_saved_seconds"] == 0
+    assert data["tokens_saved"] == 0
+    assert data["avg_answer_tokens"] is None

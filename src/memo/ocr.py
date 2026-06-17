@@ -15,7 +15,6 @@ import contextlib
 import hashlib
 import json
 import logging
-import os
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -44,8 +43,10 @@ def ocr_min_confidence(default: float = _DEFAULT_OCR_MIN_CONFIDENCE) -> float:
     """Per-line OCR confidence floor. Lines below this are dropped before the
     text is indexed, so mojibake doesn't pollute retrieval. Override with
     ``MEMO_OCR_MIN_CONFIDENCE`` (0 disables)."""
-    raw = os.environ.get("MEMO_OCR_MIN_CONFIDENCE", "").strip()
-    if not raw:
+    from memo.flags import active_flags
+
+    raw = active_flags().get("MEMO_OCR_MIN_CONFIDENCE")
+    if raw is None:
         return default
     try:
         return max(0.0, min(1.0, float(raw)))
@@ -73,8 +74,10 @@ _DEFAULT_OCR_LOW_CONF_THRESHOLD = 0.6
 def ocr_low_conf_threshold(default: float = _DEFAULT_OCR_LOW_CONF_THRESHOLD) -> float:
     """Mean-confidence threshold below which an OCR'd image is treated as
     low-quality. Override with ``MEMO_OCR_LOW_CONF_THRESHOLD`` (0 disables)."""
-    raw = os.environ.get("MEMO_OCR_LOW_CONF_THRESHOLD", "").strip()
-    if not raw:
+    from memo.flags import active_flags
+
+    raw = active_flags().get("MEMO_OCR_LOW_CONF_THRESHOLD")
+    if raw is None:
         return default
     try:
         return max(0.0, min(1.0, float(raw)))
@@ -272,5 +275,8 @@ def extract_text_cached_with_confidence(
 
 
 def ocr_enabled_via_env(default: bool = False) -> bool:
-    raw = os.environ.get("MEMO_OCR_ENABLED", "1" if default else "0").strip().lower()
-    return raw in {"1", "true", "on", "yes"}
+    from memo.flags import active_flags, flag_bool
+
+    if "MEMO_OCR_ENABLED" not in active_flags():
+        return default
+    return flag_bool("MEMO_OCR_ENABLED")

@@ -18,8 +18,11 @@ from memo.sync_git import (
     SyncGitError,
     clone_bootstrap,
     git_root_for,
+    sync_once,
     sync_pull,
     sync_push,
+    sync_status,
+    sync_tier,
 )
 
 
@@ -149,6 +152,48 @@ def test_clone_refuses_nonempty_dest(remote: Path, tmp_path: Path):
         clone_bootstrap(str(remote), dest)
 
 
+def test_sync_status_reports_clone_state(remote: Path, tmp_path: Path, monkeypatch):
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        st = sync_status(mem.cfg)
+        assert st["is_git_clone"] is True
+        assert st["branch"] == "main"
+        assert st["ahead"] == 0 and st["pending"] is False
+        # a save leaves the working tree dirty until the next push
+        mem.save(content="status body here", title="StatusX")
+        assert sync_status(mem.cfg)["dirty_files"] > 0
+    finally:
+        mem.close()
+
+
+def test_sync_status_not_a_clone(tmp_path: Path):
+    cfg = Config(data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)
+    (tmp_path / "memorias").mkdir()
+    st = sync_status(cfg)
+    assert st["is_git_clone"] is False
+
+
+def test_sync_push_retries_stranded_commit(remote: Path, tmp_path: Path, monkeypatch):
+    """A commit that landed locally but never pushed (offline/auth) must be
+    pushed by the next sync_push even when there's nothing new to commit."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        sync_push(mem.cfg, mem.store)  # initial push
+        # simulate a stranded local commit (committed, not pushed)
+        (clone / "memorias" / "stray.md").write_text("---\nid: y\n---\nstray\n")
+        _git(clone, "add", "-A")
+        _git(clone, "commit", "-m", "stranded")
+        assert sync_status(mem.cfg)["ahead"] == 1
+        # nothing NEW to commit, but ahead>0 → push must still fire
+        out = sync_push(mem.cfg, mem.store)
+        assert out["pushed"] is True
+        assert sync_status(mem.cfg)["ahead"] == 0
+    finally:
+        mem.close()
+
+
 def test_cli_pull_quiet_softfails_on_non_git(tmp_path: Path):
     """The SessionStart hook calls `memo sync pull --quiet`; a non-git install
     must exit 0 (not break the session)."""
@@ -173,6 +218,41 @@ def test_cli_pull_quiet_softfails_on_non_git(tmp_path: Path):
     # without --quiet it surfaces the error (non-zero)
     r2 = CliRunner().invoke(cli, ["sync", "pull"], env=env)
     assert r2.exit_code != 0
+
+
+def test_sync_auto_throttle_and_disable(remote: Path, tmp_path: Path):
+    """sync auto: cheap no-op when not due (no Memory/MLX built), and a hard
+    skip when MEMO_SYNC_AUTO=0."""
+    import json
+    import time
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    clone = _make_clone(remote, tmp_path / "A")
+    state = tmp_path / "stateA"
+    state.mkdir()
+    env = {
+        "MEMO_CONFIG_FILE": str(tmp_path / "memo-config.toml"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(clone / "memorias"),
+        "MEMO_STATE_DIR": str(state),
+        "MEMO_EMBEDDER_DIMS": "4",
+        "MEMO_EMBEDDER_MODEL": "stub",
+    }
+    # pre-stamp recent timestamps → neither pull nor push due → returns before
+    # building Memory (so no MLX needed).
+    (state / ".sync_auto_ts").write_text(
+        json.dumps({"last_pull": time.time(), "last_push": time.time()})
+    )
+    r = CliRunner().invoke(cli, ["sync", "auto", "--json"], env=env)
+    assert r.exit_code == 0, r.output
+    assert '"skipped": "not due"' in r.output
+
+    r2 = CliRunner().invoke(cli, ["sync", "auto", "--json"], env={**env, "MEMO_SYNC_AUTO": "0"})
+    assert r2.exit_code == 0
+    assert '"skipped": "disabled"' in r2.output
 
 
 def test_pull_aborts_on_memoria_conflict(remote: Path, tmp_path: Path, monkeypatch):
@@ -200,3 +280,102 @@ def test_pull_aborts_on_memoria_conflict(remote: Path, tmp_path: Path, monkeypat
         assert not (clone_b / ".git" / "rebase-merge").exists()
     finally:
         mem_b.close()
+
+
+def test_sync_tier_remote_clone_vs_local_plain_dir(remote: Path, tmp_path: Path, monkeypatch):
+    """`sync_tier` is "remote" only when a git remote is configured; a plain
+    (non-git) data dir is "local" and never raises."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        assert sync_tier(mem.cfg) == "remote"
+    finally:
+        mem.close()
+
+    plain = Config(
+        data_dir=tmp_path / "plain",
+        state_dir=tmp_path / "state_plain",
+        embedder_dims=4,
+    )
+    (tmp_path / "plain").mkdir()
+    assert sync_tier(plain) == "local"
+
+
+def test_sync_once_pull_rebase_before_push(remote: Path, tmp_path: Path, monkeypatch):
+    """Mac A has a divergent local commit while the remote advanced (Mac B
+    pushed). `sync_once` on A must pull-rebase A's commit onto B's tip and then
+    push without rejection — A ends with ahead==0 and B's memoria indexed."""
+    clone_a = _make_clone(remote, tmp_path / "A")
+    clone_b = _make_clone(remote, tmp_path / "B")
+
+    # --- Mac B advances the remote with a new memoria ---
+    mem_b = _mem_for(clone_b, tmp_path / "stateB", monkeypatch)
+    try:
+        rec_b_id = mem_b.save(content="from mac B", title="FromB").id
+        assert sync_push(mem_b.cfg, mem_b.store)["pushed"] is True
+    finally:
+        mem_b.close()
+
+    # --- Mac A makes a divergent local commit (committed, not pushed) ---
+    mem_a = _mem_for(clone_a, tmp_path / "stateA", monkeypatch)
+    try:
+        rec_a_id = mem_a.save(content="from mac A", title="FromA").id
+        _git(clone_a, "add", "-A")
+        _git(clone_a, "commit", "-m", "A local memoria")
+        # A is ahead of its last-known remote and unaware of B's commit
+        assert sync_status(mem_a.cfg)["ahead"] == 1
+
+        res = sync_once(mem_a.cfg, mem_a.store, mem_a)
+        assert res["tier"] == "remote"
+        assert res["pulled"] is True
+        assert res["pushed"] is True
+
+        # rebased onto B's tip + pushed cleanly → nothing stranded
+        assert sync_status(mem_a.cfg)["ahead"] == 0
+        # B's memoria arrived via the pull-reindex; A's own survived the rebase
+        assert mem_a.get(rec_b_id) is not None
+        assert mem_a.get(rec_a_id) is not None
+    finally:
+        mem_a.close()
+
+
+def test_sync_once_skips_when_lock_held(remote: Path, tmp_path: Path, monkeypatch):
+    """A held machine lock makes `sync_once` skip without doing git mutation —
+    the concurrent sibling's writes are already in the shared store, so the lock
+    holder carries them."""
+    import fcntl
+
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        lock_path = mem.cfg.state_dir / ".sync.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = lock_path.open("w")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            res = sync_once(mem.cfg, mem.store, mem)
+            # exact shape proves the pull/push branch never ran
+            assert res == {"tier": "remote", "skipped": "locked"}
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            fh.close()
+    finally:
+        mem.close()
+
+
+def test_sync_push_commit_carries_identity_label(remote: Path, tmp_path: Path, monkeypatch):
+    """A commit produced by the sync path is attributed to the identity label —
+    the message ends with `[<label>]`."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        assert sync_push(mem.cfg, mem.store)["pushed"] is True
+        subject = subprocess.run(
+            ["git", "-C", str(clone), "log", "-1", "--format=%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert "[" in subject and "]" in subject
+    finally:
+        mem.close()

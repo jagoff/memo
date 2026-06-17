@@ -73,6 +73,28 @@ def register(server: Any, memory: Memory) -> None:
         return out
 
     @server.tool()
+    def memory_search_trace(
+        query: str,
+        limit: int = 10,
+        type: str | None = None,
+        body_chars: int = 280,
+        mode: str = "hybrid",
+        source: str = "",
+    ) -> dict[str, Any]:
+        t0 = now_ms()
+        envelope = memory.search_with_trace(query, limit=limit, type_=type, mode=mode)
+        hits: list[dict[str, Any]] = []
+        for r in envelope["hits"]:
+            d = r.to_dict()
+            body = d.get("body") or ""
+            if body_chars >= 0 and len(body) > body_chars:
+                d["body"] = body[:body_chars].rstrip() + "…"
+                d["body_truncated"] = True
+            hits.append(d)
+        log_consult(memory, tool="search_trace", query=query, hits=hits, t0_ms=t0, source=source)
+        return {"hits": hits, "trace": envelope["trace"]}
+
+    @server.tool()
     def memory_rerank(
         query: str,
         hits: list[dict[str, Any]],

@@ -64,6 +64,34 @@ def test_log_consult_records_via_and_lowercased_source(tmp_path: Path) -> None:
     assert dashboard.consumer_label(rows[0]) == "synapse"
 
 
+def test_log_consult_falls_back_to_memo_source_env(tmp_path: Path, monkeypatch) -> None:
+    """A client that can't pass per-call source= (devin / opencode / windsurf)
+    is still attributed when MEMO_SOURCE is set in the server env."""
+    monkeypatch.setenv("MEMO_SOURCE", "Devin")
+    fake = SimpleNamespace(cfg=SimpleNamespace(state_dir=tmp_path))
+    _log_consult(
+        fake,  # type: ignore[arg-type]
+        tool="search",
+        query="q",
+        hits=[{"id": "y" * 8, "score": 0.9, "title": "t"}],
+        t0_ms=0,
+    )
+    rows = dashboard.read_recall_log(tmp_path, limit=5)
+    assert rows and rows[0]["source"] == "devin"
+    assert dashboard.consumer_label(rows[0]) == "devin"
+
+
+def test_log_consult_explicit_source_overrides_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_SOURCE", "devin")
+    fake = SimpleNamespace(cfg=SimpleNamespace(state_dir=tmp_path))
+    _log_consult(
+        fake,  # type: ignore[arg-type]
+        tool="ask", query="q", hits=[], t0_ms=0, source="synapse",
+    )
+    rows = dashboard.read_recall_log(tmp_path, limit=5)
+    assert rows and rows[0]["source"] == "synapse"
+
+
 def test_log_consult_never_raises_on_bad_memory(tmp_path: Path) -> None:
     # A memory object without cfg must not break the caller — telemetry is
     # best-effort and swallows its own errors.

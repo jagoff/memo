@@ -139,8 +139,9 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     # feature is part of memo's stable core contract; see experimental_index.md.
     # Skip when MEMO_MCP_SLIM=1 — reduces ~116 tools to ~26 core inline tools
     # for local/constrained LLMs where tool-definition tokens are expensive.
-    from memo.flags import flag_bool as _flag_bool
-    if not _flag_bool("MEMO_MCP_SLIM"):
+    from memo.surface import mcp_include_advanced_tools
+
+    if mcp_include_advanced_tools():
         _srv_repo.register(server, memory)
         _srv_entities.register(server, memory)
         _srv_temporal.register(server, memory)

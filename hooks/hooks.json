@@ -84,6 +84,20 @@
             "command": "MEMO_NONINTERACTIVE=1 memo session checkpoint",
             "timeout": 5,
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo sync auto",
+            "timeout": 90000,
+            "async": true,
+            "comment": "Durable in-session GitHub sync: self-throttled (MEMO_SYNC_PUSH_DEBOUNCE_S / MEMO_SYNC_PULL_INTERVAL_S) so a crashed/long session doesn't strand hours of memorias until Stop, and a long session converges on another Mac's pushes without a restart. Cheap no-op (timestamp check, no git) when not due; soft no-ops on non-git installs. Async so it never touches the recall 5s budget. Disable with MEMO_SYNC_AUTO=0."
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo capture-tick",
+            "timeout": 30,
+            "async": true,
+            "comment": "Durable incremental capture: self-throttled (MEMO_CAPTURE_INTERVAL_S, default 600s per session) so a long/crashed session's insight reaches .md mid-session instead of only at Stop. Mines NEW turns since a per-session watermark, reusing capture-stop's extract/dedup/save (bounded, no reprocessing). Cheap no-op (timestamp check, no transcript parse, no MLX) when not due. Async + soft-fail so it never touches the recall 5s budget. Disable with MEMO_CAPTURE_DISABLE=1."
           }
         ]
       }
@@ -112,11 +126,11 @@
           },
           {
             "type": "command",
-            "command": "MEMO_NONINTERACTIVE=1 memo sync push --quiet",
-            "timeout": 60000,
+            "command": "MEMO_NONINTERACTIVE=1 memo sync once --quiet",
+            "timeout": 90000,
             "async": true,
             "statusMessage": "memo: pushing memories cross-Mac…",
-            "comment": "Cross-Mac git push of memorias + signal (F5). Listed last so this session's capture-stop write is more likely already on disk. --quiet soft-fails (exit 0) on non-git installs. A just-captured memoria that loses the race syncs on the next Stop."
+            "comment": "Final flush via the single lock-guarded machine coordinator (pull-rebase-before-push). Listed last so this session's capture-stop write is on disk first. Lock-guarded so it never races the per-prompt `sync auto` or a sibling session. --quiet soft no-ops on local-tier (no remote) installs."
           }
         ]
       }

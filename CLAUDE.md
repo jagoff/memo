@@ -28,7 +28,7 @@ uv run --no-sync memo config validate
 
 ## Architecture
 
-**`Memory` facade** (`src/memo/memory/facade.py`) multiply-inherits six operation mixins — `_WriteOpsMixin`, `_SearchOpsMixin`, `_AskOpsMixin`, `_RerankOpsMixin`, `_RepoOpsMixin`, `_MaintainOpsMixin` — each in their own `src/memo/memory/<op>_ops.py` file. Module-level constants, prompts, and pure helpers are in `src/memo/memory/record.py`. Never import from a mixin directly; always go through `Memory`.
+**`Memory` facade** (`src/memo/memory/facade.py`) multiply-inherits ten operation mixins — `_WriteOpsMixin`, `_UpdateOpsMixin`, `_DeleteOpsMixin`, `_SearchOpsMixin`, `_AskOpsMixin`, `_RerankOpsMixin`, `_RepoOpsMixin`, `_MaintainOpsMixin`, `_ConsolidateOpsMixin`, `_ReplayOpsMixin` — each in their own `src/memo/memory/<op>_ops.py` file. Module-level constants, prompts, and pure helpers are in `src/memo/memory/record.py`. Never import from a mixin directly; always go through `Memory`.
 
 **MCP server** (`src/memo/server.py`) registers tools via `build_server()`. Each domain is a `server_<domain>.py` module that exports `register(server, memory)` — called once in `build_server()`. Adding a new MCP tool = create `src/memo/server_<domain>.py` + add one `register` call in `server.py`. The `_MaintainOpsMixin` method is directly callable from tests via `mock_memory.<method>()`.
 
@@ -36,13 +36,36 @@ uv run --no-sync memo config validate
 
 **CLI** is in `src/memo/cli.py` (entry-point wiring only) + `src/memo/cli_<domain>.py` files. Each domain file exports a Click command or group imported and registered in `cli.py`.
 
-**Flags** (`src/memo/flags.py`) is the single registry for all `MEMO_*` env vars. Use `flag_bool/int/float/str(name)` — never `os.environ.get("MEMO_...")` inline. `memo config validate` parses every set flag.
+**Flags** (`src/memo/flags.py`) is the single registry for all `MEMO_*` env vars — it aggregates `FlagSpec`s defined in the per-domain `flags_<group>.py` modules (`flags_recall/search/behavior/ingest/misc.py`, base types in `flags_base.py`). Add a new flag in the matching `flags_<group>.py`. Use `flag_bool/int/float/str(name)` — never `os.environ.get("MEMO_...")` inline. `memo config validate` parses every set flag.
 
 **Cache** (`src/memo/embedder.py`): query embeddings use shared LRU cache from `consciousness_contracts.cache` when `MEMO_QUERY_CACHE_SIZE > 0`. This eliminates duplication with Synapse's embed cache and ensures consistent cache behavior across the trinity.
 
 **URI helpers** (`src/memo/memory/maintain_ops.py`): backend-native replay uses shared URI parsing/validation from `consciousness_contracts.uri` when available. Fallback to manual parsing for CI/clean installs.
 
-**Sync coordination** (`src/memo/sync.py`): vault sync uses the shared `SyncCoordinator` from `consciousness_contracts` to coordinate with Memflow's git sync and avoid git collisions. State persisted to `.memflow/state/sync_coordinator.json` (via consciousness-contracts default path).
+**Sync — two explicit tiers** (`src/memo/sync_git.py`, `src/memo/identity.py`):
+- **LOCAL (intra-machine):** all sessions on a Mac share one `data_dir`/`memvec.db`
+  (WAL, thread-local conns), so a save/capture is visible to sibling sessions on
+  their next recall **with no git**. `sync_tier(cfg)` → `"local"` when no git
+  remote is configured.
+- **REMOTE (inter-machine):** the git `memo-sync` remote is the only cross-machine
+  channel. `sync_tier(cfg)` → `"remote"`. ONE owner per machine: `sync_once()`
+  takes an `flock` on `state_dir/.sync.lock` (concurrent same-machine sessions
+  skip — their writes ride the lock holder's push) and does
+  **pull-rebase-before-push** so an advanced remote rebases instead of rejecting.
+  Triggers: per-prompt `memo sync auto` (debounced via `MEMO_SYNC_PUSH_DEBOUNCE_S`
+  / `MEMO_SYNC_PULL_INTERVAL_S`, async hook) + `memo sync once` on Stop. A failed
+  push stamps `state_dir/sync_pending` and retries next trigger.
+- **Identity** (`identity.py`): stable `machine_id` (= persisted `cfg.device_id`,
+  also `history.device_id`) + `hostname` (cross-tool match key) + `session_id` +
+  `terminal`. Commits are attributed `[<hostname>·<session>]`. memflow can
+  reference a terminal later; memo only exposes the identity.
+- **Durable capture:** `memo capture-tick` (per-prompt async, self-throttled by
+  `MEMO_CAPTURE_INTERVAL_S`) captures NEW turns since a per-session watermark so a
+  long session's insight reaches `.md` before Stop, not only at Stop.
+- `memo sync status` / `memo doctor` surface the silent no-op (not a clone) and
+  stranded commits. The legacy audit-log replay (`sync.py` `SyncManager`) is the
+  `--remote <path>` fallback; the `SyncCoordinator`/consciousness_contracts hook is
+  not wired (the machine `flock` is the coordinator).
 
 **Memory types** (`src/memo/tiers.py`): durable tier = `decision`, `fact`, `bug`, `feedback`, `preference`, `note`, `manual`, `synthesis`; reference tier = `reference` (bulk-ingested vault chunks, excluded from auto-recall). `synthesis` memories are auto-generated by `memo synthesize` / `MEMO_SYNTHESIS_ENABLED=1 memo maintain` — cross-cluster inferred insights with `synthesis_sources` provenance in their `extra` frontmatter bag.
 
@@ -98,7 +121,7 @@ keep the recall hook under its 5s budget.
 ## BM25 / Spanish search
 
 FTS5's tokenizer wraps each `\w+` token in its own phrase quotes, so a
-multi-token query becomes an AND-of-tokens (not a phrase match). `store/queries.py`
+multi-token query becomes an AND-of-tokens (not a phrase match). `store/bm25_queries.py`
 tokenizes, AND-joins, and falls back to OR only on zero recall. Diacritics are
 folded (`unicode61 remove_diacritics 2`) so "decision" matches "decisión".
 
@@ -188,11 +211,20 @@ Contract for any layer above memo (synapse, memflow, agents):
    session inherits them.
 3. **Respect freshness** — memo's contradiction/freshness state is authoritative
    for durable knowledge; don't reintroduce a fact memo has superseded.
-4. **Identify yourself** — pass `source="<layer>"` (e.g. `synapse`, `memflow`) on
-   the read tools (`memory_search` / `memory_ask` / `memory_chat_ask` /
-   `memory_unified_briefing`). Every consult lands in the shared ring buffer
-   (`recall.log`) tagged with that consumer, so `memo usefulness` proves who
-   actually reads memo — a layer that never appears is flagged as a silent gap.
+4. **Identify yourself** — every read path is attributable, so `memo usefulness`
+   proves who actually reads memo (a layer that never appears is a silent gap):
+   - **MCP tools** — pass `source="<layer>"` on `memory_search` / `memory_ask` /
+     `memory_chat_ask` / `memory_unified_briefing`. If omitted, `log_consult`
+     falls back to `MEMO_SOURCE` then to the MCP client's handshake
+     `clientInfo.name` — so agent clients (devin/opencode/windsurf) attribute
+     automatically without per-call args.
+   - **CLI** (synapse/memflow shell out) — `memo search/ask/chat-ask/recall`
+     take `--source` or read `MEMO_SOURCE` env; a consult logs only when one is
+     set (an interactive `memo search` stays out of the stats). `memo recall`
+     emits `{"results":[...]}` for the memflow bridge.
+   - **Warm socket** — the recall daemon's `{"op":"search","client":"<layer>"}`
+     gives sub-second structured recall (no cold CLI) and attributes the client;
+     this is how memflow reads memo without blowing its latency budget.
 
 memo deliberately keeps cognition OFF its MCP surface
 (`test_brain_like_mcp_tools_are_not_registered`): no `suggest`/`agent`/

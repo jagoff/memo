@@ -46,7 +46,9 @@ def current_project_tag(cwd: str | os.PathLike[str] | None = None) -> str | None
         2. Git toplevel under `cwd` (defaults to `os.getcwd()`).
         3. None.
     """
-    pinned = os.environ.get("MEMO_PROJECT_TAG", "").strip()
+    from memo.flags import flag_str
+
+    pinned = flag_str("MEMO_PROJECT_TAG").strip()
     if pinned:
         slug = pinned.split(":", 1)[1] if pinned.startswith(_PROJECT_PREFIX) else pinned
         slug = slugify_project(slug)

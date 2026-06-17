@@ -223,6 +223,39 @@ class _SignalQueriesMixin(_StoreBase):
                 [(i, floor, c, c) for i, c in pairs],
             )
 
+    def all_ids(self) -> list[str]:
+        """Return every memoria id in ``meta``. Used by the outcome loop to map
+        the 8-char id prefixes stored in recall.log / grounding.log back to full
+        ids (roi_score is keyed by the full id)."""
+        return [r["id"] for r in self._conn.execute("SELECT id FROM meta").fetchall()]
+
+    def set_roi_batch(
+        self,
+        pairs: list[tuple[str, float]],
+        *,
+        floor: float = 0.5,
+        cap: float = 1.5,
+    ) -> int:
+        """Set an ABSOLUTE roi_score for each (id, roi) pair, clamped to
+        ``[floor, cap]``. Authoritative write used by the outcome loop
+        (`memo.outcome`) to overwrite the access-driven roi drift with a value
+        derived from real grounding outcomes (was the surfaced memoria actually
+        USED in the answer?). Confidence is left at its existing value (new rows
+        default 1.0). Returns the number of (id, roi) pairs written."""
+        if not pairs:
+            return 0
+        clamped = [(i, max(floor, min(cap, float(r)))) for i, r in pairs]
+        with self._tx() as cx:
+            cx.executemany(
+                "INSERT INTO memory_health(id, confidence, roi_score, updated_at) "
+                "VALUES(?, 1.0, ?, datetime('now')) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "roi_score = excluded.roi_score, "
+                "updated_at = datetime('now')",
+                [(i, r) for i, r in clamped],
+            )
+        return len(clamped)
+
     def decay_roi(
         self,
         factor: float = 0.98,

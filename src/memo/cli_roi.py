@@ -32,6 +32,10 @@ def _secs(env: str, default: int) -> int:
     return flag_int(env) or default
 
 
+# Rough chars→tokens ratio for English/Spanish prose (OpenAI/Anthropic ~4).
+_CHARS_PER_TOKEN = 4
+
+
 def _fmt_duration(seconds: float) -> str:
     seconds = int(seconds)
     if seconds < 90:
@@ -39,6 +43,15 @@ def _fmt_duration(seconds: float) -> str:
     if seconds < 5400:
         return f"{seconds / 60:.0f}m"
     return f"{seconds / 3600:.1f}h"
+
+
+def _fmt_tokens(tokens: float) -> str:
+    tokens = int(tokens)
+    if tokens < 1000:
+        return f"{tokens}"
+    if tokens < 1_000_000:
+        return f"{tokens / 1000:.1f}k"
+    return f"{tokens / 1_000_000:.2f}M"
 
 
 def compute_roi(state_dir, *, limit: int = 500, window_turns: int = 4) -> dict:
@@ -67,6 +80,21 @@ def compute_roi(state_dir, *, limit: int = 500, window_turns: int = 4) -> dict:
     secs_reask = _secs("MEMO_ROI_SECS_PER_REASK", 120)
     time_saved_s = grounded_total * secs_grounded + reask_avoided * secs_reask
 
+    # Tokens saved: same ledger as time, different unit. A grounded recall hands
+    # the model a fact it would otherwise re-derive; an avoided re-ask spares a
+    # whole answer-regeneration round-trip. Per-unit estimates are flag-tunable;
+    # the measured avg answer size is reported alongside so the number is
+    # transparent, not magic.
+    tok_grounded = _secs("MEMO_ROI_TOKENS_PER_GROUNDED", 350)
+    tok_reask = _secs("MEMO_ROI_TOKENS_PER_REASK", 900)
+    tokens_saved = grounded_total * tok_grounded + reask_avoided * tok_reask
+    answer_lens = [
+        int(g["answer_len"]) for g in read_grounding_log(state_dir) if g.get("answer_len")
+    ]
+    avg_answer_tokens = (
+        round(sum(answer_lens) / len(answer_lens) / _CHARS_PER_TOKEN) if answer_lens else None
+    )
+
     return {
         "grounded_rate": health.get("grounded_rate"),
         "grounded": grounded_total,
@@ -77,6 +105,11 @@ def compute_roi(state_dir, *, limit: int = 500, window_turns: int = 4) -> dict:
         "time_saved_human": _fmt_duration(time_saved_s),
         "secs_per_grounded": secs_grounded,
         "secs_per_reask": secs_reask,
+        "tokens_saved": tokens_saved,
+        "tokens_saved_human": _fmt_tokens(tokens_saved),
+        "tokens_per_grounded": tok_grounded,
+        "tokens_per_reask": tok_reask,
+        "avg_answer_tokens": avg_answer_tokens,
         "by_consumer": breakdown["consumers"],
         "silent": breakdown["silent"],
         "actions_by_client": actions,
@@ -119,6 +152,12 @@ def roi(*, limit: int = 500, window_turns: int = 4, as_json: bool = False) -> No
     click.echo(
         f"  estimated time    ~{data['time_saved_human']} saved "
         f"(est: {data['secs_per_grounded']}s/grounded + {data['secs_per_reask']}s/re-ask avoided)"
+    )
+    avg_tok = data.get("avg_answer_tokens")
+    avg_note = f", medido ~{avg_tok} tok/respuesta" if avg_tok else ""
+    click.echo(
+        f"  estimated tokens  ~{data['tokens_saved_human']} saved "
+        f"(est: {data['tokens_per_grounded']}/grounded + {data['tokens_per_reask']}/re-ask{avg_note})"
     )
 
     # Per-client value table.

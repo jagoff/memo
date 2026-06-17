@@ -27,8 +27,9 @@ SUMMARY_MARKER = "[contexto:"
 
 
 def contextual_retrieval_enabled() -> bool:
-    raw = os.environ.get("MEMO_CONTEXTUAL_RETRIEVAL", "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    from memo.flags import flag_bool
+
+    return flag_bool("MEMO_CONTEXTUAL_RETRIEVAL")
 
 
 def context_cache_path(state_dir: Path) -> Path:

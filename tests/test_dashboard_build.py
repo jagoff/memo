@@ -29,6 +29,24 @@ def test_poll_mode_keeps_cheap_metrics(tmp_cfg: Config):
     assert "silent" in data["usefulness"]
 
 
+def test_poll_mode_includes_gerencial_block(tmp_cfg: Config):
+    """The management rollup (funnel + value KPIs + trend) must be on the cheap
+    poll path — it is the centerpiece of the dashboard, not a full-build extra."""
+    data = build.collect_data(tmp_cfg, include_projection=False)
+    g = data["gerencial"]
+    assert [s["key"] for s in g["funnel"]] == ["preguntas", "activado", "encontro"]
+    for key in ("coverage_rate", "hit_rate", "used_rate", "time_saved_human", "trend"):
+        assert key in g, f"missing gerencial.{key}"
+    assert len(g["trend"]) == 14
+    assert all({"date", "consultas", "activado"} <= d.keys() for d in g["trend"])
+    # detailed token-savings: daily series + composition, KPI consistent with panel
+    td = g["token_detail"]
+    assert len(td["daily"]) == 14
+    assert all({"date", "grounded", "tokens"} <= d.keys() for d in td["daily"])
+    assert td["total"] == td["grounded_tokens"] + td["reask_tokens"]
+    assert g["tokens_saved"] == td["total"]
+
+
 def test_full_mode_includes_projection(tmp_cfg: Config):
     data = build.collect_data(tmp_cfg, include_projection=True)
     assert isinstance(data["projection"], dict)

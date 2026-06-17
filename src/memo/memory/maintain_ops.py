@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import builtins
 import json
-import os
 from typing import Any
 
 import frontmatter
@@ -65,7 +64,9 @@ class _MaintainOpsMixin(_MemoryBase):
         # per-save kwarg) we stay permissive — synapse outages mustn't block
         # memo's standalone writes. A missing binary is handled above and is
         # always permissive regardless of this flag.
-        fail_closed = os.environ.get("MEMO_RESPECT_SYNAPSE_FREEZE") == "1"
+        from memo.flags import flag_bool
+
+        fail_closed = flag_bool("MEMO_RESPECT_SYNAPSE_FREEZE")
         try:
             conflicts = synapse_client.list_conflicts(
                 query,

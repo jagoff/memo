@@ -237,6 +237,40 @@ def _read_last_exchange(transcript_path: Path) -> tuple[str, str] | None:
     return _read_recent_exchanges(transcript_path, n=1)
 
 
+def _parse_exchanges(transcript_path: Path) -> list[tuple[str, str]]:
+    """All (user, assistant) exchanges in chronological order.
+
+    Groups the flat (role, text) stream into ordered turns: consecutive
+    user messages are joined, then the following assistant run is joined,
+    forming one exchange. Only complete exchanges (a user turn followed by
+    an assistant response) are kept.
+
+    Where `_read_recent_exchanges` walks *backward* for the Stop hook's
+    last-N view, this walks *forward* so incremental capture can slice the
+    NEW turns since a per-session watermark (`exchanges[watermark:]`).
+    """
+    parsed = _parse_transcript(transcript_path)
+    exchanges: list[tuple[str, str]] = []
+    i = 0
+    n = len(parsed)
+    while i < n:
+        while i < n and parsed[i][0] != "user":
+            i += 1
+        if i >= n:
+            break
+        u_chunks: list[str] = []
+        while i < n and parsed[i][0] == "user":
+            u_chunks.append(parsed[i][1])
+            i += 1
+        a_chunks: list[str] = []
+        while i < n and parsed[i][0] == "assistant":
+            a_chunks.append(parsed[i][1])
+            i += 1
+        if a_chunks:  # complete exchange only (has an assistant response)
+            exchanges.append(("\n\n".join(u_chunks), "\n\n".join(a_chunks)))
+    return exchanges
+
+
 def _extract_text(content: Any) -> str:
     """Pull the plain text out of a Claude Code message content. Skips
     tool_use blocks, tool_result blocks, image blocks. Concatenates all
@@ -399,6 +433,71 @@ def is_near_duplicate(
     return top_score is not None and top_score >= threshold
 
 
+def _extract_and_save(
+    mem: Any,
+    cfg: Any,
+    user_text: str,
+    assistant_text: str,
+    *,
+    debug: bool = False,
+) -> dict[str, Any]:
+    """Extract insights from one (user, assistant) blob, dedup, save.
+
+    Shared by the Stop-hook (`run_capture`) and the incremental
+    (`run_capture_incremental`) paths so both apply the same quality
+    gate, near-duplicate check, and save metadata. Returns counts; every
+    per-candidate failure is absorbed (logged only in debug)."""
+    insights = extract_insights(
+        mem._ensure_chat(),
+        cfg.helper_model,
+        user_text,
+        assistant_text,
+    )
+    if debug:
+        print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
+
+    saved: list[str] = []
+    skipped_dup = 0
+    skipped_quality = 0
+    for cand in insights:
+        # Quality gate: skip low-specificity memories before hitting the
+        # embedder or disk. Threshold controlled by MEMO_CAPTURE_MIN_WORDS.
+        body_for_quality = f"{cand['title']}\n\n{cand['body']}"
+        if not _passes_quality(body_for_quality):
+            skipped_quality += 1
+            if debug:
+                print(
+                    f"# memo capture: skip quality '{cand['title']}'",
+                    file=sys.stderr,
+                )
+            continue
+        if is_near_duplicate(mem, cand):
+            skipped_dup += 1
+            if debug:
+                print(f"# memo capture: skip dup '{cand['title']}'", file=sys.stderr)
+            continue
+        try:
+            rec = mem.save(
+                content=cand["body"],
+                title=cand["title"],
+                type_=cand["type"],
+                tags=cand["tags"],
+            )
+            saved.append(rec.id)
+            if debug:
+                print(f"# memo capture: saved [{rec.id[:8]}] {rec.title}", file=sys.stderr)
+        except Exception as exc:
+            if debug:
+                print(f"# memo capture: save failed: {exc}", file=sys.stderr)
+
+    return {
+        "candidates": len(insights),
+        "saved": saved,
+        "skipped_dup": skipped_dup,
+        "skipped_quality": skipped_quality,
+    }
+
+
 def run_capture(
     transcript_path: Path,
     *,
@@ -460,57 +559,133 @@ def run_capture(
 
     # Lazy heavy imports: only paid past pre-filter.
     mem = Memory(cfg)
-    insights = extract_insights(
-        mem._ensure_chat(),
-        cfg.helper_model,
-        user_text,
-        assistant_text,
-    )
-    if debug:
-        print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
-
-    saved: list[str] = []
-    skipped_dup = 0
-    skipped_quality = 0
-    for cand in insights:
-        # Quality gate: skip low-specificity memories before hitting the
-        # embedder or disk. Threshold controlled by MEMO_CAPTURE_MIN_WORDS.
-        body_for_quality = f"{cand['title']}\n\n{cand['body']}"
-        if not _passes_quality(body_for_quality):
-            skipped_quality += 1
-            if debug:
-                print(
-                    f"# memo capture: skip quality '{cand['title']}'",
-                    file=sys.stderr,
-                )
-            continue
-        if is_near_duplicate(mem, cand):
-            skipped_dup += 1
-            if debug:
-                print(f"# memo capture: skip dup '{cand['title']}'", file=sys.stderr)
-            continue
-        try:
-            rec = mem.save(
-                content=cand["body"],
-                title=cand["title"],
-                type_=cand["type"],
-                tags=cand["tags"],
-            )
-            saved.append(rec.id)
-            if debug:
-                print(f"# memo capture: saved [{rec.id[:8]}] {rec.title}", file=sys.stderr)
-        except Exception as exc:
-            if debug:
-                print(f"# memo capture: save failed: {exc}", file=sys.stderr)
+    result = _extract_and_save(mem, cfg, user_text, assistant_text, debug=debug)
 
     state["last_hash"] = h
-    if saved:
+    if result["saved"]:
         state["last_save_ts"] = time.time()
     _save_state(cfg.state_dir, state)
-    return {
-        "status": "ok",
-        "candidates": len(insights),
-        "saved": saved,
-        "skipped_dup": skipped_dup,
-        "skipped_quality": skipped_quality,
-    }
+    return {"status": "ok", **result}
+
+
+# ── Incremental capture (mid-session) ───────────────────────────────────────
+#
+# The Stop hook only fires once, at session end. A long-running session can
+# accumulate hours of durable insight that never reaches `.md` (and thus the
+# local index + git sync) until Stop — and is lost entirely on a crash.
+#
+# Incremental capture closes that gap: a periodic, self-throttled pass mines
+# only the NEW turns since a per-session watermark, reusing the exact
+# extract → quality → dedup → save pipeline above. The watermark
+# (`state_dir/.capture_watermark/<session_id>.json`) records how many
+# (user, assistant) exchanges have been processed, so each pass is bounded to
+# the turns added since the last pass and old turns are never reprocessed.
+
+
+def _watermark_file(state_dir: Path, session_id: str) -> Path:
+    # session_id is a Claude Code UUID — filename-safe, matching how
+    # session.py keys its per-session JSON files.
+    return state_dir / ".capture_watermark" / f"{session_id}.json"
+
+
+def _load_watermark(state_dir: Path, session_id: str) -> dict[str, Any]:
+    """Per-session watermark, or {} on missing/corrupt (so a clobbered or
+    hand-edited file degrades to a fresh full pass, never a crash)."""
+    f = _watermark_file(state_dir, session_id)
+    if not f.is_file():
+        return {}
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_watermark(state_dir: Path, session_id: str, watermark: dict[str, Any]) -> None:
+    f = _watermark_file(state_dir, session_id)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(watermark), encoding="utf-8")
+
+
+def incremental_tick_due(state_dir: Path, session_id: str, interval_s: int) -> bool:
+    """True if at least `interval_s` seconds elapsed since this session's last
+    incremental pass (the watermark `updated` stamp).
+
+    Cheap by design — a small JSON read, no transcript parse and no Memory /
+    MLX — so the per-prompt hook can call it on every prompt and bail when not
+    due. `interval_s <= 0` disables the throttle (always due)."""
+    if interval_s <= 0:
+        return True
+    import time
+
+    wm = _load_watermark(state_dir, session_id)
+    try:
+        last = float(wm.get("updated", 0) or 0)
+    except (TypeError, ValueError):
+        last = 0.0
+    return (time.time() - last) >= interval_s
+
+
+def run_capture_incremental(
+    transcript_path: Path,
+    session_id: str,
+    *,
+    debug: bool = False,
+) -> dict[str, Any]:
+    """Mine only NEW turns since this session's watermark, then advance it.
+
+    Reuses the Stop-hook extract/dedup/save pipeline (`_extract_and_save`);
+    the watermark is what makes it incremental. Bounded to the exchanges added
+    since the previous pass; old turns are never reprocessed. Self-throttling
+    is the caller's job (`incremental_tick_due`) — this always processes what
+    is new. Soft-fail: returns a status dict, never raises.
+
+    Statuses: ``no_pair`` (empty/unreadable transcript), ``no_new`` (watermark
+    already current), ``no_trigger`` (new turns but no insight keyword), ``ok``.
+    """
+    import time
+
+    from memo.config import Config
+    from memo.memory import Memory
+
+    cfg = Config.from_env()
+    exchanges = _parse_exchanges(transcript_path)
+    if not exchanges:
+        return {"status": "no_pair"}
+
+    total = len(exchanges)
+    wm = _load_watermark(cfg.state_dir, session_id)
+    try:
+        start = int(wm.get("exchange_count", 0) or 0)
+    except (TypeError, ValueError):
+        start = 0
+    # A corrupt / stale watermark must never skip the tail or go negative:
+    # clamp out-of-range values to a full re-pass rather than silently
+    # dropping turns.
+    if start < 0 or start > total:
+        start = 0
+
+    def _stamp() -> None:
+        _save_watermark(
+            cfg.state_dir,
+            session_id,
+            {"session_id": session_id, "exchange_count": total, "updated": time.time()},
+        )
+
+    new = exchanges[start:]
+    if not new:
+        _stamp()  # refresh `updated` so the throttle clock advances
+        return {"status": "no_new", "exchange_count": total}
+
+    combined_user = "\n\n---\n\n".join(u for u, _ in new)
+    combined_assistant = "\n\n---\n\n".join(a for _, a in new)
+
+    if not _passes_prefilter(combined_assistant):
+        # Advance past these triggerless turns so we don't re-scan them.
+        _stamp()
+        return {"status": "no_trigger", "exchange_count": total}
+
+    mem = Memory(cfg)
+    result = _extract_and_save(mem, cfg, combined_user, combined_assistant, debug=debug)
+    _stamp()
+    return {"status": "ok", "processed_turns": len(new), "exchange_count": total, **result}

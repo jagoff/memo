@@ -250,8 +250,9 @@ def resolve_notes_dir(mem: Any) -> Path:
     Si la estructura no contiene `<SYSTEM_DIR>`, usar el env var.
     """
     from memo.config import SYSTEM_DIR
+    from memo.flags import flag_str
 
-    env = os.environ.get("MEMO_WHATSAPP_NOTES_DIR")
+    env = flag_str("MEMO_WHATSAPP_NOTES_DIR")
     if env:
         return Path(env).expanduser()
     data_dir = Path(mem.cfg.data_dir)

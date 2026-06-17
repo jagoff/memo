@@ -234,6 +234,151 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
     console.print("[bold green]Ready.[/bold green] memo now reads the git-synced corpus.")
 
 
+@sync_group.command(name="status")
+@click.option("--check-remote", is_flag=True, help="Probe the remote (network) for reachability.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_status(check_remote: bool, as_json: bool) -> None:
+    """Is the GitHub sync healthy? Shows clone / ahead-behind / dirty / stranded.
+
+    Kills the silent no-op: if the memorias dir isn't a git clone, the
+    SessionStart/Stop hooks soft-fail and nothing syncs — this says so plainly.
+    """
+    from memo.sync_git import sync_status as _status
+
+    cfg = Config.from_env()
+    st = _status(cfg, check_remote=check_remote)
+
+    if as_json:
+        click.echo(json.dumps(st, indent=2))
+        return
+    if not st.get("is_git_clone"):
+        console.print("[bold red]NOT syncing[/bold red] — data_dir is not a git clone.")
+        console.print(f"  [dim]{st.get('reason', '')}[/dim]")
+        console.print("  Fix: [cyan]memo sync bootstrap <url>[/cyan]")
+        return
+    ahead, behind, dirty = st["ahead"], st["behind"], st["dirty_files"]
+    if st["pending"]:
+        verdict, color = "STRANDED — push failed, will retry", "red"
+    elif ahead or dirty:
+        verdict, color = f"behind remote by {ahead} commit(s) unpushed", "yellow"
+    elif behind:
+        verdict, color = f"{behind} remote commit(s) to pull", "yellow"
+    else:
+        verdict, color = "up to date with GitHub", "green"
+    console.print(f"[bold {color}]{verdict}[/bold {color}]")
+    console.print(f"  repo:   {st['root']}  ({st['branch']})")
+    console.print(f"  remote: {st['remote'] or '—'}")
+    console.print(f"  ahead {ahead} · behind {behind} · dirty {dirty} · last {st['last_commit'] or '—'}")
+    if check_remote:
+        console.print(f"  remote reachable: {st['remote_reachable']}")
+
+
+@sync_group.command(name="once")
+@click.option("--quiet", is_flag=True, help="Soft-fail (exit 0) if not a git clone — for hooks")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_once_cmd(quiet: bool, as_json: bool) -> None:
+    """One lock-guarded machine sync (pull-rebase-before-push). Stop-hook flush.
+
+    Unlike `sync auto` (debounced), this always attempts the git step — used at
+    session end to flush this session's captures. The machine lock still ensures
+    only one process does git at a time.
+    """
+    from memo.sync_git import sync_once, sync_tier
+
+    cfg = Config.from_env()
+    if sync_tier(cfg) != "remote":
+        if not quiet:
+            console.print("[dim]sync once skipped: local tier (no remote / not a clone)[/dim]")
+        if as_json:
+            click.echo(json.dumps({"tier": "local", "skipped": "no remote"}))
+        return
+    mem = _get_memory(cfg)
+    out = sync_once(cfg, mem.store, mem)
+    if as_json:
+        click.echo(json.dumps(out))
+        return
+    bits = []
+    if out.get("pulled"):
+        bits.append("pulled")
+    if out.get("pushed"):
+        bits.append("pushed")
+    if out.get("skipped"):
+        bits.append(f"skipped({out['skipped']})")
+    console.print(f"[green]sync once[/green] → {', '.join(bits) or 'nothing to do'}")
+
+
+@sync_group.command(name="auto")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_auto(as_json: bool) -> None:
+    """Debounced, self-throttled sync — safe to fire every prompt (async hook).
+
+    Makes durable knowledge propagate WITHIN a session instead of only at Stop:
+    pulls if ``MEMO_SYNC_PULL_INTERVAL_S`` elapsed, pushes if there's something
+    to share (dirty/ahead/stranded) and ``MEMO_SYNC_PUSH_DEBOUNCE_S`` elapsed.
+    Cheap no-op (timestamp check, no git) when neither is due; soft-fails when
+    the data_dir isn't a git clone. Disable with ``MEMO_SYNC_AUTO=0``.
+    """
+    import time
+
+    from memo.flags import flag_bool, flag_int
+
+    cfg = Config.from_env()
+    did: dict = {"pulled": False, "pushed": False, "skipped": None}
+
+    if not flag_bool("MEMO_SYNC_AUTO"):  # registry default True; MEMO_SYNC_AUTO=0 opts out
+        did["skipped"] = "disabled"
+        if as_json:
+            click.echo(json.dumps(did))
+        return
+
+    ts_file = cfg.state_dir / ".sync_auto_ts"
+    try:
+        ts = json.loads(ts_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        ts = {}
+    now = time.time()
+    push_debounce = flag_int("MEMO_SYNC_PUSH_DEBOUNCE_S") or 120
+    pull_interval = flag_int("MEMO_SYNC_PULL_INTERVAL_S") or 300
+    pull_due = now - float(ts.get("last_pull", 0)) >= pull_interval
+    push_due = now - float(ts.get("last_push", 0)) >= push_debounce
+    if not pull_due and not push_due:
+        did["skipped"] = "not due"
+        if as_json:
+            click.echo(json.dumps(did))
+        return
+
+    from memo.sync_git import sync_tier
+
+    if sync_tier(cfg) != "remote":
+        did["skipped"] = "local tier (no remote / not a clone)"
+        if as_json:
+            click.echo(json.dumps(did))
+        return
+
+    # Route through the single, lock-guarded machine coordinator: it owns the
+    # pull-rebase-before-push ordering and the same-machine lock, so concurrent
+    # sessions don't race and an advanced remote rebases cleanly.
+    from memo.sync_git import sync_once
+
+    mem = _get_memory(cfg)
+    out = sync_once(cfg, mem.store, mem, do_pull=pull_due, do_push=push_due)
+    did["pulled"] = bool(out.get("pulled"))
+    did["pushed"] = bool(out.get("pushed"))
+    if out.get("skipped"):
+        did["skipped"] = out["skipped"]
+    if pull_due:
+        ts["last_pull"] = now
+    if push_due:
+        ts["last_push"] = now
+
+    import contextlib
+
+    with contextlib.suppress(OSError):
+        ts_file.write_text(json.dumps(ts), encoding="utf-8")
+    if as_json:
+        click.echo(json.dumps(did))
+
+
 @sync_group.command(name="both")
 @click.option("--remote", required=True, help="Path to remote memo state dir")
 def sync_both(remote: str) -> None:
