@@ -191,6 +191,13 @@ def sync_once(
             return {"tier": "remote", "skipped": "locked"}
 
         result: dict = {"tier": "remote", "pulled": False, "pushed": False}
+        # Commit local work (incl. deletions) BEFORE the pull. An uncommitted
+        # delete/edit would be lost to `rebase --autostash` when the remote still
+        # has the file; committing first makes it a real commit the rebase merges.
+        try:
+            _commit_local(cfg, store)
+        except SyncGitError as exc:
+            result["commit_error"] = str(exc)
         if do_pull:
             try:
                 pull_out = sync_pull(cfg, store, mem, remote=remote)
@@ -264,12 +271,19 @@ def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = Fal
     }
 
 
-def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
-    """Export signal, commit any changes, and push. Returns a summary dict."""
+def _commit_local(cfg: Config, store: VecStore) -> tuple[Path, str, int]:
+    """Export signal, stage everything (incl. deletions), and commit if dirty.
+
+    Returns ``(root, branch, n_committed)``. Idempotent — a no-op commit when the
+    tree is already clean. Pulled out of ``sync_push`` so the coordinator can
+    commit local work BEFORE the pull/rebase: an uncommitted deletion/edit would
+    otherwise be lost to ``rebase --autostash`` when the remote still has the
+    file (the delete-during-sync bug). Committing first turns local work into a
+    real commit the rebase merges correctly.
+    """
     root = git_root_for(cfg)
     branch = _current_branch(root)
     export_signal(store, signal_dir_for(cfg))
-
     _git(root, "add", "-A")
     staged = _git(root, "diff", "--cached", "--name-only").stdout.strip()
     n_files = len(staged.splitlines()) if staged else 0
@@ -278,6 +292,12 @@ def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
 
         who = _identity(cfg).label
         _git(root, "commit", "-m", f"sync: memo signal + memorias ({n_files} files) [{who}]")
+    return root, branch, n_files
+
+
+def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
+    """Commit any local changes and push. Returns a summary dict."""
+    root, branch, n_files = _commit_local(cfg, store)
 
     # Stranded-commit retry: a prior push may have failed AFTER committing
     # (offline/auth), leaving local commits unpushed. Detect that and push even
@@ -287,7 +307,7 @@ def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
         root, "rev-list", "--count", f"{remote}/{branch}..HEAD", check=False
     ).stdout.strip()
     has_unpushed = unpushed.isdigit() and int(unpushed) > 0
-    if not staged and not has_unpushed and not _pending_marker(cfg).is_file():
+    if n_files == 0 and not has_unpushed and not _pending_marker(cfg).is_file():
         return {"pushed": False, "reason": "nothing to commit", "branch": branch}
 
     # push; set upstream on first push
@@ -366,7 +386,20 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     # 3) load any new/changed memorias the pull brought in
     reindexed = mem.reindex()
 
+    # 3b) prune index rows whose `.md` the pull DELETED. reindex() only adds/
+    # updates from existing files — without this, a memoria deleted on another
+    # Mac stays findable here (orphan row) until a full rebuild. gc(fix=True)
+    # drops rows whose `.md` is gone, so a deletion propagates cross-machine.
+    pruned: list[str] = []
+    try:
+        pruned = mem.gc(fix=True).get("orphan_store", [])
+    except Exception as exc:  # never let GC break the pull
+        from memo.errors import MemoError
+
+        if not isinstance(exc, MemoError):
+            raise
+
     # 4) re-export the merged signal so the next push carries the union
     export_signal(store, signal_dir_for(cfg))
 
-    return {"pulled": True, "branch": branch, "reindexed": reindexed}
+    return {"pulled": True, "branch": branch, "reindexed": reindexed, "pruned": len(pruned)}

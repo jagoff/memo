@@ -194,6 +194,71 @@ def test_sync_push_retries_stranded_commit(remote: Path, tmp_path: Path, monkeyp
         mem.close()
 
 
+def test_sync_once_commits_local_deletion_before_pull(remote: Path, tmp_path: Path, monkeypatch):
+    """Regression: an uncommitted local .md deletion must survive sync_once
+    (commit-before-pull), not be resurrected by rebase --autostash from origin."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        rec = mem.save(content="to be deleted cross-mac", title="DeleteMe")
+        sync_once(mem.cfg, mem.store, mem)  # push it to origin
+        md = next((clone / "memorias").glob("*.md"))
+        # simulate `memo delete`'s file removal WITHOUT committing
+        md.unlink()
+        assert not md.exists()
+        out = sync_once(mem.cfg, mem.store, mem)
+        assert out["tier"] == "remote"
+        # deletion stuck locally (not resurrected) and reached origin
+        assert not md.exists(), "deletion was resurrected by the pull/rebase"
+        _git(clone, "fetch", "origin", "main")
+        tree = subprocess.run(
+            ["git", "-C", str(clone), "ls-tree", "-r", "origin/main", "--name-only"],
+            capture_output=True, text=True,
+        ).stdout
+        assert md.name not in tree, "deleted memoria still on origin"
+        _ = rec
+    finally:
+        mem.close()
+
+
+def test_sync_pull_prunes_remote_deletion(remote: Path, tmp_path: Path, monkeypatch):
+    """Receiver side: a memoria deleted on Mac A must DISAPPEAR from Mac B's
+    index after pull — reindex only adds, so sync_pull's gc(fix=True) must drop
+    the orphan row whose .md the pull removed."""
+    # A: save + push a memoria
+    clone_a = _make_clone(remote, tmp_path / "A")
+    mem_a = _mem_for(clone_a, tmp_path / "stateA", monkeypatch)
+    rec_id = None
+    try:
+        rec_id = mem_a.save(content="cross-mac delete target", title="DelTarget").id
+        sync_once(mem_a.cfg, mem_a.store, mem_a)
+    finally:
+        mem_a.close()
+    # B: pull → has it
+    clone_b = _make_clone(remote, tmp_path / "B")
+    mem_b = _mem_for(clone_b, tmp_path / "stateB", monkeypatch)
+    try:
+        sync_pull(mem_b.cfg, mem_b.store, mem_b)
+        assert mem_b.get(rec_id) is not None
+    finally:
+        mem_b.close()
+    # A: delete it + push the deletion
+    mem_a2 = _mem_for(clone_a, tmp_path / "stateA", monkeypatch)
+    try:
+        mem_a2.delete(rec_id)
+        sync_once(mem_a2.cfg, mem_a2.store, mem_a2)
+    finally:
+        mem_a2.close()
+    # B: pull again → it must be GONE from B's index (pruned), not an orphan
+    mem_b2 = _mem_for(clone_b, tmp_path / "stateB", monkeypatch)
+    try:
+        out = sync_pull(mem_b2.cfg, mem_b2.store, mem_b2)
+        assert out["pruned"] >= 1
+        assert mem_b2.get(rec_id) is None, "deleted memoria still in receiver's index"
+    finally:
+        mem_b2.close()
+
+
 def test_cli_pull_quiet_softfails_on_non_git(tmp_path: Path):
     """The SessionStart hook calls `memo sync pull --quiet`; a non-git install
     must exit 0 (not break the session)."""
