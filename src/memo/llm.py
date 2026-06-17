@@ -37,6 +37,8 @@ from collections import OrderedDict
 from collections.abc import Iterator
 from typing import Any
 
+from memo.mlx_gpu import gpu_guard
+
 _log = logging.getLogger(__name__)
 _MAX_LOADED_MODELS = 2
 
@@ -256,19 +258,20 @@ class MLXChat:
                 gen_tokens: list[int] = []
                 committed = False
                 try:
-                    for resp in _mlx_stream(
-                        m,
-                        tok,
-                        feed,
-                        max_tokens=max_tokens,
-                        sampler=sampler,
-                        prompt_cache=cache,
-                    ):
-                        if getattr(resp, "finish_reason", None) is None:
-                            tk = getattr(resp, "token", None)
-                            if tk is not None:
-                                gen_tokens.append(int(tk))
-                        parts.append(getattr(resp, "text", "") or "")
+                    with gpu_guard():
+                        for resp in _mlx_stream(
+                            m,
+                            tok,
+                            feed,
+                            max_tokens=max_tokens,
+                            sampler=sampler,
+                            prompt_cache=cache,
+                        ):
+                            if getattr(resp, "finish_reason", None) is None:
+                                tk = getattr(resp, "token", None)
+                                if tk is not None:
+                                    gen_tokens.append(int(tk))
+                            parts.append(getattr(resp, "text", "") or "")
                     self._prompt_cache_commit(
                         model,
                         m,
@@ -289,14 +292,15 @@ class MLXChat:
             add_generation_prompt=True,
             enable_thinking=thinking,
         )
-        text = _mlx_generate(
-            m,
-            tok,
-            prompt,
-            max_tokens=max_tokens,
-            sampler=sampler,
-            verbose=False,
-        )
+        with gpu_guard():
+            text = _mlx_generate(
+                m,
+                tok,
+                prompt,
+                max_tokens=max_tokens,
+                sampler=sampler,
+                verbose=False,
+            )
         # `mlx_lm.generate` returns either a bare str (newer versions)
         # or an object with `.text`. Normalise both.
         content = text if isinstance(text, str) else getattr(text, "text", str(text))
@@ -356,21 +360,22 @@ class MLXChat:
                 gen_tokens: list[int] = []
                 committed = False
                 try:
-                    for resp in _mlx_stream(
-                        m,
-                        tok,
-                        feed,
-                        max_tokens=max_tokens,
-                        sampler=sampler,
-                        prompt_cache=cache,
-                    ):
-                        if getattr(resp, "finish_reason", None) is None:
-                            tk = getattr(resp, "token", None)
-                            if tk is not None:
-                                gen_tokens.append(int(tk))
-                        delta = getattr(resp, "text", "") or ""
-                        if delta:
-                            yield delta
+                    with gpu_guard():
+                        for resp in _mlx_stream(
+                            m,
+                            tok,
+                            feed,
+                            max_tokens=max_tokens,
+                            sampler=sampler,
+                            prompt_cache=cache,
+                        ):
+                            if getattr(resp, "finish_reason", None) is None:
+                                tk = getattr(resp, "token", None)
+                                if tk is not None:
+                                    gen_tokens.append(int(tk))
+                            delta = getattr(resp, "text", "") or ""
+                            if delta:
+                                yield delta
                     self._prompt_cache_commit(
                         model,
                         m,
@@ -394,16 +399,17 @@ class MLXChat:
             enable_thinking=thinking,
         )
         try:
-            for resp in _mlx_stream(
-                m,
-                tok,
-                prompt,
-                max_tokens=max_tokens,
-                sampler=sampler,
-            ):
-                delta = getattr(resp, "text", "") or ""
-                if delta:
-                    yield delta
+            with gpu_guard():
+                for resp in _mlx_stream(
+                    m,
+                    tok,
+                    prompt,
+                    max_tokens=max_tokens,
+                    sampler=sampler,
+                ):
+                    delta = getattr(resp, "text", "") or ""
+                    if delta:
+                        yield delta
         finally:
             self._last_use[model] = time.time()
 

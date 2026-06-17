@@ -36,6 +36,8 @@ import time
 from collections.abc import Sequence
 from typing import Any, cast
 
+from memo.mlx_gpu import gpu_guard
+
 try:
     from consciousness_contracts.cache import get_default_cache
 
@@ -136,18 +138,21 @@ class MicroEmbedder:
 
         # Simplified embedding logic for the micro-model (usually not instruction-tuned)
         out = []
-        for text in inputs:
-            if not text:
-                out.append([0.0] * self.expected_dims)
-                continue
-            ids = self._tokenizer.encode(text, add_special_tokens=False)
-            arr = mx.array([ids])
-            hidden = self._model.model(arr)
-            # Simple mean pooling for micro-models
-            row = mx.mean(hidden, axis=1)
-            norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
-            emb = row / norm
-            out.append([float(x) for x in cast(list[Any], emb[0].tolist())])
+        # Serialize GPU work against all other MLX forward passes in this
+        # process (see memo.mlx_gpu); the Metal default stream is global.
+        with gpu_guard():
+            for text in inputs:
+                if not text:
+                    out.append([0.0] * self.expected_dims)
+                    continue
+                ids = self._tokenizer.encode(text, add_special_tokens=False)
+                arr = mx.array([ids])
+                hidden = self._model.model(arr)
+                # Simple mean pooling for micro-models
+                row = mx.mean(hidden, axis=1)
+                norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
+                emb = row / norm
+                out.append([float(x) for x in cast(list[Any], emb[0].tolist())])
         return out
 
     def embed_query(self, query: str) -> list[float]:
@@ -295,32 +300,36 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
             else:
                 padded.append(ids + [pad_id] * (max_len - len(ids)))
 
-        arr = mx.array(padded)
-        # `model.model` is the transformer body without the LM head —
-        # that's what produces the hidden states we pool. Calling
-        # `model(arr)` would route through `lm_head` and return logits
-        # over vocab (~151k floats per token), totally wrong here.
-        hidden = self._model.model(arr)  # (B, T, H)
+        # Serialize the GPU forward+materialization: MLX's Metal default
+        # stream is process-global, and concurrent eval from the FastMCP
+        # worker threadpool aborts the interpreter (see memo.mlx_gpu).
+        with gpu_guard():
+            arr = mx.array(padded)
+            # `model.model` is the transformer body without the LM head —
+            # that's what produces the hidden states we pool. Calling
+            # `model(arr)` would route through `lm_head` and return logits
+            # over vocab (~151k floats per token), totally wrong here.
+            hidden = self._model.model(arr)  # (B, T, H)
 
-        if hidden.shape[-1] != self.expected_dims:
-            raise RuntimeError(
-                f"Embedder produced dim={hidden.shape[-1]} but config expects "
-                f"{self.expected_dims}. Either the model swap was incorrect or "
-                f"`embedder_dims` config is stale."
-            )
+            if hidden.shape[-1] != self.expected_dims:
+                raise RuntimeError(
+                    f"Embedder produced dim={hidden.shape[-1]} but config expects "
+                    f"{self.expected_dims}. Either the model swap was incorrect or "
+                    f"`embedder_dims` config is stale."
+                )
 
-        # Per-row pool: gather hidden[i, eos_idx[i], :]. Easiest in MLX
-        # without fancy gather is a small Python loop — the heavy work
-        # (the forward pass) is already done in one batched call.
-        out: list[list[float]] = []
-        for i, sk in enumerate(skip_mask):
-            if sk:
-                out.append([0.0] * self.expected_dims)
-                continue
-            row = hidden[i : i + 1, eos_idx[i], :]  # (1, H)
-            norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
-            emb = row / norm
-            out.append([float(x) for x in emb[0].tolist()])
+            # Per-row pool: gather hidden[i, eos_idx[i], :]. Easiest in MLX
+            # without fancy gather is a small Python loop — the heavy work
+            # (the forward pass) is already done in one batched call.
+            out: list[list[float]] = []
+            for i, sk in enumerate(skip_mask):
+                if sk:
+                    out.append([0.0] * self.expected_dims)
+                    continue
+                row = hidden[i : i + 1, eos_idx[i], :]  # (1, H)
+                norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
+                emb = row / norm
+                out.append([float(x) for x in emb[0].tolist()])
         return out
 
     def embed_query(self, query: str) -> list[float]:
