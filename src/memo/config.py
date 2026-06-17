@@ -95,6 +95,74 @@ MODEL_PROFILES: dict[str, dict[str, object]] = {
 }
 
 
+def _index_embedder_profile(db_path: Path) -> tuple[str, int] | None:
+    """Read the (embedder_model, dims) the existing index was built with.
+
+    The vector index is self-describing: `schema_meta` records the builder's
+    `embedder_model` + `embedder_dims` (0.8.0+), and the vec0 table encodes its
+    dimensionality in `FLOAT[N]`. When the model is absent (pre-`schema_meta`
+    index) it is derived from the dims via `MODEL_PROFILES` (unambiguous:
+    1024→0.6B, 2560→4B). Returns None when the DB is absent/empty or nothing
+    usable is recorded.
+
+    Best-effort and read-only: any error → None, so it never blocks Config
+    construction. A short-lived RO connection is WAL-safe alongside the store.
+    """
+    import re
+    import sqlite3
+
+    if not db_path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+    try:
+        conn.row_factory = sqlite3.Row
+        model = ""
+        dims = 0
+        try:
+            rows = conn.execute(
+                "SELECT key, value FROM schema_meta "
+                "WHERE key IN ('embedder_model', 'embedder_dims')"
+            ).fetchall()
+            kv = {str(r["key"]): str(r["value"]) for r in rows}
+            model = kv.get("embedder_model", "") or ""
+            dims = int(kv.get("embedder_dims", "0") or "0")
+        except (sqlite3.Error, ValueError):
+            model, dims = "", 0
+        if dims <= 0:
+            # Fallback: read dimensionality straight off the vec0 table DDL.
+            try:
+                row = conn.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'vec'"
+                ).fetchone()
+            except sqlite3.Error:
+                row = None
+            if row and row["sql"]:
+                m = re.search(r"FLOAT\[(\d+)\]", str(row["sql"]))
+                if m:
+                    dims = int(m.group(1))
+        if dims <= 0:
+            return None
+        if not model or "stub" in model.lower():
+            # Derive the model from dims when unrecorded or a test stub.
+            model = next(
+                (
+                    str(p["embedder_model"])
+                    for p in MODEL_PROFILES.values()
+                    if p.get("embedder_dims") == dims
+                ),
+                "",
+            )
+        return (model, dims) if model else None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
 class Config(BaseModel):
     """Process-wide configuration.
 
@@ -447,6 +515,37 @@ class Config(BaseModel):
         # Step 5: explicit overrides win over everything.
         kwargs.update(overrides)
         cfg = cls(**kwargs)
+
+        # Self-describing index: adopt the embedder the existing index was built
+        # with UNLESS the operator explicitly pinned one. MCP clients don't
+        # inherit the shell env (~/.zshenv), so a bare `MEMO_NONINTERACTIVE=1`
+        # launch falls back to the default profile (0.6B/1024) and hard-crashes
+        # against a non-default-dims index — surfacing in the client as an opaque
+        # "connection closed" during the MCP handshake (hit on both Claude Code
+        # and Codex configs). The index records its builder; trust it when the
+        # operator didn't say otherwise.
+        embedder_pinned = bool(
+            os.environ.get("MEMO_EMBEDDER_MODEL")
+            or os.environ.get("MEMO_EMBEDDER_DIMS")
+            or os.environ.get("MEMO_MODEL_PROFILE")
+            or {"embedder_model", "embedder_dims", "model_profile"} & overrides.keys()
+        )
+        if not embedder_pinned:
+            adopted = _index_embedder_profile(cfg.db_path)
+            if adopted is not None:
+                model, dims = adopted
+                if model and (model != cfg.embedder_model or dims != cfg.embedder_dims):
+                    _log.info(
+                        "adopting index embedder profile %s (%dd) over default "
+                        "%s (%dd) — set MEMO_EMBEDDER_MODEL/DIMS to override",
+                        model,
+                        dims,
+                        cfg.embedder_model,
+                        cfg.embedder_dims,
+                    )
+                    cfg = cfg.model_copy(
+                        update={"embedder_model": model, "embedder_dims": dims}
+                    )
         # NB: do NOT validate the reranker model here. `Config.from_env()` must
         # stay hermetic (no network) — it's called in every test and CLI start.
         # MLXReranker._ensure_loaded() validates via snapshot_download on first
