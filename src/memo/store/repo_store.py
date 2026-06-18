@@ -150,7 +150,9 @@ class _RepoStoreMixin(_StoreBase):
             if len(emb) != dims:
                 raise ValueError(
                     f"Repo cache embedding dim mismatch: got {len(emb)}, expected {dims} "
-                    f"[input={input_hash[:12]}]",
+                    f"[input={input_hash[:12]}].\n"
+                    f"Fix: rm {self.db_path} && memo reindex\n"
+                    f"Or check: MEMO_MODEL_PROFILE={dims}D"
                 )
         with self._tx() as cx:
             cx.executemany(
@@ -177,7 +179,9 @@ class _RepoStoreMixin(_StoreBase):
             if len(emb) != self.dims:
                 raise ValueError(
                     f"Repo chunk embedding dim mismatch: got {len(emb)}, expected {self.dims} "
-                    f"[chunk={chunk_id[:12]}]",
+                    f"[chunk={chunk_id[:12]}].\n"
+                    f"Fix: rm {self.db_path} && memo reindex\n"
+                    f"Or check: MEMO_MODEL_PROFILE={self.dims}D"
                 )
             norm = sum(float(x) * float(x) for x in emb) ** 0.5
             if not (0.5 < norm < 1.5):
@@ -224,7 +228,9 @@ class _RepoStoreMixin(_StoreBase):
                 if len(emb) != self.dims:
                     raise ValueError(
                         f"Repo chunk embedding dim mismatch: got {len(emb)}, expected {self.dims} "
-                        f"[chunk={chunk.get('id', '')[:12]}]",
+                        f"[chunk={chunk.get('id', '')[:12]}].\n"
+                        f"Fix: rm {self.db_path} && memo reindex\n"
+                        f"Or check: MEMO_MODEL_PROFILE={self.dims}D"
                     )
                 norm = sum(float(x) * float(x) for x in emb) ** 0.5
                 if not (0.5 < norm < 1.5):
@@ -391,7 +397,9 @@ class _RepoStoreMixin(_StoreBase):
                 if len(emb) != self.dims:
                     raise ValueError(
                         f"Repo chunk embedding dim mismatch: got {len(emb)}, expected {self.dims} "
-                        f"[chunk={chunk.get('id', '')[:12]}]",
+                        f"[chunk={chunk.get('id', '')[:12]}].\n"
+                        f"Fix: rm {self.db_path} && memo reindex\n"
+                        f"Or check: MEMO_MODEL_PROFILE={self.dims}D"
                     )
                 norm = sum(float(x) * float(x) for x in emb) ** 0.5
                 if not (0.5 < norm < 1.5):
@@ -541,7 +549,9 @@ class _RepoStoreMixin(_StoreBase):
     ) -> list[dict[str, Any]]:
         if len(embedding) != self.dims:
             raise ValueError(
-                f"Repo query embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
+                f"Repo query embedding dim mismatch: got {len(embedding)}, expected {self.dims}.\n"
+                f"Fix: rm {self.db_path} && memo reindex\n"
+                f"Or check: MEMO_MODEL_PROFILE={self.dims}D"
             )
         # `repo_id` is a vec0 PARTITION KEY → `repo_vec.repo_id = ?` pre-filters
         # the kNN to that repo (exact, no over-fetch). Only `path_glob` (a GLOB,
