@@ -280,7 +280,14 @@ class _RerankOpsMixin(_MemoryBase):
             doc = f"{title}\n\n{body_src}" if body_src else title
             try:
                 p = float(reranker.score(query, doc))
-            except Exception:
+            except Exception as exc:
+                _log.error(
+                    "reranker score failed (model=%s, revision=%s, hit_id=%s): %s",
+                    self.cfg.reranker_model,
+                    self.cfg.reranker_revision,
+                    h.get("id"),
+                    exc,
+                )
                 p = 0.0
             new = dict(h)
             new["rerank_score"] = p

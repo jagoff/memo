@@ -47,18 +47,21 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from memo.temporal import TemporalAnalyzer
 
 try:
     from consciousness_contracts import (
-        AnomalyKind,
+        Anomaly,
+        ConsciousnessEvent,
+        LedgerWriter,
         generate_anomaly_id,
     )
 
@@ -498,6 +501,13 @@ class ContradictionScanner:
 
                 if contr.relationship == "contradiction":
                     contradictions += 1
+                    emit_anomaly(
+                        contr.memoria_id_a,
+                        contr.memoria_id_b,
+                        contr.relationship,
+                        contr.confidence,
+                        "open",
+                    )
                 else:
                     evolutions += 1
 
@@ -538,11 +548,13 @@ def emit_anomaly(
     confidence: float,
     status: str,
 ) -> str | None:
-    """Emit an Anomaly to Memflow for cross-system visibility.
+    """Emit a shared-contract anomaly event for cross-system visibility.
 
-    This is a stub for now - future implementation will write the anomaly
-    to Memflow via its MCP or CLI interface. For now, it returns the anomaly_id
-    that would be emitted.
+    Memo still does not push contradictions into Synapse's conflict store.
+    Synapse pulls open contradiction pairs from memo. This function writes a
+    best-effort `consciousness.anomaly.v1` event to the shared ledger so
+    Memflow/Synapse can observe the detection without creating a second
+    writable conflict channel.
 
     Args:
         memoria_id_a: First memoria in the contradiction pair.
@@ -552,20 +564,52 @@ def emit_anomaly(
         status: Current status (open, fused, kept_newer, etc.).
 
     Returns:
-        The anomaly_id that was/would be emitted, or None if consciousness-contracts unavailable.
+        The anomaly_id that was emitted, or None if consciousness-contracts unavailable.
     """
     if not _HAS_CONFLICT_CONTRACTS:
         return None
 
-    # NB: status→ConflictState/ResolutionKind mapping will be needed once the
-    # anomaly is actually written to Memflow (TODO below); not computed yet.
     anomaly_id = generate_anomaly_id(
-        AnomalyKind.semantic_contradiction,  # type: ignore[attr-defined]  # guarded optional dep
+        "semantic_contradiction",
         f"memo:{memoria_id_a}:{memoria_id_b}",
     )
-
-    # TODO: Write anomaly to Memflow via MCP/CLI
-    # For now, this is a stub that returns the ID for future use
+    state: Literal["detected", "resolved"] = "detected" if status == "open" else "resolved"
+    severity: Literal["low", "medium", "high"] = (
+        "high" if confidence >= 0.9 else "medium" if confidence >= 0.75 else "low"
+    )
+    ts = datetime.now(UTC).isoformat()
+    anomaly = Anomaly(
+        anomaly_id=anomaly_id,
+        kind="semantic_contradiction",
+        state=state,
+        summary=(
+            f"memo {relationship} between memorias "
+            f"{memoria_id_a[:12]} and {memoria_id_b[:12]}"
+        ),
+        detected_at=ts,
+        source_backend="memo",
+        evidence_uris=(
+            f"memo://memoria/{memoria_id_a}",
+            f"memo://memoria/{memoria_id_b}",
+        ),
+        severity=severity,
+        metadata={
+            "memoria_id_a": memoria_id_a,
+            "memoria_id_b": memoria_id_b,
+            "relationship": relationship,
+            "confidence": confidence,
+            "status": status,
+        },
+    )
+    event = ConsciousnessEvent(
+        event_id=f"evt-{uuid.uuid4().hex}",
+        ts=ts,
+        source="memo",
+        op="anomaly_raised",
+        subject_uri=f"memo://anomaly/{anomaly_id}",
+        payload=anomaly.to_dict(),
+    )
+    LedgerWriter().emit(event)
     return anomaly_id
 
 

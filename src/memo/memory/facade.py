@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+from pathlib import Path
 from typing import Any
 
 from memo.config import Config
@@ -163,6 +164,18 @@ class Memory(
                 if self._reranker is None:
                     from memo.reranker import MLXReranker
 
+                    model_path = str(self.cfg.reranker_model or "").strip()
+                    local_candidate = Path(model_path).expanduser()
+                    if (
+                        model_path
+                        and (local_candidate.is_absolute() or model_path.startswith((".", "~")))
+                        and not local_candidate.exists()
+                    ):
+                        raise FileNotFoundError(
+                            f"reranker model path does not exist: {local_candidate}. "
+                            "Set MEMO_RERANKER_MODEL to an existing local model path "
+                            "or a Hugging Face model id."
+                        )
                     self._reranker = MLXReranker(
                         model_path=self.cfg.reranker_model,
                         revision=self.cfg.reranker_revision,
