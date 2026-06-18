@@ -6,6 +6,8 @@ so they run anywhere — no Apple Silicon needed.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from memo.config import Config
@@ -14,6 +16,7 @@ from memo.contradict import (
     ContradictionStore,
     PairRecord,
     _canonical_pair,
+    emit_anomaly,
     is_stale,
 )
 from memo.memory import Memory
@@ -237,6 +240,34 @@ def test_scan_persists_contradiction_pairs(mem_with_stub_embed, monkeypatch):
     assert all(p.relationship == "contradiction" for p in pairs)
 
 
+def test_scan_emits_anomaly_for_new_contradiction(mem_with_stub_embed, monkeypatch):
+    mem = mem_with_stub_embed
+    mem.save(content="alpha original", title="Stack A", type_="decision")
+    mem.save(content="alpha updated", title="Stack B", type_="decision")
+
+    verdict = Contradiction(
+        memoria_id_a="x", memoria_id_b="y", title_a="", title_b="",
+        date_a="", date_b="",
+        relationship="contradiction", rationale="old vs new",
+        confidence=0.91,
+    )
+    _stage_classify_pair(monkeypatch, verdict)
+    emitted: list[tuple[str, str, str, float, str]] = []
+    monkeypatch.setattr(
+        "memo.contradict.emit_anomaly",
+        lambda *args: emitted.append(args) or "anom-test",
+    )
+
+    mem.contradict_scanner.scan_corpus(
+        top_k=3, sim_floor=0.0, confidence_threshold=0.7, min_days_apart=0,
+    )
+
+    assert emitted
+    assert emitted[0][2] == "contradiction"
+    assert emitted[0][3] == pytest.approx(0.91)
+    assert emitted[0][4] == "open"
+
+
 def test_scan_skips_pairs_already_resolved(mem_with_stub_embed, monkeypatch):
     mem = mem_with_stub_embed
     rec_a = mem.save(content="alpha v1", title="A", type_="note")
@@ -331,3 +362,32 @@ def test_pair_record_dataclass():
     )
     assert rec.pair_id == 1
     assert rec.status == "open"
+
+
+def test_emit_anomaly_writes_contract_ledger_event(tmp_path, monkeypatch):
+    pytest.importorskip("consciousness_contracts")
+    monkeypatch.setenv("CONSCIOUSNESS_LEDGER_ROOT", str(tmp_path / "ledger"))
+
+    anomaly_id = emit_anomaly(
+        "aaa",
+        "bbb",
+        "contradiction",
+        0.91,
+        "open",
+    )
+
+    assert anomaly_id is not None
+    paths = list((tmp_path / "ledger").glob("*.jsonl"))
+    assert len(paths) == 1
+    event = json.loads(paths[0].read_text().splitlines()[0])
+    assert event["schema"] == "consciousness.event.v1"
+    assert event["source"] == "memo"
+    assert event["op"] == "anomaly_raised"
+    assert event["subject_uri"] == f"memo://anomaly/{anomaly_id}"
+    payload = event["payload"]
+    assert payload["schema"] == "consciousness.anomaly.v1"
+    assert payload["anomaly_id"] == anomaly_id
+    assert payload["kind"] == "semantic_contradiction"
+    assert payload["state"] == "detected"
+    assert payload["metadata"]["relationship"] == "contradiction"
+    assert payload["metadata"]["confidence"] == 0.91

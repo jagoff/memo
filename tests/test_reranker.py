@@ -24,7 +24,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from memo.memory import MemoryRecord
+from memo.config import Config
+from memo.memory import Memory, MemoryRecord
 from memo.reranker import MLXReranker
 
 if TYPE_CHECKING:
@@ -185,6 +186,51 @@ def test_reranker_revision_downloads_pinned_snapshot(monkeypatch):
         "revision": "9655b27c01d2ff1c49f7e672a04b70d630161b46",
         "load_path": "/tmp/pinned-reranker",
     }
+
+
+def test_memory_ensure_reranker_rejects_missing_local_model_path(tmp_path, monkeypatch):
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs])
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        embedder_dims=4,
+        reranker_enabled=True,
+        reranker_model=str(tmp_path / "missing-reranker"),
+    )
+    mem = Memory(cfg)
+    try:
+        with pytest.raises(FileNotFoundError) as excinfo:
+            mem._ensure_reranker()
+    finally:
+        mem.close()
+
+    message = str(excinfo.value)
+    assert "reranker model path does not exist" in message
+    assert str(tmp_path / "missing-reranker") in message
+
+
+def test_rerank_hits_logs_score_failures(caplog):
+    class _FailingReranker:
+        def score(self, query: str, doc: str) -> float:
+            raise RuntimeError("score boom")
+
+    class _Memory:
+        cfg = type("Cfg", (), {
+            "reranker_enabled": True,
+            "reranker_model": "stub-reranker",
+            "reranker_revision": None,
+        })()
+
+        def _ensure_reranker(self):
+            return _FailingReranker()
+
+    hits = [{"id": "a", "title": "Alpha", "body": "body"}]
+    with caplog.at_level("ERROR", logger="memo.memory.record"):
+        out = Memory.rerank_hits(_Memory(), "query", hits)
+
+    assert out == [{"id": "a", "title": "Alpha", "body": "body", "rerank_score": 0.0}]
+    assert "reranker score failed" in caplog.text
+    assert "stub-reranker" in caplog.text
 
 
 # ── real MLX smoke ────────────────────────────────────────────────────────
