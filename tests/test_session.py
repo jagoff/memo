@@ -36,6 +36,7 @@ from memo.session import (
     prune_lru,
     read_last_user_msg,
     recent_prompts,
+    render_active_memory,
     update_summary,
 )
 
@@ -388,6 +389,28 @@ def test_checkpoint_heals_persisted_noise_summary(tmp_cfg, fake_git, tmp_path):
         tmp_cfg.state_dir, session_id="heal-me", cwd=str(tmp_path), transcript_path=str(t)
     )
     assert snap["summary"] == "clean recovered prompt"
+
+
+def test_render_active_memory_includes_session_context():
+    md = "\n".join(
+        render_active_memory(
+            {
+                "project": "memo",
+                "branch": "master",
+                "turn_count": 4,
+                "running_summary": "Se dejó listo el nuevo bloque de memoria activa.",
+                "modified_files": ["src/memo/session.py", "src/memo/cli_session.py"],
+                "last_assistant_tail": "Quedó aplicado y verificado.",
+                "prompt_trail": ["primer loop", "segundo loop", "tercer loop"],
+            }
+        )
+    )
+    assert "Memoria activa" in md
+    assert "Se dejó listo" in md
+    assert "memo" in md and "master" in md
+    assert "session.py" in md and "cli_session.py" in md
+    assert "Última respuesta" in md and "verificado" in md
+    assert "Loops abiertos (sesión)" in md and "tercer loop" in md
 
 
 def test_format_relative_buckets():

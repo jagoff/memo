@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from memo import dashboard
-from memo.cli_mandate import _MARKER, MANDATE_TEXT, _write_mandate
+from memo.cli_mandate import _MARKER, MANDATE_TEXT, _write_mandate, write_mandates_for_clients
 
 
 def test_expected_consumers_covers_non_hook_clients() -> None:
@@ -49,3 +49,10 @@ def test_write_mandate_dry_run_no_write(tmp_path: Path) -> None:
 def test_mandate_text_mentions_source_attribution() -> None:
     assert "source=" in MANDATE_TEXT
     assert "memory_unified_briefing" in MANDATE_TEXT
+
+
+def test_write_mandates_for_clients_deduplicates_shared_files(tmp_path: Path) -> None:
+    results = write_mandates_for_clients(["devin", "opencode", "windsurf"], cwd=tmp_path, dry_run=False)
+    assert results[0][0] == "AGENTS.md"
+    assert len([path for path, _status in results if path == "AGENTS.md"]) == 1
+    assert any(path == ".windsurfrules" for path, _status in results)

@@ -139,8 +139,8 @@ def test_verdict_unused_when_too_few_consults(tmp_path: Path) -> None:
     assert v["label"].startswith("❌")
 
 
-def test_verdict_weak_when_read_but_not_grounded(tmp_path: Path) -> None:
-    # Enough reads with hits, but nothing grounded → read but not helping.
+def test_verdict_unmeasured_when_read_but_not_grounded(tmp_path: Path) -> None:
+    # Enough reads with hits, but no grounding rows yet → cannot judge help.
     for i in range(25):
         append_recall_log(
             tmp_path,
@@ -152,7 +152,7 @@ def test_verdict_weak_when_read_but_not_grounded(tmp_path: Path) -> None:
             turn=i,
         )
     v = verdict(tmp_path)
-    assert v["status"] == "weak"
+    assert v["status"] == "unmeasured"
     assert v["consults"] >= 20
 
 

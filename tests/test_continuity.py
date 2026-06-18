@@ -14,6 +14,8 @@ def _rows():
             "turn_count": 7,
             "summary": "arreglando el sync replay",
             "running_summary": "Se trabajó en el fix de sync y el instalador MCP.",
+            "modified_files": ["src/memo/session.py", "src/memo/cli_session.py"],
+            "last_assistant_tail": "Cerré el ajuste y dejé el resumen listo.",
             "prompt_trail": ["primer loop", "segundo loop"],
             "updated": "2026-06-16T10:00:00+00:00",
         },
@@ -24,11 +26,13 @@ def _rows():
 def test_render_continuity_for_matching_cwd():
     out = render_continuity(_rows(), "/repos/memo")
     assert "Venías haciendo" in out
-    assert "arreglando el sync replay" in out
+    assert "- **Resumen**: Se trabajó en el fix de sync y el instalador MCP." in out
     assert "`master`" in out and "Turnos**: 7" in out
     assert "claude --resume abc12345" in out
-    assert "El hilo" in out and "instalador MCP" in out
-    assert "Loops abiertos" in out and "segundo loop" in out
+    assert "Memoria activa" in out
+    assert "Archivos tocados" in out and "cli_session.py" in out
+    assert "Última respuesta" in out and "Cerré el ajuste" in out
+    assert "Loops abiertos (sesión)" in out and "segundo loop" in out
 
 
 def test_render_continuity_no_prior_session_for_cwd():

@@ -1,0 +1,8 @@
+{
+  "lastAnalyzedAt": "2026-06-18T04:18:58.348Z",
+  "gitCommitHash": "f131cd84a74349d1deae7dfd69f0f489154be20d",
+  "version": "1.0.0",
+  "analyzedFiles": 423,
+  "generatedBy": ".understand-anything/tmp/generate-local-graphs.mjs",
+  "mode": "local-structural"
+}

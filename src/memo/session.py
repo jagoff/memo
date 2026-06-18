@@ -749,6 +749,58 @@ def update_summary(
     return True
 
 
+def _clean_snapshot_summary(snapshot: dict[str, Any], width: int) -> str:
+    """Pick the most useful short summary from a session snapshot."""
+    for cand in (
+        snapshot.get("running_summary"),
+        snapshot.get("summary"),
+        snapshot.get("last_user_msg"),
+    ):
+        if not is_command_noise(cand):
+            return _strip_command_wrappers(str(cand)).replace("\n", " ")[:width]
+    return "—"
+
+
+def render_active_memory(snapshot: dict[str, Any]) -> list[str]:
+    """Render a compact session-memory block from one snapshot."""
+    if not snapshot:
+        return []
+
+    lines = ["### Memoria activa", ""]
+    lines.append(f"- **En curso**: {_clean_snapshot_summary(snapshot, 140)}")
+
+    project = snapshot.get("project") or "—"
+    branch = snapshot.get("branch") or "—"
+    turns = snapshot.get("turn_count") or 0
+    lines.append(f"- **Contexto**: `{project}` · `{branch}` · {turns} turnos")
+
+    modified_files = [
+        str(path).strip()
+        for path in (snapshot.get("modified_files") or [])
+        if isinstance(path, str) and path.strip()
+    ][:4]
+    if modified_files:
+        lines.append("- **Archivos tocados**: " + ", ".join(f"`{path}`" for path in modified_files))
+
+    last_assistant_tail = snapshot.get("last_assistant_tail")
+    if last_assistant_tail and not is_command_noise(last_assistant_tail):
+        tail = _strip_command_wrappers(str(last_assistant_tail)).replace("\n", " ")[:160]
+        if tail:
+            lines.append(f"- **Última respuesta**: {tail}")
+
+    trail = [
+        str(prompt).strip()
+        for prompt in (snapshot.get("prompt_trail") or [])
+        if isinstance(prompt, str) and prompt.strip()
+    ]
+    if trail:
+        lines.append("- **Loops abiertos (sesión)**:")
+        for i, prompt in enumerate(reversed(trail[-_PROMPT_TRAIL_MAX:]), 1):
+            lines.append(f"  {i}. {prompt[:120]}")
+
+    return lines
+
+
 def render_continuity(rows: list[dict[str, Any]], cwd: str) -> str:
     """Render "¿qué venía haciendo?" for the latest session in `cwd`.
 
@@ -762,28 +814,14 @@ def render_continuity(rows: list[dict[str, Any]], cwd: str) -> str:
         return "Sin sesión previa en este directorio."
     top = same[0]
 
-    def _clean(width: int) -> str:
-        for cand in (top.get("summary"), top.get("last_user_msg")):
-            if not is_command_noise(cand):
-                return _strip_command_wrappers(cand or "").replace("\n", " ")[:width]
-        rs = top.get("running_summary")
-        if rs and not is_command_noise(rs):
-            return rs.strip().replace("\n", " ")[:width]
-        return "—"
-
     lines = [
         f"## Venías haciendo ({format_relative(top.get('updated'))})",
         "",
-        f"- **Resumen**: {_clean(160)}",
+        f"- **Resumen**: {_clean_snapshot_summary(top, 160)}",
         f"- **Branch**: `{top.get('branch') or '—'}`  |  **Turnos**: {top.get('turn_count') or 0}",
         f"- **Retomar**: `claude --resume {top.get('session_id') or ''}`",
     ]
-    running_summary = top.get("running_summary")
-    if running_summary and not is_command_noise(running_summary):
-        lines += ["", "### El hilo", "", running_summary.strip()]
-    trail = top.get("prompt_trail") or []
-    if trail:
-        lines += ["", "### Loops abiertos"]
-        for i, p in enumerate(reversed(trail[-5:]), 1):
-            lines.append(f"{i}. {str(p).strip()[:120]}")
+    active_memory = render_active_memory(top)
+    if active_memory:
+        lines += ["", *active_memory]
     return "\n".join(lines)

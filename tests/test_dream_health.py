@@ -81,6 +81,14 @@ def test_adaptive_context_enabled_by_default():
 
 
 # ---------------------------------------------------------------------------
+# Initiative 7 — Outcome loop on by default
+# ---------------------------------------------------------------------------
+
+def test_outcome_ranking_enabled_by_default():
+    assert flag_bool("MEMO_OUTCOME_RANKING_ENABLED") is True
+
+
+# ---------------------------------------------------------------------------
 # Initiative 5 — Memory Health Scores (store layer)
 # ---------------------------------------------------------------------------
 

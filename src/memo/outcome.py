@@ -46,7 +46,7 @@ def compute_utilities(
 
         utility = (grounded + prior_mean * prior_n) / (surfaced + prior_n)
     """
-    from memo.dashboard import GROUNDED_SCORE, read_grounding_log, read_recall_log
+    from memo.dashboard import grounding_used, read_grounding_log, read_recall_log
 
     surfaced: dict[str, set[tuple[str, int]]] = defaultdict(set)
     for r in read_recall_log(state_dir, limit=recall_limit):
@@ -62,10 +62,9 @@ def compute_utilities(
     for g in read_grounding_log(state_dir, limit=grounding_limit):
         sid, turn = g.get("session_id"), g.get("turn")
         pid = (g.get("recall_id") or "")[:8]
-        score = g.get("used_score")
         if not (sid and isinstance(turn, int) and pid):
             continue
-        if isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+        if grounding_used(g):
             grounded[pid].add((sid, turn))
 
     total_surf = sum(len(v) for v in surfaced.values())
@@ -148,6 +147,14 @@ def dead_weight(
 
     if min_surfaced <= 0:
         return []
+    from memo.dashboard import read_recall_log
+    from memo.dashboard_metrics import grounded_rate
+
+    coverage = grounded_rate(memory.cfg.state_dir, read_recall_log(memory.cfg.state_dir, limit=2000)).get(
+        "measurement_coverage"
+    )
+    if (coverage or 0.0) <= 0.0:
+        return []
     prior_n = prior_n if prior_n is not None else (flag_float("MEMO_OUTCOME_PRIOR_N") or _DEFAULT_PRIOR_N)
     u = compute_utilities(memory.cfg.state_dir, prior_n=prior_n)
     p2id = _prefix_to_id(memory)
@@ -193,14 +200,13 @@ def detect_gaps(
     Similar prompts are clustered by token Jaccard so a repeated question
     surfaces once with a count. Sorted by frequency, then recency.
     """
-    from memo.dashboard import GROUNDED_SCORE, read_grounding_log, read_recall_log
+    from memo.dashboard import grounding_used, read_grounding_log, read_recall_log
     from memo.dashboard_metrics import _is_knowledge_prompt, _jaccard, _reask_tokens
 
     grounded_turns: set[tuple[str, int]] = set()
     for g in read_grounding_log(state_dir):
         sid, turn = g.get("session_id"), g.get("turn")
-        score = g.get("used_score")
-        if sid and isinstance(turn, int) and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+        if sid and isinstance(turn, int) and grounding_used(g):
             grounded_turns.add((sid, turn))
 
     raw: list[dict[str, Any]] = []

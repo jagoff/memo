@@ -52,3 +52,17 @@
 - Use `memo.errors.MemoError` subclasses for domain errors instead of raising bare `Exception` in normal code paths.
 - If a search result is wrong, do not patch one query. Make a systemic retrieval change and prove it on `eval/regression_labels.json`.
 - Release version bumps must stay in sync across `pyproject.toml`, `.claude-plugin/plugin.json`, `server.json`, and `CHANGELOG.md`.
+
+<!-- memo-mandate -->
+## Memory-first (memo)
+
+Before deciding or answering anything that prior work might already cover,
+consult memo FIRST:
+- Start with `memory_unified_briefing` (or `memory_search` / `memory_ask`) to
+  pull durable facts, decisions, and preferences.
+- Pass `source="<this-client>"` on the read tools so usage is attributed
+  (e.g. `source="codex"`). A client that never appears in memo's consult log is
+  flagged as a silent gap by `memo usefulness`.
+- Write durable outcomes back with `memory_save` so the next session inherits
+  them. memo is the source of truth for what is *known*; build on it, and
+  contradict a surfaced memoria only explicitly.

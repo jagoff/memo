@@ -1,0 +1,3577 @@
+{
+  "projectRoot": "/Users/fer/repos/memo",
+  "batchFiles": [
+    {
+      "path": ".agents/plugins/marketplace.json",
+      "language": "json",
+      "sizeLines": 20,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".claude-plugin/marketplace.json",
+      "language": "json",
+      "sizeLines": 17,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".claude-plugin/plugin.json",
+      "language": "json",
+      "sizeLines": 13,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".claude/workflows/data-integrity-audit.js",
+      "language": "javascript",
+      "sizeLines": 90,
+      "fileCategory": "code"
+    },
+    {
+      "path": ".claude/workflows/demonolith-split.js",
+      "language": "javascript",
+      "sizeLines": 127,
+      "fileCategory": "code"
+    },
+    {
+      "path": ".github/workflows/macos-smoke.yml",
+      "language": "yaml",
+      "sizeLines": 52,
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/publish.yml",
+      "language": "yaml",
+      "sizeLines": 43,
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/slow-tests.yml",
+      "language": "yaml",
+      "sizeLines": 47,
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/test.yml",
+      "language": "yaml",
+      "sizeLines": 38,
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".mcp.json",
+      "language": "json",
+      "sizeLines": 36,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".understand-anything/tmp/generate-local-graphs.mjs",
+      "language": "javascript",
+      "sizeLines": 344,
+      "fileCategory": "code"
+    },
+    {
+      "path": "AGENTS.md",
+      "language": "markdown",
+      "sizeLines": 54,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "AUDIT_REPORT.md",
+      "language": "markdown",
+      "sizeLines": 574,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "language": "markdown",
+      "sizeLines": 524,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 267,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "commands/memo.md",
+      "language": "markdown",
+      "sizeLines": 46,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "language": "markdown",
+      "sizeLines": 78,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/briefing.md",
+      "language": "markdown",
+      "sizeLines": 84,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/contradict-loop.md",
+      "language": "markdown",
+      "sizeLines": 99,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/distribution.md",
+      "language": "markdown",
+      "sizeLines": 57,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/embedder-daemon.md",
+      "language": "markdown",
+      "sizeLines": 118,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/homebrew/mlx-memo.rb",
+      "language": "ruby",
+      "sizeLines": 42,
+      "fileCategory": "code"
+    },
+    {
+      "path": "docs/homebrew/README.md",
+      "language": "markdown",
+      "sizeLines": 100,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/install-new-mac.md",
+      "language": "markdown",
+      "sizeLines": 141,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/receipts.md",
+      "language": "markdown",
+      "sizeLines": 96,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/registry-submission.md",
+      "language": "markdown",
+      "sizeLines": 230,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-06-17-memo-two-tier-sync-and-identity-design.md",
+      "language": "markdown",
+      "sizeLines": 95,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/synapse-adapter.md",
+      "language": "markdown",
+      "sizeLines": 166,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "eval/grounding_labels.json",
+      "language": "json",
+      "sizeLines": 47,
+      "fileCategory": "config"
+    },
+    {
+      "path": "eval/regression_labels.json",
+      "language": "json",
+      "sizeLines": 183,
+      "fileCategory": "config"
+    },
+    {
+      "path": "GEMINI.md",
+      "language": "markdown",
+      "sizeLines": 92,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "hooks/hooks.json",
+      "language": "json",
+      "sizeLines": 139,
+      "fileCategory": "config"
+    },
+    {
+      "path": "install.sh",
+      "language": "shell",
+      "sizeLines": 226,
+      "fileCategory": "script"
+    },
+    {
+      "path": "launchd/com.fer.memo-dream.plist",
+      "language": "xml",
+      "sizeLines": 39,
+      "fileCategory": "config"
+    },
+    {
+      "path": "MODEL_PROFILES.md",
+      "language": "markdown",
+      "sizeLines": 144,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "PERF_OPTIMIZATIONS.md",
+      "language": "markdown",
+      "sizeLines": 110,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "plugins/memo/.codex-plugin/plugin.json",
+      "language": "json",
+      "sizeLines": 41,
+      "fileCategory": "config"
+    },
+    {
+      "path": "plugins/memo/.mcp.json",
+      "language": "json",
+      "sizeLines": 12,
+      "fileCategory": "config"
+    },
+    {
+      "path": "plugins/memo/commands/memo.md",
+      "language": "markdown",
+      "sizeLines": 43,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "plugins/memo/skills/memo/SKILL.md",
+      "language": "markdown",
+      "sizeLines": 46,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "pyproject.toml",
+      "language": "toml",
+      "sizeLines": 165,
+      "fileCategory": "config"
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "sizeLines": 1172,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "ROADMAP.md",
+      "language": "markdown",
+      "sizeLines": 152,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "scripts/audit-data-integrity.py",
+      "language": "python",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/autoloop/run.py",
+      "language": "python",
+      "sizeLines": 607,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/clean-ingest-leaks.py",
+      "language": "python",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/migrate-from-mem-vault.py",
+      "language": "python",
+      "sizeLines": 175,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/recall_eval.py",
+      "language": "python",
+      "sizeLines": 53,
+      "fileCategory": "code"
+    },
+    {
+      "path": "SECURITY.md",
+      "language": "markdown",
+      "sizeLines": 49,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "server.json",
+      "language": "json",
+      "sizeLines": 22,
+      "fileCategory": "config"
+    },
+    {
+      "path": "skills/memo/SKILL.md",
+      "language": "markdown",
+      "sizeLines": 257,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "src/memo/__init__.py",
+      "language": "python",
+      "sizeLines": 42,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/_trace.py",
+      "language": "python",
+      "sizeLines": 37,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/analytics.py",
+      "language": "python",
+      "sizeLines": 341,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/briefing.py",
+      "language": "python",
+      "sizeLines": 122,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cache_backend.py",
+      "language": "python",
+      "sizeLines": 255,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cache.py",
+      "language": "python",
+      "sizeLines": 284,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/capture.py",
+      "language": "python",
+      "sizeLines": 691,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/chunker.py",
+      "language": "python",
+      "sizeLines": 211,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_analytics.py",
+      "language": "python",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_as_of.py",
+      "language": "python",
+      "sizeLines": 175,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_backend_native.py",
+      "language": "python",
+      "sizeLines": 74,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_backup.py",
+      "language": "python",
+      "sizeLines": 176,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_briefing.py",
+      "language": "python",
+      "sizeLines": 214,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_capture.py",
+      "language": "python",
+      "sizeLines": 342,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_chat.py",
+      "language": "python",
+      "sizeLines": 136,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_collaborative.py",
+      "language": "python",
+      "sizeLines": 124,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_common.py",
+      "language": "python",
+      "sizeLines": 125,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_config.py",
+      "language": "python",
+      "sizeLines": 96,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_consolidate.py",
+      "language": "python",
+      "sizeLines": 239,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_contextual.py",
+      "language": "python",
+      "sizeLines": 202,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_contradict.py",
+      "language": "python",
+      "sizeLines": 416,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_crossdedup.py",
+      "language": "python",
+      "sizeLines": 192,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_dashboard.py",
+      "language": "python",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_dedupe.py",
+      "language": "python",
+      "sizeLines": 102,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_diag.py",
+      "language": "python",
+      "sizeLines": 561,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_doctor.py",
+      "language": "python",
+      "sizeLines": 244,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_dream.py",
+      "language": "python",
+      "sizeLines": 407,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_embed_daemon.py",
+      "language": "python",
+      "sizeLines": 96,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_encrypt.py",
+      "language": "python",
+      "sizeLines": 85,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_entities.py",
+      "language": "python",
+      "sizeLines": 138,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_eval.py",
+      "language": "python",
+      "sizeLines": 181,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_export.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_federation.py",
+      "language": "python",
+      "sizeLines": 147,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_feedback.py",
+      "language": "python",
+      "sizeLines": 90,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_graph.py",
+      "language": "python",
+      "sizeLines": 203,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_health.py",
+      "language": "python",
+      "sizeLines": 337,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_history.py",
+      "language": "python",
+      "sizeLines": 162,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_import.py",
+      "language": "python",
+      "sizeLines": 244,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_ingest_daemon.py",
+      "language": "python",
+      "sizeLines": 117,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_ingest.py",
+      "language": "python",
+      "sizeLines": 730,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_install_mcp.py",
+      "language": "python",
+      "sizeLines": 150,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_links.py",
+      "language": "python",
+      "sizeLines": 180,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_maint_daemon.py",
+      "language": "python",
+      "sizeLines": 116,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_maintain.py",
+      "language": "python",
+      "sizeLines": 387,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_mandate.py",
+      "language": "python",
+      "sizeLines": 105,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_memory.py",
+      "language": "python",
+      "sizeLines": 529,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_multimodal.py",
+      "language": "python",
+      "sizeLines": 117,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_outcome.py",
+      "language": "python",
+      "sizeLines": 111,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_profile.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_query.py",
+      "language": "python",
+      "sizeLines": 195,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_recall_daemon.py",
+      "language": "python",
+      "sizeLines": 118,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_recall_hook.py",
+      "language": "python",
+      "sizeLines": 387,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_repo.py",
+      "language": "python",
+      "sizeLines": 410,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_retier.py",
+      "language": "python",
+      "sizeLines": 66,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_roi.py",
+      "language": "python",
+      "sizeLines": 187,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_runtime.py",
+      "language": "python",
+      "sizeLines": 63,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_search.py",
+      "language": "python",
+      "sizeLines": 470,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_session.py",
+      "language": "python",
+      "sizeLines": 444,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_share.py",
+      "language": "python",
+      "sizeLines": 211,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_stats.py",
+      "language": "python",
+      "sizeLines": 42,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_sync.py",
+      "language": "python",
+      "sizeLines": 402,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_synthesize.py",
+      "language": "python",
+      "sizeLines": 105,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_temporal.py",
+      "language": "python",
+      "sizeLines": 225,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_transcripts.py",
+      "language": "python",
+      "sizeLines": 512,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_tui.py",
+      "language": "python",
+      "sizeLines": 227,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_usefulness.py",
+      "language": "python",
+      "sizeLines": 121,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_version.py",
+      "language": "python",
+      "sizeLines": 124,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli_viz.py",
+      "language": "python",
+      "sizeLines": 426,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/cli.py",
+      "language": "python",
+      "sizeLines": 345,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/collaborative.py",
+      "language": "python",
+      "sizeLines": 456,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/config.py",
+      "language": "python",
+      "sizeLines": 565,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/consciousness_ledger.py",
+      "language": "python",
+      "sizeLines": 94,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/consolidation.py",
+      "language": "python",
+      "sizeLines": 430,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/contextual_retrieval.py",
+      "language": "python",
+      "sizeLines": 134,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/contextual.py",
+      "language": "python",
+      "sizeLines": 337,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/contradict.py",
+      "language": "python",
+      "sizeLines": 633,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/crossref.py",
+      "language": "python",
+      "sizeLines": 331,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/daemon_common.py",
+      "language": "python",
+      "sizeLines": 111,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/dashboard_logs.py",
+      "language": "python",
+      "sizeLines": 172,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/dashboard_metrics.py",
+      "language": "python",
+      "sizeLines": 470,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/dashboard_panels.py",
+      "language": "python",
+      "sizeLines": 484,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/dashboard_tui.py",
+      "language": "python",
+      "sizeLines": 127,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/dashboard.py",
+      "language": "python",
+      "sizeLines": 75,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/embed_base.py",
+      "language": "python",
+      "sizeLines": 77,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/embed_protocol.py",
+      "language": "python",
+      "sizeLines": 202,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/embedder_client.py",
+      "language": "python",
+      "sizeLines": 256,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/embedder.py",
+      "language": "python",
+      "sizeLines": 427,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/encryption.py",
+      "language": "python",
+      "sizeLines": 387,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/entity_extractor.py",
+      "language": "python",
+      "sizeLines": 196,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/errors.py",
+      "language": "python",
+      "sizeLines": 71,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/eval_grounding.py",
+      "language": "python",
+      "sizeLines": 114,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/eval_recall.py",
+      "language": "python",
+      "sizeLines": 348,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/experimental_index.md",
+      "language": "markdown",
+      "sizeLines": 121,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "src/memo/federation.py",
+      "language": "python",
+      "sizeLines": 257,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/flags_base.py",
+      "language": "python",
+      "sizeLines": 47,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/flags_behavior.py",
+      "language": "python",
+      "sizeLines": 196,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/flags_ingest.py",
+      "language": "python",
+      "sizeLines": 114,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/flags_misc.py",
+      "language": "python",
+      "sizeLines": 438,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/flags_recall.py",
+      "language": "python",
+      "sizeLines": 217,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/flags_search.py",
+      "language": "python",
+      "sizeLines": 210,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/flags.py",
+      "language": "python",
+      "sizeLines": 164,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/graph.py",
+      "language": "python",
+      "sizeLines": 302,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/grounding.py",
+      "language": "python",
+      "sizeLines": 343,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/health_report.py",
+      "language": "python",
+      "sizeLines": 149,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/history.py",
+      "language": "python",
+      "sizeLines": 276,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/identity.py",
+      "language": "python",
+      "sizeLines": 85,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/import_export.py",
+      "language": "python",
+      "sizeLines": 335,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/ingest_client.py",
+      "language": "python",
+      "sizeLines": 68,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/ingest_helpers.py",
+      "language": "python",
+      "sizeLines": 148,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/ingest_server.py",
+      "language": "python",
+      "sizeLines": 291,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/lifecycle.py",
+      "language": "python",
+      "sizeLines": 451,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/llm.py",
+      "language": "python",
+      "sizeLines": 443,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/maint_client.py",
+      "language": "python",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/maint_server.py",
+      "language": "python",
+      "sizeLines": 196,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/mcp_tools.py",
+      "language": "python",
+      "sizeLines": 286,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/__init__.py",
+      "language": "python",
+      "sizeLines": 127,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/_base.py",
+      "language": "python",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/ask_ops.py",
+      "language": "python",
+      "sizeLines": 774,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/capabilities.py",
+      "language": "python",
+      "sizeLines": 145,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/consolidate_ops.py",
+      "language": "python",
+      "sizeLines": 491,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/delete_ops.py",
+      "language": "python",
+      "sizeLines": 145,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/facade.py",
+      "language": "python",
+      "sizeLines": 420,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/maintain_ops.py",
+      "language": "python",
+      "sizeLines": 700,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/prompts.py",
+      "language": "python",
+      "sizeLines": 207,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/record.py",
+      "language": "python",
+      "sizeLines": 597,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/replay_ops.py",
+      "language": "python",
+      "sizeLines": 277,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/repo_ops.py",
+      "language": "python",
+      "sizeLines": 99,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/rerank_ops.py",
+      "language": "python",
+      "sizeLines": 351,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/search_ops.py",
+      "language": "python",
+      "sizeLines": 825,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/update_ops.py",
+      "language": "python",
+      "sizeLines": 170,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/memory/write_ops.py",
+      "language": "python",
+      "sizeLines": 740,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/mlx_gpu.py",
+      "language": "python",
+      "sizeLines": 140,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/multimodal.py",
+      "language": "python",
+      "sizeLines": 492,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/navigation.py",
+      "language": "python",
+      "sizeLines": 377,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/obsidian_links.py",
+      "language": "python",
+      "sizeLines": 118,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/ocr.py",
+      "language": "python",
+      "sizeLines": 282,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/outcome.py",
+      "language": "python",
+      "sizeLines": 250,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/perf.py",
+      "language": "python",
+      "sizeLines": 48,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/proactive.py",
+      "language": "python",
+      "sizeLines": 253,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/project.py",
+      "language": "python",
+      "sizeLines": 73,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/rag_cache.py",
+      "language": "python",
+      "sizeLines": 47,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/recall_client.py",
+      "language": "python",
+      "sizeLines": 35,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/recall_logic.py",
+      "language": "python",
+      "sizeLines": 273,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/recall_server.py",
+      "language": "python",
+      "sizeLines": 73,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/recall_socket.py",
+      "language": "python",
+      "sizeLines": 400,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/recall_stats.py",
+      "language": "python",
+      "sizeLines": 96,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/receipts.py",
+      "language": "python",
+      "sizeLines": 154,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/repo_index_helpers.py",
+      "language": "python",
+      "sizeLines": 340,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/repo_index_search.py",
+      "language": "python",
+      "sizeLines": 237,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/repo_index.py",
+      "language": "python",
+      "sizeLines": 757,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/reranker.py",
+      "language": "python",
+      "sizeLines": 251,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/retrieval_boost.py",
+      "language": "python",
+      "sizeLines": 190,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/__init__.py",
+      "language": "python",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/codex.py",
+      "language": "python",
+      "sizeLines": 158,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/daemon.py",
+      "language": "python",
+      "sizeLines": 227,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/detect.py",
+      "language": "python",
+      "sizeLines": 138,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/install.py",
+      "language": "python",
+      "sizeLines": 272,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/mcp.py",
+      "language": "python",
+      "sizeLines": 204,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/migrate.py",
+      "language": "python",
+      "sizeLines": 195,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/report.py",
+      "language": "python",
+      "sizeLines": 32,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/shell_wrapper.py",
+      "language": "python",
+      "sizeLines": 194,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/sleep_cycle.py",
+      "language": "python",
+      "sizeLines": 133,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/runtime/update.py",
+      "language": "python",
+      "sizeLines": 89,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/saved_queries.py",
+      "language": "python",
+      "sizeLines": 250,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_analytics.py",
+      "language": "python",
+      "sizeLines": 41,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_asof.py",
+      "language": "python",
+      "sizeLines": 104,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_backup.py",
+      "language": "python",
+      "sizeLines": 65,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_cache.py",
+      "language": "python",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_collaborative.py",
+      "language": "python",
+      "sizeLines": 109,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_common.py",
+      "language": "python",
+      "sizeLines": 66,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_consolidate.py",
+      "language": "python",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_contextual.py",
+      "language": "python",
+      "sizeLines": 99,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_contradict.py",
+      "language": "python",
+      "sizeLines": 124,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_core_history.py",
+      "language": "python",
+      "sizeLines": 79,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_core_records.py",
+      "language": "python",
+      "sizeLines": 121,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_core_search.py",
+      "language": "python",
+      "sizeLines": 165,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_encrypt.py",
+      "language": "python",
+      "sizeLines": 68,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_entities.py",
+      "language": "python",
+      "sizeLines": 62,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_feedback.py",
+      "language": "python",
+      "sizeLines": 60,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_graph.py",
+      "language": "python",
+      "sizeLines": 111,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_health.py",
+      "language": "python",
+      "sizeLines": 90,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_import_export.py",
+      "language": "python",
+      "sizeLines": 100,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_links.py",
+      "language": "python",
+      "sizeLines": 89,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_multimodal.py",
+      "language": "python",
+      "sizeLines": 131,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_query.py",
+      "language": "python",
+      "sizeLines": 104,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_reflect.py",
+      "language": "python",
+      "sizeLines": 59,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_repo.py",
+      "language": "python",
+      "sizeLines": 99,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_resources.py",
+      "language": "python",
+      "sizeLines": 42,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_share.py",
+      "language": "python",
+      "sizeLines": 140,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_sync.py",
+      "language": "python",
+      "sizeLines": 104,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_synthesis.py",
+      "language": "python",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_temporal.py",
+      "language": "python",
+      "sizeLines": 104,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server_version.py",
+      "language": "python",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/server.py",
+      "language": "python",
+      "sizeLines": 267,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/session.py",
+      "language": "python",
+      "sizeLines": 789,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/setup/__init__.py",
+      "language": "python",
+      "sizeLines": 26,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/setup/config_io.py",
+      "language": "python",
+      "sizeLines": 88,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/setup/picker.py",
+      "language": "python",
+      "sizeLines": 109,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/setup/vaults.py",
+      "language": "python",
+      "sizeLines": 70,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/sharing.py",
+      "language": "python",
+      "sizeLines": 470,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/__init__.py",
+      "language": "python",
+      "sizeLines": 3,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/_base.py",
+      "language": "python",
+      "sizeLines": 32,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/bm25_queries.py",
+      "language": "python",
+      "sizeLines": 263,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/connection.py",
+      "language": "python",
+      "sizeLines": 94,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/feedback_store.py",
+      "language": "python",
+      "sizeLines": 190,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/migrations.py",
+      "language": "python",
+      "sizeLines": 32,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/queries.py",
+      "language": "python",
+      "sizeLines": 477,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/repo_store.py",
+      "language": "python",
+      "sizeLines": 714,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/rows.py",
+      "language": "python",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/schema.py",
+      "language": "python",
+      "sizeLines": 608,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/signal_queries.py",
+      "language": "python",
+      "sizeLines": 316,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/store.py",
+      "language": "python",
+      "sizeLines": 175,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/tantivy_index.py",
+      "language": "python",
+      "sizeLines": 181,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/store/vec_base.py",
+      "language": "python",
+      "sizeLines": 122,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/surface.py",
+      "language": "python",
+      "sizeLines": 63,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/synapse_backend.py",
+      "language": "python",
+      "sizeLines": 305,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/synapse_client.py",
+      "language": "python",
+      "sizeLines": 267,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/sync_git.py",
+      "language": "python",
+      "sizeLines": 405,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/sync_signal.py",
+      "language": "python",
+      "sizeLines": 73,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/sync.py",
+      "language": "python",
+      "sizeLines": 302,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/temporal.py",
+      "language": "python",
+      "sizeLines": 418,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/text_quality.py",
+      "language": "python",
+      "sizeLines": 81,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/tiers.py",
+      "language": "python",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/time_machine.py",
+      "language": "python",
+      "sizeLines": 358,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/transcript_miner.py",
+      "language": "python",
+      "sizeLines": 241,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/trinity_server.py",
+      "language": "python",
+      "sizeLines": 209,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/util.py",
+      "language": "python",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/versioning.py",
+      "language": "python",
+      "sizeLines": 286,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/watcher.py",
+      "language": "python",
+      "sizeLines": 220,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/memo/whatsapp_ingest.py",
+      "language": "python",
+      "sizeLines": 349,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/__init__.py",
+      "language": "python",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/conftest.py",
+      "language": "python",
+      "sizeLines": 226,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_adaptive_rerank_pool.py",
+      "language": "python",
+      "sizeLines": 216,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_analytics.py",
+      "language": "python",
+      "sizeLines": 166,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_architecture_boundaries.py",
+      "language": "python",
+      "sizeLines": 249,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_backend_native.py",
+      "language": "python",
+      "sizeLines": 159,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_briefing_unified.py",
+      "language": "python",
+      "sizeLines": 289,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cache_backend.py",
+      "language": "python",
+      "sizeLines": 45,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cache_tier.py",
+      "language": "python",
+      "sizeLines": 239,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cache.py",
+      "language": "python",
+      "sizeLines": 65,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_capture_incremental.py",
+      "language": "python",
+      "sizeLines": 350,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_capture.py",
+      "language": "python",
+      "sizeLines": 262,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_chat_stream.py",
+      "language": "python",
+      "sizeLines": 133,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_chunk_ingest.py",
+      "language": "python",
+      "sizeLines": 164,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_chunker.py",
+      "language": "python",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cli_consult_attribution.py",
+      "language": "python",
+      "sizeLines": 89,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cli_init.py",
+      "language": "python",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cli_install_mcp.py",
+      "language": "python",
+      "sizeLines": 46,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cli_install_wrapper.py",
+      "language": "python",
+      "sizeLines": 113,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cli_migrate_vault.py",
+      "language": "python",
+      "sizeLines": 286,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_cli_parity.py",
+      "language": "python",
+      "sizeLines": 355,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_collaborative.py",
+      "language": "python",
+      "sizeLines": 276,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_config.py",
+      "language": "python",
+      "sizeLines": 315,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_consciousness_ledger.py",
+      "language": "python",
+      "sizeLines": 140,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_consolidate_safe.py",
+      "language": "python",
+      "sizeLines": 87,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_consolidation.py",
+      "language": "python",
+      "sizeLines": 200,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_contextual.py",
+      "language": "python",
+      "sizeLines": 237,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_continuity.py",
+      "language": "python",
+      "sizeLines": 39,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_contradict_incremental.py",
+      "language": "python",
+      "sizeLines": 50,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_contradict.py",
+      "language": "python",
+      "sizeLines": 393,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_crossref.py",
+      "language": "python",
+      "sizeLines": 228,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_daemon_common.py",
+      "language": "python",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_dashboard_build.py",
+      "language": "python",
+      "sizeLines": 58,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_dashboard.py",
+      "language": "python",
+      "sizeLines": 191,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_db_health.py",
+      "language": "python",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_dream_health.py",
+      "language": "python",
+      "sizeLines": 304,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_embed_cache_records.py",
+      "language": "python",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_embed_cli.py",
+      "language": "python",
+      "sizeLines": 155,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_embed_protocol_contract.py",
+      "language": "python",
+      "sizeLines": 140,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_embedder_client.py",
+      "language": "python",
+      "sizeLines": 328,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_embedder_profile_authority.py",
+      "language": "python",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_embedder.py",
+      "language": "python",
+      "sizeLines": 160,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_encryption_gate.py",
+      "language": "python",
+      "sizeLines": 127,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_encryption.py",
+      "language": "python",
+      "sizeLines": 290,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_entity_extractor.py",
+      "language": "python",
+      "sizeLines": 61,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_errors.py",
+      "language": "python",
+      "sizeLines": 54,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_eval_grounding.py",
+      "language": "python",
+      "sizeLines": 59,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_eval_recall.py",
+      "language": "python",
+      "sizeLines": 196,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_eval_regression_labels.py",
+      "language": "python",
+      "sizeLines": 174,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_federation.py",
+      "language": "python",
+      "sizeLines": 227,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_feedback_decay.py",
+      "language": "python",
+      "sizeLines": 36,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_flags.py",
+      "language": "python",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_graph_store.py",
+      "language": "python",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_grounded_rate.py",
+      "language": "python",
+      "sizeLines": 131,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_grounding.py",
+      "language": "python",
+      "sizeLines": 182,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_health_report.py",
+      "language": "python",
+      "sizeLines": 269,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_history_store.py",
+      "language": "python",
+      "sizeLines": 43,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_hook_contract.py",
+      "language": "python",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_identity.py",
+      "language": "python",
+      "sizeLines": 54,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_import_export.py",
+      "language": "python",
+      "sizeLines": 192,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ingest_daemon.py",
+      "language": "python",
+      "sizeLines": 185,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ingest_enhanced.py",
+      "language": "python",
+      "sizeLines": 454,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_lifecycle.py",
+      "language": "python",
+      "sizeLines": 402,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_llm.py",
+      "language": "python",
+      "sizeLines": 89,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_logs_and_doctor.py",
+      "language": "python",
+      "sizeLines": 161,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_maint_daemon.py",
+      "language": "python",
+      "sizeLines": 91,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_maintain.py",
+      "language": "python",
+      "sizeLines": 223,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_mandate.py",
+      "language": "python",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_memory_ask.py",
+      "language": "python",
+      "sizeLines": 254,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_memory_history.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_memory_project_tag.py",
+      "language": "python",
+      "sizeLines": 75,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_memory_reindex.py",
+      "language": "python",
+      "sizeLines": 165,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_memory_search.py",
+      "language": "python",
+      "sizeLines": 141,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_memory_update_delete.py",
+      "language": "python",
+      "sizeLines": 167,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_memory_write.py",
+      "language": "python",
+      "sizeLines": 188,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_metadata_indices.py",
+      "language": "python",
+      "sizeLines": 32,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_mlx_gpu.py",
+      "language": "python",
+      "sizeLines": 105,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_multimodal.py",
+      "language": "python",
+      "sizeLines": 132,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_navigation.py",
+      "language": "python",
+      "sizeLines": 245,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_no_model_mode.py",
+      "language": "python",
+      "sizeLines": 74,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_obsidian_links.py",
+      "language": "python",
+      "sizeLines": 88,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ocr_obsidian.py",
+      "language": "python",
+      "sizeLines": 165,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ocr.py",
+      "language": "python",
+      "sizeLines": 184,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_outcome.py",
+      "language": "python",
+      "sizeLines": 117,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_perf.py",
+      "language": "python",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_proactive.py",
+      "language": "python",
+      "sizeLines": 149,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_profile.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_project.py",
+      "language": "python",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_queries.py",
+      "language": "python",
+      "sizeLines": 298,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_query_expansion.py",
+      "language": "python",
+      "sizeLines": 88,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_rag_cache.py",
+      "language": "python",
+      "sizeLines": 84,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_recall_daemon_health.py",
+      "language": "python",
+      "sizeLines": 52,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_recall_hooks.py",
+      "language": "python",
+      "sizeLines": 263,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_recall_latency.py",
+      "language": "python",
+      "sizeLines": 139,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_recall_server.py",
+      "language": "python",
+      "sizeLines": 122,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_recall_shutdown.py",
+      "language": "python",
+      "sizeLines": 99,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_receipts.py",
+      "language": "python",
+      "sizeLines": 242,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_reference_noise_gate.py",
+      "language": "python",
+      "sizeLines": 37,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_repo_dim_mismatches.py",
+      "language": "python",
+      "sizeLines": 39,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_repo_index.py",
+      "language": "python",
+      "sizeLines": 604,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_reproduce_mismatches.py",
+      "language": "python",
+      "sizeLines": 75,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_reranker.py",
+      "language": "python",
+      "sizeLines": 263,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_retrieval_boost.py",
+      "language": "python",
+      "sizeLines": 111,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_roi_reask.py",
+      "language": "python",
+      "sizeLines": 122,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_rrf_ranking.py",
+      "language": "python",
+      "sizeLines": 390,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_runtime_isolation.py",
+      "language": "python",
+      "sizeLines": 328,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_search_exact_mode.py",
+      "language": "python",
+      "sizeLines": 33,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_server_instructions.py",
+      "language": "python",
+      "sizeLines": 15,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_server.py",
+      "language": "python",
+      "sizeLines": 145,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_session.py",
+      "language": "python",
+      "sizeLines": 588,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_setup_config_io.py",
+      "language": "python",
+      "sizeLines": 70,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_setup_vaults.py",
+      "language": "python",
+      "sizeLines": 80,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_sharing.py",
+      "language": "python",
+      "sizeLines": 294,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_smoke_mlx.py",
+      "language": "python",
+      "sizeLines": 101,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_source_feedback.py",
+      "language": "python",
+      "sizeLines": 128,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_store.py",
+      "language": "python",
+      "sizeLines": 520,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_surface_profiles.py",
+      "language": "python",
+      "sizeLines": 77,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_synapse_backend.py",
+      "language": "python",
+      "sizeLines": 360,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_synapse_client.py",
+      "language": "python",
+      "sizeLines": 257,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_synapse_conflict.py",
+      "language": "python",
+      "sizeLines": 377,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_sync_bootstrap.py",
+      "language": "python",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_sync_git.py",
+      "language": "python",
+      "sizeLines": 446,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_sync_signal.py",
+      "language": "python",
+      "sizeLines": 265,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_sync.py",
+      "language": "python",
+      "sizeLines": 204,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_synthesize.py",
+      "language": "python",
+      "sizeLines": 480,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_tantivy_index.py",
+      "language": "python",
+      "sizeLines": 246,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_temporal.py",
+      "language": "python",
+      "sizeLines": 190,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_text_quality.py",
+      "language": "python",
+      "sizeLines": 61,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_tier1_safety_fixes.py",
+      "language": "python",
+      "sizeLines": 109,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_tier2_perf_fixes.py",
+      "language": "python",
+      "sizeLines": 305,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_tiers.py",
+      "language": "python",
+      "sizeLines": 167,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_time_machine.py",
+      "language": "python",
+      "sizeLines": 178,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_trace_id_env.py",
+      "language": "python",
+      "sizeLines": 71,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_transcript_miner.py",
+      "language": "python",
+      "sizeLines": 100,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_trinity_server.py",
+      "language": "python",
+      "sizeLines": 48,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_usefulness_signal.py",
+      "language": "python",
+      "sizeLines": 118,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_usefulness.py",
+      "language": "python",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_util.py",
+      "language": "python",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_versioning.py",
+      "language": "python",
+      "sizeLines": 258,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_watcher.py",
+      "language": "python",
+      "sizeLines": 71,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_whatsapp_ingest.py",
+      "language": "python",
+      "sizeLines": 130,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/build.py",
+      "language": "python",
+      "sizeLines": 1304,
+      "fileCategory": "code"
+    }
+  ],
+  "batchImportData": {
+    ".agents/plugins/marketplace.json": [],
+    ".claude-plugin/marketplace.json": [],
+    ".claude-plugin/plugin.json": [],
+    ".claude/workflows/data-integrity-audit.js": [],
+    ".claude/workflows/demonolith-split.js": [],
+    ".github/workflows/macos-smoke.yml": [],
+    ".github/workflows/publish.yml": [],
+    ".github/workflows/slow-tests.yml": [],
+    ".github/workflows/test.yml": [],
+    ".mcp.json": [],
+    ".understand-anything/tmp/generate-local-graphs.mjs": [],
+    "AGENTS.md": [],
+    "AUDIT_REPORT.md": [],
+    "CHANGELOG.md": [],
+    "CLAUDE.md": [],
+    "commands/memo.md": [],
+    "CONTRIBUTING.md": [],
+    "docs/briefing.md": [],
+    "docs/contradict-loop.md": [],
+    "docs/distribution.md": [],
+    "docs/embedder-daemon.md": [],
+    "docs/homebrew/mlx-memo.rb": [],
+    "docs/homebrew/README.md": [],
+    "docs/install-new-mac.md": [],
+    "docs/receipts.md": [],
+    "docs/registry-submission.md": [],
+    "docs/superpowers/specs/2026-06-17-memo-two-tier-sync-and-identity-design.md": [],
+    "docs/synapse-adapter.md": [],
+    "eval/grounding_labels.json": [],
+    "eval/regression_labels.json": [],
+    "GEMINI.md": [],
+    "hooks/hooks.json": [],
+    "install.sh": [],
+    "launchd/com.fer.memo-dream.plist": [],
+    "MODEL_PROFILES.md": [],
+    "PERF_OPTIMIZATIONS.md": [],
+    "plugins/memo/.codex-plugin/plugin.json": [],
+    "plugins/memo/.mcp.json": [],
+    "plugins/memo/commands/memo.md": [],
+    "plugins/memo/skills/memo/SKILL.md": [],
+    "pyproject.toml": [],
+    "README.md": [],
+    "ROADMAP.md": [],
+    "scripts/audit-data-integrity.py": [],
+    "scripts/autoloop/run.py": [],
+    "scripts/clean-ingest-leaks.py": [],
+    "scripts/migrate-from-mem-vault.py": [],
+    "scripts/recall_eval.py": [],
+    "SECURITY.md": [],
+    "server.json": [],
+    "skills/memo/SKILL.md": [],
+    "src/memo/__init__.py": [
+      "src/memo/config.py",
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/_trace.py": [],
+    "src/memo/analytics.py": [],
+    "src/memo/briefing.py": [
+      "src/memo/__init__.py",
+      "src/memo/synapse_client.py"
+    ],
+    "src/memo/cache_backend.py": [
+      "src/memo/flags.py"
+    ],
+    "src/memo/cache.py": [
+      "src/memo/flags.py"
+    ],
+    "src/memo/capture.py": [
+      "src/memo/util.py"
+    ],
+    "src/memo/chunker.py": [],
+    "src/memo/cli_analytics.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_as_of.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_backend_native.py": [
+      "src/memo/cli_common.py",
+      "src/memo/cli_diag.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_backup.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_briefing.py": [
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_capture.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_chat.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_collaborative.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_common.py": [
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_config.py": [
+      "src/memo/__init__.py",
+      "src/memo/cli_common.py",
+      "src/memo/flags.py"
+    ],
+    "src/memo/cli_consolidate.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_contextual.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_contradict.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_crossdedup.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_dashboard.py": [
+      "src/memo/config.py",
+      "src/memo/errors.py",
+      "src/memo/flags.py"
+    ],
+    "src/memo/cli_dedupe.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_diag.py": [
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_doctor.py": [
+      "src/memo/cli_common.py",
+      "src/memo/cli_diag.py",
+      "src/memo/cli_runtime.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_dream.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_embed_daemon.py": [
+      "src/memo/cli_common.py"
+    ],
+    "src/memo/cli_encrypt.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/flags.py"
+    ],
+    "src/memo/cli_entities.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_eval.py": [
+      "src/memo/__init__.py",
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/eval_recall.py"
+    ],
+    "src/memo/cli_export.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_federation.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_feedback.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_graph.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_health.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/health_report.py"
+    ],
+    "src/memo/cli_history.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_import.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_ingest_daemon.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_ingest.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_install_mcp.py": [
+      "src/memo/runtime/detect.py",
+      "src/memo/runtime/mcp.py"
+    ],
+    "src/memo/cli_links.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_maint_daemon.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_maintain.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/flags.py"
+    ],
+    "src/memo/cli_mandate.py": [],
+    "src/memo/cli_memory.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_multimodal.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_outcome.py": [
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_profile.py": [
+      "src/memo/cli_common.py",
+      "src/memo/cli_diag.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_query.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_recall_daemon.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_recall_hook.py": [
+      "src/memo/config.py",
+      "src/memo/flags.py"
+    ],
+    "src/memo/cli_repo.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/util.py"
+    ],
+    "src/memo/cli_retier.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/tiers.py"
+    ],
+    "src/memo/cli_roi.py": [
+      "src/memo/config.py",
+      "src/memo/dashboard.py"
+    ],
+    "src/memo/cli_runtime.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/runtime/daemon.py",
+      "src/memo/runtime/install.py",
+      "src/memo/runtime/report.py",
+      "src/memo/setup/__init__.py"
+    ],
+    "src/memo/cli_search.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_session.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/flags.py"
+    ],
+    "src/memo/cli_share.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_stats.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_sync.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_synthesize.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_temporal.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_transcripts.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_tui.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_usefulness.py": [
+      "src/memo/config.py",
+      "src/memo/dashboard.py"
+    ],
+    "src/memo/cli_version.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli_viz.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/cli.py": [
+      "src/memo/cli_analytics.py",
+      "src/memo/cli_as_of.py",
+      "src/memo/cli_backend_native.py",
+      "src/memo/cli_backup.py",
+      "src/memo/cli_briefing.py",
+      "src/memo/cli_capture.py",
+      "src/memo/cli_chat.py",
+      "src/memo/cli_collaborative.py",
+      "src/memo/cli_common.py",
+      "src/memo/cli_config.py",
+      "src/memo/cli_consolidate.py",
+      "src/memo/cli_contextual.py",
+      "src/memo/cli_contradict.py",
+      "src/memo/cli_crossdedup.py",
+      "src/memo/cli_dashboard.py",
+      "src/memo/cli_dedupe.py",
+      "src/memo/cli_diag.py",
+      "src/memo/cli_doctor.py",
+      "src/memo/cli_dream.py",
+      "src/memo/cli_embed_daemon.py",
+      "src/memo/cli_encrypt.py",
+      "src/memo/cli_entities.py",
+      "src/memo/cli_eval.py",
+      "src/memo/cli_export.py",
+      "src/memo/cli_feedback.py",
+      "src/memo/cli_graph.py",
+      "src/memo/cli_health.py",
+      "src/memo/cli_history.py",
+      "src/memo/cli_import.py",
+      "src/memo/cli_ingest_daemon.py",
+      "src/memo/cli_ingest.py",
+      "src/memo/cli_install_mcp.py",
+      "src/memo/cli_links.py",
+      "src/memo/cli_maint_daemon.py",
+      "src/memo/cli_maintain.py",
+      "src/memo/cli_mandate.py",
+      "src/memo/cli_memory.py",
+      "src/memo/cli_multimodal.py",
+      "src/memo/cli_outcome.py",
+      "src/memo/cli_profile.py",
+      "src/memo/cli_query.py",
+      "src/memo/cli_recall_daemon.py",
+      "src/memo/cli_recall_hook.py",
+      "src/memo/cli_repo.py",
+      "src/memo/cli_retier.py",
+      "src/memo/cli_roi.py",
+      "src/memo/cli_runtime.py",
+      "src/memo/cli_search.py",
+      "src/memo/cli_session.py",
+      "src/memo/cli_share.py",
+      "src/memo/cli_stats.py",
+      "src/memo/cli_sync.py",
+      "src/memo/cli_synthesize.py",
+      "src/memo/cli_temporal.py",
+      "src/memo/cli_transcripts.py",
+      "src/memo/cli_tui.py",
+      "src/memo/cli_usefulness.py",
+      "src/memo/cli_version.py",
+      "src/memo/cli_viz.py",
+      "src/memo/setup/__init__.py"
+    ],
+    "src/memo/collaborative.py": [],
+    "src/memo/config.py": [
+      "src/memo/flags.py"
+    ],
+    "src/memo/consciousness_ledger.py": [
+      "src/memo/util.py"
+    ],
+    "src/memo/consolidation.py": [
+      "src/memo/llm.py"
+    ],
+    "src/memo/contextual_retrieval.py": [],
+    "src/memo/contextual.py": [],
+    "src/memo/contradict.py": [
+      "src/memo/temporal.py"
+    ],
+    "src/memo/crossref.py": [],
+    "src/memo/daemon_common.py": [],
+    "src/memo/dashboard_logs.py": [],
+    "src/memo/dashboard_metrics.py": [
+      "src/memo/dashboard_logs.py"
+    ],
+    "src/memo/dashboard_panels.py": [
+      "src/memo/dashboard_logs.py",
+      "src/memo/dashboard_metrics.py"
+    ],
+    "src/memo/dashboard_tui.py": [
+      "src/memo/dashboard_panels.py"
+    ],
+    "src/memo/dashboard.py": [
+      "src/memo/dashboard_logs.py",
+      "src/memo/dashboard_metrics.py",
+      "src/memo/dashboard_panels.py",
+      "src/memo/dashboard_tui.py"
+    ],
+    "src/memo/embed_base.py": [],
+    "src/memo/embed_protocol.py": [],
+    "src/memo/embedder_client.py": [
+      "src/memo/recall_server.py"
+    ],
+    "src/memo/embedder.py": [
+      "src/memo/mlx_gpu.py"
+    ],
+    "src/memo/encryption.py": [],
+    "src/memo/entity_extractor.py": [],
+    "src/memo/errors.py": [],
+    "src/memo/eval_grounding.py": [
+      "src/memo/dashboard_metrics.py"
+    ],
+    "src/memo/eval_recall.py": [],
+    "src/memo/experimental_index.md": [],
+    "src/memo/federation.py": [],
+    "src/memo/flags_base.py": [],
+    "src/memo/flags_behavior.py": [
+      "src/memo/flags_base.py"
+    ],
+    "src/memo/flags_ingest.py": [
+      "src/memo/flags_base.py"
+    ],
+    "src/memo/flags_misc.py": [
+      "src/memo/flags_base.py"
+    ],
+    "src/memo/flags_recall.py": [
+      "src/memo/flags_base.py"
+    ],
+    "src/memo/flags_search.py": [
+      "src/memo/flags_base.py"
+    ],
+    "src/memo/flags.py": [
+      "src/memo/flags_base.py",
+      "src/memo/flags_behavior.py",
+      "src/memo/flags_ingest.py",
+      "src/memo/flags_misc.py",
+      "src/memo/flags_recall.py",
+      "src/memo/flags_search.py"
+    ],
+    "src/memo/graph.py": [],
+    "src/memo/grounding.py": [],
+    "src/memo/health_report.py": [
+      "src/memo/flags.py"
+    ],
+    "src/memo/history.py": [],
+    "src/memo/identity.py": [],
+    "src/memo/import_export.py": [],
+    "src/memo/ingest_client.py": [
+      "src/memo/__init__.py",
+      "src/memo/embed_protocol.py",
+      "src/memo/ingest_server.py"
+    ],
+    "src/memo/ingest_helpers.py": [
+      "src/memo/obsidian_links.py",
+      "src/memo/ocr.py"
+    ],
+    "src/memo/ingest_server.py": [
+      "src/memo/__init__.py",
+      "src/memo/daemon_common.py",
+      "src/memo/embed_protocol.py"
+    ],
+    "src/memo/lifecycle.py": [],
+    "src/memo/llm.py": [
+      "src/memo/mlx_gpu.py"
+    ],
+    "src/memo/maint_client.py": [
+      "src/memo/__init__.py",
+      "src/memo/embed_protocol.py",
+      "src/memo/maint_server.py"
+    ],
+    "src/memo/maint_server.py": [
+      "src/memo/daemon_common.py"
+    ],
+    "src/memo/mcp_tools.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/memory/__init__.py": [
+      "src/memo/analytics.py",
+      "src/memo/collaborative.py",
+      "src/memo/config.py",
+      "src/memo/consolidation.py",
+      "src/memo/contextual_retrieval.py",
+      "src/memo/contextual.py",
+      "src/memo/contradict.py",
+      "src/memo/crossref.py",
+      "src/memo/embedder.py",
+      "src/memo/encryption.py",
+      "src/memo/errors.py",
+      "src/memo/federation.py",
+      "src/memo/graph.py",
+      "src/memo/import_export.py",
+      "src/memo/lifecycle.py",
+      "src/memo/llm.py",
+      "src/memo/memory/facade.py",
+      "src/memo/memory/record.py",
+      "src/memo/multimodal.py",
+      "src/memo/navigation.py",
+      "src/memo/proactive.py",
+      "src/memo/saved_queries.py",
+      "src/memo/sharing.py",
+      "src/memo/store/__init__.py",
+      "src/memo/sync.py",
+      "src/memo/temporal.py",
+      "src/memo/tiers.py",
+      "src/memo/util.py",
+      "src/memo/versioning.py"
+    ],
+    "src/memo/memory/_base.py": [],
+    "src/memo/memory/ask_ops.py": [
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py"
+    ],
+    "src/memo/memory/capabilities.py": [],
+    "src/memo/memory/consolidate_ops.py": [
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py"
+    ],
+    "src/memo/memory/delete_ops.py": [
+      "src/memo/lifecycle.py",
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py"
+    ],
+    "src/memo/memory/facade.py": [
+      "src/memo/config.py",
+      "src/memo/consolidation.py",
+      "src/memo/contextual_retrieval.py",
+      "src/memo/contradict.py",
+      "src/memo/embedder.py",
+      "src/memo/graph.py",
+      "src/memo/llm.py",
+      "src/memo/memory/ask_ops.py",
+      "src/memo/memory/capabilities.py",
+      "src/memo/memory/consolidate_ops.py",
+      "src/memo/memory/delete_ops.py",
+      "src/memo/memory/maintain_ops.py",
+      "src/memo/memory/record.py",
+      "src/memo/memory/replay_ops.py",
+      "src/memo/memory/repo_ops.py",
+      "src/memo/memory/rerank_ops.py",
+      "src/memo/memory/search_ops.py",
+      "src/memo/memory/update_ops.py",
+      "src/memo/memory/write_ops.py",
+      "src/memo/store/__init__.py",
+      "src/memo/temporal.py"
+    ],
+    "src/memo/memory/maintain_ops.py": [
+      "src/memo/embedder.py",
+      "src/memo/flags.py",
+      "src/memo/lifecycle.py",
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py",
+      "src/memo/util.py"
+    ],
+    "src/memo/memory/prompts.py": [],
+    "src/memo/memory/record.py": [
+      "src/memo/errors.py",
+      "src/memo/memory/prompts.py",
+      "src/memo/tiers.py"
+    ],
+    "src/memo/memory/replay_ops.py": [
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py",
+      "src/memo/util.py"
+    ],
+    "src/memo/memory/repo_ops.py": [
+      "src/memo/memory/_base.py"
+    ],
+    "src/memo/memory/rerank_ops.py": [
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py"
+    ],
+    "src/memo/memory/search_ops.py": [
+      "src/memo/flags.py",
+      "src/memo/lifecycle.py",
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py",
+      "src/memo/perf.py"
+    ],
+    "src/memo/memory/update_ops.py": [
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py",
+      "src/memo/util.py"
+    ],
+    "src/memo/memory/write_ops.py": [
+      "src/memo/_trace.py",
+      "src/memo/flags.py",
+      "src/memo/memory/_base.py",
+      "src/memo/memory/record.py",
+      "src/memo/tiers.py",
+      "src/memo/util.py"
+    ],
+    "src/memo/mlx_gpu.py": [],
+    "src/memo/multimodal.py": [],
+    "src/memo/navigation.py": [],
+    "src/memo/obsidian_links.py": [],
+    "src/memo/ocr.py": [],
+    "src/memo/outcome.py": [],
+    "src/memo/perf.py": [],
+    "src/memo/proactive.py": [
+      "src/memo/llm.py"
+    ],
+    "src/memo/project.py": [],
+    "src/memo/rag_cache.py": [],
+    "src/memo/recall_client.py": [
+      "src/memo/__init__.py",
+      "src/memo/embed_protocol.py"
+    ],
+    "src/memo/recall_logic.py": [],
+    "src/memo/recall_server.py": [
+      "src/memo/daemon_common.py",
+      "src/memo/recall_client.py",
+      "src/memo/recall_logic.py",
+      "src/memo/recall_socket.py",
+      "src/memo/recall_stats.py"
+    ],
+    "src/memo/recall_socket.py": [
+      "src/memo/daemon_common.py",
+      "src/memo/recall_logic.py",
+      "src/memo/recall_stats.py"
+    ],
+    "src/memo/recall_stats.py": [],
+    "src/memo/receipts.py": [],
+    "src/memo/repo_index_helpers.py": [
+      "src/memo/config.py",
+      "src/memo/embedder.py"
+    ],
+    "src/memo/repo_index_search.py": [
+      "src/memo/config.py",
+      "src/memo/retrieval_boost.py"
+    ],
+    "src/memo/repo_index.py": [
+      "src/memo/config.py",
+      "src/memo/embedder.py",
+      "src/memo/ingest_helpers.py",
+      "src/memo/ocr.py",
+      "src/memo/repo_index_helpers.py",
+      "src/memo/repo_index_search.py",
+      "src/memo/store/__init__.py",
+      "src/memo/util.py"
+    ],
+    "src/memo/reranker.py": [
+      "src/memo/mlx_gpu.py"
+    ],
+    "src/memo/retrieval_boost.py": [],
+    "src/memo/runtime/__init__.py": [],
+    "src/memo/runtime/codex.py": [
+      "src/memo/cli_common.py"
+    ],
+    "src/memo/runtime/daemon.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py"
+    ],
+    "src/memo/runtime/detect.py": [],
+    "src/memo/runtime/install.py": [
+      "src/memo/cli_common.py",
+      "src/memo/runtime/codex.py",
+      "src/memo/runtime/detect.py",
+      "src/memo/runtime/mcp.py",
+      "src/memo/runtime/migrate.py",
+      "src/memo/runtime/shell_wrapper.py",
+      "src/memo/runtime/update.py"
+    ],
+    "src/memo/runtime/mcp.py": [
+      "src/memo/cli_common.py"
+    ],
+    "src/memo/runtime/migrate.py": [
+      "src/memo/cli_common.py",
+      "src/memo/config.py",
+      "src/memo/setup/__init__.py"
+    ],
+    "src/memo/runtime/report.py": [
+      "src/memo/cli_common.py"
+    ],
+    "src/memo/runtime/shell_wrapper.py": [
+      "src/memo/cli_common.py"
+    ],
+    "src/memo/runtime/sleep_cycle.py": [
+      "src/memo/config.py",
+      "src/memo/flags.py",
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/runtime/update.py": [
+      "src/memo/cli_common.py"
+    ],
+    "src/memo/saved_queries.py": [],
+    "src/memo/server_analytics.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_asof.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_backup.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_cache.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_collaborative.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_common.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_consolidate.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_contextual.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_contradict.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_core_history.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_core_records.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_core_search.py": [
+      "src/memo/memory/__init__.py",
+      "src/memo/server_common.py"
+    ],
+    "src/memo/server_encrypt.py": [
+      "src/memo/flags.py",
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_entities.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_feedback.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_graph.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_health.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_import_export.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_links.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_multimodal.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_query.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_reflect.py": [],
+    "src/memo/server_repo.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_resources.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_share.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_sync.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_synthesis.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_temporal.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server_version.py": [
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/server.py": [
+      "src/memo/__init__.py",
+      "src/memo/_trace.py",
+      "src/memo/config.py",
+      "src/memo/memory/__init__.py"
+    ],
+    "src/memo/session.py": [
+      "src/memo/flags.py"
+    ],
+    "src/memo/setup/__init__.py": [
+      "src/memo/setup/config_io.py",
+      "src/memo/setup/picker.py",
+      "src/memo/setup/vaults.py"
+    ],
+    "src/memo/setup/config_io.py": [],
+    "src/memo/setup/picker.py": [
+      "src/memo/setup/vaults.py"
+    ],
+    "src/memo/setup/vaults.py": [],
+    "src/memo/sharing.py": [],
+    "src/memo/store/__init__.py": [
+      "src/memo/store/store.py"
+    ],
+    "src/memo/store/_base.py": [],
+    "src/memo/store/bm25_queries.py": [
+      "src/memo/store/_base.py",
+      "src/memo/store/rows.py",
+      "src/memo/store/schema.py"
+    ],
+    "src/memo/store/connection.py": [
+      "src/memo/store/_base.py"
+    ],
+    "src/memo/store/feedback_store.py": [
+      "src/memo/store/_base.py"
+    ],
+    "src/memo/store/migrations.py": [
+      "src/memo/store/_base.py"
+    ],
+    "src/memo/store/queries.py": [
+      "src/memo/store/bm25_queries.py",
+      "src/memo/store/rows.py",
+      "src/memo/store/signal_queries.py"
+    ],
+    "src/memo/store/repo_store.py": [
+      "src/memo/store/_base.py",
+      "src/memo/store/rows.py",
+      "src/memo/store/schema.py"
+    ],
+    "src/memo/store/rows.py": [],
+    "src/memo/store/schema.py": [
+      "src/memo/store/_base.py"
+    ],
+    "src/memo/store/signal_queries.py": [
+      "src/memo/store/_base.py"
+    ],
+    "src/memo/store/store.py": [
+      "src/memo/store/connection.py",
+      "src/memo/store/feedback_store.py",
+      "src/memo/store/migrations.py",
+      "src/memo/store/queries.py",
+      "src/memo/store/repo_store.py",
+      "src/memo/store/schema.py",
+      "src/memo/store/tantivy_index.py",
+      "src/memo/store/vec_base.py"
+    ],
+    "src/memo/store/tantivy_index.py": [],
+    "src/memo/store/vec_base.py": [],
+    "src/memo/surface.py": [
+      "src/memo/flags.py"
+    ],
+    "src/memo/synapse_backend.py": [
+      "src/memo/memory/__init__.py",
+      "src/memo/util.py"
+    ],
+    "src/memo/synapse_client.py": [],
+    "src/memo/sync_git.py": [
+      "src/memo/errors.py",
+      "src/memo/sync_signal.py"
+    ],
+    "src/memo/sync_signal.py": [],
+    "src/memo/sync.py": [
+      "src/memo/history.py"
+    ],
+    "src/memo/temporal.py": [
+      "src/memo/llm.py"
+    ],
+    "src/memo/text_quality.py": [],
+    "src/memo/tiers.py": [],
+    "src/memo/time_machine.py": [],
+    "src/memo/transcript_miner.py": [
+      "src/memo/capture.py"
+    ],
+    "src/memo/trinity_server.py": [
+      "src/memo/recall_server.py"
+    ],
+    "src/memo/util.py": [],
+    "src/memo/versioning.py": [],
+    "src/memo/watcher.py": [],
+    "src/memo/whatsapp_ingest.py": [],
+    "tests/__init__.py": [],
+    "tests/conftest.py": [],
+    "tests/test_adaptive_rerank_pool.py": [],
+    "tests/test_analytics.py": [],
+    "tests/test_architecture_boundaries.py": [],
+    "tests/test_backend_native.py": [],
+    "tests/test_briefing_unified.py": [],
+    "tests/test_cache_backend.py": [],
+    "tests/test_cache_tier.py": [],
+    "tests/test_cache.py": [],
+    "tests/test_capture_incremental.py": [],
+    "tests/test_capture.py": [],
+    "tests/test_chat_stream.py": [],
+    "tests/test_chunk_ingest.py": [],
+    "tests/test_chunker.py": [],
+    "tests/test_cli_consult_attribution.py": [],
+    "tests/test_cli_init.py": [],
+    "tests/test_cli_install_mcp.py": [],
+    "tests/test_cli_install_wrapper.py": [],
+    "tests/test_cli_migrate_vault.py": [],
+    "tests/test_cli_parity.py": [],
+    "tests/test_collaborative.py": [],
+    "tests/test_config.py": [],
+    "tests/test_consciousness_ledger.py": [],
+    "tests/test_consolidate_safe.py": [],
+    "tests/test_consolidation.py": [],
+    "tests/test_contextual.py": [],
+    "tests/test_continuity.py": [],
+    "tests/test_contradict_incremental.py": [],
+    "tests/test_contradict.py": [],
+    "tests/test_crossref.py": [],
+    "tests/test_daemon_common.py": [],
+    "tests/test_dashboard_build.py": [],
+    "tests/test_dashboard.py": [],
+    "tests/test_db_health.py": [],
+    "tests/test_dream_health.py": [],
+    "tests/test_embed_cache_records.py": [],
+    "tests/test_embed_cli.py": [],
+    "tests/test_embed_protocol_contract.py": [],
+    "tests/test_embedder_client.py": [],
+    "tests/test_embedder_profile_authority.py": [],
+    "tests/test_embedder.py": [],
+    "tests/test_encryption_gate.py": [],
+    "tests/test_encryption.py": [],
+    "tests/test_entity_extractor.py": [],
+    "tests/test_errors.py": [],
+    "tests/test_eval_grounding.py": [],
+    "tests/test_eval_recall.py": [],
+    "tests/test_eval_regression_labels.py": [],
+    "tests/test_federation.py": [],
+    "tests/test_feedback_decay.py": [],
+    "tests/test_flags.py": [],
+    "tests/test_graph_store.py": [],
+    "tests/test_grounded_rate.py": [],
+    "tests/test_grounding.py": [],
+    "tests/test_health_report.py": [],
+    "tests/test_history_store.py": [],
+    "tests/test_hook_contract.py": [],
+    "tests/test_identity.py": [],
+    "tests/test_import_export.py": [],
+    "tests/test_ingest_daemon.py": [],
+    "tests/test_ingest_enhanced.py": [],
+    "tests/test_lifecycle.py": [],
+    "tests/test_llm.py": [],
+    "tests/test_logs_and_doctor.py": [],
+    "tests/test_maint_daemon.py": [],
+    "tests/test_maintain.py": [],
+    "tests/test_mandate.py": [],
+    "tests/test_memory_ask.py": [],
+    "tests/test_memory_history.py": [],
+    "tests/test_memory_project_tag.py": [],
+    "tests/test_memory_reindex.py": [],
+    "tests/test_memory_search.py": [],
+    "tests/test_memory_update_delete.py": [],
+    "tests/test_memory_write.py": [],
+    "tests/test_metadata_indices.py": [],
+    "tests/test_mlx_gpu.py": [],
+    "tests/test_multimodal.py": [],
+    "tests/test_navigation.py": [],
+    "tests/test_no_model_mode.py": [],
+    "tests/test_obsidian_links.py": [],
+    "tests/test_ocr_obsidian.py": [],
+    "tests/test_ocr.py": [],
+    "tests/test_outcome.py": [],
+    "tests/test_perf.py": [],
+    "tests/test_proactive.py": [],
+    "tests/test_profile.py": [],
+    "tests/test_project.py": [],
+    "tests/test_queries.py": [],
+    "tests/test_query_expansion.py": [],
+    "tests/test_rag_cache.py": [],
+    "tests/test_recall_daemon_health.py": [],
+    "tests/test_recall_hooks.py": [],
+    "tests/test_recall_latency.py": [],
+    "tests/test_recall_server.py": [],
+    "tests/test_recall_shutdown.py": [],
+    "tests/test_receipts.py": [],
+    "tests/test_reference_noise_gate.py": [],
+    "tests/test_repo_dim_mismatches.py": [],
+    "tests/test_repo_index.py": [],
+    "tests/test_reproduce_mismatches.py": [],
+    "tests/test_reranker.py": [],
+    "tests/test_retrieval_boost.py": [],
+    "tests/test_roi_reask.py": [],
+    "tests/test_rrf_ranking.py": [],
+    "tests/test_runtime_isolation.py": [],
+    "tests/test_search_exact_mode.py": [],
+    "tests/test_server_instructions.py": [],
+    "tests/test_server.py": [],
+    "tests/test_session.py": [],
+    "tests/test_setup_config_io.py": [],
+    "tests/test_setup_vaults.py": [],
+    "tests/test_sharing.py": [],
+    "tests/test_smoke_mlx.py": [],
+    "tests/test_source_feedback.py": [],
+    "tests/test_store.py": [],
+    "tests/test_surface_profiles.py": [],
+    "tests/test_synapse_backend.py": [],
+    "tests/test_synapse_client.py": [],
+    "tests/test_synapse_conflict.py": [],
+    "tests/test_sync_bootstrap.py": [],
+    "tests/test_sync_git.py": [],
+    "tests/test_sync_signal.py": [],
+    "tests/test_sync.py": [],
+    "tests/test_synthesize.py": [],
+    "tests/test_tantivy_index.py": [],
+    "tests/test_temporal.py": [],
+    "tests/test_text_quality.py": [],
+    "tests/test_tier1_safety_fixes.py": [],
+    "tests/test_tier2_perf_fixes.py": [],
+    "tests/test_tiers.py": [],
+    "tests/test_time_machine.py": [],
+    "tests/test_trace_id_env.py": [],
+    "tests/test_transcript_miner.py": [],
+    "tests/test_trinity_server.py": [],
+    "tests/test_usefulness_signal.py": [],
+    "tests/test_usefulness.py": [],
+    "tests/test_util.py": [],
+    "tests/test_versioning.py": [],
+    "tests/test_watcher.py": [],
+    "tests/test_whatsapp_ingest.py": [],
+    "web/build.py": []
+  }
+}

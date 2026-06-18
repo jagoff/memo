@@ -3,7 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from memo.dashboard_logs import read_grounding_log, read_recall_log, read_usage_log
+from memo.dashboard_logs import (
+    read_grounding_diag_log,
+    read_grounding_log,
+    read_recall_log,
+    read_usage_log,
+)
 
 STRONG_SCORE = 0.85
 # Reask/grounding-turn bar (kept moderate — used by reask_stats).
@@ -23,6 +28,10 @@ SPECIFIC_MARGIN = 0.06
 # only when it is both read enough (volume) and actually helping (grounded).
 VERDICT_MIN_CONSULTS = 20
 VERDICT_MIN_GROUNDED = 0.10
+VERDICT_MIN_MEASURED_TURNS = 1
+# Keep "unmeasured" reserved for near-absence of grounding data. Once we have
+# a modest sample, the verdict can already fall through to weak/ok.
+VERDICT_MIN_MEASUREMENT_COVERAGE = 0.05
 # Layers we EXPECT to read memo (flagged as "silent" if absent). "windsurf" was
 # retired — that IDE is now Devin Desktop (Cognition), which reads
 # ~/.codeium/windsurf/mcp_config.json with MEMO_SOURCE=devin-desktop, so it is
@@ -69,6 +78,15 @@ def _row_quality(row: dict[str, Any]) -> tuple[int, float]:
     hits = row.get("hits") or []
     top = hits[0].get("score") if hits else None
     return (len(hits), float(top) if isinstance(top, (int, float)) else 0.0)
+
+
+def grounding_used(row: dict[str, Any]) -> bool:
+    """Single production decision for whether a grounding row means "used"."""
+    score = row.get("used_score")
+    spec = row.get("specific_score")
+    strong = isinstance(score, (int, float)) and float(score) >= USED_SCORE_STRONG
+    specific = isinstance(spec, (int, float)) and float(spec) >= SPECIFIC_MARGIN
+    return bool(strong or specific or row.get("downstream_action"))
 
 
 def dedup_double_fire(rows: list[dict[str, Any]], *, window_s: float = 15.0) -> list[dict[str, Any]]:
@@ -181,31 +199,45 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
     # Turns the grounding detector actually scored, and the grounded keys.
     scored_turns: set[tuple[str, int]] = set()
     grounded_keys: set[tuple[str, int, str]] = set()
+    grounding_last_seen: str | None = None
     for g in read_grounding_log(state_dir):
         sid = g.get("session_id")
         turn = g.get("turn")
         if not sid or not isinstance(turn, int):
             continue
         scored_turns.add((sid, turn))
+        ts = g.get("ts")
+        if isinstance(ts, str) and (grounding_last_seen is None or ts > grounding_last_seen):
+            grounding_last_seen = ts
         rid = g.get("recall_id")
-        score = g.get("used_score")
-        spec = g.get("specific_score")
-        # "Used" = strong absolute match, OR clearly above the question's topical
-        # baseline (paraphrase), OR a real downstream action on what memo surfaced.
-        strong = isinstance(score, (int, float)) and float(score) >= USED_SCORE_STRONG
-        specific = isinstance(spec, (int, float)) and float(spec) >= SPECIFIC_MARGIN
-        if rid and (strong or specific or g.get("downstream_action")):
+        if rid and grounding_used(g):
             grounded_keys.add((sid, turn, rid))
 
     total_surfaced = sum(len(ids) for ids in surfaced_by_turn.values())
+    surfaced_turns = len(surfaced_by_turn)
     measured = {k: ids for k, ids in surfaced_by_turn.items() if k in scored_turns}
+    measured_turns = len(measured)
     measured_surfaced = sum(len(ids) for ids in measured.values())
+    measurement_coverage = round(measured_turns / surfaced_turns, 3) if surfaced_turns else None
+    grounding_age_hours = None
+    if grounding_last_seen:
+        dt = _parse_ts(grounding_last_seen)
+        if dt is not None:
+            from datetime import UTC, datetime
+
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            grounding_age_hours = round((datetime.now(UTC) - dt).total_seconds() / 3600, 2)
     if not measured_surfaced:
         return {
             "grounded_rate": None, "surfaced": 0, "grounded": 0,
             "answer_rate": None, "answers_total": 0, "answers_grounded": 0,
             "answer_rate_knowledge": None, "answers_knowledge_total": 0,
             "answers_knowledge_grounded": 0,
+            "surfaced_turns": surfaced_turns, "measured_turns": 0,
+            "measurement_coverage": measurement_coverage,
+            "grounding_last_seen": grounding_last_seen,
+            "grounding_age_hours": grounding_age_hours,
             "unmeasured_surfaced": total_surfaced,
         }
 
@@ -235,6 +267,11 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
         "answer_rate_knowledge": round(knowledge_grounded / len(knowledge), 3) if knowledge else None,
         "answers_knowledge_total": len(knowledge),
         "answers_knowledge_grounded": knowledge_grounded,
+        "surfaced_turns": surfaced_turns,
+        "measured_turns": measured_turns,
+        "measurement_coverage": measurement_coverage,
+        "grounding_last_seen": grounding_last_seen,
+        "grounding_age_hours": grounding_age_hours,
         "unmeasured_surfaced": total_surfaced - measured_surfaced,
     }
 
@@ -279,6 +316,11 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
         "answer_rate_knowledge": grounded["answer_rate_knowledge"],
         "answers_knowledge_total": grounded["answers_knowledge_total"],
         "answers_knowledge_grounded": grounded["answers_knowledge_grounded"],
+        "surfaced_turns": grounded["surfaced_turns"],
+        "measured_turns": grounded["measured_turns"],
+        "measurement_coverage": grounded["measurement_coverage"],
+        "grounding_last_seen": grounded["grounding_last_seen"],
+        "grounding_age_hours": grounded["grounding_age_hours"],
         "unmeasured_surfaced": grounded["unmeasured_surfaced"],
         "referenced_rate": ref["referenced_rate"],
         "referenced": ref["referenced"],
@@ -312,8 +354,7 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
         sid = g.get("session_id")
         turn = g.get("turn")
         rid = g.get("recall_id")
-        score = g.get("used_score")
-        if sid and isinstance(turn, int) and rid and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+        if sid and isinstance(turn, int) and rid and grounding_used(g):
             grounded_keys.add((sid, turn, rid))
 
     by: dict[str, dict[str, Any]] = {}
@@ -378,13 +419,20 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
     status, plus a per-expected-consumer read/silent breakdown. Pure derivation
     over the recall + grounding logs — no side effects.
     """
-    health = recall_health(state_dir, limit=min(limit, 200))
+    health = recall_health(state_dir, limit=limit)
     cb = consult_breakdown(state_dir, limit=limit)
     consults = int(cb.get("sampled") or 0)
     grounded = health.get("grounded_rate")
+    measured_turns = int(health.get("measured_turns") or 0)
+    measurement_coverage = health.get("measurement_coverage")
 
     if consults < VERDICT_MIN_CONSULTS:
         status, label = "unused", "❌ NO SE USA"
+    elif (
+        measured_turns < VERDICT_MIN_MEASURED_TURNS
+        or (measurement_coverage or 0.0) < VERDICT_MIN_MEASUREMENT_COVERAGE
+    ):
+        status, label = "unmeasured", "⚠️ SE LEE PERO NO SE MIDE"
     elif (grounded or 0.0) < VERDICT_MIN_GROUNDED:
         status, label = "weak", "⚠️ SE LEE PERO NO AYUDA"
     else:
@@ -401,6 +449,12 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
         "consults": consults,
         "grounded_rate": grounded,
         "hit_rate": health.get("hit_rate"),
+        "measurement_coverage": measurement_coverage,
+        "measured_turns": measured_turns,
+        "surfaced_turns": health.get("surfaced_turns"),
+        "grounding_last_seen": health.get("grounding_last_seen"),
+        "grounding_age_hours": health.get("grounding_age_hours"),
+        "grounding_diag": read_grounding_diag_log(state_dir, limit=5),
         "readers": readers,
         "silent": silent,
         "per_consumer": per_consumer,

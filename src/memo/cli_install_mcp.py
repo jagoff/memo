@@ -141,10 +141,10 @@ def install_mcp(
 
     if with_mandate:
         click.echo("mandate (consult memo first):")
-        # Reuse the existing mandate installer for the instruction layer. In
-        # dry-run we still pass do_write so it reports per-file actions.
-        from memo.cli_mandate import mandate as _mandate
+        from memo.cli_mandate import write_mandates_for_clients
 
-        click.get_current_context().invoke(
-            _mandate, client="all", do_write=True, dry_run=not write
-        )
+        target_agents = list(agents) or ["all"]
+        if "all" in target_agents:
+            target_agents = ["codex", "devin", "opencode", "windsurf", "cursor"]
+        for rel, status in write_mandates_for_clients(target_agents, dry_run=not write):
+            click.echo(f"  {rel:<22} {status}")

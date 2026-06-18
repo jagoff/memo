@@ -251,6 +251,103 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
     print(_json.dumps(output, ensure_ascii=False))
 
 
+@session_group.command(name="idle-maintenance")
+@click.option(
+    "--mode",
+    type=click.Choice(["capture", "reflect"], case_sensitive=False),
+    default="capture",
+    show_default=True,
+    help="Delayed idle action to run after the session goes quiet.",
+)
+@click.option("--delay-secs", default=None, type=int, show_default=True)
+def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
+    """Async idle worker — run capture or reflect after a quiet period.
+
+    The prompt-submit hook spawns this command in the background. It snapshots
+    the session's `updated` stamp on start, sleeps for the requested delay, and
+    only proceeds if the snapshot is unchanged. That makes older workers self-
+    cancel when new prompts arrive, so the delay is a real inactivity window
+    rather than a blind timer.
+
+    `capture` mines the current session chunk into durable memorias.
+    `reflect` synthesizes the active session into a durable arc note.
+    Both paths are best-effort and exit 0.
+    """
+    import json as _json
+    import sys as _sys
+    import time as _time
+    from pathlib import Path as _Path
+
+    from memo.flags import flag_bool, flag_int
+
+    if flag_bool("MEMO_SESSION_DISABLE"):
+        print("{}")
+        _sys.exit(0)
+    if flag_bool("MEMO_CAPTURE_DISABLE"):
+        print("{}")
+        _sys.exit(0)
+
+    payload: dict[str, Any] = {}
+    if not _sys.stdin.isatty():
+        try:
+            raw = _sys.stdin.read()
+            if raw.strip():
+                payload = _json.loads(raw)
+        except _json.JSONDecodeError:
+            payload = {}
+
+    sid = payload.get("session_id")
+    transcript = payload.get("transcript_path")
+    if not sid:
+        print("{}")
+        _sys.exit(0)
+
+    delay = delay_secs
+    if delay is None:
+        if mode == "reflect":
+            delay = flag_int("MEMO_SESSION_IDLE_REFLECT_SECS") or 300
+        else:
+            delay = flag_int("MEMO_SESSION_IDLE_CAPTURE_SECS") or 10
+    delay = max(0, int(delay))
+
+    try:
+        from memo.session import get_session
+
+        cfg = Config.from_env()
+        snap = get_session(cfg.state_dir, str(sid))
+        if not snap:
+            print("{}")
+            _sys.exit(0)
+        expected_updated = str(snap.get("updated") or "")
+        if delay > 0:
+            _time.sleep(delay)
+
+        current = get_session(cfg.state_dir, str(sid))
+        if not current or str(current.get("updated") or "") != expected_updated:
+            print("{}")
+            _sys.exit(0)
+
+        if mode.lower() == "capture":
+            if not transcript:
+                print("{}")
+                _sys.exit(0)
+            from memo.capture import run_capture_incremental
+
+            run_capture_incremental(_Path(str(transcript)).expanduser(), str(sid), debug=flag_bool("MEMO_SESSION_DEBUG"))
+        else:
+            from memo.cli_transcripts import _reflect_session
+            from memo.memory import Memory
+
+            mem = Memory(cfg)
+            _reflect_session(str(sid), mem, cfg, debug=flag_bool("MEMO_SESSION_DEBUG"))
+    except Exception as exc:
+        if flag_bool("MEMO_SESSION_DEBUG"):
+            print(f"# memo session idle-maintenance failed: {exc}", file=_sys.stderr)
+
+    print("{}")
+    _sys.exit(0)
+
+
 @session_group.command(name="refresh-summary")
 def session_refresh_summary() -> None:
     """Stop hook entrypoint — generate/update running_summary for the active session.
@@ -312,6 +409,7 @@ def session_recent(limit: int | None) -> None:
             format_relative,
             is_command_noise,
             list_sessions,
+            render_active_memory,
         )
 
         cfg = Config.from_env()
@@ -350,8 +448,6 @@ def session_recent(limit: int | None) -> None:
         when = format_relative(top.get("updated"))
         branch = top.get("branch") or "—"
         turns = top.get("turn_count") or 0
-        # Prefer running_summary (LLM-generated arc) over plain last_user_msg.
-        running_summary = top.get("running_summary")
         summary = _clean_summary(top, 120)
         lines.extend(
             [
@@ -364,21 +460,9 @@ def session_recent(limit: int | None) -> None:
                 "",
             ]
         )
-        if running_summary:
-            lines.extend(
-                [
-                    "### El Briefing",
-                    "",
-                    running_summary.strip(),
-                    "",
-                ]
-            )
-        prompt_trail = top.get("prompt_trail") or []
-        if prompt_trail:
-            lines.append("### Loops abiertos (últimos 7 días)")
-            lines.append("")
-            for i, p in enumerate(reversed(prompt_trail[-3:]), 1):
-                lines.append(f"{i}. {p.strip()}")
+        active_memory = render_active_memory(top)
+        if active_memory:
+            lines.extend(active_memory)
             lines.append("")
         lines.extend(
             [
