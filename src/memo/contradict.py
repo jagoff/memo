@@ -45,6 +45,7 @@ the loop is already closed.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 import uuid
@@ -56,6 +57,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from memo.temporal import TemporalAnalyzer
+
+_log = logging.getLogger(__name__)
 
 try:
     from consciousness_contracts import (
@@ -448,7 +451,8 @@ class ContradictionScanner:
 
             try:
                 emb = self.memory.embedder.embed_query(body)
-            except Exception:
+            except Exception as exc:
+                _log.debug("contradiction scanner: embed failed for id=%s: %s", rec.id[:8], exc)
                 continue
 
             neighbors = self.memory.store.search(emb, limit=top_k + 1)
