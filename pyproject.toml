@@ -69,14 +69,11 @@ ocr = [
 tantivy = [
     "tantivy>=0.22; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-# Shared trinity schemas (memo + memflow + synapse). NOT on PyPI and not a git
-# repo — a local editable dep on dev machines, absent in CI/clean installs. The
-# synapse backend + consciousness ledger guard their imports and degrade to a
-# no-op when it's missing, so it stays optional. Install with:
+# Shared trinity schemas (memo + memflow + synapse) are a dev-only local
+# editable dependency, not public package metadata. The synapse backend +
+# consciousness ledger guard their imports and degrade to a no-op when it's
+# missing. Install locally after installing memo with:
 #   uv pip install -e . && uv pip install -e ../consciousness-contracts
-contracts = [
-    "consciousness-contracts>=0.1.0",
-]
 
 [project.scripts]
 memo = "memo.cli:main"
