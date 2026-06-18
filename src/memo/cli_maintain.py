@@ -35,6 +35,7 @@ from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
 from memo.flags import flag_bool, flag_int
+from memo.util import safe_operation
 
 _log = logging.getLogger(__name__)
 
@@ -47,14 +48,12 @@ def _synthesis_state_path(cfg: Config) -> Path:
     return cfg.state_dir / "synthesis_state.json"
 
 
+@safe_operation(fallback=None, log_level=logging.DEBUG, error_message="maintain: could not read synthesis_state.json")
 def _read_synthesis_last_run(cfg: Config) -> str | None:
     """Return the ISO timestamp of the last synthesis run, or None."""
     p = _synthesis_state_path(cfg)
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return data.get("last_run") or None
-    except Exception:
-        return None
+    data = json.loads(p.read_text(encoding="utf-8"))
+    return data.get("last_run") or None
 
 
 def _write_synthesis_last_run(cfg: Config, ts: str) -> None:
@@ -315,7 +314,7 @@ def maintain_cmd(
             _log.warning("maintain: proactive synthesis failed (non-fatal): %s", exc)
             receipt["errors"].append(f"maint_synthesize: {type(exc).__name__}: {exc}")
 
-    # 6. Outcome loop (opt-in: MEMO_OUTCOME_RANKING_ENABLED=1) ----------------
+    # 6. Outcome loop (default-on; disable with MEMO_OUTCOME_RANKING_ENABLED=0) -
     # Self-tuning recall: re-derive roi_score from real grounding outcomes (was
     # the surfaced memoria USED in the answer?) so ranking promotes what helps,
     # and reversibly archive dead weight (surfaced often, never grounded). Pure
