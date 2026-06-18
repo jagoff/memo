@@ -26,6 +26,7 @@ Design constraints (see plan / CLAUDE.md):
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import time
@@ -247,13 +248,35 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
     dict (for tests/logging) or None when nothing was scored. Never raises."""
     t0 = time.time()
     budget_s = _budget_ms() / 1000.0
+
+    def _bail(reason: str, *, session_id: str | None = None, turn: int | None = None) -> dict[str, Any]:
+        try:
+            from memo.dashboard import append_grounding_diag_log
+
+            append_grounding_diag_log(
+                state_dir,
+                reason=reason,
+                session_id=session_id,
+                turn=turn,
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).debug("grounding: failed to write diag log: %s", exc)
+        out: dict[str, Any] = {"scored": 0, "bailed": reason}
+        if session_id:
+            out["session_id"] = session_id
+        if turn is not None:
+            out["turn"] = turn
+        return out
+
     try:
         from memo.dashboard import append_grounding_log
 
         session_id = (payload.get("session_id") or "").strip()
         transcript_path = payload.get("transcript_path")
-        if not session_id or not transcript_path:
-            return None
+        if not session_id:
+            return _bail("missing_session_id")
+        if not transcript_path:
+            return _bail("missing_transcript_path", session_id=session_id)
 
         # Resolve the turn the recall-hook stamped for this exchange.
         from memo import session as _session
@@ -261,16 +284,16 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
         snap = _session.get_session(state_dir, session_id) or {}
         turn = snap.get("last_recall_turn")
         if not isinstance(turn, int):
-            return None
+            return _bail("missing_last_recall_turn", session_id=session_id)
 
         recalled = _recalled_for_turn(state_dir, session_id, turn)
         if not recalled:
-            return None
+            return _bail("no_recalled_hits", session_id=session_id, turn=turn)
         recalled = recalled[:_MAX_SNIPPETS]
 
         answer = read_last_assistant_text(transcript_path)
         if not answer:
-            return None
+            return _bail("no_answer", session_id=session_id, turn=turn)
         answer_tokens = _salient_tokens(answer)
         client = snap.get("client") or "claude-code"
         question = _prompt_for_turn(state_dir, session_id, turn)
@@ -304,12 +327,13 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                         if has_q:
                             scored[i]["specific"] = max(0.0, cos_a - _cosine(qvec, svec))
                         scored[i]["method"] = "both" if scored[i]["lexical"] > 0 else "embed"
-            except Exception:
-                pass  # lexical-only fallback; never fail the turn
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).debug("grounding: embed scoring failed, using lexical-only: %s", exc)
 
         # Wall-clock guard: if we blew the budget, write nothing.
         if (time.time() - t0) >= budget_s:
-            return {"session_id": session_id, "turn": turn, "scored": 0, "bailed": "budget"}
+            return _bail("budget", session_id=session_id, turn=turn)
 
         written = 0
         for entry in scored:
@@ -339,5 +363,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
             )
             written += 1
         return {"session_id": session_id, "turn": turn, "scored": written}
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("grounding: score_turn failed: %s", exc)
         return None

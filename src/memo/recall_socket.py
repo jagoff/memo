@@ -263,7 +263,18 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                 stats.record(op, latency_ms, error=error)
 
 
+# Lock acquisition order (to avoid deadlocks):
+# 1. GPU lock (mlx_gpu._GPU_LOCK) - outermost, cross-process
+# 2. Individual module locks (chat_lock, reranker_lock, load_lock, etc.) - inner
+# Never acquire a module lock while holding GPU lock; GPU lock is only
+# for MLX device serialization, not for general state protection.
+
 class PriorityLock:
+    """Priority lock with high-priority preemption.
+
+    High-priority requests (priority > 0) jump ahead of normal requests.
+    Used by recall daemon to prioritize interactive requests over background work.
+    """
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
@@ -296,6 +307,19 @@ class PriorityLock:
             self._cond.notify_all()
 
 
+class _SimpleLockWrapper:
+    """Wrapper for threading.Lock that matches PriorityLock interface."""
+    def __init__(self, lock: threading.Lock) -> None:
+        self._lock = lock
+
+    def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
+        # Ignores priority parameter for simple lock
+        return self._lock.acquire(timeout=timeout if timeout is not None else -1)
+
+    def release(self) -> None:
+        self._lock.release()
+
+
 class _RecallServer(socketserver.ThreadingUnixStreamServer):
     def __init__(self, sock_path: str, cfg: Any, mem: Any) -> None:
         self._cfg = cfg
@@ -303,20 +327,10 @@ class _RecallServer(socketserver.ThreadingUnixStreamServer):
         from memo.flags import flag_bool, flag_str
 
         if flag_bool("MEMO_RECALL_PRIORITY_ENABLED"):
-            self._priority_lock = PriorityLock()
+            self._priority_lock: PriorityLock | _SimpleLockWrapper = PriorityLock()
         else:
-
-            class FakePriorityLock:
-                def __init__(self, lock: threading.Lock):
-                    self._lock = lock
-
-                def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
-                    return self._lock.acquire(timeout=timeout if timeout is not None else -1)
-
-                def release(self) -> None:
-                    self._lock.release()
-
-            self._priority_lock = FakePriorityLock(threading.Lock())  # type: ignore[assignment]
+            # Simple lock fallback when priority disabled
+            self._priority_lock = _SimpleLockWrapper(threading.Lock())
 
         self._micro_embedder = None
         micro_model = flag_str("MEMO_MICRO_EMBEDDER_MODEL")

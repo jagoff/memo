@@ -394,10 +394,14 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     try:
         pruned = mem.gc(fix=True).get("orphan_store", [])
     except Exception as exc:  # never let GC break the pull
+        import logging
+
         from memo.errors import MemoError
 
+        _log = logging.getLogger(__name__)
         if not isinstance(exc, MemoError):
             raise
+        _log.warning("sync_pull: GC failed (orphan rows may remain): %s", exc)
 
     # 4) re-export the merged signal so the next push carries the union
     export_signal(store, signal_dir_for(cfg))
