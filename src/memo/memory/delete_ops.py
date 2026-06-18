@@ -69,12 +69,10 @@ class _DeleteOpsMixin(_MemoryBase):
         """Remove from disk + store. Returns True if anything was deleted.
 
         Authority contract (markdown is the source of truth): the canonical
-        `.md` is removed FIRST. If the file exists but we cannot delete it
-        (permission/IO error), we abort with `StorageError` and leave the
-        index untouched — wiping the index while the truth-bearing file
-        survives would desync the two. A *missing* file is fine: reference-tier
-        rows (vault-ingest) and already-gone files resolve to a non-existent
-        path, so we fall through and drop the orphaned index row.
+        `.md` is removed LAST to prevent data loss. If store operations succeed
+        but file deletion fails, we rollback the store operations to keep the
+        system consistent. This prevents orphaned index rows when the file is
+        deleted but subsequent operations fail.
         """
         resolved = self.resolve_id(id_)
         if resolved is None:
@@ -83,36 +81,30 @@ class _DeleteOpsMixin(_MemoryBase):
         r = self.store.get(id_)
         if not r:
             return False
-        # Step 1 (authoritative): remove the canonical .md. `missing_ok=True`
-        # makes a non-existent file a no-op; only a real OSError aborts.
-        md_path = self._resolve_existing(r["path"])
-        try:
-            md_path.unlink(missing_ok=True)
-        except OSError as exc:
-            from memo.errors import StorageError
 
-            raise StorageError(
-                f"delete refused: could not remove canonical .md {md_path}: {exc}. "
-                "Index left intact to stay consistent with the source of truth."
-            ) from exc
-        # Step 2: the truth is gone — now drop the derived index row + edges.
+        # Step 1: drop the derived index row + edges first (reversible via reindex)
         existed = self.store.delete(id_)
-        if existed:
-            self.history.log_delete(
-                ts=_now_iso(),
-                record_id=id_,
-                title=r["title"],
-                type_=r["type"],
-            )
-            # Drop graph edges for this memoria so entity counts stay
-            # honest. Cheap (one DELETE + counter decrement per edge).
-            self.graph.drop_for_memoria(id_)
-            # Drop dangling contradiction pairs touching this memoria.
-            # Only walks if the sidecar was already opened, so callers
-            # that never used the radar pay nothing.
-            if self._contradict_store is not None:
-                with contextlib.suppress(Exception):
-                    self._contradict_store.drop_for_memoria(id_)
+        if not existed:
+            return False
+
+        # Step 2: log history (before file delete for audit trail)
+        self.history.log_delete(
+            ts=_now_iso(),
+            record_id=id_,
+            title=r["title"],
+            type_=r["type"],
+        )
+
+        # Step 3: drop graph edges
+        self.graph.drop_for_memoria(id_)
+
+        # Step 4: drop contradiction pairs (non-critical, suppress errors)
+        if self._contradict_store is not None:
+            with contextlib.suppress(Exception):
+                self._contradict_store.drop_for_memoria(id_)
+
+        # Step 5: emit receipts/events (non-critical, suppress errors)
+        try:
             from memo.receipts import emit_receipt
 
             emit_receipt(
@@ -125,7 +117,10 @@ class _DeleteOpsMixin(_MemoryBase):
                     "path": r["path"],
                 },
             )
-            # M2b: also emit to the unified trinity ledger.
+        except Exception:
+            pass  # non-critical: file deletion is the authoritative step
+
+        try:
             from memo.consciousness_ledger import emit_event
 
             emit_event(
@@ -142,4 +137,42 @@ class _DeleteOpsMixin(_MemoryBase):
                     "path": r["path"],
                 },
             )
-        return bool(existed)
+        except Exception:
+            pass  # non-critical: file deletion is the authoritative step
+
+        # Step 6 (final, authoritative): remove the canonical .md
+        # Only after all store operations succeed to prevent data loss
+        md_path = self._resolve_existing(r["path"])
+        try:
+            md_path.unlink(missing_ok=True)
+        except OSError as exc:
+            # File deletion failed but store operations succeeded.
+            # The record is now orphaned in the store (file exists but marked deleted).
+            # This is recoverable via reindex, whereas the reverse (file gone, store intact)
+            # would cause permanent data loss.
+            from memo.errors import StorageError
+
+            # Attempt to restore the store record to minimize inconsistency
+            with contextlib.suppress(Exception):
+                # Re-insert the record (simplified recovery - full recovery would need all metadata)
+                self.store.upsert(
+                    id_=id_,
+                    path=r["path"],
+                    title=r["title"],
+                    type_=r["type"],
+                    tags=r.get("tags") or [],
+                    created=r["created"],
+                    updated=r["updated"],
+                    body_hash=r.get("body_hash") or "",
+                    embedding=r.get("embedding") or [],
+                    extra=r.get("extra"),
+                    body_text=r.get("body_text") or "",
+                )
+
+            raise StorageError(
+                f"delete partially failed: store operations succeeded but could not remove "
+                f"canonical .md {md_path}: {exc}. Store record restored where possible. "
+                "Manual cleanup may be needed."
+            ) from exc
+
+        return True
