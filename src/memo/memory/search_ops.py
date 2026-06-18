@@ -23,6 +23,7 @@ from memo.memory.record import (
     _adaptive_rrf_k,
     _apply_decay,
     _log,
+    _rrf_confident_top,
     _rrf_fuse,
 )
 from memo.perf import timer
@@ -161,6 +162,13 @@ class _SearchOpsMixin(_MemoryBase):
             bm_hits = self.store.search_bm25(
                 query, limit=k_each, type_=type_, exclude_types=exclude_types
             )
+            exact_hits = self.store.search_bm25(
+                query,
+                limit=k_each,
+                type_=type_,
+                exclude_types=exclude_types,
+                field_boost="exact",
+            )
 
             # Graph-based candidates (Entity-aware retrieval)
             graph_hits = []
@@ -175,7 +183,7 @@ class _SearchOpsMixin(_MemoryBase):
             # lists diverge) — off by default so the eval baseline holds.
             base_k = flag_int("MEMO_RRF_K") or 60
             rrf_k = (
-                _adaptive_rrf_k([vec_hits, bm_hits, graph_hits], base_k=base_k)
+                _adaptive_rrf_k([vec_hits, bm_hits, exact_hits, graph_hits], base_k=base_k)
                 if flag_bool("MEMO_RRF_ADAPTIVE")
                 else base_k
             )
@@ -183,8 +191,10 @@ class _SearchOpsMixin(_MemoryBase):
             # Per-leg weights: MEMO_SEARCH_VEC_WEIGHT / MEMO_SEARCH_BM25_WEIGHT
             # allow the user to tilt fusion toward semantic or keyword retrieval.
             # Defaults (0.5 each) preserve the historical equal-weight behaviour.
-            # Graph leg is always weight 1.0 (unscaled) — it contributes
-            # entity-context candidates, not a competing retrieval signal.
+            # Exact BM25 reuses the keyword weight: it is still lexical evidence,
+            # just stricter and metadata-boosted. Graph leg is always weight 1.0
+            # (unscaled) because it contributes entity-context candidates, not a
+            # competing retrieval signal.
             w_vec = flag_float("MEMO_SEARCH_VEC_WEIGHT")
             w_bm25 = flag_float("MEMO_SEARCH_BM25_WEIGHT")
             # Default is 0.5/0.5; treat None as default (should not happen given
@@ -205,11 +215,11 @@ class _SearchOpsMixin(_MemoryBase):
                         _weight_sum,
                     )
             # Build weight list aligned with the lists passed to _rrf_fuse:
-            # [vec_hits, bm_hits, graph_hits] → [w_vec, w_bm25, 1.0]
-            rrf_weights = [w_vec, w_bm25, 1.0]
+            # [vec_hits, bm_hits, exact_hits, graph_hits] → [w_vec, w_bm25, w_bm25, 1.0]
+            rrf_weights = [w_vec, w_bm25, w_bm25, 1.0]
 
             rows = _rrf_fuse(
-                vec_hits, bm_hits, graph_hits,
+                vec_hits, bm_hits, exact_hits, graph_hits,
                 limit=input_k, k=rrf_k, weights=rrf_weights,
             )
             _add_trace(
@@ -217,6 +227,7 @@ class _SearchOpsMixin(_MemoryBase):
                 mode="hybrid",
                 vec_count=len(vec_hits),
                 bm25_count=len(bm_hits),
+                exact_count=len(exact_hits),
                 graph_count=len(graph_hits),
                 output_count=len(rows),
                 rrf_k=rrf_k,
@@ -294,6 +305,23 @@ class _SearchOpsMixin(_MemoryBase):
         # adding rerank to single-mode searches would surprise users
         # benchmarking the raw bi-encoder or BM25 surfaces.
         # Also skipped when disable_reranker=True (e.g., chat synthesis).
+        if _reranker_will_run and flag_bool("MEMO_RERANK_SKIP_CONFIDENT_RRF"):
+            decision = _rrf_confident_top(
+                out,
+                min_ratio=flag_float("MEMO_RERANK_SKIP_MIN_RATIO") or 3.0,
+                min_gap=flag_float("MEMO_RERANK_SKIP_MIN_GAP") or 0.05,
+            )
+            if decision.skip:
+                _reranker_will_run = False
+                out = out[:limit]
+                _add_trace(
+                    "rerank_skip",
+                    reason="confident_rrf",
+                    top_id=decision.top_id,
+                    ratio=round(decision.ratio, 6),
+                    gap=round(decision.gap, 6),
+                    output_count=len(out),
+                )
         if _reranker_will_run:
             before = len(out)
             out = self._rerank(query, out, top_n=limit)

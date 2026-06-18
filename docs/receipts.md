@@ -22,21 +22,15 @@ behaviour change.
 
 ## Wire shape
 
-A receipt is a `memflow write fact <text> --meta key=value ...`
-subprocess call:
+A receipt is a `memflow say <text> --channel memo-receipts --author memo --no-sync`
+subprocess call. It is intentionally channel state, not a durable fact:
 
 ```
-memflow write fact "Memo saved memoria abcd1234 (note): Astor — Informe TO" \
-  --meta client=memo \
-  --meta topic=memo-save \
-  --meta operation=save \
-  --meta id=abcd1234... \
-  --meta type=note \
-  --meta tags=astor,terapia \
-  --meta path=memorias/2026-05-25-astor.md \
-  --meta deferred=false \
-  --meta synapse_trace_id= \
-  ...
+memflow say \
+  "Memo saved memoria abcd1234 (note): Astor — Informe TO [client=memo operation=save topic=memo-save ...]" \
+  --channel memo-receipts \
+  --author memo \
+  --no-sync
 ```
 
 Best-effort: no raise on subprocess errors, 5-second timeout. The

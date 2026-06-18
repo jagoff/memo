@@ -8,8 +8,8 @@ Verifies:
   the memflow binary / project root cannot be found (so save/update/
   delete keep working in test/CI environments).
 - When enabled + a fake binary is wired in via `MEMO_MEMFLOW_BIN`,
-  the subprocess receives the expected `memflow write fact <text>
-  --meta key=value` shape.
+  the subprocess receives the expected `memflow say <text>
+  --channel memo-receipts --author memo --no-sync` shape.
 - `Memory.save / update / delete / reindex` invoke the emitter once
   per successful op and the receipt carries operation-specific meta.
 - `MemoSynapseBackend.remember()` passes `skip_memflow_receipt=True`
@@ -103,7 +103,7 @@ def test_emit_receipt_skipped_when_project_root_missing(monkeypatch, fake_memflo
     assert out == {"ok": False, "skipped": True, "reason": "memflow project root not found"}
 
 
-def test_emit_receipt_invokes_memflow_write_fact(monkeypatch, fake_memflow):
+def test_emit_receipt_invokes_memflow_channel_receipt(monkeypatch, fake_memflow):
     monkeypatch.setenv("MEMO_EMIT_RECEIPTS", "1")
     out = receipts.emit_receipt(
         "save",
@@ -115,13 +115,11 @@ def test_emit_receipt_invokes_memflow_write_fact(monkeypatch, fake_memflow):
     calls = _read_calls(fake_memflow)
     assert len(calls) == 1
     line = calls[0]
-    assert "write fact hello body" in line
-    assert "--meta client=memo" in line
-    assert "--meta topic=memo-save" in line
-    assert "--meta operation=save" in line
-    assert "--meta id=abc123" in line
-    assert "--meta type=note" in line
-    assert "--meta tags=alpha,beta" in line
+    assert "say hello body" in line
+    assert "--channel memo-receipts" in line
+    assert "--author memo" in line
+    assert "--no-sync" in line
+    assert "write fact" not in line
 
 
 # -- Memory.save / update / delete / reindex wiring ------------------------

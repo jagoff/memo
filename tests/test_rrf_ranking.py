@@ -11,6 +11,7 @@ from memo.memory.record import (
     _adaptive_rrf_k,
     _apply_decay,
     _halflife_for_type,
+    _rrf_confident_top,
     _rrf_fuse,
 )
 
@@ -388,3 +389,36 @@ def test_vec_weight_leg_weighting_flag_warning(monkeypatch, caplog):
     assert math.isclose(scores["b"], expected_b, rel_tol=1e-9), (
         f"score for 'b' should be {expected_b}, got {scores['b']}"
     )
+
+
+# ── #14 Reranker confident-RRF skip ───────────────────────────────────────────
+
+
+def test_rrf_confident_top_detects_clear_winner():
+    """A dominant RRF top hit can safely skip cross-encoder rerank."""
+    rows = [
+        _hit("clear", score=0.196721),
+        _hit("second", score=0.049677),
+        _hit("third", score=0.033871),
+    ]
+
+    decision = _rrf_confident_top(rows, min_ratio=3.0, min_gap=0.05)
+
+    assert decision.skip is True
+    assert decision.top_id == "clear"
+    assert decision.ratio > 3.0
+    assert decision.gap > 0.05
+
+
+def test_rrf_confident_top_keeps_ambiguous_results_for_reranker():
+    """Close RRF scores should still go through the reranker."""
+    rows = [
+        _hit("first", score=0.0164),
+        _hit("second", score=0.0159),
+        _hit("third", score=0.0147),
+    ]
+
+    decision = _rrf_confident_top(rows, min_ratio=3.0, min_gap=0.05)
+
+    assert decision.skip is False
+    assert decision.top_id == "first"

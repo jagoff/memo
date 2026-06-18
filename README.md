@@ -903,7 +903,7 @@ All env vars are optional. Defaults aim at a fresh Apple Silicon Mac.
 | `MEMO_RERANKER_ENABLED` | `1` in `balanced` / `quality` | Enable cross-encoder rerank for hybrid search |
 | `MEMO_RERANKER_MODEL` | `mku64/Qwen3-Reranker-0.6B-mlx-8Bit` | MLX reranker model |
 | `MEMO_RERANKER_REVISION` | unset | Optional HF commit/revision pin for user-hosted reranker repos |
-| `MEMO_RERANK_INPUT_K` | `30` | Hybrid candidates sent to the reranker |
+| `MEMO_RERANK_INPUT_K` | `5` | Hybrid candidates sent to the reranker |
 | `MEMO_RERANK_FUSION_ALPHA` | `0.7` | Weight of reranker score vs RRF position bonus |
 
 **Search**
