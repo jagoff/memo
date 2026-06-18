@@ -139,3 +139,155 @@ def test_search_with_trace_reports_retrieval_stages(mem_with_stub: Memory) -> No
     assert "materialize" in stages
     assert stages[-1] == "final"
     assert envelope["trace"][-1]["output_count"] == len(envelope["hits"])
+
+
+def test_hybrid_search_skips_rerank_when_rrf_has_confident_winner(
+    mem_with_stub: Memory,
+    monkeypatch,
+) -> None:
+    mem_with_stub.cfg = mem_with_stub.cfg.model_copy(update={"reranker_enabled": True})
+    monkeypatch.setenv("MEMO_RERANK_SKIP_CONFIDENT_RRF", "1")
+    monkeypatch.setenv("MEMO_RRF_K", "1")
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+
+    def _row(rid: str, title: str) -> dict:
+        return {
+            "id": rid,
+            "path": f"{rid}.md",
+            "title": title,
+            "type": "note",
+            "tags": [],
+            "created": "",
+            "updated": "",
+            "score": 1.0,
+        }
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(
+        mem_with_stub.store,
+        "search",
+        lambda *_a, **_k: [_row("clear", "Clear winner"), _row("vec-second", "Vec second")],
+    )
+    def _bm25(*_args, **kwargs):
+        if kwargs.get("field_boost") == "exact":
+            return []
+        return [_row("clear", "Clear winner"), _row("bm-second", "BM second")]
+
+    monkeypatch.setattr(mem_with_stub.store, "search_bm25", _bm25)
+    monkeypatch.setattr(
+        mem_with_stub,
+        "_rerank",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("rerank should be skipped")),
+    )
+
+    envelope = mem_with_stub.search_with_trace(
+        "clear winner",
+        limit=3,
+        mode="hybrid",
+        load_bodies=False,
+    )
+
+    assert next(hit.id for hit in envelope["hits"]) == "clear"
+    assert "rerank_skip" in [item["stage"] for item in envelope["trace"]]
+
+
+def test_hybrid_search_still_reranks_ambiguous_rrf_results(
+    mem_with_stub: Memory,
+    monkeypatch,
+) -> None:
+    mem_with_stub.cfg = mem_with_stub.cfg.model_copy(update={"reranker_enabled": True})
+    monkeypatch.setenv("MEMO_RERANK_SKIP_CONFIDENT_RRF", "1")
+    monkeypatch.setenv("MEMO_RRF_K", "60")
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+    calls = {"rerank": 0}
+
+    def _row(rid: str, title: str) -> dict:
+        return {
+            "id": rid,
+            "path": f"{rid}.md",
+            "title": title,
+            "type": "note",
+            "tags": [],
+            "created": "",
+            "updated": "",
+            "score": 1.0,
+        }
+
+    def _rerank(_query, hits, *, top_n):
+        calls["rerank"] += 1
+        return hits[:top_n]
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(
+        mem_with_stub.store,
+        "search",
+        lambda *_a, **_k: [_row("top", "Top"), _row("vec-second", "Vec second")],
+    )
+    monkeypatch.setattr(
+        mem_with_stub.store,
+        "search_bm25",
+        lambda *_a, **_k: [_row("top", "Top"), _row("bm-second", "BM second")],
+    )
+    monkeypatch.setattr(mem_with_stub, "_rerank", _rerank)
+
+    envelope = mem_with_stub.search_with_trace(
+        "ambiguous",
+        limit=3,
+        mode="hybrid",
+        load_bodies=False,
+    )
+
+    assert calls["rerank"] == 1
+    assert "rerank" in [item["stage"] for item in envelope["trace"]]
+
+
+def test_hybrid_search_includes_exact_bm25_candidates_before_rerank(
+    mem_with_stub: Memory,
+    monkeypatch,
+) -> None:
+    mem_with_stub.cfg = mem_with_stub.cfg.model_copy(
+        update={"reranker_enabled": True, "rerank_input_k": 3},
+    )
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+    seen_field_boosts: list[str | None] = []
+
+    def _row(rid: str, title: str) -> dict:
+        return {
+            "id": rid,
+            "path": f"{rid}.md",
+            "title": title,
+            "type": "note",
+            "tags": [],
+            "created": "",
+            "updated": "",
+            "score": 1.0,
+        }
+
+    def _bm25(*_args, **kwargs):
+        seen_field_boosts.append(kwargs.get("field_boost"))
+        if kwargs.get("field_boost") == "exact":
+            return [_row("exact", "Exact metadata hit")]
+        return [_row("keyword", "Keyword hit")]
+
+    def _rerank(_query, hits, *, top_n):
+        return hits[:top_n]
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(
+        mem_with_stub.store,
+        "search",
+        lambda *_a, **_k: [_row("semantic", "Semantic hit")],
+    )
+    monkeypatch.setattr(mem_with_stub.store, "search_bm25", _bm25)
+    monkeypatch.setattr(mem_with_stub, "_rerank", _rerank)
+
+    envelope = mem_with_stub.search_with_trace(
+        "exact metadata",
+        limit=3,
+        mode="hybrid",
+        load_bodies=False,
+    )
+
+    assert "exact" in [hit.id for hit in envelope["hits"]]
+    assert None in seen_field_boosts
+    assert "exact" in seen_field_boosts

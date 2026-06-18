@@ -286,14 +286,14 @@ class Config(BaseModel):
         ),
     )
     rerank_input_k: int = Field(
-        default=30,
+        default=5,
         ge=1,
         le=200,
         description=(
             "How many hybrid-fusion candidates to feed the reranker. "
             "Larger = better recall but linearly more inference time. "
-            "30 fits the 5s recall-hook budget on M3 with the 0.6B "
-            "reranker (~600ms warm)."
+            "5 keeps cold CLI search responsive with the 4B reranker while "
+            "preserving enough candidates for the top-3 interactive path."
         ),
     )
     rerank_fusion_alpha: float = Field(

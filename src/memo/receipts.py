@@ -12,7 +12,9 @@ Default OFF. Set `MEMO_EMIT_RECEIPTS=1` to enable for save/update/
 delete/reindex. (`memo repo index` keeps its own
 `MEMO_MEMFLOW_RECEIPT=1` knob — they're independent.)
 
-Wire: shells out to `memflow write fact <text> --meta key=value ...`.
+Wire: shells out to `memflow say <text> --channel memo-receipts --author memo
+--no-sync` so the breadcrumb is operational channel state, not durable
+knowledge.
 Always returns a status dict (`{"ok": True, "path": ...}` or
 `{"ok": False, "skipped": True, "reason": "..."}` or
 `{"ok": False, "error": "..."}`) — never raises. Subprocess timeout
@@ -120,9 +122,20 @@ def emit_receipt(
                 continue
             full_meta[key] = value
 
-    command: list[str] = [memflow_bin, "write", "fact", text]
-    for key, value in full_meta.items():
-        command.extend(["--meta", f"{key}={_coerce(value)}"])
+    receipt_meta = " ".join(
+        f"{key}={_coerce(value)}" for key, value in sorted(full_meta.items())
+    )
+    receipt_text = f"{text} [{receipt_meta}]" if receipt_meta else text
+    command: list[str] = [
+        memflow_bin,
+        "say",
+        receipt_text,
+        "--channel",
+        "memo-receipts",
+        "--author",
+        "memo",
+        "--no-sync",
+    ]
 
     env = dict(os.environ)
     env["MEMFLOW_PROJECT_ROOT"] = str(project_root)

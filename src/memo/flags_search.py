@@ -152,6 +152,32 @@ SPECS: tuple[FlagSpec, ...] = (
         "Default off keeps the fixed rerank_input_k pool for a stable eval baseline.",
     ),
     _spec(
+        "MEMO_RERANK_SKIP_CONFIDENT_RRF",
+        "bool",
+        False,
+        "search",
+        "Skip cross-encoder rerank when the top hybrid RRF hit is already separated "
+        "from the runner-up by MEMO_RERANK_SKIP_MIN_RATIO and MEMO_RERANK_SKIP_MIN_GAP. "
+        "Experimental: keeps obvious searches fast while preserving rerank for ambiguous "
+        "result packs. Off by default because RRF confidence can be corpus-dependent.",
+    ),
+    _spec(
+        "MEMO_RERANK_SKIP_MIN_RATIO",
+        "float",
+        3.0,
+        "search",
+        "Minimum top/second score ratio required before confident-RRF rerank skip.",
+        min_val=1.0,
+    ),
+    _spec(
+        "MEMO_RERANK_SKIP_MIN_GAP",
+        "float",
+        0.05,
+        "search",
+        "Minimum absolute top-second score gap required before confident-RRF rerank skip.",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_GRAPH_EXPANSION_ENABLED",
         "bool",
         False,

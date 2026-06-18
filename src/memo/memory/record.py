@@ -329,6 +329,14 @@ class MemoryRecord:
         }
 
 
+@dataclass(frozen=True)
+class RRFConfidenceDecision:
+    skip: bool
+    top_id: str | None
+    ratio: float
+    gap: float
+
+
 def _now_iso() -> str:
     # Millisecond precision so within-second event ordering survives
     # — required for time-machine reconstruction to distinguish
@@ -396,6 +404,37 @@ def _rrf_fuse(
         d["score"] = score
         out.append(d)
     return out
+
+
+def _rrf_confident_top(
+    rows: list[dict[str, Any]] | list[MemoryRecord],
+    *,
+    min_ratio: float,
+    min_gap: float,
+) -> RRFConfidenceDecision:
+    """Return whether the top fused result is far enough ahead to skip rerank.
+
+    The cross-encoder is valuable when RRF leaves a close pack. When the first
+    hit is already separated by both a ratio and absolute gap, loading a large
+    reranker is usually wasted latency.
+    """
+    if not rows:
+        return RRFConfidenceDecision(skip=False, top_id=None, ratio=0.0, gap=0.0)
+
+    top = rows[0]
+    top_score = float((top.get("score") if isinstance(top, dict) else top.score) or 0.0)
+    top_id = str(top.get("id") if isinstance(top, dict) else top.id)
+    if len(rows) < 2:
+        return RRFConfidenceDecision(skip=True, top_id=top_id, ratio=float("inf"), gap=top_score)
+
+    second = rows[1]
+    second_score = float(
+        (second.get("score") if isinstance(second, dict) else second.score) or 0.0
+    )
+    gap = top_score - second_score
+    ratio = float("inf") if second_score <= 0 else top_score / second_score
+    skip = top_score > 0 and gap >= min_gap and ratio >= min_ratio
+    return RRFConfidenceDecision(skip=skip, top_id=top_id, ratio=ratio, gap=gap)
 
 
 def _adaptive_rrf_k(lists: list[list[dict[str, Any]]], *, base_k: int) -> int:

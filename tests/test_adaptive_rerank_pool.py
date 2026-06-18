@@ -130,7 +130,7 @@ def _captured_pool(
     # Patch _rrf_fuse at the module level where search_ops imports it
     import memo.memory.search_ops as _sops
 
-    def _capturing_fuse(vec, bm, graph, *, limit, **kw):
+    def _capturing_fuse(*_lists, limit, **kw):
         captured["limit"] = limit
         return []
 
