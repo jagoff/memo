@@ -304,14 +304,14 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_OUTCOME_RANKING_ENABLED",
         "bool",
-        False,
+        True,
         "roi",
         "Drive memory_health.roi_score from real grounding OUTCOMES (was the "
         "surfaced memoria actually used in the answer?) instead of mere access "
         "frequency. When on, `memo maintain` / `memo outcome` reconcile roi_score "
         "from recall.log+grounding.log, and the blind per-access roi boost is "
-        "skipped so the outcome signal stays authoritative. Default off = legacy "
-        "access-driven behaviour.",
+        "skipped so the outcome signal stays authoritative. Disable only if you "
+        "need the legacy access-driven behaviour.",
     ),
     _spec(
         "MEMO_OUTCOME_PRIOR_N",
@@ -409,6 +409,22 @@ SPECS: tuple[FlagSpec, ...] = (
         "session's insight reaches .md mid-session instead of only at Stop. "
         "Self-throttled per session off the capture watermark; a cheap no-op "
         "when not due. 0 disables the throttle (capture every prompt).",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_SESSION_IDLE_CAPTURE_SECS",
+        "int",
+        10,
+        "session",
+        "Seconds of no new prompt before the delayed session-idle capture worker mines the current session chunk into durable memorias.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_SESSION_IDLE_REFLECT_SECS",
+        "int",
+        300,
+        "session",
+        "Seconds of no new prompt before the delayed session-idle reflect worker synthesizes the active session into durable memorias.",
         min_val=0,
     ),
     # WhatsApp ingest

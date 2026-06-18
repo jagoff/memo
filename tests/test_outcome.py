@@ -41,6 +41,26 @@ def test_compute_utilities_rewards_grounded_over_surfaced(tmp_path: Path) -> Non
     assert by["mem00001"]["utility"] > by["mem00002"]["utility"]
 
 
+def test_compute_utilities_uses_strong_grounding_decision(tmp_path: Path) -> None:
+    _recall(tmp_path, "s", 1, "same topic but not actually used", "mem00001")
+    _grounded(tmp_path, "s", 1, "mem00001", score=0.72)
+    _recall(tmp_path, "s", 2, "paraphrased useful recall", "mem00002")
+    dashboard.append_grounding_log(
+        tmp_path,
+        session_id="s",
+        turn=2,
+        recall_id="mem00002",
+        used_score=0.5,
+        specific_score=0.12,
+        method="both",
+    )
+
+    u = outcome.compute_utilities(tmp_path, prior_n=0.0)
+    by = u["by_prefix"]
+    assert by["mem00001"]["grounded"] == 0
+    assert by["mem00002"]["grounded"] == 1
+
+
 # ---------------- roi reconcile ----------------
 
 class _FakeStore:
@@ -85,6 +105,15 @@ def test_dead_weight_flags_surfaced_never_grounded(tmp_path: Path) -> None:
     assert "mem0live" not in ids
     # min_surfaced=0 disables
     assert outcome.dead_weight(mem, min_surfaced=0) == []
+
+
+def test_dead_weight_disabled_when_measurement_coverage_is_zero(tmp_path: Path) -> None:
+    for t in range(1, 6):
+        _recall(tmp_path, "s", t, f"never measured prompt {t}", "mem0dead")
+
+    mem = SimpleNamespace(cfg=SimpleNamespace(state_dir=tmp_path), store=_FakeStore(["mem0dead"]))
+
+    assert outcome.dead_weight(mem, min_surfaced=4) == []
 
 
 # ---------------- gaps ----------------

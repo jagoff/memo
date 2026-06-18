@@ -12,6 +12,7 @@ from pathlib import Path
 import click
 
 from memo.cli_common import console
+from memo.cli_mandate import write_mandates_for_clients
 from memo.runtime.codex import (
     _codex_home,
     _codex_read_app_server_response,
@@ -258,6 +259,12 @@ def install_slash(
         run_client("OpenCode", install_opencode)
     if "windsurf" in selected:
         run_client("Windsurf", install_windsurf)
+
+    mandate_clients = [client for client in selected if client in {"codex", "devin", "opencode", "windsurf", "cursor"}]
+    if mandate_clients:
+        console.print("[bold]Mandate[/bold]")
+        for rel, status in write_mandates_for_clients(mandate_clients, cwd=Path.cwd(), dry_run=dry_run):
+            console.print(f"  {rel:<22} {status}")
 
     if failures:
         console.print(

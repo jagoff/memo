@@ -170,3 +170,35 @@ def append_grounding_log(
 
 def read_grounding_log(state_dir: Path, *, limit: int = 4000) -> list[dict[str, Any]]:
     return _read_jsonl(grounding_log_path(state_dir), limit=limit)
+
+
+def grounding_diag_log_path(state_dir: Path) -> Path:
+    return state_dir / "grounding_diag.log"
+
+
+def append_grounding_diag_log(
+    state_dir: Path,
+    *,
+    reason: str,
+    session_id: str | None = None,
+    turn: int | None = None,
+    cap: int = 500,
+) -> None:
+    entry: dict[str, Any] = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+        "reason": reason,
+    }
+    if session_id is not None:
+        entry["session_id"] = session_id
+    if turn is not None:
+        entry["turn"] = int(turn)
+    _write_jsonl_entry(
+        grounding_diag_log_path(state_dir),
+        entry,
+        cap=cap,
+        size_limit=1024 * 100,
+    )
+
+
+def read_grounding_diag_log(state_dir: Path, *, limit: int = 500) -> list[dict[str, Any]]:
+    return _read_jsonl(grounding_diag_log_path(state_dir), limit=limit, newest_first=True)

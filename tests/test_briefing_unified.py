@@ -16,9 +16,13 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from click.testing import CliRunner
+
 import memo.briefing as briefing_mod
+import memo.cli_briefing as cli_briefing_mod
 import memo.synapse_client as synapse_client
 
 
@@ -230,6 +234,49 @@ def test_mcp_unified_briefing_empty_when_synapse_missing(tmp_cfg, monkeypatch):
     fn = asyncio.run(server.get_tool("memory_unified_briefing")).fn
     out = fn()
     assert out == {"available": False, "markdown": "", "lines": []}
+
+
+def test_cli_briefing_emits_active_memory_block(tmp_cfg, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli_briefing_mod.Config, "from_env", lambda: tmp_cfg)
+    monkeypatch.setattr(
+        "memo.session.list_sessions",
+        lambda *a, **kw: [
+            {
+                "cwd": str(tmp_path),
+                "session_id": "sid-1234",
+                "updated": "2026-06-18T10:00:00+00:00",
+                "summary": "ordenando la memoria activa",
+                "running_summary": "Se está consolidando el bloque de memoria activa.",
+                "project": "memo",
+                "branch": "master",
+                "turn_count": 3,
+                "modified_files": ["src/memo/session.py"],
+                "last_assistant_tail": "Quedó integrada en briefing y continuidad.",
+                "prompt_trail": ["primer loop", "segundo loop"],
+            }
+        ],
+    )
+
+    class _FakeStore:
+        def list_recent(self, *a, **kw):
+            return []
+
+    class _FakeMemory:
+        def __init__(self, cfg):
+            self.store = _FakeStore()
+
+    monkeypatch.setattr("memo.memory.Memory", _FakeMemory)
+    monkeypatch.setattr(briefing_mod, "synapse_briefing_lines", lambda cwd: [])
+
+    result = CliRunner().invoke(cli_briefing_mod.briefing)
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    md = payload["hookSpecificOutput"]["additionalContext"]
+    assert "Memoria activa" in md
+    assert "Última sesión en este proyecto" in md
+    assert "Quedó integrada" in md
+    assert "Loops abiertos (sesión)" in md
 
 
 # -- get_packet wrapper ---------------------------------------------------

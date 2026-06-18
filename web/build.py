@@ -565,8 +565,11 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
     reask_avoided = int(reask.get("reask_avoided") or 0)
     grounded_tokens = grounded_total * tok_grounded
     reask_tokens = reask_avoided * tok_reask
+    today_key = today.isoformat()
+    today_tokens = next((d["tokens"] for d in daily if d["date"] == today_key), 0)
     return {
         "daily": daily,
+        "today_tokens": today_tokens,
         "grounded": grounded_total,
         "grounded_tokens": grounded_tokens,
         "reask_avoided": reask_avoided,
@@ -655,13 +658,22 @@ def _gerencial(cfg: Config) -> dict[str, Any]:
     token_detail = _token_savings(state_dir)
     return {
         "funnel": funnel,
+        "consults": sampled,
         "coverage_rate": round(fired / sampled, 3) if sampled else None,
         "hit_rate": health.get("hit_rate"),
+        "grounded_rate": health.get("grounded_rate"),
+        "referenced_rate": health.get("referenced_rate"),
         "used_rate": used_rate,
         "used_total": used_total,
         "used_grounded": used_grounded,
+        "measurement_coverage": health.get("measurement_coverage"),
+        "measured_turns": health.get("measured_turns"),
+        "surfaced_turns": health.get("surfaced_turns"),
+        "grounding_age_hours": health.get("grounding_age_hours"),
         "time_saved_human": roi.get("time_saved_human"),
         "reask_avoided": reask.get("reask_avoided"),
+        "tokens_saved_today": token_detail["today_tokens"],
+        "tokens_saved_today_human": _fmt_tokens_compact(token_detail["today_tokens"]),
         "tokens_saved": token_detail["total"],
         "tokens_saved_human": _fmt_tokens_compact(token_detail["total"]),
         "avg_answer_tokens": token_detail["avg_answer_tokens"],
@@ -756,6 +768,11 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
             "answer_rate_knowledge": recall_health_data["answer_rate_knowledge"],
             "answers_knowledge_total": recall_health_data["answers_knowledge_total"],
             "answers_knowledge_grounded": recall_health_data["answers_knowledge_grounded"],
+            "surfaced_turns": recall_health_data["surfaced_turns"],
+            "measured_turns": recall_health_data["measured_turns"],
+            "measurement_coverage": recall_health_data["measurement_coverage"],
+            "grounding_last_seen": recall_health_data["grounding_last_seen"],
+            "grounding_age_hours": recall_health_data["grounding_age_hours"],
             "unmeasured_surfaced": recall_health_data["unmeasured_surfaced"],
             "referenced_rate": recall_health_data["referenced_rate"],
         },
@@ -1059,6 +1076,8 @@ _HTML_TEMPLATE = r"""<!doctype html>
               explain: "memo se consulta seguido y la información que entrega termina usándose en las respuestas. Está cumpliendo su rol de memoria primaria." },
     weak:   { glyph: "⚠️", color: "var(--yellow)",
               explain: "Las herramientas leen memo, pero lo que entrega casi no termina usándose en las respuestas. Funciona como búsqueda, todavía no como memoria de verdad." },
+    unmeasured: { glyph: "⚠️", color: "var(--yellow)",
+              explain: "Las herramientas leen memo, pero falta cobertura de grounding reciente para saber si lo entregado termina usándose. Hay que arreglar la medición antes de juzgar utilidad." },
     unused: { glyph: "❌", color: "var(--red)",
               explain: "Casi no hay consultas registradas. Sin uso no se puede saber si memo ayuda — hay que conectar y ejercitar las herramientas." },
   };
@@ -1109,18 +1128,28 @@ _HTML_TEMPLATE = r"""<!doctype html>
     const usedColor = usedRate == null ? "var(--fg-mute)"
       : usedRate >= 0.6 ? "var(--green)" : usedRate >= 0.35 ? "var(--yellow)" : "var(--red)";
     const covColor = (G.coverage_rate ?? 0) >= 0.7 ? "var(--green)" : "var(--yellow)";
+    const groundedColor = G.grounded_rate == null ? "var(--fg-mute)"
+      : G.grounded_rate >= 0.1 ? "var(--green)" : "var(--yellow)";
+    const referencedColor = G.referenced_rate == null ? "var(--fg-mute)"
+      : G.referenced_rate >= 0.1 ? "var(--green)" : "var(--yellow)";
     const kpis = [
+      { num: (G.consults ?? 0).toLocaleString("es"), accent: "var(--blue)",
+        cap: "Consultas analizadas", sub: "total de preguntas registradas" },
       { num: asPct(G.coverage_rate), accent: covColor, cap: "Preguntas donde memo se activó",
         sub: "del total de consultas" },
       { num: asPct(G.hit_rate), accent: "var(--green)", cap: "Encontró info al buscar",
         sub: "de las veces que se activó" },
+      { num: asPct(G.grounded_rate), accent: groundedColor, cap: "Hechos reutilizados",
+        sub: "de lo que memo mostró" },
+      { num: asPct(G.referenced_rate), accent: referencedColor, cap: "Memorias referenciadas",
+        sub: "aparecieron luego en la respuesta" },
       { num: usedRate == null ? "sin datos" : asPct(usedRate), accent: usedColor,
         cap: "Sus datos se usaron en la respuesta",
         sub: G.used_total ? `${G.used_grounded}/${G.used_total} respuestas medidas` : "aún sin medir" },
-      { num: G.time_saved_human || "—", accent: "var(--blue)", cap: "Tiempo ahorrado estimado",
-        sub: (G.reask_avoided != null ? G.reask_avoided + " repreguntas evitadas" : "estimación conservadora") },
-      { num: G.tokens_saved_human || "—", accent: "var(--blue)", cap: "Tokens ahorrados al modelo",
-        sub: "info traída de memo, no re-generada" + (G.avg_answer_tokens ? " · ~" + G.avg_answer_tokens + " tok/resp" : "") },
+      { num: asPct(G.measurement_coverage), accent: "var(--yellow)", cap: "Cobertura de medición",
+        sub: G.surfaced_turns ? `${G.measured_turns || 0}/${G.surfaced_turns} turnos con grounding` : "sin turnos correlatables" },
+      { num: G.tokens_saved_today_human || "—", accent: "var(--blue)", cap: "Tokens ahorrados al modelo hoy",
+        sub: "métrica diaria · info traída de memo" + (G.avg_answer_tokens ? " · ~" + G.avg_answer_tokens + " tok/resp" : "") },
     ];
     const kEl = document.getElementById("kpis");
     kEl.innerHTML = "";

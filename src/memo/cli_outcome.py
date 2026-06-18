@@ -84,7 +84,7 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
         if not flag_bool("MEMO_OUTCOME_RANKING_ENABLED"):
             click.echo(
                 "Nota: MEMO_OUTCOME_RANKING_ENABLED está OFF — el ranking sigue usando "
-                "el roi por acceso. Activalo para que estos outcomes manden."
+                "el roi por acceso. Activalo para que los outcomes manden."
             )
         return
 

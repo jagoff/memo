@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from memo.dashboard_metrics import SPECIFIC_MARGIN, USED_SCORE_STRONG
+from memo.dashboard_metrics import grounding_used
 
 LABELS_SCHEMA = "memo.eval_grounding.labels.v1"
 
@@ -58,11 +58,7 @@ def load_labels(path: Path) -> list[Label]:
 
 def detector_used(row: dict[str, Any]) -> bool:
     """The current production "used" decision for one grounding row."""
-    score = row.get("used_score")
-    spec = row.get("specific_score")
-    strong = isinstance(score, (int, float)) and float(score) >= USED_SCORE_STRONG
-    specific = isinstance(spec, (int, float)) and float(spec) >= SPECIFIC_MARGIN
-    return bool(strong or specific or row.get("downstream_action"))
+    return grounding_used(row)
 
 
 def evaluate(grounding_rows: list[dict[str, Any]], labels: list[Label]) -> dict[str, Any]:

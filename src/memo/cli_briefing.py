@@ -71,7 +71,7 @@ def briefing() -> None:
     try:
         from pathlib import Path as _Path
 
-        from memo.session import format_relative, list_sessions
+        from memo.session import format_relative, list_sessions, render_active_memory
 
         cur_cwd = str(_Path(_os.getcwd()).resolve())
         all_sessions = list_sessions(cfg.state_dir, limit=20)
@@ -88,6 +88,10 @@ def briefing() -> None:
             lines.append(f"**Última sesión en este proyecto** ({when}): {summary}")
             lines.append(f"`claude --resume {sid}`")
             lines.append("")
+            active_memory = render_active_memory(top)
+            if active_memory:
+                lines.extend(active_memory)
+                lines.append("")
     except Exception as exc:
         if debug:
             print(f"# memo briefing: session lookup failed: {exc}", file=_sys.stderr)

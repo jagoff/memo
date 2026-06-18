@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from memo.dashboard import append_grounding_log, append_recall_log, read_recall_log
-from memo.dashboard_metrics import grounded_rate
+from memo.dashboard_metrics import grounded_rate, grounding_used, verdict
 
 
 def _surface(state_dir: Path, sid: str, turn: int, ids: list[str]) -> None:
@@ -39,6 +39,9 @@ def test_unscored_turns_are_not_counted_as_misses(tmp_path: Path):
     assert g["grounded_rate"] == 1.0
     assert g["surfaced"] == 2
     assert g["grounded"] == 2
+    assert g["surfaced_turns"] == 2
+    assert g["measured_turns"] == 1
+    assert g["measurement_coverage"] == 0.5
     # Turn 2's 2 surfaced memorias are unmeasured, not misses.
     assert g["unmeasured_surfaced"] == 2
 
@@ -105,6 +108,100 @@ def test_specific_score_recovers_paraphrase(tmp_path: Path):
     g = grounded_rate(sd, read_recall_log(sd, limit=100))
     assert g["grounded"] == 1
     assert g["grounded_rate"] == 1.0
+
+
+def test_grounding_used_helper_is_single_source_of_truth() -> None:
+    assert grounding_used({"used_score": 0.85})
+    assert grounding_used({"used_score": 0.5, "specific_score": 0.1})
+    assert grounding_used({"used_score": 0.2, "downstream_action": "opened_file"})
+    assert not grounding_used({"used_score": 0.72})
+    assert not grounding_used({"used_score": 0.5, "specific_score": 0.01})
+
+
+def test_verdict_unmeasured_when_reads_exist_without_grounding(tmp_path: Path) -> None:
+    for turn in range(1, 21):
+        _surface(tmp_path, "s1", turn, [f"mem{turn:05d}"])
+
+    v = verdict(tmp_path, limit=500)
+
+    assert v["status"] == "unmeasured"
+    assert "NO SE MIDE" in v["label"]
+    assert v["measurement_coverage"] == 0.0
+
+
+def test_verdict_weak_only_after_enough_measured_turns(tmp_path: Path) -> None:
+    for turn in range(1, 21):
+        _surface(tmp_path, "s1", turn, [f"mem{turn:05d}"])
+        if turn <= 5:
+            append_grounding_log(
+                tmp_path,
+                session_id="s1",
+                turn=turn,
+                recall_id=f"mem{turn:05d}",
+                used_score=0.2,
+                method="lexical",
+            )
+
+    v = verdict(tmp_path, limit=500)
+
+    assert v["status"] == "weak"
+    assert v["measured_turns"] == 5
+
+
+def test_verdict_weak_with_sparse_but_nonzero_coverage(tmp_path: Path) -> None:
+    for turn in range(1, 21):
+        _surface(tmp_path, "s1", turn, [f"mem{turn:05d}"])
+        if turn <= 3:
+            append_grounding_log(
+                tmp_path,
+                session_id="s1",
+                turn=turn,
+                recall_id=f"mem{turn:05d}",
+                used_score=0.2,
+                method="lexical",
+            )
+
+    v = verdict(tmp_path, limit=500)
+
+    assert v["status"] == "weak"
+    assert v["measurement_coverage"] == 0.15
+
+
+def test_verdict_weak_when_only_one_turn_is_measured(tmp_path: Path) -> None:
+    for turn in range(1, 21):
+        _surface(tmp_path, "s1", turn, [f"mem{turn:05d}"])
+    append_grounding_log(
+        tmp_path,
+        session_id="s1",
+        turn=1,
+        recall_id="mem00001",
+        used_score=0.2,
+        method="lexical",
+    )
+
+    v = verdict(tmp_path, limit=500)
+
+    assert v["status"] == "weak"
+    assert v["measurement_coverage"] == 0.05
+
+
+def test_verdict_ok_when_measured_use_crosses_threshold(tmp_path: Path) -> None:
+    for turn in range(1, 21):
+        _surface(tmp_path, "s1", turn, [f"mem{turn:05d}"])
+        if turn <= 5:
+            append_grounding_log(
+                tmp_path,
+                session_id="s1",
+                turn=turn,
+                recall_id=f"mem{turn:05d}",
+                used_score=0.9 if turn == 1 else 0.2,
+                method="lexical",
+            )
+
+    v = verdict(tmp_path, limit=500)
+
+    assert v["status"] == "ok"
+    assert v["grounded_rate"] == 0.2
 
 
 def test_knowledge_segmentation(tmp_path: Path):

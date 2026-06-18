@@ -173,10 +173,22 @@ def test_grounding_no_stamp_is_noop(tmp_path: Path) -> None:
     # No last_recall_turn stamped → nothing to correlate.
     tp = _write_transcript(tmp_path, "some answer")
     out = grounding.score_turn(tmp_path, {"session_id": "nope", "transcript_path": str(tp)})
-    assert out is None
+    assert out == {"session_id": "nope", "scored": 0, "bailed": "missing_last_recall_turn"}
     assert dashboard.read_grounding_log(tmp_path) == []
 
 
 def test_grounding_missing_payload_fields_noop(tmp_path: Path) -> None:
-    assert grounding.score_turn(tmp_path, {}) is None
-    assert grounding.score_turn(tmp_path, {"session_id": "x"}) is None
+    assert grounding.score_turn(tmp_path, {}) == {"scored": 0, "bailed": "missing_session_id"}
+    assert grounding.score_turn(tmp_path, {"session_id": "x"}) == {
+        "session_id": "x",
+        "scored": 0,
+        "bailed": "missing_transcript_path",
+    }
+
+
+def test_grounding_noop_writes_diagnostic(tmp_path: Path) -> None:
+    out = grounding.score_turn(tmp_path, {"session_id": "x"})
+    assert out and out["bailed"] == "missing_transcript_path"
+    rows = dashboard.read_grounding_diag_log(tmp_path)
+    assert rows[0]["reason"] == "missing_transcript_path"
+    assert rows[0]["session_id"] == "x"

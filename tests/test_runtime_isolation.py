@@ -203,20 +203,26 @@ def test_mcp_command_forwards_model_env(monkeypatch):
 
 def test_install_slash_dry_run(monkeypatch):
     _clear_memo_env(monkeypatch)
+    repo = Path.cwd()
     monkeypatch.setattr(
         install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
-    result = CliRunner().invoke(
-        cli,
-        ["install-slash", "--client", "devin", "--dry-run", "--repo", str(Path.cwd())],
-    )
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            cli,
+            ["install-slash", "--client", "devin", "--dry-run", "--repo", str(repo)],
+        )
 
     assert result.exit_code == 0
     assert "copy" in result.output
     assert "devin mcp add -s user -e MEMO_NONINTERACTIVE=1 memo --" in result.output
+    assert "Mandate" in result.output
+    assert "AGENTS.md" in result.output
+    assert "would write" in result.output
 
 
 def test_install_slash_opencode_dry_run(monkeypatch):
@@ -227,13 +233,18 @@ def test_install_slash_opencode_dry_run(monkeypatch):
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
-    result = CliRunner().invoke(
-        cli,
-        ["install-slash", "--client", "opencode", "--dry-run"],
-    )
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            cli,
+            ["install-slash", "--client", "opencode", "--dry-run"],
+        )
 
     assert result.exit_code == 0
     assert "opencode mcp add memo --env MEMO_NONINTERACTIVE=1 --" in result.output
+    assert "Mandate" in result.output
+    assert "AGENTS.md" in result.output
+    assert "would write" in result.output
 
 
 def test_install_slash_codex_installs_plugin_and_mcp(monkeypatch):

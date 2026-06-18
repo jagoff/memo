@@ -14,6 +14,7 @@ idempotent (skips if the marker is already present).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 import click
@@ -43,6 +44,27 @@ _CLIENT_FILES: dict[str, str] = {
     "windsurf": ".windsurfrules",
     "cursor": ".cursor/rules/memo.md",
 }
+
+
+def write_mandates_for_clients(
+    clients: Iterable[str], *, cwd: Path | None = None, dry_run: bool = False
+) -> list[tuple[str, str]]:
+    """Write the mandate into the project-local files for the given clients.
+
+    Returns a list of ``(relative_path, status)`` pairs in write order. Duplicate
+    targets are collapsed so clients that share the same instruction file (codex /
+    devin / opencode) only touch the file once.
+    """
+    root = cwd or Path.cwd()
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for client in clients:
+        rel = _CLIENT_FILES.get(client)
+        if rel is None or rel in seen:
+            continue
+        seen.add(rel)
+        out.append((rel, _write_mandate(root / rel, dry_run=dry_run)))
+    return out
 
 
 def _write_mandate(target: Path, *, dry_run: bool) -> str:
