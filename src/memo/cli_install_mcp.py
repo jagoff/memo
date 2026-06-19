@@ -13,6 +13,7 @@ in MCP" (see CLAUDE.md). Dry-run by default; pass ``--write`` to apply.
 
 from __future__ import annotations
 
+import dataclasses
 import shutil
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,14 @@ import click
 
 from memo.runtime.detect import _resolved_memo_mcp
 from memo.runtime.mcp import _mcp_server_env
+
+CONSTRAINED_CLIENTS: frozenset[str] = frozenset({"codex", "opencode"})
+
+
+def _effective_profile(profile: str, agent: str) -> str:
+    if profile:
+        return profile
+    return "core" if agent in CONSTRAINED_CLIENTS else ""
 
 
 def _resolve_isolated_memo_mcp() -> Path | None:
@@ -103,12 +112,21 @@ def _report(result: dict[str, Any]) -> None:
 @click.option("--json-key", default="mcpServers", help="Generic: server-map key in the config (default mcpServers).")
 @click.option("--write", is_flag=True, help="Apply changes (default: dry-run).")
 @click.option("--with-mandate", is_flag=True, help="Also write the 'consult memo first' mandate.")
+@click.option(
+    "--profile",
+    default="",
+    type=click.Choice(["", "core", "slim", "default"], case_sensitive=False),
+    help="MCP surface profile. 'core'/'slim' expose ~25 tools (~2.4k tokens); "
+         "'default' exposes all 118 tools (~35k tokens). "
+         "Constrained clients (codex, opencode) default to 'core' automatically.",
+)
 def install_mcp(
     agents: tuple[str, ...],
     config_path: str,
     json_key: str,
     write: bool,
     with_mandate: bool,
+    profile: str,
 ) -> None:
     """Register the memo MCP server into one or more agents."""
     try:
@@ -137,7 +155,14 @@ def install_mcp(
         if "all" in selected:
             selected = list(SUPPORTED_AGENTS)
         for agent in selected:
-            _report(register_agent_mcp(agent, server, write=write))
+            eff_profile = _effective_profile(profile, agent)
+            if eff_profile and eff_profile != "default":
+                agent_env = dict(server.env)
+                agent_env["MEMO_MCP_PROFILE"] = eff_profile
+                agent_server = dataclasses.replace(server, env=agent_env)
+            else:
+                agent_server = server
+            _report(register_agent_mcp(agent, agent_server, write=write))
 
     if with_mandate:
         click.echo("mandate (consult memo first):")
