@@ -104,6 +104,22 @@ def session_checkpoint(
     transcript = transcript_path or payload.get("transcript_path")
     prompt_text = payload.get("prompt")  # present in UserPromptSubmit events
 
+    # Async hooks don't receive piped stdin — fall back to the payload file
+    # written by the preceding sync `autosave` hook.
+    if not sid:
+        try:
+            import json as _json2
+
+            _cfg0 = Config.from_env()
+            _pfile = _cfg0.state_dir / "last_hook_payload.json"
+            if _pfile.exists():
+                _fb = _json2.loads(_pfile.read_text(encoding="utf-8"))
+                sid = _fb.get("session_id")
+                cwd_resolved = cwd_resolved or _fb.get("cwd") or _os.getcwd()
+                transcript = transcript or _fb.get("transcript_path")
+        except Exception:
+            pass
+
     if not sid:
         # Without a session_id we can't key the snapshot. Fail silently
         # so the hook still exits 0.
@@ -189,6 +205,18 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
         from memo.session import check_autosave, mark_autosaved
 
         cfg = Config.from_env()
+        # Persist the payload so async hooks (idle-maintenance, checkpoint)
+        # can read session_id/transcript_path without stdin being piped.
+        try:
+            cfg.ensure_dirs()
+            _payload_data = _json.dumps(
+                {"session_id": sid, "transcript_path": transcript, "cwd": cwd},
+                ensure_ascii=False,
+            )
+            (cfg.state_dir / "last_hook_payload.json").write_text(_payload_data, encoding="utf-8")
+        except Exception:
+            pass
+
         should_save, size_kb = check_autosave(
             cfg.state_dir,
             session_id=sid,
@@ -298,6 +326,22 @@ def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
 
     sid = payload.get("session_id")
     transcript = payload.get("transcript_path")
+
+    # Async hooks don't receive piped stdin — fall back to the payload file
+    # written by the preceding sync `autosave` hook.
+    if not sid:
+        try:
+            from memo.config import Config as _Config
+
+            _cfg = _Config.from_env()
+            _pfile = _cfg.state_dir / "last_hook_payload.json"
+            if _pfile.exists():
+                _fallback = _json.loads(_pfile.read_text(encoding="utf-8"))
+                sid = sid or _fallback.get("session_id")
+                transcript = transcript or _fallback.get("transcript_path")
+        except Exception:
+            pass
+
     if not sid:
         print("{}")
         _sys.exit(0)
@@ -336,18 +380,21 @@ def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
             result = run_capture_incremental(_Path(str(transcript)).expanduser(), str(sid), debug=flag_bool("MEMO_SESSION_DEBUG"))
             if result.get("status") == "ok":
                 processed = result.get("processed_turns", 0)
-                output = {
-                    "hookSpecificOutput": {
-                        "hookEventName": "UserPromptSubmit",
-                        "additionalContext": (
-                            f"## 💾 Captura automática\n\n"
-                            f"Detecté inactividad por {delay}s y capturé {processed} turnos nuevos en memo.\n"
-                        ),
-                    }
-                }
-                print(_json.dumps(output, ensure_ascii=False))
-            else:
-                print("{}")
+                if processed > 0:
+                    # Async hook output doesn't reach the current turn.
+                    # Write the notification to a pending file so the next
+                    # recall-hook invocation surfaces it.
+                    try:
+                        _notif = (
+                            f"## 💾 Captura automática (idle {delay}s)\n\n"
+                            f"Detecté inactividad y capturé {processed} turnos nuevos en memo.\n"
+                        )
+                        (cfg.state_dir / "pending_idle_notification.txt").write_text(
+                            _notif, encoding="utf-8"
+                        )
+                    except Exception:
+                        pass
+            print("{}")
         else:
             from memo.cli_transcripts import _reflect_session
             from memo.memory import Memory
