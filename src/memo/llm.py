@@ -248,7 +248,18 @@ class MLXChat:
                     enable_thinking=thinking,
                 )
             )
-            with self._gen_lock:
+            from memo.mlx_gpu import _gpu_tl as _gpu_tl_ref
+
+            _gl_timeout = getattr(_gpu_tl_ref, "timeout", None)
+            _lock_acquired = self._gen_lock.acquire(
+                timeout=_gl_timeout if _gl_timeout is not None else -1
+            )
+            if not _lock_acquired:
+                raise TimeoutError(
+                    f"MLX _gen_lock not acquired within {_gl_timeout}s — "
+                    "an abandoned thread may still hold it"
+                )
+            try:
                 feed, cache = self._prompt_cache_prepare(model, m, prompt_tokens)
                 parts: list[str] = []
                 gen_tokens: list[int] = []
@@ -279,6 +290,8 @@ class MLXChat:
                     if not committed:
                         self._prompt_cache.pop(model, None)
                     self._last_use[model] = time.time()
+            finally:
+                self._gen_lock.release()
             return {"message": {"content": ("".join(parts) or "").strip()}}
 
         prompt = _apply_chat_template(
@@ -351,7 +364,18 @@ class MLXChat:
                     enable_thinking=thinking,
                 )
             )
-            with self._gen_lock:
+            from memo.mlx_gpu import _gpu_tl as _gpu_tl_ref
+
+            _gl_timeout = getattr(_gpu_tl_ref, "timeout", None)
+            _lock_acquired = self._gen_lock.acquire(
+                timeout=_gl_timeout if _gl_timeout is not None else -1
+            )
+            if not _lock_acquired:
+                raise TimeoutError(
+                    f"MLX _gen_lock not acquired within {_gl_timeout}s — "
+                    "an abandoned thread may still hold it"
+                )
+            try:
                 feed, cache = self._prompt_cache_prepare(model, m, prompt_tokens)
                 gen_tokens: list[int] = []
                 committed = False
@@ -385,6 +409,8 @@ class MLXChat:
                         # known token sequence — drop it so the next call rebuilds.
                         self._prompt_cache.pop(model, None)
                     self._last_use[model] = time.time()
+            finally:
+                self._gen_lock.release()
             return
 
         prompt = _apply_chat_template(

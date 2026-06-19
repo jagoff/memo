@@ -53,6 +53,12 @@ except ImportError:  # pragma: no cover - non-POSIX has no MLX/GPU to guard
 
 _GPU_LOCK = threading.RLock()
 
+# Thread-local storage for the current GPU lock timeout.
+# Set by `chat_with_timeout` in the submitted worker thread before calling
+# `chat.chat()` so that `gpu_guard()` uses a matching deadline without
+# requiring signature changes to `MLXChat.chat()`.
+_gpu_tl: threading.local = threading.local()
+
 # Cross-process flock state, only ever touched while holding `_GPU_LOCK`.
 _depth = 0
 _lock_fd: int | None = None
@@ -115,7 +121,7 @@ def _release_flock() -> None:
 
 
 @contextmanager
-def gpu_guard() -> Iterator[None]:
+def gpu_guard(timeout: float | None = None) -> Iterator[None]:
     """Serialize an MLX forward pass against all other GPU work on the machine.
 
     Holds a process-global reentrant lock (threads) and, on the outermost
@@ -123,9 +129,21 @@ def gpu_guard() -> Iterator[None]:
     region that builds and materializes MLX arrays (from `mx.array(...)`
     through the `.tolist()` / `float(...)` that forces evaluation). CPU-only
     tokenization/pooling setup can stay outside to keep the held window short.
+
+    ``timeout`` may be passed explicitly or inherited from ``_gpu_tl.timeout``
+    (a thread-local set by ``chat_with_timeout`` in the submitted worker).
+    When set, a finite deadline is imposed on the lock acquire: if an abandoned
+    thread from a prior timed-out call still holds the lock, subsequent calls
+    raise ``TimeoutError`` after this many seconds rather than blocking forever.
     """
     global _depth
-    _GPU_LOCK.acquire()
+    effective_timeout: float | None = timeout if timeout is not None else getattr(_gpu_tl, "timeout", None)
+    acquired = _GPU_LOCK.acquire(timeout=effective_timeout if effective_timeout is not None else -1)
+    if not acquired:
+        raise TimeoutError(
+            f"GPU lock not acquired within {effective_timeout}s — an abandoned MLX thread "
+            "may still hold it; this cluster will be skipped"
+        )
     try:
         if _depth == 0 and _xproc_lock_enabled():
             _acquire_flock()
