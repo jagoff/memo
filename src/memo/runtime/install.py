@@ -150,13 +150,13 @@ def mcp_command(client: str) -> None:
         )
         return
     if client == "codex":
-        click.echo(_format_command(_mcp_add_command("codex", memo_mcp, env)))
+        click.echo(_format_command(_mcp_add_command("codex", memo_mcp, {**env, "MEMO_SOURCE": "codex"})))
         return
     if client == "devin":
-        click.echo(_format_command(_mcp_add_command("devin", memo_mcp, env)))
+        click.echo(_format_command(_mcp_add_command("devin", memo_mcp, {**env, "MEMO_SOURCE": "devin"})))
         return
     if client == "opencode":
-        click.echo(_format_command(_mcp_add_command("opencode", memo_mcp, env)))
+        click.echo(_format_command(_mcp_add_command("opencode", memo_mcp, {**env, "MEMO_SOURCE": "opencode"})))
         return
     click.echo(_format_command(_mcp_add_command("claude-code", memo_mcp, env)))
 
@@ -218,7 +218,7 @@ def install_slash(
         _copy_slash_skill(root, _codex_home() / "skills" / "memo" / "SKILL.md", dry_run=dry_run)
         _install_codex_plugin(root, dry_run=dry_run)
         _run_agent_command(["codex", "mcp", "remove", "memo"], dry_run=dry_run, ok_errors=_MISSING_MCP_OK_ERRORS)
-        _run_agent_command(_mcp_add_command("codex", memo_mcp, env), dry_run=dry_run)
+        _run_agent_command(_mcp_add_command("codex", memo_mcp, {**env, "MEMO_SOURCE": "codex"}), dry_run=dry_run)
         console.print(
             "[yellow]![/yellow] Codex CLI's TUI slash menu currently lists only built-in "
             "slash commands. memo is installed as a model-visible skill and MCP server, "
@@ -238,7 +238,7 @@ def install_slash(
         console.print("[bold]Devin[/bold]")
         _copy_slash_skill(root, Path.home() / ".config" / "devin" / "skills" / "memo" / "SKILL.md", dry_run=dry_run)
         _run_agent_command(["devin", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, ok_errors=_MISSING_MCP_OK_ERRORS)
-        _run_agent_command(_mcp_add_command("devin", memo_mcp, env), dry_run=dry_run)
+        _run_agent_command(_mcp_add_command("devin", memo_mcp, {**env, "MEMO_SOURCE": "devin"}), dry_run=dry_run)
 
     def install_windsurf() -> None:
         console.print("[bold]Windsurf[/bold]")
@@ -247,7 +247,7 @@ def install_slash(
 
     def install_opencode() -> None:
         console.print("[bold]OpenCode[/bold]")
-        _run_agent_command(_mcp_add_command("opencode", memo_mcp, env), dry_run=dry_run)
+        _run_agent_command(_mcp_add_command("opencode", memo_mcp, {**env, "MEMO_SOURCE": "opencode"}), dry_run=dry_run)
 
     if "codex" in selected:
         run_client("Codex", install_codex)

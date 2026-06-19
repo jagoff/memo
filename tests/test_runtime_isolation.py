@@ -145,8 +145,10 @@ def test_mcp_command_codex(monkeypatch):
     result = CliRunner().invoke(cli, ["mcp-command", "--client", "codex"])
 
     assert result.exit_code == 0
-    assert "codex mcp add memo --env MEMO_NONINTERACTIVE=1" in result.output
+    assert "codex mcp add memo" in result.output
+    assert "--env MEMO_NONINTERACTIVE=1" in result.output
     assert "--env MEMO_MCP_PROFILE=agent" in result.output
+    assert "--env MEMO_SOURCE=codex" in result.output
     assert result.output.rstrip().endswith("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp")
 
 
@@ -163,6 +165,7 @@ def test_mcp_command_forwards_explicit_full_profile(monkeypatch):
 
     assert result.exit_code == 0
     assert "--env MEMO_MCP_PROFILE=full" in result.output
+    assert "--env MEMO_SOURCE=codex" in result.output
 
 
 def test_mcp_command_devin(monkeypatch):
@@ -176,8 +179,10 @@ def test_mcp_command_devin(monkeypatch):
     result = CliRunner().invoke(cli, ["mcp-command", "--client", "devin"])
 
     assert result.exit_code == 0
-    assert "devin mcp add -s user -e MEMO_NONINTERACTIVE=1" in result.output
+    assert "devin mcp add -s user" in result.output
+    assert "-e MEMO_NONINTERACTIVE=1" in result.output
     assert "-e MEMO_MCP_PROFILE=agent" in result.output
+    assert "MEMO_SOURCE=devin" in result.output
     assert result.output.rstrip().endswith("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp")
 
 
@@ -233,8 +238,10 @@ def test_install_slash_dry_run(monkeypatch):
 
     assert result.exit_code == 0
     assert "copy" in result.output
-    assert "devin mcp add -s user -e MEMO_NONINTERACTIVE=1" in result.output
+    assert "devin mcp add -s user" in result.output
+    assert "-e MEMO_NONINTERACTIVE=1" in result.output
     assert "-e MEMO_MCP_PROFILE=agent" in result.output
+    assert "MEMO_SOURCE=devin" in result.output
     assert "Mandate" in result.output
     assert "AGENTS.md" in result.output
     assert "would write" in result.output
@@ -344,7 +351,9 @@ def test_mcp_command_opencode(monkeypatch):
     result = CliRunner().invoke(cli, ["mcp-command", "--client", "opencode"])
 
     assert result.exit_code == 0
-    assert "opencode mcp add memo --env MEMO_NONINTERACTIVE=1" in result.output
+    assert "opencode mcp add memo" in result.output
+    assert "--env MEMO_NONINTERACTIVE=1" in result.output
+    assert "--env MEMO_SOURCE=opencode" in result.output
     assert "--env MEMO_EMBEDDER_DIMS=2560" in result.output
 
 
