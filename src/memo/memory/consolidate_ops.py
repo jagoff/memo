@@ -8,7 +8,9 @@ together. Extracted from maintain_ops.py; composed into `Memory` in facade.py.
 from __future__ import annotations
 
 import builtins
+import datetime as _dt
 import json
+import re as _re
 from typing import Any
 
 import frontmatter
@@ -21,6 +23,112 @@ from memo.memory.record import (
     chat_with_timeout,
     strip_llm_output,
 )
+
+
+def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
+    """Replace relative temporal expressions with ISO dates anchored to ref_date.
+
+    Never raises — returns original text on any error.
+    Patterns covered (ES + EN): ayer/yesterday, hoy/today, anteayer,
+    la semana pasada/last week, el mes pasado/last month,
+    hace N días/N days ago.
+    """
+    try:
+        result = text
+
+        def _iso(d: _dt.date) -> str:
+            return d.isoformat()
+
+        # hace N días / N days ago  (before simpler patterns to avoid partial match)
+        result = _re.sub(
+            r"hace\s+(\d+)\s+d[ií]as?",
+            lambda m: (
+                f"hace {m.group(1)} días"
+                f" ({_iso(ref_date - _dt.timedelta(days=int(m.group(1))))})"
+            ),
+            result,
+            flags=_re.IGNORECASE,
+        )
+        result = _re.sub(
+            r"(\d+)\s+days?\s+ago",
+            lambda m: (
+                f"{m.group(1)} days ago"
+                f" ({_iso(ref_date - _dt.timedelta(days=int(m.group(1))))})"
+            ),
+            result,
+            flags=_re.IGNORECASE,
+        )
+
+        # anteayer (before ayer to avoid partial match)
+        result = _re.sub(
+            r"\banteayer\b",
+            f"anteayer ({_iso(ref_date - _dt.timedelta(days=2))})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+
+        # ayer / yesterday
+        result = _re.sub(
+            r"\bayer\b",
+            f"ayer ({_iso(ref_date - _dt.timedelta(days=1))})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+        result = _re.sub(
+            r"\byesterday\b",
+            f"yesterday ({_iso(ref_date - _dt.timedelta(days=1))})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+
+        # hoy / today
+        result = _re.sub(
+            r"\bhoy\b",
+            f"hoy ({_iso(ref_date)})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+        result = _re.sub(
+            r"\btoday\b",
+            f"today ({_iso(ref_date)})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+
+        # la semana pasada / last week
+        week_start = ref_date - _dt.timedelta(days=7)
+        result = _re.sub(
+            r"\bla\s+semana\s+pasada\b",
+            f"la semana pasada ({_iso(week_start)})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+        result = _re.sub(
+            r"\blast\s+week\b",
+            f"last week ({_iso(week_start)})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+
+        # el mes pasado / last month
+        month_ref = ref_date.replace(day=1) - _dt.timedelta(days=1)
+        month_str = month_ref.strftime("%Y-%m")
+        result = _re.sub(
+            r"\bel\s+mes\s+pasado\b",
+            f"el mes pasado ({month_str})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+        result = _re.sub(
+            r"\blast\s+month\b",
+            f"last month ({month_str})",
+            result,
+            flags=_re.IGNORECASE,
+        )
+
+        return result
+    except Exception:
+        return text
 
 
 class _ConsolidateOpsMixin(_MemoryBase):
@@ -446,6 +554,8 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
             title = (data.get("title") or "").strip()
             body = (data.get("body") or "").strip()
+            # normalize relative temporal references to ISO dates
+            body = _normalize_relative_dates(body, _dt.date.today())
             confidence = data.get("confidence") if data.get("confidence") in _conf_rank else "low"
             rationale = (data.get("rationale") or "").strip()
 

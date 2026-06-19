@@ -442,6 +442,27 @@ SPECS: tuple[FlagSpec, ...] = (
         "whatsapp",
         "Override output dir for ingested WhatsApp notes (default <SYSTEM_DIR>/Whatsapp).",
     ),
+    # dream pipeline
+    _spec(
+        "MEMO_DREAM_PRUNE_FLOOR",
+        "float",
+        0.15,
+        "dream",
+        "ROI score floor for quality-floor prune in `memo dream run`. "
+        "Memorias with roi_score below this threshold, zero access count, and age "
+        "> MEMO_DREAM_PRUNE_MIN_AGE_DAYS are archived during the dream prune pass.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_DREAM_PRUNE_MIN_AGE_DAYS",
+        "int",
+        90,
+        "dream",
+        "Minimum age in days for the quality-floor prune pass in `memo dream run`. "
+        "Only memorias older than this are considered for archival.",
+        min_val=0,
+    ),
     # schema / embedding version check
     _spec(
         "MEMO_SKIP_MODEL_VERSION_CHECK",

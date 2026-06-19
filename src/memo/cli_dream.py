@@ -19,8 +19,9 @@ Bundles every maintenance pass into a single nightly run:
 from __future__ import annotations
 
 import json
+import logging as _logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.progress import (
@@ -35,6 +36,12 @@ from rich.progress import (
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.transcript_miner import mine_transcripts
+
+if TYPE_CHECKING:
+    from memo.memory.facade import Memory
+
+_log = _logging.getLogger(__name__)
 
 
 def _state_path(cfg: Config):
@@ -48,6 +55,114 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     if ua and ub:
         return (id_a, id_b) if ua <= ub else (id_b, id_a)
     return id_a, id_b
+
+
+def _build_orientation(mem: "Memory") -> dict:
+    """Read-only corpus inventory — runs before any mutation."""
+    conn = mem.store._conn
+    result: dict = {
+        "total": 0,
+        "by_type": {},
+        "low_roi": 0,
+        "stale_candidates": 0,
+        "open_contradictions": 0,
+        "unindexed_entities": 0,
+    }
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'"
+        ).fetchone()
+        result["total"] = int(row["n"]) if row else 0
+    except Exception:
+        pass
+
+    try:
+        rows = conn.execute(
+            "SELECT type, COUNT(*) AS n FROM meta WHERE type != 'reference' GROUP BY type"
+        ).fetchall()
+        result["by_type"] = {r["type"]: int(r["n"]) for r in rows}
+    except Exception:
+        pass
+
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM meta m "
+            "LEFT JOIN memory_health h ON h.id = m.id "
+            "WHERE COALESCE(h.roi_score, 1.0) < 0.3 AND m.type != 'reference'"
+        ).fetchone()
+        result["low_roi"] = int(row["n"]) if row else 0
+    except Exception:
+        pass
+
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM meta m "
+            "LEFT JOIN access a ON a.id = m.id "
+            "WHERE m.updated < datetime('now', '-365 days') "
+            "AND COALESCE(a.access_count, 0) = 0 "
+            "AND m.type != 'reference'"
+        ).fetchone()
+        result["stale_candidates"] = int(row["n"]) if row else 0
+    except Exception:
+        pass
+
+    try:
+        pairs = mem.contradict_store.list_open()
+        result["open_contradictions"] = len(pairs)
+    except Exception:
+        pass
+
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM meta m "
+            "WHERE m.type != 'reference' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM entity_memoria em "
+            "  JOIN entities e ON e.id = em.entity_id "
+            "  WHERE em.memoria_id = m.id"
+            ")"
+        ).fetchone()
+        result["unindexed_entities"] = int(row["n"]) if row else 0
+    except Exception:
+        pass
+
+    return result
+
+
+def _run_signal_gather(since_days: int, file_limit: int = 20) -> dict:
+    """Run transcript mining and return a compact summary.
+
+    Never raises — exceptions are captured in the returned dict.
+    """
+    try:
+        res = mine_transcripts(since_days=since_days, file_limit=file_limit)
+        return {
+            "files_processed": res.get("files_processed", 0),
+            "memorias_saved": len(res.get("saved") or []),
+            "skipped_dup": res.get("skipped_dup", 0),
+        }
+    except Exception as exc:
+        return {"files_processed": 0, "memorias_saved": 0, "skipped_dup": 0, "error": str(exc)}
+
+
+def _run_prune_floor(
+    mem: "Memory",
+    roi_floor: float,
+    min_age_days: int,
+    dry_run: bool,
+) -> list[dict]:
+    """Archive memorias below roi_floor with zero access and age >= min_age_days.
+
+    Returns list of {id, roi_score, days_old} candidates (even in dry-run).
+    """
+    candidates = mem.store.prune_floor_candidates(roi_floor=roi_floor, min_age_days=min_age_days)
+    if not dry_run:
+        for c in candidates:
+            try:
+                mem.lifecycle.archive_memoria(c["id"])
+            except Exception as exc:
+                _log.warning("prune_floor: archive failed for %s: %s", c["id"], exc)
+    return candidates
 
 
 @click.group(name="dream")
@@ -75,12 +190,18 @@ def _make_progress() -> Progress:
 @click.option(
     "--skip-maintain", is_flag=True, help="Skip the contradict/consolidate/stale/synthesize passes."
 )
+@click.option("--skip-orientation", is_flag=True, help="Skip the pre-mutation inventory panel.")
+@click.option("--skip-signal-gather", is_flag=True, help="Skip transcript mining phase.")
+@click.option("--skip-prune-floor", is_flag=True, help="Skip the quality-floor prune pass.")
 def dream_run(
     dry_run: bool,
     as_json: bool,
     skip_entities: bool,
     skip_decay: bool,
     skip_maintain: bool,
+    skip_orientation: bool,
+    skip_signal_gather: bool,
+    skip_prune_floor: bool,
 ) -> None:
     """Run the full dream pipeline once.
 
@@ -94,6 +215,8 @@ def dream_run(
 
     receipt: dict[str, Any] = {
         "dry_run": dry_run,
+        "orientation": {},
+        "signal_gathered": {"files_processed": 0, "memorias_saved": 0, "skipped_dup": 0},
         "superseded": [],
         "evolved": [],
         "merged": [],
@@ -102,14 +225,17 @@ def dream_run(
         "entities_extracted": 0,
         "roi_decayed": 0,
         "confidence_penalized": 0,
+        "pruned_floor": [],
         "errors": [],
     }
 
-    total_steps = 6
+    total_steps = 8
     skipped = (
-        (4 if skip_maintain else 0)
+        (1 if skip_signal_gather or dry_run else 0)
+        + (4 if skip_maintain else 0)
         + (1 if skip_entities or dry_run else 0)
         + (1 if skip_decay or dry_run else 0)
+        + (1 if skip_prune_floor or dry_run else 0)
     )
     active_steps = total_steps - skipped
 
@@ -119,6 +245,57 @@ def dream_run(
 
         mem = _get_memory(cfg)
         progress.update(step, description="[green]memoria cargada ✓[/green]")
+
+        # Orientation — read-only inventory before mutations -----------------
+        if not skip_orientation:
+            progress.update(step, description="[dim]orientación — inventariando corpus...[/dim]")
+            try:
+                orientation = _build_orientation(mem)
+                receipt["orientation"] = orientation
+                from rich.panel import Panel
+                from rich.table import Table
+
+                tbl = Table(show_header=False, box=None, padding=(0, 1))
+                tbl.add_column("", style="dim")
+                tbl.add_column("", justify="right")
+                tbl.add_row("memorias totales", str(orientation["total"]))
+                for t, n in sorted(orientation["by_type"].items()):
+                    tbl.add_row(f"  {t}", str(n))
+                tbl.add_row("roi < 0.3", str(orientation["low_roi"]))
+                tbl.add_row("stale candidates (>365d)", str(orientation["stale_candidates"]))
+                tbl.add_row("contradicciones abiertas", str(orientation["open_contradictions"]))
+                tbl.add_row("sin entidades indexadas", str(orientation["unindexed_entities"]))
+                console.print(
+                    Panel(tbl, title="[bold cyan]Inventario pre-dream[/bold cyan]", expand=False)
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"orientation: {type(exc).__name__}: {exc}")
+
+        # Phase 0 — Signal gather: mine new transcripts since last dream run --
+        if not skip_signal_gather and not dry_run:
+            progress.update(step, description="[0] signal gather — minando transcripts...")
+            try:
+                ts_file = _state_path(cfg) / ".last_run_ts"
+                try:
+                    last_ts = float(ts_file.read_text().strip())
+                    since_days = max(1, int((time.time() - last_ts) / 86400) + 1)
+                except Exception:
+                    since_days = 7
+                sg = _run_signal_gather(since_days=since_days, file_limit=20)
+                receipt["signal_gathered"] = sg
+                progress.update(
+                    step,
+                    description=(
+                        f"[0] signal gather [green]✓[/green]  "
+                        f"{sg['files_processed']} files, {sg['memorias_saved']} saved"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"signal_gather: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[0] signal gather [yellow]warn[/yellow]")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[0] signal gather [dim]skip[/dim]")
 
         # 0. Forget TTLs (always — explicit user intent) ---------------------
         progress.update(step, description="[dim]TTLs — enforce forget...[/dim]")
@@ -308,6 +485,32 @@ def dream_run(
         else:
             progress.update(step, description="[6/6] ROI decay [dim]skip[/dim]")
 
+        # 7. Quality-floor prune ---------------------------------------------
+        if not skip_prune_floor and not dry_run:
+            progress.update(
+                step,
+                description="[7] prune floor — buscando memorias bajo el piso...",
+                total=None,
+                completed=0,
+            )
+            try:
+                from memo.flags import flag_float, flag_int
+
+                roi_floor = flag_float("MEMO_DREAM_PRUNE_FLOOR") or 0.15
+                min_age = flag_int("MEMO_DREAM_PRUNE_MIN_AGE_DAYS") or 90
+                pruned = _run_prune_floor(mem, roi_floor=roi_floor, min_age_days=min_age, dry_run=False)
+                receipt["pruned_floor"] = pruned
+                progress.update(
+                    step,
+                    description=f"[7] prune floor [green]✓[/green]  {len(pruned)} archivadas",
+                )
+            except Exception as exc:
+                progress.update(step, description="[7] prune floor [yellow]warn[/yellow]")
+                receipt["errors"].append(f"prune_floor: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[7] prune floor [dim]skip[/dim]")
+
         # Mark step task complete so spinner stops
         progress.update(step, total=1, completed=1)
 
@@ -344,6 +547,13 @@ def dream_run(
         )
     console.print(f"  entities extracted:        {receipt['entities_extracted']}")
     console.print(f"  roi rows decayed:          {receipt['roi_decayed']}")
+    console.print(f"  quality-floor pruned:      {len(receipt['pruned_floor'])}")
+    sg = receipt.get("signal_gathered", {})
+    if sg.get("files_processed") or sg.get("memorias_saved"):
+        console.print(
+            f"  signal gather:             {sg['files_processed']} files, "
+            f"{sg['memorias_saved']} saved, {sg.get('skipped_dup', 0)} dup skipped"
+        )
     if receipt["errors"]:
         for e in receipt["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")

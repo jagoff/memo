@@ -275,6 +275,36 @@ class _SignalQueriesMixin(_StoreBase):
             )
             return cur.rowcount
 
+    def prune_floor_candidates(
+        self,
+        roi_floor: float = 0.15,
+        min_age_days: int = 90,
+        exclude_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return memorias below roi_floor, never accessed, and older than min_age_days.
+
+        Always excludes 'synthesis' and 'reference' types. Returns list of
+        {id, roi_score, days_old}.
+        """
+        excluded = (exclude_types or set()) | {"synthesis", "reference"}
+        placeholders = ",".join("?" for _ in excluded)
+        rows = self._conn.execute(
+            f"""
+            SELECT m.id,
+                   COALESCE(h.roi_score, 1.0)                        AS roi_score,
+                   CAST(julianday('now') - julianday(m.updated) AS INTEGER) AS days_old
+              FROM meta m
+              LEFT JOIN memory_health h ON h.id = m.id
+              LEFT JOIN access a       ON a.id = m.id
+             WHERE COALESCE(h.roi_score, 1.0) < ?
+               AND COALESCE(a.access_count, 0) = 0
+               AND m.updated < datetime('now', '-' || ? || ' days')
+               AND m.type NOT IN ({placeholders})
+            """,
+            (roi_floor, min_age_days, *excluded),
+        ).fetchall()
+        return [{"id": r["id"], "roi_score": r["roi_score"], "days_old": r["days_old"]} for r in rows]
+
     def eviction_candidates(
         self,
         policy: str,
