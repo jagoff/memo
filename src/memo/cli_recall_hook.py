@@ -377,6 +377,17 @@ def recall_hook() -> None:
         approx = _est_tokens("\n".join(lines))
         print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=sys.stderr)
 
+    # Prepend any pending notification from a previous async idle-maintenance run.
+    pending_notif_path = cfg.state_dir / "pending_idle_notification.txt"
+    if pending_notif_path.exists():
+        try:
+            notif = pending_notif_path.read_text(encoding="utf-8").strip()
+            if notif:
+                lines = [notif, ""] + lines
+            pending_notif_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     output = {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
