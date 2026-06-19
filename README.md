@@ -352,11 +352,15 @@ Codex supports local stdio MCP servers through `codex mcp add`:
 ```bash
 memo mcp-command --client codex
 # then run the printed command, e.g.
-codex mcp add memo --env MEMO_NONINTERACTIVE=1 -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
+codex mcp add memo --env MEMO_NONINTERACTIVE=1 --env MEMO_MCP_PROFILE=agent -- /Users/you/.local/pipx/venvs/mlx-memo/bin/memo-mcp
 codex mcp list
 ```
 
 Tools surface as `mcp__memo__memory_*` inside Codex sessions.
+Agent installs default to a five-tool surface (`briefing`, `search`, `ask`,
+`get`, `save`) so administrative schemas do not consume model context. Use
+`MEMO_MCP_PROFILE=full` only for a dedicated administrative client; `core`
+keeps the larger stable-core compatibility surface.
 
 Install the Codex assets so the exact `memo` skill is available alongside the
 MCP server:

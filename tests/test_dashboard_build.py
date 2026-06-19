@@ -100,6 +100,46 @@ def test_gerencial_tokens_saved_kpi_is_daily_not_accumulated(tmp_cfg: Config, mo
     assert g["tokens_saved"] == 200
 
 
+def test_gerencial_reports_context_cost_and_net_tokens(tmp_cfg: Config, monkeypatch):
+    monkeypatch.setenv("MEMO_ROI_TOKENS_PER_GROUNDED", "100")
+    state_dir = tmp_cfg.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    (state_dir / "grounding.log").write_text(
+        json.dumps(
+            {
+                "ts": now,
+                "session_id": "s-net",
+                "turn": 1,
+                "recall_id": "net00001",
+                "used_score": 0.9,
+                "method": "lexical",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (state_dir / "context_cost.log").write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {"ts": now, "kind": "recall", "chars": 200, "tokens_est": 50},
+                {"ts": now, "kind": "briefing", "chars": 400, "tokens_est": 100},
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    g = build.collect_data(tmp_cfg, include_projection=False)["gerencial"]
+
+    assert g["tokens_saved_today"] == 100
+    assert g["context_tokens_today"] == 150
+    assert g["tokens_net_today"] == -50
+    assert g["tokens_net"] == -50
+    assert g["token_detail"]["context_costs"] == {"briefing": 100, "recall": 50}
+
+
 def test_full_mode_includes_projection(tmp_cfg: Config):
     data = build.collect_data(tmp_cfg, include_projection=True)
     assert isinstance(data["projection"], dict)

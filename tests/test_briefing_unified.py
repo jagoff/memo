@@ -219,6 +219,7 @@ def test_mcp_unified_briefing_returns_payload(tmp_cfg, monkeypatch):
     assert "Conflictos abiertos" in out["markdown"]
     assert isinstance(out["lines"], list)
     assert len(out["lines"]) > 0
+    assert len(out["markdown"]) <= 480
 
 
 def test_mcp_unified_briefing_empty_when_synapse_missing(tmp_cfg, monkeypatch):
@@ -277,6 +278,57 @@ def test_cli_briefing_emits_active_memory_block(tmp_cfg, monkeypatch, tmp_path):
     assert "Última sesión en este proyecto" in md
     assert "Quedó integrada" in md
     assert "Loops abiertos (sesión)" in md
+
+
+def test_cli_compact_briefing_caps_context_and_skips_synapse(tmp_cfg, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli_briefing_mod.Config, "from_env", lambda: tmp_cfg)
+    monkeypatch.setattr(
+        "memo.session.list_sessions",
+        lambda *a, **kw: [
+            {
+                "cwd": str(tmp_path),
+                "session_id": "sid-compact",
+                "updated": "2026-06-18T10:00:00+00:00",
+                "summary": "resumen " + ("muy largo " * 80),
+                "running_summary": "estado " + ("detallado " * 80),
+                "project": "memo",
+                "branch": "master",
+                "turn_count": 12,
+            }
+        ],
+    )
+
+    class _FakeStore:
+        def list_recent(self, *a, **kw):
+            raise AssertionError("compact briefing must not scan open loops")
+
+    class _FakeMemory:
+        def __init__(self, cfg):
+            self.store = _FakeStore()
+
+    monkeypatch.setattr("memo.memory.Memory", _FakeMemory)
+    monkeypatch.setattr(
+        briefing_mod,
+        "synapse_briefing_lines",
+        lambda cwd: (_ for _ in ()).throw(AssertionError("compact briefing must skip Synapse")),
+    )
+
+    result = CliRunner().invoke(cli_briefing_mod.briefing, ["--compact"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    md = payload["hookSpecificOutput"]["additionalContext"]
+    assert len(md) <= 480
+    assert "sid-compact" in md
+    assert "Memoria del día" not in md
+
+
+def test_compact_text_preserves_limit_and_ellipsis() -> None:
+    compact = briefing_mod.compact_text("alpha\n\n" + ("beta " * 200), max_chars=80)
+    assert len(compact) <= 80
+    assert compact.endswith("…")
+    assert "\n\n" not in compact
 
 
 # -- get_packet wrapper ---------------------------------------------------

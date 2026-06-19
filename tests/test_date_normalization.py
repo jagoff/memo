@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import datetime
 
-import pytest
-
 from memo.memory.consolidate_ops import _normalize_relative_dates
-
 
 REF = datetime.date(2026, 6, 18)
 

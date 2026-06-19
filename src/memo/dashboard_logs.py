@@ -17,6 +17,10 @@ def recall_hook_log_path(state_dir: Path) -> Path:
     return state_dir / "recall_hook.log"
 
 
+def context_cost_log_path(state_dir: Path) -> Path:
+    return state_dir / "context_cost.log"
+
+
 def _write_jsonl_entry(
     path: Path,
     entry: dict[str, Any],
@@ -117,6 +121,42 @@ def read_recall_log(state_dir: Path, *, limit: int = 10) -> list[dict[str, Any]]
 
 def read_recall_hook_log(state_dir: Path, *, limit: int = 2000) -> list[dict[str, Any]]:
     return _read_jsonl(recall_hook_log_path(state_dir), limit=limit)
+
+
+def append_context_cost_log(
+    state_dir: Path,
+    *,
+    kind: str,
+    chars: int,
+    client: str | None = None,
+    session_id: str | None = None,
+    turn: int | None = None,
+    cap: int = 1000,
+) -> None:
+    """Record exact injected characters and a transparent chars/4 estimate."""
+    safe_chars = max(0, int(chars))
+    entry: dict[str, Any] = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+        "kind": str(kind or "unknown")[:40],
+        "chars": safe_chars,
+        "tokens_est": (safe_chars + 3) // 4,
+    }
+    if client:
+        entry["client"] = client
+    if session_id:
+        entry["session_id"] = session_id
+    if turn is not None:
+        entry["turn"] = int(turn)
+    _write_jsonl_entry(
+        context_cost_log_path(state_dir),
+        entry,
+        cap=cap,
+        size_limit=1024 * 400,
+    )
+
+
+def read_context_cost_log(state_dir: Path, *, limit: int = 4000) -> list[dict[str, Any]]:
+    return _read_jsonl(context_cost_log_path(state_dir), limit=limit)
 
 
 def usage_log_path(state_dir: Path) -> Path:
