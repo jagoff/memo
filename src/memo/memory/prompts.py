@@ -76,6 +76,9 @@ Rules:
   but could have other explanations; "low" when speculative.
 - The body should be actionable or explanatory — prefer "this suggests X" or "the pattern
   indicates Y" over vague summaries.
+- If the body contains relative temporal references (ayer, hoy, anteayer, la semana pasada,
+  el mes pasado, hace N días, yesterday, today, last week, last month, N days ago), convert
+  them to absolute ISO dates (e.g., "ayer" → "2026-06-17").
 
 Output ONLY the JSON, no markdown fences, no commentary."""
 
