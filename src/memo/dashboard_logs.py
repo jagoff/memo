@@ -115,6 +115,35 @@ def append_recall_log(
         _write_jsonl_entry(recall_hook_log_path(state_dir), entry, cap=2000, size_limit=2_000_000)
     if client:
         _update_consumer_last_seen(state_dir, client, entry["ts"])
+    day = entry["ts"][:10]
+    activated = 1 if via in ("daemon", "subprocess") else 0
+    _update_daily_trend(state_dir, day=day, delta_consults=1, delta_activado=activated)
+
+
+def _update_daily_trend(
+    state_dir: Path, *, day: str, delta_consults: int, delta_activado: int
+) -> None:
+    path = state_dir / "daily_trend.json"
+    try:
+        data: dict[str, dict[str, int]] = (
+            json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        )
+        entry = data.setdefault(day, {"consultas": 0, "activado": 0})
+        entry["consultas"] += delta_consults
+        entry["activado"] += delta_activado
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        _log.debug("dashboard: daily_trend update failed: %s", exc)
+
+
+def read_daily_trend(state_dir: Path) -> dict[str, dict[str, int]]:
+    path = state_dir / "daily_trend.json"
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def _update_consumer_last_seen(state_dir: Path, consumer: str, ts: str) -> None:

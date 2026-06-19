@@ -179,7 +179,20 @@ def grounded_rate(state_dir) -> dict[str, Any]:
     (`answer_rate` = turns that used ≥1 memoria / turns measured), the latter
     matching the "answers WITH memo vs WITHOUT" framing.
     """
-    rows = read_recall_hook_log(state_dir)
+    # Merge recall_hook.log (session-aware, started after commit 67b8507) with
+    # recall.log (rolling, has older session entries not yet in hook log).
+    # Deduplication by (session_id, turn) keeps the richer entry.
+    _hook_rows = read_recall_hook_log(state_dir)
+    _recent_rows = read_recall_log(state_dir, limit=2000)
+    _seen: set[tuple[str, int]] = set()
+    rows: list[dict[str, Any]] = []
+    for r in _hook_rows + _recent_rows:
+        _turn_val = r.get("turn")
+        _turn_int: int = _turn_val if isinstance(_turn_val, int) else -1
+        key: tuple[str, int] = (r.get("session_id") or "", _turn_int)
+        if key[0] and key[1] >= 0 and key not in _seen:
+            _seen.add(key)
+            rows.append(r)
     surfaced_by_turn: dict[tuple[str, int], set[str]] = {}
     prompt_by_turn: dict[tuple[str, int], str] = {}
     for r in rows:

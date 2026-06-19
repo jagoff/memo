@@ -41,6 +41,7 @@ from memo.config import Config  # noqa: E402
 from memo.dashboard import (  # noqa: E402
     consult_breakdown,
     read_context_cost_log,
+    read_daily_trend,
     read_recall_log,
     reask_stats,
     recall_health,
@@ -415,14 +416,17 @@ def _pillar_corpus(
     rows: list[dict[str, Any]],
     history: list[dict[str, Any]],
     contradictions: dict[str, int] | None,
+    *,
+    vec_count: int | None = None,
 ) -> dict[str, Any]:
     memvec = next((d for d in doctor["db"] if d.get("label") == "memvec"), {})
     records = memvec.get("records") or 0
     type_counts = Counter(r["type"] for r in rows)
+    n_vecs = vec_count if vec_count is not None else len(rows)
     last_save = next((h for h in history if h["op"] == "save"), None)
     detail = [
         f"records: {records}",
-        f"with vectors: {len(rows)}",
+        f"with vectors: {n_vecs}",
         f"types: {dict(type_counts.most_common(5))}",
     ]
     if last_save:
@@ -483,22 +487,34 @@ def _usefulness(cfg: Config) -> dict[str, Any]:
 def _consult_trend(state_dir: Path, *, days: int = 14, limit: int = 1000) -> list[dict[str, Any]]:
     """Consults per calendar day (last ``days``), split activated vs total.
 
-    Pure read over recall.log — shows whether memo is being asked MORE over time
-    (adoption) or going quiet. ``activado`` = the hook actually searched (fired);
-    the rest were skipped (slash commands / short prompts / no match)."""
-    by_day: dict[str, dict[str, int]] = defaultdict(lambda: {"consultas": 0, "activado": 0})
+    Uses daily_trend.json (persistent accumulator) as primary source; falls back
+    to reading recall.log for any day not yet in the file (covers today's fresh
+    entries before the first flush).  Shows adoption over time."""
+    # Persistent per-day counters (survives recall.log rotation)
+    persisted = read_daily_trend(state_dir)
+
+    # Merge today's live recall.log on top (in case daily_trend.json lags behind)
+    live: dict[str, dict[str, int]] = defaultdict(lambda: {"consultas": 0, "activado": 0})
     for r in read_recall_log(state_dir, limit=limit):
         day = (r.get("ts") or "")[:10]
         if not day:
             continue
-        by_day[day]["consultas"] += 1
+        live[day]["consultas"] += 1
         if r.get("via") in ("daemon", "subprocess"):
-            by_day[day]["activado"] += 1
-    today = datetime.now(UTC).date()
+            live[day]["activado"] += 1
+
+    # Build merged view: persisted wins; live overrides today (more accurate)
+    today = datetime.now(UTC).date().isoformat()
+    merged: dict[str, dict[str, int]] = {}
+    for d, v in persisted.items():
+        merged[d] = dict(v)
+    if today in live:
+        merged[today] = live[today]  # live is ground truth for today
+
     out: list[dict[str, Any]] = []
     for i in range(days - 1, -1, -1):
-        d = (today - timedelta(days=i)).isoformat()
-        b = by_day.get(d, {"consultas": 0, "activado": 0})
+        d = (datetime.now(UTC).date() - timedelta(days=i)).isoformat()
+        b = merged.get(d, {"consultas": 0, "activado": 0})
         out.append({"date": d, "consultas": b["consultas"], "activado": b["activado"]})
     return out
 
@@ -772,12 +788,25 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
         rows = []
         projection = None
         type_counts = {}
+        # Cheap vector count for corpus pillar (no blob reads, no PCA)
+        try:
+            import sqlite3 as _sqlite3
+            import sqlite_vec as _sv
+            _conn = _sqlite3.connect(str(cfg.db_path))
+            _conn.enable_load_extension(True)
+            _sv.load(_conn)
+            _conn.enable_load_extension(False)
+            _vec_count = _conn.execute("SELECT COUNT(*) FROM vec").fetchone()[0]
+            _conn.close()
+        except Exception:
+            _vec_count = 0
 
     pillars = [
         _pillar_vector_db(doctor, drift),
         _pillar_embedder(doctor),
         _pillar_recall(recall_log),
-        _pillar_corpus(doctor, rows, history, contradictions),
+        _pillar_corpus(doctor, rows, history, contradictions,
+                       vec_count=len(rows) if rows else _vec_count),
     ]
 
     growth = _growth_by_day(history, days=30)
