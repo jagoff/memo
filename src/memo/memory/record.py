@@ -254,15 +254,33 @@ def _recency_key(rec: MemoryRecord) -> str:
 def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, Any] | None:
     """Run ``chat.chat(**kwargs)`` with a hard wall-clock timeout.
 
-    Returns the result dict, or ``None`` if it exceeds ``timeout``. The worker
-    thread is abandoned (``shutdown(wait=False)``) — an MLX forward pass can't be
-    interrupted mid-flight, so the timeout only bounds how long *we* wait. Errors
-    raised by ``chat.chat`` propagate (caller's try/except handles them).
+    Returns the result dict, or ``None`` if it exceeds ``timeout``. On timeout
+    the worker thread is abandoned (``shutdown(wait=False)``) — an MLX forward
+    pass can't be interrupted mid-flight. To prevent the abandoned thread from
+    causing the NEXT call to deadlock on the GPU lock indefinitely, the
+    submitted thread sets ``_gpu_tl.timeout`` (a thread-local read by
+    ``gpu_guard()``) so lock acquisitions in subsequent calls time out and raise
+    ``TimeoutError`` rather than blocking forever.
+
+    Errors raised by ``chat.chat`` propagate (caller's try/except handles them).
     """
     import concurrent.futures
 
+    _timeout = timeout
+
+    def _run() -> dict[str, Any]:
+        # Set thread-local GPU timeout so gpu_guard() in this thread uses a
+        # matching deadline instead of blocking indefinitely.
+        try:
+            from memo.mlx_gpu import _gpu_tl
+
+            _gpu_tl.timeout = _timeout
+        except Exception:
+            pass
+        return chat.chat(**kwargs)
+
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    fut = ex.submit(chat.chat, **kwargs)
+    fut = ex.submit(_run)
     try:
         return fut.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
