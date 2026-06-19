@@ -170,12 +170,11 @@ def test_subprocess_path_dedup_short_ref_on_second_turn(
     # Full body is present on first turn
     assert "full body" in context1
 
-    # --- Second turn: short reference line should appear instead of full body ---
+    # --- Second turn: already-recalled IDs are filtered out entirely ---
     result2 = runner.invoke(recall_hook, input=payload_second, env=env, catch_exceptions=False)
     assert result2.exit_code == 0, result2.output
     out2 = json.loads(result2.output)
     context2 = out2["hookSpecificOutput"]["additionalContext"]
-    assert "Test Memory" in context2
-    # Short reference line with "ya citado" — no full body
-    assert "ya citado" in context2
+    # Filtered out — memory already in context window, saves tokens
+    assert "Test Memory" not in context2
     assert "full body" not in context2
