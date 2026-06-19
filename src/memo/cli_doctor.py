@@ -241,4 +241,41 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
     except Exception as exc:
         console.print(f"[dim]•[/dim] memo-first adoption check skipped: {exc}")
 
+    # Token efficiency summary — quick snapshot of profile cost and ROI.
+    try:
+        from memo.flags import flag_str as _flag_str
+
+        _profile = _flag_str("MEMO_MCP_PROFILE").strip().lower() or "default"
+        _is_slim = _profile in ("core", "slim")
+        _tool_count = "~25" if _is_slim else "~118"
+        _tok_cost = "~2.4k" if _is_slim else "~35k"
+        _profile_label = f"MEMO_MCP_PROFILE={_profile}"
+        if _is_slim:
+            console.print(
+                f"[green]✓[/green] token cost: {_profile_label}  {_tool_count} tools "
+                f"({_tok_cost} tokens/connection)"
+            )
+        else:
+            console.print(
+                f"[yellow]![/yellow] token cost: {_profile_label}  {_tool_count} tools "
+                f"({_tok_cost} tokens/connection)  "
+                "[dim](set MEMO_MCP_PROFILE=core or use `memo install-mcp --profile core` "
+                "to reduce to ~25 tools / ~2.4k tokens for constrained clients)[/dim]"
+            )
+        try:
+            from memo.cli_roi import compute_roi
+
+            _roi = compute_roi(cfg.state_dir, limit=200)
+            _saved = _roi.get("tokens_saved_human") or "0"
+            _grounded = _roi.get("grounded") or 0
+            if _grounded > 0:
+                console.print(
+                    f"[green]✓[/green] tokens saved: ~{_saved} "
+                    f"(from {_grounded} grounded recalls — run `memo roi` for details)"
+                )
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     sys.exit(0 if ok else 1)
