@@ -58,9 +58,9 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_MCP_PROFILE",
         "str",
-        "default",
+        "agent",
         "mcp",
-        "MCP surface profile: default/full expose advanced tools; core/slim expose only stable core tools.",
+        "MCP surface profile: agent (default, 5 tools) | core/slim (stable core) | full/default (all tools).",
     ),
     _spec(
         "MEMO_CLI_PROFILE",
@@ -476,11 +476,12 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_DREAM_COMPRESS_THRESHOLD",
         "int",
-        2000,
+        0,
         "dream",
         "Body-length threshold (chars) for the dream verbose-compression pass. "
         "Memorias whose body exceeds this length are LLM-compressed to 2-3 sentences "
-        "during `memo dream run`. 0 disables compression.",
+        "during `memo dream run`. Disabled by default because Markdown is canonical; "
+        "set an explicit positive value to opt in.",
         min_val=0,
     ),
     _spec(

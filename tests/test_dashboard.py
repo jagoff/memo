@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import memo.dashboard_logs as dashboard_logs
 from memo.dashboard import (
     _human_age,
     _human_bytes,
@@ -64,6 +65,31 @@ def test_append_and_read_recall_log_roundtrip(tmp_path: Path) -> None:
     assert entries[0]["prompt"] == "why did MLX win?"
     assert entries[0]["hits"][0]["id"] == "abcdef12"  # truncated to 8
     assert entries[0]["hits"][0]["score"] == 0.82
+
+
+def test_context_cost_log_roundtrip(tmp_path: Path) -> None:
+    dashboard_logs.append_context_cost_log(
+        tmp_path,
+        kind="recall",
+        chars=321,
+        client="claude-code",
+        session_id="sid-1",
+        turn=4,
+    )
+
+    rows = dashboard_logs.read_context_cost_log(tmp_path)
+
+    assert rows == [
+        {
+            "ts": rows[0]["ts"],
+            "kind": "recall",
+            "chars": 321,
+            "tokens_est": 81,
+            "client": "claude-code",
+            "session_id": "sid-1",
+            "turn": 4,
+        }
+    ]
 
 
 def test_recall_log_returns_newest_first(tmp_path: Path) -> None:

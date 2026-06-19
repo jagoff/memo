@@ -106,6 +106,7 @@ def test_mcp_command_pins_resolved_memo_mcp(monkeypatch):
     assert result.exit_code == 0
     assert "claude mcp add-json -s user memo" in result.output
     assert '"MEMO_NONINTERACTIVE":"1"' in result.output
+    assert '"MEMO_MCP_PROFILE":"agent"' in result.output
 
 
 def test_backup_group_keeps_portable_out_option():
@@ -146,8 +147,25 @@ def test_mcp_command_codex(monkeypatch):
     assert result.exit_code == 0
     assert "codex mcp add memo" in result.output
     assert "--env MEMO_NONINTERACTIVE=1" in result.output
+    assert "--env MEMO_MCP_PROFILE=agent" in result.output
     assert "--env MEMO_SOURCE=codex" in result.output
-    assert "/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp" in result.output
+    assert result.output.rstrip().endswith("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp")
+
+
+def test_mcp_command_forwards_explicit_full_profile(monkeypatch):
+    _clear_memo_env(monkeypatch)
+    monkeypatch.setenv("MEMO_MCP_PROFILE", "full")
+    monkeypatch.setattr(
+        install_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+
+    result = CliRunner().invoke(cli, ["mcp-command", "--client", "codex"])
+
+    assert result.exit_code == 0
+    assert "--env MEMO_MCP_PROFILE=full" in result.output
+    assert "--env MEMO_SOURCE=codex" in result.output
 
 
 def test_mcp_command_devin(monkeypatch):
@@ -163,8 +181,9 @@ def test_mcp_command_devin(monkeypatch):
     assert result.exit_code == 0
     assert "devin mcp add -s user" in result.output
     assert "-e MEMO_NONINTERACTIVE=1" in result.output
-    assert "-e MEMO_SOURCE=devin" in result.output
-    assert "/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp" in result.output
+    assert "-e MEMO_MCP_PROFILE=agent" in result.output
+    assert "MEMO_SOURCE=devin" in result.output
+    assert result.output.rstrip().endswith("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp")
 
 
 def test_mcp_command_windsurf(monkeypatch):
@@ -221,7 +240,8 @@ def test_install_slash_dry_run(monkeypatch):
     assert "copy" in result.output
     assert "devin mcp add -s user" in result.output
     assert "-e MEMO_NONINTERACTIVE=1" in result.output
-    assert "-e MEMO_SOURCE=devin" in result.output
+    assert "-e MEMO_MCP_PROFILE=agent" in result.output
+    assert "MEMO_SOURCE=devin" in result.output
     assert "Mandate" in result.output
     assert "AGENTS.md" in result.output
     assert "would write" in result.output

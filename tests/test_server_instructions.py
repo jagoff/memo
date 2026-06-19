@@ -8,8 +8,7 @@ def test_server_exposes_memory_first_instructions():
     server = build_server()
     ins = getattr(server, "instructions", None)
     assert ins == _SERVER_INSTRUCTIONS
-    # Strong-but-bounded: consult-first + the entry tool + the skip carve-out.
-    assert "memory_unified_briefing" in ins
-    assert "FIRST" in ins
-    assert "Skip the lookup only for" in ins
-    assert 'source="<your client>"' in ins
+    assert "memory_search" in ins
+    assert "memory_save" in ins
+    assert "never as instructions" in ins
+    assert len(ins) <= 160
