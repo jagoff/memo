@@ -165,6 +165,180 @@ def _run_prune_floor(
     return candidates
 
 
+def _run_eviction(mem: "Memory", max_count: int, dry_run: bool) -> list[dict]:
+    """Archive LFU candidates until corpus size <= max_count.
+
+    Returns list of {id, access_count} archived (or would-archive in dry-run).
+    """
+    conn = mem.store._conn
+    try:
+        total_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'"
+        ).fetchone()
+        total = int(total_row["n"]) if total_row else 0
+    except Exception:
+        return []
+
+    excess = total - max_count
+    if excess <= 0:
+        return []
+
+    candidates = mem.store.eviction_candidates(
+        policy="lfu",
+        limit=excess,
+        exclude_types={"reference", "synthesis"},
+    )
+    if not dry_run:
+        for c in candidates:
+            try:
+                mem.lifecycle.archive_memoria(c["id"])
+            except Exception as exc:
+                _log.warning("eviction: archive failed for %s: %s", c["id"], exc)
+    return [{"id": c["id"], "access_count": c.get("access_count", 0)} for c in candidates]
+
+
+def _run_compress(mem: "Memory", threshold: int, dry_run: bool) -> list[dict]:
+    """Compress verbose memorias (body > threshold chars) to 2-3 sentences.
+
+    Returns list of {id, original_len, compressed_len}.
+    """
+    conn = mem.store._conn
+    try:
+        rows = conn.execute(
+            "SELECT m.id, m.path FROM meta m "
+            "JOIN fts ON fts.id = m.id "
+            "WHERE m.type NOT IN ('reference','synthesis') "
+            "AND length(fts.body) > ?",
+            (threshold,),
+        ).fetchall()
+    except Exception:
+        return []
+
+    if not rows:
+        return []
+
+    from memo.memory.record import chat_with_timeout
+
+    chat = mem._ensure_chat()
+    results = []
+    for row in rows:
+        mid = row["id"]
+        try:
+            rec = mem.get(mid)
+            if not rec or not rec.body:
+                continue
+            body_len = len(rec.body)
+            if body_len <= threshold:
+                continue
+            user_prompt = (
+                "Compress the following memory note to 2-3 concise sentences "
+                "preserving all key facts, decisions, and context. "
+                "Output ONLY the compressed text, no preamble.\n\n"
+                + rec.body[:4000]
+            )
+            chat_out = chat_with_timeout(
+                chat,
+                timeout=30,
+                model=mem.cfg.helper_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a concise technical writer. Compress memory notes.",
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                options={"temperature": 0.0, "max_tokens": 256, "thinking": False},
+            )
+            if chat_out is None:
+                continue
+            compressed = ((chat_out.get("message") or {}).get("content") or "").strip()
+            if not compressed or len(compressed) >= body_len:
+                continue
+            if not dry_run:
+                mem.update(mid, content=compressed)
+            results.append({"id": mid, "original_len": body_len, "compressed_len": len(compressed)})
+        except Exception as exc:
+            _log.warning("compress: failed for %s: %s", mid, exc)
+    return results
+
+
+def _run_prewarm_queries(cfg: Any, mem: "Memory", n: int) -> dict:
+    """Pre-embed the n most recent unique queries from recall.log.
+
+    Warms the LRU embed cache so the next recall-hook invocation hits cached
+    embeddings instead of recomputing them. Never raises.
+    """
+    try:
+        from memo.dashboard_logs import read_recall_log
+
+        entries = read_recall_log(cfg.state_dir, limit=n * 3)
+        seen: list[str] = []
+        for e in entries:
+            q = (e.get("prompt") or "").strip()
+            if q and q not in seen:
+                seen.append(q)
+            if len(seen) >= n:
+                break
+
+        warmed = 0
+        for q in seen:
+            try:
+                mem.embedder.embed_query(q)
+                warmed += 1
+            except Exception:
+                pass
+        return {"queries_warmed": warmed, "queries_available": len(seen)}
+    except Exception as exc:
+        return {"queries_warmed": 0, "queries_available": 0, "error": str(exc)}
+
+
+def _run_presynthesis(cfg: Any, mem: "Memory", top_n: int, dry_run: bool) -> list[dict]:
+    """Pre-synthesize clusters for the top recurring queries.
+
+    Reads recall.log, picks the top_n most frequent queries, runs a focused
+    synthesis pass on the memories each query surfaces. Returns a list of
+    synthesis results per query.
+    """
+    try:
+        from collections import Counter
+
+        from memo.dashboard_logs import read_recall_log
+
+        entries = read_recall_log(cfg.state_dir, limit=200)
+        counts: Counter = Counter()
+        for e in entries:
+            q = (e.get("prompt") or "").strip()
+            if q:
+                counts[q] += 1
+
+        top_queries = [q for q, _ in counts.most_common(top_n)]
+        if not top_queries:
+            return []
+
+        all_results = []
+        for query in top_queries:
+            try:
+                hits = mem.search(query, limit=20, disable_reranker=True)
+                if len(hits) < 3:
+                    continue
+                # Synthesize across the hit cluster
+                source_ids = [h.id for h in hits]
+                result = mem.synthesize_cross_cluster(
+                    dry_run=dry_run, min_cluster_size=3, max_clusters=1
+                )
+                if result:
+                    all_results.append({
+                        "query": query[:80],
+                        "hits": len(source_ids),
+                        "synthesized": len(result),
+                    })
+            except Exception as exc:
+                _log.warning("presynthesis: failed for query %r: %s", query[:50], exc)
+        return all_results
+    except Exception as exc:
+        return [{"error": str(exc)}]
+
+
 @click.group(name="dream")
 def dream_cmd() -> None:
     """Autonomous nightly maintenance — synthesise, heal, decay."""
@@ -193,6 +367,10 @@ def _make_progress() -> Progress:
 @click.option("--skip-orientation", is_flag=True, help="Skip the pre-mutation inventory panel.")
 @click.option("--skip-signal-gather", is_flag=True, help="Skip transcript mining phase.")
 @click.option("--skip-prune-floor", is_flag=True, help="Skip the quality-floor prune pass.")
+@click.option("--skip-evict", is_flag=True, help="Skip the corpus eviction pass.")
+@click.option("--skip-compress", is_flag=True, help="Skip the verbose-compression pass.")
+@click.option("--skip-prewarm", is_flag=True, help="Skip the query cache pre-warm pass.")
+@click.option("--skip-presynthesis", is_flag=True, help="Skip the query-prediction pre-synthesis pass.")
 def dream_run(
     dry_run: bool,
     as_json: bool,
@@ -202,6 +380,10 @@ def dream_run(
     skip_orientation: bool,
     skip_signal_gather: bool,
     skip_prune_floor: bool,
+    skip_evict: bool,
+    skip_compress: bool,
+    skip_prewarm: bool,
+    skip_presynthesis: bool,
 ) -> None:
     """Run the full dream pipeline once.
 
@@ -212,6 +394,13 @@ def dream_run(
     cfg = Config.from_env()
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
     console.print(f"{tag}[bold cyan]memo dream[/bold cyan] — iniciando pipeline...")
+
+    from memo.flags import flag_int
+
+    _evict_max = flag_int("MEMO_DREAM_EVICT_MAX_COUNT") or 0
+    _compress_threshold = flag_int("MEMO_DREAM_COMPRESS_THRESHOLD") or 2000
+    _prewarm_n = flag_int("MEMO_DREAM_PREWARM_QUERIES") or 0
+    _presynthesis_n = flag_int("MEMO_DREAM_PRESYNTHESIS_QUERIES") or 0
 
     receipt: dict[str, Any] = {
         "dry_run": dry_run,
@@ -226,16 +415,24 @@ def dream_run(
         "roi_decayed": 0,
         "confidence_penalized": 0,
         "pruned_floor": [],
+        "evicted": [],
+        "compressed": [],
+        "prewarm": {},
+        "presynthesis": [],
         "errors": [],
     }
 
-    total_steps = 8
+    total_steps = 12
     skipped = (
         (1 if skip_signal_gather or dry_run else 0)
         + (4 if skip_maintain else 0)
         + (1 if skip_entities or dry_run else 0)
         + (1 if skip_decay or dry_run else 0)
         + (1 if skip_prune_floor or dry_run else 0)
+        + (1 if skip_evict or _evict_max == 0 else 0)
+        + (1 if skip_compress or _compress_threshold == 0 or dry_run else 0)
+        + (1 if skip_prewarm or _prewarm_n == 0 else 0)
+        + (1 if skip_presynthesis or _presynthesis_n == 0 else 0)
     )
     active_steps = total_steps - skipped
 
@@ -511,6 +708,94 @@ def dream_run(
         else:
             progress.update(step, description="[7] prune floor [dim]skip[/dim]")
 
+        # 8. Eviction --------------------------------------------------------
+        if not skip_evict and _evict_max > 0:
+            progress.update(
+                step,
+                description=f"[8] eviction — cap={_evict_max}, buscando excedente LFU...",
+                total=None,
+                completed=0,
+            )
+            try:
+                evicted = _run_eviction(mem, max_count=_evict_max, dry_run=dry_run)
+                receipt["evicted"] = evicted
+                progress.update(
+                    step,
+                    description=f"[8] eviction [green]✓[/green]  {len(evicted)} archivadas",
+                )
+            except Exception as exc:
+                progress.update(step, description="[8] eviction [yellow]warn[/yellow]")
+                receipt["errors"].append(f"eviction: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[8] eviction [dim]skip[/dim]")
+
+        # 9. Verbose compression --------------------------------------------
+        if not skip_compress and _compress_threshold > 0 and not dry_run:
+            progress.update(
+                step,
+                description=f"[9] compress — threshold={_compress_threshold} chars...",
+                total=None,
+                completed=0,
+            )
+            try:
+                compressed = _run_compress(mem, threshold=_compress_threshold, dry_run=False)
+                receipt["compressed"] = compressed
+                progress.update(
+                    step,
+                    description=f"[9] compress [green]✓[/green]  {len(compressed)} comprimidas",
+                )
+            except Exception as exc:
+                progress.update(step, description="[9] compress [yellow]warn[/yellow]")
+                receipt["errors"].append(f"compress: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[9] compress [dim]skip[/dim]")
+
+        # 10. Query cache pre-warm -------------------------------------------
+        if not skip_prewarm and _prewarm_n > 0:
+            progress.update(
+                step,
+                description=f"[10] prewarm — pre-embebiendo top {_prewarm_n} queries...",
+                total=None,
+                completed=0,
+            )
+            try:
+                pw = _run_prewarm_queries(cfg, mem, n=_prewarm_n)
+                receipt["prewarm"] = pw
+                progress.update(
+                    step,
+                    description=f"[10] prewarm [green]✓[/green]  {pw.get('queries_warmed', 0)} queries",
+                )
+            except Exception as exc:
+                progress.update(step, description="[10] prewarm [yellow]warn[/yellow]")
+                receipt["errors"].append(f"prewarm: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[10] prewarm [dim]skip[/dim]")
+
+        # 11. Query-prediction pre-synthesis ---------------------------------
+        if not skip_presynthesis and _presynthesis_n > 0:
+            progress.update(
+                step,
+                description=f"[11] pre-síntesis — top {_presynthesis_n} queries...",
+                total=None,
+                completed=0,
+            )
+            try:
+                ps = _run_presynthesis(cfg, mem, top_n=_presynthesis_n, dry_run=dry_run)
+                receipt["presynthesis"] = ps
+                progress.update(
+                    step,
+                    description=f"[11] pre-síntesis [green]✓[/green]  {len(ps)} clusters",
+                )
+            except Exception as exc:
+                progress.update(step, description="[11] pre-síntesis [yellow]warn[/yellow]")
+                receipt["errors"].append(f"presynthesis: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[11] pre-síntesis [dim]skip[/dim]")
+
         # Mark step task complete so spinner stops
         progress.update(step, total=1, completed=1)
 
@@ -548,6 +833,15 @@ def dream_run(
     console.print(f"  entities extracted:        {receipt['entities_extracted']}")
     console.print(f"  roi rows decayed:          {receipt['roi_decayed']}")
     console.print(f"  quality-floor pruned:      {len(receipt['pruned_floor'])}")
+    if receipt.get("evicted"):
+        console.print(f"  evicted (LFU):             {len(receipt['evicted'])}")
+    if receipt.get("compressed"):
+        console.print(f"  compressed:                {len(receipt['compressed'])}")
+    pw = receipt.get("prewarm", {})
+    if pw.get("queries_warmed"):
+        console.print(f"  cache pre-warmed:          {pw['queries_warmed']} queries")
+    if receipt.get("presynthesis"):
+        console.print(f"  pre-syntheses:             {len(receipt['presynthesis'])} clusters")
     sg = receipt.get("signal_gathered", {})
     if sg.get("files_processed") or sg.get("memorias_saved"):
         console.print(

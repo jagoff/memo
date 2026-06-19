@@ -69,6 +69,16 @@ CREATE INDEX IF NOT EXISTS idx_em_memoria ON entity_memoria(memoria_id);
 CREATE INDEX IF NOT EXISTS idx_em_entity  ON entity_memoria(entity_id);
 CREATE INDEX IF NOT EXISTS idx_e_type     ON entities(type);
 CREATE INDEX IF NOT EXISTS idx_e_mc       ON entities(mention_count);
+
+CREATE TABLE IF NOT EXISTS co_recall (
+    id_a   TEXT NOT NULL,
+    id_b   TEXT NOT NULL,
+    count  INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (id_a, id_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cr_a ON co_recall(id_a);
+CREATE INDEX IF NOT EXISTS idx_cr_b ON co_recall(id_b);
 """
 
 
@@ -293,6 +303,38 @@ class GraphStore:
         n_entities = self.count_entities()
         n_links = self._conn.execute("SELECT COUNT(*) FROM entity_memoria").fetchone()[0]
         return {"entities": n_entities, "links": n_links}
+
+    def record_co_recall(self, ids: list[str]) -> int:
+        """Increment co-recall count for every pair in `ids`.
+
+        Called after a search returns 2+ results. Pairs are stored with
+        id_a < id_b so the primary key is order-independent. Returns the
+        number of pairs upserted.
+        """
+        if len(ids) < 2:
+            return 0
+        sorted_ids = sorted(ids)
+        pairs = [
+            (sorted_ids[i], sorted_ids[j])
+            for i in range(len(sorted_ids))
+            for j in range(i + 1, len(sorted_ids))
+        ]
+        with self._tx() as cx:
+            for a, b in pairs:
+                cx.execute(
+                    "INSERT INTO co_recall (id_a, id_b, count) VALUES (?, ?, 1) "
+                    "ON CONFLICT(id_a, id_b) DO UPDATE SET count = count + 1",
+                    (a, b),
+                )
+        return len(pairs)
+
+    def top_co_recalled(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return the most frequently co-recalled pairs."""
+        rows = self._conn.execute(
+            "SELECT id_a, id_b, count FROM co_recall ORDER BY count DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def close(self) -> None:
         with suppress(Exception):
