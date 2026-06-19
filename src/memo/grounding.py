@@ -286,11 +286,27 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
             return _bail("missing_transcript_path", session_id=session_id)
 
         # Resolve the turn the recall-hook stamped for this exchange.
-        from memo import session as _session
+        # Primary: recall_hook.log (written synchronously by the recall-hook,
+        # never subject to the async-checkpoint race that leaves last_recall_turn=null
+        # in the session snapshot). Fallback: session snapshot for older runtimes.
+        from memo.dashboard import read_recall_hook_log
 
-        snap = _session.get_session(state_dir, session_id) or {}
-        turn = snap.get("last_recall_turn")
-        if not isinstance(turn, int):
+        _hook_rows = read_recall_hook_log(state_dir, limit=2000)
+        turn: int | None = None
+        for _row in reversed(_hook_rows):
+            if _row.get("session_id") == session_id:
+                _t = _row.get("turn")
+                if isinstance(_t, int) and _t >= 0:
+                    turn = _t
+                    break
+        if turn is None:
+            from memo import session as _session
+
+            snap = _session.get_session(state_dir, session_id) or {}
+            _lrt = snap.get("last_recall_turn")
+            if isinstance(_lrt, int):
+                turn = _lrt
+        if turn is None:
             return _bail("missing_last_recall_turn", session_id=session_id)
 
         recalled = _recalled_for_turn(state_dir, session_id, turn)
@@ -302,7 +318,8 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
         if not answer:
             return _bail("no_answer", session_id=session_id, turn=turn)
         answer_tokens = _salient_tokens(answer)
-        client = snap.get("client") or "claude-code"
+        _snap = locals().get("snap") or {}
+        client = _snap.get("client") or "claude-code"
         question = _prompt_for_turn(state_dir, session_id, turn)
         # Downstream-action targets for this turn (Claude Code only; [] elsewhere).
         tool_targets = collect_recent_tool_targets(transcript_path)
