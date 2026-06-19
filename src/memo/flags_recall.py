@@ -192,6 +192,22 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_RECALL_DIRECTIVE_ONCE",
+        "bool",
+        True,
+        "recall",
+        "Inject the RECALL_DIRECTIVE only on the first recall turn of a session (turn=1). Subsequent turns skip it since it's already in the context window. Saves ~110 tokens per turn. Disable to always include.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_RECALL_SCORE_ADAPTIVE_BODY",
+        "bool",
+        True,
+        "recall",
+        "Scale per-hit body_chars proportionally to hit score: score>=0.85 → 1.5×, score<0.65 → 0.5× (min 80 chars). High-confidence hits get more context; marginal hits waste fewer tokens.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_RECALL_ADAPTIVE_CONTEXT",
         "bool",
         True,

@@ -329,20 +329,49 @@ def recall_hook() -> None:
 
     from memo.recall_server import RECALL_DIRECTIVE, RECALL_FOOTER, RECALL_HEADER
 
+    # Directive-once: skip 111-token directive after the first recall turn.
+    include_directive = (
+        _turn is None
+        or _turn <= 1
+        or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
+    )
+
     footer = RECALL_FOOTER
-    lines = [RECALL_HEADER, RECALL_DIRECTIVE, ""]
-    used_chars = 0
+    lines = [RECALL_HEADER]
+    if include_directive:
+        lines += [RECALL_DIRECTIVE, ""]
+    else:
+        lines.append("")
 
     def _est_tokens(s: str) -> int:
         return max(1, len(s) // 4)
 
-    budget_chars = token_budget * 4 if token_budget > 0 else None
+    def _effective_body_chars(score: float | None) -> int:
+        if not flag_bool("MEMO_RECALL_SCORE_ADAPTIVE_BODY") or score is None:
+            return body_chars
+        if score >= 0.85:
+            return int(body_chars * 1.5)
+        if score < 0.65:
+            return max(80, body_chars // 2)
+        return body_chars
+
+    # Budget governs hit content only — deduct fixed overhead so the token cap
+    # isn't silently exceeded by header/directive/footer.
+    budget_chars_for_hits: int | None
+    if token_budget > 0:
+        overhead = sum(len(ln) + 1 for ln in lines) + len(footer) + 1 + 80
+        budget_chars_for_hits = max(0, token_budget * 4 - overhead)
+    else:
+        budget_chars_for_hits = None
+
+    used_chars = 0
 
     for h in relevant:
+        eff_body = _effective_body_chars(h.score)
         score_tag = f" (score {h.score:.2f})" if h.score is not None else ""
         body = (h.body or "").strip().replace("\n", " ")
-        if len(body) > body_chars:
-            body = body[:body_chars].rstrip() + "…"
+        if len(body) > eff_body:
+            body = body[:eff_body].rstrip() + "…"
         block_lines = [f"**[{h.id[:8]}] {h.title}**{score_tag}"]
         if h.tags:
             block_lines.append(f"_tags_: {', '.join(h.tags)}")
@@ -351,11 +380,11 @@ def recall_hook() -> None:
         block_lines.append("")
         block = "\n".join(block_lines)
 
-        if budget_chars is None:
+        if budget_chars_for_hits is None:
             lines.extend(block_lines)
             continue
 
-        remaining = budget_chars - used_chars
+        remaining = budget_chars_for_hits - used_chars
         if remaining <= 0:
             break
         if len(block) <= remaining:

@@ -12,7 +12,8 @@ how much each one shows up in the assistant's final answer:
 
 `used_score = max(lexical, embed_cosine)`. One `grounding.log` row per recalled
 memoria, keyed by `(session_id, turn, recall_id)` — the recall→use ledger that
-`dashboard.grounded_rate` joins against recall.log.
+`dashboard.grounded_rate` joins against recall_hook.log, with recall.log as a
+compatibility fallback.
 
 Design constraints (see plan / CLAUDE.md):
 - Foundation leaf: stdlib + `memo.dashboard` (leaf) + lazy `memo.embedder_client`
@@ -211,11 +212,15 @@ def _action_for_snippet(snippet: str, targets: list[dict[str, str]]) -> dict[str
 
 def _recalled_for_turn(state_dir: Path, session_id: str, turn: int) -> list[dict[str, Any]]:
     """The memorias recalled for (session_id, turn): list of
-    {id, snippet, score} pulled from recall.log. No store read."""
-    from memo.dashboard import read_recall_log
+    {id, snippet, score} pulled from recall_hook.log, falling back to the
+    shared recall.log for older runtimes. No store read."""
+    from memo.dashboard import read_recall_hook_log, read_recall_log
 
     out: dict[str, dict[str, Any]] = {}
-    for row in read_recall_log(state_dir, limit=400):
+    rows = read_recall_hook_log(state_dir, limit=2000)
+    if not rows:
+        rows = read_recall_log(state_dir, limit=2000)
+    for row in rows:
         if row.get("session_id") != session_id or row.get("turn") != turn:
             continue
         for h in row.get("hits") or []:
@@ -230,11 +235,14 @@ def _recalled_for_turn(state_dir: Path, session_id: str, turn: int) -> list[dict
 
 
 def _prompt_for_turn(state_dir: Path, session_id: str, turn: int) -> str:
-    """The user prompt recorded for (session_id, turn) in recall.log, for the
-    topical-baseline embedding. '' when not found."""
-    from memo.dashboard import read_recall_log
+    """The user prompt recorded for (session_id, turn) in recall_hook.log, for
+    the topical-baseline embedding. '' when not found."""
+    from memo.dashboard import read_recall_hook_log, read_recall_log
 
-    for row in read_recall_log(state_dir, limit=400):
+    rows = read_recall_hook_log(state_dir, limit=2000)
+    if not rows:
+        rows = read_recall_log(state_dir, limit=2000)
+    for row in rows:
         if row.get("session_id") == session_id and row.get("turn") == turn:
             p = row.get("prompt")
             if p:

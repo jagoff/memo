@@ -213,15 +213,47 @@ def _recall_logic(
         with contextlib.suppress(Exception):
             mem.contextual.record_search(prompt, [h.id for h in relevant])
 
-    lines = [RECALL_HEADER, RECALL_DIRECTIVE, ""]
+    # Directive-once: skip 111-token directive after the first recall turn (it's
+    # already in the context window from turn 1).
+    include_directive = (
+        turn is None
+        or turn <= 1
+        or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
+    )
+
+    lines = [RECALL_HEADER]
+    if include_directive:
+        lines += [RECALL_DIRECTIVE, ""]
+    else:
+        lines.append("")
+
     footer = RECALL_FOOTER
-    budget_chars = token_budget * 4 if token_budget > 0 else None
+
+    # Budget governs hit content only — deduct fixed overhead first so the
+    # token cap isn't silently exceeded by the header/directive/footer.
+    budget_chars: int | None
+    if token_budget > 0:
+        overhead = sum(len(ln) + 1 for ln in lines) + len(footer) + 1 + 80
+        budget_chars = max(0, token_budget * 4 - overhead)
+    else:
+        budget_chars = None
+
+    def _effective_body_chars(score: float | None) -> int:
+        if not flag_bool("MEMO_RECALL_SCORE_ADAPTIVE_BODY") or score is None:
+            return body_chars
+        if score >= 0.85:
+            return int(body_chars * 1.5)
+        if score < 0.65:
+            return max(80, body_chars // 2)
+        return body_chars
+
     used_chars = 0
     for h in relevant:
+        eff_body = _effective_body_chars(h.score)
         score_tag = f" (score {h.score:.2f})" if h.score is not None else ""
         body = (h.body or "").strip().replace("\n", " ")
-        if len(body) > body_chars:
-            body = body[:body_chars].rstrip() + "…"
+        if len(body) > eff_body:
+            body = body[:eff_body].rstrip() + "…"
         block_lines = [f"**[{h.id[:8]}] {h.title}**{score_tag}"]
         if h.tags:
             block_lines.append(f"_tags_: {', '.join(h.tags)}")
