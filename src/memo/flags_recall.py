@@ -186,10 +186,9 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_FEEDBACK_HINT",
         "bool",
-        True,
+        False,
         "recall",
-        "Append a feedback hint comment to the recall block so the AI layer can surface memory_feedback_record to the user.",
-        opt_out=True,
+        "Append a feedback hint comment to the recall block so the AI layer can surface memory_feedback_record to the user. Off by default (saves ~20 tokens/recall).",
     ),
     _spec(
         "MEMO_RECALL_DIRECTIVE_ONCE",
