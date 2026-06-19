@@ -1347,6 +1347,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
       }
     };
     setInterval(poll, intervalS * 1000);
+    poll();
   } else {
     setBadge("blue", "snapshot · usá `memo dashboard` para tiempo real");
   }
