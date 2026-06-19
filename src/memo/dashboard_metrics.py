@@ -33,19 +33,15 @@ VERDICT_MIN_MEASURED_TURNS = 1
 # Keep "unmeasured" reserved for near-absence of grounding data. Once we have
 # a modest sample, the verdict can already fall through to weak/ok.
 VERDICT_MIN_MEASUREMENT_COVERAGE = 0.05
-# Layers we EXPECT to read memo (flagged as "silent" if absent). "windsurf" was
-# retired — that IDE is now Devin Desktop (Cognition), which reads
-# ~/.codeium/windsurf/mcp_config.json with MEMO_SOURCE=devin-desktop, so it is
-# labelled "devin-desktop" when it consults. It is NOT in this expected set: it's
-# a GUI app that can't be driven headless, so flagging it silent is just noise —
-# it appears as a reader if/when Cascade actually queries memo.
+# Layers we EXPECT to read memo (flagged as "silent" if absent).
+# Only always-on daemons/hooks belong here; on-demand tools (devin, opencode,
+# devin-desktop) appear as readers if/when they actually query — no silent flag
+# for tools the user invokes explicitly rather than tools that run continuously.
 EXPECTED_CONSUMERS = (
     "claude-code",
     "synapse",
     "memflow",
     "codex",
-    "devin",
-    "opencode",
 )
 
 
