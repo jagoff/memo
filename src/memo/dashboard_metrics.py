@@ -410,7 +410,20 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
             }
         )
     consumers.sort(key=lambda c: c["consults"], reverse=True)
-    silent = [c for c in EXPECTED_CONSUMERS if c not in by]
+
+    # A consumer is silent if absent from both the rolling window AND the
+    # persistent last-seen tracker (within 30 days).  This prevents false
+    # positives when a low-frequency consumer (devin, opencode) scrolls out of
+    # the rolling recall.log cap but queried memo within the last month.
+    from datetime import UTC, datetime, timedelta
+
+    from memo.dashboard_logs import read_consumer_last_seen
+
+    last_seen = read_consumer_last_seen(state_dir)
+    cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
+    recently_seen = {c for c, ts in last_seen.items() if ts >= cutoff}
+    active = set(by) | recently_seen
+    silent = [c for c in EXPECTED_CONSUMERS if c not in active]
     return {"sampled": len(rows), "consumers": consumers, "silent": silent}
 
 

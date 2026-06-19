@@ -113,6 +113,29 @@ def append_recall_log(
     _write_jsonl_entry(recall_log_path(state_dir), entry, cap=cap, size_limit=1024 * 200)
     if session_id is not None:
         _write_jsonl_entry(recall_hook_log_path(state_dir), entry, cap=2000, size_limit=2_000_000)
+    if client:
+        _update_consumer_last_seen(state_dir, client, entry["ts"])
+
+
+def _update_consumer_last_seen(state_dir: Path, consumer: str, ts: str) -> None:
+    path = state_dir / "consumer_last_seen.json"
+    try:
+        data: dict[str, str] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        if ts > data.get(consumer, ""):
+            data[consumer] = ts
+            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        _log.debug("dashboard: consumer_last_seen update failed: %s", exc)
+
+
+def read_consumer_last_seen(state_dir: Path) -> dict[str, str]:
+    path = state_dir / "consumer_last_seen.json"
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def read_recall_log(state_dir: Path, *, limit: int = 10) -> list[dict[str, Any]]:
