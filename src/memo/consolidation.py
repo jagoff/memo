@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from memo.llm import MLXChat
+from memo.memory.record import chat_with_timeout
 
 _log = logging.getLogger(__name__)
 
@@ -152,14 +153,19 @@ class AdvancedConsolidator:
             prompt += f"{m.get('body_preview', '')}\n\n"
 
         try:
-            out = chat.chat(
+            out = chat_with_timeout(
+                chat,
+                timeout=60,
                 model=self.memory.cfg.llm_model,
                 messages=[
                     {"role": "system", "content": _MERGE_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                options={"temperature": 0.0, "max_tokens": 1024},
+                options={"temperature": 0.0, "max_tokens": 2048, "thinking": False},
             )
+            if out is None:
+                _log.warning("consolidation: merge-proposal LLM timeout")
+                return None
             raw = (out.get("message") or {}).get("content") or ""
         except Exception as exc:
             _log.warning("consolidation: merge-proposal LLM call failed: %s", exc)
