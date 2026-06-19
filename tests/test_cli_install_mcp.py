@@ -87,8 +87,7 @@ def _captured_servers(monkeypatch, tmp_path: Path, cli_args: list[str]) -> list[
         captured.append(server)
         return {"ok": True, "agent": agent, "action": "dry-run", "strategy": "cli", "argv": ["memo", "mcp", "add", "memo", "--", str(server.command)]}
 
-    monkeypatch.setattr("memo.cli_install_mcp.register_agent_mcp", fake_register, raising=False)
-    # also patch at the import site inside install_mcp (it imports inside the function)
+    # Patch at the import site inside install_mcp (it imports inside the function).
     import consciousness_contracts as cc
     monkeypatch.setattr(cc, "register_agent_mcp", fake_register)
 
@@ -130,3 +129,23 @@ def test_explicit_profile_default_no_injection(monkeypatch, tmp_path):
     captured = _captured_servers(monkeypatch, tmp_path, ["--agent", "codex", "--profile", "default"])
     assert len(captured) == 1
     assert "MEMO_MCP_PROFILE" not in captured[0].env
+
+
+def test_profile_annotation_in_header_output(monkeypatch, tmp_path):
+    """--profile core → output header shows [profile: core]."""
+    _make_iso(tmp_path)
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+
+    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "claude-code", "--profile", "core"])
+    assert res.exit_code == 0, res.output
+    assert "[profile: core]" in res.output
+
+
+def test_profile_annotation_omitted_for_default(monkeypatch, tmp_path):
+    """--profile default → output header does NOT show profile annotation."""
+    _make_iso(tmp_path)
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+
+    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "claude-code", "--profile", "default"])
+    assert res.exit_code == 0, res.output
+    assert "[profile:" not in res.output

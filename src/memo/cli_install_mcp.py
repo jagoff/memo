@@ -145,7 +145,8 @@ def install_mcp(
 
     server = _build_server()
 
-    click.echo(f"memo MCP → {server.command}{'' if write else '  (dry-run)'}")
+    profile_note = f" [profile: {profile}]" if profile and profile != "default" else ""
+    click.echo(f"memo MCP → {server.command}{'' if write else '  (dry-run)'}{profile_note}")
 
     if config_path:
         preset = generic_preset(config_path=config_path, json_key=json_key)
