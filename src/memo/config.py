@@ -546,6 +546,20 @@ class Config(BaseModel):
                     cfg = cfg.model_copy(
                         update={"embedder_model": model, "embedder_dims": dims}
                     )
+        else:
+            # When embedder is explicitly pinned, validate against existing index
+            # and warn if dimensions changed (requires reindex)
+            adopted = _index_embedder_profile(cfg.db_path)
+            if adopted is not None:
+                model, dims = adopted
+                if dims and dims != cfg.embedder_dims:
+                    _log.warning(
+                        "embedder dimension mismatch: config expects %dd but index was built with %dd. "
+                        "This usually happens after switching model profiles without reindexing. "
+                        "Run 'memo reindex --rebuild' to rebuild the index with the new dimensions.",
+                        cfg.embedder_dims,
+                        dims,
+                    )
         # NB: do NOT validate the reranker model here. `Config.from_env()` must
         # stay hermetic (no network) — it's called in every test and CLI start.
         # MLXReranker._ensure_loaded() validates via snapshot_download on first

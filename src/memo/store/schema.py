@@ -510,9 +510,13 @@ class _SchemaMixin(_StoreBase):
             if actual_dims is not None and actual_dims != self.dims:
                 raise RuntimeError(
                     f"{label} dimension mismatch: store has {actual_dims}D vectors "
-                    f"but config expects {self.dims}D.\n"
-                    f"Fix: rm {self.db_path} && memo reindex\n"
-                    f"Or check: MEMO_MODEL_PROFILE={self.dims}D or MEMO_EMBEDDER_DIMS={self.dims}"
+                    f"but config expects {self.dims}D. "
+                    f"This usually happens after switching between model profiles "
+                    f"(e.g., from 'default' with 1024D to 'quality' with 2560D) "
+                    f"without running 'memo reindex'.\n"
+                    f"Fix: Run 'memo reindex --rebuild' to rebuild the index with the correct dimensions.\n"
+                    f"Or check your model profile: MEMO_MODEL_PROFILE (current: {self.dims}D) "
+                    f"or MEMO_EMBEDDER_DIMS (current: {self.dims})."
                 )
 
     def _ensure_schema_meta_table(self) -> None:

@@ -324,8 +324,8 @@ class ContextualRecall:
                 from memo.dashboard import append_usage_log
 
                 append_usage_log(self.context.context_file.parent, memoria_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.debug("contextual: failed to append usage log for %s: %s", memoria_id, exc)
 
 
 __all__ = [

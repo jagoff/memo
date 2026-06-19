@@ -24,9 +24,9 @@ def test_validate_vec_dims_error_message(tmp_path: Path):
 
     error_msg = str(excinfo.value)
     assert "Embedding dimension mismatch: store has 4D vectors but config expects 8D." in error_msg
-    assert "Fix: rm" in error_msg
+    assert "Fix: Run 'memo reindex --rebuild'" in error_msg
     assert "memo reindex" in error_msg
-    assert "MEMO_MODEL_PROFILE=8D" in error_msg
+    assert "MEMO_MODEL_PROFILE (current: 8D)" in error_msg
 
 
 def test_check_embedder_version_mismatch(tmp_path: Path):
