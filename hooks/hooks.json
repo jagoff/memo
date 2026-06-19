@@ -58,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "MEMO_NONINTERACTIVE=1 memo briefing",
+            "command": "MEMO_NONINTERACTIVE=1 memo briefing --compact",
             "timeout": 5
           }
         ]
@@ -69,7 +69,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "MEMO_NONINTERACTIVE=1 MEMO_CONTEXTUAL_RETRIEVAL=1 MEMO_RECALL_MIN_SIM=0.72 memo recall-hook",
+            "command": "MEMO_NONINTERACTIVE=1 MEMO_CONTEXTUAL_RETRIEVAL=1 MEMO_RECALL_MIN_SIM=0.72 MEMO_RECALL_TOKEN_BUDGET=160 MEMO_RECALL_TOP_K=1 MEMO_RECALL_FEEDBACK_HINT=0 memo recall-hook",
             "timeout": 12,
             "comment": "Increased from 8s: daemon cold-start ~2s + inference ~3s + margin. MEMO_RECALL_MIN_SIM=0.72 chosen by `memo eval recall` (config B vec/0.72): same precision@5 as 0.60 with zero noise + 47ms p50."
           },

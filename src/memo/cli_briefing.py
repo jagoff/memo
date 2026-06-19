@@ -14,7 +14,12 @@ from memo.config import Config
 
 
 @click.command(name="briefing")
-def briefing() -> None:
+@click.option(
+    "--compact",
+    is_flag=True,
+    help="Emit a startup capsule capped at 480 characters.",
+)
+def briefing(*, compact: bool) -> None:
     """SessionStart hook — rich context panel.
 
     Emits a `hookSpecificOutput` JSON with `additionalContext` markdown
@@ -49,6 +54,21 @@ def briefing() -> None:
         print("{}")
         _sys.exit(0)
 
+    def _log_context_cost(context: str, session_id: str | None = None) -> None:
+        try:
+            from memo.dashboard import append_context_cost_log
+
+            append_context_cost_log(
+                cfg.state_dir,
+                kind="briefing",
+                chars=len(context),
+                client="claude-code",
+                session_id=session_id,
+            )
+        except Exception as exc:
+            if debug:
+                print(f"# memo briefing: context-cost log failed: {exc}", file=_sys.stderr)
+
     if flag_bool("MEMO_BRIEFING_DISABLE"):
         _bail("disabled")
         return
@@ -60,6 +80,44 @@ def briefing() -> None:
         mem = Memory(cfg)
     except Exception as exc:
         _bail(f"Memory init failed: {exc}")
+        return
+
+    if compact:
+        from pathlib import Path as _Path
+
+        from memo.briefing import compact_text
+        from memo.session import format_relative, list_sessions
+
+        cur_cwd = str(_Path(_os.getcwd()).resolve())
+        sessions = list_sessions(cfg.state_dir, limit=20)
+        same_proj = [r for r in sessions if (r.get("cwd") or "") == cur_cwd]
+        compact_lines = ["## Memo"]
+        if same_proj:
+            top = same_proj[0]
+            summary = (top.get("summary") or top.get("last_user_msg") or "—").replace(
+                "\n", " "
+            )
+            state = (top.get("running_summary") or "").replace("\n", " ")
+            compact_lines.append(
+                f"Última sesión ({format_relative(top.get('updated'))}): "
+                f"{compact_text(summary, max_chars=160)}"
+            )
+            if state:
+                compact_lines.append(f"Estado: {compact_text(state, max_chars=200)}")
+            sid = str(top.get("session_id") or "")
+            if sid:
+                compact_lines.append(f"Retomar: `claude --resume {sid}`")
+        else:
+            compact_lines.append("Sin sesión reciente en este proyecto.")
+        context = compact_text("\n".join(compact_lines), max_chars=480)
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": context,
+            }
+        }
+        _log_context_cost(context, sid if same_proj else None)
+        print(_json.dumps(output, ensure_ascii=False))
         return
 
     loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
@@ -209,10 +267,12 @@ def briefing() -> None:
         _bail("nothing to show")
         return
 
+    context = "\n".join(lines)
     output = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": "\n".join(lines),
+            "additionalContext": context,
         }
     }
+    _log_context_cost(context)
     print(_json.dumps(output, ensure_ascii=False))

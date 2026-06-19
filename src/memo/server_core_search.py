@@ -33,10 +33,12 @@ def register(server: Any, memory: Memory) -> None:
 
     @server.tool()
     def memory_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
-        from memo.briefing import synapse_briefing_lines
+        from memo.briefing import compact_text, synapse_briefing_lines
 
         t0 = now_ms()
-        lines = synapse_briefing_lines(cwd)
+        raw_lines = synapse_briefing_lines(cwd)
+        markdown = compact_text("\n".join(raw_lines), max_chars=480)
+        lines = markdown.splitlines() if markdown else []
         log_consult(
             memory,
             tool="unified_briefing",
@@ -47,7 +49,7 @@ def register(server: Any, memory: Memory) -> None:
         )
         return {
             "available": bool(lines),
-            "markdown": "\n".join(lines),
+            "markdown": markdown,
             "lines": lines,
         }
 

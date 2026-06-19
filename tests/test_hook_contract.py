@@ -37,3 +37,20 @@ def test_idle_maintenance_hooks_have_enough_timeout() -> None:
                 )
                 assert default_delay is not None
                 assert int(hook.get("timeout") or 0) >= default_delay + 5, command
+
+
+def test_recall_hook_has_small_context_defaults() -> None:
+    hooks_path = Path(__file__).resolve().parents[1] / "hooks" / "hooks.json"
+    payload = json.loads(hooks_path.read_text(encoding="utf-8"))
+    commands = [
+        str(hook.get("command") or "")
+        for group in payload["hooks"]["UserPromptSubmit"]
+        for hook in group["hooks"]
+        if "memo recall-hook" in str(hook.get("command") or "")
+    ]
+
+    assert len(commands) == 1
+    command = commands[0]
+    assert "MEMO_RECALL_TOKEN_BUDGET=160" in command
+    assert "MEMO_RECALL_TOP_K=1" in command
+    assert "MEMO_RECALL_FEEDBACK_HINT=0" in command

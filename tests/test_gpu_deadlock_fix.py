@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 
 class TestGpuTlTimeout:
@@ -28,9 +27,8 @@ class TestGpuTlTimeout:
             _gpu_tl.timeout = 0.1  # 100 ms deadline
             import pytest
 
-            with pytest.raises(TimeoutError):
-                with gpu_guard():
-                    pass
+            with pytest.raises(TimeoutError), gpu_guard():
+                pass
         finally:
             _gpu_tl.timeout = None
             release_lock.set()

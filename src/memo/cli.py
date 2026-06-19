@@ -116,7 +116,6 @@ from memo.cli_viz import mapa_cmd
 # `run_picker` itself defers the heavy `questionary` import until called.
 from memo.setup import run_picker, write_config_file
 
-
 _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
         "Core",
@@ -226,6 +225,8 @@ class SurfaceGroup(click.Group):
 
             rows: list[tuple[str, str]] = []
             for name, cmd in cmds_in_section:
+                if cmd is None:
+                    continue
                 short_help = cmd.get_short_help_str(limit=formatter.width)
                 rows.append((name, short_help))
 

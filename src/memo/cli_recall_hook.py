@@ -327,54 +327,20 @@ def recall_hook() -> None:
         _bail(f"no hits above min_sim={min_sim}")
         return
 
-    from memo.recall_server import RECALL_DIRECTIVE, RECALL_FOOTER, RECALL_HEADER
-
-    footer = RECALL_FOOTER
-    lines = [RECALL_HEADER, RECALL_DIRECTIVE, ""]
-    used_chars = 0
+    from memo.recall_logic import render_recall_context
 
     def _est_tokens(s: str) -> int:
         return max(1, len(s) // 4)
 
-    budget_chars = token_budget * 4 if token_budget > 0 else None
-
-    for h in relevant:
-        score_tag = f" (score {h.score:.2f})" if h.score is not None else ""
-        body = (h.body or "").strip().replace("\n", " ")
-        if len(body) > body_chars:
-            body = body[:body_chars].rstrip() + "…"
-        block_lines = [f"**[{h.id[:8]}] {h.title}**{score_tag}"]
-        if h.tags:
-            block_lines.append(f"_tags_: {', '.join(h.tags)}")
-        if body:
-            block_lines.append(f"> {body}")
-        block_lines.append("")
-        block = "\n".join(block_lines)
-
-        if budget_chars is None:
-            lines.extend(block_lines)
-            continue
-
-        remaining = budget_chars - used_chars
-        if remaining <= 0:
-            break
-        if len(block) <= remaining:
-            lines.extend(block_lines)
-            used_chars += len(block)
-        else:
-            if body:
-                head_len = len(block_lines[0]) + 1
-                tags_len = (len(block_lines[1]) + 1) if h.tags else 0
-                avail = max(0, remaining - head_len - tags_len - 3)
-                if avail > 20:
-                    trunc_body = body[:avail].rstrip() + "…"
-                    block_lines[-2 if h.tags else -1] = f"> {trunc_body}"
-                    lines.extend(block_lines)
-            break
-
-    lines.append(footer)
+    context = render_recall_context(
+        relevant,
+        [],
+        turn=_turn,
+        body_chars=body_chars,
+        token_budget=token_budget,
+    )
     if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
-        approx = _est_tokens("\n".join(lines))
+        approx = _est_tokens(context)
         print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=sys.stderr)
 
     # Prepend any pending notification from a previous async idle-maintenance run.
@@ -383,15 +349,29 @@ def recall_hook() -> None:
         try:
             notif = pending_notif_path.read_text(encoding="utf-8").strip()
             if notif:
-                lines = [notif, ""] + lines
+                context = f"{notif}\n\n{context}"
             pending_notif_path.unlink(missing_ok=True)
         except Exception:
             pass
 
+    try:
+        from memo.dashboard import append_context_cost_log
+
+        append_context_cost_log(
+            cfg.state_dir,
+            kind="recall",
+            chars=len(context),
+            client=_client,
+            session_id=_sid,
+            turn=_turn,
+        )
+    except Exception as exc:
+        _log.debug("context-cost log write failed: %s", exc)
+
     output = {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
-            "additionalContext": "\n".join(lines),
+            "additionalContext": context,
         }
     }
     print(json.dumps(output, ensure_ascii=False))
