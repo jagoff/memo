@@ -379,15 +379,16 @@ def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
 
             result = run_capture_incremental(_Path(str(transcript)).expanduser(), str(sid), debug=flag_bool("MEMO_SESSION_DEBUG"))
             if result.get("status") == "ok":
-                processed = result.get("processed_turns", 0)
-                if processed > 0:
+                saved_count = len(result.get("saved", []))
+                if saved_count > 0:
                     # Async hook output doesn't reach the current turn.
                     # Write the notification to a pending file so the next
-                    # recall-hook invocation surfaces it.
+                    # recall-hook invocation surfaces it. Only notify when
+                    # insights were actually saved (not just exchanges scanned).
                     try:
                         _notif = (
                             f"## 💾 Captura automática (idle {delay}s)\n\n"
-                            f"Detecté inactividad y capturé {processed} turnos nuevos en memo.\n"
+                            f"Detecté inactividad y guardé {saved_count} memoria(s) nueva(s) en memo.\n"
                         )
                         (cfg.state_dir / "pending_idle_notification.txt").write_text(
                             _notif, encoding="utf-8"

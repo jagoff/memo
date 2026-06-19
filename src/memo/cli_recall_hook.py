@@ -58,6 +58,24 @@ def recall_hook() -> None:
                 )
             except Exception as exc:
                 _log.debug("bail recall-log write failed: %s", exc)
+        # Consume any pending idle-capture notification even when there are no
+        # recall hits — otherwise it piles up indefinitely on sessions where
+        # the recall bails (short prompts, no matches, etc.).
+        pending_notif_path = cfg.state_dir / "pending_idle_notification.txt"
+        if pending_notif_path.exists():
+            try:
+                notif = pending_notif_path.read_text(encoding="utf-8").strip()
+                if notif:
+                    print(json.dumps({
+                        "hookSpecificOutput": {
+                            "hookEventName": "UserPromptSubmit",
+                            "additionalContext": notif,
+                        }
+                    }, ensure_ascii=False))
+                    pending_notif_path.unlink(missing_ok=True)
+                    sys.exit(0)
+            except Exception:
+                pass
         print("{}")
         sys.exit(0)
 
