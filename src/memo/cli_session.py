@@ -333,7 +333,21 @@ def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
                 _sys.exit(0)
             from memo.capture import run_capture_incremental
 
-            run_capture_incremental(_Path(str(transcript)).expanduser(), str(sid), debug=flag_bool("MEMO_SESSION_DEBUG"))
+            result = run_capture_incremental(_Path(str(transcript)).expanduser(), str(sid), debug=flag_bool("MEMO_SESSION_DEBUG"))
+            if result.get("status") == "ok":
+                processed = result.get("processed_turns", 0)
+                output = {
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": (
+                            f"## 💾 Captura automática\n\n"
+                            f"Detecté inactividad por {delay}s y capturé {processed} turnos nuevos en memo.\n"
+                        ),
+                    }
+                }
+                print(_json.dumps(output, ensure_ascii=False))
+            else:
+                print("{}")
         else:
             from memo.cli_transcripts import _reflect_session
             from memo.memory import Memory

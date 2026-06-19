@@ -11,6 +11,7 @@ public + private member of the original god-class.
 from __future__ import annotations
 
 import contextlib
+import logging
 import threading
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,8 @@ from memo.memory.update_ops import _UpdateOpsMixin
 from memo.memory.write_ops import _WriteOpsMixin
 from memo.store import VecStore
 from memo.temporal import TemporalAnalyzer
+
+_log = logging.getLogger(__name__)
 
 
 class Memory(
@@ -176,10 +179,25 @@ class Memory(
                             "Set MEMO_RERANKER_MODEL to an existing local model path "
                             "or a Hugging Face model id."
                         )
-                    self._reranker = MLXReranker(
-                        model_path=self.cfg.reranker_model,
-                        revision=self.cfg.reranker_revision,
-                    )
+                    try:
+                        _log.info(
+                            "Loading reranker model=%s revision=%s",
+                            self.cfg.reranker_model,
+                            self.cfg.reranker_revision or "default",
+                        )
+                        self._reranker = MLXReranker(
+                            model_path=self.cfg.reranker_model,
+                            revision=self.cfg.reranker_revision,
+                        )
+                        _log.info("Reranker loaded successfully")
+                    except Exception as exc:
+                        _log.error(
+                            "Failed to load reranker model=%s revision=%s: %s",
+                            self.cfg.reranker_model,
+                            self.cfg.reranker_revision,
+                            exc,
+                        )
+                        raise
         return self._reranker
 
     def _generate_contextual_summary(self, prompt: str) -> str:
@@ -220,7 +238,11 @@ class Memory(
     def contradict_store(self) -> ContradictionStore:
         """Lazy accessor for the persistent contradictions sidecar."""
         if self._contradict_store is None:
-            self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
+            try:
+                self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
+            except Exception as exc:
+                _log.warning("contradict_store init failed: %s", exc)
+                raise
         return self._contradict_store
 
     @property

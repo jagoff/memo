@@ -117,6 +117,68 @@ from memo.cli_viz import mapa_cmd
 from memo.setup import run_picker, write_config_file
 
 
+_COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
+    (
+        "Core",
+        ["save", "search", "ask", "get", "update", "delete", "list"],
+    ),
+    (
+        "Recall & Hooks",
+        ["recall", "recall-hook", "briefing", "continuity", "prewarm", "capture-tick", "capture-stop"],
+    ),
+    (
+        "Session & History",
+        ["history", "as-of", "diff", "historia", "session", "resume", "reflect", "mine-history"],
+    ),
+    (
+        "Maintenance",
+        ["reindex", "maintain", "dream", "consolidate", "synthesize", "dedupe", "cross-dedup", "retier", "contradict", "temporal"],
+    ),
+    (
+        "Analysis & Quality",
+        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "usefulness", "gaps", "outcome", "profile"],
+    ),
+    (
+        "Knowledge Graph",
+        ["graph", "entities", "entity", "extract-entities", "links", "version"],
+    ),
+    (
+        "Advanced Search",
+        ["embed", "rerank", "contextual", "chat", "chat-ask", "multimodal", "repo"],
+    ),
+    (
+        "Import / Export / Sync",
+        ["import", "export", "backup", "restore", "sync", "ingest", "share"],
+    ),
+    (
+        "Visualization",
+        ["tui", "dashboard", "mapa", "logs", "hook-log"],
+    ),
+    (
+        "Setup & Config",
+        [
+            "init", "config", "install-mcp", "install-watcher", "uninstall-watcher",
+            "install-slash", "install-shell-wrapper", "migrate", "migrate-vault",
+            "self-update", "watch",
+        ],
+    ),
+    (
+        "Daemons",
+        ["recall-daemon", "ingest-daemon", "maint-daemon", "embed-daemon"],
+    ),
+    (
+        "Other",
+        [
+            "backend-native", "collaborative", "encrypt", "feedback", "query",
+            "mandate", "sleep-cycle", "ocr-image", "provenance", "mcp-command",
+        ],
+    ),
+]
+
+# Flat set of all commands with an assigned section (for "Other" overflow).
+_SECTIONED: set[str] = {cmd for _, cmds in _COMMAND_SECTIONS for cmd in cmds}
+
+
 class SurfaceGroup(click.Group):
     """Root Click group that filters commands by the configured surface profile."""
 
@@ -131,6 +193,44 @@ class SurfaceGroup(click.Group):
         if not cli_command_visible(cmd_name):
             return None
         return super().get_command(ctx, cmd_name)
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        from memo.surface import cli_command_visible
+
+        visible = set(self.list_commands(ctx))
+
+        # Collect commands per section, then an overflow "Other" bucket.
+        overflow: list[str] = [
+            cmd for cmd in sorted(visible) if cmd not in _SECTIONED and cli_command_visible(cmd)
+        ]
+
+        sections = list(_COMMAND_SECTIONS)
+        if overflow:
+            # Merge overflow into the last "Other" section or append it.
+            other_idx = next((i for i, (title, _) in enumerate(sections) if title == "Other"), None)
+            if other_idx is not None:
+                title, existing = sections[other_idx]
+                sections[other_idx] = (title, existing + overflow)
+            else:
+                sections.append(("Other", overflow))
+
+        for section_title, cmd_names in sections:
+            cmds_in_section = [
+                (name, self.get_command(ctx, name))
+                for name in cmd_names
+                if name in visible
+            ]
+            cmds_in_section = [(n, c) for n, c in cmds_in_section if c is not None]
+            if not cmds_in_section:
+                continue
+
+            rows: list[tuple[str, str]] = []
+            for name, cmd in cmds_in_section:
+                short_help = cmd.get_short_help_str(limit=formatter.width)
+                rows.append((name, short_help))
+
+            with formatter.section(section_title):
+                formatter.write_dl(rows)
 
 
 @click.group(cls=SurfaceGroup)

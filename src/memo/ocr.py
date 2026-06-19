@@ -199,7 +199,8 @@ def extract_text_with_confidence(
                         except Exception:
                             conf = 1.0
                         pairs.append((text, conf))
-            except Exception:
+            except Exception as exc:
+                _log.debug("OCR processing failed for one region: %s", exc)
                 continue
         return _join_confident(pairs, ocr_min_confidence()), _mean_conf(pairs)
     except Exception as exc:
