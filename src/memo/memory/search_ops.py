@@ -395,6 +395,13 @@ class _SearchOpsMixin(_MemoryBase):
             out = self._apply_health_scores(out)
             _add_trace("health", input_count=before, output_count=len(out))
         self._record_access([r.id for r in out])
+        # Co-recall graph edges: record which memories surface together.
+        # Gated by flag so the graph DB write stays opt-in (off by default).
+        if len(out) >= 2 and flag_bool("MEMO_GRAPH_CO_RECALL"):
+            try:
+                self.graph.record_co_recall([r.id for r in out])
+            except Exception as _co_exc:
+                _log.debug("co_recall record failed: %s", _co_exc)
         _add_trace("final", output_count=len(out), limit=limit)
         return out
 

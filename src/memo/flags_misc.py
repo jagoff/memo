@@ -463,6 +463,58 @@ SPECS: tuple[FlagSpec, ...] = (
         "Only memorias older than this are considered for archival.",
         min_val=0,
     ),
+    _spec(
+        "MEMO_DREAM_EVICT_MAX_COUNT",
+        "int",
+        0,
+        "dream",
+        "Corpus size ceiling for the dream eviction pass. When > 0 and the total "
+        "non-reference memoria count exceeds this value, the coldest LFU candidates "
+        "are archived until the corpus is within budget. 0 disables eviction.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_DREAM_COMPRESS_THRESHOLD",
+        "int",
+        2000,
+        "dream",
+        "Body-length threshold (chars) for the dream verbose-compression pass. "
+        "Memorias whose body exceeds this length are LLM-compressed to 2-3 sentences "
+        "during `memo dream run`. 0 disables compression.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_DREAM_PREWARM_QUERIES",
+        "int",
+        20,
+        "dream",
+        "Number of recent unique queries from recall.log to pre-embed during the "
+        "dream prewarm pass, warming the LRU query-embed cache for the next session. "
+        "0 disables the pass.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_DREAM_PRESYNTHESIS_QUERIES",
+        "int",
+        0,
+        "dream",
+        "Number of top recurring queries from recall.log to pre-synthesize during "
+        "the dream query-prediction pass. For each top query, memo searches for the "
+        "matching memorias and runs a focused synthesis pass on that cluster. "
+        "0 disables the pass.",
+        min_val=0,
+    ),
+    # graph co-recall
+    _spec(
+        "MEMO_GRAPH_CO_RECALL",
+        "bool",
+        False,
+        "graph",
+        "Record co-recall edges in graph.db whenever a search returns 2+ results. "
+        "Pairs of co-recalled memoria IDs are stored in the `co_recall` table with "
+        "incrementing counts. Off by default to avoid graph DB write overhead on the "
+        "recall-hook hot path.",
+    ),
     # schema / embedding version check
     _spec(
         "MEMO_SKIP_MODEL_VERSION_CHECK",
