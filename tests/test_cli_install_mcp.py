@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -60,3 +61,72 @@ def test_install_mcp_with_mandate_targets_selected_agents(monkeypatch, tmp_path)
     assert res.exit_code == 0, res.output
     assert "AGENTS.md" in res.output
     assert res.output.count("AGENTS.md") == 1
+
+
+# ---------------------------------------------------------------------------
+# Profile tests
+# ---------------------------------------------------------------------------
+
+def _make_iso(tmp_path: Path) -> Path:
+    iso = tmp_path / ".local" / "bin" / "memo-mcp"
+    iso.parent.mkdir(parents=True)
+    iso.write_text("#!/bin/sh\n")
+    return iso
+
+
+def _captured_servers(monkeypatch, tmp_path: Path, cli_args: list[str]) -> list[Any]:
+    """Run install-mcp and return the list of AgentMcpServer objects passed to register_agent_mcp."""
+    from consciousness_contracts import register_agent_mcp as real_register
+
+    _make_iso(tmp_path)
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+
+    captured: list[Any] = []
+
+    def fake_register(agent, server, *, write=False, preset=None):
+        captured.append(server)
+        return {"ok": True, "agent": agent, "action": "dry-run", "strategy": "cli", "argv": ["memo", "mcp", "add", "memo", "--", str(server.command)]}
+
+    monkeypatch.setattr("memo.cli_install_mcp.register_agent_mcp", fake_register, raising=False)
+    # also patch at the import site inside install_mcp (it imports inside the function)
+    import consciousness_contracts as cc
+    monkeypatch.setattr(cc, "register_agent_mcp", fake_register)
+
+    res = CliRunner().invoke(cli, ["install-mcp"] + cli_args)
+    assert res.exit_code == 0, res.output
+    return captured
+
+
+def test_explicit_profile_core_injects_env(monkeypatch, tmp_path):
+    """--profile core → MEMO_MCP_PROFILE=core in server env."""
+    captured = _captured_servers(monkeypatch, tmp_path, ["--agent", "claude-code", "--profile", "core"])
+    assert len(captured) == 1
+    assert captured[0].env.get("MEMO_MCP_PROFILE") == "core"
+
+
+def test_auto_profile_codex(monkeypatch, tmp_path):
+    """No --profile, agent=codex → MEMO_MCP_PROFILE=core (auto)."""
+    captured = _captured_servers(monkeypatch, tmp_path, ["--agent", "codex"])
+    assert len(captured) == 1
+    assert captured[0].env.get("MEMO_MCP_PROFILE") == "core"
+
+
+def test_auto_profile_opencode(monkeypatch, tmp_path):
+    """No --profile, agent=opencode → MEMO_MCP_PROFILE=core (auto)."""
+    captured = _captured_servers(monkeypatch, tmp_path, ["--agent", "opencode"])
+    assert len(captured) == 1
+    assert captured[0].env.get("MEMO_MCP_PROFILE") == "core"
+
+
+def test_no_auto_profile_claude_code(monkeypatch, tmp_path):
+    """No --profile, agent=claude-code → MEMO_MCP_PROFILE NOT injected."""
+    captured = _captured_servers(monkeypatch, tmp_path, ["--agent", "claude-code"])
+    assert len(captured) == 1
+    assert "MEMO_MCP_PROFILE" not in captured[0].env
+
+
+def test_explicit_profile_default_no_injection(monkeypatch, tmp_path):
+    """--profile default → MEMO_MCP_PROFILE NOT injected (explicit default = no var)."""
+    captured = _captured_servers(monkeypatch, tmp_path, ["--agent", "codex", "--profile", "default"])
+    assert len(captured) == 1
+    assert "MEMO_MCP_PROFILE" not in captured[0].env
