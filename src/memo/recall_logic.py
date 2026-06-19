@@ -72,6 +72,23 @@ def _dedup_key(hit: Any) -> str:
     return f"{title}|{body}"
 
 
+def _deduplicate_synthesis(hits: list[Any]) -> list[Any]:
+    """Remove source memories that are already covered by a synthesis hit.
+
+    A synthesis hit has extra.synthesis_sources = [id1, id2, ...].
+    If a synthesis hit appears alongside its source memories, the sources
+    are redundant — remove them.
+    """
+    covered_ids: set[str] = set()
+    for h in hits:
+        if getattr(h, "type", "") == "synthesis":
+            sources = (getattr(h, "extra", None) or {}).get("synthesis_sources") or []
+            covered_ids.update(sources)
+    if not covered_ids:
+        return list(hits)
+    return [h for h in hits if h.id not in covered_ids]
+
+
 def dedup_hits(hits: list[Any]) -> list[Any]:
     seen_ids: set[str] = set()
     seen_keys: set[str] = set()
@@ -178,9 +195,9 @@ def _recall_logic(
                     for h, d_vec in zip(candidates, doc_vecs, strict=True)
                 ]
                 scored.sort(key=lambda x: x.score or 0.0, reverse=True)
-                qualifying = _rank(scored)
+                qualifying = _deduplicate_synthesis(_rank(scored))
         else:
-            qualifying = _rank(mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types))
+            qualifying = _deduplicate_synthesis(_rank(mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)))
     except Exception as exc:
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return "{}", None
@@ -190,7 +207,7 @@ def _recall_logic(
         if ctx:
             try:
                 expanded = mem.search(f"{ctx}\n{prompt}", limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
-                qualifying = _rank(expanded)
+                qualifying = _deduplicate_synthesis(_rank(expanded))
                 if debug and qualifying:
                     print(f"# recall-daemon: query expansion recovered {len(qualifying)} hits", file=sys.stderr)
             except Exception as _exc:

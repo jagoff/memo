@@ -270,14 +270,16 @@ def recall_hook() -> None:
 
         return dedup_hits(rel)
 
-    relevant = _search_filter(prompt)
+    from memo.recall_logic import _deduplicate_synthesis
+
+    relevant = _deduplicate_synthesis(_search_filter(prompt))
 
     if not relevant and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
         from memo.recall_server import _session_context
 
         _ctx = _session_context(mem, exclude_types)
         if _ctx:
-            relevant = _search_filter(f"{_ctx}\n{prompt}")
+            relevant = _deduplicate_synthesis(_search_filter(f"{_ctx}\n{prompt}"))
             if relevant and flag_bool("MEMO_RECALL_DEBUG"):
                 print(
                     f"# memo recall-hook: query expansion recovered {len(relevant)} hits",
