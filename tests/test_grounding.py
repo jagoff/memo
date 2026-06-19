@@ -51,8 +51,7 @@ def test_grounded_rate_joins_and_excludes_old_rows(tmp_path: Path) -> None:
         tmp_path, session_id="s", turn=1, recall_id="mem00002",
         used_score=0.10, method="embed",
     )
-    rows = dashboard.read_recall_log(tmp_path, limit=50)
-    gr = dashboard.grounded_rate(tmp_path, rows)
+    gr = dashboard.grounded_rate(tmp_path)
     # denominator = 2 correlatable surfacings (legacy mem99999 excluded)
     assert gr["surfaced"] == 2
     assert gr["grounded"] == 1

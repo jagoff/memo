@@ -147,12 +147,9 @@ def dead_weight(
 
     if min_surfaced <= 0:
         return []
-    from memo.dashboard import read_recall_log
     from memo.dashboard_metrics import grounded_rate
 
-    coverage = grounded_rate(memory.cfg.state_dir, read_recall_log(memory.cfg.state_dir, limit=2000)).get(
-        "measurement_coverage"
-    )
+    coverage = grounded_rate(memory.cfg.state_dir).get("measurement_coverage")
     if (coverage or 0.0) <= 0.0:
         return []
     prior_n = prior_n if prior_n is not None else (flag_float("MEMO_OUTCOME_PRIOR_N") or _DEFAULT_PRIOR_N)

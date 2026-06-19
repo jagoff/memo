@@ -6,6 +6,7 @@ from typing import Any
 from memo.dashboard_logs import (
     read_grounding_diag_log,
     read_grounding_log,
+    read_recall_hook_log,
     read_recall_log,
     read_usage_log,
 )
@@ -168,7 +169,7 @@ def _is_knowledge_prompt(prompt: str) -> bool:
     return any(tok in p for tok in _INTERROGATIVE) or len(p) >= 60
 
 
-def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def grounded_rate(state_dir) -> dict[str, Any]:
     """Did surfaced memorias actually get USED in the answer?
 
     Honest denominator: a surfaced memoria only counts if its turn was actually
@@ -182,6 +183,7 @@ def grounded_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
     (`answer_rate` = turns that used ≥1 memoria / turns measured), the latter
     matching the "answers WITH memo vs WITHOUT" framing.
     """
+    rows = read_recall_hook_log(state_dir)
     surfaced_by_turn: dict[tuple[str, int], set[str]] = {}
     prompt_by_turn: dict[tuple[str, int], str] = {}
     for r in rows:
@@ -299,7 +301,7 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
         return xs[len(xs) // 2] if xs else None
 
     ref = referenced_rate(state_dir, rows)
-    grounded = grounded_rate(state_dir, rows)
+    grounded = grounded_rate(state_dir)
     return {
         "sampled": len(rows),
         "fired": len(fired),

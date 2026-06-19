@@ -13,6 +13,10 @@ def recall_log_path(state_dir: Path) -> Path:
     return state_dir / "recall.log"
 
 
+def recall_hook_log_path(state_dir: Path) -> Path:
+    return state_dir / "recall_hook.log"
+
+
 def _write_jsonl_entry(
     path: Path,
     entry: dict[str, Any],
@@ -103,10 +107,16 @@ def append_recall_log(
     if client is not None:
         entry["client"] = client
     _write_jsonl_entry(recall_log_path(state_dir), entry, cap=cap, size_limit=1024 * 200)
+    if session_id is not None:
+        _write_jsonl_entry(recall_hook_log_path(state_dir), entry, cap=2000, size_limit=2_000_000)
 
 
 def read_recall_log(state_dir: Path, *, limit: int = 10) -> list[dict[str, Any]]:
     return _read_jsonl(recall_log_path(state_dir), limit=limit, newest_first=True)
+
+
+def read_recall_hook_log(state_dir: Path, *, limit: int = 2000) -> list[dict[str, Any]]:
+    return _read_jsonl(recall_hook_log_path(state_dir), limit=limit)
 
 
 def usage_log_path(state_dir: Path) -> Path:
