@@ -168,6 +168,34 @@ def test_grounding_unrelated_not_used(tmp_path: Path, monkeypatch) -> None:
     assert g[0]["used_score"] < 0.5  # not grounded
 
 
+def test_grounding_uses_hook_log_when_recall_log_is_flooded(tmp_path: Path, monkeypatch) -> None:
+    # The Stop hook writes a durable copy into recall_hook.log. If recall.log is
+    # flooded, grounding must still find the turn there instead of dropping to
+    # "no_recalled_hits".
+    def _boom(*_args, **_kwargs) -> None:
+        raise AssertionError("embedder should not run when lexical is high")
+
+    monkeypatch.setattr("memo.embedder_client.embed", _boom)
+    payload = _setup_turn(
+        tmp_path,
+        snippet="kubernetes deployment rollout strategy",
+        assistant_text="Use the kubernetes deployment rollout strategy described earlier.",
+    )
+    for i in range(401):
+        dashboard.append_recall_log(
+            tmp_path,
+            prompt=f"noise {i}",
+            hits=[{"id": f"noise{i:05d}", "score": 0.1, "title": "noise"}],
+            via="subprocess",
+        )
+
+    summary = grounding.score_turn(tmp_path, payload)
+    assert summary and summary["scored"] == 1
+    g = dashboard.read_grounding_log(tmp_path)
+    assert len(g) == 1
+    assert g[0]["recall_id"] == "memaaaa1"
+
+
 def test_grounding_no_stamp_is_noop(tmp_path: Path) -> None:
     # No last_recall_turn stamped → nothing to correlate.
     tp = _write_transcript(tmp_path, "some answer")
