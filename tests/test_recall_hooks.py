@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import memo.dashboard_logs as dashboard_logs
 from memo.memory import MemoryRecord
 from memo.recall_server import (
     RECALL_DIRECTIVE,
@@ -97,6 +98,60 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
     assert RECALL_DIRECTIVE in context
     assert "authoritative" in context.lower()
+
+
+def test_recall_logic_emits_directive_only_on_first_turn(monkeypatch, tmp_path) -> None:
+    hit = _rec("once0001", "One fact", 0.90)
+
+    class StubMemory:
+        def search(self, query, limit, mode, recency=False, exclude_types=None):
+            return [hit]
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_DIRECTIVE_ONCE", "1")
+
+    first, _ = _recall_logic(
+        "anything", cwd=None, mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path), debug=False, turn=1,
+    )
+    later, _ = _recall_logic(
+        "anything", cwd=None, mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path), debug=False, turn=2,
+    )
+
+    assert RECALL_DIRECTIVE in json.loads(first)["hookSpecificOutput"]["additionalContext"]
+    assert RECALL_DIRECTIVE not in json.loads(later)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_recall_logic_caps_total_context_and_logs_exact_cost(monkeypatch, tmp_path) -> None:
+    hit = _rec("cap00001", "Long fact", 0.90)
+    object.__setattr__(hit, "body", "substantial context " * 200)
+
+    class StubMemory:
+        def search(self, query, limit, mode, recency=False, exclude_types=None):
+            return [hit]
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "160")
+    monkeypatch.setenv("MEMO_RECALL_TOP_K", "1")
+    monkeypatch.setenv("MEMO_RECALL_FEEDBACK_HINT", "0")
+
+    result, log_result = _recall_logic(
+        "anything", cwd=None, mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
+        session_id="sid-cap", turn=1, client="claude-code",
+    )
+    context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
+
+    assert "Long fact" in context
+    assert len(context) <= 160 * 4
+    assert log_result is not None
+    log_result()
+    costs = dashboard_logs.read_context_cost_log(tmp_path)
+    assert costs[-1]["chars"] == len(context)
+    assert costs[-1]["kind"] == "recall"
 
 
 def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:

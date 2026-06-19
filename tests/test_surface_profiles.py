@@ -75,3 +75,43 @@ def test_mcp_core_profile_hides_advanced_tools(tmp_path, monkeypatch) -> None:
         assert asyncio.run(server.get_tool("memory_collaborative_connections")) is None
     finally:
         mem.close()
+
+
+def test_mcp_agent_profile_is_default_and_exposes_five_tools(tmp_path, monkeypatch) -> None:
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        vault_path=tmp_path / "vault",
+        embedder_dims=4,
+    )
+    monkeypatch.delenv("MEMO_MCP_PROFILE", raising=False)
+    monkeypatch.delenv("MEMO_MCP_SLIM", raising=False)
+    mem = Memory(cfg)
+    try:
+        tools = asyncio.run(build_server(memory=mem).list_tools())
+        assert {tool.name for tool in tools} == {
+            "memory_ask",
+            "memory_get",
+            "memory_save",
+            "memory_search",
+            "memory_unified_briefing",
+        }
+    finally:
+        mem.close()
+
+
+def test_mcp_full_profile_keeps_advanced_tools(tmp_path, monkeypatch) -> None:
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        vault_path=tmp_path / "vault",
+        embedder_dims=4,
+    )
+    monkeypatch.setenv("MEMO_MCP_PROFILE", "full")
+    mem = Memory(cfg)
+    try:
+        server = build_server(memory=mem)
+        assert asyncio.run(server.get_tool("memory_graph_path")) is not None
+        assert asyncio.run(server.get_tool("memory_collaborative_connections")) is not None
+    finally:
+        mem.close()

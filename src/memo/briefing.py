@@ -27,6 +27,18 @@ _MAX_ITEMS = 3
 _SNIPPET_CHARS = 160
 
 
+def compact_text(text: str, *, max_chars: int = 480) -> str:
+    """Collapse blank/indented lines and enforce a hard context-size cap."""
+    if max_chars <= 0:
+        return ""
+    compact = "\n".join(line.strip() for line in str(text or "").splitlines() if line.strip())
+    if len(compact) <= max_chars:
+        return compact
+    if max_chars == 1:
+        return "…"
+    return compact[: max_chars - 1].rstrip() + "…"
+
+
 def synapse_briefing_lines(
     cwd: str | None = None,
     *,
@@ -119,4 +131,4 @@ def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-__all__ = ["synapse_briefing_lines"]
+__all__ = ["compact_text", "synapse_briefing_lines"]

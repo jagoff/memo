@@ -21,6 +21,7 @@ def test_flag_returns_default_when_unset() -> None:
     assert flags.flag("MEMO_RECALL_DISABLE", env=env) is False
     # opt-out default-on bool
     assert flags.flag("MEMO_EMIT_LEDGER", env=env) is True
+    assert flags.flag_int("MEMO_DREAM_COMPRESS_THRESHOLD", env=env) == 0
 
 
 def test_typed_coercion() -> None:

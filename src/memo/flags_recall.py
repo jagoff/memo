@@ -207,6 +207,22 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_RECALL_DIRECTIVE_ONCE",
+        "bool",
+        True,
+        "recall",
+        "Inject the safety/authority directive only on the first session turn.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_RECALL_SCORE_ADAPTIVE_BODY",
+        "bool",
+        True,
+        "recall",
+        "Scale body detail by relevance while respecting the total token budget.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_RECALL_ADAPTIVE_CONTEXT",
         "bool",
         True,

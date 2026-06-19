@@ -40,6 +40,7 @@ from memo.cli_runtime import _runtime_install_report  # noqa: E402
 from memo.config import Config  # noqa: E402
 from memo.dashboard import (  # noqa: E402
     consult_breakdown,
+    read_context_cost_log,
     read_recall_log,
     reask_stats,
     recall_health,
@@ -532,6 +533,8 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
 
     seen: set[tuple[str, int, str]] = set()
     by_day: dict[str, int] = defaultdict(int)
+    context_by_day: dict[str, int] = defaultdict(int)
+    context_costs: dict[str, int] = defaultdict(int)
     answer_lens: list[int] = []
     for g in read_grounding_log(state_dir):
         if g.get("answer_len"):
@@ -550,12 +553,34 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
         seen.add(key)
         by_day[day] += 1
 
+    for row in read_context_cost_log(state_dir):
+        day = str(row.get("ts") or "")[:10]
+        kind = str(row.get("kind") or "unknown")
+        tokens = row.get("tokens_est")
+        if not isinstance(tokens, (int, float)):
+            chars = max(0, int(row.get("chars") or 0))
+            tokens = (chars + 3) // 4
+        token_count = max(0, int(tokens))
+        context_costs[kind] += token_count
+        if day:
+            context_by_day[day] += token_count
+
     today = datetime.now(UTC).date()
     daily: list[dict[str, Any]] = []
     for i in range(days - 1, -1, -1):
         d = (today - timedelta(days=i)).isoformat()
         g = by_day.get(d, 0)
-        daily.append({"date": d, "grounded": g, "tokens": g * tok_grounded})
+        gross = g * tok_grounded
+        context_tokens = context_by_day.get(d, 0)
+        daily.append(
+            {
+                "date": d,
+                "grounded": g,
+                "tokens": gross,
+                "context_tokens": context_tokens,
+                "net_tokens": gross - context_tokens,
+            }
+        )
 
     grounded_total = sum(by_day.values())
     try:
@@ -565,8 +590,13 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
     reask_avoided = int(reask.get("reask_avoided") or 0)
     grounded_tokens = grounded_total * tok_grounded
     reask_tokens = reask_avoided * tok_reask
+    context_tokens = sum(context_costs.values())
     today_key = today.isoformat()
     today_tokens = next((d["tokens"] for d in daily if d["date"] == today_key), 0)
+    today_context_tokens = next(
+        (d["context_tokens"] for d in daily if d["date"] == today_key), 0
+    )
+    total = grounded_tokens + reask_tokens
     return {
         "daily": daily,
         "today_tokens": today_tokens,
@@ -574,7 +604,12 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
         "grounded_tokens": grounded_tokens,
         "reask_avoided": reask_avoided,
         "reask_tokens": reask_tokens,
-        "total": grounded_tokens + reask_tokens,
+        "context_costs": dict(sorted(context_costs.items())),
+        "context_tokens": context_tokens,
+        "today_context_tokens": today_context_tokens,
+        "today_net": today_tokens - today_context_tokens,
+        "total": total,
+        "net": total - context_tokens,
         "tok_grounded": tok_grounded,
         "tok_reask": tok_reask,
         "avg_answer_tokens": (
@@ -674,8 +709,13 @@ def _gerencial(cfg: Config) -> dict[str, Any]:
         "reask_avoided": reask.get("reask_avoided"),
         "tokens_saved_today": token_detail["today_tokens"],
         "tokens_saved_today_human": _fmt_tokens_compact(token_detail["today_tokens"]),
+        "context_tokens_today": token_detail["today_context_tokens"],
+        "tokens_net_today": token_detail["today_net"],
+        "tokens_net_today_human": _fmt_tokens_compact(token_detail["today_net"]),
         "tokens_saved": token_detail["total"],
         "tokens_saved_human": _fmt_tokens_compact(token_detail["total"]),
+        "tokens_net": token_detail["net"],
+        "tokens_net_human": _fmt_tokens_compact(token_detail["net"]),
         "avg_answer_tokens": token_detail["avg_answer_tokens"],
         "token_detail": token_detail,
         "trend": _consult_trend(state_dir),
@@ -1132,6 +1172,8 @@ _HTML_TEMPLATE = r"""<!doctype html>
       : G.grounded_rate >= 0.1 ? "var(--green)" : "var(--yellow)";
     const referencedColor = G.referenced_rate == null ? "var(--fg-mute)"
       : G.referenced_rate >= 0.1 ? "var(--green)" : "var(--yellow)";
+    const fmtTok = n => n == null ? "—" : (Math.abs(n) < 1000 ? String(n)
+      : Math.abs(n) < 1e6 ? (n/1000).toFixed(1) + "k" : (n/1e6).toFixed(2) + "M");
     const kpis = [
       { num: (G.consults ?? 0).toLocaleString("es"), accent: "var(--blue)",
         cap: "Consultas analizadas", sub: "total de preguntas registradas" },
@@ -1148,8 +1190,8 @@ _HTML_TEMPLATE = r"""<!doctype html>
         sub: G.used_total ? `${G.used_grounded}/${G.used_total} respuestas medidas` : "aún sin medir" },
       { num: asPct(G.measurement_coverage), accent: "var(--yellow)", cap: "Cobertura de medición",
         sub: G.surfaced_turns ? `${G.measured_turns || 0}/${G.surfaced_turns} turnos con grounding` : "sin turnos correlatables" },
-      { num: G.tokens_saved_today_human || "—", accent: "var(--blue)", cap: "Tokens ahorrados al modelo hoy",
-        sub: "métrica diaria · info traída de memo" + (G.avg_answer_tokens ? " · ~" + G.avg_answer_tokens + " tok/resp" : "") },
+      { num: G.tokens_net_today_human || "—", accent: (G.tokens_net_today || 0) >= 0 ? "var(--blue)" : "var(--red)", cap: "Ahorro neto de tokens hoy",
+        sub: `${fmtTok(G.tokens_saved_today || 0)} evitados - ${fmtTok(G.context_tokens_today || 0)} inyectados` },
     ];
     const kEl = document.getElementById("kpis");
     kEl.innerHTML = "";
@@ -1164,12 +1206,11 @@ _HTML_TEMPLATE = r"""<!doctype html>
 
     // ── AHORRO DE TOKENS (detalle) ──
     const td = G.token_detail || {};
-    const fmtTok = n => n == null ? "—" : (n < 1000 ? String(n)
-      : n < 1e6 ? (n/1000).toFixed(1) + "k" : (n/1e6).toFixed(2) + "M");
     const gTok = td.grounded_tokens || 0, rTok = td.reask_tokens || 0, tTot = td.total || 0;
-    document.getElementById("tok-total").textContent = fmtTok(tTot);
+    document.getElementById("tok-total").textContent = fmtTok(td.net || 0);
     document.getElementById("tok-assump").textContent =
       `${td.tok_grounded || 0} tok/hecho · ${td.tok_reask || 0} tok/repregunta`
+      + ` · ${fmtTok(td.context_tokens || 0)} tok de contexto descontados`
       + (td.avg_answer_tokens ? ` · ~${td.avg_answer_tokens} tok/respuesta medido` : "");
     const segG = tTot > 0 ? (gTok / tTot * 100) : 0;
     document.getElementById("tok-seg-grounded").style.width = segG.toFixed(1) + "%";
@@ -1181,7 +1222,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
     const tdaily = td.daily || [];
     if (tdaily.length) {
       Plotly.react("token-trend", [{
-        type: "bar", x: tdaily.map(d => d.date.slice(5)), y: tdaily.map(d => d.tokens),
+        type: "bar", x: tdaily.map(d => d.date.slice(5)), y: tdaily.map(d => d.net_tokens),
         marker: { color: "#2ee6a6" },
         hovertemplate: "%{x}<br>%{y} tokens (%{customdata} hechos)<extra></extra>",
         customdata: tdaily.map(d => d.grounded),

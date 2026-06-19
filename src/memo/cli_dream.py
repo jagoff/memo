@@ -57,7 +57,7 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     return id_a, id_b
 
 
-def _build_orientation(mem: "Memory") -> dict:
+def _build_orientation(mem: Memory) -> dict:
     """Read-only corpus inventory — runs before any mutation."""
     conn = mem.store._conn
     result: dict = {
@@ -146,7 +146,7 @@ def _run_signal_gather(since_days: int, file_limit: int = 20) -> dict:
 
 
 def _run_prune_floor(
-    mem: "Memory",
+    mem: Memory,
     roi_floor: float,
     min_age_days: int,
     dry_run: bool,
@@ -165,7 +165,7 @@ def _run_prune_floor(
     return candidates
 
 
-def _run_eviction(mem: "Memory", max_count: int, dry_run: bool) -> list[dict]:
+def _run_eviction(mem: Memory, max_count: int, dry_run: bool) -> list[dict]:
     """Archive LFU candidates until corpus size <= max_count.
 
     Returns list of {id, access_count} archived (or would-archive in dry-run).
@@ -197,7 +197,7 @@ def _run_eviction(mem: "Memory", max_count: int, dry_run: bool) -> list[dict]:
     return [{"id": c["id"], "access_count": c.get("access_count", 0)} for c in candidates]
 
 
-def _run_compress(mem: "Memory", threshold: int, dry_run: bool) -> list[dict]:
+def _run_compress(mem: Memory, threshold: int, dry_run: bool) -> list[dict]:
     """Compress verbose memorias (body > threshold chars) to 2-3 sentences.
 
     Returns list of {id, original_len, compressed_len}.
@@ -262,7 +262,7 @@ def _run_compress(mem: "Memory", threshold: int, dry_run: bool) -> list[dict]:
     return results
 
 
-def _run_prewarm_queries(cfg: Any, mem: "Memory", n: int) -> dict:
+def _run_prewarm_queries(cfg: Any, mem: Memory, n: int) -> dict:
     """Pre-embed the n most recent unique queries from recall.log.
 
     Warms the LRU embed cache so the next recall-hook invocation hits cached
@@ -292,7 +292,7 @@ def _run_prewarm_queries(cfg: Any, mem: "Memory", n: int) -> dict:
         return {"queries_warmed": 0, "queries_available": 0, "error": str(exc)}
 
 
-def _run_presynthesis(cfg: Any, mem: "Memory", top_n: int, dry_run: bool) -> list[dict]:
+def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[dict]:
     """Pre-synthesize clusters for the top recurring queries.
 
     Reads recall.log, picks the top_n most frequent queries, runs a focused
@@ -398,7 +398,7 @@ def dream_run(
     from memo.flags import flag_int
 
     _evict_max = flag_int("MEMO_DREAM_EVICT_MAX_COUNT") or 0
-    _compress_threshold = flag_int("MEMO_DREAM_COMPRESS_THRESHOLD") or 2000
+    _compress_threshold = flag_int("MEMO_DREAM_COMPRESS_THRESHOLD") or 0
     _prewarm_n = flag_int("MEMO_DREAM_PREWARM_QUERIES") or 0
     _presynthesis_n = flag_int("MEMO_DREAM_PRESYNTHESIS_QUERIES") or 0
 

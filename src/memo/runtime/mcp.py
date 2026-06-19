@@ -19,6 +19,7 @@ _MCP_ENV_FORWARD_KEYS = (
     "MEMO_STATE_DIR",
     "MEMO_VAULT_PATH",
     "MEMO_MEMORY_SUBDIR",
+    "MEMO_MCP_PROFILE",
     "MEMO_MODEL_PROFILE",
     "MEMO_LLM_MODEL",
     "MEMO_HELPER_MODEL",
@@ -44,7 +45,12 @@ _MISSING_MCP_OK_ERRORS = (
 
 
 def _mcp_server_env() -> dict[str, str]:
-    env = {"MEMO_NONINTERACTIVE": "1"}
+    from memo.flags import flag_str
+
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_MCP_PROFILE": flag_str("MEMO_MCP_PROFILE") or "agent",
+    }
     for key in _MCP_ENV_FORWARD_KEYS:
         val = os.environ.get(key)
         if val:
