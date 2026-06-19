@@ -44,7 +44,7 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_TOKEN_BUDGET",
         "int",
-        0,
+        600,
         "recall",
         "Token budget for injected context (0 = off).",
     ),

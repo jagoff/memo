@@ -729,6 +729,35 @@ def mark_reflected(state_dir: Path, session_id: str) -> bool:
     return False
 
 
+def get_recalled_ids(state_dir: Path, session_id: str) -> dict[str, int]:
+    """Return mapping of memory_id -> first_seen_turn for this session.
+    Returns {} if session doesn't exist or has no recalled_ids."""
+    existing = _load(state_dir, session_id) or {}
+    return dict(existing.get("recalled_ids", {}))
+
+
+def mark_ids_recalled(
+    state_dir: Path,
+    session_id: str,
+    new_ids: dict[str, int],
+) -> None:
+    """Merge new {id: turn} entries into the session's recalled_ids.
+    Best-effort: swallows all exceptions (non-critical path)."""
+    if not new_ids:
+        return
+    try:
+        existing = _load(state_dir, session_id) or {}
+        recalled = dict(existing.get("recalled_ids", {}))
+        # Only record first-seen turn; don't overwrite if already present
+        for mid, turn in new_ids.items():
+            if mid not in recalled:
+                recalled[mid] = turn
+        existing["recalled_ids"] = recalled
+        _write(state_dir, session_id, existing)
+    except Exception:
+        pass
+
+
 def update_summary(
     state_dir: Path,
     session_id: str,

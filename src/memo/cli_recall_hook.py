@@ -327,6 +327,17 @@ def recall_hook() -> None:
         _bail(f"no hits above min_sim={min_sim}")
         return
 
+    # Session dedup: IDs already injected in earlier turns get a short reference
+    # instead of full body, saving ~380 chars each time.
+    _prev_recalled: dict[str, int] = {}
+    if _sid and _turn is not None:
+        try:
+            from memo import session as _session_mod
+
+            _prev_recalled = _session_mod.get_recalled_ids(cfg.state_dir, _sid)
+        except Exception:
+            _prev_recalled = {}
+
     from memo.recall_server import RECALL_DIRECTIVE, RECALL_FOOTER, RECALL_HEADER
 
     # Directive-once: skip 111-token directive after the first recall turn.
@@ -367,6 +378,22 @@ def recall_hook() -> None:
     used_chars = 0
 
     for h in relevant:
+        prev_turn = _prev_recalled.get(h.id)
+        if prev_turn is not None:
+            ref_line = f"**[{h.id[:8]}] {h.title}** _(ya citado, turno {prev_turn})_"
+            block_lines = [ref_line, ""]
+            block = "\n".join(block_lines)
+            if budget_chars_for_hits is None:
+                lines.extend(block_lines)
+            else:
+                remaining = budget_chars_for_hits - used_chars
+                if remaining <= 0:
+                    break
+                if len(block) <= remaining:
+                    lines.extend(block_lines)
+                    used_chars += len(block)
+            continue
+
         eff_body = _effective_body_chars(h.score)
         score_tag = f" (score {h.score:.2f})" if h.score is not None else ""
         body = (h.body or "").strip().replace("\n", " ")
@@ -424,4 +451,15 @@ def recall_hook() -> None:
         }
     }
     print(json.dumps(output, ensure_ascii=False))
+
+    # Persist newly recalled IDs so future turns can dedup them
+    if _sid and _turn is not None and relevant:
+        try:
+            from memo import session as _session_mod
+
+            new_ids = {h.id: _turn for h in relevant if h.id not in _prev_recalled}
+            _session_mod.mark_ids_recalled(cfg.state_dir, _sid, new_ids)
+        except Exception:
+            pass
+
     sys.exit(0)
