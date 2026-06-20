@@ -47,7 +47,9 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
     project_hit = _rec("project1", "Project", 0.60, ["project:memo"])
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
+        def search(
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+        ) -> list[MemoryRecord]:
             return [global_hit, project_hit]
 
     monkeypatch.setenv("MEMO_PROJECT_TAG", "memo")
@@ -72,7 +74,7 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
 def test_dedup_hits_drops_duplicate_id_and_near_identical_content() -> None:
     a = _rec("id000001", "Decisión MLX", 0.80)
     a_dup_id = _rec("id000001", "Decisión MLX", 0.50)  # same id, lower score
-    a_near = _rec("id000002", "Decisión MLX", 0.70)    # different id, same title+body
+    a_near = _rec("id000002", "Decisión MLX", 0.70)  # different id, same title+body
     b = _rec("id000003", "Otra cosa distinta", 0.65)
 
     out = dedup_hits([a, a_dup_id, a_near, b])
@@ -85,15 +87,20 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
     hit = _rec("auth0001", "Some fact", 0.80)
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
+        def search(
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+        ) -> list[MemoryRecord]:
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
     result, _log = _recall_logic(
-        "anything", cwd=None, mem=StubMemory(),
-        cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
+        "anything",
+        cwd=None,
+        mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
     )
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
     assert RECALL_DIRECTIVE in context
@@ -112,12 +119,20 @@ def test_recall_logic_emits_directive_only_on_first_turn(monkeypatch, tmp_path) 
     monkeypatch.setenv("MEMO_RECALL_DIRECTIVE_ONCE", "1")
 
     first, _ = _recall_logic(
-        "anything", cwd=None, mem=StubMemory(),
-        cfg=SimpleNamespace(state_dir=tmp_path), debug=False, turn=1,
+        "anything",
+        cwd=None,
+        mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+        turn=1,
     )
     later, _ = _recall_logic(
-        "anything", cwd=None, mem=StubMemory(),
-        cfg=SimpleNamespace(state_dir=tmp_path), debug=False, turn=2,
+        "anything",
+        cwd=None,
+        mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+        turn=2,
     )
 
     assert RECALL_DIRECTIVE in json.loads(first)["hookSpecificOutput"]["additionalContext"]
@@ -139,9 +154,14 @@ def test_recall_logic_caps_total_context_and_logs_exact_cost(monkeypatch, tmp_pa
     monkeypatch.setenv("MEMO_RECALL_FEEDBACK_HINT", "0")
 
     result, log_result = _recall_logic(
-        "anything", cwd=None, mem=StubMemory(),
-        cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
-        session_id="sid-cap", turn=1, client="claude-code",
+        "anything",
+        cwd=None,
+        mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+        session_id="sid-cap",
+        turn=1,
+        client="claude-code",
     )
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
 
@@ -158,14 +178,17 @@ def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:
     seen = {}
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
+        def search(
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+        ) -> list[MemoryRecord]:
             seen["recency"] = recency
             return [_rec("r0000001", "Fresh", 0.9)]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
-    _recall_logic("q", cwd=None, mem=StubMemory(),
-                  cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
+    _recall_logic(
+        "q", cwd=None, mem=StubMemory(), cfg=SimpleNamespace(state_dir=tmp_path), debug=False
+    )
     assert seen["recency"] is True
 
 
@@ -192,6 +215,7 @@ def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
             @staticmethod
             def get_preferences():
                 return SimpleNamespace(preferred_types={})
+
         @staticmethod
         def record_search(prompt, ids):
             recorded["prompt"] = prompt
@@ -199,13 +223,21 @@ def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
 
     class StubMemory:
         contextual = FakeContextual()
-        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
+
+        def search(
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+        ) -> list[MemoryRecord]:
             return [_rec("surf0001", "surfaced", 0.9)]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
-    _recall_logic("mi pregunta", cwd=None, mem=StubMemory(),
-                  cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
+    _recall_logic(
+        "mi pregunta",
+        cwd=None,
+        mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
     assert recorded["prompt"] == "mi pregunta"
     assert recorded["ids"] == ["surf0001"]
 
@@ -214,7 +246,9 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     hits = [_rec(f"id{i:07d}", f"hit {i}", 0.9 - i * 0.05) for i in range(5)]
 
     class StubMemory:
-        def search(self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None) -> list[MemoryRecord]:
+        def search(
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+        ) -> list[MemoryRecord]:
             return hits
 
     monkeypatch.setenv("MEMO_RECALL_TOP_K", "3")
@@ -222,8 +256,9 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
     monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")  # isolate from prefs
 
-    result, _log = _recall_logic("q", cwd=None, mem=StubMemory(),
-                           cfg=SimpleNamespace(state_dir=tmp_path), debug=False)
+    result, _log = _recall_logic(
+        "q", cwd=None, mem=StubMemory(), cfg=SimpleNamespace(state_dir=tmp_path), debug=False
+    )
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
     # top-3 in the main block, next 2 in the related nudge
     nudge_line = context.split("relacionado):", 1)[1]
@@ -248,12 +283,20 @@ class _StubMicroEmbedder:
 def test_fallback_scoring_does_not_mutate_shared_hits(monkeypatch, tmp_path) -> None:
     """The micro-embedder fallback must score into NEW records, never mutate
     the shared frozen hits returned by `search`."""
+
     def _body_rec(id_: str, title: str) -> MemoryRecord:
         # distinct bodies so dedup doesn't collapse them as near-identical
         return MemoryRecord(
-            id=id_, path=f"notes/{id_}.md", title=title, type="note", tags=[],
-            created="2026-05-21T00:00:00+00:00", updated="2026-05-21T00:00:00+00:00",
-            body=f"unique body for {title} " * 8, extra={}, score=0.0,
+            id=id_,
+            path=f"notes/{id_}.md",
+            title=title,
+            type="note",
+            tags=[],
+            created="2026-05-21T00:00:00+00:00",
+            updated="2026-05-21T00:00:00+00:00",
+            body=f"unique body for {title} " * 8,
+            extra={},
+            score=0.0,
         )
 
     a = _body_rec("aaaa0001", "Alpha")
@@ -280,8 +323,11 @@ def test_fallback_scoring_does_not_mutate_shared_hits(monkeypatch, tmp_path) -> 
     monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
 
     result, _log = _recall_logic(
-        "q", cwd=None, mem=StubMemory(),
-        cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
+        "q",
+        cwd=None,
+        mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
         micro_embedder=micro,
     )
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
@@ -309,10 +355,60 @@ def test_project_tag_failure_is_logged_not_silent(monkeypatch, tmp_path, caplog)
 
     with caplog.at_level("DEBUG", logger=rl._logger.name):
         result, _log = _recall_logic(
-            "q", cwd=str(tmp_path), mem=StubMemory(),
-            cfg=SimpleNamespace(state_dir=tmp_path), debug=False,
+            "q",
+            cwd=str(tmp_path),
+            mem=StubMemory(),
+            cfg=SimpleNamespace(state_dir=tmp_path),
+            debug=False,
         )
     # control flow preserved: recall still succeeds
     assert "Surfaced" in json.loads(result)["hookSpecificOutput"]["additionalContext"]
     # but the failure is now observable
     assert any("project_tag resolution failed" in r.message for r in caplog.records)
+
+
+def test_pop_pending_notification_reads_and_deletes(tmp_path):
+    from memo.cli_recall_hook import _pop_pending_notification
+
+    (tmp_path / "pending_idle_notification.txt").write_text("💾 saved 2 memorias", encoding="utf-8")
+    assert _pop_pending_notification(tmp_path) == "💾 saved 2 memorias"
+    # second read is empty — the file was consumed
+    assert _pop_pending_notification(tmp_path) == ""
+    assert not (tmp_path / "pending_idle_notification.txt").exists()
+
+
+def test_pop_pending_notification_absent_returns_empty(tmp_path):
+    from memo.cli_recall_hook import _pop_pending_notification
+
+    assert _pop_pending_notification(tmp_path) == ""
+
+
+def test_inject_notification_prepends_to_daemon_additional_context():
+    from memo.cli_recall_hook import _inject_notification_into_result
+
+    daemon_result = json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": "<memo-recall>…</memo-recall>",
+            }
+        }
+    )
+    merged = json.loads(_inject_notification_into_result(daemon_result, "💾 saved 1 memoria"))
+    ctx = merged["hookSpecificOutput"]["additionalContext"]
+    assert ctx.startswith("💾 saved 1 memoria")
+    assert "<memo-recall>" in ctx  # original recall preserved
+
+
+def test_inject_notification_noop_when_empty():
+    from memo.cli_recall_hook import _inject_notification_into_result
+
+    daemon_result = json.dumps({"hookSpecificOutput": {"additionalContext": "x"}})
+    assert _inject_notification_into_result(daemon_result, "") == daemon_result
+
+
+def test_inject_notification_fallback_on_unparseable_result():
+    from memo.cli_recall_hook import _inject_notification_into_result
+
+    merged = json.loads(_inject_notification_into_result("not json", "💾 saved"))
+    assert merged["hookSpecificOutput"]["additionalContext"] == "💾 saved"
