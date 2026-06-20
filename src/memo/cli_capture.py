@@ -19,19 +19,19 @@ from memo.cli_common import console
 from memo.config import Config
 
 
-def _write_capture_notification(state_dir: Path, titles: list[str]) -> None:
+def _write_capture_notification(state_dir: Path, titles: list[str], *, idle: bool = False) -> None:
     """Write a pending notification the next recall-hook surfaces, so passive
-    auto-capture is visible to the user. Best-effort; never raises."""
+    auto-capture is visible to the user. Rendered as a single muted line
+    (``※ auto save…``) rather than a heading, to stay unobtrusive in the
+    console. Best-effort; never raises."""
     if not titles:
         return
     n = len(titles)
     shown = "; ".join(t for t in titles[:3])
     if n > 3:
-        shown += f"; +{n - 3} más"
-    body = (
-        f"## 💾 Captura automática\n\n"
-        f"memo guardó {n} memoria(s) nueva(s) de esta conversación: {shown}.\n"
-    )
+        shown += f"; +{n - 3} more"
+    tag = "auto save (idle)" if idle else "auto save"
+    body = f"※ {tag}: {shown}\n"
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / "pending_idle_notification.txt").write_text(body, encoding="utf-8")

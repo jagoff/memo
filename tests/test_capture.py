@@ -50,17 +50,26 @@ def test_extract_text_concatenates_text_blocks_skips_tools():
 
 def test_read_last_exchange_picks_latest_pair(tmp_path: Path):
     transcript = tmp_path / "t.jsonl"
-    _write_transcript(transcript, [
-        {"type": "user", "message": {"content": "old user msg"}},
-        {"type": "assistant", "message": {"content": "old assistant msg"}},
-        {"type": "user", "message": {
-            "content": [{"type": "text", "text": "qué decidí sobre MLX?"}]
-        }},
-        {"type": "assistant", "message": {"content": [
-            {"type": "text", "text": "Decidiste usar MLX porque la latencia bajó 30%."},
-            {"type": "tool_use", "name": "Read", "input": {}},
-        ]}},
-    ])
+    _write_transcript(
+        transcript,
+        [
+            {"type": "user", "message": {"content": "old user msg"}},
+            {"type": "assistant", "message": {"content": "old assistant msg"}},
+            {
+                "type": "user",
+                "message": {"content": [{"type": "text", "text": "qué decidí sobre MLX?"}]},
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Decidiste usar MLX porque la latencia bajó 30%."},
+                        {"type": "tool_use", "name": "Read", "input": {}},
+                    ]
+                },
+            },
+        ],
+    )
     pair = _read_last_exchange(transcript)
     assert pair is not None
     user, asst = pair
@@ -71,9 +80,12 @@ def test_read_last_exchange_picks_latest_pair(tmp_path: Path):
 
 def test_read_last_exchange_returns_none_on_user_only(tmp_path: Path):
     transcript = tmp_path / "t.jsonl"
-    _write_transcript(transcript, [
-        {"type": "user", "message": {"content": "lonely user msg"}},
-    ])
+    _write_transcript(
+        transcript,
+        [
+            {"type": "user", "message": {"content": "lonely user msg"}},
+        ],
+    )
     assert _read_last_exchange(transcript) is None
 
 
@@ -100,23 +112,30 @@ def test_prefilter_passes_with_trigger_and_length():
 def test_extract_insights_parses_clean_json():
     """Stub helper that returns valid JSON. The pipeline should
     surface every well-formed item and reject malformed entries."""
+
     class _StubChat:
         def chat(self, model, messages, options):
-            return {"message": {"content": json.dumps([
-                {
-                    "title": "Use MLX over Ollama",
-                    "type": "decision",
-                    "body": "MLX shaved 30% off prefill latency vs Ollama for the same model.",
-                    "tags": ["mlx", "ollama", "latency"],
-                },
-                {"title": "", "body": "missing title — should drop"},
-                {
-                    "title": "Reranker threshold 0.4 for hybrid mode",
-                    "type": "preference",
-                    "body": "Fused scores cluster around 0.3-0.7; 0.4 is the empirical knee.",
-                    "tags": ["reranker", "threshold"],
-                },
-            ])}}
+            return {
+                "message": {
+                    "content": json.dumps(
+                        [
+                            {
+                                "title": "Use MLX over Ollama",
+                                "type": "decision",
+                                "body": "MLX shaved 30% off prefill latency vs Ollama for the same model.",
+                                "tags": ["mlx", "ollama", "latency"],
+                            },
+                            {"title": "", "body": "missing title — should drop"},
+                            {
+                                "title": "Reranker threshold 0.4 for hybrid mode",
+                                "type": "preference",
+                                "body": "Fused scores cluster around 0.3-0.7; 0.4 is the empirical knee.",
+                                "tags": ["reranker", "threshold"],
+                            },
+                        ]
+                    )
+                }
+            }
 
     out = extract_insights(_StubChat(), "any-model", "user", "assistant")
     assert len(out) == 2
@@ -127,11 +146,13 @@ def test_extract_insights_parses_clean_json():
 def test_extract_insights_strips_markdown_fences():
     class _StubChat:
         def chat(self, model, messages, options):
-            return {"message": {"content": (
-                "```json\n"
-                '[{"title": "T", "type": "note", "body": "B", "tags": []}]\n'
-                "```"
-            )}}
+            return {
+                "message": {
+                    "content": (
+                        '```json\n[{"title": "T", "type": "note", "body": "B", "tags": []}]\n```'
+                    )
+                }
+            }
 
     out = extract_insights(_StubChat(), "m", "u", "a")
     assert len(out) == 1
@@ -248,14 +269,22 @@ def test_run_capture_skips_duplicate_turn(tmp_path: Path, monkeypatch):
     )
 
     transcript = tmp_path / "t.jsonl"
-    _write_transcript(transcript, [
-        {"type": "user", "message": {"content": "decidí algo"}},
-        {"type": "assistant", "message": {"content": (
-            "Decidiste cambiar la config porque el bug del reranker se "
-            "manifestaba cuando el body excedía 4096 tokens. Fix: truncar "
-            "a 1200 chars antes del rerank. Latencia bajó 3x."
-        )}},
-    ])
+    _write_transcript(
+        transcript,
+        [
+            {"type": "user", "message": {"content": "decidí algo"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "content": (
+                        "Decidiste cambiar la config porque el bug del reranker se "
+                        "manifestaba cuando el body excedía 4096 tokens. Fix: truncar "
+                        "a 1200 chars antes del rerank. Latencia bajó 3x."
+                    )
+                },
+            },
+        ],
+    )
 
     run_capture(transcript)  # first call processes the turn
     out2 = run_capture(transcript)
@@ -267,10 +296,17 @@ def test_write_capture_notification_lists_titles(tmp_path: Path) -> None:
 
     _write_capture_notification(tmp_path, ["Falso negativo en grounding", "Floor de tokens"])
     notif = (tmp_path / "pending_idle_notification.txt").read_text(encoding="utf-8")
-    assert "💾" in notif
-    assert "2 memoria" in notif
+    assert notif.startswith("※ auto save:")  # muted single line, not a heading
     assert "Falso negativo en grounding" in notif
     assert "Floor de tokens" in notif
+
+
+def test_write_capture_notification_idle_tag(tmp_path: Path) -> None:
+    from memo.cli_capture import _write_capture_notification
+
+    _write_capture_notification(tmp_path, ["Insight"], idle=True)
+    notif = (tmp_path / "pending_idle_notification.txt").read_text(encoding="utf-8")
+    assert notif.startswith("※ auto save (idle):")
 
 
 def test_write_capture_notification_truncates_and_counts(tmp_path: Path) -> None:
@@ -278,8 +314,7 @@ def test_write_capture_notification_truncates_and_counts(tmp_path: Path) -> None
 
     _write_capture_notification(tmp_path, [f"t{i}" for i in range(5)])
     notif = (tmp_path / "pending_idle_notification.txt").read_text(encoding="utf-8")
-    assert "5 memoria" in notif
-    assert "+2 más" in notif  # only first 3 listed
+    assert "+2 more" in notif  # only first 3 listed
 
 
 def test_write_capture_notification_noop_on_empty(tmp_path: Path) -> None:
@@ -305,7 +340,8 @@ def test_capture_stop_writes_notification_when_saved(tmp_path: Path, monkeypatch
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
     monkeypatch.setattr(
-        capture_mod, "run_capture",
+        capture_mod,
+        "run_capture",
         lambda *a, **k: {"status": "ok", "saved": ["id1"], "saved_titles": ["Insight uno"]},
     )
 
@@ -314,7 +350,7 @@ def test_capture_stop_writes_notification_when_saved(tmp_path: Path, monkeypatch
 
     assert result.exit_code == 0
     notif = (state / "pending_idle_notification.txt").read_text(encoding="utf-8")
-    assert "💾" in notif and "Insight uno" in notif
+    assert notif.startswith("※ auto save:") and "Insight uno" in notif
 
 
 def test_capture_stop_no_notification_when_nothing_saved(tmp_path: Path, monkeypatch) -> None:
@@ -332,7 +368,8 @@ def test_capture_stop_no_notification_when_nothing_saved(tmp_path: Path, monkeyp
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
     monkeypatch.setattr(
-        capture_mod, "run_capture",
+        capture_mod,
+        "run_capture",
         lambda *a, **k: {"status": "duplicate_turn", "saved": [], "saved_titles": []},
     )
 

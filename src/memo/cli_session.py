@@ -476,22 +476,15 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             )
             _hb("captured", status=str(result.get("status")), saved=len(result.get("saved", [])))
             if result.get("status") == "ok":
-                saved_count = len(result.get("saved", []))
-                if saved_count > 0:
-                    # Async hook output doesn't reach the current turn.
-                    # Write the notification to a pending file so the next
-                    # recall-hook invocation surfaces it. Only notify when
-                    # insights were actually saved (not just exchanges scanned).
-                    try:
-                        _notif = (
-                            f"## 💾 Captura automática (idle {delay}s)\n\n"
-                            f"Detecté inactividad y guardé {saved_count} memoria(s) nueva(s) en memo.\n"
-                        )
-                        (cfg.state_dir / "pending_idle_notification.txt").write_text(
-                            _notif, encoding="utf-8"
-                        )
-                    except Exception:
-                        pass
+                _titles = result.get("saved_titles") or []
+                if _titles:
+                    # Async hook output doesn't reach the current turn. Write a
+                    # pending notification the next recall-hook surfaces. Only
+                    # fires when insights were actually saved (not just scanned).
+                    from memo.cli_capture import _write_capture_notification
+
+                    _write_capture_notification(cfg.state_dir, _titles, idle=True)
+            _hb("captured-notified", saved=len(result.get("saved_titles") or []))
             print("{}")
         else:
             from memo.cli_transcripts import _reflect_session
