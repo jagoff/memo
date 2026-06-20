@@ -260,3 +260,84 @@ def test_run_capture_skips_duplicate_turn(tmp_path: Path, monkeypatch):
     run_capture(transcript)  # first call processes the turn
     out2 = run_capture(transcript)
     assert out2["status"] == "duplicate_turn"
+
+
+def test_write_capture_notification_lists_titles(tmp_path: Path) -> None:
+    from memo.cli_capture import _write_capture_notification
+
+    _write_capture_notification(tmp_path, ["Falso negativo en grounding", "Floor de tokens"])
+    notif = (tmp_path / "pending_idle_notification.txt").read_text(encoding="utf-8")
+    assert "💾" in notif
+    assert "2 memoria" in notif
+    assert "Falso negativo en grounding" in notif
+    assert "Floor de tokens" in notif
+
+
+def test_write_capture_notification_truncates_and_counts(tmp_path: Path) -> None:
+    from memo.cli_capture import _write_capture_notification
+
+    _write_capture_notification(tmp_path, [f"t{i}" for i in range(5)])
+    notif = (tmp_path / "pending_idle_notification.txt").read_text(encoding="utf-8")
+    assert "5 memoria" in notif
+    assert "+2 más" in notif  # only first 3 listed
+
+
+def test_write_capture_notification_noop_on_empty(tmp_path: Path) -> None:
+    from memo.cli_capture import _write_capture_notification
+
+    _write_capture_notification(tmp_path, [])
+    assert not (tmp_path / "pending_idle_notification.txt").exists()
+
+
+def test_capture_stop_writes_notification_when_saved(tmp_path: Path, monkeypatch) -> None:
+    """capture-stop surfaces a pending notification listing saved memorias."""
+    from click.testing import CliRunner
+
+    import memo.capture as capture_mod
+    from memo.cli_capture import capture_stop
+
+    state = tmp_path / "state"
+    state.mkdir()
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setattr(
+        capture_mod, "run_capture",
+        lambda *a, **k: {"status": "ok", "saved": ["id1"], "saved_titles": ["Insight uno"]},
+    )
+
+    payload = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
+    result = CliRunner().invoke(capture_stop, input=payload)
+
+    assert result.exit_code == 0
+    notif = (state / "pending_idle_notification.txt").read_text(encoding="utf-8")
+    assert "💾" in notif and "Insight uno" in notif
+
+
+def test_capture_stop_no_notification_when_nothing_saved(tmp_path: Path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    import memo.capture as capture_mod
+    from memo.cli_capture import capture_stop
+
+    state = tmp_path / "state"
+    state.mkdir()
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setattr(
+        capture_mod, "run_capture",
+        lambda *a, **k: {"status": "duplicate_turn", "saved": [], "saved_titles": []},
+    )
+
+    payload = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
+    result = CliRunner().invoke(capture_stop, input=payload)
+
+    assert result.exit_code == 0
+    assert not (state / "pending_idle_notification.txt").exists()

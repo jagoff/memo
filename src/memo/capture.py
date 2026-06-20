@@ -457,6 +457,7 @@ def _extract_and_save(
         print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
 
     saved: list[str] = []
+    saved_titles: list[str] = []
     skipped_dup = 0
     skipped_quality = 0
     for cand in insights:
@@ -484,6 +485,7 @@ def _extract_and_save(
                 tags=cand["tags"],
             )
             saved.append(rec.id)
+            saved_titles.append(rec.title)
             if debug:
                 print(f"# memo capture: saved [{rec.id[:8]}] {rec.title}", file=sys.stderr)
         except Exception as exc:
@@ -493,6 +495,7 @@ def _extract_and_save(
     return {
         "candidates": len(insights),
         "saved": saved,
+        "saved_titles": saved_titles,
         "skipped_dup": skipped_dup,
         "skipped_quality": skipped_quality,
     }

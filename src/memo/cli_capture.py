@@ -19,6 +19,26 @@ from memo.cli_common import console
 from memo.config import Config
 
 
+def _write_capture_notification(state_dir: Path, titles: list[str]) -> None:
+    """Write a pending notification the next recall-hook surfaces, so passive
+    auto-capture is visible to the user. Best-effort; never raises."""
+    if not titles:
+        return
+    n = len(titles)
+    shown = "; ".join(t for t in titles[:3])
+    if n > 3:
+        shown += f"; +{n - 3} más"
+    body = (
+        f"## 💾 Captura automática\n\n"
+        f"memo guardó {n} memoria(s) nueva(s) de esta conversación: {shown}.\n"
+    )
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "pending_idle_notification.txt").write_text(body, encoding="utf-8")
+    except OSError:
+        pass
+
+
 @click.command(name="capture-stop")
 def capture_stop() -> None:
     """Stop hook — passive auto-extract of insights from the last turn.
@@ -69,8 +89,17 @@ def capture_stop() -> None:
 
     try:
         from memo.capture import run_capture
+        from memo.config import Config
 
-        run_capture(Path(transcript_path), debug=debug)
+        result = run_capture(Path(transcript_path), debug=debug)
+        # Surface what was saved so auto-capture is VISIBLE: write a pending
+        # notification the next recall-hook prepends to its context (the same
+        # channel the user already sees). Without this, capture-stop — the path
+        # that does most of the saving — is silent and the user can't tell it
+        # ran. Only fires when memorias were actually saved (not on dedup/cooldown).
+        titles = result.get("saved_titles") or []
+        if titles:
+            _write_capture_notification(Config.from_env().state_dir, titles)
     except Exception as exc:
         if debug:
             print(f"# memo capture-stop failed: {exc}", file=_sys.stderr)
