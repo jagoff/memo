@@ -8,12 +8,17 @@ from memo.cli_mandate import _MARKER, MANDATE_TEXT, _write_mandate, write_mandat
 
 
 def test_expected_consumers_covers_non_hook_clients() -> None:
-    for c in ("claude-code", "synapse", "memflow", "codex", "devin", "opencode"):
+    # Only always-on daemons/hooks belong in EXPECTED_CONSUMERS — they are
+    # flagged "silent" when absent. claude-code (recall-hook) + synapse/memflow
+    # (always-on services) + codex qualify.
+    for c in ("claude-code", "synapse", "memflow", "codex"):
         assert c in dashboard.EXPECTED_CONSUMERS
-    # "windsurf" retired (now Devin Desktop); devin-desktop is a GUI app that
-    # can't be driven headless, so it's not flagged as a silent gap.
-    assert "windsurf" not in dashboard.EXPECTED_CONSUMERS
-    assert "devin-desktop" not in dashboard.EXPECTED_CONSUMERS
+    # On-demand tools the user invokes explicitly (not continuous daemons) must
+    # NOT be flagged silent when idle: devin/opencode appear as readers if/when
+    # they query, but absence isn't a gap. "windsurf" retired (now Devin
+    # Desktop); devin-desktop is a GUI app that can't be driven headless.
+    for c in ("devin", "opencode", "windsurf", "devin-desktop"):
+        assert c not in dashboard.EXPECTED_CONSUMERS
 
 
 def test_write_mandate_creates_and_is_idempotent(tmp_path: Path) -> None:

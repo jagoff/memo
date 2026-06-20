@@ -198,16 +198,37 @@ def detect_gaps(
     surfaces once with a count. Sorted by frequency, then recency.
     """
     from memo.dashboard import grounding_used, read_grounding_log, read_recall_log
-    from memo.dashboard_metrics import _is_knowledge_prompt, _jaccard, _reask_tokens
+    from memo.dashboard_metrics import (
+        _is_knowledge_prompt,
+        _jaccard,
+        _reask_tokens,
+        filter_real_sessions,
+        is_ambient_recall,
+    )
 
+    # scored_turns = turns the grounding detector actually measured; grounded_turns
+    # = the subset where a memoria was used. A turn that was never scored is
+    # "unmeasured", NOT "found-but-unused" — counting it as a gap turns thin
+    # measurement coverage into a flood of false gaps. Only a measured-and-unused
+    # turn is a real "surfaced but didn't help" gap.
+    scored_turns: set[tuple[str, int]] = set()
     grounded_turns: set[tuple[str, int]] = set()
     for g in read_grounding_log(state_dir):
         sid, turn = g.get("session_id"), g.get("turn")
-        if sid and isinstance(turn, int) and grounding_used(g):
-            grounded_turns.add((sid, turn))
+        if sid and isinstance(turn, int):
+            scored_turns.add((sid, turn))
+            if grounding_used(g):
+                grounded_turns.add((sid, turn))
 
+    # Gaps answer "what couldn't memo answer for YOU": scope to ambient recall
+    # (your prompts) AND to real working sessions. An eval harness (synapse)
+    # spawns throwaway single-turn claude-code sessions that fire a generic
+    # corpus question (TCP vs UDP, git rebase…) through the same ambient hook, so
+    # the via filter alone can't exclude them — filter_real_sessions drops the
+    # turn_count == 1 probes so the panel shows questions that were actually yours.
+    ambient = [r for r in read_recall_log(state_dir, limit=limit) if is_ambient_recall(r)]
     raw: list[dict[str, Any]] = []
-    for r in read_recall_log(state_dir, limit=limit):
+    for r in filter_real_sessions(state_dir, ambient):
         prompt = (r.get("prompt") or "").strip()
         if not prompt or not _is_knowledge_prompt(prompt) or _is_injected_noise(prompt):
             continue
@@ -221,7 +242,12 @@ def detect_gaps(
             reason = "sin coincidencias"
         elif not hits:
             reason = "0 resultados"
-        elif sid and isinstance(turn, int) and (sid, turn) not in grounded_turns:
+        elif (
+            sid
+            and isinstance(turn, int)
+            and (sid, turn) in scored_turns
+            and (sid, turn) not in grounded_turns
+        ):
             reason = "encontró algo pero no se usó"
         else:
             continue
@@ -233,20 +259,24 @@ def detect_gaps(
         for c in clusters:
             if _jaccard(tok, c["tokens"]) >= sim_threshold:
                 c["count"] += 1
-                c["reasons"].add(g["reason"])
+                # Single reason = the latest occurrence's state. The same prompt
+                # can recall 0 results once and surface-but-unused another time;
+                # unioning them renders the contradictory "0 resultados, encontró
+                # algo pero no se usó". The most recent state is the truthful one.
                 if (g["ts"] or "") > (c["last_seen"] or ""):
                     c["last_seen"] = g["ts"]
                     c["prompt"] = g["prompt"]
+                    c["reason"] = g["reason"]
                 break
         else:
             clusters.append({
                 "tokens": tok, "prompt": g["prompt"], "count": 1,
-                "reasons": {g["reason"]}, "last_seen": g["ts"],
+                "reason": g["reason"], "last_seen": g["ts"],
             })
 
     out = [
         {"prompt": c["prompt"], "count": c["count"],
-         "reasons": sorted(c["reasons"]), "last_seen": c["last_seen"]}
+         "reasons": [c["reason"]], "last_seen": c["last_seen"]}
         for c in clusters if c["count"] >= min_count
     ]
     out.sort(key=lambda c: (c["count"], c["last_seen"] or ""), reverse=True)

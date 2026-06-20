@@ -29,6 +29,10 @@ SPECIFIC_MARGIN = 0.06
 # only when it is both read enough (volume) and actually helping (grounded).
 VERDICT_MIN_CONSULTS = 20
 VERDICT_MIN_GROUNDED = 0.10
+# Flag weakness as soon as there's ANY measurement (deliberate: surface a low
+# grounded_rate early rather than hide behind "unmeasured"). The honest-denominator
+# logic in grounded_rate already excludes un-scored turns, so a measured turn here
+# means a real recall→use observation.
 VERDICT_MIN_MEASURED_TURNS = 1
 # Keep "unmeasured" reserved for near-absence of grounding data. Once we have
 # a modest sample, the verdict can already fall through to weak/ok.
@@ -288,7 +292,29 @@ def grounded_rate(state_dir) -> dict[str, Any]:
 
 
 def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
-    rows = dedup_double_fire(read_recall_log(state_dir, limit=limit))
+    # Scope the recall-hook health story to ambient recall: an agent's explicit
+    # eval searches (cli:search/mcp:*) are real consults but they are NOT "memo
+    # deciding to activate on your prompt", so counting them as the funnel
+    # denominator makes the activation rate read 6% instead of the true ~86%.
+    #
+    # Source of truth = recall_hook.log: durable (cap 2000), ambient-by-
+    # construction (only the session-aware recall-hook writes it), and never
+    # flooded by an agent's cli:search traffic the way the shared recall.log is.
+    # Bails aren't carried in the hook log, so fold in recent ambient bail rows
+    # from recall.log. Fall back to recall.log (ambient-filtered) when the hook
+    # log is empty — older runtimes / tests that log via= without a session_id.
+    hook_rows = dedup_double_fire(
+        [r for r in read_recall_hook_log(state_dir, limit=2000) if is_ambient_recall(r)]
+    )
+    shared = dedup_double_fire(read_recall_log(state_dir, limit=max(limit, 2000)))
+    if hook_rows:
+        bail_rows_shared = [r for r in shared if (r.get("via") or "").strip().lower() == "bail"]
+        rows = hook_rows + bail_rows_shared
+    else:
+        rows = [r for r in shared if is_ambient_recall(r)]
+    # Drop eval-probe sessions (single-turn throwaways an eval harness spawns);
+    # the funnel/verdict should reflect YOUR real working sessions only.
+    rows = filter_real_sessions(state_dir, rows)
     fired = [r for r in rows if r.get("via") in ("daemon", "subprocess")]
     bail_rows = [r for r in rows if r.get("via") == "bail"]
     bailed = len(bail_rows)
@@ -339,6 +365,59 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
         "median_top_score": round(_median(top_scores), 3) if top_scores else None,
         "p50_latency_ms": _median(lats),
     }
+
+
+# Rows produced by the auto-firing recall-hook (the user's ambient recall),
+# as opposed to an explicit tool/agent search (synapse `cli:search`, `mcp:*`).
+# The "¿funciona como TU memoria?" story — funnel, gaps, verdict volume — scopes
+# to these so an agent's eval traffic (e.g. synapse hammering memo with a generic
+# eval corpus) can't distort the picture. The "¿quién usa memo?" panel still
+# counts every reader via consult_breakdown.
+_AMBIENT_VIA = frozenset({"daemon", "subprocess", "bail", "daemon_error"})
+
+
+def is_ambient_recall(row: dict[str, Any]) -> bool:
+    return (row.get("via") or "").strip().lower() in _AMBIENT_VIA
+
+
+def filter_real_sessions(state_dir, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep rows from real working sessions, dropping throwaway single-turn
+    sessions an eval harness spawns. synapse's eval fires a generic corpus
+    question (TCP vs UDP, git rebase…) into a fresh claude-code session that
+    fires once (turn_count == 1) and vanishes; those arrive through the ambient
+    recall-hook, so `is_ambient_recall` alone can't tell them from your own
+    prompts.
+
+    A session is "real" if it has ≥ 2 turns — judged by the durable session
+    snapshot's turn_count, OR (when no snapshot exists) by contributing ≥ 2 rows
+    to this window. The row-count fallback keeps the signal working without a
+    session-store read and degrades gracefully on older runtimes. Rows with no
+    session attribution (bails, pre-session-id runtimes) are kept — we can't
+    prove they are probes and dropping them would hide real activity."""
+    from memo.session import get_session
+
+    row_counts: dict[str, int] = {}
+    for r in rows:
+        sid = r.get("session_id")
+        if sid:
+            row_counts[sid] = row_counts.get(sid, 0) + 1
+
+    snap_turns: dict[str, int] = {}
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        sid = r.get("session_id")
+        if not sid:
+            out.append(r)
+            continue
+        if row_counts.get(sid, 0) >= 2:
+            out.append(r)
+            continue
+        if sid not in snap_turns:
+            snap = get_session(state_dir, sid) or {}
+            snap_turns[sid] = int(snap.get("turn_count") or 0)
+        if snap_turns[sid] >= 2:
+            out.append(r)
+    return out
 
 
 def consumer_label(row: dict[str, Any]) -> str:
@@ -445,7 +524,11 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
     """
     health = recall_health(state_dir, limit=limit)
     cb = consult_breakdown(state_dir, limit=limit)
-    consults = int(cb.get("sampled") or 0)
+    # Volume that gates the verdict = ambient prompts (yours), not the all-tools
+    # total. "¿Funciona como TU memoria?" needs enough of YOUR usage to judge;
+    # an agent's eval flood shouldn't unlock or distort the verdict. The all-tools
+    # per-consumer total stays in consult_breakdown for "¿quién usa memo?".
+    consults = int(health.get("sampled") or 0)
     grounded = health.get("grounded_rate")
     measured_turns = int(health.get("measured_turns") or 0)
     measurement_coverage = health.get("measurement_coverage")
