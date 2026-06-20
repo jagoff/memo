@@ -26,7 +26,6 @@ all analysis is computed on-the-fly from the corpus + history.
 
 from __future__ import annotations
 
-import concurrent.futures
 import logging
 import re
 from collections import defaultdict
@@ -41,6 +40,7 @@ _log = logging.getLogger(__name__)
 # Cap on rows pulled into memory for whole-corpus temporal analysis. A corpus
 # larger than this is silently truncated — we log a warning when the cap bites.
 _ANALYSIS_ROW_CAP = 10_000
+_PAIR_CLASSIFY_TIMEOUT_SECONDS = 30.0
 
 _CONTRADICTION_SYSTEM_PROMPT = """You analyze two memory notes from a personal archive to detect temporal contradictions.
 
@@ -193,23 +193,27 @@ Title: {r2.title}
 Type: {r2.type}
 Body: {(r2.body or "")[:1000]}
 
-Analyze the temporal relationship between these two notes."""
+        Analyze the temporal relationship between these two notes."""
 
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
-                _fut = _ex.submit(
-                    chat.chat,
-                    model=self.memory.cfg.helper_model,
-                    messages=[
-                        {"role": "system", "content": _CONTRADICTION_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    options={"temperature": 0.0, "max_tokens": 256},
-                )
-                try:
-                    out = _fut.result(timeout=30)
-                except concurrent.futures.TimeoutError:
-                    return None
+            from memo.memory.record import chat_with_timeout
+
+            out = chat_with_timeout(
+                chat,
+                timeout=_PAIR_CLASSIFY_TIMEOUT_SECONDS,
+                model=self.memory.cfg.helper_model,
+                messages=[
+                    {"role": "system", "content": _CONTRADICTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                options={
+                    "temperature": 0.0,
+                    "max_tokens": 256,
+                    "thinking": False,
+                },
+            )
+            if out is None:
+                return None
             raw = (out.get("message") or {}).get("content") or ""
         except Exception:
             return None

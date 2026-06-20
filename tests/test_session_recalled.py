@@ -10,10 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from memo.session import get_recalled_ids, mark_ids_recalled
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for get_recalled_ids / mark_ids_recalled
@@ -89,9 +86,7 @@ def _make_hit(id_: str, title: str, body: str = "body text here") -> dict:
     }
 
 
-def test_subprocess_path_dedup_short_ref_on_second_turn(
-    tmp_cfg, monkeypatch
-) -> None:
+def test_subprocess_path_dedup_short_ref_on_second_turn(tmp_cfg, monkeypatch) -> None:
     """Second-turn call for the same session/memory emits the short reference line."""
     from click.testing import CliRunner
 
@@ -134,7 +129,7 @@ def test_subprocess_path_dedup_short_ref_on_second_turn(
     # Memory is imported inside the function via `from memo.memory import Memory`,
     # so we patch the class on the source module.
     class StubMemory:
-        def __init__(self, cfg):  # noqa: ARG002
+        def __init__(self, cfg):
             pass
 
         def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
@@ -148,16 +143,20 @@ def test_subprocess_path_dedup_short_ref_on_second_turn(
     # Also stub dedup_hits so it's a no-op pass-through.
     monkeypatch.setattr("memo.recall_server.dedup_hits", lambda hits: hits)
 
-    payload_first = json.dumps({
-        "prompt": "what do you know about this topic",
-        "session_id": sid,
-        "cwd": str(tmp_cfg.data_dir),
-    })
-    payload_second = json.dumps({
-        "prompt": "what do you know about this topic",
-        "session_id": sid,
-        "cwd": str(tmp_cfg.data_dir),
-    })
+    payload_first = json.dumps(
+        {
+            "prompt": "what do you know about this topic",
+            "session_id": sid,
+            "cwd": str(tmp_cfg.data_dir),
+        }
+    )
+    payload_second = json.dumps(
+        {
+            "prompt": "what do you know about this topic",
+            "session_id": sid,
+            "cwd": str(tmp_cfg.data_dir),
+        }
+    )
 
     runner = CliRunner()
 

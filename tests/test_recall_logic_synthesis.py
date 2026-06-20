@@ -1,9 +1,8 @@
 """Tests for _deduplicate_synthesis in recall_logic."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
-
-import pytest
 
 from memo.recall_logic import _deduplicate_synthesis
 

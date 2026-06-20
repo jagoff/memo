@@ -1,5 +1,8 @@
 """Tests for temporal reasoning module."""
 
+import time
+from types import SimpleNamespace
+
 import pytest
 
 from memo.temporal import (
@@ -20,6 +23,66 @@ def test_temporal_analyzer_init(temporal_analyzer):
     """Test TemporalAnalyzer initialization."""
     assert temporal_analyzer.memory is not None
     assert temporal_analyzer._chat is None  # Lazy
+
+
+def test_classify_pair_timeout_does_not_wait_for_worker(mock_memory, monkeypatch):
+    class SlowChat:
+        def chat(self, **_kwargs):
+            time.sleep(0.3)
+            return {"message": {"content": '{"relationship":"unrelated"}'}}
+
+    monkeypatch.setattr("memo.temporal._PAIR_CLASSIFY_TIMEOUT_SECONDS", 0.05)
+    analyzer = TemporalAnalyzer(mock_memory, chat=SlowChat())
+    rec_a = SimpleNamespace(
+        id="a",
+        updated="2026-01-01T00:00:00+00:00",
+        title="A",
+        type="decision",
+        body="old",
+    )
+    rec_b = SimpleNamespace(
+        id="b",
+        updated="2026-02-01T00:00:00+00:00",
+        title="B",
+        type="decision",
+        body="new",
+    )
+
+    started = time.monotonic()
+    result = analyzer._classify_pair(rec_a, rec_b)
+    elapsed = time.monotonic() - started
+
+    assert result is None
+    assert elapsed < 0.2
+
+
+def test_classify_pair_disables_thinking_for_json_response(mock_memory):
+    class CapturingChat:
+        options = None
+
+        def chat(self, **kwargs):
+            self.options = kwargs["options"]
+            return {"message": {"content": '{"relationship":"consistent"}'}}
+
+    chat = CapturingChat()
+    analyzer = TemporalAnalyzer(mock_memory, chat=chat)
+    rec_a = SimpleNamespace(
+        id="a",
+        updated="2026-01-01T00:00:00+00:00",
+        title="A",
+        type="decision",
+        body="old",
+    )
+    rec_b = SimpleNamespace(
+        id="b",
+        updated="2026-02-01T00:00:00+00:00",
+        title="B",
+        type="decision",
+        body="new",
+    )
+
+    assert analyzer._classify_pair(rec_a, rec_b) is None
+    assert chat.options["thinking"] is False
 
 
 def test_detect_entity_contradictions_no_entities(temporal_analyzer):

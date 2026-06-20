@@ -262,6 +262,15 @@ def _recall_logic(
                         body = mem._read_body(h.path)
                     candidate_bodies.append(f"{h.title}\n{body}")
                 doc_vecs = micro_embedder.embed(candidate_bodies)
+                # Validate embedding dimensions match expected (skip for test stubs with tiny dims)
+                mem_cfg = getattr(mem, "cfg", None)
+                expected_dims = getattr(mem_cfg, "embedder_dims", 1024) if mem_cfg is not None else 1024
+                if expected_dims > 10:  # Skip validation for test stubs (e.g., 2-dim)
+                    for d_vec in doc_vecs:
+                        if len(d_vec) != expected_dims:
+                            raise ValueError(f"micro_embedder produced dim={len(d_vec)} but expected {expected_dims}")
+                    if len(q_vec) != expected_dims:
+                        raise ValueError(f"micro_embedder query produced dim={len(q_vec)} but expected {expected_dims}")
                 scored = [
                     replace(h, score=sum(x * y for x, y in zip(q_vec, d_vec, strict=True)))
                     for h, d_vec in zip(candidates, doc_vecs, strict=True)

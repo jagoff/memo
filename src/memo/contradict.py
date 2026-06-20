@@ -397,6 +397,7 @@ class ContradictionScanner:
         since: str | None = None,
         type_: str | None = None,
         progress: Any = None,
+        persist: bool = True,
     ) -> ScanResult:
         """Walk the corpus, classify near-neighbors, persist contradictions.
 
@@ -416,6 +417,8 @@ class ContradictionScanner:
             type_: Optional type filter (e.g. only `decision` memorias).
             progress: Optional callable `fn(current, total, title)` for
                 CLI progress bars.
+            persist: Store detected pairs and emit anomaly events. Set to
+                False for read-only preview runs.
 
         Returns:
             ScanResult with counters.
@@ -490,28 +493,32 @@ class ContradictionScanner:
                 if contr.relationship not in ("contradiction", "evolution"):
                     continue
 
-                existed = self.store.already_resolved(*pair_key) or _is_open(self.store, *pair_key)
-                self.store.upsert_open(
-                    memoria_id_a=contr.memoria_id_a,
-                    memoria_id_b=contr.memoria_id_b,
-                    relationship=contr.relationship,
-                    confidence=contr.confidence,
-                    rationale=contr.rationale,
-                )
-                if existed:
-                    refreshed += 1
-                else:
-                    inserted += 1
+                if persist:
+                    existed = self.store.already_resolved(*pair_key) or _is_open(
+                        self.store, *pair_key
+                    )
+                    self.store.upsert_open(
+                        memoria_id_a=contr.memoria_id_a,
+                        memoria_id_b=contr.memoria_id_b,
+                        relationship=contr.relationship,
+                        confidence=contr.confidence,
+                        rationale=contr.rationale,
+                    )
+                    if existed:
+                        refreshed += 1
+                    else:
+                        inserted += 1
 
                 if contr.relationship == "contradiction":
                     contradictions += 1
-                    emit_anomaly(
-                        contr.memoria_id_a,
-                        contr.memoria_id_b,
-                        contr.relationship,
-                        contr.confidence,
-                        "open",
-                    )
+                    if persist:
+                        emit_anomaly(
+                            contr.memoria_id_a,
+                            contr.memoria_id_b,
+                            contr.relationship,
+                            contr.confidence,
+                            "open",
+                        )
                 else:
                     evolutions += 1
 
@@ -587,8 +594,7 @@ def emit_anomaly(
         kind="semantic_contradiction",
         state=state,
         summary=(
-            f"memo {relationship} between memorias "
-            f"{memoria_id_a[:12]} and {memoria_id_b[:12]}"
+            f"memo {relationship} between memorias {memoria_id_a[:12]} and {memoria_id_b[:12]}"
         ),
         detected_at=ts,
         source_backend="memo",
