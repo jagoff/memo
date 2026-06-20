@@ -87,6 +87,7 @@ def run_idle_capture_loop() -> None:
     Runs capture every MEMO_SESSION_IDLE_CAPTURE_SECS (default 10s).
     """
     import logging
+    import sys
     from pathlib import Path
 
     from memo.cli_capture import run_capture_incremental
@@ -137,11 +138,18 @@ def run_idle_capture_loop() -> None:
                     shown = "; ".join(t for t in titles[:3])
                     if n > 3:
                         shown += f"; +{n - 3} more"
+                    notif = f"※ auto save (idle): {shown}"
                     f.write(
                         f'{{"ts": "{ts}", "stage": "captured", "sid": "{sid}", '
                         f'"status": "{result.get("status")}", "saved": {n}}}\n'
                     )
                     _log.info("idle daemon: captured %d insights", n)
+                    # Also write to pending notification for recall hook
+                    (cfg.state_dir / "pending_idle_notification.txt").write_text(
+                        notif + "\n", encoding="utf-8"
+                    )
+                    # Also print to stderr so user sees it in their terminal
+                    print(notif, file=sys.stderr)
                 else:
                     f.write(
                         f'{{"ts": "{ts}", "stage": "scanned", "sid": "{sid}", '
