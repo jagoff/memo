@@ -51,6 +51,9 @@ def share_with_user(
         expires_days=expires_days,
     )
 
+    if not share:
+        raise click.ClickException("Failed to create share")
+
     console.print(f"[green]Shared {memoria_id[:8]} with {shared_with}[/green]")
     console.print(f"Permission: {permission}")
     if share.expires_at:
@@ -167,6 +170,9 @@ def share_comment(memoria_id: str, content: str, author: str, parent: str | None
         content=content,
         parent_id=parent,
     )
+
+    if not comment:
+        raise click.ClickException("Failed to add comment")
 
     console.print("[green]Comment added[/green]")
     console.print(f"Author: {comment.author}")
