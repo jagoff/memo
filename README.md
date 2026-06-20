@@ -463,8 +463,10 @@ Install the bundled [Claude Code plugin](#slash-command--memo) and memo silently
 - **`SessionStart` (startup/resume)** → `memo briefing` (5 s) — emits El Briefing as `additionalContext` at the top of every session.
 - **`UserPromptSubmit`** → `memo recall-hook` (8 s) — queries the recall daemon (fast path, <200 ms) or falls back to BM25 keyword search if the daemon isn't running yet (cold start). Returns top-3 memorias above cosine 0.6 as `additionalContext` before the agent answers.
 - **`Stop`** → `memo capture-stop` (async, 30 s) — helper LLM reads the just-finished exchange, extracts actionable insights, runs a quality gate (`MEMO_CAPTURE_MIN_WORDS`), deduplicates against the corpus, and saves survivors automatically. Shows `※ auto save: ...` when memories are saved.
-- **`UserPromptSubmit` (idle)** → `memo session idle-capture` (async, delayed) — after `MEMO_SESSION_IDLE_CAPTURE_SECS` (default 10s) of no new prompts, extracts insights from the current session. Shows `※ auto save (idle): ...` when memories are saved.
+- **`UserPromptSubmit` (idle)** → `memo session idle-capture` (async, delayed) — after `MEMO_SESSION_IDLE_CAPTURE_SECS` (default 10s) of no new prompts, extracts insights from the current session. Shows `※ auto save (idle): ...` when complete. **(Requires Claude Code hooks — see notes for other agents below)**
 - **`Stop`** → `memo session checkpoint` (async, 5 s) — snapshots `cwd`, branch, summary, and last message to `~/.local/share/memo/sessions/` so crashed sessions can be resumed.
+
+**Note**: Idle capture and other hooks require Claude Code's hook system (`hooks/hooks.json`). Other agents (opencode, Windsurf, etc.) using MCP only get the `memo_*` tools — add a similar idle trigger via the agent's native hook system or use the standalone `memo session idle-maintenance --mode capture` command.
 
 All hooks run 100 % local. Your prompts never leave the machine.
 
