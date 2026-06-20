@@ -484,6 +484,12 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
                     from memo.cli_capture import _write_capture_notification
 
                     _write_capture_notification(cfg.state_dir, _titles, idle=True)
+                    # Also print notification directly so user sees it
+                    n = len(_titles)
+                    shown = "; ".join(t for t in _titles[:3])
+                    if n > 3:
+                        shown += f"; +{n - 3} more"
+                    console.print(f"[dim]※ auto save (idle): {shown}[/dim]")
             _hb("captured-notified", saved=len(result.get("saved_titles") or []))
             print("{}")
         else:

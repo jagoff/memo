@@ -100,6 +100,12 @@ def capture_stop() -> None:
         titles = result.get("saved_titles") or []
         if titles:
             _write_capture_notification(Config.from_env().state_dir, titles)
+            # Also print notification directly so user sees it
+            n = len(titles)
+            shown = "; ".join(t for t in titles[:3])
+            if n > 3:
+                shown += f"; +{n - 3} more"
+            console.print(f"[dim]※ auto save: {shown}[/dim]")
     except Exception as exc:
         if debug:
             print(f"# memo capture-stop failed: {exc}", file=_sys.stderr)
