@@ -48,6 +48,7 @@ from memo import server_import_export as _srv_import_export
 from memo import server_links as _srv_links
 from memo import server_multimodal as _srv_multimodal
 from memo import server_query as _srv_query
+from memo import server_idle_capture as _srv_idle_capture
 from memo import server_reflect as _srv_reflect
 from memo import server_repo as _srv_repo
 from memo import server_resources as _srv_resources
@@ -136,6 +137,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         _srv_consolidate.register(server, memory)
         _srv_synthesis.register(server, memory)
         _srv_reflect.register(server, memory)
+        _srv_idle_capture.register(server, memory)
         _srv_graph.register(server, memory)
         _srv_health.register(server, memory)
         _srv_contextual.register(server, memory)
