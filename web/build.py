@@ -768,6 +768,10 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
     contradictions = _contradictions_stats(cfg)
 
     # Heavy step (read every vector + PCA) — only on a full build, not per poll.
+    # _vec_count feeds the corpus pillar on the cheap poll path; initialise it
+    # here so the `len(rows) if rows else _vec_count` fallback is always bound,
+    # even on a full build whose corpus read came back empty.
+    _vec_count = 0
     if include_projection:
         rows = _read_vectors(cfg.db_path, limit=limit)
         if len(rows) >= 3:
@@ -1236,10 +1240,14 @@ _HTML_TEMPLATE = r"""<!doctype html>
     // ── AHORRO DE TOKENS (detalle) ──
     const td = G.token_detail || {};
     const gTok = td.grounded_tokens || 0, rTok = td.reask_tokens || 0, tTot = td.total || 0;
-    document.getElementById("tok-total").textContent = fmtTok(td.net || 0);
+    // Headline = GROSS saved, which is exactly what the composition bar (green +
+    // blue) sums to — so the big number is never smaller than one of its own
+    // segments. The net (after subtracting injected-context cost) is stated
+    // explicitly in the assumptions line so the bottom line stays honest.
+    document.getElementById("tok-total").textContent = fmtTok(tTot);
     document.getElementById("tok-assump").textContent =
       `${td.tok_grounded || 0} tok/hecho · ${td.tok_reask || 0} tok/repregunta`
-      + ` · ${fmtTok(td.context_tokens || 0)} tok de contexto descontados`
+      + ` · −${fmtTok(td.context_tokens || 0)} contexto → neto ${fmtTok(td.net || 0)}`
       + (td.avg_answer_tokens ? ` · ~${td.avg_answer_tokens} tok/respuesta medido` : "");
     const segG = tTot > 0 ? (gTok / tTot * 100) : 0;
     document.getElementById("tok-seg-grounded").style.width = segG.toFixed(1) + "%";
