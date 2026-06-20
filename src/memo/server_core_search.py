@@ -61,7 +61,7 @@ def register(server: Any, memory: Memory) -> None:
         body_chars: int = 280,
         mode: str = "hybrid",
         source: str = "",
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         t0 = now_ms()
         out: list[dict[str, Any]] = []
         for r in memory.search(query, limit=limit, type_=type, mode=mode):
@@ -72,7 +72,15 @@ def register(server: Any, memory: Memory) -> None:
                 d["body_truncated"] = True
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
-        return out
+
+        # Read pending idle notification
+        notif_path = memory.cfg.state_dir / "pending_idle_notification.txt"
+        notification = notif_path.read_text(encoding="utf-8").strip() if notif_path.exists() else ""
+
+        return {
+            "hits": out,
+            "notification": notification,
+        }
 
     @server.tool()
     def memo_search_trace(
@@ -141,6 +149,13 @@ def register(server: Any, memory: Memory) -> None:
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(memory, tool="ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
+
+        # Read pending idle notification
+        notif_path = memory.cfg.state_dir / "pending_idle_notification.txt"
+        notification = notif_path.read_text(encoding="utf-8").strip() if notif_path.exists() else ""
+        if notification:
+            out["notification"] = notification
+
         return out
 
     @server.tool()
