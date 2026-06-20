@@ -133,29 +133,32 @@ def run_idle_capture_loop() -> None:
 
             # Log result
             ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-            with open(log_file, "a") as f:
-                if titles:
-                    shown = "; ".join(t for t in titles[:3])
-                    if n > 3:
-                        shown += f"; +{n - 3} more"
-                    notif = f"※ auto save (idle): {shown}"
+            if titles:
+                shown = "; ".join(t for t in titles[:3])
+                if n > 3:
+                    shown += f"; +{n - 3} more"
+                notif = f"※ auto save (idle): {shown}"
+                with open(log_file, "a") as f:
                     f.write(
                         f'{{"ts": "{ts}", "stage": "captured", "sid": "{sid}", '
                         f'"status": "{result.get("status")}", "saved": {n}}}\n'
                     )
-                    _log.info("idle daemon: captured %d insights", n)
-                    # Also write to pending notification for recall hook
-                    (cfg.state_dir / "pending_idle_notification.txt").write_text(
-                        notif + "\n", encoding="utf-8"
-                    )
-                    # Also print to stderr so user sees it in their terminal
-                    print(notif, file=sys.stderr)
-                else:
+                _log.info("idle daemon: captured %d insights", n)
+            else:
+                notif = "※ auto save (idle): scanned (0 new insights)"
+                with open(log_file, "a") as f:
                     f.write(
                         f'{{"ts": "{ts}", "stage": "scanned", "sid": "{sid}", '
                         f'"status": "{result.get("status")}", "saved": 0}}\n'
                     )
-                    _log.debug("idle daemon: scanned (0 new insights)")
+                _log.debug("idle daemon: scanned (0 new insights)")
+
+            # Always write pending notification so recall hook can show it
+            (cfg.state_dir / "pending_idle_notification.txt").write_text(
+                notif + "\n", encoding="utf-8"
+            )
+            # Also print to stderr so user sees it in their terminal
+            print(notif, file=sys.stderr)
 
         except Exception as exc:
             _log.error("idle daemon: error: %s", exc)
