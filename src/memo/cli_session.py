@@ -355,19 +355,33 @@ def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
     delay = max(0, int(delay))
 
     try:
-        from memo.session import get_session
+        from memo.session import get_session, read_last_user_msg
 
         cfg = Config.from_env()
         snap = get_session(cfg.state_dir, str(sid))
         if not snap:
             print("{}")
             _sys.exit(0)
-        expected_updated = str(snap.get("updated") or "")
+        # Inactivity gate keyed on the user's last prompt, NOT the session
+        # `updated` stamp. `updated` is bumped by the same turn's Stop checkpoint
+        # (and the per-prompt checkpoint), so keying on it made the worker
+        # self-cancel on every turn — the inactivity capture never fired. The
+        # transcript's last user message changes ONLY when a genuinely new prompt
+        # arrives, so it's the real "did the user keep going?" signal. Read from
+        # the transcript (source of truth) to dodge the async checkpoint race.
+        _tx = _Path(str(transcript)).expanduser() if transcript else None
+        expected_prompt = read_last_user_msg(_tx) if _tx else str(snap.get("last_user_msg") or "")
         if delay > 0:
             _time.sleep(delay)
 
         current = get_session(cfg.state_dir, str(sid))
-        if not current or str(current.get("updated") or "") != expected_updated:
+        if not current:
+            print("{}")
+            _sys.exit(0)
+        current_prompt = read_last_user_msg(_tx) if _tx else str(current.get("last_user_msg") or "")
+        if current_prompt != expected_prompt:
+            # A newer prompt arrived during the window → still active; a fresh
+            # worker spawned for that turn will handle the quiet period.
             print("{}")
             _sys.exit(0)
 

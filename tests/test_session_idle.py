@@ -47,7 +47,9 @@ def test_idle_maintenance_capture_runs_when_session_is_still_current(tmp_cfg, mo
     assert calls == [(transcript, "sid-1", False)]
 
 
-def test_idle_maintenance_capture_skips_when_session_changed(tmp_cfg, monkeypatch, tmp_path):
+def test_idle_maintenance_capture_skips_when_new_prompt_arrives(tmp_cfg, monkeypatch, tmp_path):
+    """A NEW user prompt during the window → self-cancel (a fresh worker handles
+    the next quiet period). Keyed on the transcript's last user message."""
     from memo import cli_session as cli_session_mod
 
     monkeypatch.setattr(cli_session_mod.Config, "from_env", lambda: tmp_cfg)
@@ -57,19 +59,16 @@ def test_idle_maintenance_capture_skips_when_session_changed(tmp_cfg, monkeypatc
     transcript = tmp_path / "transcript.jsonl"
     transcript.write_text("")
     calls = []
-    snapshots = [
-        {"session_id": "sid-2", "updated": "2026-06-18T10:00:00+00:00"},
-        {"session_id": "sid-2", "updated": "2026-06-18T10:00:05+00:00"},
-    ]
+    # Successive reads see a new user prompt → the user kept going.
+    prompts = ["prompt A", "prompt B"]
 
-    def _fake_get_session(state_dir, session_id):
-        return snapshots.pop(0)
+    monkeypatch.setattr("memo.session.get_session", lambda sd, sid: {"session_id": sid})
+    monkeypatch.setattr("memo.session.read_last_user_msg", lambda p: prompts.pop(0))
 
     def _fake_capture_incremental(path, sid, debug=False):
         calls.append((Path(path), sid, debug))
         return {"status": "ok"}
 
-    monkeypatch.setattr("memo.session.get_session", _fake_get_session)
     monkeypatch.setattr("memo.capture.run_capture_incremental", _fake_capture_incremental)
 
     result = CliRunner().invoke(
@@ -81,6 +80,44 @@ def test_idle_maintenance_capture_skips_when_session_changed(tmp_cfg, monkeypatc
 
     assert result.exit_code == 0, result.output
     assert calls == []
+
+
+def test_idle_maintenance_capture_runs_despite_updated_bump_same_prompt(tmp_cfg, monkeypatch, tmp_path):
+    """Regression: the same turn's Stop checkpoint bumps `updated` without a new
+    prompt. The worker must NOT self-cancel on that — else the inactivity capture
+    never fires. Keyed on the user prompt (stable), not `updated`."""
+    from memo import cli_session as cli_session_mod
+
+    monkeypatch.setattr(cli_session_mod.Config, "from_env", lambda: tmp_cfg)
+    monkeypatch.setenv("MEMO_SESSION_DISABLE", "0")
+    monkeypatch.setenv("MEMO_CAPTURE_DISABLE", "0")
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("")
+    calls = []
+    # `updated` changed between reads (Stop checkpoint), but the prompt did not.
+    snapshots = [
+        {"session_id": "sid-x", "updated": "2026-06-18T10:00:00+00:00"},
+        {"session_id": "sid-x", "updated": "2026-06-18T10:00:05+00:00"},
+    ]
+    monkeypatch.setattr("memo.session.get_session", lambda sd, sid: snapshots.pop(0))
+    monkeypatch.setattr("memo.session.read_last_user_msg", lambda p: "decidimos usar X")
+
+    def _fake_capture_incremental(path, sid, debug=False):
+        calls.append((Path(path), sid, debug))
+        return {"status": "ok"}
+
+    monkeypatch.setattr("memo.capture.run_capture_incremental", _fake_capture_incremental)
+
+    result = CliRunner().invoke(
+        cli,
+        ["session", "idle-maintenance", "--mode", "capture", "--delay-secs", "0"],
+        input=_payload("sid-x", transcript),
+        env={"MEMO_NONINTERACTIVE": "1", "MEMO_STATE_DIR": str(tmp_cfg.state_dir)},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [(transcript, "sid-x", False)]
 
 
 def test_idle_maintenance_reflect_runs_when_session_is_still_current(tmp_cfg, monkeypatch, tmp_path):
