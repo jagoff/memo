@@ -188,7 +188,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "recall",
-        "Append a feedback hint comment to the recall block so the AI layer can surface memory_feedback_record to the user. Off by default (saves ~20 tokens/recall).",
+        "Append a feedback hint comment to the recall block so the AI layer can surface memo_feedback_record to the user. Off by default (saves ~20 tokens/recall).",
     ),
     _spec(
         "MEMO_RECALL_DIRECTIVE_ONCE",
@@ -203,23 +203,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "recall",
-        "Scale per-hit body_chars proportionally to hit score: score>=0.85 → 1.5×, score<0.65 → 0.5× (min 80 chars). High-confidence hits get more context; marginal hits waste fewer tokens.",
-        opt_out=True,
-    ),
-    _spec(
-        "MEMO_RECALL_DIRECTIVE_ONCE",
-        "bool",
-        True,
-        "recall",
-        "Inject the safety/authority directive only on the first session turn.",
-        opt_out=True,
-    ),
-    _spec(
-        "MEMO_RECALL_SCORE_ADAPTIVE_BODY",
-        "bool",
-        True,
-        "recall",
-        "Scale body detail by relevance while respecting the total token budget.",
+        "Scale per-hit body_chars proportionally to hit score: score>=0.85 -> 1.5x, score<0.65 -> 0.5x (min 80 chars). High-confidence hits get more context; marginal hits waste fewer tokens.",
         opt_out=True,
     ),
     _spec(

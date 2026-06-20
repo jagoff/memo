@@ -292,14 +292,21 @@ class PriorityLock:
                     if end_time is not None:
                         wait_timeout = max(0, end_time - time.time())
                         if wait_timeout <= 0:
+                            if priority > 0:
+                                self._high_priority_waiters -= 1
                             return False
                     if not self._cond.wait(timeout=wait_timeout):
+                        if priority > 0:
+                            self._high_priority_waiters -= 1
                         return False
                 self._busy = True
-                return True
-            finally:
                 if priority > 0:
                     self._high_priority_waiters -= 1
+                return True
+            except Exception:
+                if priority > 0:
+                    self._high_priority_waiters -= 1
+                raise
 
     def release(self) -> None:
         with self._lock:

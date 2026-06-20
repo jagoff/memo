@@ -240,7 +240,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "no encuentro la respuesta en las memorias guardadas",
         "misc",
-        "Message returned by memory_ask when no relevant sources are found.",
+        "Message returned by memo_ask when no relevant sources are found.",
     ),
     _spec(
         "MEMO_VAULT_SYSTEM_DIR",
@@ -524,5 +524,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "misc",
         "Skip the embedder model/dims version check on VecStore open. "
         "Set to 1 in tests that use stub embedders with non-production dims/model names.",
+    ),
+    # strict mode — surface silent failures as exceptions for debugging
+    _spec(
+        "MEMO_STRICT",
+        "bool",
+        False,
+        "misc",
+        "Strict mode: raise exceptions instead of silently falling back in contextual retrieval, "
+        "embedder client, reranker, and other fallback paths. Use for debugging.",
     ),
 )

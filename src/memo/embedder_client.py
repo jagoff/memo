@@ -143,12 +143,19 @@ def embed_query(text: str, *, state_dir: Path | None = None) -> list[float]:
             "embed_query: daemon unreachable and "
             "MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1 disables in-process fallback"
         )
+    from memo.flags import flag_bool
+
+    if flag_bool("MEMO_STRICT"):
+        raise RuntimeError(
+            "embed_query: daemon unreachable and MEMO_STRICT=1 disables in-process fallback. "
+            "Start the daemon with 'memo recall-daemon start' or set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1"
+        )
     _log.warning(
         "embedder_client: daemon unreachable at %s, falling back to in-process "
         "(first call will be slow ~2s due to cold MLX load). "
         "To start the daemon: 'memo recall-daemon start'. "
         "To require daemon and fail fast: set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1",
-        resolved / "recall.sock"
+        resolved / "recall.sock",
     )
     return _inproc().embed_query(text)
 
@@ -186,13 +193,20 @@ def embed(
             "embed: daemon unreachable and "
             "MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1 disables in-process fallback"
         )
+    from memo.flags import flag_bool
+
+    if flag_bool("MEMO_STRICT"):
+        raise RuntimeError(
+            "embed: daemon unreachable and MEMO_STRICT=1 disables in-process fallback. "
+            "Start the daemon with 'memo recall-daemon start' or set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1"
+        )
     _log.warning(
         "embedder_client: daemon unreachable at %s, falling back to in-process "
         "(batch of %d items, first call will be slow ~2s due to cold MLX load). "
         "To start the daemon: 'memo recall-daemon start'. "
         "To require daemon and fail fast: set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1",
         resolved / "recall.sock",
-        len(items)
+        len(items),
     )
     return _inproc().embed(items)
 

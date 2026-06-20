@@ -41,7 +41,11 @@ def test_canonical_pair_is_order_independent():
 
 def test_upsert_open_inserts_and_returns_id(store):
     pid = store.upsert_open(
-        "aaa", "bbb", "contradiction", 0.9, "rationale text",
+        "aaa",
+        "bbb",
+        "contradiction",
+        0.9,
+        "rationale text",
     )
     assert pid > 0
     rows = store.list_open()
@@ -174,7 +178,7 @@ def mem_with_stub_embed(tmp_cfg: Config, monkeypatch) -> Memory:
         out = []
         for s in inputs:
             # Group by first char so "alpha-1" and "alpha-2" cluster together.
-            bucket = (ord((s or " ")[0]) % 4)
+            bucket = ord((s or " ")[0]) % 4
             v = [0.0] * 4
             v[bucket] = 1.0
             out.append(v)
@@ -219,18 +223,26 @@ def _stage_classify_pair(monkeypatch, verdict: Contradiction | None):
 def test_scan_persists_contradiction_pairs(mem_with_stub_embed, monkeypatch):
     mem = mem_with_stub_embed
     mem.save(content="alpha original — uso Ollama local", title="Stack A", type_="decision")
-    mem.save(content="alpha actualizado — migré a MLX",  title="Stack B", type_="decision")
+    mem.save(content="alpha actualizado — migré a MLX", title="Stack B", type_="decision")
 
     verdict = Contradiction(
-        memoria_id_a="x", memoria_id_b="y", title_a="", title_b="",
-        date_a="", date_b="",
-        relationship="contradiction", rationale="Ollama vs MLX",
+        memoria_id_a="x",
+        memoria_id_b="y",
+        title_a="",
+        title_b="",
+        date_a="",
+        date_b="",
+        relationship="contradiction",
+        rationale="Ollama vs MLX",
         confidence=0.9,
     )
     _stage_classify_pair(monkeypatch, verdict)
 
     result = mem.contradict_scanner.scan_corpus(
-        top_k=3, sim_floor=0.0, confidence_threshold=0.7, min_days_apart=0,
+        top_k=3,
+        sim_floor=0.0,
+        confidence_threshold=0.7,
+        min_days_apart=0,
     )
     assert result.contradictions_found >= 1
     assert result.pairs_inserted >= 1
@@ -240,15 +252,57 @@ def test_scan_persists_contradiction_pairs(mem_with_stub_embed, monkeypatch):
     assert all(p.relationship == "contradiction" for p in pairs)
 
 
+def test_scan_without_persistence_only_reports_matches(mem_with_stub_embed, monkeypatch):
+    mem = mem_with_stub_embed
+    mem.save(content="alpha original", title="Stack A", type_="decision")
+    mem.save(content="alpha updated", title="Stack B", type_="decision")
+
+    verdict = Contradiction(
+        memoria_id_a="x",
+        memoria_id_b="y",
+        title_a="",
+        title_b="",
+        date_a="",
+        date_b="",
+        relationship="contradiction",
+        rationale="old vs new",
+        confidence=0.91,
+    )
+    _stage_classify_pair(monkeypatch, verdict)
+    emitted: list[tuple[str, str, str, float, str]] = []
+    monkeypatch.setattr(
+        "memo.contradict.emit_anomaly",
+        lambda *args: emitted.append(args) or "anom-test",
+    )
+
+    result = mem.contradict_scanner.scan_corpus(
+        top_k=3,
+        sim_floor=0.0,
+        confidence_threshold=0.7,
+        min_days_apart=0,
+        persist=False,
+    )
+
+    assert result.contradictions_found >= 1
+    assert result.pairs_inserted == 0
+    assert mem.contradict_store.list_open() == []
+    assert emitted == []
+
+
 def test_scan_emits_anomaly_for_new_contradiction(mem_with_stub_embed, monkeypatch):
     mem = mem_with_stub_embed
     mem.save(content="alpha original", title="Stack A", type_="decision")
     mem.save(content="alpha updated", title="Stack B", type_="decision")
 
     verdict = Contradiction(
-        memoria_id_a="x", memoria_id_b="y", title_a="", title_b="",
-        date_a="", date_b="",
-        relationship="contradiction", rationale="old vs new",
+        memoria_id_a="x",
+        memoria_id_b="y",
+        title_a="",
+        title_b="",
+        date_a="",
+        date_b="",
+        relationship="contradiction",
+        rationale="old vs new",
         confidence=0.91,
     )
     _stage_classify_pair(monkeypatch, verdict)
@@ -259,7 +313,10 @@ def test_scan_emits_anomaly_for_new_contradiction(mem_with_stub_embed, monkeypat
     )
 
     mem.contradict_scanner.scan_corpus(
-        top_k=3, sim_floor=0.0, confidence_threshold=0.7, min_days_apart=0,
+        top_k=3,
+        sim_floor=0.0,
+        confidence_threshold=0.7,
+        min_days_apart=0,
     )
 
     assert emitted
@@ -275,20 +332,32 @@ def test_scan_skips_pairs_already_resolved(mem_with_stub_embed, monkeypatch):
 
     # Pre-resolve the pair as dismissed.
     pid = mem.contradict_store.upsert_open(
-        rec_a.id, rec_b.id, "contradiction", 0.9, "seed",
+        rec_a.id,
+        rec_b.id,
+        "contradiction",
+        0.9,
+        "seed",
     )
     mem.contradict_store.resolve(pid, "dismissed", note="seeded")
 
     verdict = Contradiction(
-        memoria_id_a="x", memoria_id_b="y", title_a="", title_b="",
-        date_a="", date_b="",
-        relationship="contradiction", rationale="should not appear",
+        memoria_id_a="x",
+        memoria_id_b="y",
+        title_a="",
+        title_b="",
+        date_a="",
+        date_b="",
+        relationship="contradiction",
+        rationale="should not appear",
         confidence=0.99,
     )
     calls = _stage_classify_pair(monkeypatch, verdict)
 
     result = mem.contradict_scanner.scan_corpus(
-        top_k=3, sim_floor=0.0, confidence_threshold=0.7, min_days_apart=0,
+        top_k=3,
+        sim_floor=0.0,
+        confidence_threshold=0.7,
+        min_days_apart=0,
     )
     # The classifier should never have been asked about this pair.
     pair_key = tuple(sorted((rec_a.id, rec_b.id)))
@@ -303,15 +372,23 @@ def test_scan_respects_confidence_threshold(mem_with_stub_embed, monkeypatch):
     mem.save(content="alpha 2", title="B", type_="note")
 
     low_conf = Contradiction(
-        memoria_id_a="x", memoria_id_b="y", title_a="", title_b="",
-        date_a="", date_b="",
-        relationship="contradiction", rationale="weak",
+        memoria_id_a="x",
+        memoria_id_b="y",
+        title_a="",
+        title_b="",
+        date_a="",
+        date_b="",
+        relationship="contradiction",
+        rationale="weak",
         confidence=0.4,
     )
     _stage_classify_pair(monkeypatch, low_conf)
 
     result = mem.contradict_scanner.scan_corpus(
-        top_k=3, sim_floor=0.0, confidence_threshold=0.7, min_days_apart=0,
+        top_k=3,
+        sim_floor=0.0,
+        confidence_threshold=0.7,
+        min_days_apart=0,
     )
     assert result.contradictions_found == 0
     assert mem.contradict_store.list_open() == []
@@ -327,7 +404,10 @@ def test_scan_ignores_unrelated_verdicts(mem_with_stub_embed, monkeypatch):
     _stage_classify_pair(monkeypatch, None)
 
     result = mem.contradict_scanner.scan_corpus(
-        top_k=3, sim_floor=0.0, confidence_threshold=0.7, min_days_apart=0,
+        top_k=3,
+        sim_floor=0.0,
+        confidence_threshold=0.7,
+        min_days_apart=0,
     )
     assert result.contradictions_found == 0
     assert mem.contradict_store.list_open() == []
@@ -339,7 +419,11 @@ def test_memory_delete_cleans_orphan_pairs(mem_with_stub_embed):
     rec_b = mem.save(content="alpha bis", title="B", type_="note")
 
     mem.contradict_store.upsert_open(
-        rec_a.id, rec_b.id, "contradiction", 0.9, "seeded",
+        rec_a.id,
+        rec_b.id,
+        "contradiction",
+        0.9,
+        "seeded",
     )
     assert len(mem.contradict_store.list_open()) == 1
 

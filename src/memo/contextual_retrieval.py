@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import threading
 from collections.abc import Callable
@@ -18,6 +19,8 @@ from pathlib import Path
 # each other's entries (last-writer-wins). The slow LLM generate() runs OUTSIDE
 # this lock — only the fast re-read+write is guarded.
 _CACHE_LOCK = threading.Lock()
+
+_log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "memo-contextual-v1-2026-05-26"
 MIN_BODY_CHARS = 300
@@ -102,7 +105,16 @@ def get_or_generate_context(
 
     try:
         generated = sanitize_context(generate(build_context_prompt(title, body_text)))
-    except Exception:
+    except Exception as exc:
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_STRICT"):
+            raise
+        _log.warning(
+            "contextual_retrieval: context generation failed (title=%r): %s",
+            title[:50],
+            exc,
+        )
         return ""
     if not generated:
         return ""

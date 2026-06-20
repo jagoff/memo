@@ -69,9 +69,7 @@ def _build_orientation(mem: Memory) -> dict:
         "unindexed_entities": 0,
     }
     try:
-        row = conn.execute(
-            "SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'").fetchone()
         result["total"] = int(row["n"]) if row else 0
     except Exception:
         pass
@@ -233,8 +231,7 @@ def _run_compress(mem: Memory, threshold: int, dry_run: bool) -> list[dict]:
             user_prompt = (
                 "Compress the following memory note to 2-3 concise sentences "
                 "preserving all key facts, decisions, and context. "
-                "Output ONLY the compressed text, no preamble.\n\n"
-                + rec.body[:4000]
+                "Output ONLY the compressed text, no preamble.\n\n" + rec.body[:4000]
             )
             chat_out = chat_with_timeout(
                 chat,
@@ -327,11 +324,13 @@ def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[
                     dry_run=dry_run, min_cluster_size=3, max_clusters=1
                 )
                 if result:
-                    all_results.append({
-                        "query": query[:80],
-                        "hits": len(source_ids),
-                        "synthesized": len(result),
-                    })
+                    all_results.append(
+                        {
+                            "query": query[:80],
+                            "hits": len(source_ids),
+                            "synthesized": len(result),
+                        }
+                    )
             except Exception as exc:
                 _log.warning("presynthesis: failed for query %r: %s", query[:50], exc)
         return all_results
@@ -370,7 +369,9 @@ def _make_progress() -> Progress:
 @click.option("--skip-evict", is_flag=True, help="Skip the corpus eviction pass.")
 @click.option("--skip-compress", is_flag=True, help="Skip the verbose-compression pass.")
 @click.option("--skip-prewarm", is_flag=True, help="Skip the query cache pre-warm pass.")
-@click.option("--skip-presynthesis", is_flag=True, help="Skip the query-prediction pre-synthesis pass.")
+@click.option(
+    "--skip-presynthesis", is_flag=True, help="Skip the query-prediction pre-synthesis pass."
+)
 def dream_run(
     dry_run: bool,
     as_json: bool,
@@ -519,6 +520,7 @@ def dream_run(
                     confidence_threshold=0.9,
                     max_pairs=50,
                     progress=_contradict_progress,
+                    persist=not dry_run,
                 )
                 contradicted_ids: list[str] = []
                 for pair in mem.contradict_store.list_open(min_confidence=0.9):
@@ -695,7 +697,9 @@ def dream_run(
 
                 roi_floor = flag_float("MEMO_DREAM_PRUNE_FLOOR") or 0.15
                 min_age = flag_int("MEMO_DREAM_PRUNE_MIN_AGE_DAYS") or 90
-                pruned = _run_prune_floor(mem, roi_floor=roi_floor, min_age_days=min_age, dry_run=False)
+                pruned = _run_prune_floor(
+                    mem, roi_floor=roi_floor, min_age_days=min_age, dry_run=False
+                )
                 receipt["pruned_floor"] = pruned
                 progress.update(
                     step,

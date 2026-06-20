@@ -1,5 +1,5 @@
 """Tests for Dream Mode initiatives: health scores, graph expansion,
-adaptive recall, synthesis default, smarter capture, memory_health_report."""
+adaptive recall, synthesis default, smarter capture, memo_health_report."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from memo.memory.write_ops import _infer_type_from_content
 # ---------------------------------------------------------------------------
 # Initiative 6 — Smarter Capture: regex type inference
 # ---------------------------------------------------------------------------
+
 
 class TestInferTypeFromContent:
     def test_decision_english(self):
@@ -32,10 +33,15 @@ class TestInferTypeFromContent:
         assert _infer_type_from_content("Issue: found that the connection pool leaks") == "bug"
 
     def test_fact_english(self):
-        assert _infer_type_from_content("Turns out the model needs the instruction prefix") == "fact"
+        assert (
+            _infer_type_from_content("Turns out the model needs the instruction prefix") == "fact"
+        )
 
     def test_fact_spanish(self):
-        assert _infer_type_from_content("Resulta que el modelo necesita el prefijo de instrucción") == "fact"
+        assert (
+            _infer_type_from_content("Resulta que el modelo necesita el prefijo de instrucción")
+            == "fact"
+        )
 
     def test_no_match_returns_none(self):
         assert _infer_type_from_content("The quick brown fox jumps") is None
@@ -58,23 +64,27 @@ class TestInferTypeFromContent:
 # Initiative 4 — Synthesis default on
 # ---------------------------------------------------------------------------
 
+
 def test_synthesis_enabled_by_default():
     assert flag_bool("MEMO_SYNTHESIS_ENABLED") is True
 
 
 def test_synthesis_min_cluster_default():
     from memo.flags import flag_int
+
     assert flag_int("MEMO_SYNTHESIS_MIN_CLUSTER") == 5
 
 
 def test_synthesis_max_clusters_default():
     from memo.flags import flag_int
+
     assert flag_int("MEMO_SYNTHESIS_MAX_CLUSTERS") == 10
 
 
 # ---------------------------------------------------------------------------
 # Initiative 2 — Adaptive recall context flag
 # ---------------------------------------------------------------------------
+
 
 def test_adaptive_context_enabled_by_default():
     assert flag_bool("MEMO_RECALL_ADAPTIVE_CONTEXT") is True
@@ -84,6 +94,7 @@ def test_adaptive_context_enabled_by_default():
 # Initiative 7 — Outcome loop on by default
 # ---------------------------------------------------------------------------
 
+
 def test_outcome_ranking_enabled_by_default():
     assert flag_bool("MEMO_OUTCOME_RANKING_ENABLED") is True
 
@@ -91,6 +102,7 @@ def test_outcome_ranking_enabled_by_default():
 # ---------------------------------------------------------------------------
 # Initiative 5 — Memory Health Scores (store layer)
 # ---------------------------------------------------------------------------
+
 
 class TestMemoryHealthStore:
     def test_get_health_batch_empty(self, mock_memory):
@@ -140,9 +152,7 @@ class TestMemoryHealthStore:
         mock_memory.store.boost_roi_batch(["abc", "def"])
         # Backdate the rows so they match the older_than_days filter.
         with mock_memory.store._tx() as cx:
-            cx.execute(
-                "UPDATE memory_health SET updated_at = datetime('now', '-60 days')"
-            )
+            cx.execute("UPDATE memory_health SET updated_at = datetime('now', '-60 days')")
         n = mock_memory.store.decay_roi(factor=0.5, older_than_days=30)
         assert n == 2
         health = mock_memory.store.get_health_batch(["abc"])
@@ -163,6 +173,7 @@ class TestMemoryHealthStore:
 # ---------------------------------------------------------------------------
 # Initiative 5 — Health scores applied in search
 # ---------------------------------------------------------------------------
+
 
 class TestHealthScoresInSearch:
     def test_neutral_health_no_effect(self, mock_memory):
@@ -197,6 +208,7 @@ class TestHealthScoresInSearch:
 # Initiative 3 — Dream Mode CLI smoke test
 # ---------------------------------------------------------------------------
 
+
 class TestDreamCli:
     def test_dream_run_dry_run(self, tmp_cfg, monkeypatch):
         """memo dream run --dry-run should exit 0 without modifying state."""
@@ -207,12 +219,15 @@ class TestDreamCli:
         from memo.cli_dream import dream_cmd
 
         runner = CliRunner()
-        result = runner.invoke(dream_cmd, ["run", "--dry-run", "--json"],
-                               env={
-                                   "MEMO_NONINTERACTIVE": "1",
-                                   "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
-                                   "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
-                               })
+        result = runner.invoke(
+            dream_cmd,
+            ["run", "--dry-run", "--json"],
+            env={
+                "MEMO_NONINTERACTIVE": "1",
+                "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+                "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+            },
+        )
         assert result.exit_code == 0
         # Rich console output precedes the JSON block — find the opening brace.
         out = result.output
@@ -221,6 +236,56 @@ class TestDreamCli:
         assert receipt["dry_run"] is True
         assert "errors" in receipt
 
+    def test_dream_run_dry_run_does_not_persist_contradiction_scan(self, tmp_cfg, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from click.testing import CliRunner
+
+        from memo.cli_dream import dream_cmd
+        from memo.contradict import ScanResult
+
+        mem = MagicMock()
+        mem.lifecycle.enforce_forget_ttl.return_value = []
+        mem.contradict_scanner.scan_corpus.return_value = ScanResult(
+            scanned_memorias=0,
+            pairs_examined=0,
+            pairs_inserted=0,
+            pairs_refreshed=0,
+            pairs_skipped_resolved=0,
+            contradictions_found=0,
+            evolutions_found=0,
+        )
+        mem.contradict_store.list_open.return_value = []
+        mem.consolidator.consolidate_all.return_value = {"results": []}
+        mem.temporal.detect_stale_memorias.return_value = []
+        mem.synthesize_cross_cluster.return_value = []
+        monkeypatch.setattr("memo.cli_dream._get_memory", lambda _cfg: mem)
+
+        result = CliRunner().invoke(
+            dream_cmd,
+            [
+                "run",
+                "--dry-run",
+                "--json",
+                "--skip-orientation",
+                "--skip-entities",
+                "--skip-decay",
+                "--skip-prune-floor",
+                "--skip-evict",
+                "--skip-compress",
+                "--skip-prewarm",
+                "--skip-presynthesis",
+            ],
+            env={
+                "MEMO_NONINTERACTIVE": "1",
+                "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+                "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+            },
+        )
+
+        assert result.exit_code == 0
+        assert mem.contradict_scanner.scan_corpus.call_args.kwargs["persist"] is False
+
     def test_dream_status_never_run(self, tmp_cfg, monkeypatch):
         from click.testing import CliRunner
 
@@ -228,25 +293,30 @@ class TestDreamCli:
 
         monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_cfg.state_dir))
         runner = CliRunner()
-        result = runner.invoke(dream_cmd, ["status"],
-                               env={
-                                   "MEMO_NONINTERACTIVE": "1",
-                                   "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
-                                   "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
-                               })
+        result = runner.invoke(
+            dream_cmd,
+            ["status"],
+            env={
+                "MEMO_NONINTERACTIVE": "1",
+                "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+                "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+            },
+        )
         assert result.exit_code == 0
         assert "never" in result.output
 
 
 # ---------------------------------------------------------------------------
-# Initiative 5 — memory_health_report MCP tool
+# Initiative 5 — memo_health_report MCP tool
 # ---------------------------------------------------------------------------
+
 
 class TestMemoryHealthReport:
     def test_returns_empty_on_fresh_corpus(self, mock_memory):
         from unittest.mock import MagicMock
 
         from memo.server_health import register
+
         server = MagicMock()
         captured = {}
 
@@ -254,6 +324,7 @@ class TestMemoryHealthReport:
             def decorator(fn):
                 captured["fn"] = fn
                 return fn
+
             return decorator
 
         server.tool = mock_tool
@@ -280,6 +351,7 @@ class TestMemoryHealthReport:
             def decorator(fn):
                 captured["fn"] = fn
                 return fn
+
             return decorator
 
         server.tool = mock_tool
@@ -303,6 +375,7 @@ class TestMemoryHealthReport:
             def decorator(fn):
                 captured["fn"] = fn
                 return fn
+
             return decorator
 
         server.tool = mock_tool
