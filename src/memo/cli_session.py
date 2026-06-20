@@ -288,18 +288,27 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
     help="Delayed idle action to run after the session goes quiet.",
 )
 @click.option("--delay-secs", default=None, type=int, show_default=True)
-def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
+@click.option(
+    "--detached-worker",
+    is_flag=True,
+    hidden=True,
+    help="Internal: marks the re-spawned detached worker so it does the work "
+    "instead of detaching again.",
+)
+def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker: bool) -> None:
     """Async idle worker — run capture or reflect after a quiet period.
 
-    The prompt-submit hook spawns this command in the background. It snapshots
-    the session's `updated` stamp on start, sleeps for the requested delay, and
-    only proceeds if the snapshot is unchanged. That makes older workers self-
-    cancel when new prompts arrive, so the delay is a real inactivity window
-    rather than a blind timer.
+    The prompt-submit hook invokes this; it immediately re-spawns itself DETACHED
+    (`start_new_session`, marked with `_MEMO_IDLE_DETACHED`) and returns, so the
+    worker outlives the turn — Claude Code reaps the inline async hook at turn
+    end, which used to kill the sleep before it elapsed. The detached worker then
+    sleeps for the delay and proceeds only if the user's last prompt (read from
+    the transcript) is unchanged — a genuinely new prompt means the user kept
+    going, so it self-cancels and a fresh worker handles the next quiet window.
 
     `capture` mines the current session chunk into durable memorias.
     `reflect` synthesizes the active session into a durable arc note.
-    Both paths are best-effort and exit 0.
+    Both paths are best-effort and exit 0. Heartbeats land in `idle_capture.log`.
     """
     import json as _json
     import sys as _sys
@@ -354,6 +363,75 @@ def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
             delay = flag_int("MEMO_SESSION_IDLE_CAPTURE_SECS") or 10
     delay = max(0, int(delay))
 
+    # Survive turn-end reaping. Claude Code reaps this inline async hook when the
+    # turn ends — before the quiet window elapses — so the sleep was killed and
+    # the capture never ran (the idle watermark sat frozen for hours). Re-spawn
+    # ourselves in a NEW session (detached from the hook's process group, like
+    # the autosave hook does for capture-stop) and return immediately; the
+    # detached worker (--detached-worker) owns the sleep + capture and outlives
+    # the turn.
+    if not detached_worker:
+        import os as _os
+        import subprocess as _sp
+
+        try:
+            _child = _sp.Popen(
+                [
+                    "memo",
+                    "session",
+                    "idle-maintenance",
+                    "--mode",
+                    mode,
+                    "--delay-secs",
+                    str(delay),
+                    "--detached-worker",
+                ],
+                stdin=_sp.PIPE,
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
+                start_new_session=True,
+                env={**_os.environ, "MEMO_NONINTERACTIVE": "1"},
+            )
+            if _child.stdin is not None:
+                _child.stdin.write(
+                    _json.dumps({"session_id": sid, "transcript_path": transcript}).encode()
+                )
+                _child.stdin.close()
+        except Exception as _exc:
+            if flag_bool("MEMO_SESSION_DEBUG"):
+                print(f"# idle-maintenance detach failed: {_exc}", file=_sys.stderr)
+        print("{}")
+        _sys.exit(0)
+
+    # --- detached worker (own process group, survives the turn) ---
+    def _hb(stage: str, **extra: Any) -> None:
+        """Heartbeat to idle_capture.log so the inactivity path is observable —
+        proves the worker fired, survived the sleep, and what it captured."""
+        try:
+            from datetime import UTC, datetime
+
+            _sd = Config.from_env().state_dir
+            _sd.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+                "stage": stage,
+                "sid": str(sid)[:8],
+                "mode": mode,
+                **extra,
+            }
+            _log = _sd / "idle_capture.log"
+            with _log.open("a", encoding="utf-8") as f:
+                f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+            # Cap growth: a few lines fire per prompt, so trim to the last 500
+            # once it crosses ~200KB — never grows unbounded.
+            if _log.stat().st_size > 1024 * 200:
+                _lines = _log.read_text(encoding="utf-8").splitlines()[-500:]
+                _log.write_text("\n".join(_lines) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
+    _hb("start", delay=delay)
+
     try:
         from memo.session import get_session, read_last_user_msg
 
@@ -382,8 +460,10 @@ def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
         if current_prompt != expected_prompt:
             # A newer prompt arrived during the window → still active; a fresh
             # worker spawned for that turn will handle the quiet period.
+            _hb("self-cancel-new-prompt")
             print("{}")
             _sys.exit(0)
+        _hb("survived-quiet-window")
 
         if mode.lower() == "capture":
             if not transcript:
@@ -391,7 +471,10 @@ def session_idle_maintenance(mode: str, delay_secs: int | None) -> None:
                 _sys.exit(0)
             from memo.capture import run_capture_incremental
 
-            result = run_capture_incremental(_Path(str(transcript)).expanduser(), str(sid), debug=flag_bool("MEMO_SESSION_DEBUG"))
+            result = run_capture_incremental(
+                _Path(str(transcript)).expanduser(), str(sid), debug=flag_bool("MEMO_SESSION_DEBUG")
+            )
+            _hb("captured", status=str(result.get("status")), saved=len(result.get("saved", [])))
             if result.get("status") == "ok":
                 saved_count = len(result.get("saved", []))
                 if saved_count > 0:
