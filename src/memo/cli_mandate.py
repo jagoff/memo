@@ -26,12 +26,12 @@ MANDATE_TEXT = f"""{_MARKER}
 
 Before deciding or answering anything that prior work might already cover,
 consult memo FIRST:
-- Start with `memory_unified_briefing` (or `memory_search` / `memory_ask`) to
+- Start with `memo_unified_briefing` (or `memo_search` / `memo_ask`) to
   pull durable facts, decisions, and preferences.
 - Pass `source="<this-client>"` on the read tools so usage is attributed
   (e.g. `source="codex"`). A client that never appears in memo's consult log is
   flagged as a silent gap by `memo usefulness`.
-- Write durable outcomes back with `memory_save` so the next session inherits
+- Write durable outcomes back with `memo_save` so the next session inherits
   them. memo is the source of truth for what is *known*; build on it, and
   contradict a surfaced memoria only explicitly.
 """

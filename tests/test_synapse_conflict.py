@@ -10,7 +10,7 @@ Coverage:
 - The freeze check ONLY fires when `extra.synapse_trace_id` is
   present (anonymous saves bypass it).
 - Missing synapse binary → graceful no-op (save proceeds).
-- MCP `memory_save(respect_synapse_freeze=True)` returns a
+- MCP `memo_save(respect_synapse_freeze=True)` returns a
   structured `{"status": "refused", "conflict": {...}}` payload.
 - `MemoSynapseBackend.remember()` propagates the WriteRefused as a
   ValueError (synapse caller already gets receipt-or-raise).
@@ -289,7 +289,7 @@ def test_list_conflicts_missing_binary_never_raises_even_strict(monkeypatch):
 
 
 def test_mcp_save_returns_structured_refused(tmp_cfg, monkeypatch):
-    """memory_save MCP tool should NOT raise; returns refused payload."""
+    """memo_save MCP tool should NOT raise; returns refused payload."""
     import asyncio
     import hashlib
 
@@ -323,7 +323,7 @@ def test_mcp_save_returns_structured_refused(tmp_cfg, monkeypatch):
     )
 
     server = build_server(memory=mem)
-    save_fn = asyncio.run(server.get_tool("memory_save")).fn
+    save_fn = asyncio.run(server.get_tool("memo_save")).fn
     out = save_fn(
         content="mcp body",
         title="mcp",

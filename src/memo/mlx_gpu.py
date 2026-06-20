@@ -14,7 +14,7 @@ inside `mlx::core::eval`.)
 There are **two** ways memo provokes this, and they need two locks:
 
 1. *Intra-process* — the FastMCP HTTP server runs sync tool handlers on a
-   worker threadpool, so a `memory_search` (embed) and a `memory_ask` (chat),
+   worker threadpool, so a `memo_search` (embed) and a `memo_ask` (chat),
    or two concurrent searches, enter MLX at once. A process-global
    `threading.RLock` serializes those.
 

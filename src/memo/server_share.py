@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_share_with_user(
+    def memo_share_with_user(
         memoria_id: str,
         shared_with: str,
         permission: str = "read",
@@ -43,7 +43,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return share.__dict__
 
     @server.tool()
-    def memory_share_unshare(
+    def memo_share_unshare(
         memoria_id: str,
         shared_with: str,
     ) -> dict[str, Any]:
@@ -59,7 +59,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"success": success, "memoria_id": memoria_id, "shared_with": shared_with}
 
     @server.tool()
-    def memory_share_create_link(
+    def memo_share_create_link(
         memoria_id: str,
         permission: str = "read",
         expires_hours: int = 24,
@@ -85,7 +85,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"link": link, "memoria_id": memoria_id}
 
     @server.tool()
-    def memory_share_list(
+    def memo_share_list(
         memoria_id: str,
     ) -> list[dict[str, Any]]:
         """List all shares for a memoria.
@@ -100,7 +100,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [s.__dict__ for s in shares]
 
     @server.tool()
-    def memory_share_comment(
+    def memo_share_comment(
         memoria_id: str,
         content: str,
         author: str = "user",
@@ -125,7 +125,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return comment.__dict__
 
     @server.tool()
-    def memory_share_comments(
+    def memo_share_comments(
         memoria_id: str,
     ) -> list[dict[str, Any]]:
         """List all comments for a memoria.

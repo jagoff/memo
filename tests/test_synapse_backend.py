@@ -9,7 +9,7 @@ Coverage:
 - `MemoSynapseBackend.{health,collect,remember}` implements the
   contract synapse expects, including the kind→memo_type coercion
   and the "synapse" tag injection.
-- MCP `memory_save(extra=...)` + `memory_provenance(id)` round-trip
+- MCP `memo_save(extra=...)` + `memo_provenance(id)` round-trip
   via FastMCP's in-process tool harness.
 - CLI `memo save --meta KEY=VALUE` and `memo provenance ID --json`
   work end-to-end.
@@ -314,7 +314,7 @@ def test_cli_save_meta_rejects_bad_pair(tmp_cfg, monkeypatch):
 
 
 def test_mcp_save_and_provenance_tools(tmp_cfg):
-    """memory_save(extra=...) + memory_provenance(id) round-trip."""
+    """memo_save(extra=...) + memo_provenance(id) round-trip."""
     import asyncio
     import hashlib
 
@@ -343,8 +343,8 @@ def test_mcp_save_and_provenance_tools(tmp_cfg):
             raise RuntimeError(f"tool {name!r} not registered")
         return tool.fn
 
-    save_fn = _tool("memory_save")
-    prov_fn = _tool("memory_provenance")
+    save_fn = _tool("memo_save")
+    prov_fn = _tool("memo_provenance")
     prov = _sample_provenance()
 
     rec = save_fn(content="mcp body", title="mcp-title", extra=prov)

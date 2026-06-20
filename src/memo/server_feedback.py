@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_feedback_record(
+    def memo_feedback_record(
         source_id: str,
         query: str,
         rating: str,
@@ -40,7 +40,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.feedback_record(source_id, query_text=query, rating=rating)
 
     @server.tool()
-    def memory_feedback_list(
+    def memo_feedback_list(
         source_id: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
@@ -54,7 +54,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"rows": rows, "count": len(rows)}
 
     @server.tool()
-    def memory_feedback_clear(source_id: str) -> dict[str, Any]:
+    def memo_feedback_clear(source_id: str) -> dict[str, Any]:
         """Drop all feedback rows for `source_id`. Returns count deleted."""
         n = memory.feedback_clear(source_id)
         return {"source_id": source_id, "deleted": n}

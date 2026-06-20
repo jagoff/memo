@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_version_history(
+    def memo_version_history(
         memoria_id: str,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
@@ -34,7 +34,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [v.__dict__ for v in versions]
 
     @server.tool()
-    def memory_version_diff(
+    def memo_version_diff(
         memoria_id: str,
         version_a: int | None = None,
         version_b: int | None = None,
@@ -53,7 +53,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return diff.__dict__ if diff else None
 
     @server.tool()
-    def memory_version_rollback(
+    def memo_version_rollback(
         memoria_id: str,
         version_id: int,
         reason: str | None = None,

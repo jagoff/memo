@@ -3,7 +3,7 @@
 Consolidation merges memorias and archives originals — a data-loss
 operation. The safe contract:
 
-- MCP `memory_consolidate_apply` defaults to `dry_run=True` (no mutation
+- MCP `memo_consolidate_apply` defaults to `dry_run=True` (no mutation
   unless the caller opts in).
 - CLI `memo consolidate apply` previews by default; `--force` is required
   to mutate, gated by an interactive confirmation unless `--yes` is given.
@@ -50,7 +50,7 @@ def test_server_consolidate_apply_defaults_to_dry_run():
     spy = _SpyMem()
     server = FastMCP("t")
     server_consolidate.register(server, spy)
-    tool = asyncio.run(server.get_tool("memory_consolidate_apply")).fn
+    tool = asyncio.run(server.get_tool("memo_consolidate_apply")).fn
     tool()  # no dry_run arg → must default to a non-destructive preview
     assert spy.consolidator.calls[0]["dry_run"] is True
 

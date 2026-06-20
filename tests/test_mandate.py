@@ -53,7 +53,7 @@ def test_write_mandate_dry_run_no_write(tmp_path: Path) -> None:
 
 def test_mandate_text_mentions_source_attribution() -> None:
     assert "source=" in MANDATE_TEXT
-    assert "memory_unified_briefing" in MANDATE_TEXT
+    assert "memo_unified_briefing" in MANDATE_TEXT
 
 
 def test_write_mandates_for_clients_deduplicates_shared_files(tmp_path: Path) -> None:

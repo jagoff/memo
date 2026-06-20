@@ -8,7 +8,7 @@ from memo.memory import AmbiguousIdError, Memory
 
 def register(server: Any, memory: Memory) -> None:
     @server.tool()
-    def memory_save(
+    def memo_save(
         content: str,
         title: str | None = None,
         type: str = "note",
@@ -38,11 +38,11 @@ def register(server: Any, memory: Memory) -> None:
         return rec.to_dict()
 
     @server.tool()
-    def memory_list(limit: int = 20, type: str | None = None) -> list[dict[str, Any]]:
+    def memo_list(limit: int = 20, type: str | None = None) -> list[dict[str, Any]]:
         return [r.to_dict() for r in memory.list(limit=limit, type_=type)]
 
     @server.tool()
-    def memory_get(id: str) -> dict[str, Any] | None:
+    def memo_get(id: str) -> dict[str, Any] | None:
         try:
             rec = memory.get(id)
         except AmbiguousIdError as exc:
@@ -54,7 +54,7 @@ def register(server: Any, memory: Memory) -> None:
         return rec.to_dict()
 
     @server.tool()
-    def memory_update(
+    def memo_update(
         id: str,
         title: str | None = None,
         type: str | None = None,
@@ -74,18 +74,18 @@ def register(server: Any, memory: Memory) -> None:
         return rec.to_dict() if rec else None
 
     @server.tool()
-    def memory_reindex(force: bool = False) -> dict[str, int]:
+    def memo_reindex(force: bool = False) -> dict[str, int]:
         return memory.reindex(force=force)
 
     @server.tool()
-    def memory_delete(id: str) -> dict[str, Any]:
+    def memo_delete(id: str) -> dict[str, Any]:
         try:
             return {"deleted": memory.delete(id)}
         except AmbiguousIdError as exc:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
 
     @server.tool()
-    def memory_forget(id: str, reason: str | None = None) -> dict[str, Any]:
+    def memo_forget(id: str, reason: str | None = None) -> dict[str, Any]:
         try:
             rec = memory.forget(id, reason=reason)
         except AmbiguousIdError as exc:
@@ -95,7 +95,7 @@ def register(server: Any, memory: Memory) -> None:
         return {"forgotten": True, "id": rec.id}
 
     @server.tool()
-    def memory_unforget(id: str) -> dict[str, Any]:
+    def memo_unforget(id: str) -> dict[str, Any]:
         try:
             rec = memory.unforget(id)
         except AmbiguousIdError as exc:
@@ -105,7 +105,7 @@ def register(server: Any, memory: Memory) -> None:
         return {"unforgotten": True, "id": rec.id}
 
     @server.tool()
-    def memory_consolidate(
+    def memo_consolidate(
         threshold: float = 0.85,
         max_clusters: int = 20,
         type: str | None = None,
@@ -117,5 +117,5 @@ def register(server: Any, memory: Memory) -> None:
         )
 
     @server.tool()
-    def memory_lint() -> dict[str, list[dict[str, Any]]]:
+    def memo_lint() -> dict[str, list[dict[str, Any]]]:
         return memory.lint()

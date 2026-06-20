@@ -199,22 +199,22 @@ them, and contradict one only explicitly.
 Role split (resolve the "first place to look" overlap by role, not rivalry):
 
 - **memo** — durable facts/decisions/preferences. Source of truth for *what is
-  known*. Reads: recall hook, `memory_search`/`memory_ask`,
-  `memory_unified_briefing`. Writes: `memory_save` (+ ambient capture on Stop).
+  known*. Reads: recall hook, `memo_search`/`memo_ask`,
+  `memo_unified_briefing`. Writes: `memo_save` (+ ambient capture on Stop).
 - **Memflow** — live cross-agent/cross-machine working state and presence.
   Source of truth for *what is happening right now*, not durable knowledge.
 
 Contract for any layer above memo (synapse, memflow, agents):
-1. **Read first** — consult memo recall before deciding; `memory_unified_briefing`
+1. **Read first** — consult memo recall before deciding; `memo_unified_briefing`
    is the entry point.
-2. **Write back** — persist durable facts to memo via `memory_save` so the next
+2. **Write back** — persist durable facts to memo via `memo_save` so the next
    session inherits them.
 3. **Respect freshness** — memo's contradiction/freshness state is authoritative
    for durable knowledge; don't reintroduce a fact memo has superseded.
 4. **Identify yourself** — every read path is attributable, so `memo usefulness`
    proves who actually reads memo (a layer that never appears is a silent gap):
-   - **MCP tools** — pass `source="<layer>"` on `memory_search` / `memory_ask` /
-     `memory_chat_ask` / `memory_unified_briefing`. If omitted, `log_consult`
+   - **MCP tools** — pass `source="<layer>"` on `memo_search` / `memo_ask` /
+     `memo_chat_ask` / `memo_unified_briefing`. If omitted, `log_consult`
      falls back to `MEMO_SOURCE` then to the MCP client's handshake
      `clientInfo.name` — so agent clients (devin/opencode/windsurf) attribute
      automatically without per-call args.

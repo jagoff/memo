@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_graph_path(
+    def memo_graph_path(
         source: str,
         target: str,
         max_length: int = 5,
@@ -35,7 +35,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return path.__dict__ if path else None
 
     @server.tool()
-    def memory_graph_neighbors(
+    def memo_graph_neighbors(
         entity: str,
         max_neighbors: int = 50,
     ) -> dict[str, Any]:
@@ -52,7 +52,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return neighbors.__dict__
 
     @server.tool()
-    def memory_graph_communities(
+    def memo_graph_communities(
         min_size: int = 2,
     ) -> list[dict[str, Any]]:
         """Detect communities (connected components) in the entity graph.
@@ -67,7 +67,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [c.__dict__ for c in communities]
 
     @server.tool()
-    def memory_graph_centrality(
+    def memo_graph_centrality(
         top: int = 20,
     ) -> dict[str, Any]:
         """Compute centrality metrics for all entities.
@@ -90,7 +90,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         }
 
     @server.tool()
-    def memory_graph_export(
+    def memo_graph_export(
         format: str = "dot",
         include_memorias: bool = False,
     ) -> dict[str, Any]:

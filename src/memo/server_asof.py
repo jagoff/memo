@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_search_as_of(
+    def memo_search_as_of(
         query: str,
         as_of: str,
         limit: int = 10,
@@ -39,7 +39,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             mode: `hybrid` (default), `vec`, or `bm25`.
 
         Returns: `{"as_of", "snapshot_size", "results": [...]}` where
-        each result has the same shape as `memory_search` items.
+        each result has the same shape as `memo_search` items.
         """
         from memo.time_machine import reconstruct
 
@@ -54,10 +54,10 @@ def register(server: FastMCP, memory: Memory) -> None:
         }
 
     @server.tool()
-    def memory_ask_as_of(question: str, as_of: str, k: int = 5) -> dict[str, Any]:
+    def memo_ask_as_of(question: str, as_of: str, k: int = 5) -> dict[str, Any]:
         """RAG question against a past snapshot.
 
-        Same contract as `memory_ask` but the corpus view is rewound to
+        Same contract as `memo_ask` but the corpus view is rewound to
         `as_of`. The LLM is told explicitly that the view is historical
         so it doesn't smuggle in facts that only became known later.
 
@@ -72,7 +72,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return snap.ask(question, k=k)
 
     @server.tool()
-    def memory_diff(from_ts: str, to_ts: str | None = None) -> dict[str, Any]:
+    def memo_diff(from_ts: str, to_ts: str | None = None) -> dict[str, Any]:
         """Diff the corpus between two snapshots — added, removed, updated.
 
         Args:

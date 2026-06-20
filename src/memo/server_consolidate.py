@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_consolidate_propose(
+    def memo_consolidate_propose(
         threshold: float = 0.85,
         max_clusters: int = 20,
         type: str | None = None,
@@ -24,7 +24,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Detect clusters and propose merge strategies (read-only).
 
         Returns a dict with detected clusters and merge proposals. Does not
-        modify the corpus. Use `memory_consolidate_apply` to execute merges.
+        modify the corpus. Use `memo_consolidate_apply` to execute merges.
 
         Args:
             threshold: Cosine similarity threshold (default 0.85).
@@ -40,7 +40,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
 
     @server.tool()
-    def memory_consolidate_apply(
+    def memo_consolidate_apply(
         threshold: float = 0.85,
         max_clusters: int = 20,
         type: str | None = None,
@@ -71,7 +71,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
 
     @server.tool()
-    def memory_consolidate_list_archived() -> list[dict[str, Any]]:
+    def memo_consolidate_list_archived() -> list[dict[str, Any]]:
         """List all archived memorias.
 
         Returns a list of archived memoria entries with metadata including

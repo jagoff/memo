@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_query_save(
+    def memo_query_save(
         name: str,
         query_text: str,
         type_filter: str | None = None,
@@ -57,7 +57,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"status": "saved", "name": name}
 
     @server.tool()
-    def memory_query_list() -> list[dict[str, Any]]:
+    def memo_query_list() -> list[dict[str, Any]]:
         """List all saved queries.
 
         Returns a list of all saved queries with their parameters.
@@ -67,7 +67,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [q.__dict__ for q in queries]
 
     @server.tool()
-    def memory_query_run(
+    def memo_query_run(
         name: str,
     ) -> dict[str, Any]:
         """Execute a saved query.
@@ -90,7 +90,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         }
 
     @server.tool()
-    def memory_query_delete(
+    def memo_query_delete(
         name: str,
     ) -> dict[str, Any]:
         """Delete a saved query.

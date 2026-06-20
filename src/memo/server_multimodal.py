@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_ocr_image(
+    def memo_ocr_image(
         image_path: str,
     ) -> dict[str, Any]:
         """Run Apple Vision OCR on an image and return extracted text.
@@ -48,7 +48,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"text": text, "cached": cached}
 
     @server.tool()
-    def memory_multimodal_add_image(
+    def memo_multimodal_add_image(
         image_path: str,
         memoria_id: str | None = None,
     ) -> dict[str, str]:
@@ -64,7 +64,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"content_id": content.id, "modality": content.modality}
 
     @server.tool()
-    def memory_multimodal_add_audio(
+    def memo_multimodal_add_audio(
         audio_path: str,
         memoria_id: str | None = None,
     ) -> dict[str, str]:
@@ -80,7 +80,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"content_id": content.id, "modality": content.modality}
 
     @server.tool()
-    def memory_multimodal_search_images(
+    def memo_multimodal_search_images(
         query: str,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
@@ -97,7 +97,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [r.__dict__ for r in results]
 
     @server.tool()
-    def memory_multimodal_search_audio(
+    def memo_multimodal_search_audio(
         query: str,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
@@ -114,7 +114,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [r.__dict__ for r in results]
 
     @server.tool()
-    def memory_multimodal_search_all(
+    def memo_multimodal_search_all(
         query: str,
         limit: int = 10,
     ) -> dict[str, list[dict[str, Any]]]:

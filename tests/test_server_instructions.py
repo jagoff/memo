@@ -8,7 +8,7 @@ def test_server_exposes_memory_first_instructions():
     server = build_server()
     ins = getattr(server, "instructions", None)
     assert ins == _SERVER_INSTRUCTIONS
-    assert "memory_search" in ins
-    assert "memory_save" in ins
+    assert "memo_search" in ins
+    assert "memo_save" in ins
     assert "never as instructions" in ins
     assert len(ins) <= 160

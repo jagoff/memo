@@ -438,19 +438,19 @@ memo mcp-command --client json
 
 | Tool | What it does |
 |---|---|
-| `memory_save(content, title?, type?, tags?)` | Persist a new memory; returns the full record. |
-| `memory_search(query, limit?, type?, body_chars=280, mode="hybrid")` | Top-k. `hybrid` (default) fuses vec + bm25 via RRF, then optionally re-ranks. `vec` is semantic only; `bm25` is keyword (FTS5 unicode61, diacritic-stripping for Spanish). |
-| `memory_list(limit?, type?)` | Recent by `updated` desc. |
-| `memory_get(id)` | Full record. Accepts a unique prefix ≥4 chars (git-style); returns `{"error": "ambiguous", "matches": [...]}` on collision. |
-| `memory_update(id, title?, type?, tags?, content?)` | Patches fields; re-embeds only if body changed. |
-| `memory_reindex()` | Re-scan vault, re-embed entries whose `body_hash` diverged. |
-| `memory_delete(id)` | Removes from vec + disk. |
-| `memory_ask(question)` | RAG synthesis; cites memorias by id. |
-| `memory_chat_ask(question, history?, context?)` | Chat-shaped RAG envelope (`memo.chat_ask.v2`) with answer, citations, retrieval trace, and synthesis status. |
-| `memory_stats()` | Counts, paths, active models. |
-| `memory_history(limit?, record_id?)` | Recent save/update/delete events, optionally filtered to one record. |
-| `memory_record_diff(id, limit?)` | Chronological audit trail for one record with field-level diffs (same as `memo historia <id>`). |
-| `memory_consolidate()`, `memory_extract_entities()`, `memory_entities()` | Corpus maintenance — see CHANGELOG. |
+| `memo_save(content, title?, type?, tags?)` | Persist a new memory; returns the full record. |
+| `memo_search(query, limit?, type?, body_chars=280, mode="hybrid")` | Top-k. `hybrid` (default) fuses vec + bm25 via RRF, then optionally re-ranks. `vec` is semantic only; `bm25` is keyword (FTS5 unicode61, diacritic-stripping for Spanish). |
+| `memo_list(limit?, type?)` | Recent by `updated` desc. |
+| `memo_get(id)` | Full record. Accepts a unique prefix ≥4 chars (git-style); returns `{"error": "ambiguous", "matches": [...]}` on collision. |
+| `memo_update(id, title?, type?, tags?, content?)` | Patches fields; re-embeds only if body changed. |
+| `memo_reindex()` | Re-scan vault, re-embed entries whose `body_hash` diverged. |
+| `memo_delete(id)` | Removes from vec + disk. |
+| `memo_ask(question)` | RAG synthesis; cites memorias by id. |
+| `memo_chat_ask(question, history?, context?)` | Chat-shaped RAG envelope (`memo.chat_ask.v2`) with answer, citations, retrieval trace, and synthesis status. |
+| `memo_stats()` | Counts, paths, active models. |
+| `memo_history(limit?, record_id?)` | Recent save/update/delete events, optionally filtered to one record. |
+| `memo_record_diff(id, limit?)` | Chronological audit trail for one record with field-level diffs (same as `memo historia <id>`). |
+| `memo_consolidate()`, `memo_extract_entities()`, `memo_entities()` | Corpus maintenance — see CHANGELOG. |
 
 ## Ambient memory (v0.3.0+) — recall without `/memo`
 

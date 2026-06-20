@@ -48,10 +48,10 @@ MEMO_BRIEFING_SYNAPSE_DISABLE=1 memo briefing
 
 ## MCP surface
 
-The same composer is exposed as `memory_unified_briefing`:
+The same composer is exposed as `memo_unified_briefing`:
 
 ```python
-result = mcp.call("memory_unified_briefing", cwd="/abs/path")
+result = mcp.call("memo_unified_briefing", cwd="/abs/path")
 # {"available": bool, "markdown": "<lines>", "lines": [str, ...]}
 ```
 

@@ -8,7 +8,7 @@ from memo.server_common import log_consult, now_ms
 
 def register(server: Any, memory: Memory) -> None:
     @server.tool()
-    def memory_get_embedder_profile() -> dict[str, Any]:
+    def memo_get_embedder_profile() -> dict[str, Any]:
         cfg = memory.cfg
         try:
             from consciousness_contracts import EmbedderProfile
@@ -32,7 +32,7 @@ def register(server: Any, memory: Memory) -> None:
             }
 
     @server.tool()
-    def memory_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
+    def memo_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
         from memo.briefing import compact_text, synapse_briefing_lines
 
         t0 = now_ms()
@@ -54,7 +54,7 @@ def register(server: Any, memory: Memory) -> None:
         }
 
     @server.tool()
-    def memory_search(
+    def memo_search(
         query: str,
         limit: int = 10,
         type: str | None = None,
@@ -75,7 +75,7 @@ def register(server: Any, memory: Memory) -> None:
         return out
 
     @server.tool()
-    def memory_search_trace(
+    def memo_search_trace(
         query: str,
         limit: int = 10,
         type: str | None = None,
@@ -97,7 +97,7 @@ def register(server: Any, memory: Memory) -> None:
         return {"hits": hits, "trace": envelope["trace"]}
 
     @server.tool()
-    def memory_rerank(
+    def memo_rerank(
         query: str,
         hits: list[dict[str, Any]],
         top_n: int | None = None,
@@ -106,14 +106,14 @@ def register(server: Any, memory: Memory) -> None:
         return memory.rerank_hits(query, hits, top_n=top_n, body_chars=body_chars)
 
     @server.tool()
-    def memory_embed_query(text: str) -> dict[str, Any]:
+    def memo_embed_query(text: str) -> dict[str, Any]:
         if not text or not text.strip():
-            raise ValueError("memory_embed_query: empty text")
+            raise ValueError("memo_embed_query: empty text")
         vec = memory.embedder.embed_query(text)
         return {"vector": vec, "dim": len(vec), "model": memory.cfg.embedder_model}
 
     @server.tool()
-    def memory_embed_batch(texts: list[str]) -> dict[str, Any]:
+    def memo_embed_batch(texts: list[str]) -> dict[str, Any]:
         if not texts:
             return {"vectors": [], "dim": 0, "model": memory.cfg.embedder_model}
         vecs = memory.embedder.embed(texts)
@@ -121,7 +121,7 @@ def register(server: Any, memory: Memory) -> None:
         return {"vectors": vecs, "dim": dim, "model": memory.cfg.embedder_model}
 
     @server.tool()
-    def memory_ask(
+    def memo_ask(
         question: str,
         k: int = 5,
         type: str | None = None,
@@ -144,7 +144,7 @@ def register(server: Any, memory: Memory) -> None:
         return out
 
     @server.tool()
-    def memory_chat_ask(
+    def memo_chat_ask(
         question: str,
         k: int = 7,
         type: str | None = None,

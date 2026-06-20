@@ -15,7 +15,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_synthesize_run(
+    def memo_synthesize_run(
         dry_run: bool = True,
         threshold: float | None = None,
         min_cluster_size: int | None = None,
@@ -49,7 +49,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.synthesize_cross_cluster(**kwargs)
 
     @server.tool()
-    def memory_synthesize_list(
+    def memo_synthesize_list(
         confidence: str | None = None,
     ) -> list[dict[str, Any]]:
         """List all existing synthesis memorias with their provenance.
@@ -101,7 +101,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return results
 
     @server.tool()
-    def memory_synthesize_delete(id: str) -> dict[str, Any]:
+    def memo_synthesize_delete(id: str) -> dict[str, Any]:
         """Delete a synthesis memoria by ID.
 
         Only deletes memories of type=synthesis. Raises an error if the
@@ -130,7 +130,7 @@ def register(server: FastMCP, memory: Memory) -> None:
                 "deleted": False,
                 "reason": (
                     f"Memoria {resolved!r} has type={rec.type!r}, not 'synthesis'. "
-                    "Use memory_delete to delete non-synthesis memories."
+                    "Use memo_delete to delete non-synthesis memories."
                 ),
             }
 

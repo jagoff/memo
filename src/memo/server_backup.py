@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_backup_create(
+    def memo_backup_create(
         compress: bool = True,
         name: str | None = None,
     ) -> dict[str, Any]:
@@ -33,7 +33,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return metadata.__dict__
 
     @server.tool()
-    def memory_backup_list() -> list[dict[str, Any]]:
+    def memo_backup_list() -> list[dict[str, Any]]:
         """List all available backups.
 
         Returns a list of all backup archives with their metadata
@@ -43,7 +43,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [b.__dict__ for b in backups]
 
     @server.tool()
-    def memory_backup_restore(
+    def memo_backup_restore(
         backup_name: str,
         restore_memorias: bool = True,
         restore_dbs: bool = True,

@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_links_backlinks(
+    def memo_links_backlinks(
         memoria_id: str,
     ) -> list[dict[str, Any]]:
         """Show all memorias that reference this one.
@@ -31,7 +31,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [b.__dict__ for b in backlinks]
 
     @server.tool()
-    def memory_links_outlinks(
+    def memo_links_outlinks(
         memoria_id: str,
     ) -> list[dict[str, Any]]:
         """Show all memorias that this one references.
@@ -46,7 +46,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [o.__dict__ for o in outlinks]
 
     @server.tool()
-    def memory_links_suggest(
+    def memo_links_suggest(
         content: str,
         title: str | None = None,
         tags: list[str] | None = None,
@@ -73,7 +73,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [s.__dict__ for s in suggestions]
 
     @server.tool()
-    def memory_links_format(
+    def memo_links_format(
         memoria_id: str,
         title: str | None = None,
     ) -> str:

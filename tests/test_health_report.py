@@ -61,7 +61,7 @@ def test_server_health_summary_tool(mock_memory):
 
     mock_memory.save(content="one", title="One", tags=["t"])
     server = build_server(memory=mock_memory)
-    tool = asyncio.run(server.get_tool("memory_health_summary")).fn
+    tool = asyncio.run(server.get_tool("memo_health_summary")).fn
     out = tool()
     assert out["corpus"]["memorias"] == 1
 

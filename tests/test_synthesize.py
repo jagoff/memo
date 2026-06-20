@@ -315,7 +315,7 @@ def test_gc_no_stale_synthesis_when_sources_intact(mock_memory):
     assert report.get("stale_synthesis", []) == []
 
 
-# ── 3.3a: memory_synthesize_list confidence filter ──────────────────────────
+# ── 3.3a: memo_synthesize_list confidence filter ──────────────────────────
 
 def _get_synth_tool_fn(mock_memory, tool_name: str):
     """Register server_synthesis and return the named tool's underlying function."""
@@ -333,7 +333,7 @@ def _get_synth_tool_fn(mock_memory, tool_name: str):
 
 
 def test_synthesize_list_confidence_filter_returns_matching(mock_memory):
-    """memory_synthesize_list(confidence='medium') returns only medium-confidence entries."""
+    """memo_synthesize_list(confidence='medium') returns only medium-confidence entries."""
     _force_close_embeddings(mock_memory)
     mock_memory._chat = _SynthesisChat()  # returns confidence="medium"
 
@@ -342,7 +342,7 @@ def test_synthesize_list_confidence_filter_returns_matching(mock_memory):
 
     mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
 
-    tool_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_list")
+    tool_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_list")
 
     all_results = tool_fn()
     assert any(r["confidence"] == "medium" for r in all_results)
@@ -362,7 +362,7 @@ def test_synthesize_list_confidence_filter_excludes_non_matching(mock_memory):
 
     mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
 
-    tool_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_list")
+    tool_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_list")
 
     # Filter by "high" should return nothing (we only have "medium")
     filtered = tool_fn(confidence="high")
@@ -370,15 +370,15 @@ def test_synthesize_list_confidence_filter_excludes_non_matching(mock_memory):
 
 
 def test_synthesize_list_invalid_confidence_raises(mock_memory):
-    """memory_synthesize_list with invalid confidence raises ValueError."""
-    tool_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_list")
+    """memo_synthesize_list with invalid confidence raises ValueError."""
+    tool_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_list")
 
     with pytest.raises(ValueError, match="confidence must be one of"):
         tool_fn(confidence="invalid")
 
 
 def test_synthesize_list_no_filter_returns_all(mock_memory):
-    """memory_synthesize_list() with no filter returns all synthesis memorias."""
+    """memo_synthesize_list() with no filter returns all synthesis memorias."""
     _force_close_embeddings(mock_memory)
     mock_memory._chat = _SynthesisChat()
 
@@ -387,16 +387,16 @@ def test_synthesize_list_no_filter_returns_all(mock_memory):
 
     mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
 
-    tool_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_list")
+    tool_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_list")
     results = tool_fn()
     assert len(results) >= 1
 
 
-# ── 3.3b: memory_synthesize_delete MCP tool ─────────────────────────────────
+# ── 3.3b: memo_synthesize_delete MCP tool ─────────────────────────────────
 
 
 def test_synthesize_delete_removes_synthesis(mock_memory):
-    """memory_synthesize_delete deletes an existing synthesis memoria."""
+    """memo_synthesize_delete deletes an existing synthesis memoria."""
     _force_close_embeddings(mock_memory)
     mock_memory._chat = _SynthesisChat()
 
@@ -408,7 +408,7 @@ def test_synthesize_delete_removes_synthesis(mock_memory):
     assert len(saved) >= 1
     synth_id = saved[0]["id"]
 
-    delete_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_delete")
+    delete_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_delete")
     result = delete_fn(id=synth_id)
 
     assert result["deleted"] is True
@@ -417,10 +417,10 @@ def test_synthesize_delete_removes_synthesis(mock_memory):
 
 
 def test_synthesize_delete_refuses_non_synthesis(mock_memory):
-    """memory_synthesize_delete refuses to delete a non-synthesis memoria."""
+    """memo_synthesize_delete refuses to delete a non-synthesis memoria."""
     rec = mock_memory.save(content="Regular note", type_="note")
 
-    delete_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_delete")
+    delete_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_delete")
     result = delete_fn(id=rec.id)
 
     assert result["deleted"] is False
@@ -430,8 +430,8 @@ def test_synthesize_delete_refuses_non_synthesis(mock_memory):
 
 
 def test_synthesize_delete_nonexistent_id(mock_memory):
-    """memory_synthesize_delete returns deleted=False for unknown ID."""
-    delete_fn = _get_synth_tool_fn(mock_memory, "memory_synthesize_delete")
+    """memo_synthesize_delete returns deleted=False for unknown ID."""
+    delete_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_delete")
     result = delete_fn(id="00000000-0000-0000-0000-000000000000")
 
     assert result["deleted"] is False

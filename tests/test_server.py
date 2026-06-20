@@ -5,8 +5,8 @@ the FastMCP server with `build_server(memory=...)`, and inspect the tool
 return values directly via the `Memory` instance — bypassing the JSON-RPC
 transport. This is enough to lock in:
 
-- `memory_search` truncates `body` to the configured `body_chars`.
-- `memory_get` / `memory_update` / `memory_delete` return the structured
+- `memo_search` truncates `body` to the configured `body_chars`.
+- `memo_get` / `memo_update` / `memo_delete` return the structured
   `ambiguous` shape instead of raising when a prefix collides.
 """
 
@@ -57,7 +57,7 @@ def test_search_truncates_body(mem: Memory):
     huge = "x" * 5_000
     mem.save(content=huge, title="Huge")
     server = build_server(memory=mem)
-    search = _tool(server, "memory_search")
+    search = _tool(server, "memo_search")
     out = search(query="huge", body_chars=200)
     assert out, "search returned nothing"
     body = out[0]["body"]
@@ -70,7 +70,7 @@ def test_search_truncates_body(mem: Memory):
 def test_search_full_body_when_chars_huge(mem: Memory):
     mem.save(content="corto", title="Short")
     server = build_server(memory=mem)
-    search = _tool(server, "memory_search")
+    search = _tool(server, "memo_search")
     out = search(query="corto", body_chars=10_000)
     assert out
     assert out[0]["body"] == "corto"
@@ -80,7 +80,7 @@ def test_search_full_body_when_chars_huge(mem: Memory):
 def test_search_trace_returns_hits_and_pipeline(mem: Memory):
     mem.save(content="alpha body", title="Alpha")
     server = build_server(memory=mem)
-    search_trace = _tool(server, "memory_search_trace")
+    search_trace = _tool(server, "memo_search_trace")
 
     out = search_trace(query="alpha", limit=3)
 
@@ -99,7 +99,7 @@ def test_get_returns_ambiguous_shape(mem: Memory, monkeypatch):
     mem.save(content="b", title="B")
 
     server = build_server(memory=mem)
-    get = _tool(server, "memory_get")
+    get = _tool(server, "memo_get")
     out = get(id="aaaaaaaa")
     assert isinstance(out, dict)
     assert out.get("error") == "ambiguous"
@@ -117,7 +117,7 @@ def test_memory_chat_ask_returns_v2_envelope(mem: Memory, monkeypatch):
     monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
 
     server = build_server(memory=mem)
-    chat_ask = _tool(server, "memory_chat_ask")
+    chat_ask = _tool(server, "memo_chat_ask")
     out = chat_ask(
         question="what did alpha decide?",
         k=2,
@@ -135,7 +135,7 @@ def test_memory_chat_ask_returns_v2_envelope(mem: Memory, monkeypatch):
 
 def test_memory_chat_ask_no_hits_returns_unavailable(mem: Memory):
     server = build_server(memory=mem)
-    chat_ask = _tool(server, "memory_chat_ask")
+    chat_ask = _tool(server, "memo_chat_ask")
     out = chat_ask(question="missing context")
 
     assert out["schema"] == "memo.chat_ask.v2"

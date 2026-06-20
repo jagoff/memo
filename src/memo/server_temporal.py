@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_temporal_contradictions(
+    def memo_temporal_contradictions(
         entity: str,
         entity_type: str | None = None,
         confidence_threshold: float = 0.7,
@@ -43,7 +43,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [c.__dict__ for c in contradictions]
 
     @server.tool()
-    def memory_temporal_timeline(
+    def memo_temporal_timeline(
         entity: str,
         entity_type: str | None = None,
     ) -> dict[str, Any] | None:
@@ -72,7 +72,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         }
 
     @server.tool()
-    def memory_temporal_stale(
+    def memo_temporal_stale(
         days_threshold: int = 180,
         min_access_count: int = 0,
     ) -> list[dict[str, Any]]:
@@ -93,7 +93,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
 
     @server.tool()
-    def memory_temporal_patterns() -> dict[str, Any]:
+    def memo_temporal_patterns() -> dict[str, Any]:
         """Analyze high-level temporal patterns across the entire corpus.
 
         Returns metrics including:

@@ -1,6 +1,6 @@
 """Synapse-aware briefing section composer.
 
-`memo briefing` (SessionStart hook) and the `memory_unified_briefing`
+`memo briefing` (SessionStart hook) and the `memo_unified_briefing`
 MCP tool both want to surface unified state from synapse — handoffs +
 attention queue + open conflicts — alongside memo's own local sections.
 

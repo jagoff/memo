@@ -25,7 +25,7 @@ def _disabled() -> dict[str, Any]:
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_encrypt_unlock(
+    def memo_encrypt_unlock(
         password: str,
     ) -> dict[str, Any]:
         """Unlock the vault with password.
@@ -42,7 +42,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"success": success, "status": "unlocked" if success else "failed"}
 
     @server.tool()
-    def memory_encrypt_lock() -> dict[str, Any]:
+    def memo_encrypt_lock() -> dict[str, Any]:
         """Lock the vault (clear master key from memory).
 
         Clears the master encryption key from memory, preventing
@@ -54,7 +54,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"status": "locked"}
 
     @server.tool()
-    def memory_encrypt_status() -> dict[str, Any]:
+    def memo_encrypt_status() -> dict[str, Any]:
         """Check if vault is unlocked.
 
         Returns the current lock status of the vault and whether

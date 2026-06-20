@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_repo_index(
+    def memo_repo_index(
         url: str,
         name: str | None = None,
         ref: str | None = None,
@@ -44,17 +44,17 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
 
     @server.tool()
-    def memory_repo_embed(repo: str, force: bool = False) -> dict[str, Any]:
+    def memo_repo_embed(repo: str, force: bool = False) -> dict[str, Any]:
         """Embed pending repo chunks. Runs automatically during repo index by default."""
         return memory.repo_embed(repo, force=force)
 
     @server.tool()
-    def memory_repo_status(repo: str) -> dict[str, Any] | None:
+    def memo_repo_status(repo: str) -> dict[str, Any] | None:
         """Return exact and semantic index counts for one repo."""
         return memory.repo_status(repo)
 
     @server.tool()
-    def memory_repo_search(
+    def memo_repo_search(
         query: str,
         limit: int = 10,
         repo: str | None = None,
@@ -79,7 +79,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         ]
 
     @server.tool()
-    def memory_repo_get_file(
+    def memo_repo_get_file(
         repo: str,
         path: str,
         start: int | None = None,
@@ -89,11 +89,11 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.repo_get_file(repo, path, start=start, end=end)
 
     @server.tool()
-    def memory_repo_list(limit: int = 100) -> list[dict[str, Any]]:
+    def memo_repo_list(limit: int = 100) -> list[dict[str, Any]]:
         """List indexed repositories."""
         return memory.repo_list(limit=limit)
 
     @server.tool()
-    def memory_repo_delete(repo: str, remove_clone: bool = True) -> dict[str, bool]:
+    def memo_repo_delete(repo: str, remove_clone: bool = True) -> dict[str, bool]:
         """Delete one indexed repo and optionally remove memo's managed clone."""
         return {"deleted": memory.repo_delete(repo, remove_clone=remove_clone)}
