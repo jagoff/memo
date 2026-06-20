@@ -133,11 +133,18 @@ def test_gerencial_reports_context_cost_and_net_tokens(tmp_cfg: Config, monkeypa
 
     g = build.collect_data(tmp_cfg, include_projection=False)["gerencial"]
 
+    # Gross components are reported as-is for transparency...
     assert g["tokens_saved_today"] == 100
     assert g["context_tokens_today"] == 150
-    assert g["tokens_net_today"] == -50
-    assert g["tokens_net"] == -50
     assert g["token_detail"]["context_costs"] == {"briefing": 100, "recall": 50}
+    # ...but "ahorro neto" floors at 0: savings are measurement-gated (only
+    # grounded recalls) while context cost counts every injection, so a raw
+    # net of 100 - 150 = -50 is a coverage artifact, not a real loss. A day
+    # that saved nothing nets 0, never negative.
+    assert g["tokens_net_today"] == 0
+    assert g["tokens_net"] == 0
+    assert g["token_detail"]["today_net"] == 0
+    assert g["token_detail"]["net"] == 0
 
 
 def test_full_mode_includes_projection(tmp_cfg: Config):

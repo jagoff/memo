@@ -594,7 +594,11 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
                 "grounded": g,
                 "tokens": gross,
                 "context_tokens": context_tokens,
-                "net_tokens": gross - context_tokens,
+                # "Ahorro" floors at 0: savings only count grounding-scored recalls
+                # while context cost counts every injection, so thin measurement
+                # coverage makes net artificially negative. A day with no measured
+                # savings is "saved nothing" (0), not "cost you tokens".
+                "net_tokens": max(0, gross - context_tokens),
             }
         )
 
@@ -623,9 +627,9 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
         "context_costs": dict(sorted(context_costs.items())),
         "context_tokens": context_tokens,
         "today_context_tokens": today_context_tokens,
-        "today_net": today_tokens - today_context_tokens,
+        "today_net": max(0, today_tokens - today_context_tokens),
         "total": total,
-        "net": total - context_tokens,
+        "net": max(0, total - context_tokens),
         "tok_grounded": tok_grounded,
         "tok_reask": tok_reask,
         "avg_answer_tokens": (
