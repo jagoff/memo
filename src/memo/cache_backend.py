@@ -201,8 +201,11 @@ class MemflowBackend:
         )
         if not str(body).strip():
             return None
+        _body_stripped = str(body).strip()
         title = (
-            meta.get("memo_title") or item.get("title") or str(body).strip().splitlines()[0][:80]
+            meta.get("memo_title")
+            or item.get("title")
+            or (_body_stripped.splitlines()[0][:80] if _body_stripped else "Untitled")
         )
         rtype = meta.get("memo_type") or item.get("type") or item.get("kind") or "note"
         # Prefer memo's own id so a round-trip is idempotent; else derive a
