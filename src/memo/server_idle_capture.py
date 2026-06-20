@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,7 +23,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             dry_run: Preview what would be saved without writing anything.
         """
-        from memo.cli_capture import run_capture_incremental
+        from memo.capture import run_capture_incremental
         from memo.session import list_sessions
 
         cfg = memory.cfg
@@ -88,9 +87,10 @@ def run_idle_capture_loop() -> None:
     """
     import logging
     import sys
+    import time
     from pathlib import Path
 
-    from memo.cli_capture import run_capture_incremental
+    from memo.capture import run_capture_incremental
     from memo.config import Config
     from memo.flags import flag_int
     from memo.session import list_sessions
