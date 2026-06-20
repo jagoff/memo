@@ -192,7 +192,7 @@ class TrinityHandler(socketserver.StreamRequestHandler):
             if not all(isinstance(t, str) for t in texts):
                 return json.dumps({"error": "embed_batch: every element of `texts` must be a string"})
             vectors = self.server._mem.embedder.embed(texts) if texts else []
-            dim = len(vectors[0]) if vectors else 0
+            dim = len(vectors[0]) if vectors else 0  # type: ignore[union-attr]
             return json.dumps(
                 {
                     "vectors": vectors,

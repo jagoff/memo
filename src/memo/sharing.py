@@ -323,7 +323,7 @@ class ShareManager:
         shared_with: str,
         permission: str = "read",
         expires_days: int | None = None,
-    ) -> Share:
+    ) -> Share | None:
         """Share a memoria with a user.
 
         Args:
@@ -346,7 +346,11 @@ class ShareManager:
             expires_at=expires_at,
         )
 
-        return self.share_store.get_shares(memoria_id)[-1]
+        shares = self.share_store.get_shares(memoria_id)
+        if not shares:
+            _log.warning("share: add succeeded but get_shares returned empty for %s", memoria_id[:8])
+            return None
+        return shares[-1]
 
     def unshare_with_user(self, memoria_id: str, shared_with: str) -> bool:
         """Unshare a memoria from a user.
@@ -421,7 +425,7 @@ class ShareManager:
         author: str,
         content: str,
         parent_id: str | None = None,
-    ) -> Comment:
+    ) -> Comment | None:
         """Add a comment to a memoria.
 
         Args:
@@ -434,7 +438,11 @@ class ShareManager:
             Comment object.
         """
         self.share_store.add_comment(memoria_id, author, content, parent_id)
-        return self.share_store.get_comments(memoria_id)[-1]
+        comments = self.share_store.get_comments(memoria_id)
+        if not comments:
+            _log.warning("comment: add succeeded but get_comments returned empty for %s", memoria_id[:8])
+            return None
+        return comments[-1]
 
     def get_comments(self, memoria_id: str) -> list[Comment]:
         """Get all comments for a memoria.

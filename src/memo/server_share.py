@@ -40,6 +40,8 @@ def register(server: FastMCP, memory: Memory) -> None:
             permission=permission,
             expires_days=expires_days,
         )
+        if not share:
+            raise ValueError(f"Failed to share {memoria_id[:8]}")
         return share.__dict__
 
     @server.tool()
@@ -122,6 +124,8 @@ def register(server: FastMCP, memory: Memory) -> None:
             content=content,
             parent_id=parent_id,
         )
+        if not comment:
+            raise ValueError(f"Failed to add comment to {memoria_id[:8]}")
         return comment.__dict__
 
     @server.tool()
