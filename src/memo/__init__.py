@@ -9,8 +9,8 @@
 - Vector store: `sqlite-vec` (single file, no daemon, no Qdrant).
 - Storage of record: markdown files under
   `<vault>/<SYSTEM_DIR>/AI/memory/`.
-- MCP server: `fastmcp` with tools `memory_save`, `memory_search`,
-  `memory_list`, `memory_get`, `memory_update`, `memory_delete`.
+- MCP server: `fastmcp` with tools `memo_save`, `memo_search`,
+  `memo_list`, `memo_get`, `memo_update`, `memo_delete`.
 
 Public API:
 

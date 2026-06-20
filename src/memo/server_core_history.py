@@ -8,11 +8,11 @@ from memo.memory import AmbiguousIdError, Memory
 
 def register(server: Any, memory: Memory) -> None:
     @server.tool()
-    def memory_provenance(id: str) -> dict[str, Any] | None:
+    def memo_provenance(id: str) -> dict[str, Any] | None:
         return memory.provenance(id)
 
     @server.tool()
-    def memory_record_diff(id: str, limit: int = 50) -> dict[str, Any]:
+    def memo_record_diff(id: str, limit: int = 50) -> dict[str, Any]:
         resolved_id = id
         if len(resolved_id) < 32:
             try:
@@ -31,7 +31,7 @@ def register(server: Any, memory: Memory) -> None:
         }
 
     @server.tool()
-    def memory_history(
+    def memo_history(
         limit: int = 20,
         op: str | None = None,
         id: str | None = None,
@@ -48,19 +48,19 @@ def register(server: Any, memory: Memory) -> None:
         return memory.history.list_recent(limit=limit, op=op, record_id=record_id)
 
     @server.tool()
-    def memory_session_list(limit: int = 10, project: str | None = None) -> list[dict[str, Any]]:
+    def memo_session_list(limit: int = 10, project: str | None = None) -> list[dict[str, Any]]:
         from memo.session import list_sessions
 
         return list_sessions(memory.cfg.state_dir, limit=limit, project=project)
 
     @server.tool()
-    def memory_session_get(session_id: str) -> dict[str, Any] | None:
+    def memo_session_get(session_id: str) -> dict[str, Any] | None:
         from memo.session import get_session
 
         return get_session(memory.cfg.state_dir, session_id)
 
     @server.tool()
-    def memory_stats() -> dict[str, Any]:
+    def memo_stats() -> dict[str, Any]:
         history_errors = 0
         with contextlib.suppress(Exception):
             history_errors = int(getattr(memory.history, "error_count", 0))

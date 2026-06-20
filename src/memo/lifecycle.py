@@ -4,7 +4,7 @@ Internal maintenance layer driven by `memo maintain` (NOT exposed on the
 public CLI or MCP surface — see tests/test_architecture_boundaries.py;
 memo is the memory store, orchestration lives in Synapse). The user-facing
 primitives are `Memory.forget()` / `Memory.unforget()` (CRUD-like, exposed
-as the `memory_forget` / `memory_unforget` MCP tools).
+as the `memo_forget` / `memo_unforget` MCP tools).
 
 Manages the lifecycle of memories over time:
 - Explicit forget with a TTL (`forget_after`) — soft, reversible

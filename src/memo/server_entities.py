@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_extract_entities(
+    def memo_extract_entities(
         ids: list[str] | None = None,
         all_: bool = False,
         force: bool = False,
@@ -42,7 +42,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
 
     @server.tool()
-    def memory_entities(
+    def memo_entities(
         limit: int = 30,
         type: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -56,7 +56,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.graph.top_entities(limit=limit, type_=type)
 
     @server.tool()
-    def memory_entity(name: str, type: str | None = None) -> list[str]:
+    def memo_entity(name: str, type: str | None = None) -> list[str]:
         """Memoria IDs that mention `name` (and optionally a specific
         entity type). Returns a list of full UUIDs."""
         return memory.graph.entity_memorias(name, type_=type)

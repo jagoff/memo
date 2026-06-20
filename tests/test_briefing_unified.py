@@ -9,7 +9,7 @@ Covers:
   `archived` are filtered out.
 - Item count is capped (top-3 each).
 - Snippets are clipped to keep the briefing tight.
-- `memory_unified_briefing` MCP tool returns the structured payload.
+- `memo_unified_briefing` MCP tool returns the structured payload.
 - The CLI briefing command swallows synapse errors and falls back to
   the local-only sections (no regression when synapse is absent).
 """
@@ -213,7 +213,7 @@ def test_mcp_unified_briefing_returns_payload(tmp_cfg, monkeypatch):
     monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: _packet_fixture())
 
     server = build_server(memory=mem)
-    fn = asyncio.run(server.get_tool("memory_unified_briefing")).fn
+    fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
     out = fn(cwd="/tmp/sample")
     assert out["available"] is True
     assert "Conflictos abiertos" in out["markdown"]
@@ -232,7 +232,7 @@ def test_mcp_unified_briefing_empty_when_synapse_missing(tmp_cfg, monkeypatch):
     monkeypatch.setattr(synapse_client, "is_available", lambda: False)
 
     server = build_server(memory=mem)
-    fn = asyncio.run(server.get_tool("memory_unified_briefing")).fn
+    fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
     out = fn()
     assert out == {"available": False, "markdown": "", "lines": []}
 

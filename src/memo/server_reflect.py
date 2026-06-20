@@ -1,4 +1,4 @@
-"""MCP tool: memory_reflect — synthesize a session transcript into durable memorias."""
+"""MCP tool: memo_reflect — synthesize a session transcript into durable memorias."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_reflect(
+    def memo_reflect(
         session_id: str | None = None,
         last: bool = True,
         if_due: bool = False,

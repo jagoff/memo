@@ -242,7 +242,7 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
             "Record an implicit feedback signal (click or ignore) on a memoria "
             "for a given query. Use 'click' when the user viewed/used this result; "
             "'ignore' when they skipped it. These are softer signals than "
-            "memory_feedback_record's thumbs_up/thumbs_down."
+            "memo_feedback_record's thumbs_up/thumbs_down."
         ),
         params=(
             Param("source_id", "string", description="Memoria id or unique prefix"),

@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_import_json(
+    def memo_import_json(
         input_path: str,
     ) -> dict[str, Any]:
         """Import memorias from JSON file.
@@ -33,7 +33,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return result.__dict__
 
     @server.tool()
-    def memory_import_csv(
+    def memo_import_csv(
         input_path: str,
     ) -> dict[str, Any]:
         """Import memorias from CSV file.
@@ -50,7 +50,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return result.__dict__
 
     @server.tool()
-    def memory_export_json(
+    def memo_export_json(
         output_path: str,
     ) -> dict[str, Any]:
         """Export memorias to JSON file.
@@ -66,7 +66,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return result.__dict__
 
     @server.tool()
-    def memory_export_csv(
+    def memo_export_csv(
         output_path: str,
     ) -> dict[str, Any]:
         """Export memorias to CSV file.
@@ -83,7 +83,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return result.__dict__
 
     @server.tool()
-    def memory_export_markdown_bundle(
+    def memo_export_markdown_bundle(
         output_path: str,
     ) -> dict[str, Any]:
         """Export memorias to Markdown bundle (zip).

@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_contradict_scan(
+    def memo_contradict_scan(
         top_k: int = 5,
         sim_floor: float = 0.55,
         confidence_threshold: float = 0.7,
@@ -28,7 +28,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Scan the corpus for contradiction / evolution pairs and persist them.
 
-        Unlike `memory_temporal_contradictions`, which requires an entity name
+        Unlike `memo_temporal_contradictions`, which requires an entity name
         and returns ephemeral results, this walks all memorias, uses vec
         neighborhoods to surface candidate pairs, and persists detected
         contradictions to a sidecar DB. The same pair is never re-classified
@@ -65,7 +65,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         }
 
     @server.tool()
-    def memory_contradict_list(
+    def memo_contradict_list(
         status: str = "open",
         limit: int = 20,
         min_confidence: float = 0.0,
@@ -92,7 +92,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [p.__dict__ for p in pairs]
 
     @server.tool()
-    def memory_contradict_resolve(
+    def memo_contradict_resolve(
         pair_id: int,
         status: str,
         note: str | None = None,
@@ -107,11 +107,11 @@ def register(server: FastMCP, memory: Memory) -> None:
           - `dismissed`   — false positive
 
         This tool only updates the sidecar; it does NOT itself delete the
-        memorias or run a merge. Use `memory_consolidate_apply` or
-        `memory_delete` first if the resolution implies destructive ops.
+        memorias or run a merge. Use `memo_consolidate_apply` or
+        `memo_delete` first if the resolution implies destructive ops.
 
         Args:
-            pair_id: The integer pair_id returned by `memory_contradict_list`.
+            pair_id: The integer pair_id returned by `memo_contradict_list`.
             status: One of the valid statuses listed above.
             note: Optional free-form resolution note.
         """
@@ -119,6 +119,6 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"updated": ok, "pair_id": pair_id, "status": status}
 
     @server.tool()
-    def memory_contradict_stats() -> dict[str, int]:
+    def memo_contradict_stats() -> dict[str, int]:
         """Return counts of contradiction pairs grouped by status."""
         return memory.contradict_store.stats()

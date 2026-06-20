@@ -268,7 +268,7 @@ class CacheManager:
     # -- stats -------------------------------------------------------------
 
     def stats(self) -> dict[str, Any]:
-        """Snapshot for the `memory_cache_stats` MCP tool."""
+        """Snapshot for the `memo_cache_stats` MCP tool."""
         store = self.memory.store
         total = store.count()
         cap = self.policy.max_entries

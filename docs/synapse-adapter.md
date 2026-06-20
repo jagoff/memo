@@ -111,7 +111,7 @@ memo save - --title "Decision" \
   <<< "Body here"
 ```
 
-The MCP `memory_save` tool accepts the same payload as `extra={...}`.
+The MCP `memo_save` tool accepts the same payload as `extra={...}`.
 
 ## Freeze-write protocol
 

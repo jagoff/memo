@@ -226,7 +226,7 @@ class _WriteOpsMixin(_MemoryBase):
         # heading/link (the class that accreted as dead index rows before the
         # ingest filter existed). Durable tiers are exempt — short facts and
         # preferences are legitimate. Mirrors the repo/vault ingest filter so
-        # this junk cannot re-enter through `memory_save`.
+        # this junk cannot re-enter through `memo_save`.
         if type_ in REFERENCE_TYPES and is_reference_noise(content):
             raise ValueError(
                 "reference content is near-empty noise (no heading/link, "

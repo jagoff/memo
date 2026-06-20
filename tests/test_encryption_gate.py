@@ -99,9 +99,9 @@ def test_cli_enabled_proceeds(monkeypatch, tmp_path):
 # ── MCP surface ───────────────────────────────────────────────────────────────
 
 _MCP_CALLS = (
-    ("memory_encrypt_status", {}),
-    ("memory_encrypt_lock", {}),
-    ("memory_encrypt_unlock", {"password": "pw"}),
+    ("memo_encrypt_status", {}),
+    ("memo_encrypt_lock", {}),
+    ("memo_encrypt_unlock", {"password": "pw"}),
 )
 
 
@@ -122,6 +122,6 @@ def test_mcp_enabled_proceeds(mem, monkeypatch):
     """Flag on → real status shape (is_unlocked key present)."""
     monkeypatch.setenv("MEMO_ENCRYPTION_ENABLED", "1")
     server = build_server(memory=mem)
-    out = _tool(server, "memory_encrypt_status")()
+    out = _tool(server, "memo_encrypt_status")()
     assert "is_unlocked" in out
     assert out["status"] in ("locked", "unlocked")

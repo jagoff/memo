@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — MCP tools renamed `memory_*` → `memo_*`.** All 116 MCP tools now
+  share the `memo_` prefix matching the server name (`memo_ask`, `memo_search`,
+  `memo_save`, `memo_consolidate`, …) for naming consistency. Clients that call
+  tools by name (synapse `memo_backend`, memflow) were updated in lockstep.
+  Non-tool identifiers (`memory_dir`, the `memory_health` table, `memory_id`,
+  `memory_type`) are unchanged. Re-connect / restart any MCP client to pick up
+  the new names.
 - `delete()` now removes the canonical `.md` first and aborts (`StorageError`)
   if it can't, so the index never outlives its source file. `save()` no longer
   loses a memoria when indexing fails after the disk write — it marks the file

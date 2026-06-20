@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_collaborative_share_connection(
+    def memo_collaborative_share_connection(
         user_id: str,
         entity_a: str,
         entity_b: str,
@@ -45,7 +45,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return conn.__dict__
 
     @server.tool()
-    def memory_collaborative_connections(
+    def memo_collaborative_connections(
         entity: str,
     ) -> list[dict[str, Any]]:
         """Get shared connections for an entity.
@@ -60,7 +60,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [c.__dict__ for c in connections]
 
     @server.tool()
-    def memory_collaborative_recommend(
+    def memo_collaborative_recommend(
         entity: str,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
@@ -77,7 +77,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [r.__dict__ for r in recommendations]
 
     @server.tool()
-    def memory_collaborative_share_insight(
+    def memo_collaborative_share_insight(
         user_id: str,
         content: str,
     ) -> dict[str, str]:
@@ -94,7 +94,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return insight.__dict__
 
     @server.tool()
-    def memory_collaborative_insights(
+    def memo_collaborative_insights(
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """Get top voted insights from the community.

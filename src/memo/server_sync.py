@@ -30,23 +30,23 @@ def _resolve_remote_history_db(remote: str | None) -> Path | None:
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_sync_diff(
+    def memo_sync_diff(
         remote: str | None = None,
     ) -> dict[str, Any]:
         """Not supported in the replay sync model.
 
         Sync replays the remote audit log into the local store; there is no
-        precomputed file diff. Use ``memory_sync_pull`` to apply remote events.
+        precomputed file diff. Use ``memo_sync_pull`` to apply remote events.
 
         Args:
             remote: Path to remote memo state dir (unused).
         """
         return {
-            "error": "replay sync model has no precomputed diff; use memory_sync_pull",
+            "error": "replay sync model has no precomputed diff; use memo_sync_pull",
         }
 
     @server.tool()
-    def memory_sync_push(
+    def memo_sync_push(
         remote: str | None = None,
     ) -> dict[str, Any]:
         """Not supported in the replay sync model.
@@ -62,7 +62,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         }
 
     @server.tool()
-    def memory_sync_pull(
+    def memo_sync_pull(
         remote: str | None = None,
     ) -> dict[str, Any]:
         """Pull remote changes by replaying the remote audit log.
@@ -80,7 +80,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return diff.__dict__
 
     @server.tool()
-    def memory_sync_both(
+    def memo_sync_both(
         remote: str | None = None,
     ) -> dict[str, Any]:
         """Sync from a remote machine (replay model alias for pull).

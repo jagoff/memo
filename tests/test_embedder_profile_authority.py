@@ -1,7 +1,7 @@
 """M4: memo is the authoritative source of the embedder profile.
 
 These tests pin the wire shape returned by:
-1. The new MCP tool ``memory_get_embedder_profile`` — used by synapse and
+1. The new MCP tool ``memo_get_embedder_profile`` — used by synapse and
    memflow at startup to verify compatibility.
 2. ``_profile_status_report`` — extended to include a ``typed_profile``
    field that contracts-aware consumers can pluck.
@@ -51,7 +51,7 @@ def test_compatibility_check_detects_dim_drift(tmp_cfg: Config) -> None:
 
 
 def test_mcp_tool_exposes_typed_profile(tmp_cfg: Config) -> None:
-    """memory_get_embedder_profile must be registered and return the contract shape."""
+    """memo_get_embedder_profile must be registered and return the contract shape."""
     import asyncio
 
     from memo.memory import Memory
@@ -59,8 +59,8 @@ def test_mcp_tool_exposes_typed_profile(tmp_cfg: Config) -> None:
 
     mem = Memory(tmp_cfg)
     server = build_server(memory=mem)
-    tool = asyncio.run(server.get_tool("memory_get_embedder_profile"))
-    assert tool is not None, "memory_get_embedder_profile not registered"
+    tool = asyncio.run(server.get_tool("memo_get_embedder_profile"))
+    assert tool is not None, "memo_get_embedder_profile not registered"
 
     payload = tool.fn()
     assert payload["schema"] == "consciousness.embedder_profile.v1"

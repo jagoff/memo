@@ -45,7 +45,7 @@ lists third-party MCP servers under
 ```markdown
 ## What
 
-`memo` is a local MCP memory server for Apple Silicon Macs. It exposes 13 tools (`memory_save`, `memory_search`, `memory_list`, `memory_ask`, etc.) plus two resources (`memo://recent`, `memo://memory/{id}`) over stdio.
+`memo` is a local MCP memory server for Apple Silicon Macs. It exposes 13 tools (`memo_save`, `memo_search`, `memo_list`, `memo_ask`, etc.) plus two resources (`memo://recent`, `memo://memory/{id}`) over stdio.
 
 ## Why it's different
 

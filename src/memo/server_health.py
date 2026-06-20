@@ -14,7 +14,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_health_summary(probe_embedder: bool = False) -> dict[str, Any]:
+    def memo_health_summary(probe_embedder: bool = False) -> dict[str, Any]:
         """Operational health snapshot: corpus size, index dims, embedder
         profile, health-score coverage, feedback volume, and warnings.
 
@@ -28,7 +28,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return build_health_report(memory, probe_embedder=probe_embedder)
 
     @server.tool()
-    def memory_health_report(
+    def memo_health_report(
         top_n: int = 10,
     ) -> dict[str, Any]:
         """Report memory health: lowest-confidence and highest-ROI memorias.

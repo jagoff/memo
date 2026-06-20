@@ -4,7 +4,7 @@ A single read-only aggregation of corpus size, index dims, embedder
 profile, health-score coverage, feedback volume, and derived warnings.
 Pure (no MLX) unless `probe_embedder=True`, which times one `embed_query`.
 
-The MCP tool `memory_health_summary` and the `memo health` CLI both render
+The MCP tool `memo_health_summary` and the `memo health` CLI both render
 the dict returned by `build_health_report`.
 """
 

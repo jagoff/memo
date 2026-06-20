@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_contextual_search(
+    def memo_contextual_search(
         query: str,
         limit: int = 10,
         mode: str = "hybrid",
@@ -40,7 +40,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [r.__dict__ for r in results]
 
     @server.tool()
-    def memory_contextual_record_search(
+    def memo_contextual_record_search(
         query: str,
         memoria_ids: list[str],
     ) -> dict[str, Any]:
@@ -58,7 +58,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"status": "recorded", "count": len(memoria_ids)}
 
     @server.tool()
-    def memory_contextual_record_click(
+    def memo_contextual_record_click(
         memoria_id: str,
     ) -> dict[str, Any]:
         """Record that the user clicked/viewed a memoria (for preference learning).
@@ -73,7 +73,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"status": "recorded", "memoria_id": memoria_id}
 
     @server.tool()
-    def memory_contextual_preferences() -> dict[str, Any]:
+    def memo_contextual_preferences() -> dict[str, Any]:
         """Show learned user preferences for memory recall.
 
         Returns the current preference scores for memory types, entities,
@@ -84,7 +84,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return prefs.__dict__
 
     @server.tool()
-    def memory_contextual_history(
+    def memo_contextual_history(
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """Show recent conversation history used for contextual recall.

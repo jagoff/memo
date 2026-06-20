@@ -16,7 +16,7 @@ from memo.memory import Memory
 
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
-    def memory_analytics_summary() -> dict[str, Any]:
+    def memo_analytics_summary() -> dict[str, Any]:
         """Get analytics summary of the memory corpus.
 
         Returns comprehensive metrics including total memorias,
@@ -26,7 +26,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return metrics.__dict__
 
     @server.tool()
-    def memory_analytics_growth(
+    def memo_analytics_growth(
         days: int = 30,
     ) -> dict[str, Any]:
         """Get growth data over time.

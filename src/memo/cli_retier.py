@@ -6,7 +6,7 @@ When everything is `type=note` the reference material drowns durable knowledge
 in the auto-recall hook. This one-shot migration moves vault-sourced `note`
 memorias to `type=reference` so the recall hook (which excludes the reference
 tier — see `memo.tiers`) surfaces durable knowledge again. Reference material
-stays fully searchable on demand via `memory_search` / `memo search`.
+stays fully searchable on demand via `memo_search` / `memo search`.
 
 Only `meta.type` changes — bodies/embeddings are untouched, so it's cheap and
 needs no re-embed. Dry-run by default; pass `--apply` to commit.

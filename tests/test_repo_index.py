@@ -473,9 +473,9 @@ def test_repo_mcp_tools(tmp_path: Path, monkeypatch):
         assert tool is not None
         return cast(Any, tool).fn
 
-    index = asyncio.run(_tool("memory_repo_index"))
-    search = asyncio.run(_tool("memory_repo_search"))
-    get_file = asyncio.run(_tool("memory_repo_get_file"))
+    index = asyncio.run(_tool("memo_repo_index"))
+    search = asyncio.run(_tool("memo_repo_search"))
+    get_file = asyncio.run(_tool("memo_repo_get_file"))
 
     indexed = index(url=str(repo), name="sample")
     assert indexed["indexed_files"] == 2
@@ -488,8 +488,8 @@ def test_repo_mcp_tools(tmp_path: Path, monkeypatch):
     file_out = get_file(repo="sample", path="src/app.py", start=2, end=2)
     assert "needle-value" in file_out["text"]
 
-    embed = asyncio.run(_tool("memory_repo_embed"))
-    status = asyncio.run(_tool("memory_repo_status"))
+    embed = asyncio.run(_tool("memo_repo_embed"))
+    status = asyncio.run(_tool("memo_repo_status"))
 
     embedded = embed(repo="sample")
     assert embedded["pending_chunks"] == 0
