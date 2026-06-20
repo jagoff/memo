@@ -81,6 +81,7 @@ from memo.cli_outcome import gaps as gaps_cmd
 from memo.cli_outcome import outcome as outcome_cmd
 from memo.cli_profile import profile_group
 from memo.cli_query import query_group
+from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_recall_hook import recall_hook
 from memo.cli_repo import repo_group
@@ -314,6 +315,7 @@ cli.add_command(backend_native_group)
 cli.add_command(feedback_group)
 cli.add_command(repo_group)
 cli.add_command(recall_daemon_group)
+cli.add_command(idle_daemon_group)
 cli.add_command(ingest_daemon_group)
 cli.add_command(maint_daemon_group)
 cli.add_command(embed_daemon_group)
