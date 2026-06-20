@@ -477,19 +477,19 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             _hb("captured", status=str(result.get("status")), saved=len(result.get("saved", [])))
             if result.get("status") == "ok":
                 _titles = result.get("saved_titles") or []
+                n = len(_titles)
+                # Always show notification to confirm capture ran
                 if _titles:
-                    # Async hook output doesn't reach the current turn. Write a
-                    # pending notification the next recall-hook surfaces. Only
-                    # fires when insights were actually saved (not just scanned).
-                    from memo.cli_capture import _write_capture_notification
-
-                    _write_capture_notification(cfg.state_dir, _titles, idle=True)
-                    # Also print notification directly so user sees it
-                    n = len(_titles)
                     shown = "; ".join(t for t in _titles[:3])
                     if n > 3:
                         shown += f"; +{n - 3} more"
                     console.print(f"[dim]※ auto save (idle): {shown}[/dim]")
+                else:
+                    console.print(f"[dim]※ auto save (idle): scanned (0 new insights)[/dim]")
+                # Also write pending notification if there were saved titles
+                if _titles:
+                    from memo.cli_capture import _write_capture_notification
+                    _write_capture_notification(cfg.state_dir, _titles, idle=True)
             _hb("captured-notified", saved=len(result.get("saved_titles") or []))
             print("{}")
         else:

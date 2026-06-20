@@ -98,14 +98,18 @@ def capture_stop() -> None:
         # that does most of the saving — is silent and the user can't tell it
         # ran. Only fires when memorias were actually saved (not on dedup/cooldown).
         titles = result.get("saved_titles") or []
+        n = len(titles)
+        # Always show notification to confirm capture ran
         if titles:
-            _write_capture_notification(Config.from_env().state_dir, titles)
-            # Also print notification directly so user sees it
-            n = len(titles)
             shown = "; ".join(t for t in titles[:3])
             if n > 3:
                 shown += f"; +{n - 3} more"
             console.print(f"[dim]※ auto save: {shown}[/dim]")
+        else:
+            console.print(f"[dim]※ auto save: scanned (0 new insights)[/dim]")
+        # Also write pending notification if there were saved titles
+        if titles:
+            _write_capture_notification(Config.from_env().state_dir, titles)
     except Exception as exc:
         if debug:
             print(f"# memo capture-stop failed: {exc}", file=_sys.stderr)
