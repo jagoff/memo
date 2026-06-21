@@ -56,6 +56,7 @@ cd /Users/fer/repos/synapse && PYTHONPATH=src /Users/fer/repos/memflow/.venv/bin
 1. **Fix venv** en `_detect_python` (fuente) + en 8 plists vivos: `memo/.venv → memflow/.venv` (contradict-scan, dashboard, dream-synthesis, gc-memo-duplicates, gc-vault-orphans, morning-digest, runtime-loop, watcher).
 2. **Stagger** `gc-vault-orphans` 03:00 → 03:40.
 3. **Reload** de los 8 (`launchctl bootout`+`bootstrap`). dashboard/watcher/runtime-loop: exit 1 → running (PID asignado, exit 0). dashboard:8765 → HTTP 200.
+4. **`vault-ingest` arreglado**: su wrapper `~/.synapse/bin/vault-ingest.sh` tenía hardcodeado el venv viejo (generado antes del fix). `synapse ops install vault-ingest` lo regeneró con `_detect_python` arreglado → corre limpio (err vacío, log "OK notes/work").
 
 **Backups:** todos los plists originales en `~/.memo-daemon-backups/<timestamp>/`.
 
