@@ -53,6 +53,9 @@ web/health.html
 # Local backup archives
 memo-backup-*.zip
 
+# devswarm temp workspace
+.devswarm-temp/
+
 # graphify tool output (local analysis cache)
 graphify-out/
 
