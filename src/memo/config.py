@@ -503,7 +503,24 @@ class Config(BaseModel):
         if os.environ.get("MEMO_SINGLE_DB"):
             kwargs["single_db"] = flag_bool("MEMO_SINGLE_DB")
 
-        # Step 4: legacy back-compat — if data_dir is still unset BUT the
+        # Step 4: zero-config repo mode — detect if we're running from
+        # a cloned memo repo (cwd contains memo's source). In that case,
+        # override any prior config and use paths relative to cwd so the
+        # clone works out-of-the-box. Skip if user explicitly set
+        # MEMO_DATA_DIR or has a legacy vault_path setup OR has an existing
+        # config file (opt-in to repo mode is implied by not setting these).
+        cwd_is_repo = (Path.cwd() / "src" / "memo" / "__init__.py").is_file()
+        has_data_env = "MEMO_DATA_DIR" in os.environ
+        has_state_env = "MEMO_STATE_DIR" in os.environ
+        has_vault_env = "MEMO_VAULT_PATH" in os.environ
+        has_legacy = has_vault_env or os.environ.get("MEMO_MEMORY_SUBDIR")
+        has_storage_config = file_data and file_data.get("storage")
+        if cwd_is_repo and not has_data_env and not has_legacy and not has_storage_config:
+            kwargs["data_dir"] = "memorias"
+        if cwd_is_repo and not has_state_env and not has_legacy and not has_storage_config:
+            kwargs["state_dir"] = ".memo-state"
+
+        # Step 5: legacy back-compat — if data_dir is still unset BUT the
         # legacy pair (vault_path + memory_subdir) is set, derive it.
         # This keeps pre-`memo init` installs working unchanged.
         if "data_dir" not in kwargs:

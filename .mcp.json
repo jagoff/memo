@@ -5,8 +5,7 @@
       "command": "memo-mcp",
       "args": [],
       "env": {
-        "MEMO_NONINTERACTIVE": "1",
-        "MEMO_DATA_DIR": "/Users/fer/repos/memo-sync/memorias"
+        "MEMO_NONINTERACTIVE": "1"
       }
     },
     "sqlite-explorer": {
