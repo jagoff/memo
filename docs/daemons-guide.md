@@ -65,10 +65,19 @@ cp ~/.memo-daemon-backups/<TS>/com.synapse.<x>.plist ~/Library/LaunchAgents/
 launchctl bootout gui/$(id -u)/com.synapse.<x>; launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.synapse.<x>.plist
 ```
 
-## 5. Candidatos de consolidación (decisión del usuario — no aplicados)
+## 5. Consolidación del maintenance nocturno (APLICADO 2026-06-20)
 
-Reducir el *número* de agentes es una decisión por-feature (cada uno es una función distinta de synapse/memflow que podés usar). Candidatos claros:
-- **Maintenance nocturno** (`memo-consolidate` + `gc-memo-duplicates` + `gc-vault-orphans` + `contradict-scan`): 4 jobs que cargan MLX por separado → 1 orquestador `synapse ops nightly` que cargue MLX una vez y corra todo en secuencia. Requiere un builder nuevo en `synapse/ops.py`.
+**4 agentes → 1.** `memo-consolidate` + `gc-memo-duplicates` + `gc-vault-orphans` + `contradict-scan` se fusionaron en un único `com.synapse.memo-nightly` (diario 03:00) que corre los 4 pasos **en secuencia** vía wrapper `~/.synapse/bin/memo-nightly.sh` → un solo cold-load MLX a la vez en vez de 4 solapados. Durable en fuente: `build_memo_nightly_plist`/`build_memo_nightly_script` + entrada `memo-nightly` en `SERVICE_TO_LABEL` (`synapse/ops.py`). Los 4 builders/labels viejos quedan (instalables individualmente con `synapse ops install <svc>`); los plists vivos se removieron (backups en `~/.memo-daemon-backups/`).
+
+```bash
+# logs del run nocturno
+tail -f ~/.synapse/state/logs/memo-nightly.log
+# revertir a los 4 agentes separados
+cd ~/repos/synapse && for s in memo-consolidate gc-memo-duplicates gc-vault-orphans contradict-scan; do PYTHONPATH=src ~/repos/memflow/.venv/bin/python -m synapse.cli ops install $s; done
+PYTHONPATH=src ~/repos/memflow/.venv/bin/python -m synapse.cli ops uninstall memo-nightly  # o launchctl bootout
+```
+
+### Pendiente (decisión del usuario — no aplicado)
 - **`runtime-loop` cada 60s**: subir a 300s+ si no se necesita reacción sub-minuto.
 - **Dream duplicado**: `memo-dream` (memo) vs `dream-synthesis` (memflow) — decidir si ambos aportan.
 
