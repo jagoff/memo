@@ -116,3 +116,27 @@ def test_consult_breakdown_exposes_strong_hit_rate(tmp_path) -> None:
     assert cc["fired"] == 2
     assert cc["hit_rate"] == 1.0
     assert cc["strong_hit_rate"] == 0.5
+
+
+def test_consult_breakdown_grounded_rate_excludes_unscored_turns(tmp_path) -> None:
+    """Per-consumer grounded_rate must use the SAME honest denominator as the
+    headline grounded_rate(): a memoria surfaced on a turn the grounding detector
+    never scored is 'not measured', not 'not used'. Counting it as a miss
+    deflates the per-tool rate below the headline for the same data."""
+    from memo.dashboard import append_grounding_log
+
+    # turn 1: surfaced + scored + used (used_score ≥ 0.8)
+    append_recall_log(tmp_path, prompt="alpha what did we decide", hits=[{"id": "m1", "score": 0.9, "title": "M1"}], via="daemon", session_id="s1", turn=1)
+    append_grounding_log(tmp_path, session_id="s1", turn=1, recall_id="m1", used_score=0.9, method="cosine")
+    # turn 2: surfaced + scored + NOT used
+    append_recall_log(tmp_path, prompt="beta how does caching work", hits=[{"id": "m2", "score": 0.88, "title": "M2"}], via="daemon", session_id="s1", turn=2)
+    append_grounding_log(tmp_path, session_id="s1", turn=2, recall_id="m2", used_score=0.1, method="cosine")
+    # turn 3: surfaced but NEVER scored (no grounding row) → unmeasured, must be excluded
+    append_recall_log(tmp_path, prompt="gamma why is this so slow", hits=[{"id": "m3", "score": 0.7, "title": "M3"}], via="daemon", session_id="s1", turn=3)
+
+    bd = consult_breakdown(tmp_path, limit=500)
+    cc = next(c for c in bd["consumers"] if c["consumer"] == "claude-code")
+    # Honest: 1 used / 2 MEASURED surfaced = 0.5, not 1/3 = 0.333 (naive, counting
+    # the unscored turn 3 as a miss).
+    assert cc["grounded_surfaced"] == 2
+    assert cc["grounded_rate"] == 0.5

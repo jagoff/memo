@@ -35,10 +35,14 @@ def test_poll_mode_includes_gerencial_block(tmp_cfg: Config):
     poll path — it is the centerpiece of the dashboard, not a full-build extra."""
     data = build.collect_data(tmp_cfg, include_projection=False)
     g = data["gerencial"]
-    assert [s["key"] for s in g["funnel"]] == ["preguntas", "activado", "encontro"]
+    assert [s["key"] for s in g["funnel"]] == ["preguntas", "muestra", "activadas"]
     for key in (
         "consults",
+        "consults_total",
+        "consults_sampled",
         "coverage_rate",
+        "activation_rate_total",
+        "activation_rate_sampled",
         "hit_rate",
         "grounded_rate",
         "referenced_rate",
@@ -50,6 +54,8 @@ def test_poll_mode_includes_gerencial_block(tmp_cfg: Config):
     assert len(g["trend"]) == 14
     assert all({"date", "consultas", "activado"} <= d.keys() for d in g["trend"])
     assert g["consults"] == 0
+    assert g["consults_total"] == 0
+    assert g["consults_sampled"] == 0
     assert g["grounded_rate"] is None
     assert g["referenced_rate"] is None
     # detailed token-savings: daily series + composition, KPI consistent with panel
@@ -147,6 +153,51 @@ def test_gerencial_reports_context_cost_and_net_tokens(tmp_cfg: Config, monkeypa
     assert g["token_detail"]["net"] == 0
 
 
+def test_gerencial_consults_uses_daily_trend_total(tmp_cfg: Config):
+    state_dir = tmp_cfg.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "daily_trend.json").write_text(
+        json.dumps(
+            {
+                "2026-06-19": {"consultas": 1126, "activado": 41},
+                "2026-06-20": {"consultas": 745, "activado": 24},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    g = build.collect_data(tmp_cfg, include_projection=False)["gerencial"]
+
+    assert g["consults"] == 1871
+    assert g["consults_total"] == 1871
+    assert g["consults_sampled"] == 0
+    assert g["activations_total"] == 65
+    assert g["coverage_rate"] == 0.035
+    assert g["activation_rate_total"] == 0.035
+    assert g["activation_rate_sampled"] is None
+
+
+def test_verdict_exposes_total_and_sampled_consults(tmp_cfg: Config):
+    state_dir = tmp_cfg.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "daily_trend.json").write_text(
+        json.dumps(
+            {
+                "2026-06-19": {"consultas": 1126, "activado": 41},
+                "2026-06-20": {"consultas": 745, "activado": 24},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verdict = build.collect_data(tmp_cfg, include_projection=False)["verdict"]
+
+    assert verdict["consults"] == 0
+    assert verdict["consults_sampled"] == 0
+    assert verdict["consults_total"] == 1871
+    assert verdict["activations_total"] == 65
+
+
 def test_full_mode_includes_projection(tmp_cfg: Config):
     data = build.collect_data(tmp_cfg, include_projection=True)
     assert isinstance(data["projection"], dict)
@@ -156,3 +207,23 @@ def test_full_mode_includes_projection(tmp_cfg: Config):
 def test_collect_data_is_json_serializable(tmp_cfg: Config):
     data = build.collect_data(tmp_cfg, include_projection=False)
     json.dumps(data, ensure_ascii=False, default=str)  # must not raise
+
+
+def test_consult_trend_today_survives_trimmed_recall_log(tmp_path: Path):
+    """daily_trend.json is the synchronous, complete accumulator; recall.log is
+    size-capped and trims to its last lines. On a busy day the trimmed log holds
+    only a fraction of today's rows, so the live count under-reports today. The
+    trend must take the per-field max so a trimmed recall.log never shrinks
+    today's bar below the persisted accumulator."""
+    today = datetime.now(UTC).date().isoformat()
+    (tmp_path / "daily_trend.json").write_text(
+        json.dumps({today: {"consultas": 796, "activado": 31}}), encoding="utf-8"
+    )
+    # recall.log retains only 3 of today's rows (the rest trimmed away).
+    kept = [json.dumps({"ts": f"{today}T1{i}:00:00+00:00", "via": "daemon"}) for i in range(3)]
+    (tmp_path / "recall.log").write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+    trend = build._consult_trend(tmp_path)
+    bucket = next(d for d in trend if d["date"] == today)
+    assert bucket["consultas"] == 796  # persisted total, not the 3 surviving rows
+    assert bucket["activado"] == 31

@@ -6,6 +6,7 @@ from typing import Any
 from memo.dashboard_logs import (
     read_grounding_diag_log,
     read_grounding_log,
+    read_daily_trend,
     read_recall_hook_log,
     read_recall_log,
     read_usage_log,
@@ -46,6 +47,7 @@ EXPECTED_CONSUMERS = (
     "synapse",
     "memflow",
     "codex",
+    "blackbox",
 )
 
 
@@ -439,13 +441,20 @@ def consumer_label(row: dict[str, Any]) -> str:
 
 def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
     rows = dedup_double_fire(read_recall_log(state_dir, limit=limit))
+    # scored_turns = turns the grounding detector actually measured; grounded_keys
+    # = the subset where a memoria was used. Per-consumer grounded_rate divides by
+    # SCORED-surfaced only, mirroring the honest denominator in grounded_rate():
+    # a memoria surfaced on an un-scored turn is "not measured", not "not used".
+    scored_turns: set[tuple[str, int]] = set()
     grounded_keys: set[tuple[str, int, str]] = set()
     for g in read_grounding_log(state_dir):
         sid = g.get("session_id")
         turn = g.get("turn")
         rid = g.get("recall_id")
-        if sid and isinstance(turn, int) and rid and grounding_used(g):
-            grounded_keys.add((sid, turn, rid))
+        if sid and isinstance(turn, int):
+            scored_turns.add((sid, turn))
+            if rid and grounding_used(g):
+                grounded_keys.add((sid, turn, rid))
 
     by: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -465,7 +474,7 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
                         agg["strong"] += 1
             sid = r.get("session_id")
             turn = r.get("turn")
-            if sid and isinstance(turn, int):
+            if sid and isinstance(turn, int) and (sid, turn) in scored_turns:
                 for h in hits:
                     hid = h.get("id")
                     if not hid:
@@ -524,16 +533,19 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
     """
     health = recall_health(state_dir, limit=limit)
     cb = consult_breakdown(state_dir, limit=limit)
+    daily = read_daily_trend(state_dir)
+    consults_total = sum(int(row.get("consultas") or 0) for row in daily.values())
+    activations_total = sum(int(row.get("activado") or 0) for row in daily.values())
     # Volume that gates the verdict = ambient prompts (yours), not the all-tools
     # total. "¿Funciona como TU memoria?" needs enough of YOUR usage to judge;
     # an agent's eval flood shouldn't unlock or distort the verdict. The all-tools
     # per-consumer total stays in consult_breakdown for "¿quién usa memo?".
-    consults = int(health.get("sampled") or 0)
+    consults_sampled = int(health.get("sampled") or 0)
     grounded = health.get("grounded_rate")
     measured_turns = int(health.get("measured_turns") or 0)
     measurement_coverage = health.get("measurement_coverage")
 
-    if consults < VERDICT_MIN_CONSULTS:
+    if consults_sampled < VERDICT_MIN_CONSULTS:
         status, label = "unused", "❌ NO SE USA"
     elif (
         measured_turns < VERDICT_MIN_MEASURED_TURNS
@@ -553,7 +565,11 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
     return {
         "status": status,
         "label": label,
-        "consults": consults,
+        "consults": consults_sampled,
+        "consults_sampled": consults_sampled,
+        "consults_total": consults_total,
+        "activations_total": activations_total,
+        "activations_sampled": int(health.get("fired") or 0),
         "grounded_rate": grounded,
         "hit_rate": health.get("hit_rate"),
         "measurement_coverage": measurement_coverage,
