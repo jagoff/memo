@@ -559,8 +559,12 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
 
     readers = [str(c.get("consumer")) for c in cb.get("consumers", [])]
     silent = list(cb.get("silent") or [])
+    per_consumer_names = list(EXPECTED_CONSUMERS)
+    for name in readers:
+        if name not in per_consumer_names:
+            per_consumer_names.append(name)
     per_consumer = [
-        {"name": name, "reads": name in readers} for name in EXPECTED_CONSUMERS
+        {"name": name, "reads": name in readers} for name in per_consumer_names
     ]
     return {
         "status": status,

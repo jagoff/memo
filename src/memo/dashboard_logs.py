@@ -113,8 +113,9 @@ def append_recall_log(
     _write_jsonl_entry(recall_log_path(state_dir), entry, cap=cap, size_limit=1024 * 200)
     if session_id is not None:
         _write_jsonl_entry(recall_hook_log_path(state_dir), entry, cap=2000, size_limit=2_000_000)
-    if client:
-        _update_consumer_last_seen(state_dir, client, entry["ts"])
+    consumer = (client or source or "").strip().lower()
+    if consumer:
+        _update_consumer_last_seen(state_dir, consumer, entry["ts"])
     day = entry["ts"][:10]
     activated = 1 if via in ("daemon", "subprocess") else 0
     _update_daily_trend(state_dir, day=day, delta_consults=1, delta_activado=activated)

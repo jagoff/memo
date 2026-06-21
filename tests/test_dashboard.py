@@ -215,3 +215,20 @@ def test_verdict_marks_expected_consumers_silent(tmp_path: Path) -> None:
     assert by_name["claude-code"] is True
     assert by_name["memflow"] is False
     assert "memflow" in v["silent"]
+
+
+def test_verdict_includes_on_demand_readers(tmp_path: Path) -> None:
+    append_recall_log(
+        tmp_path,
+        prompt="project briefing",
+        hits=[],
+        via="mcp:unified_briefing",
+        source="opencode",
+    )
+
+    v = verdict(tmp_path)
+
+    by_name = {p["name"]: p["reads"] for p in v["per_consumer"]}
+    assert by_name["opencode"] is True
+    assert "opencode" in v["readers"]
+    assert "opencode" not in v["silent"]

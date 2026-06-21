@@ -15,7 +15,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from memo.dashboard_logs import read_recall_log
+from memo.dashboard_logs import (
+    read_context_cost_log,
+    read_grounding_log,
+    read_recall_log,
+    read_usage_log,
+)
 from memo.dashboard_metrics import consult_breakdown, reask_stats, recall_health, verdict
 
 _log = logging.getLogger(__name__)
@@ -482,3 +487,83 @@ def _panel_consumers(state_dir: Path) -> Panel:
         else tbl
     )
     return Panel(body, title="[bold cyan]consumers[/bold cyan]", border_style="cyan")
+
+
+_utility_cache: _TTLCache = _TTLCache(ttl_s=30.0)
+
+
+def _panel_utility(state_dir: Path) -> Panel:
+    """Panel answering 'is memo worth it?' — tokens saved, hit rate, grounding."""
+    key = str(state_dir)
+    cached = _utility_cache.get(key)
+    if cached is None:
+        total_tokens = 0
+        usage_ids: set[str] = set()
+        grounding_yes = 0
+        grounding_no = 0
+
+        try:
+            for entry in read_context_cost_log(state_dir, limit=2000):
+                total_tokens += entry.get("tokens_est", 0)
+        except Exception as exc:
+            _log.debug("dashboard: context_cost fetch failed: %s", exc)
+
+        try:
+            for entry in read_usage_log(state_dir, limit=2000):
+                eid = entry.get("id", "")
+                if eid:
+                    usage_ids.add(eid)
+        except Exception as exc:
+            _log.debug("dashboard: usage_log fetch failed: %s", exc)
+
+        try:
+            for entry in read_grounding_log(state_dir, limit=2000):
+                g = entry.get("grounded")
+                if g is True:
+                    grounding_yes += 1
+                elif g is False:
+                    grounding_no += 1
+        except Exception as exc:
+            _log.debug("dashboard: grounding fetch failed: %s", exc)
+
+        fired = with_hits = strong = 0
+        try:
+            health = recall_health(state_dir, limit=500)
+            fired = health.get("fired", 0)
+            with_hits = int(health.get("hit_rate", 0) * fired) if fired else 0
+            strong = int(health.get("strong_hit_rate", 0) * fired) if fired else 0
+        except Exception as exc:
+            _log.debug("dashboard: recall_health fetch failed: %s", exc)
+
+        tokens_saved = total_tokens
+        cost_usd = tokens_saved * 0.00001
+        strong_rate_pct = (strong / fired * 100) if fired else 0
+        grounding_rate_pct = (grounding_yes / (grounding_yes + grounding_no) * 100) if (grounding_yes + grounding_no) else 0
+        unique_mems = len(usage_ids)
+
+        def _n(v: Any) -> str:
+            return "—" if v is None else str(v)
+
+        def _pct(v: float) -> str:
+            return "—" if v <= 0 else f"{v:.0f}%"
+
+        rows = [
+            ("tokens evitados", f"[yellow]{tokens_saved:,}[/yellow]"),
+            ("costo evitado", f"[green]${cost_usd:.2f}[/green]"),
+            ("recall hooks", f"{_n(fired)} fue / {_n(with_hits)} hits"),
+            ("strong hits", f"{_pct(strong_rate_pct)} (score >0.7)"),
+            ("memorias", f"[cyan]{unique_mems}[/cyan] únicas"),
+            ("grounding", f"{_pct(grounding_rate_pct)} respondida"),
+        ]
+
+        tbl = Table.grid(padding=(0, 2), expand=False)
+        tbl.add_column(width=16)
+        tbl.add_column()
+        for label, value in rows:
+            tbl.add_row(Text(label, style="dim"), Text(value, style="bold"))
+        cached = tbl
+        _utility_cache.set(cached, key)
+
+    style = "green"
+    title = "[bold green]memo: ¿vale la pena?[/bold green]"
+    return Panel(cached, title=title, border_style=style, padding=(0, 1))
