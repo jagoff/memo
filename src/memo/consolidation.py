@@ -151,46 +151,57 @@ class AdvancedConsolidator:
             prompt += f"Updated: {m['updated']}\n"
             prompt += f"{m.get('body_preview', '')}\n\n"
 
-        try:
-            out = chat_with_timeout(
-                chat,
-                # Must cover a COLD load of cfg.llm_model: with the 30B MoE the
-                # weight read (~17GB) alone exceeds 60s, so a 60s budget kills the
-                # load mid-flight before it can warm — every cluster then re-cold-
-                # loads and times out again. 180s lets the first call warm the
-                # model; subsequent clusters reuse it and finish in seconds.
-                timeout=180,
-                model=self.memory.cfg.llm_model,
-                messages=[
-                    {"role": "system", "content": _MERGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                options={"temperature": 0.0, "max_tokens": 4096, "thinking": False},
-            )
+        messages = [
+            {"role": "system", "content": _MERGE_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+
+        # timeout=180 must cover a COLD load of cfg.llm_model: with the 30B MoE
+        # the weight read (~17GB) alone exceeds 60s, so a tighter budget would
+        # kill the load before it can warm and every cluster would re-cold-load.
+        # The first call warms the model; the rest reuse it in seconds.
+        #
+        # Greedy decode (temp=0.0) is deterministic, so a cluster whose output
+        # truncates into invalid JSON fails identically on every run. One sampled
+        # retry (temp=0.3) breaks that determinism and recovers it; a still-bad
+        # second output degrades to a skipped cluster (never a crash).
+        data: dict[str, Any] | None = None
+        for attempt, temperature in enumerate((0.0, 0.3)):
+            try:
+                out = chat_with_timeout(
+                    chat,
+                    timeout=180,
+                    model=self.memory.cfg.llm_model,
+                    messages=messages,
+                    options={"temperature": temperature, "max_tokens": 4096, "thinking": False},
+                )
+            except Exception as exc:
+                _log.warning("consolidation: merge-proposal LLM call failed: %s", exc)
+                return None
             if out is None:
                 _log.warning("consolidation: merge-proposal LLM timeout")
                 return None
             raw = (out.get("message") or {}).get("content") or ""
-        except Exception as exc:
-            _log.warning("consolidation: merge-proposal LLM call failed: %s", exc)
-            return None
-
-        # Robust extraction: the model may wrap the object in prose or a markdown
-        # fence, or stop mid-string on a bad generation. Decode the first JSON
-        # object starting at the opening brace (raw_decode ignores any trailing
-        # text, including a closing fence); a truncated/unterminated object then
-        # degrades to a skipped cluster instead of being lost to a brittle parse.
-        start = raw.find("{")
-        if start == -1:
-            _log.warning("consolidation: merge-proposal had no JSON object; skipping cluster")
-            return None
-        try:
-            data, _ = json.JSONDecoder().raw_decode(raw, start)
-        except (ValueError, TypeError) as exc:
-            _log.warning("consolidation: merge-proposal JSON unparseable (%s); skipping cluster", exc)
-            return None
-
-        if not isinstance(data, dict):
+            # Decode the first JSON object from the opening brace; raw_decode
+            # ignores surrounding prose / a closing fence.
+            start = raw.find("{")
+            if start != -1:
+                try:
+                    parsed, _ = json.JSONDecoder().raw_decode(raw, start)
+                    if isinstance(parsed, dict):
+                        data = parsed
+                        break
+                except (ValueError, TypeError):
+                    pass
+            if attempt == 0:
+                _log.info(
+                    "consolidation: merge-proposal greedy output unparseable; "
+                    "retrying once with sampling"
+                )
+        if data is None:
+            _log.warning(
+                "consolidation: merge-proposal JSON unparseable after retry; skipping cluster"
+            )
             return None
 
         return MergeProposal(
