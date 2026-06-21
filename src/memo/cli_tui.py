@@ -16,7 +16,7 @@ from memo.cli_common import console
 from memo.config import Config
 
 
-@click.command(name="stats")
+@click.command(name="tui")
 @click.option(
     "--refresh", type=float, default=1.0, show_default=True, help="Refresh interval in seconds."
 )
@@ -25,7 +25,7 @@ from memo.config import Config
     is_flag=True,
     help="Don't take over the terminal screen — render inline (handy for tmux/screen).",
 )
-def stats(refresh: float, no_clear: bool) -> None:
+def tui(refresh: float, no_clear: bool) -> None:
     """Live terminal dashboard — token savings, utility metrics, consumers.
 
     Shows: tokens evitados, costo $, recall hooks, strong hits, memorias únicas,
