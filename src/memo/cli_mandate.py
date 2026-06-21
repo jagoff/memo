@@ -43,6 +43,7 @@ _CLIENT_FILES: dict[str, str] = {
     "opencode": "AGENTS.md",
     "windsurf": ".windsurfrules",
     "cursor": ".cursor/rules/memo.md",
+    "blackbox": "AGENTS.md",
 }
 
 
@@ -88,7 +89,7 @@ def _write_mandate(target: Path, *, dry_run: bool) -> str:
 @click.option(
     "--client",
     "client",
-    type=click.Choice(["all", "codex", "devin", "opencode", "windsurf", "cursor"]),
+    type=click.Choice(["all", "codex", "devin", "opencode", "windsurf", "cursor", "blackbox"]),
     default=None,
     help="Write the mandate into this client's project-local instruction file.",
 )

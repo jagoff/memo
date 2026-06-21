@@ -16,7 +16,7 @@ from memo.cli_common import console
 from memo.config import Config
 
 
-@click.command(name="tui")
+@click.command(name="stats")
 @click.option(
     "--refresh", type=float, default=1.0, show_default=True, help="Refresh interval in seconds."
 )
@@ -25,13 +25,11 @@ from memo.config import Config
     is_flag=True,
     help="Don't take over the terminal screen — render inline (handy for tmux/screen).",
 )
-def tui(refresh: float, no_clear: bool) -> None:
-    """Live terminal dashboard — corpus stats, recent saves/recalls, MLX warm-state,
-    watcher status, top tags, 14-day sparklines. Ctrl+C to exit.
+def stats(refresh: float, no_clear: bool) -> None:
+    """Live terminal dashboard — token savings, utility metrics, consumers.
 
-    Reads from the existing `history.db` (saves) and a JSONL recall log
-    written by `memo recall-hook`. Read-only — does not modify the
-    corpus.
+    Shows: tokens evitados, costo $, recall hooks, strong hits, memorias únicas,
+    grounding rate. Ctrl+C to exit.
     """
     from memo.dashboard import run_tui
 
