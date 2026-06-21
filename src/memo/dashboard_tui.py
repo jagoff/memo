@@ -15,48 +15,31 @@ from rich.live import Live
 from rich.text import Text
 
 from memo.dashboard_panels import (
-    _panel_activity,
     _panel_consumers,
     _panel_corpus,
-    _panel_memflow,
-    _panel_recall_quality,
-    _panel_recent_recalls,
-    _panel_recent_saves,
-    _panel_runtime,
-    _panel_top_tags,
+    _panel_utility,
     _panel_verdict,
 )
 
 
 def render(memory: Any, state_dir: Path) -> Layout:
+    """Production TUI: utility focus, minimal panels, terminal fit."""
     layout = Layout()
     layout.split_column(
-        Layout(name="verdict", size=8),
-        Layout(name="top", size=3),
-        Layout(name="mid", size=8),
-        Layout(name="bot", size=6),
-        Layout(name="ext", size=9),
+        Layout(name="header", size=10),
+        Layout(name="mid", size=18),
         Layout(name="footer", size=1),
     )
-    layout["verdict"].split_row(Layout(name="verdict_memo"), Layout(name="verdict_memflow"))
-    layout["top"].split_row(Layout(name="corpus"), Layout(name="runtime"))
-    layout["mid"].split_row(Layout(name="saves"), Layout(name="recalls"))
-    layout["bot"].split_row(Layout(name="tags"), Layout(name="activity"))
-    layout["ext"].split_row(Layout(name="recall_quality"), Layout(name="consumers"))
+    layout["header"].split_row(Layout(name="utility"), Layout(name="verdict"))
+    layout["mid"].split_row(Layout(name="stats"), Layout(name="consumers"))
 
-    layout["verdict_memo"].update(_panel_verdict(state_dir))
-    layout["verdict_memflow"].update(_panel_memflow(state_dir))
-    layout["corpus"].update(_panel_corpus(memory))
-    layout["runtime"].update(_panel_runtime(memory))
-    layout["saves"].update(_panel_recent_saves(memory, limit=5))
-    layout["recalls"].update(_panel_recent_recalls(state_dir, limit=4))
-    layout["tags"].update(_panel_top_tags(memory, limit=4))
-    layout["activity"].update(_panel_activity(memory, state_dir))
-    layout["recall_quality"].update(_panel_recall_quality(state_dir))
+    layout["utility"].update(_panel_utility(state_dir))
+    layout["verdict"].update(_panel_verdict(state_dir))
+    layout["stats"].update(_panel_corpus(memory))
     layout["consumers"].update(_panel_consumers(state_dir))
     now = datetime.now().strftime("%H:%M:%S")
     footer = Text.from_markup(
-        f"[dim]memo · live  ·  {memory.cfg.memory_dir}  ·  [/dim][cyan]{now}[/cyan]"
+        f"[dim]memo TUI  ·  {memory.cfg.memory_dir}  ·  [/dim][cyan]{now}[/cyan]"
         f"  [dim]·  [/dim][bold]q[/bold][dim] / [/dim][bold]ESC[/bold][dim] / Ctrl+C to quit[/dim]"
     )
     layout["footer"].update(Align.center(footer))
