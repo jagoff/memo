@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import memo.dashboard_logs as dashboard_logs
 from memo import dashboard
 from memo.server_common import log_consult as _log_consult
 
@@ -62,6 +63,7 @@ def test_log_consult_records_via_and_lowercased_source(tmp_path: Path) -> None:
     assert rows[0]["via"] == "mcp:search"
     assert rows[0]["source"] == "synapse"
     assert dashboard.consumer_label(rows[0]) == "synapse"
+    assert "synapse" in dashboard_logs.read_consumer_last_seen(tmp_path)
 
 
 def test_log_consult_falls_back_to_memo_source_env(tmp_path: Path, monkeypatch) -> None:

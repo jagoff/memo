@@ -80,9 +80,14 @@ def _stats_file(state_dir: Path) -> Path:
     return state_dir / "embed_daemon_stats.json"
 
 
-def _stats_persister(state_dir: Path, stats: _DaemonStats, interval_s: float) -> None:
+def _stats_persister(
+    state_dir: Path,
+    stats: _DaemonStats,
+    interval_s: float,
+    shutdown_event: threading.Event,
+) -> None:
     target = _stats_file(state_dir)
-    while True:
+    while not shutdown_event.is_set():
         time.sleep(interval_s)
         try:
             snap = stats.snapshot()

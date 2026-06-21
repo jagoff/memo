@@ -243,7 +243,7 @@ Construidas en el array `kpis` (`:1230-1248`), dibujadas en `:1249-1258`. Todas 
   - `helping` = `grounded_rate ≥ 0.10` (`:1301`) — hoy no cambia el color pero está calculado.
 - **Callout silencioso** `#silent-callout` (`:1316-1325`): `DATA.usefulness.silent` = consumidores de
   `EXPECTED_CONSUMERS` que no aparecen ni en la ventana ni en `consumer_last_seen.json` (< 30 días)
-  (`metrics:504-516`). Si vacío: "✅ Todas las herramientas esperadas están consultando memo."
+  (`metrics:504-516`). Si vacío: vacío (sin mensaje).
 - **De dónde sale `consult_breakdown`** (`metrics:442-517`): deduplica `recall.log`, agrupa por
   `consumer_label(row)` (client → source → via→claude-code/mcp/bail, `metrics:425-439`), cuenta
   consults/fired/with_hits/strong, calcula `hit_rate`, `grounded_rate` (cruzando con

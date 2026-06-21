@@ -128,7 +128,7 @@ class _SearchOpsMixin(_MemoryBase):
             # the cross-encoder has more candidates to discriminate
             # between; the final `limit` is applied AFTER rerank.
             input_k = self.cfg.rerank_input_k if self.cfg.reranker_enabled else limit
-            k_each = max(input_k * 2, 30)
+            k_each = max(input_k * 2, 20)
             emb = self.embedder.embed_query(query)
             vec_hits = self.store.search(
                 emb, limit=k_each, type_=type_, exclude_types=exclude_types
@@ -181,7 +181,7 @@ class _SearchOpsMixin(_MemoryBase):
             # configurable (MEMO_RRF_K, default 60); MEMO_RRF_ADAPTIVE opts
             # into density-driven k (sharper on agreement, softer when the
             # lists diverge) — off by default so the eval baseline holds.
-            base_k = flag_int("MEMO_RRF_K") or 60
+            base_k = flag_int("MEMO_RRF_K") or 25
             rrf_k = (
                 _adaptive_rrf_k([vec_hits, bm_hits, exact_hits, graph_hits], base_k=base_k)
                 if flag_bool("MEMO_RRF_ADAPTIVE")
@@ -618,6 +618,7 @@ class _SearchOpsMixin(_MemoryBase):
                 boosted.sort(key=lambda r: r.score or 0.0, reverse=True)
             return boosted
         except Exception:
+            _log.exception("retrieval boost failed, returning unboosted results")
             return results
 
     def _apply_retrieval_boost(
