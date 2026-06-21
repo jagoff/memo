@@ -365,7 +365,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 chat = self._ensure_chat()
                 chat_out = chat_with_timeout(
                     chat,
-                    timeout=60,
+                    timeout=180,
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _CONSOLIDATE_SYSTEM_PROMPT},
@@ -530,7 +530,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
             try:
                 chat_out = chat_with_timeout(
                     chat,
-                    timeout=60,
+                    timeout=180,
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},

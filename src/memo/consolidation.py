@@ -155,7 +155,12 @@ class AdvancedConsolidator:
         try:
             out = chat_with_timeout(
                 chat,
-                timeout=60,
+                # Must cover a COLD load of cfg.llm_model: with the 30B MoE the
+                # weight read (~17GB) alone exceeds 60s, so a 60s budget kills the
+                # load mid-flight before it can warm — every cluster then re-cold-
+                # loads and times out again. 180s lets the first call warm the
+                # model; subsequent clusters reuse it and finish in seconds.
+                timeout=180,
                 model=self.memory.cfg.llm_model,
                 messages=[
                     {"role": "system", "content": _MERGE_SYSTEM_PROMPT},
