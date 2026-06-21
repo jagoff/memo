@@ -103,7 +103,7 @@ from memo.cli_runtime import (
 from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
 from memo.cli_session import continuity_cmd, session_group
 from memo.cli_share import share_group
-from memo.cli_stats import stats as info_cmd
+from memo.cli_stats import stats
 from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
@@ -136,7 +136,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Analysis & Quality",
-        ["health", "info", "doctor", "lint", "analytics", "eval", "roi", "usefulness", "gaps", "outcome", "profile"],
+        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "usefulness", "gaps", "outcome", "profile"],
     ),
     (
         "Knowledge Graph",
@@ -273,7 +273,7 @@ cli.add_command(diff_cmd)
 cli.add_command(historia_cmd)
 cli.add_command(briefing)
 cli.add_command(init_cmd)
-cli.add_command(info_cmd)
+cli.add_command(stats)
 cli.add_command(doctor)
 cli.add_command(migrate_vault)
 cli.add_command(migrate_vault, name="migrate")  # alias

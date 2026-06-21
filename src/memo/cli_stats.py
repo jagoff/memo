@@ -9,7 +9,7 @@ from memo.cli_common import console
 from memo.config import Config
 
 
-@click.command(name="info")
+@click.command(name="stats")
 def stats() -> None:
     """Summary info — total records, vault path, embedder model."""
     from memo.memory import Memory
