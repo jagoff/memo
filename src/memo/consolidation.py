@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -166,7 +165,7 @@ class AdvancedConsolidator:
                     {"role": "system", "content": _MERGE_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                options={"temperature": 0.0, "max_tokens": 2048, "thinking": False},
+                options={"temperature": 0.0, "max_tokens": 4096, "thinking": False},
             )
             if out is None:
                 _log.warning("consolidation: merge-proposal LLM timeout")
@@ -176,14 +175,19 @@ class AdvancedConsolidator:
             _log.warning("consolidation: merge-proposal LLM call failed: %s", exc)
             return None
 
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE)
-
+        # Robust extraction: the model may wrap the object in prose or a markdown
+        # fence, or stop mid-string on a bad generation. Decode the first JSON
+        # object starting at the opening brace (raw_decode ignores any trailing
+        # text, including a closing fence); a truncated/unterminated object then
+        # degrades to a skipped cluster instead of being lost to a brittle parse.
+        start = raw.find("{")
+        if start == -1:
+            _log.warning("consolidation: merge-proposal had no JSON object; skipping cluster")
+            return None
         try:
-            data = json.loads(raw)
+            data, _ = json.JSONDecoder().raw_decode(raw, start)
         except (ValueError, TypeError) as exc:
-            _log.warning("consolidation: merge-proposal JSON parse failed: %s", exc)
+            _log.warning("consolidation: merge-proposal JSON unparseable (%s); skipping cluster", exc)
             return None
 
         if not isinstance(data, dict):
