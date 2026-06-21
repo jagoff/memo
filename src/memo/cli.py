@@ -55,6 +55,7 @@ from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
 from memo.cli_health import health as health_cmd
 from memo.cli_history import diff_cmd, historia_cmd
+from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
 from memo.cli_ingest_daemon import ingest_daemon_group
@@ -81,7 +82,6 @@ from memo.cli_outcome import gaps as gaps_cmd
 from memo.cli_outcome import outcome as outcome_cmd
 from memo.cli_profile import profile_group
 from memo.cli_query import query_group
-from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_recall_hook import recall_hook
 from memo.cli_repo import repo_group
@@ -103,12 +103,12 @@ from memo.cli_runtime import (
 from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
 from memo.cli_session import continuity_cmd, session_group
 from memo.cli_share import share_group
-from memo.cli_stats import stats
+from memo.cli_stats import stats as stats_info
 from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
 from memo.cli_transcripts import mine_history, reflect
-from memo.cli_tui import hook_log, logs, tui
+from memo.cli_tui import hook_log, logs, stats
 from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_version import version_group
 from memo.cli_viz import mapa_cmd
@@ -152,7 +152,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Visualization",
-        ["tui", "dashboard", "mapa", "logs", "hook-log"],
+        ["stats", "dashboard", "mapa", "logs", "hook-log"],
     ),
     (
         "Setup & Config",
@@ -260,7 +260,7 @@ cli.add_command(gaps_cmd)
 cli.add_command(outcome_cmd)
 cli.add_command(mandate_cmd)
 cli.add_command(mapa_cmd)
-cli.add_command(tui)
+cli.add_command(stats)
 cli.add_command(hook_log)
 cli.add_command(logs)
 cli.add_command(mine_history)
@@ -273,6 +273,7 @@ cli.add_command(diff_cmd)
 cli.add_command(historia_cmd)
 cli.add_command(briefing)
 cli.add_command(init_cmd)
+cli.add_command(stats_info, name="info")
 cli.add_command(stats)
 cli.add_command(doctor)
 cli.add_command(migrate_vault)
