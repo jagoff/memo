@@ -55,3 +55,10 @@ memo-backup-*.zip
 
 # graphify tool output (local analysis cache)
 graphify-out/
+
+# Zero-config repo mode defaults (auto-created on first run)
+memorias/
+.memo-state/
+.memo-state/*.db
+.memo-state/*.db-shm
+.memo-state/*.db-wal
