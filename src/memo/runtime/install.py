@@ -107,7 +107,7 @@ def init_cmd(force: bool) -> None:
 @click.option(
     "--client",
     type=click.Choice(
-        ["claude-code", "claude-desktop", "codex", "devin", "opencode", "windsurf", "json"]
+        ["claude-code", "claude-desktop", "codex", "devin", "opencode", "windsurf", "blackbox", "json"]
     ),
     default="claude-code",
     show_default=True,
@@ -158,6 +158,9 @@ def mcp_command(client: str) -> None:
     if client == "opencode":
         click.echo(_format_command(_mcp_add_command("opencode", memo_mcp, {**env, "MEMO_SOURCE": "opencode"})))
         return
+    if client == "blackbox":
+        click.echo(_format_command(_mcp_add_command("blackbox", memo_mcp, {**env, "MEMO_SOURCE": "blackbox"})))
+        return
     click.echo(_format_command(_mcp_add_command("claude-code", memo_mcp, env)))
 
 
@@ -166,7 +169,7 @@ def mcp_command(client: str) -> None:
     "--client",
     "clients",
     multiple=True,
-    type=click.Choice(["all", "claude-code", "codex", "devin", "opencode", "windsurf"]),
+    type=click.Choice(["all", "claude-code", "codex", "devin", "opencode", "windsurf", "blackbox"]),
     help="Client to configure. Repeatable. Defaults to all supported agent clients.",
 )
 @click.option(
@@ -260,7 +263,7 @@ def install_slash(
     if "windsurf" in selected:
         run_client("Windsurf", install_windsurf)
 
-    mandate_clients = [client for client in selected if client in {"codex", "devin", "opencode", "windsurf", "cursor"}]
+    mandate_clients = [client for client in selected if client in {"codex", "devin", "opencode", "windsurf", "cursor", "blackbox"}]
     if mandate_clients:
         console.print("[bold]Mandate[/bold]")
         for rel, status in write_mandates_for_clients(mandate_clients, cwd=Path.cwd(), dry_run=dry_run):

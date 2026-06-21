@@ -410,7 +410,7 @@ def run_server(state_dir: Path | None = None) -> None:
     if interval > 0:
         persister = threading.Thread(
             target=_stats_persister,
-            args=(state_dir, server._stats, interval),
+            args=(state_dir, server._stats, interval, shutdown_event),
             daemon=True,
             name="recall-daemon-stats-persister",
         )

@@ -23,15 +23,20 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             dry_run: Preview what would be saved without writing anything.
         """
+        import uuid
+        from pathlib import Path
+
         from memo.capture import run_capture_incremental
-        from memo.session import list_sessions
+        from memo.session import checkpoint, list_sessions
 
         cfg = memory.cfg
 
         # Get the most recent session
         sessions = list_sessions(cfg.state_dir, limit=1)
         if not sessions:
-            return {"status": "no_sessions", "saved": 0, "saved_titles": []}
+            new_sid = str(uuid.uuid4())
+            checkpoint(cfg.state_dir, session_id=new_sid, cwd=str(Path.cwd()))
+            sessions = [{"session_id": new_sid, "transcript_path": None, "cwd": str(Path.cwd())}]
 
         sid = sessions[0].get("session_id")
         if not sid:
@@ -76,6 +81,86 @@ def register(server: FastMCP, memory: Memory) -> None:
             "saved_titles": titles,
             "notification": notification,
             "session_id": sid,
+        }
+
+    @server.tool()
+    def memo_start_session(
+        session_id: str | None = None,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        """Start a new session for this client.
+
+        Call this when beginning a new task or conversation. This enables
+        session tracking (auto-capture, checkpoints, grounding).
+
+        Args:
+            session_id: Optional session ID (auto-generated if not provided).
+            cwd: Current working directory (defaults to current directory).
+        """
+        import uuid
+        from datetime import UTC, datetime
+
+        from memo.session import checkpoint
+
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        if not cwd:
+            import os
+            cwd = os.getcwd()
+
+        cfg = memory.cfg
+        result = checkpoint(
+            cfg.state_dir,
+            session_id=session_id,
+            cwd=cwd,
+            prompt=None,
+        )
+
+        return {
+            "status": "started",
+            "session_id": session_id,
+            "cwd": cwd,
+            "project": result.get("project"),
+            "head_commit": result.get("head_commit", "")[:12],
+            "created": datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+
+    @server.tool()
+    def memo_save_text(
+        text: str,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Save a memory from text.
+
+        Use this to save insights, decisions, or important information
+        directly without needing a transcript. Works for any LLM client
+        (opencode, Claude Desktop, etc).
+
+        Args:
+            text: The content to save as a memory.
+            title: Optional title (auto-generated from first line if not provided).
+        """
+        from memo.memory import WriteRefused
+
+        if not text:
+            return {"status": "error", "message": "text is required"}
+
+        if not title:
+            first_line = text.strip().split("\n")[0][:80]
+            title = first_line
+
+        memory._ensure_chat()
+
+        try:
+            rec = memory.save(content=text, title=title, type_="note")
+        except WriteRefused as exc:
+            return {"status": "refused", "conflict": exc.conflict, "message": str(exc)}
+
+        return {
+            "status": "saved",
+            "saved": 1,
+            "title": title,
+            "ids": [rec.id],
         }
 
 

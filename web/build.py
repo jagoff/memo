@@ -1333,7 +1333,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
         " — estas herramientas están conectadas pero no consultan la memoria.";
     } else {
       sc.className = "badge-silent ok";
-      sc.textContent = "✅ Todas las herramientas esperadas están consultando memo.";
+      sc.innerHTML = "";
     }
 
     // ── VACÍOS DE CONOCIMIENTO ──
