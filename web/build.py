@@ -503,13 +503,25 @@ def _consult_trend(state_dir: Path, *, days: int = 14, limit: int = 1000) -> lis
         if r.get("via") in ("daemon", "subprocess"):
             live[day]["activado"] += 1
 
-    # Build merged view: persisted wins; live overrides today (more accurate)
-    today = datetime.now(UTC).date().isoformat()
+    # Build merged view by per-field MAX. daily_trend.json is the synchronous,
+    # complete accumulator (incremented on every recall append); recall.log is
+    # size-capped and trims to its last lines, so the live count can only
+    # UNDER-report a busy day. Taking the max means a trimmed recall.log never
+    # shrinks today's bar below the persisted total, while still recovering a day
+    # that daily_trend missed (e.g. a failed trend write, or rows logged by an
+    # older runtime before the accumulator existed).
     merged: dict[str, dict[str, int]] = {}
     for d, v in persisted.items():
         merged[d] = dict(v)
-    if today in live:
-        merged[today] = live[today]  # live is ground truth for today
+    for d, v in live.items():
+        cur = merged.get(d)
+        if cur is None:
+            merged[d] = dict(v)
+        else:
+            merged[d] = {
+                "consultas": max(int(cur.get("consultas", 0)), v["consultas"]),
+                "activado": max(int(cur.get("activado", 0)), v["activado"]),
+            }
 
     out: list[dict[str, Any]] = []
     for i in range(days - 1, -1, -1):
@@ -688,14 +700,32 @@ def _gerencial(cfg: Config) -> dict[str, Any]:
     sampled = int(health.get("sampled") or 0)
     hit_rate = float(health.get("hit_rate") or 0.0)
     with_hits = round(hit_rate * fired) if fired else 0
+    daily = read_daily_trend(state_dir)
+    consults_total = sum(int(row.get("consultas") or 0) for row in daily.values())
+    activated_total = sum(int(row.get("activado") or 0) for row in daily.values())
 
-    # Funnel stages that share ONE honest denominator (sampled). "Used in the
-    # answer" is deliberately NOT a 4th bar — it is measured on a smaller scored
-    # subset, so it lives as its own KPI to avoid implying a false collapse.
+    # The top summary is intentionally split by source:
+    # - historical totals from the persistent daily accumulator
+    # - recent sample from recall/log windows for quality metrics
     funnel = [
-        {"key": "preguntas", "label": "Preguntas hechas", "value": sampled},
-        {"key": "activado", "label": "memo se activó", "value": fired},
-        {"key": "encontro", "label": "Encontró información útil", "value": with_hits},
+        {
+            "key": "preguntas",
+            "label": "Consultas totales",
+            "value": consults_total,
+            "sub": "acumulado histórico en daily_trend.json",
+        },
+        {
+            "key": "muestra",
+            "label": "Consultas analizadas",
+            "value": sampled,
+            "sub": "muestra reciente usada para hit/grounding",
+        },
+        {
+            "key": "activadas",
+            "label": "Activaciones históricas",
+            "value": activated_total,
+            "sub": "consultas totales que abrieron memo",
+        },
     ]
 
     k_total = int(health.get("answers_knowledge_total") or 0)
@@ -713,8 +743,14 @@ def _gerencial(cfg: Config) -> dict[str, Any]:
     token_detail = _token_savings(state_dir)
     return {
         "funnel": funnel,
-        "consults": sampled,
-        "coverage_rate": round(fired / sampled, 3) if sampled else None,
+        "consults": consults_total,
+        "consults_total": consults_total,
+        "consults_sampled": sampled,
+        "activations_total": activated_total,
+        "activations_sampled": fired,
+        "coverage_rate": round(activated_total / consults_total, 3) if consults_total else None,
+        "activation_rate_total": round(activated_total / consults_total, 3) if consults_total else None,
+        "activation_rate_sampled": round(fired / sampled, 3) if sampled else None,
         "hit_rate": health.get("hit_rate"),
         "grounded_rate": health.get("grounded_rate"),
         "referenced_rate": health.get("referenced_rate"),
@@ -983,16 +1019,12 @@ _HTML_TEMPLATE = r"""<!doctype html>
 
   /* ── funnel ── */
   .funnel { display: grid; gap: 10px; }
-  .fstage { display: grid; grid-template-columns: 190px 1fr auto; align-items: center;
-            gap: 14px; }
+  .fstage { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px;
+            padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .fstage:last-child { border-bottom: none; }
   .fstage .fname { font-size: 13.5px; color: var(--fg); }
   .fstage .fname small { display: block; color: var(--fg-dim); font-size: 11px; margin-top: 1px; }
-  .fbar { height: 34px; background: var(--panel-soft); border-radius: 9px; overflow: hidden; }
-  .fbar > div { height: 100%; border-radius: 9px; transition: width .6s cubic-bezier(.16,1,.3,1);
-                display: flex; align-items: center; padding-left: 12px;
-                font-weight: 700; font-size: 13px; color: #06121f; }
-  .fstage .fval { font-weight: 800; font-size: 17px; min-width: 84px; text-align: right; }
-  .fstage .fval small { color: var(--fg-dim); font-weight: 600; font-size: 11.5px; }
+  .fstage .fval { font-weight: 800; font-size: 17px; min-width: 104px; text-align: right; }
   @media (max-width: 620px) { .fstage { grid-template-columns: 1fr; gap: 4px; } .fstage .fval { text-align: left; } }
 
   /* ── KPI cards ── */
@@ -1105,8 +1137,8 @@ _HTML_TEMPLATE = r"""<!doctype html>
 
   <!-- QUIÉN USA MEMO -->
   <section class="panel">
-    <h2>¿Quién usa memo?</h2>
-    <p class="hint">memo es la memoria compartida de todas las herramientas (Claude Code, Codex, Devin…). Cada barra es cuántas veces esa herramienta consultó memo.</p>
+    <h2>¿Quién usa memo? · muestra reciente</h2>
+    <p class="hint">memo es la memoria compartida de todas las herramientas (Claude Code, Codex, Devin…). Esta tabla muestra la ventana reciente que usa el dashboard para medir actividad; no es un total histórico.</p>
     <div class="tools" id="tools"></div>
     <div class="badge-silent" id="silent-callout"></div>
   </section>
@@ -1177,26 +1209,22 @@ _HTML_TEMPLATE = r"""<!doctype html>
     vl.textContent = (V.label || "❌ NO SE USA").replace(/^[^ ]+ /, "");
     vl.style.color = vc.color;
     document.getElementById("verdict-explain").textContent = vc.explain;
-    document.getElementById("verdict-consults").textContent = (V.consults ?? 0).toLocaleString("es");
+    const vd = Number(V.consults_sampled ?? V.consults ?? 0);
+    const vt = Number(V.consults_total ?? V.consults ?? 0);
+    document.getElementById("verdict-consults").textContent =
+      `${vd.toLocaleString("es")} / ${vt.toLocaleString("es")}`;
+    document.querySelector("#verdict-panel .vstat span").textContent = "muestra / total";
 
     // ── EMBUDO ──
     const funnel = G.funnel || [];
-    const top = funnel.length ? (funnel[0].value || 0) : 0;
-    const fcolors = ["var(--blue)", "var(--green)", "var(--green)"];
-    const fnotes = ["lo que se le preguntó al asistente",
-                    "decidió que valía la pena buscar",
-                    "devolvió algo relevante"];
     const fEl = document.getElementById("funnel");
     fEl.innerHTML = "";
-    funnel.forEach((s, i) => {
-      const pct = top > 0 ? (s.value / top * 100) : 0;
-      const ofTop = (i > 0 && top > 0) ? `<small>${Math.round(pct)}% del total</small>` : "";
+    funnel.forEach((s) => {
       const row = document.createElement("div");
       row.className = "fstage";
       row.innerHTML =
-        `<div class="fname">${s.label}<small>${fnotes[i] || ""}</small></div>
-         <div class="fbar"><div style="width:${Math.max(pct, 3)}%;background:${fcolors[i] || 'var(--blue)'};"></div></div>
-         <div class="fval">${(s.value ?? 0).toLocaleString("es")} ${ofTop}</div>`;
+        `<div class="fname">${s.label}<small>${s.sub || ""}</small></div>
+         <div class="fval">${(s.value ?? 0).toLocaleString("es")}</div>`;
       fEl.appendChild(row);
     });
 
@@ -1207,21 +1235,21 @@ _HTML_TEMPLATE = r"""<!doctype html>
     const covColor = (G.coverage_rate ?? 0) >= 0.7 ? "var(--green)" : "var(--yellow)";
     const groundedColor = G.grounded_rate == null ? "var(--fg-mute)"
       : G.grounded_rate >= 0.1 ? "var(--green)" : "var(--yellow)";
-    const referencedColor = G.referenced_rate == null ? "var(--fg-mute)"
-      : G.referenced_rate >= 0.1 ? "var(--green)" : "var(--yellow)";
     const fmtTok = n => n == null ? "—" : (Math.abs(n) < 1000 ? String(n)
       : Math.abs(n) < 1e6 ? (n/1000).toFixed(1) + "k" : (n/1e6).toFixed(2) + "M");
+    const consultsSampled = G.consults_sampled ?? 0;
+    const consultsTotal = G.consults_total ?? G.consults ?? 0;
     const kpis = [
-      { num: (G.consults ?? 0).toLocaleString("es"), accent: "var(--blue)",
-        cap: "Consultas analizadas", sub: "total de preguntas registradas" },
-      { num: asPct(G.coverage_rate), accent: covColor, cap: "Preguntas donde memo se activó",
-        sub: "del total de consultas" },
-      { num: asPct(G.hit_rate), accent: "var(--green)", cap: "Encontró info al buscar",
-        sub: "de las veces que se activó" },
+      { num: consultsTotal.toLocaleString("es"), accent: "var(--blue)",
+        cap: "Consultas totales", sub: "acumulado histórico" },
+      { num: consultsSampled.toLocaleString("es"), accent: "var(--yellow)",
+        cap: "Consultas analizadas", sub: "muestra reciente para calidad" },
+      { num: asPct(G.activation_rate_total ?? G.coverage_rate), accent: covColor,
+        cap: "Activación histórica", sub: "memo se abrió sobre el total" },
+      { num: asPct(G.hit_rate), accent: "var(--green)", cap: "Hit rate de la muestra",
+        sub: "de las veces que memo se activó" },
       { num: asPct(G.grounded_rate), accent: groundedColor, cap: "Hechos reutilizados",
         sub: "de lo que memo mostró" },
-      { num: asPct(G.referenced_rate), accent: referencedColor, cap: "Memorias referenciadas",
-        sub: "aparecieron luego en la respuesta" },
       { num: usedRate == null ? "sin datos" : asPct(usedRate), accent: usedColor,
         cap: "Sus datos se usaron en la respuesta",
         sub: G.used_total ? `${G.used_grounded}/${G.used_total} respuestas medidas` : "aún sin medir" },
