@@ -77,9 +77,9 @@ cd ~/repos/synapse && for s in memo-consolidate gc-memo-duplicates gc-vault-orph
 PYTHONPATH=src ~/repos/memflow/.venv/bin/python -m synapse.cli ops uninstall memo-nightly  # o launchctl bootout
 ```
 
-### Pendiente (decisión del usuario — no aplicado)
-- **`runtime-loop` cada 60s**: subir a 300s+ si no se necesita reacción sub-minuto.
-- **Dream duplicado**: `memo-dream` (memo) vs `dream-synthesis` (memflow) — decidir si ambos aportan.
+### Resueltos (2026-06-20)
+- **`runtime-loop` 60s → 300s.** `build_runtime_loop_plist(start_interval_seconds=300)` en `synapse/ops.py` + plist vivo regenerado (`StartInterval=300`). Menos spawns de intérprete por hora.
+- **Dream NO está duplicado.** `com.memo.dream` = `memo dream run` → pipeline de memo (temporal/contradicción/evolución) sobre el corpus de **memo**. `com.synapse.dream-synthesis` = `memflow.dream.analyze` sobre `~/repos/memflow` → corpus de **memflow**. Mismo nombre, **stores soberanos distintos**; mergear violaría la invariante de la trinity (Memo=memoria semántica / Memflow=estado vivo). **Se quedan ambos.**
 
 ## 6. Verificación
 ```bash
