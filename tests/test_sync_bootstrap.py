@@ -102,6 +102,20 @@ def test_bootstrap_clone_rejects_nonempty_non_clone(tmp_path: Path):
         bootstrap_clone("file:///nonexistent", dest, config_path=tmp_path / "config.toml")
 
 
+def test_bootstrap_clone_refuses_broken_clone_empty_memorias(remote: Path, tmp_path: Path):
+    """A git clone whose memorias/ lost its .md must NOT be silently reused — the
+    caller's `reindex --rebuild` would truncate the index against an empty disk and
+    wipe it (the data-loss incident). Refuse with recovery guidance instead."""
+    dest = tmp_path / "memo-sync"
+    cfg_path = tmp_path / "config.toml"
+    bootstrap_clone(str(remote), dest, config_path=cfg_path)
+    # Simulate the incident: every .md gone but .git intact.
+    for md in (dest / "memorias").rglob("*.md"):
+        md.unlink()
+    with pytest.raises(SyncGitError, match=r"no \.md"):
+        bootstrap_clone(str(remote), dest, config_path=cfg_path)
+
+
 def _stub_embed(self, inputs):
     out = []
     for s in inputs:
