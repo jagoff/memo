@@ -100,6 +100,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 tantivy.commit()
             except Exception as exc:
                 _log.warning("tantivy upsert failed (FTS5 still current): %s", exc)
+                self._mark_tantivy_unhealthy()
 
     def upsert_text_only(
         self,
@@ -145,6 +146,11 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
                 (id_, title, " ".join(tags), body_text),
             )
+            # Drop any stale vector — this method writes text-only, so a
+            # pre-existing vec row for the same id would make semantic search
+            # see the old body. Callers that later embed will re-insert via
+            # upsert() with the correct vector.
+            cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
         # Dual-write to tantivy.
         tantivy = self._get_tantivy()
         if tantivy is not None:
@@ -154,6 +160,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 tantivy.commit()
             except Exception as exc:
                 _log.warning("tantivy upsert_text_only failed: %s", exc)
+                self._mark_tantivy_unhealthy()
 
     def has_vector(self, id_: str) -> bool:
         row = self._conn.execute("SELECT 1 FROM vec WHERE id = ? LIMIT 1", (id_,)).fetchone()
@@ -199,6 +206,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
                 (id_, title, " ".join(tags), body_text),
             )
+            # Sync vec.type — vec0 has no UPDATE, so delete + reinsert
+            existing_emb = cx.execute(
+                "SELECT embedding FROM vec WHERE id = ?", (id_,)
+            ).fetchone()
+            if existing_emb is not None:
+                cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                cx.execute(
+                    "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+                    (id_, existing_emb["embedding"], type_),
+                )
             was_updated = cur.rowcount > 0
         # Dual-write to tantivy (preserve existing body, just update title/tags).
         if was_updated:
@@ -210,6 +227,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     tantivy.commit()
                 except Exception as exc:
                     _log.warning("tantivy update_meta failed: %s", exc)
+                    self._mark_tantivy_unhealthy()
         return was_updated
 
     def get(self, id_: str) -> dict[str, Any] | None:
@@ -329,6 +347,17 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def chunks_by_parent_id(self, parent_id: str) -> list[dict[str, Any]]:
+        """All chunks whose extra_json contains the given parent_id.
+        Used by reindex to prune stale chunks without scanning every row."""
+        rows = self._conn.execute(
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            "FROM meta "
+            "WHERE json_extract(extra_json, '$.parent_id') = ?",
+            (parent_id,),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
     def list_recent(
         self,
         limit: int = 20,
@@ -441,6 +470,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 tantivy.commit()
             except Exception as exc:
                 _log.warning("tantivy clear failed during rebuild: %s", exc)
+                self._mark_tantivy_unhealthy()
         return int(n)
 
     def delete(self, id_: str) -> bool:
@@ -450,6 +480,10 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
             cx.execute("DELETE FROM access WHERE id = ?", (id_,))
+            cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
+            # Cascade feedback rows for this source id
+            cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
+            cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
         if existed:
             tantivy = self._get_tantivy()
             if tantivy is not None:
@@ -458,6 +492,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     tantivy.commit()
                 except Exception as exc:
                     _log.warning("tantivy delete failed: %s", exc)
+                    self._mark_tantivy_unhealthy()
         return existed
 
     def bulk_update_type(self, ids: list[str], new_type: str) -> int:
@@ -474,4 +509,15 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 "UPDATE meta SET type = ? WHERE id = ?",
                 [(new_type, i) for i in ids],
             )
+            # Sync vec.type for every id that has a vector
+            for id_ in ids:
+                existing = cx.execute(
+                    "SELECT embedding FROM vec WHERE id = ?", (id_,)
+                ).fetchone()
+                if existing is not None:
+                    cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                    cx.execute(
+                        "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+                        (id_, existing["embedding"], new_type),
+                    )
         return len(ids)

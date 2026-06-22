@@ -363,6 +363,9 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     # 1) remote signal → DB (loss-proof: from the git object, pre-rebase)
     _merge_remote_signal_from_git(root, store, remote_ref)
 
+    # 1b) rebuild feedback vectors for newly imported feedback rows
+    store.rebuild_feedback_vecs(mem.embedder.embed_query)
+
     # 2) rebase local commits onto the remote tip
     rebase = _git(root, "rebase", "--autostash", remote_ref, check=False)
     if rebase.returncode != 0:

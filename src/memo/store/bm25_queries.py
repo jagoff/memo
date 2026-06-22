@@ -209,9 +209,10 @@ class _BM25QueriesMixin(_StoreBase):
         for r in rows:
             d = _row_to_dict(r)
             # bm25() returns a NEGATIVE score for sqlite-fts5 (lower =
-            # better). Invert into [0, 1] roughly: 1/(1 + abs(score)).
+            # better). Transform into [0, 1] where higher = better match:
+            # 1 - 1/(1 + |bm|) — more negative BM25 → score near 1.0.
             bm = float(r["bm25_score"])
-            d["score"] = 1.0 / (1.0 + abs(bm)) if bm < 0 else 0.0
+            d["score"] = 1.0 - 1.0 / (1.0 + abs(bm)) if bm < 0 else 0.0
             out.append(d)
         return out[:limit]
 

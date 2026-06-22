@@ -501,6 +501,15 @@ class _SchemaMixin(_StoreBase):
             _log.info("migrated `%s`: %d vectors preserved", table, len(payload))
 
     def _validate_vec_dims(self) -> None:
+        import os
+
+        if os.environ.get("MEMO_SKIP_MODEL_VERSION_CHECK", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return
         for table, label in (
             ("vec", "Embedding"),
             ("repo_vec", "Repo embedding"),

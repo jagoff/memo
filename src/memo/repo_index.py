@@ -199,6 +199,11 @@ class RepoCorpus:
 
         existing_files = self.store.repo_file_hashes(repo_id)
         seen_paths: set[str] = set()
+        # Track all paths that were part of the scan input, regardless of
+        # processing success. Used for deletion detection below — without this
+        # a transient read/OCR/stat error on a previously-indexed file would
+        # make it disappear from seen_paths and get falsely deleted.
+        tracked_paths: set[str] = set()
         # (dev, inode) of every file already indexed this run. On a
         # case-insensitive filesystem (APFS default) git can track the same
         # physical file under two casings (e.g. `notes/x.md` + `Notes/x.md`),
@@ -267,6 +272,7 @@ class RepoCorpus:
                 _emit(progress, "file_skipped", path=rel_posix, reason="excluded")
                 continue
             checked += 1
+            tracked_paths.add(rel_posix)
             try:
                 st = path.stat()
                 size = st.st_size
@@ -343,7 +349,7 @@ class RepoCorpus:
         _flush()
 
         deleted_file_ids = [
-            meta["id"] for path, meta in existing_files.items() if path not in seen_paths
+            meta["id"] for path, meta in existing_files.items() if path not in tracked_paths
         ]
         if deleted_file_ids:
             self.store.delete_repo_files(repo_id, deleted_file_ids)

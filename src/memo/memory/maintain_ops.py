@@ -440,13 +440,8 @@ class _MaintainOpsMixin(_MemoryBase):
 
         # Prune stale chunks from a previous reindex that had more chunks
         # (e.g. note was shortened or restructured into fewer sections).
-        for row in self.store.list_recent(limit=100_000):
-            row_extra = row.get("extra") or {}
-            if (
-                isinstance(row_extra, dict)
-                and row_extra.get("parent_id") == parent_id
-                and row["id"] not in valid_chunk_ids
-            ):
+        for row in self.store.chunks_by_parent_id(parent_id):
+            if row["id"] not in valid_chunk_ids:
                 self.store.delete(row["id"])
                 _log.debug(
                     "reindex: pruned stale chunk %s (parent %s)", row["id"][:12], parent_id[:8]

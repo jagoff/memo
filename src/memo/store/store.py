@@ -108,9 +108,19 @@ class VecStore(
         self.tantivy_index_dir: Path = db_path.parent / "tantivy"
         self._tantivy_inst: TantivyFTSIndex | None = None
         self._tantivy_init_lock: threading.Lock = threading.Lock()
+        self._tantivy_healthy: bool = True
         self._maybe_rebuild_tantivy()
 
     # -- tantivy wiring --------------------------------------------------------
+
+    def _mark_tantivy_unhealthy(self) -> None:
+        """Mark the tantivy index as stale so search falls back to FTS5."""
+        self._tantivy_healthy = False
+
+    def _rebuild_tantivy(self) -> None:
+        """Rebuild tantivy from SQLite FTS5 and mark healthy."""
+        self._rebuild_tantivy_from_sqlite()
+        self._tantivy_healthy = True
 
     def _get_tantivy(self) -> TantivyFTSIndex | None:
         """Return the live TantivyFTSIndex, or None to fall back to FTS5.
@@ -118,7 +128,10 @@ class VecStore(
         Respects `MEMO_FTS_BACKEND`: 'fts5' forces FTS5; 'tantivy' requires
         tantivy (raises if absent); 'auto' (default) uses tantivy when installed.
         Lazy-opens the index on first call; thread-safe.
+        Returns None when the index is known-unhealthy from a prior write failure.
         """
+        if not self._tantivy_healthy:
+            return None
         from ..flags import flag_str
 
         backend = flag_str("MEMO_FTS_BACKEND")

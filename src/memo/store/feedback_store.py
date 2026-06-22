@@ -166,6 +166,41 @@ class _FeedbackMixin(_StoreBase):
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def rebuild_feedback_vecs(self, embed_fn: object) -> int:
+        """Re-embed all `source_feedback` rows into `source_feedback_vec`.
+
+        Iterates feedback rows without a vector, embeds ``query_text`` via
+        ``embed_fn(query_text: str) -> list[float]`` — pass the embedder's
+        ``embed_query`` so the stored vector carries the asymmetric-retrieval
+        query prefix, matching how feedback vecs are written on the normal
+        path (rerank_ops) and how they're matched at search time. Idempotent —
+        skips feedback ids that already have a vector row. Returns count of new
+        vectors inserted.
+        """
+        rows = self._conn.execute(
+            "SELECT sf.id, sf.source_id, sf.query_text "
+            "FROM source_feedback sf "
+            "LEFT JOIN source_feedback_vec fv ON fv.feedback_id = sf.id "
+            "WHERE fv.feedback_id IS NULL"
+        ).fetchall()
+        if not rows:
+            return 0
+        vectors = [embed_fn(r["query_text"]) for r in rows]  # type: ignore[operator]
+        from sqlite_vec import serialize_float32
+
+        count = 0
+        with self._tx() as cx:
+            for r, vec in zip(rows, vectors, strict=True):
+                if len(vec) != self.dims:
+                    continue
+                cx.execute(
+                    "INSERT OR IGNORE INTO source_feedback_vec "
+                    "(feedback_id, source_id, query_emb) VALUES (?, ?, ?)",
+                    (r["id"], r["source_id"], serialize_float32(vec)),
+                )
+                count += 1
+        return count
+
     def clear_source_feedback(self, source_id: str) -> int:
         """Drop all feedback rows for a source. Returns count deleted."""
         with self._tx() as cx:

@@ -330,9 +330,9 @@ class _RepoStoreMixin(_StoreBase):
                     chunk_rows,
                 )
                 cx.executemany(
-                    "INSERT INTO repo_vec (id, embedding) VALUES (?, ?)",
+                    "INSERT INTO repo_vec (id, repo_id, embedding) VALUES (?, ?, ?)",
                     [
-                        (chunk["id"], serialize_float32(chunk["embedding"]))
+                        (chunk["id"], source["id"], serialize_float32(chunk["embedding"]))
                         for chunk in file_data.get("chunks") or []
                         if chunk.get("embedding") is not None
                     ],
@@ -475,9 +475,9 @@ class _RepoStoreMixin(_StoreBase):
                     chunk_rows,
                 )
                 cx.executemany(
-                    "INSERT INTO repo_vec (id, embedding) VALUES (?, ?)",
+                    "INSERT INTO repo_vec (id, repo_id, embedding) VALUES (?, ?, ?)",
                     [
-                        (chunk["id"], serialize_float32(chunk["embedding"]))
+                        (chunk["id"], repo_id, serialize_float32(chunk["embedding"]))
                         for chunk in file_data.get("chunks") or []
                         if chunk.get("embedding") is not None
                     ],

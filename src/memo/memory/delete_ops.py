@@ -82,6 +82,29 @@ class _DeleteOpsMixin(_MemoryBase):
         if not r:
             return False
 
+        # Pre-fetch embedding + body text for rollback (store.get() omits them).
+        # vec0 returns the embedding as a packed little-endian float32 blob —
+        # deserialize it back to list[float] so upsert() can re-serialize on
+        # restore. (An earlier `isinstance(..., (list, tuple))` check never
+        # matched the blob, so the embedding was silently dropped on rollback.)
+        stored_embedding: list[float] = []
+        stored_body_text: str = ""
+        if self.store.has_vector(id_):
+            vec_row = self.store._conn.execute(
+                "SELECT embedding FROM vec WHERE id = ?", (id_,)
+            ).fetchone()
+            raw = vec_row["embedding"] if vec_row is not None else None
+            if isinstance(raw, (bytes, bytearray)):
+                import struct
+
+                stored_embedding = list(struct.unpack(f"<{len(raw) // 4}f", raw))
+            elif isinstance(raw, (list, tuple)):
+                stored_embedding = list(raw)
+        fts_row = self.store._conn.execute(
+            "SELECT body FROM fts WHERE id = ?", (id_,)
+        ).fetchone()
+        stored_body_text = fts_row["body"] if fts_row is not None else ""
+
         # Step 1: drop the derived index row + edges first (reversible via reindex)
         existed = self.store.delete(id_)
         if not existed:
@@ -152,9 +175,7 @@ class _DeleteOpsMixin(_MemoryBase):
             # would cause permanent data loss.
             from memo.errors import StorageError
 
-            # Attempt to restore the store record to minimize inconsistency
             with contextlib.suppress(Exception):
-                # Re-insert the record (simplified recovery - full recovery would need all metadata)
                 self.store.upsert(
                     id_=id_,
                     path=r["path"],
@@ -164,9 +185,9 @@ class _DeleteOpsMixin(_MemoryBase):
                     created=r["created"],
                     updated=r["updated"],
                     body_hash=r.get("body_hash") or "",
-                    embedding=r.get("embedding") or [],
+                    embedding=stored_embedding,
                     extra=r.get("extra"),
-                    body_text=r.get("body_text") or "",
+                    body_text=stored_body_text,
                 )
 
             raise StorageError(

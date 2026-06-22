@@ -126,3 +126,20 @@ def test_clear_removes_all_rows(mem_with_stub: Memory):
     n = mem_with_stub.feedback_clear(rec.id)
     assert n == 2
     assert mem_with_stub.feedback_list(source_id=rec.id) == []
+
+
+def test_rebuild_feedback_vecs_uses_embed_query_signature(mem_with_stub: Memory):
+    """`rebuild_feedback_vecs` must call `embed_fn(text: str)` per row, NOT
+    `embed_fn(list[str])`. All call sites pass `embedder.embed_query`, which
+    takes a single str (`query.strip()`); a batch call crashes with
+    AttributeError. Simulates an imported feedback row that has no vec yet
+    (signal import inserts `source_feedback` but not `source_feedback_vec`)."""
+    rec = mem_with_stub.save(content="alpha body", title="Alpha")
+    mem_with_stub.feedback_record(rec.id, query_text="alpha", rating="up")
+    store = mem_with_stub.store
+    # Drop the vec to mimic a feedback row imported from a remote signal pack.
+    with store._tx() as cx:
+        cx.execute("DELETE FROM source_feedback_vec")
+    assert store.rebuild_feedback_vecs(mem_with_stub.embedder.embed_query) == 1
+    # Idempotent: a second pass finds nothing to rebuild.
+    assert store.rebuild_feedback_vecs(mem_with_stub.embedder.embed_query) == 0

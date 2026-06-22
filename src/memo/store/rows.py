@@ -41,7 +41,7 @@ def _repo_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 def _repo_bm25_row_to_dict(row: sqlite3.Row, match_type: str) -> dict[str, Any]:
     d = _repo_row_to_dict(row)
     bm = float(row["bm25_score"])
-    d["score"] = 1.0 / (1.0 + abs(bm)) if bm < 0 else 0.0
+    d["score"] = 1.0 - 1.0 / (1.0 + abs(bm)) if bm < 0 else 0.0
     d["match_type"] = match_type
     return d
 
