@@ -55,6 +55,30 @@ def test_reindex_rebuild_preserves_signal(mem_with_stub: Memory):
     assert mem_with_stub.get(b.id) is not None
 
 
+def test_reindex_rebuild_refused_when_data_dir_empty(mem_with_stub: Memory):
+    """Rebuild against a data_dir with 0 .md must refuse, not wipe the index.
+    Markdown is the only source that can repopulate it — if it vanished (deleted
+    dir / half-broken clone), truncating the index destroys the last copy."""
+    import pytest
+
+    from memo.errors import StorageError
+
+    a = mem_with_stub.save(content="no me borres", title="A")
+    b = mem_with_stub.save(content="ni a mi", title="B")
+    for md in mem_with_stub.cfg.memory_dir.rglob("*.md"):
+        md.unlink()
+    assert next(mem_with_stub.cfg.memory_dir.rglob("*.md"), None) is None
+    assert mem_with_stub.store.count() == 2
+
+    with pytest.raises(StorageError, match="refused"):
+        mem_with_stub.reindex(rebuild=True)
+
+    # index untouched — both memorias still recoverable
+    assert mem_with_stub.store.count() == 2
+    assert mem_with_stub.get(a.id) is not None
+    assert mem_with_stub.get(b.id) is not None
+
+
 def test_reindex_rebuild_drops_orphans(mem_with_stub: Memory):
     a = mem_with_stub.save(content="vive", title="A")
     b = mem_with_stub.save(content="muere", title="B")

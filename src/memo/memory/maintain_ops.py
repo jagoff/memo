@@ -15,6 +15,7 @@ from typing import Any
 import frontmatter
 
 from memo.embedder import assert_valid_embedding
+from memo.errors import StorageError
 from memo.flags import flag_bool
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
 from memo.memory._base import _MemoryBase
@@ -220,6 +221,19 @@ class _MaintainOpsMixin(_MemoryBase):
         chunk_ingest = flag_bool("MEMO_CHUNK_INGEST")
 
         if rebuild:
+            # Safety: never truncate a populated index against an empty disk.
+            # If data_dir lost its .md (deleted dir, half-broken clone) a rebuild
+            # would clear the derivable tables and replay nothing — wiping the only
+            # surviving copy. Refuse so the markdown can be restored first.
+            if next(memory_root.rglob("*.md"), None) is None:
+                indexed = self.store.count()
+                if indexed > 0:
+                    raise StorageError(
+                        f"reindex --rebuild refused: data_dir {memory_root} has 0 .md "
+                        f"but the index holds {indexed} memorias — rebuilding would wipe "
+                        "them. Restore the .md first (`memo sync bootstrap <url>`, or "
+                        "`git -C <repo> restore .`), or run `memo reindex` (no --rebuild)."
+                    )
             # Wipe only the derivable tables; signal tables survive and re-join
             # on id. Every file then takes the `existing is None` add path.
             cleared = self.store.clear_memoria_index()

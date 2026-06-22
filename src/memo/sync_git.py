@@ -110,9 +110,19 @@ def bootstrap_clone(url: str, dest: Path, *, config_path: Path | None = None) ->
     from memo.setup.config_io import load_config_file, write_config_file
 
     memorias = dest / "memorias"
-    if (dest / ".git").exists() and memorias.exists():
-        n_md = len(list(memorias.rglob("*.md")))
+    git_ok = (dest / ".git").exists()
+    n_md = len(list(memorias.rglob("*.md"))) if memorias.exists() else 0
+    if git_ok and n_md > 0:
         summary = {"cloned": str(dest), "memorias_dir": str(memorias), "memorias": n_md, "reused": True}
+    elif git_ok:
+        # A git clone with zero markdown is a BROKEN corpus, not a fresh one:
+        # reusing it then `reindex --rebuild` (the CLI's next step) would truncate
+        # the index against an empty disk and wipe it. Refuse with recovery steps.
+        raise SyncGitError(
+            f"{dest} is a git clone but has no .md under memorias/ — refusing to "
+            f"bootstrap (a rebuild would wipe the index). Restore tracked files with "
+            f"`git -C {dest} restore .`, or `rm -rf {dest}` then re-run bootstrap."
+        )
     else:
         summary = clone_bootstrap(url, dest)
         summary["reused"] = False
