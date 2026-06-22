@@ -24,18 +24,24 @@ _log = logging.getLogger(__name__)
 _TYPE_FILTER_CANDIDATE_MULT = 20
 
 
-def _env_float(name: str, default: float) -> float:
+def _env_float(name: str, default: float, min_val: float | None = None, max_val: float | None = None) -> float:
     """Parse a float env var, falling back to `default` when unset/blank/bad.
 
     The store layer is a foundation module and cannot import memo.flags, so
     these tuning knobs (registered there for `memo config validate`) are read
-    directly from the environment here.
+    directly from the environment here. `min_val`/`max_val` duplicate the flag
+    spec bounds so `memo config validate` and runtime agree.
     """
     raw = os.environ.get(name)
     if not raw or not raw.strip():
         return default
     try:
-        return float(raw)
+        v = float(raw)
+        if min_val is not None and v < min_val:
+            return default
+        if max_val is not None and v > max_val:
+            return default
+        return v
     except ValueError:
         return default
 
@@ -149,9 +155,11 @@ class _BM25QueriesMixin(_StoreBase):
         # MEMO_EXACT_TITLE_WEIGHT / MEMO_EXACT_TAGS_WEIGHT (registered in
         # flags.py for `memo config validate`; read here via os.environ because
         # the store layer is a foundation module and cannot import memo.flags).
+        # KEEP DEFAULTS IN SYNC WITH flags_search.py (MEMO_EXACT_TITLE_WEIGHT=10.0,
+        # MEMO_EXACT_TAGS_WEIGHT=8.0).
         if field_boost == "exact":
-            title_w = _env_float("MEMO_EXACT_TITLE_WEIGHT", 10.0)
-            tags_w = _env_float("MEMO_EXACT_TAGS_WEIGHT", 8.0)
+            title_w = _env_float("MEMO_EXACT_TITLE_WEIGHT", 10.0, min_val=0.0)
+            tags_w = _env_float("MEMO_EXACT_TAGS_WEIGHT", 8.0, min_val=0.0)
             body_w = _BM25_FTS_BODY_WEIGHT
         else:
             title_w = _BM25_FTS_TITLE_WEIGHT

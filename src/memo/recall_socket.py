@@ -345,7 +345,7 @@ class _RecallServer(socketserver.ThreadingUnixStreamServer):
             try:
                 from memo.embedder import MicroEmbedder
 
-                self._micro_embedder = MicroEmbedder(micro_model)
+                self._micro_embedder = MicroEmbedder(micro_model, expected_dims=cfg.embedder_dims)
             except Exception as exc:
                 print(f"# recall-daemon: failed to init micro-embedder: {exc}", file=sys.stderr)
 

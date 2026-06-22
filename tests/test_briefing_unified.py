@@ -234,7 +234,7 @@ def test_mcp_unified_briefing_empty_when_synapse_missing(tmp_cfg, monkeypatch):
     server = build_server(memory=mem)
     fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
     out = fn()
-    assert out == {"available": False, "markdown": "", "lines": []}
+    assert out == {"available": False, "markdown": "", "lines": [], "notification": ""}
 
 
 def test_cli_briefing_emits_active_memory_block(tmp_cfg, monkeypatch, tmp_path):

@@ -141,7 +141,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         _srv_consolidate.register(server, memory)
         _srv_synthesis.register(server, memory)
         _srv_reflect.register(server, memory)
-        _srv_idle_capture.register(server, memory)
         _srv_graph.register(server, memory)
         _srv_health.register(server, memory)
         _srv_contextual.register(server, memory)
@@ -166,6 +165,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     _srv_core_records.register(server, memory)
     _srv_core_search.register(server, memory)
     _srv_core_history.register(server, memory)
+    _srv_idle_capture.register(server, memory)
     _srv_resources.register(server, memory)
 
     from memo.surface import mcp_tools_to_remove
@@ -250,15 +250,51 @@ def main() -> None:
         os.environ.setdefault("MEMO_PROMPT_CACHE", "1")
         os.environ.setdefault("MEMO_QUERY_CACHE_SIZE", "500")
         server = build_server()
+        _ensure_idle_daemon()
         host = flag_str("MEMO_MCP_HOST") or "127.0.0.1"
-        # flag_int falls back to the registered default (18768) on a malformed
-        # value, so no try/except is needed here.
-        port = flag_int("MEMO_MCP_PORT") or 18768
+        port = flag_int("MEMO_MCP_PORT")
         # transport is validated against the allowed set just above.
         server.run(transport=cast(Any, transport), host=host, port=port)
     else:
         server = build_server()
+        _ensure_idle_daemon()
         server.run()
+
+
+def _ensure_idle_daemon() -> None:
+    """Start the idle capture daemon as a background subprocess if not running.
+
+    This enables auto-capture for MCP-only clients (opencode, Devin, Windsurf)
+    that don't have Claude Code hooks to trigger idle-maintenance.
+    """
+    import subprocess as _subprocess
+    import sys as _sys
+
+    from memo.config import Config
+    from memo.daemon_common import is_pid_alive, read_pid
+
+    cfg = Config.from_env()
+    pid_file = cfg.state_dir / "idle-daemon.pid"
+    if pid_file.exists():
+        pid = read_pid(pid_file)
+        if pid and is_pid_alive(pid):
+            return  # already running
+        pid_file.unlink(missing_ok=True)
+    try:
+        log_file = cfg.state_dir / "idle_capture.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_file, "a") as log_fh:
+            proc = _subprocess.Popen(
+                [_sys.executable, "-m", "memo.cli", "idle-daemon", "_serve"],
+                stdout=log_fh,
+                stderr=_subprocess.STDOUT,
+                env={**os.environ, "MEMO_NONINTERACTIVE": "1"},
+                start_new_session=True,
+            )
+        pid_file.write_text(str(proc.pid))
+        _log.info("idle daemon started (pid=%d)", proc.pid)
+    except Exception as exc:
+        _log.warning("idle daemon start failed: %s", exc)
 
 
 if __name__ == "__main__":

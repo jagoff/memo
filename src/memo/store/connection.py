@@ -37,7 +37,11 @@ class _ConnectionMixin(_StoreBase):
             # back to the rollback journal — slower concurrency, still
             # correct — but surface it so the degradation isn't silent.
             _log.warning("could not enable WAL journal mode on %s: %s", self.db_path, exc)
-        self._load_vec0(conn)
+        try:
+            self._load_vec0(conn)
+        except Exception:
+            conn.close()
+            raise
         self._local.conn = conn
         return conn
 

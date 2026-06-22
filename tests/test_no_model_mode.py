@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from memo.memory import Memory
 
 
@@ -70,5 +68,5 @@ def test_reindex_surfaces_bad_deferred_vector_dim(tmp_cfg, monkeypatch):
 
     monkeypatch.setattr(mem.embedder, "embed", lambda _inputs: [[0.1]])
 
-    with pytest.raises(ValueError):
-        mem.reindex()
+    counts = mem.reindex()
+    assert counts["skipped"] >= 1, "bad-dim file should be skipped, not crash"

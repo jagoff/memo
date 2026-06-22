@@ -66,3 +66,18 @@ consult memo FIRST:
 - Write durable outcomes back with `memo_save` so the next session inherits
   them. memo is the source of truth for what is *known*; build on it, and
   contradict a surfaced memoria only explicitly.
+
+## Auto-capture workflow
+
+After completing a significant unit of work (fixing a bug, implementing a
+feature, finishing a code review):
+
+1. Call `memo_idle_capture` to extract insights from the session into durable
+   memorias.
+2. Call `memo_pop_notification` to read any pending capture notification.
+3. If the notification is non-empty, SHOW it to the user so they see what was
+   auto-saved.
+
+Before responding to the user, always call `memo_pop_notification` — it reads
+and dismisses any notifications from the background idle daemon. Display the
+result prominently if non-empty.

@@ -175,7 +175,7 @@ class _DeleteOpsMixin(_MemoryBase):
             # would cause permanent data loss.
             from memo.errors import StorageError
 
-            with contextlib.suppress(Exception):
+            try:
                 self.store.upsert(
                     id_=id_,
                     path=r["path"],
@@ -189,6 +189,11 @@ class _DeleteOpsMixin(_MemoryBase):
                     extra=r.get("extra"),
                     body_text=stored_body_text,
                 )
+            except Exception as restore_exc:
+                raise StorageError(
+                    f"delete partially failed AND rollback failed: {restore_exc}. "
+                    "Run 'memo reindex' to recover."
+                ) from restore_exc
 
             raise StorageError(
                 f"delete partially failed: store operations succeeded but could not remove "

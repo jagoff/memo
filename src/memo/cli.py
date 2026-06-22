@@ -43,7 +43,7 @@ from memo.cli_contradict import contradict_group
 from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_dashboard import dashboard_cmd
 from memo.cli_dedupe import dedupe_cmd
-from memo.cli_diag import _recall_daemon_health  # noqa: F401
+from memo.cli_diag import _recall_daemon_health  # noqa: F401 — used in daemon lifecycle
 from memo.cli_doctor import doctor
 from memo.cli_dream import dream_cmd
 from memo.cli_embed_daemon import embed_daemon_group
@@ -354,6 +354,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "init",
     "doctor",
     "migrate-vault",
+    "migrate",  # alias for migrate-vault
     "mcp-command",
     "install-slash",
     "install-mcp",

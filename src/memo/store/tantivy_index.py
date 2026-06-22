@@ -70,6 +70,13 @@ class TantivyFTSIndex:
 
     # -- write -----------------------------------------------------------------
 
+    def close(self) -> None:
+        """Release the tantivy writer and index resources."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._writer.commit()
+
     def add_document(self, id_: str, title: str, tags: str, body: str) -> None:
         import tantivy
 

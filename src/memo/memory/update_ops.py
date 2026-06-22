@@ -57,7 +57,7 @@ class _UpdateOpsMixin(_MemoryBase):
         new_title = (title.strip() if title else r["title"]) or r["title"]
         new_type = type_ or r["type"]
         new_tags = _normalise_tags(tags) if tags is not None else r["tags"]
-        new_extra = extra if extra is not None else r.get("extra") or {}
+        new_extra = extra if extra is not None else dict(r.get("extra") or {})
         now_iso = _now_iso()
 
         # Body resolution: provided > on-disk > empty.
@@ -70,44 +70,48 @@ class _UpdateOpsMixin(_MemoryBase):
 
         abs_path = self._resolve_existing(r["path"])
         abs_path.parent.mkdir(parents=True, exist_ok=True)
-        post = frontmatter.Post(
-            new_body,
-            id=id_,
-            title=new_title,
-            type=new_type,
-            tags=new_tags,
-            created=r["created"],
-            updated=now_iso,
-        )
-        if new_extra:
-            post["extra"] = new_extra
-        abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
         # Re-embed when the body OR title changed — both are part of the
         # embed input now (see `_compose_for_embed`). Pure retag/type
-        # changes still skip the embedder.
+        # changes still skip the embedder. Embed BEFORE touching the file
+        # so a failure doesn't leave file and store diverged.
         if body_changed or title_changed:
-            # Reuse the content-addressed embed cache (see save()): an edit
-            # that restores previously-embedded content skips the embedder.
             embedding = self._embed_cached(
                 self._compose_for_embed(new_title, new_body),
                 ctx=f"update id={id_[:8]}",
             )
-            self.store.upsert(
-                id_=id_,
-                path=r["path"],
+
+        # Lock around file+store write so concurrent updates to the same id
+        # don't lose the first writer's changes (last-writer-wins).
+        with self._save_path_lock:
+            post = frontmatter.Post(
+                new_body,
+                id=id_,
                 title=new_title,
-                type_=new_type,
+                type=new_type,
                 tags=new_tags,
                 created=r["created"],
                 updated=now_iso,
-                body_hash=new_body_hash,
-                embedding=embedding,
-                extra=new_extra,
-                body_text=new_body,
             )
-        else:
-            self.store.update_meta(
+            post["extra"] = new_extra or {}
+            abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+            if body_changed or title_changed:
+                self.store.upsert(
+                    id_=id_,
+                    path=r["path"],
+                    title=new_title,
+                    type_=new_type,
+                    tags=new_tags,
+                    created=r["created"],
+                    updated=now_iso,
+                    body_hash=new_body_hash,
+                    embedding=embedding,
+                    extra=new_extra,
+                    body_text=new_body,
+                )
+            else:
+                self.store.update_meta(
                 id_=id_,
                 title=new_title,
                 type_=new_type,

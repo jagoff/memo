@@ -128,10 +128,6 @@ def tmp_cfg(tmp_path: Path) -> Config:
     data.mkdir()
     (vault / "Obsidian" / "AI" / "memory").mkdir(parents=True)
     state.mkdir()
-    # Point the TOML config-file lookup at a non-existent path so
-    # `Config.from_env()` doesn't accidentally pick up the developer's
-    # real `~/.config/memo/config.toml` while running tests.
-    os.environ.setdefault("MEMO_CONFIG_FILE", str(tmp_path / "memo-config.toml"))
     # Disable auto-project tagging in the default test fixture so tests
     # that assert exact tag sets aren't polluted by the cwd-derived
     # `project:<repo>` tag. Tests that exercise the auto-tag flow opt

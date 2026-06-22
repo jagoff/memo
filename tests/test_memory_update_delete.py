@@ -21,7 +21,7 @@ def test_list_orders_recent_first(mem_with_stub: Memory):
     a = mem_with_stub.save(content="primero", title="A")
     import time
 
-    time.sleep(0.001)
+    time.sleep(1.1)
     b = mem_with_stub.save(content="segundo", title="B")
     items = mem_with_stub.list(limit=10)
     titles = [r.title for r in items]

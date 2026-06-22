@@ -75,6 +75,17 @@ def register(server: FastMCP, memory: Memory) -> None:
         else:
             notification = "※ auto save (idle): scanned (0 new insights)"
 
+        # Write pending notification so memo_pop_notification and search/ask
+        # tools can surface it to the user. Also print to stderr for clients
+        # that display daemon output (opencode, Claude Desktop).
+        import contextlib as _contextlib
+        with _contextlib.suppress(OSError):
+            (cfg.state_dir / "pending_idle_notification.txt").write_text(
+                notification + "\n", encoding="utf-8"
+            )
+        import sys as _sys
+        print(notification, file=_sys.stderr)
+
         return {
             "status": result.get("status"),
             "saved": n,
@@ -82,6 +93,25 @@ def register(server: FastMCP, memory: Memory) -> None:
             "notification": notification,
             "session_id": sid,
         }
+
+    @server.tool()
+    def memo_pop_notification() -> str:
+        """Read and dismiss pending idle-capture notification.
+
+        Returns the notification text (or empty string if none). The
+        notification is deleted after reading, so subsequent calls return
+        empty until a new capture runs. Call this periodically (e.g. after
+        each subtask) to surface auto-captured insights to the user.
+        """
+        path = memory.cfg.state_dir / "pending_idle_notification.txt"
+        if not path.exists():
+            return ""
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+            path.unlink(missing_ok=True)
+            return text
+        except OSError:
+            return ""
 
     @server.tool()
     def memo_start_session(

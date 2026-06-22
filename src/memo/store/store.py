@@ -43,6 +43,7 @@ for clarity even though `vec_distance_l2` would rank identically.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 from pathlib import Path
@@ -102,12 +103,17 @@ class VecStore(
         # The CLI and recall daemon are single-threaded / lock-serialised,
         # so they simply reuse their one thread-local connection.
         self._local = threading.local()
-        self._connect()
-        self._init_schema()
+        try:
+            self._connect()
+            self._init_schema()
+        except BaseException:
+            self.close()
+            raise
         # Tantivy FTS index — optional, lives next to the sqlite DB.
         self.tantivy_index_dir: Path = db_path.parent / "tantivy"
         self._tantivy_inst: TantivyFTSIndex | None = None
         self._tantivy_init_lock: threading.Lock = threading.Lock()
+        self._tantivy_write_lock: threading.Lock = threading.Lock()
         self._tantivy_healthy: bool = True
         self._maybe_rebuild_tantivy()
 
@@ -117,10 +123,27 @@ class VecStore(
         """Mark the tantivy index as stale so search falls back to FTS5."""
         self._tantivy_healthy = False
 
+    def _write_tantivy(self, fn: object) -> None:
+        """Execute a tantivy write operation under the write lock.
+
+        Serialises all tantivy mutations (add/delete/commit) across threads
+        so concurrent upserts don't corrupt the index.
+        """
+        with self._tantivy_write_lock:
+            fn()  # type: ignore[operator]
+
     def _rebuild_tantivy(self) -> None:
         """Rebuild tantivy from SQLite FTS5 and mark healthy."""
         self._rebuild_tantivy_from_sqlite()
         self._tantivy_healthy = True
+
+    def close(self) -> None:
+        """Close sqlite connection and tantivy index."""
+        tantivy = getattr(self, "_tantivy_inst", None)
+        if tantivy is not None:
+            with contextlib.suppress(Exception):
+                tantivy.close()
+        super().close()
 
     def _get_tantivy(self) -> TantivyFTSIndex | None:
         """Return the live TantivyFTSIndex, or None to fall back to FTS5.
@@ -169,16 +192,21 @@ class VecStore(
             _log.warning("tantivy initial rebuild failed, FTS5 stays primary: %s", exc)
 
     def _rebuild_tantivy_from_sqlite(self) -> None:
-        """Bulk-rebuild the tantivy index from the current FTS5 table.
+        """Bulk-rebuild the tantivy index from the current FTS5 table."""
+        rows = self._conn.execute("SELECT id, title, tags, body FROM fts")
+        records: list[dict[str, str]] = []
+        batch_size = 5000
+        for row in rows:
+            records.append(
+                {"id": row["id"], "title": row["title"], "tags": row["tags"], "body": row["body"]}
+            )
+            if len(records) >= batch_size:
+                self._flush_tantivy_batch(records)
+                records.clear()
+        if records:
+            self._flush_tantivy_batch(records)
 
-        Uses tantivy's delete_all_documents so a single writer commit produces
-        a clean, consistent snapshot of the FTS5 ground truth without touching
-        the index directory.
-        """
-        rows = self._conn.execute("SELECT id, title, tags, body FROM fts").fetchall()
-        records = [
-            {"id": r["id"], "title": r["title"], "tags": r["tags"], "body": r["body"]} for r in rows
-        ]
+    def _flush_tantivy_batch(self, records: list[dict[str, str]]) -> None:
         t = self._get_tantivy()
         if t is None:
             return

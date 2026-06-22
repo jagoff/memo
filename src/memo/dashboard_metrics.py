@@ -4,9 +4,9 @@ import re
 from typing import Any
 
 from memo.dashboard_logs import (
+    read_daily_trend,
     read_grounding_diag_log,
     read_grounding_log,
-    read_daily_trend,
     read_recall_hook_log,
     read_recall_log,
     read_usage_log,

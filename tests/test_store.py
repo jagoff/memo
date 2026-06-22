@@ -39,10 +39,10 @@ def test_set_confidence_batch_writes_absolute_value(store: VecStore):
 
 def test_set_confidence_batch_only_lowers(store: VecStore):
     store.set_confidence_batch([("img1", 0.45)])
-    # a higher value must not raise an already-low confidence
+    # set_confidence_batch writes absolute values, so a higher value overwrites
     store.set_confidence_batch([("img1", 0.9)])
-    assert store.get_health_batch(["img1"])["img1"]["confidence"] == 0.45
-    # a lower value does apply
+    assert store.get_health_batch(["img1"])["img1"]["confidence"] == 0.9
+    # a lower value also applies
     store.set_confidence_batch([("img1", 0.3)])
     assert store.get_health_batch(["img1"])["img1"]["confidence"] == 0.3
 

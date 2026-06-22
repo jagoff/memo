@@ -31,6 +31,7 @@ from memo.memory.record import (
     chat_with_timeout,
     strip_llm_output,
 )
+from memo.util import sha256_full as _sha256_full
 from memo.util import sha256_short as _sha256_short
 
 
@@ -162,7 +163,7 @@ class _MaintainOpsMixin(_MemoryBase):
         """
         model = self.cfg.embedder_model
         dims = self.cfg.embedder_dims
-        input_hash = _sha256_short(text)
+        input_hash = _sha256_full(text)
         cached = self.store.get_repo_embedding_cache(
             model=model, dims=dims, input_hashes=[input_hash]
         )
@@ -253,6 +254,12 @@ class _MaintainOpsMixin(_MemoryBase):
                 )
                 type_ = "note"
             tags = _normalise_tags(list(meta.get("tags") or []))
+            # YAML frontmatter may store tags as a comma-separated string
+            # instead of a list (hand-edited files). Normalize to list.
+            if tags and isinstance(tags[0], str) and "," in tags[0]:
+                tags = _normalise_tags(
+                    [t.strip() for t in tags[0].split(",") if t.strip()]
+                )
             created = meta.get("created") or _now_iso()
             updated = meta.get("updated") or created
             extra = meta.get("extra") or {}
@@ -280,22 +287,27 @@ class _MaintainOpsMixin(_MemoryBase):
                         md_id[:8],
                     )
                     self.store.delete(stale["id"])
-                emb = self._embed_cached(
-                    self._compose_for_embed(title, body), ctx=f"reindex add {md_id[:8]}"
-                )
-                self.store.upsert(
-                    id_=md_id,
-                    path=rel,
-                    title=title,
-                    type_=type_,
-                    tags=tags,
-                    created=created,
-                    updated=updated,
-                    body_hash=new_hash,
-                    embedding=emb,
-                    extra=extra if extra else None,
-                    body_text=body,
-                )
+                try:
+                    emb = self._embed_cached(
+                        self._compose_for_embed(title, body), ctx=f"reindex add {md_id[:8]}"
+                    )
+                    self.store.upsert(
+                        id_=md_id,
+                        path=rel,
+                        title=title,
+                        type_=type_,
+                        tags=tags,
+                        created=created,
+                        updated=updated,
+                        body_hash=new_hash,
+                        embedding=emb,
+                        extra=extra if extra else None,
+                        body_text=body,
+                    )
+                except Exception as exc:
+                    _log.warning("reindex: skipping %s (embed failed): %s", md_path.name, exc)
+                    skipped += 1
+                    continue
                 added += 1
                 if chunk_ingest:
                     added += self._reindex_emit_chunks(
@@ -314,22 +326,27 @@ class _MaintainOpsMixin(_MemoryBase):
                 if isinstance(extra, dict):
                     extra = dict(extra)
                     extra.pop("_memo_embed_pending", None)
-                emb = self._embed_cached(
-                    self._compose_for_embed(title, body), ctx=f"reindex update {md_id[:8]}"
-                )
-                self.store.upsert(
-                    id_=md_id,
-                    path=rel,
-                    title=title,
-                    type_=type_,
-                    tags=tags,
-                    created=existing["created"],
-                    updated=_now_iso(),
-                    body_hash=new_hash,
-                    embedding=emb,
-                    extra=extra if extra else None,
-                    body_text=body,
-                )
+                try:
+                    emb = self._embed_cached(
+                        self._compose_for_embed(title, body), ctx=f"reindex update {md_id[:8]}"
+                    )
+                    self.store.upsert(
+                        id_=md_id,
+                        path=rel,
+                        title=title,
+                        type_=type_,
+                        tags=tags,
+                        created=existing["created"],
+                        updated=_now_iso(),
+                        body_hash=new_hash,
+                        embedding=emb,
+                        extra=extra if extra else None,
+                        body_text=body,
+                    )
+                except Exception as exc:
+                    _log.warning("reindex: skipping %s (re-embed failed): %s", md_path.name, exc)
+                    skipped += 1
+                    continue
                 reindexed += 1
                 if chunk_ingest:
                     reindexed += self._reindex_emit_chunks(
@@ -341,6 +358,24 @@ class _MaintainOpsMixin(_MemoryBase):
                         created=created,
                         updated=updated,
                         force=force,
+                    )
+            else:
+                # Metadata-only frontmatter change (tags/type/extra changed,
+                # body unchanged) — update meta without re-embedding.
+                meta_changed = (
+                    title != existing["title"]
+                    or type_ != existing["type"]
+                    or tags != existing["tags"]
+                    or extra != (existing.get("extra") or {})
+                )
+                if meta_changed:
+                    self.store.update_meta(
+                        id_=md_id,
+                        title=title,
+                        type_=type_,
+                        tags=tags,
+                        updated=_now_iso(),
+                        extra=extra if extra else None,
                     )
         # Successful reindex: every meta.path now uses the current
         # memory_dir-relative layout, so future startups can skip the

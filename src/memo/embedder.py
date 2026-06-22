@@ -39,10 +39,12 @@ from typing import Any, cast
 from memo.mlx_gpu import gpu_guard
 
 try:
-    from consciousness_contracts.cache import get_default_cache
+    from consciousness_contracts.cache import (
+        get_default_cache,  # type: ignore[import-not-found,unused-ignore]
+    )
 
     _HAS_SHARED_CACHE = True
-except ImportError:
+except Exception:
     _HAS_SHARED_CACHE = False
 
 

@@ -10,6 +10,7 @@ imports only foundation modules, never the mixins or facade.
 
 from __future__ import annotations
 
+import concurrent.futures as _futures
 import logging
 import re
 from dataclasses import dataclass, field, replace
@@ -250,6 +251,17 @@ def _recency_key(rec: MemoryRecord) -> str:
 
 # -- LLM-call helpers (shared by the maintain/consolidate/synthesize loops) ----
 
+_CHAT_EXECUTOR: _futures.ThreadPoolExecutor | None = None
+
+
+def _get_chat_executor() -> _futures.ThreadPoolExecutor:
+    global _CHAT_EXECUTOR
+    if _CHAT_EXECUTOR is None:
+        _CHAT_EXECUTOR = _futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="chat-timeout"
+        )
+    return _CHAT_EXECUTOR
+
 
 def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, Any] | None:
     """Run ``chat.chat(**kwargs)`` with a hard wall-clock timeout.
@@ -264,7 +276,6 @@ def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, 
 
     Errors raised by ``chat.chat`` propagate (caller's try/except handles them).
     """
-    import concurrent.futures
 
     _timeout = timeout
 
@@ -279,14 +290,12 @@ def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, 
             pass
         return chat.chat(**kwargs)
 
-    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    ex = _get_chat_executor()
     fut = ex.submit(_run)
     try:
         return fut.result(timeout=timeout)
-    except concurrent.futures.TimeoutError:
+    except _futures.TimeoutError:
         return None
-    finally:
-        ex.shutdown(wait=False)
 
 
 def strip_llm_output(text: str) -> str:

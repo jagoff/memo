@@ -22,6 +22,7 @@ class _StoreBase:
     tantivy_index_dir: Path
     _tantivy_inst: TantivyFTSIndex | None
     _tantivy_init_lock: threading.Lock
+    _tantivy_write_lock: threading.Lock
 
     @property
     def _conn(self) -> sqlite3.Connection: ...  # type: ignore[empty-body]
@@ -31,3 +32,5 @@ class _StoreBase:
     def _get_tantivy(self) -> TantivyFTSIndex | None: ...  # type: ignore[empty-body]
     def _rebuild_tantivy_from_sqlite(self) -> None: ...
     def _mark_tantivy_unhealthy(self) -> None: ...
+    def _write_tantivy(self, fn: object) -> None: ...
+    def _run_migrations(self) -> None: ...

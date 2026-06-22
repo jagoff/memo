@@ -16,7 +16,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
             d["tags"] = []
     if d.get("extra_json"):
         try:
-            d["extra"] = json.loads(d["extra_json"])
+            parsed = json.loads(d["extra_json"])
+            d["extra"] = parsed if isinstance(parsed, dict) else {}
         except (ValueError, TypeError):
             d["extra"] = {}
         d.pop("extra_json", None)
@@ -34,7 +35,7 @@ def _fts_match_expr(query: str) -> str:
 
 
 def _repo_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    raw = dict(zip(row.keys(), row, strict=True))
+    raw = dict(row)
     return {k: v for k, v in raw.items() if k not in {"distance", "bm25_score"}}
 
 

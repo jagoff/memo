@@ -211,9 +211,9 @@ class _SignalQueriesMixin(_StoreBase):
                 "INSERT INTO memory_health(id, confidence, roi_score, updated_at) "
                 "VALUES(?, max(?, 1.0 - ?), 1.0, datetime('now')) "
                 "ON CONFLICT(id) DO UPDATE SET "
-                "confidence = max(excluded.confidence, confidence - ?), "
+                "confidence = max(?, confidence - ?), "
                 "updated_at = datetime('now')",
-                [(i, floor, delta, delta) for i in ids],
+                [(i, floor, delta, floor, delta) for i in ids],
             )
 
     def set_confidence_batch(
@@ -233,9 +233,9 @@ class _SignalQueriesMixin(_StoreBase):
                 "INSERT INTO memory_health(id, confidence, roi_score, updated_at) "
                 "VALUES(?, max(?, ?), 1.0, datetime('now')) "
                 "ON CONFLICT(id) DO UPDATE SET "
-                "confidence = min(confidence, ?), "
+                "confidence = excluded.confidence, "
                 "updated_at = datetime('now')",
-                [(i, floor, c, c) for i, c in pairs],
+                [(i, floor, c) for i, c in pairs],
             )
 
     def all_ids(self) -> list[str]:

@@ -8,23 +8,17 @@ on:
 
 jobs:
   slow:
-    runs-on: ubuntu-latest
+    # MLX slow tests require Apple Silicon — use macos runner for real inference
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Install uv
-        run: pip install uv
+      - name: Install Python 3.13 + uv via Homebrew
+        run: brew install python@3.13 uv
+      - name: Create virtualenv
+        run: uv venv --python "$(brew --prefix python@3.13)/bin/python3.13" .venv
       - name: Install package + dev deps
-        run: |
-          uv venv .venv
-          uv pip install -e '.[dev]'
+        run: uv pip install --python .venv/bin/python -e '.[dev]'
       - name: Run slow tests
-        # Full suite including the slow-marked tests skipped in PR CI.
-        # No -n auto: some slow tests (socket servers, daemon lifecycle)
-        # are sensitive to parallel teardown races.
         run: .venv/bin/python -m pytest -m "slow" --timeout=300 -v
 
       # ---------------------------------------------------------------------------
