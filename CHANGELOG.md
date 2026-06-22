@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-22
+
 ### Added
 
 - **Auto-recall fires on more real prompts (less wasted coverage).** The
@@ -41,6 +43,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (history/graph/contradictions/crossref) into the single `memvec.db` file.
   `memo migrate --consolidate-db` merges existing `*.db` files (renames them
   `*.db.bak`, idempotent).
+- **Idle daemon and `memo_idle_capture` MCP tool.** Background auto-capture fires
+  every 10 s for agents without Claude Code hooks. Auto-starts from the
+  `unified_briefing`, `search`, and `ask` MCP side-effect paths.
+- **Two-tier cross-Mac git sync.** `memo sync bootstrap`, `memo sync auto`, and
+  `memo sync once` replicate the memory corpus across machines via a bare git
+  remote (`memo-sync`). Pull-rebase-before-push, `flock`-based single owner per
+  machine, debounced async hooks on every prompt. Cross-machine deletes propagate
+  via orphan-prune on pull.
+- **`memo install-mcp`** — one-command MCP registration into any agent (Claude
+  Code, Devin, Codex, opencode, Windsurf). Pins `MEMO_SOURCE` per-client for
+  per-consumer attribution telemetry.
+- **`memo stats` (formerly `memo tui`)** — production TUI with utility/verdict
+  panels and `--background` HTTP server with live auto-refresh at `localhost`.
+  Surfaces "¿funciona?" verdict, per-consumer grounded rate, and token-savings
+  estimate.
+- **`memo eval grounding`** — ground-truth calibration harness to measure whether
+  memo's context is actually used in model answers (paraphrase-aware,
+  knowledge-segmented).
+- **Hybrid search tuning.** Exact BM25 leg + confident-RRF skip; configurable
+  leg weights via `MEMO_SEARCH_VEC_WEIGHT` / `MEMO_SEARCH_BM25_WEIGHT`;
+  per-type recency decay half-lives (`MEMO_RECALL_DECAY_HALF_LIFE_*`).
+- **Sleep-time compute (dream pipeline improvements).** Signal gather, date
+  normalization, prune floor, and orientation passes added to the nightly dream
+  pipeline. Progress UI + LLM timeout/thinking hardened.
+- **`memo continuity`** — native "what was I working on" command providing
+  memflow-style cross-session state recall from within memo.
+- **`memo_health_report` MCP tool** — corpus health metrics exposed over MCP, with
+  34 covering tests.
+- **Token-savings ROI** surfaced in `memo doctor` output and the stats dashboard
+  (`MEMO_ROI_TOKENS_PER_*` flags).
+- **`memo_idle_capture`** MCP tool for agents without Claude Code hooks to trigger
+  background capture on demand.
+- Zero-config repo mode for MCP marketplace distribution (self-describing index
+  adopts embedder profile from DB metadata when env vars are unset).
 
 ### Changed
 
@@ -58,6 +94,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fixed** a data-loss bug: `memo migrate-vault` previously deleted `memvec.db`,
   silently wiping feedback/access/health signal. It now preserves the DB and
   reindexes in place.
+- Recall token budget default raised to 600; session-dedup active in the
+  subprocess recall path. `MEMO_RECALL_FEEDBACK_HINT` default changed to off
+  (opt-in, saves ~20 tokens/recall).
+- `cli.py` monolith split into 11+ focused modules (`cli_capture`, `cli_memory`,
+  `cli_tui`, `cli_session`, `cli_runtime`, `cli_viz`, …). No command-line
+  behavior change.
+- Consolidation LLM timeout raised 60 s → 180 s; merge-proposal token budget
+  doubled to 2048; robust JSON-parsing with sampling retry on unparseable output.
+- MLX GPU work serialized across processes via a lock to prevent `SIGABRT` under
+  concurrent embedder calls.
+- Dashboard denominators corrected for trend and per-consumer grounded rate;
+  stale numbers and false-silent consumer warnings eliminated.
+
+### Fixed
+
+- `rebuild_feedback_vecs` crash on reindex; embedding correctly removed on delete
+  rollback.
+- Config self-describing index adopts embedder profile from DB metadata when env
+  unset, fixing "connection closed" in MCP clients lacking embedder env vars.
+- ~80 latent bugs repaired across 3 audit passes (data-loss error swallows,
+  error handling, thread safety, concurrency races).
+- CI smoke uses Homebrew `python@3.13` (setup-python lacks sqlite extension
+  loading; `--strict-runtime` was unsatisfiable in venv CI).
+- Sync: commit-before-pull + prune orphans on pull for correct cross-Mac delete
+  propagation.
+- `VecStore` per-thread connections fix HTTP-transport race under FastMCP worker
+  threadpool.
+- Idle-maintenance never ran (async hooks receive no stdin pipe) — fixed.
+- `inactivity-capture` self-cancelled every turn (keyed on wrong signal) — fixed.
+- **Data-loss guard: `reindex --rebuild` refuses an empty `data_dir`.** If the
+  markdown source vanished (deleted dir / half-broken clone) while the index is
+  still populated, a rebuild would truncate the derivable tables and replay
+  nothing — wiping the only surviving copy. It now raises `StorageError` with
+  recovery steps instead. Restore the `.md` first, or use `memo reindex` (no
+  `--rebuild`) to reconcile.
+- **Data-loss guard: `sync bootstrap` refuses a broken clone.** A `dest` that is
+  a git clone but has zero `.md` under `memorias/` is no longer "reused" (which
+  then fed `reindex --rebuild` → wipe); it raises with `git restore` / re-clone
+  guidance.
+- `install.sh` injects `consciousness-contracts` best-effort from a local
+  checkout (`MEMO_CONTRACTS_PATH`, default `~/repos/consciousness-contracts`) so
+  `install-mcp` + the shared embed cache work on a fresh Mac; absent → memo runs
+  with fallbacks. install.sh also hints `MEMO_SYNC_REMOTE` when no corpus is wired.
 
 ## [0.8.0] - 2026-05-21
 

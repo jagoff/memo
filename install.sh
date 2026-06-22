@@ -104,6 +104,25 @@ ensure_default_dirs() {
   mkdir -p "${MEMO_STATE_DIR:-$HOME/.local/share/memo}"
 }
 
+# consciousness-contracts is a sibling repo, not on PyPI — a `pipx install
+# git+...memo.git` cannot pull it. memo runs fine without it (shared embed cache
+# + URI parsing fall back), but `install-mcp` and the shared cache need it.
+# Inject best-effort from a local checkout; never fail the install if it's absent.
+inject_contracts() {
+  local cc="${MEMO_CONTRACTS_PATH:-$HOME/repos/consciousness-contracts}"
+  if [[ ! -f "$cc/pyproject.toml" ]]; then
+    say "consciousness-contracts not found at $cc — skipping (memo runs with fallbacks; set MEMO_CONTRACTS_PATH to enable)"
+    return 0
+  fi
+  say "injecting consciousness-contracts from $cc (enables install-mcp + shared cache)"
+  if run_pipx inject "$APP_NAME" -e "$cc" >/dev/null 2>&1; then
+    say "consciousness-contracts injected"
+  else
+    warn "consciousness-contracts inject failed (non-fatal; memo runs with fallbacks)."
+    warn "Re-run manually: pipx inject $APP_NAME -e $cc"
+  fi
+}
+
 resolve_memo_bin() {
   if command -v memo >/dev/null 2>&1; then
     command -v memo
@@ -169,6 +188,7 @@ main() {
   run_pipx install --force "$spec"
   run_pipx ensurepath >/dev/null 2>&1 || true
 
+  inject_contracts
   ensure_default_dirs
 
   local memo_bin
@@ -222,6 +242,9 @@ main() {
       warn "sync bootstrap failed — private repo needs git creds (SSH key/PAT) on this Mac."
       warn "Re-run after auth: memo sync bootstrap $MEMO_SYNC_REMOTE --dest $sync_dest"
     fi
+  else
+    say "no shared corpus wired (memo starts empty). To join an existing corpus on"
+    say "  a fresh Mac, re-run with: MEMO_SYNC_REMOTE=<git-url> ./install.sh"
   fi
 
   say "MCP registration command (manual fallback):"
