@@ -36,6 +36,30 @@ SPECS: tuple[FlagSpec, ...] = (
         "Maximum cumulative feedback boost.",
         min_val=0.0,
     ),
+    # auto-update (memo-mcp self-update on start, gated + throttled)
+    _spec(
+        "MEMO_AUTO_UPDATE",
+        "bool",
+        False,
+        "update",
+        "On memo-mcp start, check for a newer git TAG and self-update in the "
+        "background (takes effect next start). Default off; enable per-machine.",
+    ),
+    _spec(
+        "MEMO_AUTO_UPDATE_INTERVAL_S",
+        "int",
+        21600,
+        "update",
+        "Min seconds between auto-update checks (throttle). Default 6h.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_AUTO_UPDATE_REPO",
+        "str",
+        "",
+        "update",
+        "Git repo URL to check tags / install from (empty → the memo default).",
+    ),
     # MCP transport
     _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
     _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),

@@ -241,6 +241,12 @@ def main() -> None:
     """
     from memo.flags import flag_int, flag_str
 
+    # Auto-update check (gated by MEMO_AUTO_UPDATE, throttled, detached spawn —
+    # never raises, never blocks). A newer git tag takes effect on the NEXT start.
+    from memo.runtime.autoupdate import maybe_auto_update
+
+    maybe_auto_update()
+
     transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
         # Long-lived daemon: enable the prompt cache + a larger query-embedding
