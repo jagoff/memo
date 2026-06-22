@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-06-22
+
+### Fixed
+
+- **sync:** `_pull_rebase` now loops over every conflict stop (was: only the first), so a Mac with multiple local commits that each conflict on `signal/*.json` reconciles instead of staying behind forever.
+- **sync:** memo's git subprocesses now run with `GIT_EDITOR=true`/`GIT_SEQUENCE_EDITOR=true`, so `git rebase --continue` after auto-resolving a signal conflict no longer dies with "Terminal is dumb, EDITOR unset" in headless/daemon/SSH contexts (the failure `sync_once` was silently swallowing as "nothing to do").
+
 ## [1.0.1] - 2026-06-22
 
 ### Added

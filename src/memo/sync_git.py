@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -59,6 +60,11 @@ def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
         capture_output=True,
         text=True,
         timeout=_GIT_TIMEOUT,
+        # memo drives git non-interactively (daemon / hook / SSH session): a
+        # `rebase --continue` after auto-resolving a signal conflict otherwise
+        # tries to open an editor and dies with "Terminal is dumb, EDITOR unset",
+        # which sync_once swallows → silent perpetual cross-Mac divergence.
+        env={**os.environ, "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"},
     )
     if check and cp.returncode != 0:
         raise SyncGitError(f"git {' '.join(args)} failed: {cp.stderr.strip() or cp.stdout.strip()}")
@@ -113,7 +119,12 @@ def bootstrap_clone(url: str, dest: Path, *, config_path: Path | None = None) ->
     git_ok = (dest / ".git").exists()
     n_md = len(list(memorias.rglob("*.md"))) if memorias.exists() else 0
     if git_ok and n_md > 0:
-        summary = {"cloned": str(dest), "memorias_dir": str(memorias), "memorias": n_md, "reused": True}
+        summary = {
+            "cloned": str(dest),
+            "memorias_dir": str(memorias),
+            "memorias": n_md,
+            "reused": True,
+        }
     elif git_ok:
         # A git clone with zero markdown is a BROKEN corpus, not a fresh one:
         # reusing it then `reindex --rebuild` (the CLI's next step) would truncate
@@ -331,7 +342,9 @@ def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
             # NOT lost, just not yet shared.
             with contextlib.suppress(OSError):
                 _pending_marker(cfg).write_text(branch, encoding="utf-8")
-            raise SyncGitError(f"git push failed (commit kept locally, will retry): {push.stderr.strip()}")
+            raise SyncGitError(
+                f"git push failed (commit kept locally, will retry): {push.stderr.strip()}"
+            )
     # Pushed — clear any prior pending marker.
     _pending_marker(cfg).unlink(missing_ok=True)
     return {"pushed": True, "committed_files": n_files, "branch": branch}
@@ -376,25 +389,28 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     # 1b) rebuild feedback vectors for newly imported feedback rows
     store.rebuild_feedback_vecs(mem.embedder.embed_query)
 
-    # 2) rebase local commits onto the remote tip
+    # 2) rebase local commits onto the remote tip. The rebase stops ONCE PER
+    # local commit that conflicts; signal/*.json conflicts on essentially every
+    # cross-Mac sync (machine-local counters), so resolve-and-continue in a LOOP
+    # until the rebase finishes or a real `.md` conflict needs a human. (Handling
+    # only the first stop left multi-commit divergence stuck and behind forever.)
     rebase = _git(root, "rebase", "--autostash", remote_ref, check=False)
-    if rebase.returncode != 0:
+    while rebase.returncode != 0:
         conflicts = _git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
         non_signal = [c for c in conflicts if not c.startswith("signal/")]
-        if non_signal:
+        if non_signal or not conflicts:
+            # a real memoria conflict, or a failure with nothing to resolve
+            # (don't loop forever): abort and surface for manual handling.
             _git(root, "rebase", "--abort", check=False)
             raise SyncGitError(
-                "rebase conflict in memorias needs manual resolution: "
-                + ", ".join(non_signal)
+                "rebase conflict needs manual resolution: "
+                + (", ".join(non_signal) or rebase.stderr.strip())
             )
         # only signal/*.json conflicts — DB already holds the union, take theirs
         for c in conflicts:
             _git(root, "checkout", "--theirs", "--", c, check=False)
             _git(root, "add", "--", c)
-        cont = _git(root, "rebase", "--continue", check=False)
-        if cont.returncode != 0:
-            _git(root, "rebase", "--abort", check=False)
-            raise SyncGitError(f"rebase --continue failed: {cont.stderr.strip()}")
+        rebase = _git(root, "rebase", "--continue", check=False)
 
     # 3) load any new/changed memorias the pull brought in
     reindexed = mem.reindex()

@@ -41,7 +41,9 @@ def _stub_embed(self, inputs):
 
 
 def _make_clone(remote: Path, where: Path) -> Path:
-    subprocess.run(["git", "clone", str(remote), str(where)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "clone", str(remote), str(where)], check=True, capture_output=True, text=True
+    )
     _git(where, "config", "user.email", "t@t.t")
     _git(where, "config", "user.name", "t")
     (where / "memorias").mkdir(exist_ok=True)
@@ -213,7 +215,8 @@ def test_sync_once_commits_local_deletion_before_pull(remote: Path, tmp_path: Pa
         _git(clone, "fetch", "origin", "main")
         tree = subprocess.run(
             ["git", "-C", str(clone), "ls-tree", "-r", "origin/main", "--name-only"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         ).stdout
         assert md.name not in tree, "deleted memoria still on origin"
         _ = rec
@@ -343,6 +346,63 @@ def test_pull_aborts_on_memoria_conflict(remote: Path, tmp_path: Path, monkeypat
             sync_pull(mem_b.cfg, mem_b.store, mem_b)
         # repo left clean (rebase aborted), not mid-rebase
         assert not (clone_b / ".git" / "rebase-merge").exists()
+    finally:
+        mem_b.close()
+
+
+def test_pull_resolves_multi_commit_signal_conflicts_headless(
+    remote: Path, tmp_path: Path, monkeypatch
+):
+    """Regression: a Mac with MULTIPLE local commits that each conflict on
+    signal/*.json must rebase cleanly in a headless env (no usable editor).
+
+    Reproduces the two bugs that left a Mac silently diverged (behind forever):
+      1. `rebase --continue` opened an editor → "Terminal is dumb, EDITOR unset".
+      2. only the FIRST conflict stop was resolved; a 2nd conflicting commit left
+         the rebase stuck → aborted → `sync_once` swallowed it as a no-op.
+    """
+    clone_a = _make_clone(remote, tmp_path / "A")
+    clone_b = _make_clone(remote, tmp_path / "B")
+
+    # A advances origin with two signal files
+    (clone_a / "signal").mkdir(exist_ok=True)
+    (clone_a / "signal" / "access.json").write_text('{"v": "A"}\n')
+    (clone_a / "signal" / "memory_health.json").write_text('{"v": "A"}\n')
+    _git(clone_a, "add", "-A")
+    _git(clone_a, "commit", "-m", "A signal")
+    _git(clone_a, "push", "origin", "main")
+
+    # B makes TWO local commits, each conflicting on a DIFFERENT signal file →
+    # the rebase stops twice (the bug only handled the first stop).
+    (clone_b / "signal").mkdir(exist_ok=True)
+    (clone_b / "signal" / "access.json").write_text('{"v": "B1"}\n')
+    _git(clone_b, "add", "-A")
+    _git(clone_b, "commit", "-m", "B signal 1")
+    (clone_b / "signal" / "memory_health.json").write_text('{"v": "B2"}\n')
+    _git(clone_b, "add", "-A")
+    _git(clone_b, "commit", "-m", "B signal 2")
+
+    # Force "no usable editor": without the production override `rebase --continue`
+    # would run `false` and fail fast (proving the bug) instead of hanging on a
+    # real editor. The fix sets GIT_EDITOR=true in git's env regardless of this.
+    monkeypatch.setenv("GIT_EDITOR", "false")
+    monkeypatch.setenv("GIT_SEQUENCE_EDITOR", "false")
+
+    mem_b = _mem_for(clone_b, tmp_path / "stateB", monkeypatch)
+    try:
+        res = sync_pull(mem_b.cfg, mem_b.store, mem_b)
+        assert res["pulled"] is True
+        # rebase finished — not stuck mid-rebase
+        assert not (clone_b / ".git" / "rebase-merge").exists()
+        assert not (clone_b / ".git" / "rebase-apply").exists()
+        # divergence reconciled: origin/main is now an ancestor of B's HEAD
+        _git(clone_b, "fetch", "origin", "main")
+        anc = subprocess.run(
+            ["git", "-C", str(clone_b), "merge-base", "--is-ancestor", "origin/main", "HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        assert anc.returncode == 0, "origin/main not in B's history after rebase"
     finally:
         mem_b.close()
 
