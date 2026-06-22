@@ -59,12 +59,12 @@ def test_search_truncates_body(mem: Memory):
     server = build_server(memory=mem)
     search = _tool(server, "memo_search")
     out = search(query="huge", body_chars=200)
-    assert out, "search returned nothing"
-    body = out[0]["body"]
+    assert out["hits"], "search returned nothing"
+    body = out["hits"][0]["body"]
     # Truncated body has the ellipsis suffix; allow a little slack for the rstrip.
     assert len(body) <= 201
     assert body.endswith("…")
-    assert out[0]["body_truncated"] is True
+    assert out["hits"][0]["body_truncated"] is True
 
 
 def test_search_full_body_when_chars_huge(mem: Memory):
@@ -72,9 +72,9 @@ def test_search_full_body_when_chars_huge(mem: Memory):
     server = build_server(memory=mem)
     search = _tool(server, "memo_search")
     out = search(query="corto", body_chars=10_000)
-    assert out
-    assert out[0]["body"] == "corto"
-    assert "body_truncated" not in out[0]
+    assert out["hits"]
+    assert out["hits"][0]["body"] == "corto"
+    assert "body_truncated" not in out["hits"][0]
 
 
 def test_search_trace_returns_hits_and_pipeline(mem: Memory):

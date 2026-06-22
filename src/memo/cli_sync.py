@@ -74,13 +74,16 @@ def sync_import_signal(as_json: bool) -> None:
     mem = _get_memory(cfg)
     sig = signal_dir_for(cfg)
     counts = import_signal(mem.store, sig)
+    rebuilt = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
 
     if as_json:
-        click.echo(json.dumps({"signal_dir": str(sig), "merged": counts}, indent=2))
+        click.echo(json.dumps({"signal_dir": str(sig), "merged": counts, "feedback_vecs_rebuilt": rebuilt}, indent=2))
         return
     console.print(f"[bold]Imported signal[/bold] ← {sig}")
     for table, n in counts.items():
         console.print(f"  {table}: {n}")
+    if rebuilt:
+        console.print(f"  source_feedback_vec: {rebuilt}")
 
 
 @sync_group.command(name="diff")
@@ -222,6 +225,7 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
     mem = _get_memory(cfg)
     out["reindexed"] = mem.reindex(rebuild=True)
     out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
+    out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
 
     if as_json:
         click.echo(json.dumps(out, indent=2))

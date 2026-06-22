@@ -305,6 +305,9 @@ def test_fallback_scoring_does_not_mutate_shared_hits(monkeypatch, tmp_path) -> 
 
     class StubMemory:
         embedder = SimpleNamespace(is_warm=False)
+        # embedder_dims ≤ 10 makes recall skip its dim-validation guard for the
+        # 2-dim stub vectors (the guard reads mem.cfg.embedder_dims).
+        cfg = SimpleNamespace(embedder_dims=2)
 
         def search(self, query, limit, mode, recency=False, exclude_types=None):
             return candidates

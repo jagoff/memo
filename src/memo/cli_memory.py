@@ -262,6 +262,10 @@ def reindex(force: bool, rebuild: bool, as_json: bool) -> None:
     without losing user-signal data — the safe alternative to deleting the DB.
     """
 
+    import os
+
+    if rebuild:
+        os.environ.setdefault("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
     mem = _get_memory(Config.from_env())
     counts = mem.reindex(force=force, rebuild=rebuild)
     if as_json:

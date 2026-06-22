@@ -57,10 +57,12 @@ def test_delete_aborts_when_md_unlink_fails(mem_with_stub: Memory, monkeypatch):
     monkeypatch.setattr("pathlib.Path.unlink", _boom)
     with pytest.raises(StorageError, match="delete partially failed"):
         mem_with_stub.delete(rec.id)
-    # After the fix, store operations complete first, then file deletion fails.
-    # The record should be restored in the store, but the monkeypatch may interfere.
-    # For now, we just verify the error was raised with the new message.
-    # The restore mechanism is best-effort; the critical fix is preventing data loss.
+    # Store operations complete first, then file deletion fails → the record is
+    # restored, INCLUDING its embedding. The rollback reads the vec0 blob and
+    # deserializes it; a regression here (dropping the vector) would leave the
+    # restored row unsearchable until the next reindex.
+    assert mem_with_stub.store.count() == 1
+    assert mem_with_stub.store.has_vector(rec.id) is True
 
 
 def test_delete_proceeds_when_md_already_missing(mem_with_stub: Memory):

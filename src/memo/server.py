@@ -23,6 +23,7 @@ Or programmatically:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, cast
 
@@ -44,11 +45,11 @@ from memo import server_entities as _srv_entities
 from memo import server_feedback as _srv_feedback
 from memo import server_graph as _srv_graph
 from memo import server_health as _srv_health
+from memo import server_idle_capture as _srv_idle_capture
 from memo import server_import_export as _srv_import_export
 from memo import server_links as _srv_links
 from memo import server_multimodal as _srv_multimodal
 from memo import server_query as _srv_query
-from memo import server_idle_capture as _srv_idle_capture
 from memo import server_reflect as _srv_reflect
 from memo import server_repo as _srv_repo
 from memo import server_resources as _srv_resources
@@ -60,6 +61,8 @@ from memo import server_version as _srv_version
 from memo._trace import TRACE_HEADER, trace_scope
 from memo.config import Config
 from memo.memory import Memory
+
+_log = logging.getLogger(__name__)
 
 
 def _make_trace_middleware() -> Any:
@@ -88,6 +91,7 @@ def _make_trace_middleware() -> Any:
                 trace_id = (headers.get(TRACE_HEADER) or "").strip()
             except Exception:
                 trace_id = ""
+                _log.debug("trace middleware: get_http_headers() failed", exc_info=True)
             if not trace_id:
                 return await call_next(context)
             with trace_scope(trace_id):

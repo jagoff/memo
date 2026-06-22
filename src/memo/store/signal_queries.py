@@ -123,13 +123,29 @@ class _SignalQueriesMixin(_StoreBase):
                         for r in health
                     ],
                 )
+            feedback_applied = 0
             if feedback:
-                # union by id (and by the secondary UNIQUE(source_id,query_text,rating))
-                cx.executemany(
-                    "INSERT OR IGNORE INTO source_feedback "
-                    "(id, source_id, query_text, rating, created_at, extra_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    [
+                for r in feedback:
+                    # Cancel-and-replace: any existing feedback for this
+                    # (source_id, query_text) is replaced by the newest
+                    # created_at, regardless of rating. Prevents stale
+                    # opposite-rating rows from different devices coexisting.
+                    existing = cx.execute(
+                        "SELECT id, rating, created_at FROM source_feedback "
+                        "WHERE source_id = ? AND query_text = ?",
+                        (r["source_id"], r["query_text"]),
+                    ).fetchone()
+                    if existing is not None:
+                        existing_created = existing["created_at"]
+                        incoming_created = r.get("created_at") or ""
+                        if incoming_created <= existing_created:
+                            continue
+                        cx.execute("DELETE FROM source_feedback_vec WHERE feedback_id = ?", (existing["id"],))
+                        cx.execute("DELETE FROM source_feedback WHERE id = ?", (existing["id"],))
+                    cx.execute(
+                        "INSERT INTO source_feedback "
+                        "(id, source_id, query_text, rating, created_at, extra_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
                         (
                             r["id"],
                             r["source_id"],
@@ -137,11 +153,10 @@ class _SignalQueriesMixin(_StoreBase):
                             int(r["rating"]),
                             r["created_at"],
                             r.get("extra_json"),
-                        )
-                        for r in feedback
-                    ],
-                )
-        return {"access": len(access), "memory_health": len(health), "source_feedback": len(feedback)}
+                        ),
+                    )
+                    feedback_applied += 1
+        return {"access": len(access), "memory_health": len(health), "source_feedback": feedback_applied}
 
     # -- memory health (confidence + roi_score) ----------------------------
 
