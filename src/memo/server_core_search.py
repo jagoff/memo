@@ -18,6 +18,40 @@ def _read_notification(memory: Memory) -> str:
         return ""
 
 
+def _auto_capture(memory: Memory) -> None:
+    """Best-effort auto-capture: runs idle capture on the most recent session.
+
+    Called as a side-effect from memo_unified_briefing, memo_search, memo_ask.
+    Never raises — failures are logged at debug level and silently swallowed.
+    Writes notification to pending file so the next tool call surfaces it.
+    """
+    from pathlib import Path
+
+    from memo.capture import run_capture_incremental
+    from memo.cli_capture import _write_capture_notification
+    from memo.session import list_sessions
+
+    try:
+        state_dir = memory.cfg.state_dir
+        sessions = list_sessions(state_dir, limit=1)
+        if not sessions:
+            return
+        sid = sessions[0].get("session_id")
+        transcript_raw = sessions[0].get("transcript_path")
+        if not sid or not transcript_raw:
+            return
+        transcript = Path(transcript_raw)
+        if not transcript.is_file():
+            return
+        result = run_capture_incremental(transcript, sid, debug=False)
+        titles = result.get("saved_titles") or []
+        if titles:
+            _write_capture_notification(state_dir, titles, idle=True)
+            _log.info("auto-capture: saved %d insight(s): %s", len(titles), "; ".join(titles[:3]))
+    except Exception:
+        _log.debug("auto-capture: skipped", exc_info=True)
+
+
 def register(server: Any, memory: Memory) -> None:
     @server.tool()
     def memo_get_embedder_profile() -> dict[str, Any]:
@@ -59,6 +93,10 @@ def register(server: Any, memory: Memory) -> None:
             t0_ms=t0,
             source=source,
         )
+
+        # Auto-capture: best-effort side effect — never blocks briefing.
+        _auto_capture(memory)
+
         return {
             "available": bool(lines),
             "markdown": markdown,
@@ -85,6 +123,9 @@ def register(server: Any, memory: Memory) -> None:
                 d["body_truncated"] = True
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
+
+        # Auto-capture: best-effort side effect on every search turn.
+        _auto_capture(memory)
 
         # Read pending idle notification (best-effort, races with writer)
         notification = _read_notification(memory)
@@ -161,6 +202,9 @@ def register(server: Any, memory: Memory) -> None:
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(memory, tool="ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
+
+        # Auto-capture: best-effort side effect on every ask turn.
+        _auto_capture(memory)
 
         # Read pending idle notification (best-effort, races with writer)
         out["notification"] = _read_notification(memory)

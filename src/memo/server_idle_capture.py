@@ -42,9 +42,10 @@ def register(server: FastMCP, memory: Memory) -> None:
         if not sid:
             return {"status": "no_session_id", "saved": 0, "saved_titles": []}
 
-        transcript = sessions[0].get("transcript_path")
-        if not transcript:
+        transcript_raw = sessions[0].get("transcript_path")
+        if not transcript_raw:
             return {"status": "no_transcript", "saved": 0, "saved_titles": []}
+        transcript = Path(transcript_raw)
 
         if dry_run:
             return {
