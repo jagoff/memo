@@ -30,6 +30,11 @@ _MCP_ENV_FORWARD_KEYS = (
     "MEMO_RERANKER_REVISION",
     "MEMO_RERANK_INPUT_K",
     "MEMO_RERANK_FUSION_ALPHA",
+    # auto-update: forwarded only when set at install time, so a machine opts in
+    # with `MEMO_AUTO_UPDATE=1 memo install-mcp --write` (off by default).
+    "MEMO_AUTO_UPDATE",
+    "MEMO_AUTO_UPDATE_INTERVAL_S",
+    "MEMO_AUTO_UPDATE_REPO",
 )
 
 _MISSING_MCP_OK_ERRORS = (

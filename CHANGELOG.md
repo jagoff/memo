@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-22
+
+### Added
+
+- **Auto-update on memo-mcp start (opt-in).** When `MEMO_AUTO_UPDATE=1`, memo-mcp checks (throttled, default 6h via `MEMO_AUTO_UPDATE_INTERVAL_S`) for a newer git **tag** (`vX.Y.Z`) and, if found, spawns a detached `memo self-update --to-tag <tag>` in the background — the new version takes effect on the next start. Trigger is a tag (not any commit) so un-tagged/broken pushes never propagate. Default off (public repo); `MEMO_AUTO_UPDATE=1 memo install-mcp --write` bakes it into a machine's agent configs. `memo self-update --to-tag` reinstalls the isolated runtime from `git+<repo>@<tag>` (pipx/uv), since git installs aren't on PyPI.
+
 ## [1.0.0] - 2026-06-22
 
 ### Added
