@@ -32,13 +32,13 @@ def test_update_revert_hits_embedding_cache(mock_memory):
 
 
 def test_save_populates_embedding_cache(mock_memory):
-    from memo.memory.maintain_ops import _sha256_short
+    from memo.memory.maintain_ops import _sha256_full
 
     mock_memory.save(content="cache me please", title="Title")
     text = mock_memory._compose_for_embed("Title", "cache me please")
     cached = mock_memory.store.get_repo_embedding_cache(
         model=mock_memory.cfg.embedder_model,
         dims=mock_memory.cfg.embedder_dims,
-        input_hashes=[_sha256_short(text)],
+        input_hashes=[_sha256_full(text)],
     )
     assert cached, "save should populate the content-addressed embedding cache"

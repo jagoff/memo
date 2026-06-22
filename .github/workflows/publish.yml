@@ -36,7 +36,16 @@ jobs:
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
           sudo mv mcp-publisher /usr/local/bin/mcp-publisher
       - name: Wait for PyPI propagation
-        run: sleep 60
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml'))['project']['version'])")
+          for i in $(seq 1 12); do
+            if curl -sf "https://pypi.org/pypi/mlx-memo/${version}/json" > /dev/null 2>&1; then
+              echo "PyPI version ${version} is available"
+              break
+            fi
+            echo "Waiting for PyPI propagation (attempt ${i}/12)..."
+            sleep 10
+          done
       - name: Publish server.json
         run: |
           mcp-publisher login github-oidc

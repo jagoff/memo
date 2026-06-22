@@ -568,14 +568,23 @@ class _AskOpsMixin(_MemoryBase):
 
     def _corpus_version(self) -> str:
         """Cheap corpus fingerprint: row count + latest update timestamp.
-        Any save/update/delete moves it, invalidating cached retrievals."""
+        Any save/update/delete moves it, invalidating cached retrievals.
+        Includes repo source state so repo index/embed/delete busts the cache."""
         try:
-            row = self.store._conn.execute(
+            meta = self.store._conn.execute(
                 "SELECT COUNT(*), COALESCE(MAX(updated), '') FROM meta"
             ).fetchone()
-            return f"{row[0]}:{row[1]}"
+            ver = f"m{meta[0]}:{meta[1]}"
         except Exception:
-            return ""
+            ver = "m0:"
+        try:
+            repo = self.store._conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(indexed_at), '') FROM repo_sources"
+            ).fetchone()
+            ver += f":r{repo[0]}:{repo[1]}"
+        except Exception:
+            ver += ":r0:"
+        return ver
 
     def _verbatim_short_circuit(
         self,

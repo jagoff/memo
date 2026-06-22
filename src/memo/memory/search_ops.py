@@ -129,10 +129,14 @@ class _SearchOpsMixin(_MemoryBase):
             # between; the final `limit` is applied AFTER rerank.
             input_k = self.cfg.rerank_input_k if self.cfg.reranker_enabled else limit
             k_each = max(input_k * 2, 20)
-            emb = self.embedder.embed_query(query)
-            vec_hits = self.store.search(
-                emb, limit=k_each, type_=type_, exclude_types=exclude_types
-            )
+            try:
+                emb = self.embedder.embed_query(query)
+                vec_hits = self.store.search(
+                    emb, limit=k_each, type_=type_, exclude_types=exclude_types
+                )
+            except Exception:
+                _log.warning("embedder unavailable, vec leg disabled in hybrid mode")
+                vec_hits = []
             # Adaptive rerank pool: resize input_k based on the score spread of
             # vec candidates.  High variance → results are diverse, widen the pool
             # so the reranker can pick the best from a richer set.  Low variance

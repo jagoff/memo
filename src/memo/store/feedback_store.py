@@ -186,8 +186,6 @@ class _FeedbackMixin(_StoreBase):
         if not rows:
             return 0
         vectors = [embed_fn(r["query_text"]) for r in rows]  # type: ignore[operator]
-        from sqlite_vec import serialize_float32
-
         count = 0
         with self._tx() as cx:
             for r, vec in zip(rows, vectors, strict=True):

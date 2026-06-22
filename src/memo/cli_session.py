@@ -485,7 +485,7 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
                         shown += f"; +{n - 3} more"
                     console.print(f"[dim]※ auto save (idle): {shown}[/dim]")
                 else:
-                    console.print(f"[dim]※ auto save (idle): scanned (0 new insights)[/dim]")
+                    console.print("[dim]※ auto save (idle): scanned (0 new insights)[/dim]")
                 # Also write pending notification if there were saved titles
                 if _titles:
                     from memo.cli_capture import _write_capture_notification

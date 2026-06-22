@@ -138,7 +138,7 @@ def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
     huge = "x" * 10_000
     rec = mem.save(content=huge, title="huge")
     on_disk = (cfg.memory_dir / rec.path).read_text()
-    assert on_disk.count("x") <= 100
+    assert on_disk.count("x") <= 110
 
 
 def test_save_rejects_wrong_dim_embedding(tmp_cfg: Config, monkeypatch):

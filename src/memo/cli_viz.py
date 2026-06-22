@@ -83,8 +83,8 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
             "       meta.title, meta.type, meta.tags, "
             "       meta.created, meta.updated "
             "FROM vec JOIN meta ON meta.id = vec.id "
-            "ORDER BY meta.updated DESC "
-            f"LIMIT {int(limit)}"
+            "ORDER BY meta.updated DESC LIMIT ?",
+            (limit,),
         ).fetchall()
     except Exception as exc:
         console.print(f"[red]Query failed:[/red] {exc}")

@@ -353,8 +353,7 @@ class _WriteOpsMixin(_MemoryBase):
             created=created_iso,
             updated=now_iso,
         )
-        if extra_for_store:
-            post["extra"] = extra_for_store
+        post["extra"] = extra_for_store or {}
 
         # Allocate a unique path and create the .md atomically under a lock:
         # `meta.path` is UNIQUE, so two concurrent same-title+date saves probing
@@ -447,6 +446,10 @@ class _WriteOpsMixin(_MemoryBase):
             # A dims/norm validation failure signals a misconfigured embedder
             # or model (e.g. wrong MEMO_EMBEDDER_DIMS) — fail loudly so it isn't
             # masked by silently marking every save embed-pending.
+            # Stamp pending marker on the already-written .md so reindex picks it up.
+            extra_for_store["_memo_embed_pending"] = True
+            post["extra"] = extra_for_store
+            abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
             raise
         except Exception as exc:
             return self._save_index_pending(
@@ -540,7 +543,6 @@ class _WriteOpsMixin(_MemoryBase):
         # Re-stamp the on-disk frontmatter with the pending marker so a later
         # `memo reindex` knows to re-embed. Best-effort: if even this rewrite
         # fails, the original .md is still on disk and reindex picks it up by
-        # body_hash anyway.
         with contextlib.suppress(Exception):
             post["extra"] = extra_for_store
             abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")

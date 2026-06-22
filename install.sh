@@ -137,6 +137,11 @@ should_download_models() {
     yes|true|1|Y|y) return 0 ;;
     no|false|0|N|n) return 1 ;;
     auto|"")
+      # Skip prompt if models are already cached
+      if [[ -d "$HOME/.cache/huggingface/hub/models--mlx-community--Qwen3-Embedding-0.6B-4bit-DWQ" ]]; then
+        say "models already cached, skipping download"
+        return 1
+      fi
       ask_yes_no "[memo install] Download MLX models now (~7 GB, required for retrieval)? [Y/n]" Y
       ;;
     *)

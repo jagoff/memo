@@ -50,13 +50,14 @@ def idle_daemon_start() -> None:
     env = os.environ.copy()
     env["MEMO_NONINTERACTIVE"] = "1"
 
-    proc = _subprocess.Popen(
-        [sys.executable, "-m", "memo.cli", "idle-daemon", "_serve"],
-        stdout=open(log_file, "a"),
-        stderr=_subprocess.STDOUT,
-        env=env,
-        start_new_session=True,
-    )
+    with open(log_file, "a") as log_fh:
+        proc = _subprocess.Popen(
+            [sys.executable, "-m", "memo.cli", "idle-daemon", "_serve"],
+            stdout=log_fh,
+            stderr=_subprocess.STDOUT,
+            env=env,
+            start_new_session=True,
+        )
 
     pid_file.write_text(str(proc.pid))
     click.echo(f"idle daemon started (pid={proc.pid})", err=True)
@@ -65,9 +66,10 @@ def idle_daemon_start() -> None:
 @idle_daemon_group.command(name="stop")
 def idle_daemon_stop() -> None:
     """Stop the idle capture daemon."""
+    import signal as _signal
+
     from memo.daemon_common import is_pid_alive as _is_pid_alive
     from memo.daemon_common import read_pid as _read_pid
-    import signal as _signal
 
     cfg = Config.from_env()
     pid_file = cfg.state_dir / "idle-daemon.pid"

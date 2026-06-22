@@ -92,15 +92,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 (id_, title, " ".join(tags), body_text),
             )
         # Dual-write to tantivy (outside the sqlite tx — separate index).
-        tantivy = self._get_tantivy()
-        if tantivy is not None:
-            try:
-                tantivy.delete_document(id_)
-                tantivy.add_document(id_, title, " ".join(tags), body_text)
-                tantivy.commit()
-            except Exception as exc:
-                _log.warning("tantivy upsert failed (FTS5 still current): %s", exc)
-                self._mark_tantivy_unhealthy()
+        with self._tantivy_write_lock:
+            tantivy = self._get_tantivy()
+            if tantivy is not None:
+                try:
+                    tantivy.delete_document(id_)
+                    tantivy.add_document(id_, title, " ".join(tags), body_text)
+                    tantivy.commit()
+                except Exception as exc:
+                    _log.warning("tantivy upsert failed (FTS5 still current): %s", exc)
+                    self._mark_tantivy_unhealthy()
 
     def upsert_text_only(
         self,
@@ -152,15 +153,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             # upsert() with the correct vector.
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
         # Dual-write to tantivy.
-        tantivy = self._get_tantivy()
-        if tantivy is not None:
-            try:
-                tantivy.delete_document(id_)
-                tantivy.add_document(id_, title, " ".join(tags), body_text)
-                tantivy.commit()
-            except Exception as exc:
-                _log.warning("tantivy upsert_text_only failed: %s", exc)
-                self._mark_tantivy_unhealthy()
+        with self._tantivy_write_lock:
+            tantivy = self._get_tantivy()
+            if tantivy is not None:
+                try:
+                    tantivy.delete_document(id_)
+                    tantivy.add_document(id_, title, " ".join(tags), body_text)
+                    tantivy.commit()
+                except Exception as exc:
+                    _log.warning("tantivy upsert_text_only failed: %s", exc)
+                    self._mark_tantivy_unhealthy()
 
     def has_vector(self, id_: str) -> bool:
         row = self._conn.execute("SELECT 1 FROM vec WHERE id = ? LIMIT 1", (id_,)).fetchone()
@@ -219,15 +221,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             was_updated = cur.rowcount > 0
         # Dual-write to tantivy (preserve existing body, just update title/tags).
         if was_updated:
-            tantivy = self._get_tantivy()
-            if tantivy is not None:
-                try:
-                    tantivy.delete_document(id_)
-                    tantivy.add_document(id_, title, " ".join(tags), body_text)
-                    tantivy.commit()
-                except Exception as exc:
-                    _log.warning("tantivy update_meta failed: %s", exc)
-                    self._mark_tantivy_unhealthy()
+            with self._tantivy_write_lock:
+                tantivy = self._get_tantivy()
+                if tantivy is not None:
+                    try:
+                        tantivy.delete_document(id_)
+                        tantivy.add_document(id_, title, " ".join(tags), body_text)
+                        tantivy.commit()
+                    except Exception as exc:
+                        _log.warning("tantivy update_meta failed: %s", exc)
+                        self._mark_tantivy_unhealthy()
         return was_updated
 
     def get(self, id_: str) -> dict[str, Any] | None:
@@ -463,14 +466,24 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             cx.execute("DELETE FROM meta")
             cx.execute("DELETE FROM vec")
             cx.execute("DELETE FROM fts")
-        tantivy = self._get_tantivy()
-        if tantivy is not None:
-            try:
-                tantivy._writer.delete_all_documents()
-                tantivy.commit()
-            except Exception as exc:
-                _log.warning("tantivy clear failed during rebuild: %s", exc)
-                self._mark_tantivy_unhealthy()
+        with self._tantivy_write_lock:
+            tantivy = self._get_tantivy()
+            if tantivy is not None:
+                try:
+                    tantivy._writer.delete_all_documents()
+                    tantivy.commit()
+                except Exception as exc:
+                    _log.warning("tantivy clear failed during rebuild: %s", exc)
+                    self._mark_tantivy_unhealthy()
+            elif self.tantivy_index_dir.is_dir():
+                # Tantivy unavailable but stale index directory exists — nuke it
+                # so _maybe_rebuild_tantivy will do a full rebuild when tantivy
+                # becomes available again, rather than serving ghost documents.
+                import shutil
+                try:
+                    shutil.rmtree(self.tantivy_index_dir)
+                except Exception as exc:
+                    _log.warning("failed to remove stale tantivy index: %s", exc)
         return int(n)
 
     def delete(self, id_: str) -> bool:
@@ -485,14 +498,15 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
             cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
         if existed:
-            tantivy = self._get_tantivy()
-            if tantivy is not None:
-                try:
-                    tantivy.delete_document(id_)
-                    tantivy.commit()
-                except Exception as exc:
-                    _log.warning("tantivy delete failed: %s", exc)
-                    self._mark_tantivy_unhealthy()
+            with self._tantivy_write_lock:
+                tantivy = self._get_tantivy()
+                if tantivy is not None:
+                    try:
+                        tantivy.delete_document(id_)
+                        tantivy.commit()
+                    except Exception as exc:
+                        _log.warning("tantivy delete failed: %s", exc)
+                        self._mark_tantivy_unhealthy()
         return existed
 
     def bulk_update_type(self, ids: list[str], new_type: str) -> int:
@@ -510,14 +524,19 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 [(new_type, i) for i in ids],
             )
             # Sync vec.type for every id that has a vector
+            placeholders = ",".join("?" for _ in ids)
+            vec_rows = {
+                r["id"]: r["embedding"]
+                for r in cx.execute(
+                    f"SELECT id, embedding FROM vec WHERE id IN ({placeholders})", ids
+                ).fetchall()
+            }
             for id_ in ids:
-                existing = cx.execute(
-                    "SELECT embedding FROM vec WHERE id = ?", (id_,)
-                ).fetchone()
-                if existing is not None:
+                emb = vec_rows.get(id_)
+                if emb is not None:
                     cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
                     cx.execute(
                         "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
-                        (id_, existing["embedding"], new_type),
+                        (id_, emb, new_type),
                     )
         return len(ids)

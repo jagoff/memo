@@ -23,10 +23,21 @@ class _MigrationsMixin(_StoreBase):
 
     def set_user_version(self, version: int) -> None:
         """Bump the on-disk schema version. Run inside a write tx."""
-        # `PRAGMA user_version = N` doesn't accept parameter binding; we
-        # interpolate after asserting the value is a small integer to
-        # rule out any injection vector.
         if not isinstance(version, int) or version < 0:
             raise ValueError(f"user_version must be a non-negative int, got {version!r}")
         with self._conn:
             self._conn.execute(f"PRAGMA user_version = {version}")
+
+    def _run_migrations(self) -> None:
+        """Run pending schema migrations in order.
+
+        Called from _init_schema_locked after DDL creation. Fresh databases
+        (version 0, empty meta table) are stamped at version 1 immediately.
+        Existing databases are migrated version-by-version.
+        """
+        current = self.get_user_version()
+        if current == 0:
+            row = self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()
+            if row and int(row[0]) == 0:
+                # Fresh DB — stamp at version 1 immediately.
+                self.set_user_version(1)

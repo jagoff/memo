@@ -199,7 +199,7 @@ def embed_cmd(text: str | None, batch_json) -> None:
         dim = len(vecs[0]) if vecs else 0
         out = {"vectors": vecs, "dim": dim, "model": mem.cfg.embedder_model}
     else:
-        assert text is not None
+        assert text is not None, "internal error: text is None in embed-text mode"
         vec = mem.embedder.embed_query(text)
         out = {"vector": vec, "dim": len(vec), "model": mem.cfg.embedder_model}
     sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")

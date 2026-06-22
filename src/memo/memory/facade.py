@@ -78,6 +78,8 @@ class Memory(
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         cfg.ensure_dirs()
+        self._close_lock = threading.Lock()
+        self._closed = False
         # MEMO_EMBEDDER_VIA_DAEMON=1: embed via the recall daemon socket
         # instead of loading a second in-process copy of the embedder. Used by
         # the warm memo-mcp chat daemon so its resident footprint is just the
@@ -118,7 +120,7 @@ class Memory(
         # Guards lazy `_chat` construction — the FastMCP HTTP transport
         # dispatches tool calls on a worker threadpool, so two concurrent
         # requests could otherwise both build a (multi-GB) MLXChat.
-        self._chat_lock = threading.Lock()
+        self._chat_lock = threading.RLock()
         # Knowledge-graph store. Cheap to open (just sqlite); creating
         # eagerly so graph queries never lazy-stall a CLI command.
         self.graph = GraphStore(cfg.graph_db)
@@ -223,8 +225,10 @@ class Memory(
     def temporal(self) -> TemporalAnalyzer:
         """Lazy accessor for TemporalAnalyzer."""
         if self._temporal is None:
-            chat = self._ensure_chat()
-            self._temporal = TemporalAnalyzer(self, chat)
+            with self._chat_lock:
+                if self._temporal is None:
+                    chat = self._ensure_chat()
+                    self._temporal = TemporalAnalyzer(self, chat)
         return self._temporal
 
     @property
@@ -238,11 +242,13 @@ class Memory(
     def contradict_store(self) -> ContradictionStore:
         """Lazy accessor for the persistent contradictions sidecar."""
         if self._contradict_store is None:
-            try:
-                self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
-            except Exception as exc:
-                _log.warning("contradict_store init failed: %s", exc)
-                raise
+            with self._chat_lock:
+                if self._contradict_store is None:
+                    try:
+                        self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
+                    except Exception as exc:
+                        _log.warning("contradict_store init failed: %s", exc)
+                        raise
         return self._contradict_store
 
     @property
@@ -418,6 +424,10 @@ class Memory(
         connection; other threads' connections are released when those
         threads end.  Idempotent — safe to call multiple times.
         """
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
         with contextlib.suppress(Exception):
             self.store.close()
         with contextlib.suppress(Exception):

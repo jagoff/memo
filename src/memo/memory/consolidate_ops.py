@@ -206,6 +206,14 @@ class _ConsolidateOpsMixin(_MemoryBase):
         items: builtins.list[dict[str, Any]] = []
         for r in rows:
             blob = r["emb"]
+            if not blob or len(blob) % 4 != 0:
+                _log.warning("consolidate: skipping corrupt embedding for %s", r["id"][:12])
+                continue
+            try:
+                emb = list(struct.unpack(f"<{len(blob) // 4}f", blob))
+            except struct.error:
+                _log.warning("consolidate: skipping corrupt embedding for %s", r["id"][:12])
+                continue
             items.append(
                 {
                     "id": r["id"],
@@ -214,7 +222,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     "tags": json.loads(r["tags"]) if r["tags"] else [],
                     "path": r["path"],
                     "updated": r["updated"],
-                    "emb": list(struct.unpack(f"<{len(blob) // 4}f", blob)),
+                    "emb": emb,
                 }
             )
         return items

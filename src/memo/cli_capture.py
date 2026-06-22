@@ -106,7 +106,7 @@ def capture_stop() -> None:
                 shown += f"; +{n - 3} more"
             console.print(f"[dim]※ auto save: {shown}[/dim]")
         else:
-            console.print(f"[dim]※ auto save: scanned (0 new insights)[/dim]")
+            console.print("[dim]※ auto save: scanned (0 new insights)[/dim]")
         # Also write pending notification if there were saved titles
         if titles:
             _write_capture_notification(Config.from_env().state_dir, titles)

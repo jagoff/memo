@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from memo.memory import Memory
 from memo.server_common import log_consult, now_ms
+
+_log = logging.getLogger(__name__)
+
+
+def _read_notification(memory: Memory) -> str:
+    """Read pending idle-capture notification without deleting it."""
+    notif_path = memory.cfg.state_dir / "pending_idle_notification.txt"
+    try:
+        return notif_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
 
 
 def register(server: Any, memory: Memory) -> None:
@@ -51,6 +63,7 @@ def register(server: Any, memory: Memory) -> None:
             "available": bool(lines),
             "markdown": markdown,
             "lines": lines,
+            "notification": _read_notification(memory),
         }
 
     @server.tool()
@@ -73,9 +86,8 @@ def register(server: Any, memory: Memory) -> None:
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
 
-        # Read pending idle notification
-        notif_path = memory.cfg.state_dir / "pending_idle_notification.txt"
-        notification = notif_path.read_text(encoding="utf-8").strip() if notif_path.exists() else ""
+        # Read pending idle notification (best-effort, races with writer)
+        notification = _read_notification(memory)
 
         return {
             "hits": out,
@@ -150,11 +162,8 @@ def register(server: Any, memory: Memory) -> None:
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(memory, tool="ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
 
-        # Read pending idle notification
-        notif_path = memory.cfg.state_dir / "pending_idle_notification.txt"
-        notification = notif_path.read_text(encoding="utf-8").strip() if notif_path.exists() else ""
-        if notification:
-            out["notification"] = notification
+        # Read pending idle notification (best-effort, races with writer)
+        out["notification"] = _read_notification(memory)
 
         return out
 

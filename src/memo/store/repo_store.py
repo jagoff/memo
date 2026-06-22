@@ -498,44 +498,42 @@ class _RepoStoreMixin(_StoreBase):
     def _delete_repo_file_rows(self, cx: sqlite3.Connection, file_ids: list[str]) -> None:
         if not file_ids:
             return
-        chunk_ids: list[str] = []
-        line_ids: list[str] = []
         for batch in _batches(file_ids):
             placeholders = ",".join("?" for _ in batch)
-            chunk_ids.extend(
+            chunk_ids = [
                 r["id"]
                 for r in cx.execute(
                     f"SELECT id FROM repo_chunks WHERE file_id IN ({placeholders})",
                     batch,
                 ).fetchall()
-            )
-            line_ids.extend(
+            ]
+            line_ids = [
                 r["id"]
                 for r in cx.execute(
                     f"SELECT id FROM repo_lines WHERE file_id IN ({placeholders})",
                     batch,
                 ).fetchall()
-            )
-        cx.executemany("DELETE FROM repo_vec WHERE id = ?", [(cid,) for cid in chunk_ids])
-        cx.executemany("DELETE FROM repo_chunk_fts WHERE id = ?", [(cid,) for cid in chunk_ids])
-        cx.executemany("DELETE FROM repo_line_fts WHERE id = ?", [(lid,) for lid in line_ids])
-        cx.executemany("DELETE FROM repo_chunks WHERE file_id = ?", [(fid,) for fid in file_ids])
-        cx.executemany("DELETE FROM repo_lines WHERE file_id = ?", [(fid,) for fid in file_ids])
-        cx.executemany("DELETE FROM repo_files WHERE id = ?", [(fid,) for fid in file_ids])
+            ]
+            cx.executemany("DELETE FROM repo_vec WHERE id = ?", [(cid,) for cid in chunk_ids])
+            cx.executemany("DELETE FROM repo_chunk_fts WHERE id = ?", [(cid,) for cid in chunk_ids])
+            cx.executemany("DELETE FROM repo_line_fts WHERE id = ?", [(lid,) for lid in line_ids])
+            cx.executemany("DELETE FROM repo_chunks WHERE file_id = ?", [(fid,) for fid in batch])
+            cx.executemany("DELETE FROM repo_lines WHERE file_id = ?", [(fid,) for fid in batch])
+            cx.executemany("DELETE FROM repo_files WHERE id = ?", [(fid,) for fid in batch])
 
     def delete_repo(self, key: str) -> bool:
         source = self.get_repo_source(key)
         if source is None:
             return False
         repo_id = source["id"]
-        file_ids = [
-            r["id"]
-            for r in self._conn.execute(
-                "SELECT id FROM repo_files WHERE repo_id = ?",
-                (repo_id,),
-            ).fetchall()
-        ]
         with self._tx() as cx:
+            file_ids = [
+                r["id"]
+                for r in cx.execute(
+                    "SELECT id FROM repo_files WHERE repo_id = ?",
+                    (repo_id,),
+                ).fetchall()
+            ]
             self._delete_repo_file_rows(cx, file_ids)
             cx.execute("DELETE FROM repo_sources WHERE id = ?", (repo_id,))
         return True

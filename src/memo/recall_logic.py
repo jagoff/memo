@@ -229,11 +229,11 @@ def _recall_logic(
         if micro_embedder:
             use_fallback = True
             if debug:
-                print("# recall-daemon: main embedder cold, using micro-embedder", file=sys.stderr)
+                _logger.warning("recall-daemon: main embedder cold, using micro-embedder")
         elif not flag_bool("MEMO_RECALL_FORCE_MODE"):
             mode = "bm25"
             if debug:
-                print("# recall-daemon: main embedder cold, falling back to BM25", file=sys.stderr)
+                _logger.warning("recall-daemon: main embedder cold, falling back to BM25")
 
     def _passes(h: Any) -> bool:
         if h.score is not None and h.score < min_sim:

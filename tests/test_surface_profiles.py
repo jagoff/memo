@@ -77,7 +77,7 @@ def test_mcp_core_profile_hides_advanced_tools(tmp_path, monkeypatch) -> None:
         mem.close()
 
 
-def test_mcp_agent_profile_is_default_and_exposes_five_tools(tmp_path, monkeypatch) -> None:
+def test_mcp_agent_profile_is_default_and_exposes_core_tools(tmp_path, monkeypatch) -> None:
     cfg = Config(
         data_dir=tmp_path / "data",
         state_dir=tmp_path / "state",
@@ -89,13 +89,22 @@ def test_mcp_agent_profile_is_default_and_exposes_five_tools(tmp_path, monkeypat
     mem = Memory(cfg)
     try:
         tools = asyncio.run(build_server(memory=mem).list_tools())
-        assert {tool.name for tool in tools} == {
+        tool_names = {tool.name for tool in tools}
+        # Core tools every profile must have
+        assert tool_names.issuperset({
             "memo_ask",
             "memo_get",
             "memo_save",
             "memo_search",
             "memo_unified_briefing",
-        }
+            "memo_idle_capture",
+            "memo_pop_notification",
+            "memo_start_session",
+            "memo_save_text",
+        })
+        # Advanced tools the agent profile must NOT have
+        assert "memo_graph_nodes" not in tool_names
+        assert "memo_contradict_scan" not in tool_names
     finally:
         mem.close()
 

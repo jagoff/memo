@@ -345,6 +345,7 @@ class _SchemaMixin(_StoreBase):
         # rather than producing a confusing dim-mismatch error at query time.
         self._ensure_schema_meta_table()
         self._check_embedder_version()
+        self._run_migrations()
 
     # Secondary B-tree indices on `meta` that older DBs predate. Kept out of
     # the `_schema_ready()`-gated DDL block (which only runs on fresh DBs) so a
@@ -609,7 +610,12 @@ class _SchemaMixin(_StoreBase):
         try:
             stored_dims = int(stored_dims_str)
         except ValueError:
-            return  # malformed stored dims, don't block startup
+            from ..errors import StorageError
+
+            raise StorageError(
+                f"Corrupted embedder_dims in schema_meta: {stored_dims_str!r}. "
+                "Run 'memo reindex --rebuild' to fix."
+            ) from None
 
         if stored_model != current_model or stored_dims != current_dims:
             from ..errors import StorageError
