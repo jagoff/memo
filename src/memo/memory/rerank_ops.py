@@ -130,7 +130,7 @@ class _RerankOpsMixin(_MemoryBase):
         # Prefix lookup. Must match exactly one row.
         matches = self.store.find_by_prefix(sid, limit=2)
         if not matches:
-            raise ValueError(f"no memoria matches source_id prefix {sid!r}")
+            raise ValueError(f"no memory matches source_id prefix {sid!r}")
         if len(matches) > 1:
             raise AmbiguousIdError(sid, matches)
         return matches[0]
@@ -187,7 +187,7 @@ class _RerankOpsMixin(_MemoryBase):
         if halflife_days is None:
             halflife_days = 180.0
         _now = datetime.now(tz=UTC)
-        # Existence pre-filter: most memorias have zero feedback rows, so a
+        # Existence pre-filter: most memories have zero feedback rows, so a
         # single IN-list lookup tells us which hits are even worth the kNN vec
         # scan below. Collapses a per-hit N+1 into 1 query for the common case.
         try:

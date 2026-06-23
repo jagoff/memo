@@ -74,7 +74,7 @@ def as_of_search(
     tbl = Table(
         show_lines=False,
         expand=True,
-        title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias existed",
+        title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memories existed",
     )
     tbl.add_column("score", justify="right", width=6)
     tbl.add_column("type", width=10)
@@ -111,7 +111,7 @@ def as_of_ask(question: str, as_of: str, k: int, as_json: bool) -> None:
     console.print(
         Panel.fit(
             out["answer"] or "[dim](no answer)[/dim]",
-            title=f"✓ as-of {snap.as_of.date().isoformat()} ({len(snap)} memorias in scope)",
+            title=f"✓ as-of {snap.as_of.date().isoformat()} ({len(snap)} memories in scope)",
             border_style="magenta",
         )
     )
@@ -127,7 +127,7 @@ def as_of_ask(question: str, as_of: str, k: int, as_json: bool) -> None:
 @click.option("--limit", default=20, type=int, show_default=True)
 @click.option("--json", "as_json", is_flag=True)
 def as_of_list(as_of: str, type_: str | None, limit: int, as_json: bool) -> None:
-    """List memorias that existed in a past snapshot (most-recent first)."""
+    """List memories that existed in a past snapshot (most-recent first)."""
     from memo.memory import Memory
     from memo.time_machine import reconstruct
 
@@ -164,7 +164,7 @@ def as_of_list(as_of: str, type_: str | None, limit: int, as_json: bool) -> None
     tbl = Table(
         show_lines=False,
         expand=True,
-        title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias",
+        title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memories",
     )
     tbl.add_column("id", width=10)
     tbl.add_column("type", width=10)

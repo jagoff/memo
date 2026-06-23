@@ -217,9 +217,9 @@ class FederationSearcher:
         return results
 
     def _deduplicate_results(self, results: list[FederatedResult]) -> list[FederatedResult]:
-        """Deduplicate results by memoria ID.
+        """Deduplicate results by memory ID.
 
-        If the same memoria ID appears from multiple vaults, keep the one
+        If the same memory ID appears from multiple vaults, keep the one
         with the highest score.
 
         Args:

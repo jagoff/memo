@@ -18,25 +18,25 @@ from memo.config import Config
 
 
 @click.command(name="extract-entities")
-@click.option("--all", "all_", is_flag=True, help="Process every memoria in the store.")
+@click.option("--all", "all_", is_flag=True, help="Process every memory in the store.")
 @click.option(
     "--id",
     "id_",
     default=None,
     multiple=True,
-    help="Repeatable. Process specific memoria id(s) (full or prefix).",
+    help="Repeatable. Process specific memory id(s) (full or prefix).",
 )
 @click.option(
     "--force",
     is_flag=True,
-    help="Re-extract even if memoria already has entity links (default skips).",
+    help="Re-extract even if memory already has entity links (default skips).",
 )
 @click.option("--json", "as_json", is_flag=True)
 def extract_entities(all_: bool, id_: tuple[str, ...], force: bool, as_json: bool) -> None:
     """Extract named entities (person/project/technology/file/org/concept)
-    from memoria bodies via Qwen2.5-3B and write them to the graph DB.
+    from memory bodies via Qwen2.5-3B and write them to the graph DB.
 
-    Cost: ~0.5-1s per memoria. 223-doc corpus ≈ 2-4 min.
+    Cost: ~0.5-1s per memory. 223-doc corpus ≈ 2-4 min.
     """
 
     if not all_ and not id_:
@@ -119,7 +119,7 @@ def entities(limit: int, type_: str | None, as_json: bool) -> None:
 )
 @click.option("--json", "as_json", is_flag=True)
 def entity(name: str, type_: str | None, as_json: bool) -> None:
-    """Memorias that mention an entity."""
+    """Memories that mention an entity."""
 
     mem = _get_memory(Config.from_env())
     ids = mem.graph.entity_memorias(name, type_=type_)
@@ -127,9 +127,9 @@ def entity(name: str, type_: str | None, as_json: bool) -> None:
         click.echo(json.dumps(ids, indent=2))
         return
     if not ids:
-        console.print(f"[dim]no memorias mention {name!r}{f' ({type_})' if type_ else ''}[/dim]")
+        console.print(f"[dim]no memories mention {name!r}{f' ({type_})' if type_ else ''}[/dim]")
         return
-    console.print(f"[bold]{len(ids)}[/bold] memoria(s) mention [cyan]{name}[/cyan]:")
+    console.print(f"[bold]{len(ids)}[/bold] memory(s) mention [cyan]{name}[/cyan]:")
     for mid in ids[:50]:
         rec = mem.store.get(mid)
         if rec:

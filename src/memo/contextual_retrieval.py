@@ -50,7 +50,7 @@ def build_context_prompt(title: str, body: str) -> str:
         f"Note: {title.strip() or 'untitled'}\n\n"
         f"<MEMORIA>\n{body_snippet}\n</MEMORIA>\n\n"
         "Give a single short sentence, at most 30 words, that situates this "
-        "memoria within the user's personal archive to improve semantic "
+        "memory within the user's personal archive to improve semantic "
         "search. Respond with only the sentence."
     )
 

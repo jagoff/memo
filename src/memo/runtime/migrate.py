@@ -80,7 +80,7 @@ def _consolidate_sidecar_dbs() -> None:
 @click.command(name="migrate-vault")
 @click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
 @click.option("--from", "from_dir", default=None, type=click.Path(exists=True, file_okay=False, resolve_path=True), help="Source memory_dir. Defaults to current cfg.memory_dir.")
-@click.option("--into-vault", is_flag=True, help="Move memorias INTO the Obsidian vault (<vault>/<SYSTEM_DIR>/AI/memory) and set memories_in_vault=1 so the vault becomes the source of truth.")
+@click.option("--into-vault", is_flag=True, help="Move memories INTO the Obsidian vault (<vault>/<SYSTEM_DIR>/AI/memory) and set memories_in_vault=1 so the vault becomes the source of truth.")
 @click.option("--rollback", is_flag=True, help="Restore the config snapshot taken by the last migration and exit. Copied files are left in place (migration never deletes anything).")
 @click.option("--consolidate-db", is_flag=True, help="Merge the sidecar DBs (history/graph/contradictions/crossref) into the main memvec.db, set MEMO_SINGLE_DB=1 in config, and rename the legacy files to *.db.bak (reversible). Idempotent. Does not move any .md files.")
 @click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
@@ -106,7 +106,7 @@ def migrate_vault(
         shutil.copy2(snapshot, _resolve_config_path())
         console.print(f"[green]✓[/green] restored config from snapshot {snapshot}")
         console.print(
-            "[dim]Copied memoria files were left in place; remove them manually "
+            "[dim]Copied memory files were left in place; remove them manually "
             "if you no longer want them.[/dim]"
         )
         return
@@ -155,7 +155,7 @@ def migrate_vault(
 
     if not yes:
         click.confirm(
-            f"Copy {len(md_files)} memorias from\n  {src}\n→ {dst}\n"
+            f"Copy {len(md_files)} memories from\n  {src}\n→ {dst}\n"
             "and rebuild memvec.db. Source files will be left in place. "
             "Proceed?",
             abort=True,

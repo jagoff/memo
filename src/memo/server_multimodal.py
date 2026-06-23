@@ -56,7 +56,7 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Args:
             image_path: Path to the image file.
-            memoria_id: Optional associated memoria ID.
+            memoria_id: Optional associated memory ID.
         """
         from pathlib import Path
 
@@ -72,7 +72,7 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Args:
             audio_path: Path to the audio file.
-            memoria_id: Optional associated memoria ID.
+            memoria_id: Optional associated memory ID.
         """
         from pathlib import Path
 

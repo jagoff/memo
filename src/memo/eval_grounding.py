@@ -1,6 +1,6 @@
 """Ground-truth eval for the grounding detector — does "used memo" match reality?
 
-The utility metric joins recall.log × grounding.log and calls a memoria "used"
+The utility metric joins recall.log × grounding.log and calls a memory "used"
 when used_score ≥ USED_SCORE_STRONG, specific_score ≥ SPECIFIC_MARGIN, or a
 downstream action fired. Those thresholds are heuristics; without labels the rate
 is unfalsifiable. This module scores the detector against a hand-labeled set:

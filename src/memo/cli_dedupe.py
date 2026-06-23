@@ -17,7 +17,7 @@ from memo.config import Config
     help="Cosine threshold for near-duplicate clustering (default: 0.92)",
 )
 @click.option("--max-clusters", type=int, default=50, help="Max clusters to surface (default: 50)")
-@click.option("--type", "type_", help="Filter by memoria type")
+@click.option("--type", "type_", help="Filter by memory type")
 @click.option(
     "--apply",
     "do_apply",
@@ -34,7 +34,7 @@ def dedupe_cmd(
     dry_run: bool,
     as_json: bool,
 ) -> None:
-    """Find and (optionally) merge near-duplicate memorias."""
+    """Find and (optionally) merge near-duplicate memories."""
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 

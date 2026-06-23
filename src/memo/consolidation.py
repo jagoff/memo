@@ -1,25 +1,25 @@
 """Advanced consolidation — LLM-driven clustering + intelligent merge.
 
 Expands on the basic consolidate() in memory.py by adding:
-- Intelligent merge of clustered memorias into a single richer entry
+- Intelligent merge of clustered memories into a single richer entry
 - Archival of obsolete versions with forward references
 - Auto-application of consolidation decisions with confirmation
 - Conflict resolution when merging conflicting information
 
 ## Merge Strategy
 
-When merging a cluster of related memorias:
+When merging a cluster of related memories:
 1. Preserve the most recent timestamp
 2. Combine tags (union, de-duplicated)
 3. Merge bodies with section headers indicating source
 4. Use LLM to synthesize a unified title if needed
-5. Archive old memorias with a reference to the new merged one
+5. Archive old memories with a reference to the new merged one
 
 ## Archival Format
 
-Archived memorias are moved to a subdirectory `archived/` within the memory
+Archived memories are moved to a subdirectory `archived/` within the memory
 directory and get a frontmatter field `archived_for` pointing to the new
-merged memoria ID.
+merged memory ID.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ _log = logging.getLogger(__name__)
 
 _MERGE_SYSTEM_PROMPT = """You merge multiple related memory notes into a single coherent entry.
 
-You receive a cluster of 2+ memorias that have been identified as semantically
+You receive a cluster of 2+ memories that have been identified as semantically
 related (duplicates, evolutions, or facets). Output a JSON object:
 
 {
@@ -48,7 +48,7 @@ related (duplicates, evolutions, or facets). Output a JSON object:
 }
 
 Merge strategies:
-- "keep_latest": the latest memoria supersedes all others (use for evolutions)
+- "keep_latest": the latest memory supersedes all others (use for evolutions)
 - "synthesis": create a new unified entry combining key points from all
 - "concat_with_headers": concatenate with section headers per source (use for facets)
 
@@ -61,7 +61,7 @@ Rules:
 
 @dataclass(frozen=True)
 class MergeProposal:
-    """A proposal for merging a cluster of memorias."""
+    """A proposal for merging a cluster of memories."""
 
     cluster_id: int
     memoria_ids: list[str]
@@ -69,15 +69,15 @@ class MergeProposal:
     merged_body: str
     merge_strategy: str
     rationale: str
-    archived_ids: list[str]  # IDs of memorias to archive after merge
+    archived_ids: list[str]  # IDs of memories to archive after merge
 
 
 @dataclass(frozen=True)
 class ConsolidationResult:
     """Result of a consolidation operation."""
 
-    merged_id: str | None  # ID of the new merged memoria (if any)
-    archived_ids: list[str]  # IDs of archived memorias
+    merged_id: str | None  # ID of the new merged memory (if any)
+    archived_ids: list[str]  # IDs of archived memories
     skipped_ids: list[str]  # IDs that were skipped (e.g., conflicts)
     summary: str
 
@@ -133,7 +133,7 @@ class AdvancedConsolidator:
                 merged_title=latest.get("title", ""),
                 merged_body=self._read_body(latest["id"]),
                 merge_strategy="keep_latest",
-                rationale=f"Latest memoria ({latest['id'][:8]}) supersedes older versions",
+                rationale=f"Latest memory ({latest['id'][:8]}) supersedes older versions",
                 archived_ids=[m["id"] for m in members if m["id"] != latest["id"]],
             )
 
@@ -145,7 +145,7 @@ class AdvancedConsolidator:
         chat = self._ensure_chat()
 
         members = cluster.get("members", [])
-        prompt = "Cluster of related memorias:\n\n"
+        prompt = "Cluster of related memories:\n\n"
         for m in members:
             prompt += f"[{m['id'][:8]}] {m['title']}\n"
             prompt += f"Updated: {m['updated']}\n"
@@ -215,7 +215,7 @@ class AdvancedConsolidator:
         )
 
     def _read_body(self, memoria_id: str) -> str:
-        """Read the body of a memoria by ID."""
+        """Read the body of a memory by ID."""
         rec = self.memory.get(memoria_id)
         return rec.body if rec else ""
 
@@ -239,7 +239,7 @@ class AdvancedConsolidator:
                 merged_id=None,
                 archived_ids=[],
                 skipped_ids=proposal.memoria_ids,
-                summary=f"Dry run: would merge {len(proposal.memoria_ids)} memorias",
+                summary=f"Dry run: would merge {len(proposal.memoria_ids)} memories",
             )
 
         # keep_latest: the surviving ID already exists — just archive the older ones.
@@ -258,7 +258,7 @@ class AdvancedConsolidator:
                     merged_id=surviving_id,
                     archived_ids=archived,
                     skipped_ids=[],
-                    summary=f"Kept {surviving_id[:8]}, archived {len(archived)} superseded memorias",
+                    summary=f"Kept {surviving_id[:8]}, archived {len(archived)} superseded memories",
                 )
             except Exception as e:
                 return ConsolidationResult(
@@ -292,7 +292,7 @@ class AdvancedConsolidator:
                 tags=list(all_tags),
             )
 
-            # Archive the old memorias
+            # Archive the old memories
             archived = []
             for mid in proposal.archived_ids:
                 if self._archive_memoria(mid, merged_rec.id):
@@ -302,7 +302,7 @@ class AdvancedConsolidator:
                 merged_id=merged_rec.id,
                 archived_ids=archived,
                 skipped_ids=[],
-                summary=f"Merged {len(proposal.memoria_ids)} memorias into {merged_rec.id[:8]}",
+                summary=f"Merged {len(proposal.memoria_ids)} memories into {merged_rec.id[:8]}",
             )
         except Exception as e:
             return ConsolidationResult(
@@ -313,7 +313,7 @@ class AdvancedConsolidator:
             )
 
     def _archive_memoria(self, memoria_id: str, replacement_id: str) -> bool:
-        """Archive a memoria by moving it to the archived/ subdirectory.
+        """Archive a memory by moving it to the archived/ subdirectory.
 
         Adds a frontmatter field `archived_for` pointing to the replacement.
         """
@@ -380,7 +380,7 @@ class AdvancedConsolidator:
 
         Two-pass strategy:
         1. Fast lane (cosine ≥ auto_threshold, default 0.95): skip LLM, merge as
-           keep_latest. No model cost for obviously identical memorias.
+           keep_latest. No model cost for obviously identical memories.
         2. Normal pass (cosine ≥ threshold, default 0.85): LLM classifies the
            relationship (duplicate / evolution / facets / unrelated). Skips any
            cluster whose members were already handled by the fast lane.
@@ -388,7 +388,7 @@ class AdvancedConsolidator:
         Args:
             threshold: Cosine similarity threshold for the LLM pass.
             max_clusters: Maximum clusters per pass.
-            type_: Optional filter by memoria type.
+            type_: Optional filter by memory type.
             auto_apply: If True, automatically apply all merge proposals.
             dry_run: If True, don't actually modify anything.
             auto_threshold: Override for the fast-lane threshold. If None, reads

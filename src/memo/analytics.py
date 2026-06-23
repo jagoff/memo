@@ -27,7 +27,7 @@ class CorpusMetrics:
     type_distribution: dict[str, int]
     tag_frequency: dict[str, int]
     entity_frequency: dict[str, int]
-    growth_rate: float  # memorias per day
+    growth_rate: float  # memories per day
     average_access_count: float
 
 
@@ -63,24 +63,24 @@ class AnalyticsEngine:
         Returns:
             CorpusMetrics with all computed metrics.
         """
-        # Get all memorias
-        memorias = self.memory.list(limit=10000)
+        # Get all memories
+        memories = self.memory.list(limit=10000)
 
-        total_memorias = len(memorias)
+        total_memorias = len(memories)
 
         # Type distribution
-        type_counter = Counter(m.type for m in memorias)
+        type_counter = Counter(m.type for m in memories)
         type_distribution = dict(type_counter)
 
         # Tag frequency
         tag_counter: Counter[str] = Counter()
-        for m in memorias:
+        for m in memories:
             tag_counter.update(m.tags)
         tag_frequency = dict(tag_counter.most_common(50))
 
         # Entity frequency
         entity_counter: Counter[str] = Counter()
-        for m in memorias:
+        for m in memories:
             entities = self.memory.graph.get_entity_mentions(m.id)
             for e in entities:
                 entity_counter[e.name] += 1
@@ -89,17 +89,17 @@ class AnalyticsEngine:
         # Total entities
         total_entities = self.memory.graph.count_entities()
 
-        # Growth rate (memorias per day)
+        # Growth rate (memories per day)
         if total_memorias > 1:
-            first_date = datetime.fromisoformat(memorias[-1].updated.replace("Z", "+00:00"))
-            last_date = datetime.fromisoformat(memorias[0].updated.replace("Z", "+00:00"))
+            first_date = datetime.fromisoformat(memories[-1].updated.replace("Z", "+00:00"))
+            last_date = datetime.fromisoformat(memories[0].updated.replace("Z", "+00:00"))
             days = max(1, (last_date - first_date).days)
             growth_rate = total_memorias / days
         else:
             growth_rate = 0.0
 
         # Average access count
-        total_access = sum(self.memory.lifecycle.get_access_count(m.id) for m in memorias)
+        total_access = sum(self.memory.lifecycle.get_access_count(m.id) for m in memories)
         average_access_count = total_access / total_memorias if total_memorias > 0 else 0.0
 
         return CorpusMetrics(
@@ -121,11 +121,11 @@ class AnalyticsEngine:
         Returns:
             GrowthData with dates and counts.
         """
-        memorias = self.memory.list(limit=10000)
+        memories = self.memory.list(limit=10000)
 
         # Group by date
         date_counts: Counter[str] = Counter()
-        for m in memorias:
+        for m in memories:
             date_str = m.updated[:10]  # YYYY-MM-DD
             date_counts[date_str] += 1
 
@@ -191,7 +191,7 @@ class AnalyticsEngine:
             writer = csv.writer(f)
             writer.writerow(["Metric", "Value"])
 
-            writer.writerow(["Total Memorias", metrics.total_memorias])
+            writer.writerow(["Total Memories", metrics.total_memorias])
             writer.writerow(["Total Entities", metrics.total_entities])
             writer.writerow(["Growth Rate", metrics.growth_rate])
             writer.writerow(["Average Access Count", metrics.average_access_count])
@@ -233,9 +233,9 @@ class Dashboard:
         lines = [
             "=== Memory Analytics Dashboard ===",
             "",
-            f"Total Memorias: {metrics.total_memorias}",
+            f"Total Memories: {metrics.total_memorias}",
             f"Total Entities: {metrics.total_entities}",
-            f"Growth Rate: {metrics.growth_rate:.2f} memorias/day",
+            f"Growth Rate: {metrics.growth_rate:.2f} memories/day",
             f"Average Access Count: {metrics.average_access_count:.2f}",
             "",
             "Type Distribution:",
@@ -286,9 +286,9 @@ class Dashboard:
 
     <div class="section">
         <h2>Overview</h2>
-        <p>Total Memorias: <span class="metric">{metrics.total_memorias}</span></p>
+        <p>Total Memories: <span class="metric">{metrics.total_memorias}</span></p>
         <p>Total Entities: <span class="metric">{metrics.total_entities}</span></p>
-        <p>Growth Rate: <span class="metric">{metrics.growth_rate:.2f}</span> memorias/day</p>
+        <p>Growth Rate: <span class="metric">{metrics.growth_rate:.2f}</span> memories/day</p>
         <p>Average Access Count: <span class="metric">{metrics.average_access_count:.2f}</span></p>
     </div>
 

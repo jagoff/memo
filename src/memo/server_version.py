@@ -20,14 +20,14 @@ def register(server: FastMCP, memory: Memory) -> None:
         memoria_id: str,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
-        """Show version history for a memoria.
+        """Show version history for a memory.
 
-        Returns a list of all versions of the specified memoria,
+        Returns a list of all versions of the specified memory,
         most recent first. Each version includes title, type, tags,
         body snapshot, and change reason.
 
         Args:
-            memoria_id: The memoria ID to get history for.
+            memoria_id: The memory ID to get history for.
             limit: Maximum versions to return.
         """
         versions = memory.versioning.get_version_history(memoria_id, limit=limit)
@@ -39,13 +39,13 @@ def register(server: FastMCP, memory: Memory) -> None:
         version_a: int | None = None,
         version_b: int | None = None,
     ) -> dict[str, Any] | None:
-        """Show diff between two versions of a memoria.
+        """Show diff between two versions of a memory.
 
         Returns a unified diff between two versions. If version_a or version_b
         is None, uses the latest and latest-1 versions respectively.
 
         Args:
-            memoria_id: The memoria ID to diff.
+            memoria_id: The memory ID to diff.
             version_a: First version ID (or None for latest).
             version_b: Second version ID (or None for latest-1).
         """
@@ -58,13 +58,13 @@ def register(server: FastMCP, memory: Memory) -> None:
         version_id: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        """Rollback a memoria to a previous version.
+        """Rollback a memory to a previous version.
 
-        Restores the memoria to the specified version by updating its
+        Restores the memory to the specified version by updating its
         content, title, type, and tags to match the version snapshot.
 
         Args:
-            memoria_id: The memoria ID to rollback.
+            memoria_id: The memory ID to rollback.
             version_id: The version ID to rollback to.
             reason: Optional reason for the rollback.
         """

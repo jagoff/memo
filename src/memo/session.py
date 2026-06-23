@@ -6,7 +6,7 @@ I working on" state: cwd, branch, last user prompt, last todo, last
 plan. Survives a crashed/closed Claude Code session so the next
 SessionStart can show a picker of recent work.
 
-## Why a sidecar JSON store, not a memoria
+## Why a sidecar JSON store, not a memory
 
 A session snapshot is ephemeral by nature: 90% of the value lives in
 the first 24h, decaying to ~zero past a week. Pulling them through

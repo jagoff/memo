@@ -39,7 +39,7 @@ _log = logging.getLogger(__name__)
 _VALID_MODES = {"off", "read_through", "write_through", "write_back"}
 _VALID_EVICTION = {"lru", "lfu", "ttl"}
 
-# extra-bag key marking a memoria written locally but not yet persisted to the
+# extra-bag key marking a memory written locally but not yet persisted to the
 # backing store (write-back mode). Such entries must be flushed before they can
 # be evicted, or the write is lost.
 CACHE_DIRTY_KEY = "_cache_dirty"
@@ -98,11 +98,11 @@ class CacheBackend(Protocol):
     `Memory`. Kept as a Protocol so this module has no backend dependency."""
 
     def push(self, record: Any) -> bool:
-        """Persist a memoria to the backing store. Returns True on success."""
+        """Persist a memory to the backing store. Returns True on success."""
         ...
 
     def fetch(self, query: str, *, limit: int = 10) -> list[dict[str, Any]]:
-        """Read-through: fetch candidate memorias from the backing store."""
+        """Read-through: fetch candidate memories from the backing store."""
         ...
 
     def has_current(self, id_: str, body_hash: str) -> bool:
@@ -160,7 +160,7 @@ class CacheManager:
     # -- flush (write-back safety) -----------------------------------------
 
     def _flush(self, memoria_id: str) -> bool:
-        """Push a memoria to the backing store before eviction. Returns True
+        """Push a memory to the backing store before eviction. Returns True
         if the local copy is safe to drop (clean, or successfully flushed)."""
         rec = self.memory.get(memoria_id)
         if rec is None:
@@ -171,7 +171,7 @@ class CacheManager:
         if self.backend is None:
             # Dirty but nowhere to flush: refuse to evict, never lose a write.
             _log.warning(
-                "cache: memoria %s is dirty but no backend configured; "
+                "cache: memory %s is dirty but no backend configured; "
                 "skipping eviction to avoid data loss",
                 memoria_id[:8],
             )
@@ -234,7 +234,7 @@ class CacheManager:
     # -- flush -------------------------------------------------------------
 
     def flush_all(self) -> dict[str, Any]:
-        """Push every dirty (write-back, un-persisted) memoria to the backing
+        """Push every dirty (write-back, un-persisted) memory to the backing
         store and clear its dirty flag. Returns counts. No-op when disabled or
         no backend is configured.
         """

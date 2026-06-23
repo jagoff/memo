@@ -119,7 +119,7 @@ memo install-slash --client claude-code --client codex --client opencode --clien
 To move existing data:
 
 ```bash
-# On the old Mac: portable zip with .md memorias + memvec.db + history.db.
+# On the old Mac: portable zip with .md memories + memvec.db + history.db.
 memo backup --out ~/Desktop/memo-transfer.zip
 
 # On the new Mac, after installing memo:
@@ -127,7 +127,7 @@ memo restore ~/Desktop/memo-transfer.zip --reindex --yes
 memo doctor --strict-runtime
 ```
 
-If your memorias already live in an iCloud/Syncthing/Git-synced Obsidian folder,
+If your memories already live in an iCloud/Syncthing/Git-synced Obsidian folder,
 point the new Mac at that same folder instead of copying the zip:
 
 ```bash
@@ -297,7 +297,7 @@ tool:
 | `/memo reindex` | absorb edits made directly in Obsidian |
 | `/memo history [op] [id]` | audit log of save/update/delete |
 | `/memo consolidate [threshold]` | cluster near-duplicates + merge proposals |
-| `/memo mapa [--output FILE]` | generate 2D semantic canvas HTML |
+| `/memo map [--output FILE]` | generate 2D semantic canvas HTML |
 | `/memo doctor [--gc] [--fix]` | self-check + orphan detect |
 
 ---
@@ -313,7 +313,7 @@ tool:
 | `memo_update(id, title?, type?, tags?, content?)` | Patches fields; re-embeds only if body changed. |
 | `memo_reindex()` | Re-scan vault, re-embed entries whose `body_hash` diverged. |
 | `memo_delete(id)` | Removes from vec + disk. |
-| `memo_ask(question)` | RAG synthesis; cites memorias by id. |
+| `memo_ask(question)` | RAG synthesis; cites memories by id. |
 | `memo_chat_ask(question, history?, context?)` | Chat-shaped RAG envelope (`memo.chat_ask.v2`) with answer, citations, retrieval trace, and synthesis status. |
 | `memo_stats()` | Counts, paths, active models. |
 | `memo_history(limit?, record_id?)` | Recent save/update/delete events, optionally filtered to one record. |
@@ -325,7 +325,7 @@ tool:
 ## Ambient memory
 
 Install the bundled Claude Code plugin and memo silently consults your past on
-every prompt and injects the most relevant memorias as `additionalContext` —
+every prompt and injects the most relevant memories as `additionalContext` —
 **the agent sees them before answering**, no manual invocation. With the plugin,
 six hooks plug in automatically:
 
@@ -377,14 +377,14 @@ session start if macOS killed it under memory pressure.
 | Env var | Default | Purpose |
 |---|---|---|
 | `MEMO_RECALL_DISABLE` | unset | Set to `1` to skip recall entirely |
-| `MEMO_RECALL_TOP_K` | `3` | Max memorias to inject |
+| `MEMO_RECALL_TOP_K` | `3` | Max memories to inject |
 | `MEMO_RECALL_MIN_SIM` | `0.6` | Cosine similarity floor |
 | `MEMO_RECALL_MIN_PROMPT_CHARS` | `12` | Skip very short prompts |
-| `MEMO_RECALL_BODY_CHARS` | `240` | Snippet length per memoria |
+| `MEMO_RECALL_BODY_CHARS` | `240` | Snippet length per memory |
 | `MEMO_RECALL_SKIP_SLASH` | `1` | Skip recall on `/` prompts |
-| `MEMO_RECALL_TOKEN_BUDGET` | `0` | When > 0, pack memorias greedily until ~N tokens; truncate tail to fit |
-| `MEMO_RECALL_PROJECT_BOOST` | `0.15` | Additive score boost for memorias whose tags match the current project tag |
-| `MEMO_RECALL_MIN_BODY_CHARS` | `40` | Filter out stub memorias (empty or near-empty bodies) |
+| `MEMO_RECALL_TOKEN_BUDGET` | `0` | When > 0, pack memories greedily until ~N tokens; truncate tail to fit |
+| `MEMO_RECALL_PROJECT_BOOST` | `0.15` | Additive score boost for memories whose tags match the current project tag |
+| `MEMO_RECALL_MIN_BODY_CHARS` | `40` | Filter out stub memories (empty or near-empty bodies) |
 | `MEMO_RECALL_FORCE_MODE` | unset | Set to `1` to disable the warm-signal cold-start check |
 | `MEMO_RECALL_DEBUG` | unset | Print failure reasons to stderr |
 
@@ -441,7 +441,7 @@ memo mine-history --dry-run --debug         # cost estimation, no writes
 
 ### Auto-reindex on edit
 
-Editing a memoria directly in Obsidian normally needs a manual `memo reindex`.
+Editing a memory directly in Obsidian normally needs a manual `memo reindex`.
 `memo watch` (foreground) or `memo install-watcher` (background launchd job)
 debounces FS events and runs `Memory.reindex()` automatically. Logs land in
 `~/Library/Logs/memo/`.
@@ -450,7 +450,7 @@ debounces FS events and runs `Memory.reindex()` automatically. Logs land in
 
 `memo save` auto-attaches a `project:<repo>` tag derived from the git toplevel of
 your cwd (or `MEMO_PROJECT_TAG`). The recall hook reads `cwd` from the hook
-payload and boosts memorias whose tags match by `MEMO_RECALL_PROJECT_BOOST`
+payload and boosts memories whose tags match by `MEMO_RECALL_PROJECT_BOOST`
 (default `0.15`). Opt out per-call with `memo save --no-project-tag`; disable
 globally with `MEMO_AUTO_PROJECT_TAG=0`.
 
@@ -499,17 +499,17 @@ _Continue with: `give me loop N` · `/memo get <id>` · `/memo ask <question>`_
 | `MEMO_BRIEFING_LOOPS_DAYS` | `7` | Recency window for open loops |
 | `MEMO_BRIEFING_DEBUG` | unset | Print failures to stderr |
 
-### Semantic map — `memo mapa`
+### Semantic map — `memo map`
 
-`memo mapa` reads all embeddings in `memvec.db`, projects them to 2D via **UMAP**
+`memo map` reads all embeddings in `memvec.db`, projects them to 2D via **UMAP**
 (if `umap-learn` is installed) or **PCA** (numpy fallback), and renders a
 self-contained interactive HTML file.
 
 ```bash
-memo mapa                                      # generate + open in browser
-memo mapa --output ~/Desktop/mapa.html --no-open
-memo mapa --limit 200                          # most recent 200
-memo mapa --no-animate                         # skip the timeline animation
+memo map                                      # generate + open in browser
+memo map --output ~/Desktop/map.html --no-open
+memo map --limit 200                          # most recent 200
+memo map --no-animate                         # skip the timeline animation
 ```
 
 The HTML colours points by type, shows title/tags/date on hover, opens full
@@ -528,7 +528,7 @@ a snapshot at any `T` is rebuilt by replaying events in reverse from "now". See
 memo as-of ask "MLX vs Ollama" --date 2026-02-01   # what did I think 3 months ago?
 memo diff --from 2026-03-01 --to 2026-04-30        # what changed between releases?
 memo as-of search "auth middleware" --date 2026-03-15
-memo as-of list --date 2026-03-01                  # memorias that existed then
+memo as-of list --date 2026-03-01                  # memories that existed then
 ```
 
 Use cases: debugging agent regressions, reproducible AI behaviour (serve a past
@@ -553,7 +553,7 @@ memo stats
 memo ask 'what changed in the embedder this month?'
 
 # ── History & audit ────────────────────────────────────────────────────────
-memo historia <id>                # chronological audit trail for one record with field diffs
+memo record-history <id>                # chronological audit trail for one record with field diffs
 memo history                      # recent save/update/delete events across all records
 
 # ── Ambient memory commands (also run by hooks) ────────────────────────────
@@ -565,9 +565,9 @@ memo session checkpoint           # snapshot current session state (Stop hook)
 memo session recent --limit 5     # list recent sessions
 
 # ── Semantic map ───────────────────────────────────────────────────────────
-memo mapa                         # generate + open in browser (UMAP or PCA → Plotly HTML)
-memo mapa --output ~/Desktop/mapa.html --no-open
-memo mapa --limit 200 --no-animate
+memo map                         # generate + open in browser (UMAP or PCA → Plotly HTML)
+memo map --output ~/Desktop/map.html --no-open
+memo map --limit 200 --no-animate
 
 # ── Setup & maintenance ────────────────────────────────────────────────────
 memo doctor                       # self-check
@@ -576,7 +576,7 @@ memo doctor --gc --fix            # drop orphan store rows (.md never auto-delet
 memo install-slash                # configure Claude Code, Codex, Windsurf, Devin
 memo mcp-command --client windsurf # print Windsurf mcp_config.json block
 memo init                         # re-run first-run picker
-memo migrate-vault <new-path>     # move memorias to a different folder
+memo migrate-vault <new-path>     # move memories to a different folder
 memo backup --out memo.zip        # backup .md files + index
 
 # ── Time-machine ───────────────────────────────────────────────────────────
@@ -587,12 +587,12 @@ memo diff --from 2026-03-01 --to 2026-04-30
 
 # ── Knowledge graph ────────────────────────────────────────────────────────
 memo entities                     # top entities across the corpus
-memo entity <name>                # memorias that mention a specific entity
+memo entity <name>                # memories that mention a specific entity
 memo extract-entities --all       # populate the entity graph (Qwen 3B, batch)
 memo consolidate                  # cluster near-duplicates + merge proposals
 
 # ── Backfill & watching ────────────────────────────────────────────────────
-memo mine-history --since 30      # backfill memorias from past Claude Code chats
+memo mine-history --since 30      # backfill memories from past Claude Code chats
 memo watch                        # foreground file-watcher: auto-reindex on .md edit
 memo install-watcher              # background watcher via launchd plist
 memo uninstall-watcher            # remove the launchd watcher job
@@ -638,7 +638,7 @@ latest PyPI without installing.
 ## Configuration
 
 All env vars are optional; defaults aim at a fresh Apple Silicon Mac. On first
-run in an interactive shell, an arrow-key picker asks where memorias should live
+run in an interactive shell, an arrow-key picker asks where memories should live
 and persists the choice to `~/.config/memo/config.toml`. Re-run it with
 `memo init`. Hooks get `MEMO_NONINTERACTIVE=1` so they never trigger the picker.
 
@@ -650,7 +650,7 @@ hardcoded defaults.
 
 | Env var | Default | What |
 |---|---|---|
-| `MEMO_DATA_DIR` | `~/Documents/memo` | Where memoria `.md` files live |
+| `MEMO_DATA_DIR` | `~/Documents/memo` | Where memory `.md` files live |
 | `MEMO_VAULT_PATH` | `(unset)` | Optional Obsidian vault for `memo ingest` |
 | `MEMO_STATE_DIR` | `~/.local/share/memo` | sqlite-vec DB + state |
 | `MEMO_CONFIG_FILE` | `~/.config/memo/config.toml` | Override config-file path |
@@ -709,7 +709,7 @@ memo reindex     # later, once the embedder is cached
 ### Upgrading the embedder
 
 The default 0.6B is fast (~50 ms/embed) and small (~600 MB) but recall on diffuse
-queries can be noisy. For the 200–2000 memorias range, swap to a larger variant.
+queries can be noisy. For the 200–2000 memories range, swap to a larger variant.
 
 | Model | Dims | Disk | Recall | Per-embed |
 |---|---|---|---|---|
@@ -784,7 +784,7 @@ own memory in plain text.
 3. **Markdown is the storage of record** — plain `.md` you can edit, sync, and
    `grep`; the sqlite index is rebuildable.
 4. **Ambient recall + session awareness** as a turnkey hook bundle — the agent
-   sees the right memorias before it answers, and the corpus grows on its own.
+   sees the right memories before it answers, and the corpus grows on its own.
 5. **MCP is a primary interface** — same stdio contract for every client on day
    one, with a deliberately tiny default tool surface.
 
@@ -804,7 +804,7 @@ federation, and orchestration belong outside memo's surface.
 |---|---|
 | `multimodal` | Cross-modal semantic search over images, audio, and text |
 | `collaborative` | Shared knowledge graph across multiple users |
-| `sharing` | Per-memoria sharing links and permission grants |
+| `sharing` | Per-memory sharing links and permission grants |
 | `encryption` | AES-256-GCM file-level primitives (gated OFF; `MEMO_ENCRYPTION_ENABLED=1`) |
 | `contradict` | Contradiction and staleness radar with triage workflow |
 | `chunker` | Heading-aware sub-document chunking for long memories |
@@ -812,7 +812,7 @@ federation, and orchestration belong outside memo's surface.
 | `contextual` | Conversation-history-aware recall boosting |
 | `navigation` | BFS path finding and community detection on the entity graph |
 | `sync` | Multi-device sync and compressed backups |
-| `versioning` | Per-memoria version history and unified-diff rollback |
+| `versioning` | Per-memory version history and unified-diff rollback |
 
 The current inventory of broader corpus/workflow experiments lives in
 [`src/memo/experimental_index.md`](../src/memo/experimental_index.md).

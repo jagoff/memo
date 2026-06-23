@@ -52,7 +52,7 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Args:
             query: The search query that was used.
-            memoria_ids: List of memoria IDs that were recalled.
+            memoria_ids: List of memory IDs that were recalled.
         """
         memory.contextual.record_search(query, memoria_ids)
         return {"status": "recorded", "count": len(memoria_ids)}
@@ -61,13 +61,13 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_contextual_record_click(
         memoria_id: str,
     ) -> dict[str, Any]:
-        """Record that the user clicked/viewed a memoria (for preference learning).
+        """Record that the user clicked/viewed a memory (for preference learning).
 
-        Use this when the user explicitly selects a memoria from search results.
+        Use this when the user explicitly selects a memory from search results.
         This teaches the system which memory types and entities the user prefers.
 
         Args:
-            memoria_id: The memoria ID that was clicked/viewed.
+            memoria_id: The memory ID that was clicked/viewed.
         """
         memory.contextual.record_click(memoria_id)
         return {"status": "recorded", "memoria_id": memoria_id}
@@ -89,7 +89,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     ) -> list[dict[str, Any]]:
         """Show recent conversation history used for contextual recall.
 
-        Returns the N most recent prompts with their recalled memorias.
+        Returns the N most recent prompts with their recalled memories.
         This history is used to build context for search re-ranking.
 
         Args:

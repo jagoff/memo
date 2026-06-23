@@ -1,19 +1,19 @@
 """The Outcome Loop — memo learns from whether its recalls actually got USED.
 
 Closes the recall → use → outcome loop. The grounding detector already records,
-per turn, whether a surfaced memoria was actually used in the answer
+per turn, whether a surfaced memory was actually used in the answer
 (``grounding.log``). Today that signal dies in the dashboard while ranking's
 ``memory_health.roi_score`` is driven by mere ACCESS (every surfacing boosts it
 — so noise that keeps showing up ranks higher). This module turns the outcome
 signal into:
 
-  - a per-memoria UTILITY score (Bayesian-smoothed grounded/surfaced) reconciled
-    into ``roi_score`` so ranking promotes memorias that ground answers and
+  - a per-memory UTILITY score (Bayesian-smoothed grounded/surfaced) reconciled
+    into ``roi_score`` so ranking promotes memories that ground answers and
     demotes ones that surface but never help (:func:`reconcile_roi`);
   - a KNOWLEDGE-GAP report — prompts where recall bailed / returned nothing /
     was never grounded: what memo could not answer, i.e. what to capture next
     (:func:`detect_gaps`);
-  - DEAD-WEIGHT detection — memorias surfaced often yet never grounded, for
+  - DEAD-WEIGHT detection — memories surfaced often yet never grounded, for
     reversible archival by ``memo maintain`` (:func:`dead_weight`).
 
 Pure reads over recall.log + grounding.log, plus a single roi write on reconcile.
@@ -37,12 +37,12 @@ def compute_utilities(
     recall_limit: int = 2000,
     grounding_limit: int = 4000,
 ) -> dict[str, Any]:
-    """Per-memoria utility from real outcomes, keyed by 8-char id prefix.
+    """Per-memory utility from real outcomes, keyed by 8-char id prefix.
 
-    ``surfaced`` = distinct (session, turn) the memoria was shown in;
+    ``surfaced`` = distinct (session, turn) the memory was shown in;
     ``grounded`` = of those, how many the answer actually used (intersection,
     so utility never exceeds 1). ``utility`` is Bayesian-smoothed toward the
-    global grounded rate so a memoria seen once isn't judged on one data point::
+    global grounded rate so a memory seen once isn't judged on one data point::
 
         utility = (grounded + prior_mean * prior_n) / (surfaced + prior_n)
     """
@@ -102,7 +102,7 @@ def reconcile_roi(
     """Recompute ``roi_score`` from grounding outcomes and write it.
 
     ``roi_score = floor + utility * (cap - floor)`` — utility 0 (surfaced, never
-    grounded) → floor; utility 1 → cap; no-data memorias stay near neutral via
+    grounded) → floor; utility 1 → cap; no-data memories stay near neutral via
     the Bayesian prior. Authoritative absolute write (overwrites access drift).
     """
     from memo.flags import flag_float
@@ -140,7 +140,7 @@ def dead_weight(
     min_surfaced: int,
     prior_n: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Memorias surfaced ``>= min_surfaced`` times yet NEVER grounded — recall
+    """Memories surfaced ``>= min_surfaced`` times yet NEVER grounded — recall
     noise that crowds out useful hits. Candidates for reversible archival.
     ``min_surfaced <= 0`` disables (returns [])."""
     from memo.flags import flag_float
@@ -207,7 +207,7 @@ def detect_gaps(
     )
 
     # scored_turns = turns the grounding detector actually measured; grounded_turns
-    # = the subset where a memoria was used. A turn that was never scored is
+    # = the subset where a memory was used. A turn that was never scored is
     # "unmeasured", NOT "found-but-unused" — counting it as a gap turns thin
     # measurement coverage into a flood of false gaps. Only a measured-and-unused
     # turn is a real "surfaced but didn't help" gap.

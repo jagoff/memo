@@ -17,7 +17,7 @@ from memo.config import Config
 
 @click.group(name="import")
 def import_group() -> None:
-    """Import memorias from other formats."""
+    """Import memories from other formats."""
     pass
 
 

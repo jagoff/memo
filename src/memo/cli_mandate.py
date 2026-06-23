@@ -33,7 +33,7 @@ consult memo FIRST:
   flagged as a silent gap by `memo usefulness`.
 - Write durable outcomes back with `memo_save` so the next session inherits
   them. memo is the source of truth for what is *known*; build on it, and
-  contradict a surfaced memoria only explicitly.
+  contradict a surfaced memory only explicitly.
 """
 
 # Project-local instruction file each client reads (relative to cwd).

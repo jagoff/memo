@@ -2,7 +2,7 @@
 
 Re-exports the shared trace contextvar from ``consciousness-contracts`` so the
 MCP server (which reads the ``x-synapse-trace-id`` header) and the write path
-(which stamps ``synapse_trace_id`` onto saved memorias) converge on one trace
+(which stamps ``synapse_trace_id`` onto saved memories) converge on one trace
 id per request. When the optional contracts package is absent (CI / clean
 installs) this degrades to inert no-ops: ``current_trace()`` returns ``""`` and
 ``trace_scope`` is a transparent context manager, so the env-var path still

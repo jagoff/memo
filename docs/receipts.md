@@ -27,7 +27,7 @@ subprocess call. It is intentionally channel state, not a durable fact:
 
 ```
 memflow say \
-  "Memo saved memoria abcd1234 (note): Astor — Informe TO [client=memo operation=save topic=memo-save ...]" \
+  "Memo saved memory abcd1234 (note): Astor — Informe TO [client=memo operation=save topic=memo-save ...]" \
   --channel memo-receipts \
   --author memo \
   --no-sync

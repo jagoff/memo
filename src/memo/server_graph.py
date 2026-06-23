@@ -24,7 +24,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Find shortest path between two entities in the entity graph.
 
         Uses BFS to find the shortest path. Two entities are connected if
-        they share a memoria. Returns the path including intermediate entities.
+        they share a memory. Returns the path including intermediate entities.
 
         Args:
             source: Source entity name.
@@ -42,7 +42,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Get direct neighbors of an entity in the graph.
 
         Returns entities directly connected to the given entity, along with
-        the memorias that connect them.
+        the memories that connect them.
 
         Args:
             entity: Entity name.
@@ -101,7 +101,7 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Args:
             format: Either "dot" for Graphviz DOT format or "json" for web UI.
-            include_memorias: If True and format is "json", include memoria IDs in edge data.
+            include_memorias: If True and format is "json", include memory IDs in edge data.
         """
         if format == "dot":
             dot = memory.navigator.export_graphviz()

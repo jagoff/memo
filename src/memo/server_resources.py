@@ -10,7 +10,7 @@ def register(server: Any, memory: Memory) -> None:
     def _resource_recent() -> str:
         recs = memory.list(limit=20)
         if not recs:
-            return "# memo · recent\n\n_(no memorias yet)_\n"
+            return "# memo · recent\n\n_(no memories yet)_\n"
         out = ["# memo · recent", ""]
         for r in recs:
             tags = ", ".join(r.tags) if r.tags else ""
@@ -29,7 +29,7 @@ def register(server: Any, memory: Memory) -> None:
                 f"- `{m}`" for m in exc.matches
             )
         if rec is None:
-            return f"# Not found\n\nNo memoria for id `{id}`.\n"
+            return f"# Not found\n\nNo memory for id `{id}`.\n"
         tags = ", ".join(rec.tags) if rec.tags else "—"
         return (
             f"# {rec.title}\n\n"

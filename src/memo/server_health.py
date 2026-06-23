@@ -31,18 +31,18 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_health_report(
         top_n: int = 10,
     ) -> dict[str, Any]:
-        """Report memory health: lowest-confidence and highest-ROI memorias.
+        """Report memory health: lowest-confidence and highest-ROI memories.
 
         Returns two ranked lists drawn from the memory_health table:
-        - `low_confidence`: memorias most penalised by open contradictions.
-        - `high_roi`: memorias most frequently recalled (promoted by access).
+        - `low_confidence`: memories most penalised by open contradictions.
+        - `high_roi`: memories most frequently recalled (promoted by access).
 
-        Memorias not yet in the health table have neutral scores (1.0/1.0)
+        Memories not yet in the health table have neutral scores (1.0/1.0)
         and won't appear here. Run `memo dream run` or `memo contradict scan`
         to populate scores.
 
         Args:
-            top_n: How many memorias to return in each list (default 10).
+            top_n: How many memories to return in each list (default 10).
         """
         store = memory.store
         conn = store._conn

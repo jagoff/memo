@@ -1,4 +1,4 @@
-"""`memo version` command group — memoria version history / diff / rollback.
+"""`memo version` command group — memory version history / diff / rollback.
 
 Extracted from cli.py (3a god-module decomposition). Registered onto the
 root group in cli.py via `cli.add_command(version_group)`.
@@ -29,7 +29,7 @@ def version_group() -> None:
 @click.option("--limit", type=int, default=10, help="Max versions to show (default: 10)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
-    """Show version history for a memoria.
+    """Show version history for a memory.
 
     Example: memo version history abc123
     """
@@ -43,7 +43,7 @@ def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
         return
 
     if not versions:
-        console.print(f"[dim]No version history for memoria {memoria_id[:8]}[/dim]")
+        console.print(f"[dim]No version history for memory {memoria_id[:8]}[/dim]")
         return
 
     console.print(f"[bold]Version History for {memoria_id[:8]}[/bold]")
@@ -78,7 +78,7 @@ def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
 def version_diff(
     memoria_id: str, version_a: int | None, version_b: int | None, as_json: bool
 ) -> None:
-    """Show diff between two versions of a memoria.
+    """Show diff between two versions of a memory.
 
     Example: memo version diff abc123 --version-a 1 --version-b 2
     """
@@ -106,10 +106,10 @@ def version_diff(
 @click.argument("version_id", type=int)
 @click.option("--reason", help="Reason for the rollback")
 @click.confirmation_option(
-    prompt="This will restore the memoria to the specified version. Continue?"
+    prompt="This will restore the memory to the specified version. Continue?"
 )
 def version_rollback(memoria_id: str, version_id: int, reason: str | None) -> None:
-    """Rollback a memoria to a previous version.
+    """Rollback a memory to a previous version.
 
     Example: memo version rollback abc123 1 --reason "Mistake in update"
     """

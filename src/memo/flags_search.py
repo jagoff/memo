@@ -182,7 +182,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "search",
-        "After primary search + rerank, follow knowledge-graph entity edges from the top-3 hits (1-hop) and append up to 3 adjacent memorias scored at 0.6x the minimum primary score. Requires entities to have been extracted first (`memo extract-entities`).",
+        "After primary search + rerank, follow knowledge-graph entity edges from the top-3 hits (1-hop) and append up to 3 adjacent memories scored at 0.6x the minimum primary score. Requires entities to have been extracted first (`memo extract-entities`).",
     ),
     _spec(
         "MEMO_QUERY_CACHE_SIZE",

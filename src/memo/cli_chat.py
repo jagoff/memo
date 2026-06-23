@@ -34,7 +34,7 @@ def chat_group() -> None:
 @click.argument("question")
 @click.option(
     "--k", default=7, type=int, show_default=True,
-    help="Top-K memorias to feed the LLM as context.",
+    help="Top-K memories to feed the LLM as context.",
 )
 @click.option("--type", "type_", default=None, help="Restrict retrieval to one record type.")
 @click.option(

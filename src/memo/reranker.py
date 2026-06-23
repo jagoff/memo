@@ -93,7 +93,7 @@ class MLXReranker:
             on the doc side because the prompt structure is
             `prefix + query + doc + suffix`; truncating the head would
             chop the instruction. 4096 is well within Qwen3's 32k
-            window and keeps even very long memorias intact.
+            window and keeps even very long memories intact.
         task: Optional instruction string. Defaults to a generic
             personal-memory phrasing.
     """

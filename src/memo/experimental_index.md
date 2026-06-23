@@ -29,7 +29,7 @@ on external vision/audio embedding models not bundled with the standard install.
 
 ## collaborative.py
 
-Collaborative social memory graph. Shares memorias and derived knowledge
+Collaborative social memory graph. Shares memories and derived knowledge
 connections across multiple users so that discoveries made by one user can
 surface for others. Requires a shared storage backend that is not yet
 implemented in the core.
@@ -43,14 +43,14 @@ implementations.
 
 ## sharing.py
 
-Memory sharing and permissions. Lets users share individual memorias with
+Memory sharing and permissions. Lets users share individual memories with
 other users via temporary links or explicit permission grants, with optional
 expiration and comment threads. Requires a network transport layer that is
 not bundled.
 
 ## encryption.py
 
-AES-256-GCM per-memoria encryption. Encrypts sensitive memories on disk
+AES-256-GCM per-memory encryption. Encrypts sensitive memories on disk
 using a password-derived key (PBKDF2), with support for tag-based selective
 encryption or full-corpus encryption. Key management and rotation are not
 yet hardened for production use.
@@ -74,7 +74,7 @@ pipeline.
 ## crossref.py
 
 Cross-reference and backlink system. Parses Obsidian-style `[[wikilinks]]`
-in memoria content, builds a backlink index, suggests links when saving, and
+in memory content, builds a backlink index, suggests links when saving, and
 enables multi-hop `ask()` traversals. The index schema is a draft and has
 not been tested against the live store.
 
@@ -115,7 +115,7 @@ is finalised.
 
 ## versioning.py
 
-Per-memoria version history and diff UI. Stores a snapshot of each memory
+Per-memory version history and diff UI. Stores a snapshot of each memory
 on every update, visualises unified diffs between versions, and supports
 rollback to any prior state. The version store is separate from `history.db`
 and is not yet garbage-collected.

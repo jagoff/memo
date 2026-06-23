@@ -234,7 +234,7 @@ def _reflect_session(
     """Core reflect logic. Returns a result dict.
 
     Loads the session snapshot, reads the full transcript, calls the LLM,
-    saves memorias, stamps `reflected_at`. All heavy imports are deferred.
+    saves memories, stamps `reflected_at`. All heavy imports are deferred.
     """
     from memo.session import get_session, mark_reflected
 
@@ -396,7 +396,7 @@ def reflect(
     dry_run: bool,
     debug: bool,
 ) -> None:
-    """Synthesize a session transcript into durable memorias.
+    """Synthesize a session transcript into durable memories.
 
     Reads the full session transcript (not just the last 3 turns),
     extracts decisions/facts/bugs/follow-ups, deduplicates against the
@@ -508,5 +508,5 @@ def reflect(
 # `memo session ...` — short-lived "what was I working on" snapshots, written
 # on every Claude Code Stop hook. Survive a closed/crashed session so the
 # next SessionStart can show a picker of recent work. Storage is sidecar
-# JSON in `state_dir/sessions/`, NOT memorias (different lifecycle, different
+# JSON in `state_dir/sessions/`, NOT memories (different lifecycle, different
 # query pattern — looked up by recency, never by semantic similarity).

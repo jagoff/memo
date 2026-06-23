@@ -17,17 +17,17 @@ from memo.config import Config
 
 @click.group(name="multimodal")
 def multimodal_group() -> None:
-    """Multi-modal memoria with universal embeddings."""
+    """Multi-modal memory with universal embeddings."""
     pass
 
 
 @multimodal_group.command(name="add-image")
 @click.argument("image_path", type=click.Path(exists=True))
-@click.option("--memoria-id", help="Associated memoria ID")
+@click.option("--memory-id", help="Associated memory ID")
 def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
     """Add an image to the multi-modal corpus.
 
-    Example: memo multimodal add-image /path/to/image.png --memoria-id abc123
+    Example: memo multimodal add-image /path/to/image.png --memory-id abc123
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)
@@ -43,11 +43,11 @@ def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
 
 @multimodal_group.command(name="add-audio")
 @click.argument("audio_path", type=click.Path(exists=True))
-@click.option("--memoria-id", help="Associated memoria ID")
+@click.option("--memory-id", help="Associated memory ID")
 def multimodal_add_audio(audio_path: str, memoria_id: str | None) -> None:
     """Add audio to the multi-modal corpus.
 
-    Example: memo multimodal add-audio /path/to/audio.mp3 --memoria-id abc123
+    Example: memo multimodal add-audio /path/to/audio.mp3 --memory-id abc123
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)

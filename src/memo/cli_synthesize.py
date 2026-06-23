@@ -2,7 +2,7 @@
 
 Reads all non-synthesis memories, clusters them at a configurable cosine
 threshold, and asks the local LLM what each cluster implies that no single
-memory states alone. Results are saved as ``type=synthesis`` memorias with
+memory states alone. Results are saved as ``type=synthesis`` memories with
 provenance links to the contributing sources.
 
 Requires a local LLM (Qwen2.5-7B or equivalent). Same LLM as consolidation.
@@ -54,7 +54,7 @@ def synthesize_cmd(
     Unlike consolidation (which merges duplicates), synthesis asks:
     "what do these memories collectively imply that none states alone?"
 
-    Results are saved as type=synthesis memorias with provenance links.
+    Results are saved as type=synthesis memories with provenance links.
     Use --dry-run to preview without saving.
 
     Example:

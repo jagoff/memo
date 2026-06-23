@@ -22,14 +22,14 @@ def register(server: FastMCP, memory: Memory) -> None:
         permission: str = "read",
         expires_days: int | None = None,
     ) -> dict[str, Any]:
-        """Share a memoria with a user.
+        """Share a memory with a user.
 
-        Shares a memoria with a specific user (by email or username)
+        Shares a memory with a specific user (by email or username)
         with the specified permission level. Optionally expires after
         a number of days.
 
         Args:
-            memoria_id: The memoria ID to share.
+            memoria_id: The memory ID to share.
             shared_with: Email or username to share with.
             permission: Permission level (read, comment, edit, admin).
             expires_days: Optional days until expiration.
@@ -49,12 +49,12 @@ def register(server: FastMCP, memory: Memory) -> None:
         memoria_id: str,
         shared_with: str,
     ) -> dict[str, Any]:
-        """Unshare a memoria from a user.
+        """Unshare a memory from a user.
 
         Removes a share for a specific user.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             shared_with: The user to unshare.
         """
         success = memory.sharing.unshare_with_user(memoria_id, shared_with)
@@ -73,7 +73,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         and expiration time.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             permission: Permission level.
             expires_hours: Hours until expiration.
             password: Optional password.
@@ -90,13 +90,13 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_share_list(
         memoria_id: str,
     ) -> list[dict[str, Any]]:
-        """List all shares for a memoria.
+        """List all shares for a memory.
 
-        Returns all shares for the specified memoria with their
+        Returns all shares for the specified memory with their
         permission levels and expiration dates.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
         """
         shares = memory.sharing.share_store.get_shares(memoria_id)
         return [s.__dict__ for s in shares]
@@ -108,12 +108,12 @@ def register(server: FastMCP, memory: Memory) -> None:
         author: str = "user",
         parent_id: str | None = None,
     ) -> dict[str, Any]:
-        """Add a comment to a memoria.
+        """Add a comment to a memory.
 
-        Adds a comment to a memoria, optionally as a reply to another comment.
+        Adds a comment to a memory, optionally as a reply to another comment.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             content: Comment content.
             author: Comment author.
             parent_id: Optional parent comment ID.
@@ -132,13 +132,13 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_share_comments(
         memoria_id: str,
     ) -> list[dict[str, Any]]:
-        """List all comments for a memoria.
+        """List all comments for a memory.
 
-        Returns all comments for the specified memoria, including
+        Returns all comments for the specified memory, including
         reply threads.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
         """
         comments = memory.sharing.get_comments(memoria_id)
         return [c.__dict__ for c in comments]

@@ -17,7 +17,7 @@ class _SignalQueriesMixin(_StoreBase):
     #
     # The history log only records save/update/delete, never reads — so it
     # can't drive LRU/LFU. The `access` table fills that gap: `touch()` bumps
-    # a per-memoria hit count + last-access timestamp on every search/ask
+    # a per-memory hit count + last-access timestamp on every search/ask
     # hit. Cheap, write-light, and decoupled from the hot `meta`/`vec` path.
 
     def touch(self, ids: list[str], *, ts: str | None = None) -> None:
@@ -40,7 +40,7 @@ class _SignalQueriesMixin(_StoreBase):
             )
 
     def get_access(self, id_: str) -> dict[str, Any]:
-        """Return {access_count, last_accessed} for a memoria.
+        """Return {access_count, last_accessed} for a memory.
 
         Defaults to count 0 / last_accessed None when never touched.
         """
@@ -54,10 +54,10 @@ class _SignalQueriesMixin(_StoreBase):
 
     # -- cross-machine signal export/import (F3) ---------------------------
     #
-    # The `.md` memorias sync via git; the signal tables (access, health,
+    # The `.md` memories sync via git; the signal tables (access, health,
     # source_feedback) are local-only PRIMARY data not present in markdown.
     # `dump_signal` snapshots them for `memo sync export-signal`; `merge_signal`
-    # folds a peer's snapshot back in, keyed on the stable memoria id. Merge is
+    # folds a peer's snapshot back in, keyed on the stable memory id. Merge is
     # idempotent on re-pull: access = max, health = newer updated_at wins,
     # feedback = union by id. (source_feedback_vec embeddings are NOT synced —
     # they are re-derivable from query_text by a future re-embed pass.)
@@ -239,7 +239,7 @@ class _SignalQueriesMixin(_StoreBase):
             )
 
     def all_ids(self) -> list[str]:
-        """Return every memoria id in ``meta``. Used by the outcome loop to map
+        """Return every memory id in ``meta``. Used by the outcome loop to map
         the 8-char id prefixes stored in recall.log / grounding.log back to full
         ids (roi_score is keyed by the full id)."""
         return [r["id"] for r in self._conn.execute("SELECT id FROM meta").fetchall()]
@@ -254,7 +254,7 @@ class _SignalQueriesMixin(_StoreBase):
         """Set an ABSOLUTE roi_score for each (id, roi) pair, clamped to
         ``[floor, cap]``. Authoritative write used by the outcome loop
         (`memo.outcome`) to overwrite the access-driven roi drift with a value
-        derived from real grounding outcomes (was the surfaced memoria actually
+        derived from real grounding outcomes (was the surfaced memory actually
         USED in the answer?). Confidence is left at its existing value (new rows
         default 1.0). Returns the number of (id, roi) pairs written."""
         if not pairs:
@@ -276,7 +276,7 @@ class _SignalQueriesMixin(_StoreBase):
         factor: float = 0.98,
         older_than_days: int = 30,
     ) -> int:
-        """Multiply roi_score by `factor` for memorias not accessed in `older_than_days`.
+        """Multiply roi_score by `factor` for memories not accessed in `older_than_days`.
 
         Returns the count of rows updated. Used by Dream mode nightly pipeline.
         """
@@ -296,7 +296,7 @@ class _SignalQueriesMixin(_StoreBase):
         min_age_days: int = 90,
         exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return memorias below roi_floor, never accessed, and older than min_age_days.
+        """Return memories below roi_floor, never accessed, and older than min_age_days.
 
         Always excludes 'synthesis' and 'reference' types. Returns list of
         {id, roi_score, days_old}.
@@ -327,7 +327,7 @@ class _SignalQueriesMixin(_StoreBase):
         *,
         exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return up to `limit` memorias coldest-first under the given policy.
+        """Return up to `limit` memories coldest-first under the given policy.
 
         Joins `meta` LEFT against `access` so never-accessed rows participate,
         falling back to `meta.updated` as their effective last-access time

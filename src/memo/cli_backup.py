@@ -66,7 +66,7 @@ def _portable_backup(out_path: str | None) -> None:
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
     size_kb = out_p.stat().st_size // 1024
-    console.print(f"[green]✓[/green] backup: {out_p} ({n_md} memorias, {size_kb} KB)")
+    console.print(f"[green]✓[/green] backup: {out_p} ({n_md} memories, {size_kb} KB)")
 
 
 @click.group(name="backup", invoke_without_command=True)
@@ -106,7 +106,7 @@ def backup_create(compress: bool, name: str | None, as_json: bool) -> None:
     console.print("[bold]Backup Created[/bold]")
     console.print()
     console.print(f"Timestamp: {metadata.timestamp}")
-    console.print(f"Memorias: {metadata.memoria_count}")
+    console.print(f"Memories: {metadata.memoria_count}")
     console.print(f"Checksum: {metadata.checksum[:16]}...")
     console.print(f"Size: {metadata.compressed_size:,} bytes (compressed)")
     console.print(f"Original: {metadata.original_size:,} bytes")
@@ -151,7 +151,7 @@ def backup_list(as_json: bool) -> None:
 
 @backup_group.command(name="restore")
 @click.argument("backup_name")
-@click.option("--no-memorias", "skip_memorias", is_flag=True, help="Skip memoria files")
+@click.option("--no-memories", "skip_memorias", is_flag=True, help="Skip memory files")
 @click.option("--no-dbs", "skip_dbs", is_flag=True, help="Skip databases")
 @click.confirmation_option(
     prompt="This will restore from backup. Current data may be overwritten. Continue?"

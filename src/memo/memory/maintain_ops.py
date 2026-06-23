@@ -102,7 +102,7 @@ class _MaintainOpsMixin(_MemoryBase):
     # -- provenance ---------------------------------------------------------
 
     def provenance(self, id_: str) -> dict[str, Any] | None:
-        """Return the full provenance trail for a memoria.
+        """Return the full provenance trail for a memory.
 
         Combines the current state (provenance subset of `meta.extra_json`)
         with the per-op history (each save/update event carrying its own
@@ -207,7 +207,7 @@ class _MaintainOpsMixin(_MemoryBase):
         When `MEMO_CHUNK_INGEST=1`, long notes (> chunker DEFAULT_TARGET_CHARS)
         are additionally split into heading-aware chunk records. Each chunk is
         stored with type='reference', extra.parent_id pointing to the parent
-        memoria id, and a path of `<rel>#chunk-<n>`. The parent record itself
+        memory id, and a path of `<rel>#chunk-<n>`. The parent record itself
         is always indexed whole-note for semantic coherence. Default off
         (MEMO_CHUNK_INGEST=0) preserves existing whole-note behaviour.
 
@@ -230,7 +230,7 @@ class _MaintainOpsMixin(_MemoryBase):
                 if indexed > 0:
                     raise StorageError(
                         f"reindex --rebuild refused: data_dir {memory_root} has 0 .md "
-                        f"but the index holds {indexed} memorias — rebuilding would wipe "
+                        f"but the index holds {indexed} memories — rebuilding would wipe "
                         "them. Restore the .md first (`memo sync bootstrap <url>`, or "
                         "`git -C <repo> restore .`), or run `memo reindex` (no --rebuild)."
                     )
@@ -499,7 +499,7 @@ class _MaintainOpsMixin(_MemoryBase):
         return written
 
     def lint(self) -> dict[str, builtins.list[dict[str, Any]]]:
-        """Surface memorias with quality issues.
+        """Surface memories with quality issues.
 
         Categories:
         - `legacy_extra`: has `extra` keys from mem-vault migration
@@ -566,19 +566,19 @@ class _MaintainOpsMixin(_MemoryBase):
         skip_already_indexed: bool = True,
         max_batch: int | None = None,
     ) -> dict[str, int]:
-        """Extract named entities from memorias and write to the graph.
+        """Extract named entities from memories and write to the graph.
 
         Modes:
-        - `ids=[...]`: process exactly the listed memoria ids.
-        - `all_=True`: process every memoria in the store.
+        - `ids=[...]`: process exactly the listed memory ids.
+        - `all_=True`: process every memory in the store.
 
-        With `skip_already_indexed=True` (default), memorias that
+        With `skip_already_indexed=True` (default), memories that
         already have entries in `entity_memoria` are skipped — useful
-        for incremental runs after adding new memorias. Pass False to
+        for incremental runs after adding new memories. Pass False to
         force re-extraction (e.g. after improving the prompt).
 
         Returns counts: `{processed, entities_extracted, links_written, skipped, errors}`.
-        Cost: ~0.5-1s per memoria with Qwen2.5-3B. 223 memorias ≈ 2-4 min.
+        Cost: ~0.5-1s per memory with Qwen2.5-3B. 223 memories ≈ 2-4 min.
         """
         if not all_ and not ids:
             raise ValueError("pass either ids=[...] or all_=True")

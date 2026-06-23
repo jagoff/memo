@@ -29,20 +29,20 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Scan the corpus for contradiction / evolution pairs and persist them.
 
         Unlike `memo_temporal_contradictions`, which requires an entity name
-        and returns ephemeral results, this walks all memorias, uses vec
+        and returns ephemeral results, this walks all memories, uses vec
         neighborhoods to surface candidate pairs, and persists detected
         contradictions to a sidecar DB. The same pair is never re-classified
         once the user resolves it.
 
         Args:
-            top_k: Neighbors to consider per memoria.
+            top_k: Neighbors to consider per memory.
             sim_floor: Cosine floor for candidate pairs.
             confidence_threshold: Min LLM confidence to persist.
             min_days_apart: Skip pairs whose `updated` are within N days.
-            max_memorias: Hard cap on memorias visited.
+            max_memorias: Hard cap on memories visited.
             max_pairs: Hard cap on pairs sent to the LLM.
-            since: ISO date; only memorias updated on/after are scanned.
-            type: Optional memoria type filter.
+            since: ISO date; only memories updated on/after are scanned.
+            type: Optional memory type filter.
         """
         result = memory.contradict_scanner.scan_corpus(
             top_k=top_k,
@@ -100,14 +100,14 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Mark a contradiction pair as resolved.
 
         Valid statuses (excluding `open`):
-          - `fused`       — both merged into a new memoria
+          - `fused`       — both merged into a new memory
           - `kept_newer`  — newer side won, older deleted/archived
           - `kept_older`  — older side won
           - `evolved`     — legitimate evolution, both kept
           - `dismissed`   — false positive
 
         This tool only updates the sidecar; it does NOT itself delete the
-        memorias or run a merge. Use `memo_consolidate_apply` or
+        memories or run a merge. Use `memo_consolidate_apply` or
         `memo_delete` first if the resolution implies destructive ops.
 
         Args:

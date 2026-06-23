@@ -1,7 +1,7 @@
 """Generate the memo Health Dashboard — a self-contained interactive HTML.
 
 Reads memo state via the same Python APIs used by ``memo doctor`` / ``memo
-profile status`` / ``memo mapa``: no extra services, no shell-outs. Emits a
+profile status`` / ``memo map``: no extra services, no shell-outs. Emits a
 single HTML file at ``web/health.html`` (or ``--output``) with:
 
   - 4 colour-coded pillar lights (red / yellow / green / blue)
@@ -147,7 +147,7 @@ def _project_3d(vecs: list[list[float]]) -> tuple[list[float], list[float], list
 
 
 def _body_hash_drift(cfg: Config) -> dict[str, int]:
-    """Count memorias whose .md body diverges from store body_hash.
+    """Count memories whose .md body diverges from store body_hash.
 
     No re-embedding — just hashes on disk and compares.
     """
@@ -310,7 +310,7 @@ def _pillar_vector_db(doctor: dict[str, Any], drift: dict[str, int]) -> dict[str
     return {
         "label": "Vector DB",
         "status": "green",
-        "summary": f"{memvec.get('records')} memorias · {memvec.get('vec_dims')}D",
+        "summary": f"{memvec.get('records')} memories · {memvec.get('vec_dims')}D",
         "detail": [
             f"path: {memvec['path']}",
             f"size: {memvec.get('size_bytes', 0):,} bytes",
@@ -438,7 +438,7 @@ def _pillar_corpus(
     return {
         "label": "Corpus",
         "status": "blue",
-        "summary": f"{records:,} memorias",
+        "summary": f"{records:,} memories",
         "detail": detail,
     }
 
@@ -544,7 +544,7 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
     """Detailed token-savings breakdown for the dashboard graph.
 
     Two honest drivers, each a clearly-labeled estimate:
-      - "hechos reutilizados" — a surfaced memoria the answer actually used
+      - "hechos reutilizados" — a surfaced memory the answer actually used
         (grounding.log, used_score ≥ GROUNDED_SCORE, deduped by sid+turn+id) ×
         ``MEMO_ROI_TOKENS_PER_GROUNDED``: tokens the model didn't spend
         re-deriving the fact. This one is DATED, so it drives the daily series.
@@ -817,7 +817,7 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
         if len(rows) >= 3:
             xs, ys, zs, method = _project_3d([r["vec"] for r in rows])
         else:
-            xs, ys, zs, method = [], [], [], "n/a (need ≥ 3 memorias with vectors)"
+            xs, ys, zs, method = [], [], [], "n/a (need ≥ 3 memories with vectors)"
         projection = {
             "method": method,
             "xs": xs, "ys": ys, "zs": zs,
@@ -953,7 +953,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<title>memo · ¿funciona como memoria?</title>
+<title>memo · ¿funciona como memory?</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <style>
@@ -1081,7 +1081,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
 </head>
 <body>
 <header>
-  <h1>memo · <span class="sub">¿está funcionando como memoria?</span></h1>
+  <h1>memo · <span class="sub">¿está funcionando como memory?</span></h1>
   <span class="meta" id="meta-stamp"></span>
   <span class="live-badge" id="live-badge"></span>
 </header>
@@ -1138,7 +1138,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
   <!-- QUIÉN USA MEMO -->
   <section class="panel">
     <h2>¿Quién usa memo? · muestra reciente</h2>
-    <p class="hint">memo es la memoria compartida de todas las herramientas (Claude Code, Codex, Devin…). Esta tabla muestra la ventana reciente que usa el dashboard para medir actividad; no es un total histórico.</p>
+    <p class="hint">memo es la memory compartida de todas las herramientas (Claude Code, Codex, Devin…). Esta tabla muestra la ventana reciente que usa el dashboard para medir actividad; no es un total histórico.</p>
     <div class="tools" id="tools"></div>
     <div class="badge-silent" id="silent-callout"></div>
   </section>
@@ -1182,9 +1182,9 @@ _HTML_TEMPLATE = r"""<!doctype html>
 
   const VERDICT_COPY = {
     ok:     { glyph: "✅", color: "var(--green)",
-              explain: "memo se consulta seguido y la información que entrega termina usándose en las respuestas. Está cumpliendo su rol de memoria primaria." },
+              explain: "memo se consulta seguido y la información que entrega termina usándose en las respuestas. Está cumpliendo su rol de memory primaria." },
     weak:   { glyph: "⚠️", color: "var(--yellow)",
-              explain: "Las herramientas leen memo, pero lo que entrega casi no termina usándose en las respuestas. Funciona como búsqueda, todavía no como memoria de verdad." },
+              explain: "Las herramientas leen memo, pero lo que entrega casi no termina usándose en las respuestas. Funciona como búsqueda, todavía no como memory de verdad." },
     unmeasured: { glyph: "⚠️", color: "var(--yellow)",
               explain: "Las herramientas leen memo, pero falta cobertura de grounding reciente para saber si lo entregado termina usándose. Hay que arreglar la medición antes de juzgar utilidad." },
     unused: { glyph: "❌", color: "var(--red)",
@@ -1330,7 +1330,7 @@ _HTML_TEMPLATE = r"""<!doctype html>
     if (silent.length) {
       sc.className = "badge-silent";
       sc.innerHTML = "<b>No están usando memo:</b> " + silent.join(", ") +
-        " — estas herramientas están conectadas pero no consultan la memoria.";
+        " — estas herramientas están conectadas pero no consultan la memory.";
     } else {
       sc.className = "badge-silent ok";
       sc.innerHTML = "";
@@ -1432,7 +1432,7 @@ def main() -> None:
     ap.add_argument("--output", type=Path, default=None,
                     help="Output HTML path (default: web/health.html)")
     ap.add_argument("--limit", type=int, default=1500,
-                    help="Max memorias to project (default: 1500)")
+                    help="Max memories to project (default: 1500)")
     ap.add_argument("--open", action="store_true",
                     help="Open the generated HTML in the default browser")
     args = ap.parse_args()

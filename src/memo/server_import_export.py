@@ -19,9 +19,9 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_import_json(
         input_path: str,
     ) -> dict[str, Any]:
-        """Import memorias from JSON file.
+        """Import memories from JSON file.
 
-        Imports memorias from a JSON file, creating new entries
+        Imports memories from a JSON file, creating new entries
         for each item in the file.
 
         Args:
@@ -36,9 +36,9 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_import_csv(
         input_path: str,
     ) -> dict[str, Any]:
-        """Import memorias from CSV file.
+        """Import memories from CSV file.
 
-        Imports memorias from a CSV file, creating new entries
+        Imports memories from a CSV file, creating new entries
         for each row in the file.
 
         Args:
@@ -53,9 +53,9 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_export_json(
         output_path: str,
     ) -> dict[str, Any]:
-        """Export memorias to JSON file.
+        """Export memories to JSON file.
 
-        Exports all memorias to a JSON file with complete metadata.
+        Exports all memories to a JSON file with complete metadata.
 
         Args:
             output_path: Path to write JSON file.
@@ -69,9 +69,9 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_export_csv(
         output_path: str,
     ) -> dict[str, Any]:
-        """Export memorias to CSV file.
+        """Export memories to CSV file.
 
-        Exports all memorias to a CSV file with columns for
+        Exports all memories to a CSV file with columns for
         id, title, body, tags, type, created, updated.
 
         Args:
@@ -86,9 +86,9 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_export_markdown_bundle(
         output_path: str,
     ) -> dict[str, Any]:
-        """Export memorias to Markdown bundle (zip).
+        """Export memories to Markdown bundle (zip).
 
-        Exports all memorias to a zip file containing individual
+        Exports all memories to a zip file containing individual
         .md files with frontmatter metadata.
 
         Args:

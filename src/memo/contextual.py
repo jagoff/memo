@@ -52,7 +52,7 @@ class PromptContext:
 
     timestamp: str
     prompt: str
-    recalled_memorias: list[str]  # IDs of memorias recalled for this prompt
+    recalled_memorias: list[str]  # IDs of memories recalled for this prompt
 
 
 @dataclass
@@ -162,7 +162,7 @@ class ContextStore:
         return list(self._context)[-n:]
 
     def record_feedback(self, memoria_id: str, memoria_type: str, entities: list[str]) -> None:
-        """Record user feedback (e.g., they clicked/viewed a memoria)."""
+        """Record user feedback (e.g., they clicked/viewed a memory)."""
         # Don't let the bulk `reference` tier teach a type preference. It
         # dominates the corpus, so learning "prefer reference" would amplify
         # the very noise the recall tiering exists to suppress (this is the
@@ -308,7 +308,7 @@ class ContextualRecall:
         self.context.add_prompt(query, recalled_ids)
 
     def record_click(self, memoria_id: str) -> None:
-        """Record that the user clicked/viewed a memoria."""
+        """Record that the user clicked/viewed a memory."""
         rec = self.memory.get(memoria_id)
         if rec:
             entities = [
@@ -317,7 +317,7 @@ class ContextualRecall:
                 if isinstance(e, dict) and e.get("name")
             ]
             self.context.record_feedback(memoria_id, rec.type, entities)
-            # Closed-loop "used" signal: a fetched memoria is one acted on, not
+            # Closed-loop "used" signal: a fetched memory is one acted on, not
             # just shown. Cross-referenced against recall.log by
             # `memo usefulness` → referenced_rate. Best-effort, off hot path.
             try:

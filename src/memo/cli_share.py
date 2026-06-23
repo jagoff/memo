@@ -1,4 +1,4 @@
-"""`memo share` command group — memoria sharing + comments.
+"""`memo share` command group — memory sharing + comments.
 
 Extracted from cli.py (3a god-module decomposition). Registered onto the
 root group in cli.py via `cli.add_command(share_group)`.
@@ -20,7 +20,7 @@ from memo.config import Config
 
 @click.group(name="share")
 def share_group() -> None:
-    """Memory sharing — share memorias with others."""
+    """Memory sharing — share memories with others."""
     pass
 
 
@@ -37,7 +37,7 @@ def share_group() -> None:
 def share_with_user(
     memoria_id: str, shared_with: str, permission: str, expires_days: int | None
 ) -> None:
-    """Share a memoria with a user.
+    """Share a memory with a user.
 
     Example: memo share with-user abc123 user@example.com --permission comment
     """
@@ -64,7 +64,7 @@ def share_with_user(
 @click.argument("memoria_id")
 @click.argument("shared_with")
 def share_unshare(memoria_id: str, shared_with: str) -> None:
-    """Unshare a memoria from a user.
+    """Unshare a memory from a user.
 
     Example: memo share unshare abc123 user@example.com
     """
@@ -115,7 +115,7 @@ def share_create_link(
 @click.argument("memoria_id")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def share_list(memoria_id: str, as_json: bool) -> None:
-    """List all shares for a memoria.
+    """List all shares for a memory.
 
     Example: memo share list abc123
     """
@@ -157,7 +157,7 @@ def share_list(memoria_id: str, as_json: bool) -> None:
 @click.option("--author", default="user", help="Comment author")
 @click.option("--parent", help="Parent comment ID for replies")
 def share_comment(memoria_id: str, content: str, author: str, parent: str | None) -> None:
-    """Add a comment to a memoria.
+    """Add a comment to a memory.
 
     Example: memo share comment abc123 "This is a comment" --author "John Doe"
     """
@@ -183,7 +183,7 @@ def share_comment(memoria_id: str, content: str, author: str, parent: str | None
 @click.argument("memoria_id")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def share_comments(memoria_id: str, as_json: bool) -> None:
-    """List all comments for a memoria.
+    """List all comments for a memory.
 
     Example: memo share comments abc123
     """

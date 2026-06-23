@@ -504,7 +504,7 @@ class _AskOpsMixin(_MemoryBase):
         for h in repo_hits:
             norm = _norm_dedup_path(h.path)
             base = norm.rsplit("/", 1)[-1] if norm else ""
-            # Skip if same file already surfaced as a vault memoria.
+            # Skip if same file already surfaced as a vault memory.
             if norm and (norm in seen_paths or base in seen_paths):
                 continue
             # Dedup intra-repo: keep only the first (highest-score) chunk per file.

@@ -282,12 +282,12 @@ class _ConsolidateOpsMixin(_MemoryBase):
         type_: str | None = None,
         skip_llm: bool = False,
     ) -> builtins.list[dict[str, Any]]:
-        """Find clusters of near-duplicate memorias and propose actions.
+        """Find clusters of near-duplicate memories and propose actions.
 
         Algorithm:
         1. Pull all stored embeddings (we have them already; no re-embed).
         2. Greedy single-link clustering by cosine ≥ `threshold`.
-           Each memoria joins the first existing cluster it's
+           Each memory joins the first existing cluster it's
            ≥-similar to, or starts a new one.
         3. Drop singletons. The remaining clusters are candidates.
         4. For each cluster, MLXChat 7B reads the bodies and emits a

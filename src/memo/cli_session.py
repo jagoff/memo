@@ -306,7 +306,7 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
     the transcript) is unchanged — a genuinely new prompt means the user kept
     going, so it self-cancels and a fresh worker handles the next quiet window.
 
-    `capture` mines the current session chunk into durable memorias.
+    `capture` mines the current session chunk into durable memories.
     `reflect` synthesizes the active session into a durable arc note.
     Both paths are best-effort and exit 0. Heartbeats land in `idle_capture.log`.
     """

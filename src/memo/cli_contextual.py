@@ -90,13 +90,13 @@ def contextual_record_search(query: str, memoria_ids: tuple[str, ...]) -> None:
     mem = _get_memory(cfg)
 
     mem.contextual.record_search(query, list(memoria_ids))
-    console.print(f"[green]Recorded search with {len(memoria_ids)} recalled memorias[/green]")
+    console.print(f"[green]Recorded search with {len(memoria_ids)} recalled memories[/green]")
 
 
 @contextual_group.command(name="record-click")
 @click.argument("memoria_id")
 def contextual_record_click(memoria_id: str) -> None:
-    """Record that the user clicked/viewed a memoria (for preference learning).
+    """Record that the user clicked/viewed a memory (for preference learning).
 
     Example: memo contextual record-click abc123
     """
@@ -104,7 +104,7 @@ def contextual_record_click(memoria_id: str) -> None:
     mem = _get_memory(cfg)
 
     mem.contextual.record_click(memoria_id)
-    console.print(f"[green]Recorded click for memoria {memoria_id[:8]}[/green]")
+    console.print(f"[green]Recorded click for memory {memoria_id[:8]}[/green]")
 
 
 @contextual_group.command(name="preferences")
@@ -180,7 +180,7 @@ def contextual_history(limit: int, as_json: bool) -> None:
     for i, ctx in enumerate(history, 1):
         console.print(f"[cyan]{i}. {ctx.timestamp}[/cyan]")
         console.print(f"   Prompt: {ctx.prompt[:80]}")
-        console.print(f"   Recalled: {len(ctx.recalled_memorias)} memoria(s)")
+        console.print(f"   Recalled: {len(ctx.recalled_memorias)} memory(s)")
         console.print()
 
 

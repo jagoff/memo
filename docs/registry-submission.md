@@ -50,9 +50,9 @@ lists third-party MCP servers under
 ## Why it's different
 
 - 100 % local — embedder (Qwen3-Embedding), reranker (Qwen3-Reranker), and chat LLM (Qwen2.5-7B) all run in-process via Apple MLX. No Ollama, no Qdrant, no cloud key.
-- Markdown is the storage of record — memorias are plain `.md` files in an Obsidian-compatible vault. The sqlite-vec index is rebuildable.
+- Markdown is the storage of record — memories are plain `.md` files in an Obsidian-compatible vault. The sqlite-vec index is rebuildable.
 - Hybrid retrieval out of the box: vec (cosine) + BM25 (FTS5 with unicode61 + diacritic stripping) fused via RRF, then cross-encoder reranked.
-- Ambient recall: a Claude Code plugin auto-injects the top-k memorias as `additionalContext` on every prompt — no manual `/memo` call.
+- Ambient recall: a Claude Code plugin auto-injects the top-k memories as `additionalContext` on every prompt — no manual `/memo` call.
 
 ## Repo / install
 

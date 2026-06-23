@@ -1,4 +1,4 @@
-"""Multi-modal memoria with universal embeddings.
+"""Multi-modal memory with universal embeddings.
 
 NOTE: Covered by test suite (tests/test_multimodal.py). Not exposed via MCP yet.
 
@@ -40,7 +40,7 @@ class MultiModalContent:
     """Multi-modal content with embedding."""
 
     id: str
-    memoria_id: str | None  # If associated with a memoria
+    memoria_id: str | None  # If associated with a memory
     modality: str
     content: bytes  # Binary data (image, audio, video)
     embedding: list[float]  # Universal embedding
@@ -124,7 +124,7 @@ class MultiModalStore:
             content: Binary content data.
             modality: Modality type.
             embedding: Universal embedding.
-            memoria_id: Associated memoria ID (optional).
+            memoria_id: Associated memory ID (optional).
             metadata: Additional metadata.
 
         Returns:
@@ -208,10 +208,10 @@ class MultiModalStore:
         return dot / (mag_a * mag_b)
 
     def list_by_memoria(self, memoria_id: str) -> list[MultiModalContent]:
-        """List all content associated with a memoria.
+        """List all content associated with a memory.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
 
         Returns:
             List of MultiModalContent.
@@ -436,7 +436,7 @@ class MultiModalManager:
 
         Args:
             image_path: Path to the image.
-            memoria_id: Associated memoria ID.
+            memoria_id: Associated memory ID.
             metadata: Additional metadata.
 
         Returns:
@@ -463,7 +463,7 @@ class MultiModalManager:
 
         Args:
             audio_path: Path to the audio.
-            memoria_id: Associated memoria ID.
+            memoria_id: Associated memory ID.
             metadata: Additional metadata.
 
         Returns:

@@ -31,7 +31,7 @@ def consolidate_group() -> None:
 @click.option(
     "--max-clusters", type=int, default=20, help="Maximum clusters to process (default: 20)"
 )
-@click.option("--type", "type_", help="Filter by memoria type")
+@click.option("--type", "type_", help="Filter by memory type")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def consolidate_propose(
     threshold: float,
@@ -73,7 +73,7 @@ def consolidate_propose(
         console.print(f"[cyan]{i}. Cluster {p['cluster_id']}[/cyan]")
         console.print(f"   Strategy: {p['merge_strategy']}")
         console.print(f"   Rationale: {p['rationale']}")
-        console.print(f"   Memorias to merge: {len(p['memoria_ids'])}")
+        console.print(f"   Memories to merge: {len(p['memoria_ids'])}")
         console.print()
 
     if len(proposals) > 10:
@@ -97,7 +97,7 @@ def consolidate_propose(
 @click.option(
     "--max-clusters", type=int, default=20, help="Maximum clusters to process (default: 20)"
 )
-@click.option("--type", "type_", help="Filter by memoria type")
+@click.option("--type", "type_", help="Filter by memory type")
 @click.option(
     "--force",
     is_flag=True,
@@ -136,7 +136,7 @@ def consolidate_apply(
     dry_run = not force
     if force and not yes:
         click.confirm(
-            "This will merge memorias and archive the originals. Continue?",
+            "This will merge memories and archive the originals. Continue?",
             abort=True,
         )
 
@@ -173,7 +173,7 @@ def consolidate_apply(
     archived_count = sum(len(r.get("archived_ids", [])) for r in results)
     skipped_count = sum(len(r.get("skipped_ids", [])) for r in results)
 
-    console.print(f"[green]✓ Merged {merged_count} memorias[/green]")
+    console.print(f"[green]✓ Merged {merged_count} memories[/green]")
     console.print(f"[yellow]↻ Archived {archived_count} old versions[/yellow]")
     console.print(f"[dim]⊘ Skipped {skipped_count} (conflicts)[/dim]")
 
@@ -187,7 +187,7 @@ def consolidate_apply(
 @consolidate_group.command(name="list-archived")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def consolidate_list_archived(as_json: bool) -> None:
-    """List all archived memorias.
+    """List all archived memories.
 
     Example: memo consolidate list-archived
     """
@@ -195,7 +195,7 @@ def consolidate_list_archived(as_json: bool) -> None:
     archival_dir = cfg.memory_dir / "archived"
 
     if not archival_dir.is_dir():
-        console.print("[dim]No archived memorias found[/dim]")
+        console.print("[dim]No archived memories found[/dim]")
         return
 
     archived_files = list(archival_dir.glob("*.md"))
@@ -217,7 +217,7 @@ def consolidate_list_archived(as_json: bool) -> None:
         click.echo(json.dumps(archived_data, indent=2))
         return
 
-    table = Table(title="Archived Memorias")
+    table = Table(title="Archived Memories")
     table.add_column("ID", style="cyan")
     table.add_column("Title", style="yellow")
     table.add_column("Archived For", style="green")

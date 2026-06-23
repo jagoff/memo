@@ -1,7 +1,7 @@
 """Backend-native replay resolution for `Memory`.
 
 `_ReplayOpsMixin` resolves `memo://` / `memflow://` replay URIs back to their
-source payloads (memoria, repo-index chunk, repo). Extracted from
+source payloads (memory, repo-index chunk, repo). Extracted from
 maintain_ops.py (god-module decomposition); composed into `Memory` in facade.py.
 """
 
@@ -77,7 +77,7 @@ class _ReplayOpsMixin(_MemoryBase):
             resource_id = parts.resource_id or ""
             subpath = parts.subpath or ""
 
-            if resource_type == "memoria":
+            if resource_type == "memory":
                 if not resource_id:
                     return payload("missing", "memo://memoria URI did not include an id.")
                 try:
@@ -85,15 +85,15 @@ class _ReplayOpsMixin(_MemoryBase):
                 except AmbiguousIdError as exc:
                     return payload(
                         "error",
-                        f"ambiguous memoria id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+                        f"ambiguous memory id prefix {exc.prefix!r}: {len(exc.matches)} matches",
                     )
                 if rec is None:
-                    return payload("missing", "Memo memoria was not found.")
+                    return payload("missing", "Memo memory was not found.")
                 return payload(
                     "found",
-                    f"resolved memoria: {rec.id}",
+                    f"resolved memory: {rec.id}",
                     content_hash=_stable_content_hash(rec.to_dict()),
-                    target={"kind": "memoria", "id": rec.id, "path": rec.path},
+                    target={"kind": "memory", "id": rec.id, "path": rec.path},
                 )
 
             elif resource_type == "repo-index":
@@ -172,15 +172,15 @@ class _ReplayOpsMixin(_MemoryBase):
                 except AmbiguousIdError as exc:
                     return payload(
                         "error",
-                        f"ambiguous memoria id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+                        f"ambiguous memory id prefix {exc.prefix!r}: {len(exc.matches)} matches",
                     )
                 if rec is None:
-                    return payload("missing", "Memo memoria was not found.")
+                    return payload("missing", "Memo memory was not found.")
                 return payload(
                     "found",
-                    f"resolved memoria: {rec.id}",
+                    f"resolved memory: {rec.id}",
                     content_hash=_stable_content_hash(rec.to_dict()),
-                    target={"kind": "memoria", "id": rec.id, "path": rec.path},
+                    target={"kind": "memory", "id": rec.id, "path": rec.path},
                 )
 
             if uri.startswith(repo_index_prefix):

@@ -241,7 +241,7 @@ def resolve_notes_dir(mem: Any) -> Path:
 
     The vault root is derived from `data_dir` by finding the `<SYSTEM_DIR>`
     ancestor (e.g. `Obsidian`) and taking its parent — robust to the depth of
-    the memorias subdir (`<SYSTEM_DIR>/Memory`, `<SYSTEM_DIR>/AI/memory`, …).
+    the memories subdir (`<SYSTEM_DIR>/Memory`, `<SYSTEM_DIR>/AI/memory`, …).
     If the structure doesn't contain `<SYSTEM_DIR>`, use the env var.
     """
     from memo.config import SYSTEM_DIR

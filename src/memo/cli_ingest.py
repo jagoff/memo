@@ -86,7 +86,7 @@ def _resolve_ingest_row(store, path_str):
 @click.option(
     "--include-orphan-images/--no-include-orphan-images",
     default=True,
-    help="OCR images not referenced by any note and ingest them as standalone memorias.",
+    help="OCR images not referenced by any note and ingest them as standalone memories.",
 )
 @click.option(
     "--prune/--no-prune",
@@ -111,7 +111,7 @@ def ingest(
 
     Walks `<vault_path>/**/*.md`, embeds each, stores under path
     `<name>/<rel-path>`. Files with `id:` in frontmatter are skipped
-    (those are curated memorias managed by `memo reindex`).
+    (those are curated memories managed by `memo reindex`).
 
     The user's .md files are NOT modified — we synthesize ids from
     path hash and write only to `~/.local/share/memo/memvec.db`.
@@ -122,7 +122,7 @@ def ingest(
 
     Default exclusions skip Obsidian system dirs (.obsidian/, .trash/,
     etc.) and memo's own memory subtree (`<SYSTEM_DIR>/AI/`) so we
-    don't double-index curated memorias. Note: sibling user content
+    don't double-index curated memories. Note: sibling user content
     under `<SYSTEM_DIR>/` — `Contacts/`, `99-Forms/`, `99-Templates/`
     — IS indexed (e.g. `<SYSTEM_DIR>/Contacts/Grecia.md`).
 
@@ -455,7 +455,7 @@ def ingest(
                 except Exception:
                     fm = frontmatter.Post(raw)
 
-                # Skip curated memorias (have explicit id).
+                # Skip curated memories (have explicit id).
                 if fm.metadata.get("id"):
                     skipped_id += 1
                     continue
@@ -608,7 +608,7 @@ def ingest(
     # Prune: drop vault-ingest rows under this label whose source file is
     # gone from disk (moved/renamed/deleted). Per-file chunk reconciliation
     # already ran in _emit_record for re-emitted files; this catches whole
-    # files that disappeared. source-filtered, so curated memorias are safe.
+    # files that disappeared. source-filtered, so curated memories are safe.
     if prune:
         for row in store.vault_ingest_rows(label):
             abs_path = row.get("abs_path")

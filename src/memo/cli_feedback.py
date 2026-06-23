@@ -17,7 +17,7 @@ from memo.config import Config
 @click.group(name="feedback")
 def feedback_group() -> None:
     """Per-source 👍/👎 feedback used to teach the retriever which
-    memorias to surface (or hide) for queries similar to the one being
+    memories to surface (or hide) for queries similar to the one being
     voted on."""
 
 

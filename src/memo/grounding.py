@@ -1,8 +1,8 @@
-"""Grounding detector — did the answer actually USE the recalled memorias?
+"""Grounding detector — did the answer actually USE the recalled memories?
 
 Runs at the Stop hook (`memo capture-stop` → `grounding.score_turn`), AFTER the
 answer is generated, inside the 30s async budget. For the turn's recalled
-memorias (cached as `hits[].snippet` in recall.log by the recall-hook) it scores
+memories (cached as `hits[].snippet` in recall.log by the recall-hook) it scores
 how much each one shows up in the assistant's final answer:
 
   1. lexical containment (free) — salient snippet tokens present in the answer.
@@ -11,7 +11,7 @@ how much each one shows up in the assistant's final answer:
      prefix). Catches paraphrase.
 
 `used_score = max(lexical, embed_cosine)`. One `grounding.log` row per recalled
-memoria, keyed by `(session_id, turn, recall_id)` — the recall→use ledger that
+memory, keyed by `(session_id, turn, recall_id)` — the recall→use ledger that
 `dashboard.grounded_rate` joins against recall_hook.log, with recall.log as a
 compatibility fallback.
 
@@ -189,7 +189,7 @@ def collect_recent_tool_targets(
 
 def _action_for_snippet(snippet: str, targets: list[dict[str, str]]) -> dict[str, str] | None:
     """If a recalled snippet names a path/command the turn acted on, return the
-    matching action. A memoria that mentions `foo/bar.py` and the turn Read
+    matching action. A memory that mentions `foo/bar.py` and the turn Read
     `foo/bar.py` is a strong downstream-action signal."""
     snip = snippet or ""
     if not snip:
@@ -211,7 +211,7 @@ def _action_for_snippet(snippet: str, targets: list[dict[str, str]]) -> dict[str
 
 
 def _recalled_for_turn(state_dir: Path, session_id: str, turn: int) -> list[dict[str, Any]]:
-    """The memorias recalled for (session_id, turn): list of
+    """The memories recalled for (session_id, turn): list of
     {id, snippet, score} pulled from recall_hook.log, falling back to the
     shared recall.log for older runtimes. No store read."""
     from memo.dashboard import read_recall_hook_log, read_recall_log
@@ -332,7 +332,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
 
         # Stage 2 — embedding, single batch: answer + question + ALL snippets.
         # `specific = cos(answer, mem) - cos(question, mem)` separates real use
-        # (answer matches the memoria MORE than the topical baseline the question
+        # (answer matches the memory MORE than the topical baseline the question
         # already set) from same-topic overlap — the cause of the inflated rate.
         if (time.time() - t0) < budget_s:
             try:

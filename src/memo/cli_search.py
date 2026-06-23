@@ -20,7 +20,7 @@ from memo.config import Config
 
 def _sources_as_hits(out: dict) -> list[dict]:
     """Map an ask/chat-ask answer envelope's ``sources`` to recall-log hit dicts
-    so the consult records which memorias backed the answer."""
+    so the consult records which memories backed the answer."""
     hits: list[dict] = []
     for s in out.get("sources") or []:
         if not isinstance(s, dict):
@@ -112,7 +112,7 @@ def search(
 @click.command()
 @click.argument("question")
 @click.option(
-    "--k", default=5, type=int, show_default=True, help="Top-K memorias to feed the LLM as context."
+    "--k", default=5, type=int, show_default=True, help="Top-K memories to feed the LLM as context."
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option("--json", "as_json", is_flag=True)
@@ -209,7 +209,7 @@ def embed_cmd(text: str | None, batch_json) -> None:
 @click.command(name="chat-ask")
 @click.argument("question")
 @click.option(
-    "--k", default=7, type=int, show_default=True, help="Top-K memorias to feed the LLM as context."
+    "--k", default=7, type=int, show_default=True, help="Top-K memories to feed the LLM as context."
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option(

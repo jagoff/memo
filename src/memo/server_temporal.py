@@ -22,9 +22,9 @@ def register(server: FastMCP, memory: Memory) -> None:
         confidence_threshold: float = 0.7,
         max_pairs: int = 20,
     ) -> list[dict[str, Any]]:
-        """Detect contradictions among memorias mentioning a specific entity.
+        """Detect contradictions among memories mentioning a specific entity.
 
-        Uses the helper LLM to classify pairs of memorias as contradiction,
+        Uses the helper LLM to classify pairs of memories as contradiction,
         evolution, consistent, or unrelated. Returns only contradictions and
         evolutions above the confidence threshold.
 
@@ -47,7 +47,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         entity: str,
         entity_type: str | None = None,
     ) -> dict[str, Any] | None:
-        """Build a chronological timeline of all memorias mentioning an entity.
+        """Build a chronological timeline of all memories mentioning an entity.
 
         Returns a timeline with events ordered by date, including first/last
         seen timestamps. Useful for tracking evolution of decisions or
@@ -76,16 +76,16 @@ def register(server: FastMCP, memory: Memory) -> None:
         days_threshold: int = 180,
         min_access_count: int = 0,
     ) -> list[dict[str, Any]]:
-        """Find memorias that may be stale based on age and lack of access.
+        """Find memories that may be stale based on age and lack of access.
 
-        Returns potentially stale memorias with metadata including days since
+        Returns potentially stale memories with metadata including days since
         update and access count. Useful for identifying outdated information
         that may need review.
 
         Args:
             days_threshold: Days since last update to consider stale.
             min_access_count: Minimum access count to exclude (frequently-accessed
-                old memorias may still be relevant).
+                old memories may still be relevant).
         """
         return memory.temporal.detect_stale_memorias(
             days_threshold=days_threshold,

@@ -1,4 +1,4 @@
-"""`memo diff` / `memo historia` — corpus diff + per-memoria history views.
+"""`memo diff` / `memo record-history` — corpus diff + per-memory history views.
 
 Extracted from cli.py (2b god-module decomposition). Registered via
 `cli.add_command(...)`.
@@ -25,7 +25,7 @@ from memo.config import Config
 def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
     """Diff the corpus between two snapshots.
 
-    Shows added / removed / updated memorias plus a summary line. Useful
+    Shows added / removed / updated memories plus a summary line. Useful
     for "what changed since last Monday" or "what evolved between two
     releases".
     """
@@ -81,12 +81,12 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
             )
 
 
-@click.command(name="historia")
+@click.command(name="record-history")
 @click.argument("id_or_prefix")
 @click.option("--limit", default=50, type=int, show_default=True, help="Max events to show.")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def historia_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
-    """Show the full edit history for one memoria.
+    """Show the full edit history for one memory.
 
     Displays every save / update / delete event from the audit log,
     with field-level diffs on each update (title, type, tags, body_hash).
@@ -95,8 +95,8 @@ def historia_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
 
     Examples:
 
-      memo historia abc12345
-      memo historia abc12345 --json
+      memo record-history abc12345
+      memo record-history abc12345 --json
     """
     from memo.memory import AmbiguousIdError, Memory
 
@@ -122,7 +122,7 @@ def historia_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
     console.print(
         Panel.fit(
             f"[bold]{title_str}[/bold]  [dim]{resolved[:8]}[/dim]",
-            title="historia",
+            title="record history",
             border_style="cyan",
         )
     )

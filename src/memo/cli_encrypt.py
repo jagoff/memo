@@ -30,7 +30,7 @@ def _require_enabled() -> None:
 
 @click.group(name="encrypt")
 def encrypt_group() -> None:
-    """Memory encryption — encrypt sensitive memorias."""
+    """Memory encryption — encrypt sensitive memories."""
     pass
 
 

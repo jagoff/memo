@@ -35,7 +35,7 @@ _log = logging.getLogger(__name__)
 
 # Durable tiers + the bulk `reference` tier. The split (which types the recall
 # hook / briefing surface automatically vs. on-demand-only) lives in
-# `memo.tiers`; this set is just "every type a memoria may legally carry".
+# `memo.tiers`; this set is just "every type a memory may legally carry".
 _VALID_TYPES = DURABLE_TYPES | REFERENCE_TYPES
 
 # Bulk `reference` chunks shorter than this with no heading and no link/URL
@@ -96,7 +96,7 @@ def _norm_dedup_path(path: str | None) -> str:
     """Normalise a vault/repo path for cross-source dedup in ask context.
 
     Strips leading ./ and / segments, lowercases, and removes any
-    `#chunk-N` suffix so multi-chunk memorias deduplicate back to their
+    `#chunk-N` suffix so multi-chunk memories deduplicate back to their
     parent path. Conservative: same string after normalisation means
     same file for the purposes of source merging.
     """
@@ -113,7 +113,7 @@ def _norm_dedup_path(path: str | None) -> str:
 
 def _vault_dedup_keys(rec: MemoryRecord) -> set[str]:
     """Signals used to detect that a repo hit covers the same file as a
-    vault memoria. Vault ingestion may slugify the on-disk path, so we
+    vault memory. Vault ingestion may slugify the on-disk path, so we
     cross-reference title, `extra.abs_path`, and basename.
     """
     keys: set[str] = set()
@@ -518,7 +518,7 @@ def _compose_for_embed(title: str, body: str) -> str:
 # Default recency half-life (days) applied when a consumer path requests
 # `search(recency=True)` without an explicit MEMO_SEARCH_DECAY_HALFLIFE. At
 # one half-life a memory's freshness term is exactly 0.5; ~90 days keeps a
-# fact at full weight for weeks, then lets it yield to fresher memorias
+# fact at full weight for weeks, then lets it yield to fresher memories
 # rather than being crowded out forever.
 _RECALL_DECAY_HALFLIFE_DEFAULT = 90.0
 

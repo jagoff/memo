@@ -71,7 +71,7 @@ class _SearchOpsMixin(_MemoryBase):
                 when enabled in config. Useful for chat synthesis where
                 RRF is sufficient and reranker adds latency.
             recency: If True, blend a freshness bonus into the final score
-                (newer memorias rank higher) even when MEMO_SEARCH_DECAY_HALFLIFE
+                (newer memories rank higher) even when MEMO_SEARCH_DECAY_HALFLIFE
                 is unset. The consumer-facing paths (recall hook, ask/chat) pass
                 this so stale facts don't crowd out recent ones; the eval
                 harness leaves it False to keep a raw, comparable baseline.
@@ -255,7 +255,7 @@ class _SearchOpsMixin(_MemoryBase):
                 ),
             )
         _add_trace("materialize", input_count=len(rows), output_count=len(out), load_bodies=load_bodies)
-        # Drop soft-forgotten memorias (forget_after TTL elapsed, see
+        # Drop soft-forgotten memories (forget_after TTL elapsed, see
         # lifecycle.py) before feedback/rerank so they never reach the
         # consumer — recall, ask, chat all route through here. Reversible
         # via `unforget`; pass include_forgotten=True to surface them.
@@ -423,7 +423,7 @@ class _SearchOpsMixin(_MemoryBase):
         type_: str | None = None,
         exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch memorias sharing entities with the query via the knowledge graph.
+        """Fetch memories sharing entities with the query via the knowledge graph.
         Returns a ranked list for RRF fusion.
         """
         try:
@@ -432,7 +432,7 @@ class _SearchOpsMixin(_MemoryBase):
             if not query_entities:
                 return []
 
-            # Find memorias sharing these entities
+            # Find memories sharing these entities
             # Score them by how many distinct query entities they match
             memoria_counts: dict[str, int] = {}
             for ent_name in query_entities:
@@ -486,10 +486,10 @@ class _SearchOpsMixin(_MemoryBase):
         load_bodies: bool = True,
         exclude_types: set[str] | None = None,
     ) -> list[MemoryRecord]:
-        """Append graph-adjacent memorias not in the primary result set.
+        """Append graph-adjacent memories not in the primary result set.
 
         Walks entity edges from the top-3 results (1-hop) via the knowledge
-        graph and appends up to 3 connected memorias scored at 0.6× the
+        graph and appends up to 3 connected memories scored at 0.6× the
         minimum primary score. Requires entities to have been extracted first
         (`memo extract-entities`). Best-effort: any failure returns `results`
         unchanged so graph availability never breaks the search path.
@@ -515,7 +515,7 @@ class _SearchOpsMixin(_MemoryBase):
             if not entity_names:
                 return results
 
-            # Collect connected memoria IDs (1-hop via shared entity membership).
+            # Collect connected memory IDs (1-hop via shared entity membership).
             candidate_ids: list[str] = []
             seen_candidates: set[str] = set(existing_ids)
             for entity_name in entity_names[:5]:
@@ -677,7 +677,7 @@ class _SearchOpsMixin(_MemoryBase):
         """Multiply each result's score by its confidence × roi_score.
 
         Memories with open contradictions (low confidence) rank lower; frequently
-        recalled memories (high roi_score) rank higher. No-op for memorias not yet
+        recalled memories (high roi_score) rank higher. No-op for memories not yet
         in the health table (missing rows default to 1.0 × 1.0 = neutral).
         Best-effort: any failure returns results unchanged.
         """
@@ -707,7 +707,7 @@ class _SearchOpsMixin(_MemoryBase):
             return results
 
     def _record_access(self, ids: list[str]) -> None:
-        """Record read/hits for the surfaced memorias (powers LRU/LFU + the
+        """Record read/hits for the surfaced memories (powers LRU/LFU + the
         promotion/demotion lifecycle).
 
         Done synchronously on the calling thread so it reuses that thread's
@@ -795,7 +795,7 @@ class _SearchOpsMixin(_MemoryBase):
     ) -> list[MemoryRecord]:
         """Recent entries by `updated` desc. Body included for each.
 
-        Soft-forgotten memorias (see `forget`) are excluded unless
+        Soft-forgotten memories (see `forget`) are excluded unless
         `include_forgotten=True`. `updated_since` (ISO-8601) filters at the
         DB level — incremental callers (e.g. contradiction scans) get the
         freshest anchors within `limit` instead of post-filtering a page of

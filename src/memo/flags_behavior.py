@@ -32,7 +32,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "entity",
-        "Include knowledge-graph candidates in hybrid search. Memorias sharing entities with the query are fused via RRF.",
+        "Include knowledge-graph candidates in hybrid search. Memories sharing entities with the query are fused via RRF.",
     ),
     # session checkpoints / resume
     _spec(
@@ -154,7 +154,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "maintain",
-        "When set, `memo maintain` runs an emergent-synthesis pass on clusters of memorias "
+        "When set, `memo maintain` runs an emergent-synthesis pass on clusters of memories "
         "added/updated since the last synthesis. Tracks state in <state_dir>/synthesis_state.json. "
         "Non-blocking: a synthesis failure logs a warning but does not abort the maintain cycle.",
     ),

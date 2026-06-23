@@ -25,7 +25,7 @@ Entity types (use lowercase, exactly one of):
 
 Rules:
 - Extract ONLY proper nouns and named entities. Do NOT extract generic
-  nouns ("decisión", "fix", "bug").
+  nouns ("decision", "fix", "bug").
 - Normalise to canonical form: lowercase, no surrounding punctuation,
   no plural suffix.
 - 0-15 entities per note. Empty list if no proper nouns.
@@ -34,7 +34,7 @@ Rules:
 
 _CONSOLIDATE_SYSTEM_PROMPT = """You analyze a cluster of related memory notes from a personal archive.
 
-You receive a list of 2+ memorias that the user's vector index marked
+You receive a list of 2+ memories that the user's vector index marked
 as semantically near-duplicates. Output a single JSON object:
 
 {

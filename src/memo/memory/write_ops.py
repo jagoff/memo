@@ -180,7 +180,7 @@ class _WriteOpsMixin(_MemoryBase):
         - `respect_synapse_freeze`: when True, query synapse's
           `RealityConflict` ledger before commit and raise
           `WriteRefused` if a blocking freeze-write covers this
-          memoria's topic. Defaults to the env knob
+          memory's topic. Defaults to the env knob
           `MEMO_RESPECT_SYNAPSE_FREEZE=1` (opt-in). Only fires when
           `extra` carries a `synapse_trace_id` — anonymous saves
           bypass the check.
@@ -263,7 +263,7 @@ class _WriteOpsMixin(_MemoryBase):
 
         # Auto-tag with the caller's project (git toplevel basename or
         # MEMO_PROJECT_TAG) so per-repo recall can boost the right
-        # memorias. Skipped when the caller already passed any
+        # memories. Skipped when the caller already passed any
         # `project:` tag — explicit always wins.
         if auto_project and flag_bool("MEMO_AUTO_PROJECT_TAG"):
             try:
@@ -309,7 +309,7 @@ class _WriteOpsMixin(_MemoryBase):
                             _dup_id = (_dh.get("id") or "")[:8]
                             _log.warning(
                                 "save: near-duplicate detected — '%s' (sim=%.2f, id=%s). "
-                                "Consider `memo update %s` instead of creating a new memoria.",
+                                "Consider `memo update %s` instead of creating a new memory.",
                                 _dup_title,
                                 _dup_score,
                                 _dup_id,
@@ -407,15 +407,15 @@ class _WriteOpsMixin(_MemoryBase):
             return deferred_rec
 
         # Embed `title + body`: the title carries the highest-density
-        # signal for retrieval ("Astor — Informe TO" is a much better
-        # match for a query like "informe terapia ocupacional astor"
+        # signal for retrieval ("Astor — OT Report" is a much better
+        # match for a query like "occupational therapy report astor"
         # than the body's clinical paragraphs alone). Prepending also
         # protects the title from head-truncation when the body is
         # long — see embedder.py for the truncation rationale.
         #
         # Authority contract: the `.md` is already on disk and IS the source
         # of truth. If embed or the vector upsert fails here, we must NOT
-        # leave the memoria unrecoverable — we mark it embed-pending on disk
+        # leave the memory unrecoverable — we mark it embed-pending on disk
         # (so `memo reindex` re-embeds it) and best-effort index it text-only
         # so BM25 still finds it, then return the record. Never raise past a
         # successful disk write.
@@ -546,7 +546,7 @@ class _WriteOpsMixin(_MemoryBase):
         with contextlib.suppress(Exception):
             post["extra"] = extra_for_store
             abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
-        # Best-effort text-only index so the memoria is at least BM25-searchable
+        # Best-effort text-only index so the memory is at least BM25-searchable
         # before the next reindex. A fully-down store leaves only the .md, which
         # reindex will still recover.
         with contextlib.suppress(Exception):
@@ -601,7 +601,7 @@ class _WriteOpsMixin(_MemoryBase):
         prov = _extract_provenance(rec.extra or {})
         emit_receipt(
             "save",
-            text=f"Memo saved memoria {rec.id[:8]} ({rec.type}): {rec.title}",
+            text=f"Memo saved memory {rec.id[:8]} ({rec.type}): {rec.title}",
             meta={
                 "id": rec.id,
                 "type": rec.type,
@@ -713,7 +713,7 @@ class _WriteOpsMixin(_MemoryBase):
         return new_path
 
     def _read_body(self, rel_path: str) -> str:
-        # Fast path: curated memorias live on disk under memory_dir / vault_path.
+        # Fast path: curated memories live on disk under memory_dir / vault_path.
         abs_path = self._resolve_existing(rel_path)
         if abs_path.is_file():
             try:

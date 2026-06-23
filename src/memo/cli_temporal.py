@@ -45,7 +45,7 @@ def temporal_contradictions(
     max_pairs: int,
     as_json: bool,
 ) -> None:
-    """Detect contradictions among memorias mentioning a specific entity.
+    """Detect contradictions among memories mentioning a specific entity.
 
     Example: memo temporal contradictions mlx
     """
@@ -95,7 +95,7 @@ def temporal_contradictions(
 @click.option("--type", "entity_type", help="Filter by entity type from graph")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> None:
-    """Build a chronological timeline of all memorias mentioning an entity.
+    """Build a chronological timeline of all memories mentioning an entity.
 
     Example: memo temporal timeline mlx
     """
@@ -108,7 +108,7 @@ def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> No
     )
 
     if timeline is None:
-        console.print(f"[yellow]No memorias found for entity '{entity}'[/yellow]")
+        console.print(f"[yellow]No memories found for entity '{entity}'[/yellow]")
         return
 
     if as_json:
@@ -151,7 +151,7 @@ def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> No
 )
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def temporal_stale(days: int, min_access_count: int, as_json: bool) -> None:
-    """Find memorias that may be stale based on age and lack of access.
+    """Find memories that may be stale based on age and lack of access.
 
     Example: memo temporal stale --days 90
     """
@@ -168,10 +168,10 @@ def temporal_stale(days: int, min_access_count: int, as_json: bool) -> None:
         return
 
     if not stale:
-        console.print(f"[green]No stale memorias found (threshold: {days} days)[/green]")
+        console.print(f"[green]No stale memories found (threshold: {days} days)[/green]")
         return
 
-    table = Table(title=f"Potentially Stale Memorias (>{days} days)")
+    table = Table(title=f"Potentially Stale Memories (>{days} days)")
     table.add_column("ID", style="cyan")
     table.add_column("Title", style="yellow")
     table.add_column("Type", style="magenta")
@@ -213,8 +213,8 @@ def temporal_patterns(as_json: bool) -> None:
     console.print("[bold]Temporal Patterns[/bold]")
     console.print()
 
-    # Memorias per month
-    console.print("[yellow]Memorias per month:[/yellow]")
+    # Memories per month
+    console.print("[yellow]Memories per month:[/yellow]")
     for month, count in list(patterns["memorias_per_month"].items())[-12:]:
         console.print(f"  {month}: {count}")
     console.print()

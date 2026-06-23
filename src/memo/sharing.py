@@ -1,12 +1,12 @@
 """EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
 
-Memory sharing & collaboration — share memorias with other users.
+Memory sharing & collaboration — share memories with other users.
 
 Enables:
-- Share memorias with other users (permissions)
+- Share memories with other users (permissions)
 - Temporary sharing links with expiration
 - Collaboration in real-time (editing simultaneously)
-- Comments on shared memorias
+- Comments on shared memories
 - Version control for shared content
 """
 
@@ -24,7 +24,7 @@ _log = logging.getLogger(__name__)
 
 
 class Permission(Enum):
-    """Permission levels for shared memorias."""
+    """Permission levels for shared memories."""
 
     READ = "read"
     COMMENT = "comment"
@@ -34,7 +34,7 @@ class Permission(Enum):
 
 @dataclass
 class Share:
-    """A share of a memoria with another user."""
+    """A share of a memory with another user."""
 
     memoria_id: str
     shared_with: str  # Email or username
@@ -46,7 +46,7 @@ class Share:
 
 @dataclass
 class Comment:
-    """A comment on a memoria."""
+    """A comment on a memory."""
 
     memoria_id: str
     author: str
@@ -139,7 +139,7 @@ class ShareStore:
         """Add a share.
 
         Args:
-            memoria_id: The memoria ID being shared.
+            memoria_id: The memory ID being shared.
             shared_with: Email or username to share with.
             permission: Permission level.
             expires_at: Optional expiration timestamp.
@@ -157,10 +157,10 @@ class ShareStore:
         self._save()
 
     def get_shares(self, memoria_id: str) -> list[Share]:
-        """Get all shares for a memoria.
+        """Get all shares for a memory.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
 
         Returns:
             List of Share objects.
@@ -171,7 +171,7 @@ class ShareStore:
         """Remove a share.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             shared_with: The user to unshare with.
 
         Returns:
@@ -198,7 +198,7 @@ class ShareStore:
         """Create a temporary sharing link.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             permission: Permission level.
             expires_hours: Hours until expiration.
             password: Optional password.
@@ -256,10 +256,10 @@ class ShareStore:
         content: str,
         parent_id: str | None = None,
     ) -> None:
-        """Add a comment to a memoria.
+        """Add a comment to a memory.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             author: Comment author.
             content: Comment content.
             parent_id: Optional parent comment ID.
@@ -275,10 +275,10 @@ class ShareStore:
         self._save()
 
     def get_comments(self, memoria_id: str) -> list[Comment]:
-        """Get all comments for a memoria.
+        """Get all comments for a memory.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
 
         Returns:
             List of Comment objects.
@@ -289,7 +289,7 @@ class ShareStore:
         """Delete a comment.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             comment_id: The comment ID (created_at timestamp).
 
         Returns:
@@ -308,7 +308,7 @@ class ShareStore:
 
 
 class ShareManager:
-    """Manages sharing and collaboration for memorias.
+    """Manages sharing and collaboration for memories.
 
     Args:
         share_store: The ShareStore for sharing metadata.
@@ -324,10 +324,10 @@ class ShareManager:
         permission: str = "read",
         expires_days: int | None = None,
     ) -> Share | None:
-        """Share a memoria with a user.
+        """Share a memory with a user.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             shared_with: Email or username.
             permission: Permission level.
             expires_days: Optional days until expiration.
@@ -353,10 +353,10 @@ class ShareManager:
         return shares[-1]
 
     def unshare_with_user(self, memoria_id: str, shared_with: str) -> bool:
-        """Unshare a memoria from a user.
+        """Unshare a memory from a user.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             shared_with: The user to unshare.
 
         Returns:
@@ -374,7 +374,7 @@ class ShareManager:
         """Create a temporary sharing link.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             permission: Permission level.
             expires_hours: Hours until expiration.
             password: Optional password.
@@ -427,10 +427,10 @@ class ShareManager:
         content: str,
         parent_id: str | None = None,
     ) -> Comment | None:
-        """Add a comment to a memoria.
+        """Add a comment to a memory.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             author: Comment author.
             content: Comment content.
             parent_id: Optional parent comment ID.
@@ -446,10 +446,10 @@ class ShareManager:
         return comments[-1]
 
     def get_comments(self, memoria_id: str) -> list[Comment]:
-        """Get all comments for a memoria.
+        """Get all comments for a memory.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
 
         Returns:
             List of Comment objects.
@@ -460,7 +460,7 @@ class ShareManager:
         """Delete a comment.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             comment_id: The comment ID.
 
         Returns:

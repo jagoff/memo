@@ -64,13 +64,13 @@ class Memory(
         mem = Memory(cfg)
 
         rec = mem.save(
-            content="**What**: Migré obsidian-rag a MLX. ...",
-            title="MLX migration cierre formal",
+            content="**What**: Migrated obsidian-rag to MLX. ...",
+            title="MLX migration formal wrap-up",
             type_="decision",
             tags=["mlx", "obsidian-rag", "migration"],
         )
 
-        hits = mem.search("cómo migré a mlx", limit=5)
+        hits = mem.search("how I migrated to mlx", limit=5)
         for h in hits:
             print(f"{h.score:.3f} · {h.title}")
     """
@@ -439,7 +439,7 @@ class Memory(
                 self._contradict_store.close()
 
     def _mark_dirty(self, id_: str) -> None:
-        """Flag a memoria as written-locally-but-not-yet-on-backing-store
+        """Flag a memory as written-locally-but-not-yet-on-backing-store
         (write-back). Metadata-only update — no re-embed."""
         from memo.cache import CACHE_DIRTY_KEY
 

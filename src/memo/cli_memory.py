@@ -379,11 +379,11 @@ def ocr_image(image_path: str, as_json: bool) -> None:
 @click.argument("id_", metavar="ID")
 @click.option("--json", "as_json", is_flag=True)
 def provenance(id_: str, as_json: bool) -> None:
-    """Provenance trail for one memoria.
+    """Provenance trail for one memory.
 
     Returns the current synapse_*/agent_* keys plus every save/update
     event carrying its own provenance snapshot. Useful to audit which
-    agent / trace_id / route_reason produced each version of a memoria.
+    agent / trace_id / route_reason produced each version of a memory.
     """
 
     mem = _get_memory(Config.from_env())
@@ -435,7 +435,7 @@ def provenance(id_: str, as_json: bool) -> None:
 )
 @click.option("--json", "as_json", is_flag=True)
 def lint(category: str | None, limit: int, as_json: bool) -> None:
-    """Surface memorias with quality issues. Read-only — does not edit
+    """Surface memories with quality issues. Read-only — does not edit
     anything. Use to plan a manual cleanup pass.
     """
 
@@ -490,7 +490,7 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
         if manifest:
             console.print(
                 f"backup created: {manifest.get('created')}  "
-                f"memorias: {manifest.get('n_md')}  "
+                f"memories: {manifest.get('n_md')}  "
                 f"embedder: {manifest.get('embedder_model')}",
             )
         if not yes:
@@ -519,7 +519,7 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
                 n_db += 1
 
     console.print(
-        f"[green]✓[/green] restored {n_md} memorias + {n_db} state DB(s) into {cfg.data_dir}",
+        f"[green]✓[/green] restored {n_md} memories + {n_db} state DB(s) into {cfg.data_dir}",
     )
 
     if reindex:

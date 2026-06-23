@@ -41,7 +41,7 @@ def _fmt_pair_header(rec_a, rec_b, pair) -> str:
 
 @contradict_group.command(name="scan")
 @click.option(
-    "--top-k", type=int, default=5, help="Vec neighbors to consider per memoria (default: 5)"
+    "--top-k", type=int, default=5, help="Vec neighbors to consider per memory (default: 5)"
 )
 @click.option(
     "--sim-floor",
@@ -59,13 +59,13 @@ def _fmt_pair_header(rec_a, rec_b, pair) -> str:
     help="Skip pairs whose updates are within N days (default: 1)",
 )
 @click.option(
-    "--max-memorias", type=int, default=2000, help="Cap on memorias visited (default: 2000)"
+    "--max-memories", type=int, default=2000, help="Cap on memories visited (default: 2000)"
 )
 @click.option(
     "--max-pairs", type=int, default=500, help="Cap on pairs sent to the LLM (default: 500)"
 )
-@click.option("--since", help="Only scan memorias updated on/after this ISO date")
-@click.option("--type", "type_", help="Filter by memoria type")
+@click.option("--since", help="Only scan memories updated on/after this ISO date")
+@click.option("--type", "type_", help="Filter by memory type")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def contradict_scan(
     top_k: int,
@@ -212,7 +212,7 @@ def _display_pair_excerpt(rec, label: str, *, stale_days: int = 180) -> None:
 
 _TRIAGE_HELP = """
 Actions for each pair:
-  f = fuse (LLM-merge both → new memoria, archive both)
+  f = fuse (LLM-merge both → new memory, archive both)
   n = newer wins (keep newer, delete older)
   o = older wins (keep older, delete newer)
   e = evolved (legitimate evolution, mark resolved, keep both)

@@ -17,7 +17,7 @@ from memo.config import Config
 
 @click.group(name="collaborative")
 def collaborative_group() -> None:
-    """Memoria Social Colaborativa con Grafo de Conocimiento Compartido."""
+    """Collaborative Social Memory with a Shared Knowledge Graph."""
     pass
 
 
@@ -30,7 +30,7 @@ def collaborative_group() -> None:
 def collaborative_share_connection(
     user_id: str, entity_a: str, entity_b: str, relationship: str, confidence: float
 ) -> None:
-    """Comparte una conexión descubierta con la comunidad.
+    """Share a discovered connection with the community.
 
     Example: memo collaborative share-connection user123 MLX Apple "optimized for"
     """
@@ -54,7 +54,7 @@ def collaborative_share_connection(
 @collaborative_group.command(name="connections")
 @click.argument("entity")
 def collaborative_connections(entity: str) -> None:
-    """Ver conexiones compartidas para una entidad.
+    """View shared connections for an entity.
 
     Example: memo collaborative connections MLX
     """
@@ -71,9 +71,9 @@ def collaborative_connections(entity: str) -> None:
 
 @collaborative_group.command(name="recommend")
 @click.argument("entity")
-@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+@click.option("--limit", type=int, default=10, help="Maximum number of results")
 def collaborative_recommend(entity: str, limit: int) -> None:
-    """Obtiene conexiones recomendadas basadas en patrones colectivos.
+    """Get recommended connections based on collective patterns.
 
     Example: memo collaborative recommend MLX
     """
@@ -92,7 +92,7 @@ def collaborative_recommend(entity: str, limit: int) -> None:
 @click.argument("user-id")
 @click.argument("content")
 def collaborative_share_insight(user_id: str, content: str) -> None:
-    """Comparte un insight con la comunidad.
+    """Share an insight with the community.
 
     Example: memo collaborative share-insight user123 "MLX is ideal for edge because..."
     """
@@ -107,9 +107,9 @@ def collaborative_share_insight(user_id: str, content: str) -> None:
 
 
 @collaborative_group.command(name="insights")
-@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+@click.option("--limit", type=int, default=10, help="Maximum number of results")
 def collaborative_insights(limit: int) -> None:
-    """Ver los insights más votados de la comunidad.
+    """View the community's most-voted insights.
 
     Example: memo collaborative insights
     """

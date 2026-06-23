@@ -29,10 +29,10 @@ DURABLE_TYPES: frozenset[str] = frozenset(
 )
 
 # A chunk marker like "§54/130" in a title — the signature of a bulk vault
-# ingest (one source doc split across many memorias).
+# ingest (one source doc split across many memories).
 _CHUNK_TITLE_RE = re.compile(r"§\s*\d+\s*/\s*\d+")
 
-# Path prefixes that mark vault-sourced material. memo's own saved memorias
+# Path prefixes that mark vault-sourced material. memo's own saved memories
 # live under the memory_dir with date-shaped relative paths (e.g.
 # "2026/05/foo.md"), never under these.
 _VAULT_PREFIXES: tuple[str, ...] = ("notes/", "work/")

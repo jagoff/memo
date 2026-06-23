@@ -15,7 +15,7 @@ from memo.config import Config
 
 @click.group(name="export")
 def export_group() -> None:
-    """Export memorias to other formats."""
+    """Export memories to other formats."""
     pass
 
 

@@ -263,7 +263,7 @@ def run_synapse_eval(env: dict[str, str]) -> Path:
 
 def memo_id_part(source_id: str) -> str:
     raw = str(source_id or "").strip().lower()
-    if raw.startswith("memo://memoria/"):
+    if raw.startswith("memo://memory/"):
         return raw.rsplit("/", 1)[-1]
     if raw.startswith("memo:"):
         return raw.split(":", 1)[1]

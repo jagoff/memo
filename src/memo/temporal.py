@@ -1,6 +1,6 @@
 """Temporal reasoning & contradiction detection for memory corpus.
 
-Analyzes the temporal dimension of memorias to detect:
+Analyzes the temporal dimension of memories to detect:
 - Contradictions between facts over time (e.g. "used Ollama" → "migrated to MLX")
 - Evolution of decisions/opinions
 - Stale/outdated information
@@ -14,13 +14,13 @@ all analysis is computed on-the-fly from the corpus + history.
 ## Detection Strategy
 
 1. **Semantic contradiction detection**: For a given entity/topic, search
-   for memorias that express conflicting facts. Uses the helper LLM to
+   for memories that express conflicting facts. Uses the helper LLM to
    classify pairs as {contradiction, evolution, unrelated, consistent}.
 
-2. **Temporal evolution tracking**: For entities with multiple memorias over
+2. **Temporal evolution tracking**: For entities with multiple memories over
    time, build a timeline and detect phase changes (e.g. opinion shifts).
 
-3. **Staleness detection**: Mark memorias that haven't been accessed in
+3. **Staleness detection**: Mark memories that haven't been accessed in
    N months and reference technologies/tools that may have evolved.
 """
 
@@ -44,7 +44,7 @@ _PAIR_CLASSIFY_TIMEOUT_SECONDS = 30.0
 
 _CONTRADICTION_SYSTEM_PROMPT = """You analyze two memory notes from a personal archive to detect temporal contradictions.
 
-You receive two memorias with timestamps. Output a JSON object:
+You receive two memories with timestamps. Output a JSON object:
 
 {
   "relationship": "contradiction" | "evolution" | "consistent" | "unrelated",
@@ -63,7 +63,7 @@ Output ONLY the JSON, no markdown fences, no commentary."""
 
 @dataclass(frozen=True)
 class Contradiction:
-    """A detected contradiction between two memorias."""
+    """A detected contradiction between two memories."""
 
     memoria_id_a: str
     memoria_id_b: str
@@ -89,7 +89,7 @@ class TimelineEvent:
 
 @dataclass(frozen=True)
 class EntityTimeline:
-    """Timeline of all memorias mentioning a specific entity."""
+    """Timeline of all memories mentioning a specific entity."""
 
     entity_name: str
     entity_type: str
@@ -123,7 +123,7 @@ class TemporalAnalyzer:
         confidence_threshold: float = 0.7,
         max_pairs: int = 20,
     ) -> list[Contradiction]:
-        """Find contradictions among memorias mentioning a specific entity.
+        """Find contradictions among memories mentioning a specific entity.
 
         Args:
             entity_name: The entity to analyze (e.g. "ollama", "mlx").
@@ -134,7 +134,7 @@ class TemporalAnalyzer:
         Returns:
             List of detected contradictions, sorted by confidence descending.
         """
-        # Get memorias mentioning this entity
+        # Get memories mentioning this entity
         memoria_ids = self.memory.graph.entity_memorias(entity_name, entity_type)
         if len(memoria_ids) < 2:
             return []
@@ -180,7 +180,7 @@ class TemporalAnalyzer:
         return contradictions
 
     def _classify_pair(self, r1: Any, r2: Any) -> Contradiction | None:
-        """Use LLM to classify the relationship between two memorias."""
+        """Use LLM to classify the relationship between two memories."""
         chat = self._ensure_chat()
 
         prompt = f"""Memory A (date: {r1.updated}):
@@ -257,7 +257,7 @@ Body: {(r2.body or "")[:1000]}
         entity_name: str,
         entity_type: str | None = None,
     ) -> EntityTimeline | None:
-        """Build a chronological timeline of all memorias mentioning an entity."""
+        """Build a chronological timeline of all memories mentioning an entity."""
         memoria_ids = self.memory.graph.entity_memorias(entity_name, entity_type)
         if not memoria_ids:
             return None
@@ -305,24 +305,24 @@ Body: {(r2.body or "")[:1000]}
         days_threshold: int = 180,
         min_access_count: int = 0,
     ) -> list[dict[str, Any]]:
-        """Find memorias that may be stale based on age and lack of access.
+        """Find memories that may be stale based on age and lack of access.
 
         Args:
             days_threshold: Days since last update to consider stale.
             min_access_count: Minimum access count to exclude (frequently-accessed
-                old memorias may still be relevant).
+                old memories may still be relevant).
 
         Returns:
-            List of potentially stale memorias with metadata.
+            List of potentially stale memories with metadata.
         """
         cutoff = (datetime.now(UTC) - timedelta(days=days_threshold)).isoformat()
 
-        # Get all memorias, filter by date
+        # Get all memories, filter by date
         all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP)
         if len(all_records) >= _ANALYSIS_ROW_CAP:
             _log.warning(
                 "detect_stale_memorias: corpus hit the %d-row cap; older "
-                "memorias were not scanned.",
+                "memories were not scanned.",
                 _ANALYSIS_ROW_CAP,
             )
         stale = []
@@ -373,11 +373,11 @@ Body: {(r2.body or "")[:1000]}
         if len(all_records) >= _ANALYSIS_ROW_CAP:
             _log.warning(
                 "detect_temporal_patterns: corpus hit the %d-row cap; older "
-                "memorias were not included.",
+                "memories were not included.",
                 _ANALYSIS_ROW_CAP,
             )
 
-        # Memorias per month
+        # Memories per month
         monthly: defaultdict[str, int] = defaultdict(int)
         for rec in all_records:
             try:
@@ -399,7 +399,7 @@ Body: {(r2.body or "")[:1000]}
             except (ValueError, TypeError, AttributeError):
                 pass
 
-        # Most active entities (by number of memorias)
+        # Most active entities (by number of memories)
         entity_counts: defaultdict[str, int] = defaultdict(int)
         top_entities = self.memory.graph.top_entities(limit=100)
         for ent in top_entities:

@@ -14,7 +14,7 @@ Manages the lifecycle of memories over time:
 
 ## Forgetting (soft, reversible) — `forget_after` TTL
 
-A memoria can carry `forget_after` (ISO date) and `forget_reason` in its
+A memory can carry `forget_after` (ISO date) and `forget_reason` in its
 `extra` bag / frontmatter. Once the date passes, `apply_lifecycle_rules`
 soft-forgets it: sets `extra.is_forgotten = True` so it drops out of
 `search` / recall / `list` by default, WITHOUT moving or deleting the file.
@@ -46,7 +46,7 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-# Keys carried in a memoria's `extra` bag (persisted to meta.extra_json and to
+# Keys carried in a memory's `extra` bag (persisted to meta.extra_json and to
 # the on-disk frontmatter `extra:` block, so they survive a reindex for free).
 FORGET_AFTER_KEY = "forget_after"  # ISO date/datetime; soft-forget once passed
 FORGET_REASON_KEY = "forget_reason"  # free-text why
@@ -93,7 +93,7 @@ class LifecyclePolicy:
 
 @dataclass
 class LifecycleAction:
-    """A lifecycle action taken on a memoria."""
+    """A lifecycle action taken on a memory."""
 
     memoria_id: str
     action: str  # archive, promote, demote, expire, delete
@@ -115,7 +115,7 @@ class LifecycleManager:
         self._actions_log: list[LifecycleAction] = []
 
     def get_access_count(self, memoria_id: str) -> int:
-        """Get the number of times a memoria has been read/hit.
+        """Get the number of times a memory has been read/hit.
 
         Reads the `access` table (populated by `store.touch()` on every
         search/ask hit). Falls back to counting non-save history events when
@@ -164,7 +164,7 @@ class LifecycleManager:
             return 0
 
     def should_archive(self, memoria_id: str) -> tuple[bool, str]:
-        """Determine if a memoria should be archived.
+        """Determine if a memory should be archived.
 
         Returns:
             (should_archive, reason)
@@ -184,7 +184,7 @@ class LifecycleManager:
         return False, "Recently accessed"
 
     def should_promote(self, memoria_id: str) -> tuple[bool, str]:
-        """Determine if a memoria should be promoted (high priority).
+        """Determine if a memory should be promoted (high priority).
 
         Returns:
             (should_promote, reason)
@@ -197,7 +197,7 @@ class LifecycleManager:
         return False, f"Accessed only {access_count} times"
 
     def should_demote(self, memoria_id: str) -> tuple[bool, str]:
-        """Determine if a memoria should be demoted (low priority).
+        """Determine if a memory should be demoted (low priority).
 
         Returns:
             (should_demote, reason)
@@ -210,20 +210,20 @@ class LifecycleManager:
         return False, f"Accessed {access_count} times"
 
     def should_expire(self, memoria_id: str) -> tuple[bool, str]:
-        """Determine if a temporary memoria should expire.
+        """Determine if a temporary memory should expire.
 
         Returns:
             (should_expire, reason)
         """
         rec = self.memory.get(memoria_id)
         if not rec:
-            return False, "Memoria not found"
+            return False, "Memory not found"
 
         # Check if it's a temporary type
         if rec.type == "temp":
             days_since_update = self.get_days_since_update(memoria_id)
             if days_since_update > self.policy.temp_expiration_days:
-                return True, f"Temp memoria, {days_since_update} days old"
+                return True, f"Temp memory, {days_since_update} days old"
 
         # Check for temp:... tags
         for tag in rec.tags:
@@ -236,17 +236,17 @@ class LifecycleManager:
                 except (ValueError, IndexError):
                     pass
 
-        return False, "Not a temporary memoria"
+        return False, "Not a temporary memory"
 
     def should_forget(self, memoria_id: str) -> tuple[bool, str]:
-        """Determine if a memoria's `forget_after` TTL has elapsed.
+        """Determine if a memory's `forget_after` TTL has elapsed.
 
-        Returns (should_forget, reason). False for memorias already forgotten
+        Returns (should_forget, reason). False for memories already forgotten
         or without a parseable `forget_after`.
         """
         rec = self.memory.get(memoria_id)
         if rec is None:
-            return False, "Memoria not found"
+            return False, "Memory not found"
         extra = rec.extra or {}
         if extra.get(IS_FORGOTTEN_KEY):
             return False, "Already forgotten"
@@ -263,7 +263,7 @@ class LifecycleManager:
         dry_run: bool = False,
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
-        """Soft-forget every memoria whose `forget_after` TTL has elapsed.
+        """Soft-forget every memory whose `forget_after` TTL has elapsed.
 
         Narrow counterpart to `apply_lifecycle_rules` — does ONLY the explicit
         forget pass (no inactivity-archival, no temp-expiration), so callers
@@ -281,7 +281,7 @@ class LifecycleManager:
         return acted
 
     def archive_memoria(self, memoria_id: str) -> bool:
-        """Archive a memoria by moving it to the inactive/ subdirectory.
+        """Archive a memory by moving it to the inactive/ subdirectory.
 
         Returns True if successful.
         """
@@ -325,11 +325,11 @@ class LifecycleManager:
         dry_run: bool = False,
         limit: int = 100,
     ) -> dict[str, Any]:
-        """Apply lifecycle rules to all memorias.
+        """Apply lifecycle rules to all memories.
 
         Args:
             dry_run: If True, only report what would happen.
-            limit: Maximum memorias to process.
+            limit: Maximum memories to process.
 
         Returns:
             Dict with counts of actions taken.
@@ -392,7 +392,7 @@ class LifecycleManager:
         return actions
 
     def get_lifecycle_report(self, limit: int = 100) -> dict[str, Any]:
-        """Generate a report on the lifecycle state of memorias.
+        """Generate a report on the lifecycle state of memories.
 
         Returns:
             Dict with statistics and recommendations.

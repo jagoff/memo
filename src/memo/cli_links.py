@@ -28,7 +28,7 @@ def links_group() -> None:
 @click.argument("memoria_id")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def links_backlinks(memoria_id: str, as_json: bool) -> None:
-    """Show all memorias that reference this one.
+    """Show all memories that reference this one.
 
     Example: memo links backlinks abc123
     """
@@ -42,7 +42,7 @@ def links_backlinks(memoria_id: str, as_json: bool) -> None:
         return
 
     if not backlinks:
-        console.print(f"[dim]No backlinks found for memoria {memoria_id[:8]}[/dim]")
+        console.print(f"[dim]No backlinks found for memory {memoria_id[:8]}[/dim]")
         return
 
     table = Table(title=f"Backlinks to {memoria_id[:8]}")
@@ -66,7 +66,7 @@ def links_backlinks(memoria_id: str, as_json: bool) -> None:
 @click.argument("memoria_id")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def links_outlinks(memoria_id: str, as_json: bool) -> None:
-    """Show all memorias that this one references.
+    """Show all memories that this one references.
 
     Example: memo links outlinks abc123
     """
@@ -80,7 +80,7 @@ def links_outlinks(memoria_id: str, as_json: bool) -> None:
         return
 
     if not outlinks:
-        console.print(f"[dim]No outlinks found for memoria {memoria_id[:8]}[/dim]")
+        console.print(f"[dim]No outlinks found for memory {memoria_id[:8]}[/dim]")
         return
 
     console.print(f"[bold]Outlinks from {memoria_id[:8]}[/bold]")
@@ -92,14 +92,14 @@ def links_outlinks(memoria_id: str, as_json: bool) -> None:
 
 @links_group.command(name="suggest")
 @click.argument("content")
-@click.option("--title", help="Title of the memoria being saved")
-@click.option("--tags", multiple=True, help="Tags of the memoria being saved")
+@click.option("--title", help="Title of the memory being saved")
+@click.option("--tags", multiple=True, help="Tags of the memory being saved")
 @click.option("--limit", type=int, default=5, help="Max suggestions (default: 5)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def links_suggest(
     content: str, title: str | None, tags: tuple[str, ...], limit: int, as_json: bool
 ) -> None:
-    """Suggest links to existing memorias based on content.
+    """Suggest links to existing memories based on content.
 
     Example: memo links suggest "MLX performance optimization" --title "MLX"
     """
@@ -142,7 +142,7 @@ def links_suggest(
 @click.argument("memoria_id")
 @click.option("--title", help="Display title for the link")
 def links_format(memoria_id: str, title: str | None) -> None:
-    """Format a memoria ID as a wikilink.
+    """Format a memory ID as a wikilink.
 
     Example: memo links format abc123 --title "My Memory"
     """
@@ -156,7 +156,7 @@ def links_format(memoria_id: str, title: str | None) -> None:
 @links_group.command(name="reindex")
 @click.confirmation_option(prompt="This will rebuild the entire cross-reference index. Continue?")
 def links_reindex() -> None:
-    """Rebuild the cross-reference index from all memorias.
+    """Rebuild the cross-reference index from all memories.
 
     Example: memo links reindex
     """
@@ -167,7 +167,7 @@ def links_reindex() -> None:
     # share the main DB file under single_db, where unlinking would nuke it).
     mem.crossref.reset()
 
-    # Re-index all memorias
+    # Re-index all memories
     all_records = mem.list(limit=10000)
     indexed = 0
 
@@ -177,4 +177,4 @@ def links_reindex() -> None:
             mem.crossref.index_wikilinks(rec.id, body)
             indexed += 1
 
-    console.print(f"[green]Reindexed {indexed} memorias[/green]")
+    console.print(f"[green]Reindexed {indexed} memories[/green]")

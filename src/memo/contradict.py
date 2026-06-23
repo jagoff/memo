@@ -8,7 +8,7 @@ the missing pieces needed for a triage workflow:
 
 - **Sidecar DB** (`contradictions.db`) so the LLM verdict on a pair is
   not recomputed every time. Status of each pair lives across runs.
-- **Corpus-wide scan** that walks every memoria, finds near-neighbors
+- **Corpus-wide scan** that walks every memory, finds near-neighbors
   via vec search, and classifies the pairs that look promising. Pair
   IDs are canonical (lower id first) so the same pair is never stored
   twice.
@@ -74,7 +74,7 @@ except ImportError:
 
 VALID_STATUSES = {
     "open",  # pending triage
-    "fused",  # merged into a new memoria
+    "fused",  # merged into a new memory
     "kept_newer",  # newer side won, older deleted/archived
     "kept_older",  # older side won (rare; explicit user choice)
     "evolved",  # both kept, marked as legitimate evolution
@@ -142,7 +142,7 @@ class ContradictionStore:
       3. `resolve(pair_id, status, note)` — triage walker writes the
          resolution. Status must be one of `VALID_STATUSES` (minus
          `open`).
-      4. `drop_for_memoria(memoria_id)` — called when a memoria is
+      4. `drop_for_memoria(memoria_id)` — called when a memory is
          deleted so dangling pairs vanish.
     """
 
@@ -293,7 +293,7 @@ class ContradictionStore:
             return cur.rowcount > 0
 
     def drop_for_memoria(self, memoria_id: str) -> int:
-        """Delete all pairs touching this memoria (called on memoria delete)."""
+        """Delete all pairs touching this memory (called on memory delete)."""
         with self._tx() as cx:
             cur = cx.execute(
                 "DELETE FROM pairs WHERE memoria_id_a=? OR memoria_id_b=?",
@@ -358,7 +358,7 @@ class ScanResult:
 class ContradictionScanner:
     """Corpus-wide contradiction detection driven by vec neighborhoods.
 
-    For each memoria, the scanner fetches the top-K vec neighbors (above
+    For each memory, the scanner fetches the top-K vec neighbors (above
     a cosine floor), canonicalizes each (self, neighbor) pair, skips
     pairs already resolved or already open in the store, asks the LLM
     to classify the pair, and persists `contradiction` / `evolution`
@@ -402,7 +402,7 @@ class ContradictionScanner:
         """Walk the corpus, classify near-neighbors, persist contradictions.
 
         Args:
-            top_k: Neighbors to pull per memoria via vec search.
+            top_k: Neighbors to pull per memory via vec search.
             sim_floor: Skip neighbors with cosine below this. Cheap
                 prefilter so the LLM only sees pairs that are at least
                 topically related.
@@ -410,11 +410,11 @@ class ContradictionScanner:
             min_days_apart: Pairs whose `updated` timestamps are closer
                 than this are skipped (same-day edits are usually
                 revisions, not contradictions).
-            max_memorias: Hard cap on memorias visited per run.
+            max_memorias: Hard cap on memories visited per run.
             max_pairs: Hard cap on pairs sent to the LLM per run.
-            since: ISO date string; only memorias `updated >= since` are
+            since: ISO date string; only memories `updated >= since` are
                 used as scan anchors. Useful for incremental runs.
-            type_: Optional type filter (e.g. only `decision` memorias).
+            type_: Optional type filter (e.g. only `decision` memories).
             progress: Optional callable `fn(current, total, title)` for
                 CLI progress bars.
             persist: Store detected pairs and emit anomaly events. Set to
@@ -568,8 +568,8 @@ def emit_anomaly(
     writable conflict channel.
 
     Args:
-        memoria_id_a: First memoria in the contradiction pair.
-        memoria_id_b: Second memoria in the contradiction pair.
+        memoria_id_a: First memory in the contradiction pair.
+        memoria_id_b: Second memory in the contradiction pair.
         relationship: Relationship type (contradiction, evolution, etc).
         confidence: Confidence score (0-1).
         status: Current status (open, fused, kept_newer, etc.).
@@ -594,7 +594,7 @@ def emit_anomaly(
         kind="semantic_contradiction",
         state=state,
         summary=(
-            f"memo {relationship} between memorias {memoria_id_a[:12]} and {memoria_id_b[:12]}"
+            f"memo {relationship} between memories {memoria_id_a[:12]} and {memoria_id_b[:12]}"
         ),
         detected_at=ts,
         source_backend="memo",

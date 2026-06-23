@@ -22,18 +22,18 @@ def register(server: FastMCP, memory: Memory) -> None:
         force: bool = False,
     ) -> dict[str, int]:
         """Extract named entities (person/project/technology/file/org/concept)
-        from memoria bodies via Qwen2.5-3B and write them to the graph DB.
+        from memory bodies via Qwen2.5-3B and write them to the graph DB.
 
         Args:
-            ids: Specific memoria ids to process (full UUID hex). Mutually
+            ids: Specific memory ids to process (full UUID hex). Mutually
                 exclusive with `all_`.
-            all_: Process every memoria in the store.
+            all_: Process every memory in the store.
             force: Re-extract even if entity links already exist
-                (default skips already-indexed memorias).
+                (default skips already-indexed memories).
 
         Returns counts: `{processed, entities_extracted, links_written, skipped, errors}`.
-        Cost: ~0.5-1s per memoria. Use `all_=True` once after a fresh
-        install, then incrementally on new memorias.
+        Cost: ~0.5-1s per memory. Use `all_=True` once after a fresh
+        install, then incrementally on new memories.
         """
         return memory.extract_entities(
             ids=ids,
@@ -57,6 +57,6 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @server.tool()
     def memo_entity(name: str, type: str | None = None) -> list[str]:
-        """Memoria IDs that mention `name` (and optionally a specific
+        """Memory IDs that mention `name` (and optionally a specific
         entity type). Returns a list of full UUIDs."""
         return memory.graph.entity_memorias(name, type_=type)

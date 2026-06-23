@@ -222,7 +222,7 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="memo_entity_search",
         description=(
-            "Search memorias with entity-aware boosting. Extracts named entities "
+            "Search memories with entity-aware boosting. Extracts named entities "
             "(persons, technologies, projects) from the query and boosts results "
             "whose stored entities overlap. Useful for 'what do I know about "
             "Alice and React?' style queries."
@@ -239,13 +239,13 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="memo_feedback_implicit",
         description=(
-            "Record an implicit feedback signal (click or ignore) on a memoria "
+            "Record an implicit feedback signal (click or ignore) on a memory "
             "for a given query. Use 'click' when the user viewed/used this result; "
             "'ignore' when they skipped it. These are softer signals than "
             "memo_feedback_record's thumbs_up/thumbs_down."
         ),
         params=(
-            Param("source_id", "string", description="Memoria id or unique prefix"),
+            Param("source_id", "string", description="Memory id or unique prefix"),
             Param("query", "string", description="Query text this feedback applies to"),
             Param(
                 "signal",

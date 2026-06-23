@@ -9,7 +9,7 @@ Orchestrates the freshness machinery that previously only ran by hand:
      opts into a real delete for the most confident contradictions instead.
   2. Duplicates — consolidate high-similarity clusters (merge → archive the
      sources with an `archived_for` pointer; reversible).
-  3. Staleness — archive memorias never accessed and older than `--stale-days`.
+  3. Staleness — archive memories never accessed and older than `--stale-days`.
 
 Every mutation is **reversible by default** (archive, not delete). `--dry-run`
 previews without touching anything. A receipt of what changed is written to
@@ -95,7 +95,7 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     "--stale-days",
     type=int,
     default=365,
-    help="Archive never-accessed memorias older than this (default 365).",
+    help="Archive never-accessed memories older than this (default 365).",
 )
 @click.option(
     "--dup-threshold",
@@ -139,7 +139,7 @@ def maintain_cmd(
     as_json: bool,
     if_due: bool,
 ) -> None:
-    """Supersede contradictions, merge duplicates, archive stale memorias.
+    """Supersede contradictions, merge duplicates, archive stale memories.
 
     Reversible by default (archives to inactive/). Example:
       memo maintain --dry-run
@@ -188,14 +188,14 @@ def maintain_cmd(
         "archived_stale": [],
         "synthesized": [],  # emergent cross-memory insights generated
         "synthesis_count": 0,  # new clusters synthesized by proactive pass
-        "outcome_reconciled": 0,  # memorias whose roi_score was re-derived from outcomes
-        "dead_archived": [],  # surfaced-never-grounded memorias soft-forgotten
+        "outcome_reconciled": 0,  # memories whose roi_score was re-derived from outcomes
+        "dead_archived": [],  # surfaced-never-grounded memories soft-forgotten
         "errors": [],
     }
 
     # 0. Explicit forget TTLs ------------------------------------------------
     # Honour user-set `forget_after` dates: soft-forget (reversible) so the
-    # memoria drops out of recall/search without losing the file. Runs even
+    # memory drops out of recall/search without losing the file. Runs even
     # when other passes are skipped — it's explicit user intent, not heuristics.
     try:
         for item in mem.lifecycle.enforce_forget_ttl(dry_run=dry_run):
@@ -316,7 +316,7 @@ def maintain_cmd(
 
     # 6. Outcome loop (default-on; disable with MEMO_OUTCOME_RANKING_ENABLED=0) -
     # Self-tuning recall: re-derive roi_score from real grounding outcomes (was
-    # the surfaced memoria USED in the answer?) so ranking promotes what helps,
+    # the surfaced memory USED in the answer?) so ranking promotes what helps,
     # and reversibly archive dead weight (surfaced often, never grounded). Pure
     # derivation over the recall/grounding logs + one roi write.
     if flag_bool("MEMO_OUTCOME_RANKING_ENABLED"):
@@ -368,7 +368,7 @@ def maintain_cmd(
     )
     console.print(f"  duplicate clusters merged: {len(receipt['merged'])}")
     console.print(f"  forget_after TTLs applied: {len(receipt['forgotten'])}")
-    console.print(f"  stale memorias archived: {len(receipt['archived_stale'])}")
+    console.print(f"  stale memories archived: {len(receipt['archived_stale'])}")
     if receipt["synthesized"]:
         saved = sum(1 for s in receipt["synthesized"] if s.get("saved"))
         console.print(
@@ -379,7 +379,7 @@ def maintain_cmd(
     if receipt.get("outcome_reconciled") or receipt.get("dead_archived"):
         console.print(
             f"  outcome loop: roi_score re-derived for {receipt['outcome_reconciled']} "
-            f"memorias, {len(receipt['dead_archived'])} dead-weight archived"
+            f"memories, {len(receipt['dead_archived'])} dead-weight archived"
         )
     if receipt["errors"]:
         for e in receipt["errors"]:

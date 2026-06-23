@@ -4,7 +4,7 @@ memo's corpus mixes durable knowledge (decisions/facts/preferences) with
 bulk-ingested vault material (Obsidian notes, CVs, course quotes, lyrics).
 When everything is `type=note` the reference material drowns durable knowledge
 in the auto-recall hook. This one-shot migration moves vault-sourced `note`
-memorias to `type=reference` so the recall hook (which excludes the reference
+memories to `type=reference` so the recall hook (which excludes the reference
 tier — see `memo.tiers`) surfaces durable knowledge again. Reference material
 stays fully searchable on demand via `memo_search` / `memo search`.
 
@@ -32,7 +32,7 @@ from memo.tiers import is_reference_candidate
     "--limit", default=20, show_default=True, type=int, help="Sample rows to print in the preview."
 )
 def retier_cmd(apply_changes: bool, limit: int) -> None:
-    """Move vault-sourced `note` memorias into the `reference` tier."""
+    """Move vault-sourced `note` memories into the `reference` tier."""
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
@@ -48,7 +48,7 @@ def retier_cmd(apply_changes: bool, limit: int) -> None:
     ]
     total_notes = sum(1 for r in rows if r.get("type") == "note")
 
-    console.print(f"corpus: {len(rows)} memorias, {total_notes} of type 'note'")
+    console.print(f"corpus: {len(rows)} memories, {total_notes} of type 'note'")
     console.print(f"vault-sourced notes to retier → reference: [bold]{len(candidates)}[/bold]")
     for r in candidates[:limit]:
         console.print(
@@ -63,4 +63,4 @@ def retier_cmd(apply_changes: bool, limit: int) -> None:
         return
 
     n = mem.store.bulk_update_type([r["id"] for r in candidates], "reference")
-    console.print(f"\n[green]reclassified {n} memorias to type=reference[/green]")
+    console.print(f"\n[green]reclassified {n} memories to type=reference[/green]")

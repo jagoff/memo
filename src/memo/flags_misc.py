@@ -151,7 +151,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         0,
         "cache",
-        "Freshness window in days before a cached memoria is revalidated against the backing store / eligible for ttl eviction (0 = off).",
+        "Freshness window in days before a cached memory is revalidated against the backing store / eligible for ttl eviction (0 = off).",
     ),
     _spec(
         "MEMO_CACHE_BACKEND",
@@ -229,7 +229,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "misc",
-        "Before saving, run a quick vec search for near-duplicates. In interactive mode, prompts to update an existing memoria instead. In non-interactive mode, logs a warning.",
+        "Before saving, run a quick vec search for near-duplicates. In interactive mode, prompts to update an existing memory instead. In non-interactive mode, logs a warning.",
         opt_out=True,
     ),
     _spec(
@@ -246,7 +246,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "misc",
-        "Auto-tag saved memorias with the cwd project.",
+        "Auto-tag saved memories with the cwd project.",
         opt_out=True,
     ),
     _spec("MEMO_PROJECT_TAG", "str", "", "misc", "Pin a project tag (overrides cwd detection)."),
@@ -278,11 +278,11 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "misc",
-        "Store curated memoria .md files INSIDE the Obsidian vault "
+        "Store curated memory .md files INSIDE the Obsidian vault "
         "(<vault>/<SYSTEM_DIR>/AI/memory) instead of data_dir, making the "
         "vault the human-editable source of truth. Requires MEMO_VAULT_PATH. "
         "sqlite stays a rebuildable index. Ingest already excludes AI/ and "
-        "id:-frontmatter files, so memorias are never double-ingested as "
+        "id:-frontmatter files, so memories are never double-ingested as "
         "reference tier. Default off keeps existing installs untouched.",
     ),
     _spec(
@@ -331,7 +331,7 @@ SPECS: tuple[FlagSpec, ...] = (
         True,
         "roi",
         "Drive memory_health.roi_score from real grounding OUTCOMES (was the "
-        "surfaced memoria actually used in the answer?) instead of mere access "
+        "surfaced memory actually used in the answer?) instead of mere access "
         "frequency. When on, `memo maintain` / `memo outcome` reconcile roi_score "
         "from recall.log+grounding.log, and the blind per-access roi boost is "
         "skipped so the outcome signal stays authoritative. Disable only if you "
@@ -342,9 +342,9 @@ SPECS: tuple[FlagSpec, ...] = (
         "float",
         3.0,
         "roi",
-        "Bayesian prior strength for per-memoria utility = (grounded + "
+        "Bayesian prior strength for per-memory utility = (grounded + "
         "prior_mean*prior_n) / (surfaced + prior_n). Higher = more surfacings "
-        "needed before a memoria's utility moves off the global baseline.",
+        "needed before a memory's utility moves off the global baseline.",
         min_val=0.0,
     ),
     _spec(
@@ -353,7 +353,7 @@ SPECS: tuple[FlagSpec, ...] = (
         0.6,
         "roi",
         "Lowest roi_score the outcome loop assigns (utility 0 → floor). Demotes "
-        "but never zeroes a memoria that surfaces a lot yet never grounds.",
+        "but never zeroes a memory that surfaces a lot yet never grounds.",
         min_val=0.0,
     ),
     _spec(
@@ -369,7 +369,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         8,
         "roi",
-        "Dead-weight archival: a memoria must have been surfaced at least this "
+        "Dead-weight archival: a memory must have been surfaced at least this "
         "many times (and never grounded) before `memo maintain` proposes "
         "archiving it as recall noise. 0 disables dead-weight archival.",
         min_val=0,
@@ -429,7 +429,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "capture",
         "Minimum seconds between incremental in-session captures (`memo "
         "capture-tick`, wired as an async per-prompt hook). Mines NEW turns "
-        "since a per-session watermark into durable memorias so a long/crashed "
+        "since a per-session watermark into durable memories so a long/crashed "
         "session's insight reaches .md mid-session instead of only at Stop. "
         "Self-throttled per session off the capture watermark; a cheap no-op "
         "when not due. 0 disables the throttle (capture every prompt).",
@@ -440,7 +440,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         10,
         "session",
-        "Seconds of no new prompt before the delayed session-idle capture worker mines the current session chunk into durable memorias.",
+        "Seconds of no new prompt before the delayed session-idle capture worker mines the current session chunk into durable memories.",
         min_val=0,
     ),
     _spec(
@@ -448,7 +448,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         300,
         "session",
-        "Seconds of no new prompt before the delayed session-idle reflect worker synthesizes the active session into durable memorias.",
+        "Seconds of no new prompt before the delayed session-idle reflect worker synthesizes the active session into durable memories.",
         min_val=0,
     ),
     # WhatsApp ingest
@@ -473,7 +473,7 @@ SPECS: tuple[FlagSpec, ...] = (
         0.15,
         "dream",
         "ROI score floor for quality-floor prune in `memo dream run`. "
-        "Memorias with roi_score below this threshold, zero access count, and age "
+        "Memories with roi_score below this threshold, zero access count, and age "
         "> MEMO_DREAM_PRUNE_MIN_AGE_DAYS are archived during the dream prune pass.",
         min_val=0.0,
         max_val=1.0,
@@ -484,7 +484,7 @@ SPECS: tuple[FlagSpec, ...] = (
         90,
         "dream",
         "Minimum age in days for the quality-floor prune pass in `memo dream run`. "
-        "Only memorias older than this are considered for archival.",
+        "Only memories older than this are considered for archival.",
         min_val=0,
     ),
     _spec(
@@ -493,7 +493,7 @@ SPECS: tuple[FlagSpec, ...] = (
         0,
         "dream",
         "Corpus size ceiling for the dream eviction pass. When > 0 and the total "
-        "non-reference memoria count exceeds this value, the coldest LFU candidates "
+        "non-reference memory count exceeds this value, the coldest LFU candidates "
         "are archived until the corpus is within budget. 0 disables eviction.",
         min_val=0,
     ),
@@ -503,7 +503,7 @@ SPECS: tuple[FlagSpec, ...] = (
         0,
         "dream",
         "Body-length threshold (chars) for the dream verbose-compression pass. "
-        "Memorias whose body exceeds this length are LLM-compressed to 2-3 sentences "
+        "Memories whose body exceeds this length are LLM-compressed to 2-3 sentences "
         "during `memo dream run`. Disabled by default because Markdown is canonical; "
         "set an explicit positive value to opt in.",
         min_val=0,
@@ -525,7 +525,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "dream",
         "Number of top recurring queries from recall.log to pre-synthesize during "
         "the dream query-prediction pass. For each top query, memo searches for the "
-        "matching memorias and runs a focused synthesis pass on that cluster. "
+        "matching memories and runs a focused synthesis pass on that cluster. "
         "0 disables the pass.",
         min_val=0,
     ),
@@ -536,7 +536,7 @@ SPECS: tuple[FlagSpec, ...] = (
         False,
         "graph",
         "Record co-recall edges in graph.db whenever a search returns 2+ results. "
-        "Pairs of co-recalled memoria IDs are stored in the `co_recall` table with "
+        "Pairs of co-recalled memory IDs are stored in the `co_recall` table with "
         "incrementing counts. Off by default to avoid graph DB write overhead on the "
         "recall-hook hot path.",
     ),

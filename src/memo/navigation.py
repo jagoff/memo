@@ -10,8 +10,8 @@ Extends the basic entity graph in graph.py with:
 
 ## Path Finding
 
-Uses BFS to find shortest paths between entities in the entity-memoria graph.
-Two entities are connected if they share a memoria. Path length = number of
+Uses BFS to find shortest paths between entities in the entity-memory graph.
+Two entities are connected if they share a memory. Path length = number of
 intermediate entities.
 
 ## Community Detection
@@ -40,7 +40,7 @@ class EntityPath:
     target: str
     path: list[str]  # List of entity names including source and target
     length: int
-    intermediate_memorias: list[str]  # Memoria IDs that connect each step
+    intermediate_memorias: list[str]  # Memory IDs that connect each step
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ class EntityNeighbors:
 
     entity: str
     direct_neighbors: list[str]  # Entities directly connected
-    neighbor_memorias: dict[str, list[str]]  # entity -> memoria IDs that connect
+    neighbor_memorias: dict[str, list[str]]  # entity -> memory IDs that connect
     degree: int
 
 
@@ -72,7 +72,7 @@ class CentralityScores:
 
 
 class GraphNavigator:
-    """Navigator for the entity-memoria graph.
+    """Navigator for the entity-memory graph.
 
     Args:
         graph_store: The GraphStore instance to query.
@@ -144,15 +144,15 @@ class GraphNavigator:
         return None
 
     def _build_adjacency_list(self) -> dict[str, set[tuple[str, str]]]:
-        """Build adjacency list from entity-memoria graph.
+        """Build adjacency list from entity-memory graph.
 
         Returns: entity -> set of (neighbor_entity, memoria_id)
         """
         adj: dict[str, set[tuple[str, str]]] = defaultdict(set)
 
-        # For each memoria, connect all entities that mention it
-        # This is O(N * E) where N=memorias, E=entities per memoria
-        # Acceptable for corpora with <10k memorias
+        # For each memory, connect all entities that mention it
+        # This is O(N * E) where N=memories, E=entities per memory
+        # Acceptable for corpora with <10k memories
         all_entities = self.graph.top_entities(limit=10000)
 
         entity_to_memorias: dict[str, list[str]] = defaultdict(list)
@@ -162,7 +162,7 @@ class GraphNavigator:
             for mid in memoria_ids:
                 entity_to_memorias[name].append(mid)
 
-        # Connect entities that share memorias
+        # Connect entities that share memories
         memoria_to_entities: dict[str, list[str]] = defaultdict(list)
         for ent_name, mem_ids in entity_to_memorias.items():
             for mid in mem_ids:
@@ -184,7 +184,7 @@ class GraphNavigator:
             max_neighbors: Maximum neighbors to return.
 
         Returns:
-            EntityNeighbors with direct connections and shared memorias.
+            EntityNeighbors with direct connections and shared memories.
         """
         entity = entity.lower().strip()
         adj = self._build_adjacency_list()
@@ -197,12 +197,12 @@ class GraphNavigator:
                 degree=0,
             )
 
-        # Group neighbors by memoria
+        # Group neighbors by memory
         neighbor_mems: dict[str, list[str]] = defaultdict(list)
         for neighbor, mem_id in adj[entity]:
             neighbor_mems[neighbor].append(mem_id)
 
-        # Sort by number of shared memorias
+        # Sort by number of shared memories
         sorted_neighbors = sorted(
             neighbor_mems.items(),
             key=lambda x: len(x[1]),
@@ -339,7 +339,7 @@ class GraphNavigator:
         """Export graph to JSON format for web visualization.
 
         Args:
-            include_memorias: If True, include memoria IDs in edge data.
+            include_memorias: If True, include memory IDs in edge data.
 
         Returns:
             Dict with nodes and edges suitable for D3.js/Cytoscape.js.

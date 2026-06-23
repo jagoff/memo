@@ -1,6 +1,6 @@
 """Git repository ingestion and retrieval for memo.
 
-This subsystem is intentionally separate from curated memorias. Repo
+This subsystem is intentionally separate from curated memories. Repo
 content is source code / document corpus material: it can be large, it
 changes by commit, and callers need line-accurate retrieval rather than
 one note-shaped Markdown file per record.

@@ -20,7 +20,7 @@ Always returns a status dict (`{"ok": True, "path": ...}` or
 `{"ok": False, "error": "..."}`) — never raises. Subprocess timeout
 is 5s.
 
-Synapse-originated writes pass `disabled=True` so the same memoria
+Synapse-originated writes pass `disabled=True` so the same memory
 does not get receipted twice (synapse keeps its own ledger).
 """
 

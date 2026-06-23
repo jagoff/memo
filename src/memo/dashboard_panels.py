@@ -162,7 +162,7 @@ def _panel_corpus(memory: Any) -> Panel:
     top3 = types_counter.most_common(3)
     types_line = "  ".join(f"[bold]{n}[/bold] {t}" for t, n in top3) or "—"
     body = Text.from_markup(
-        f"[bold cyan]{total}[/bold cyan] memorias  ·  "
+        f"[bold cyan]{total}[/bold cyan] memories  ·  "
         f"[bold cyan]{len(projects)}[/bold cyan] proj  ·  {types_line}"
     )
     return Panel(body, title="[bold magenta]corpus[/bold magenta]", border_style="magenta", padding=(0, 1))
@@ -552,7 +552,7 @@ def _panel_utility(state_dir: Path) -> Panel:
             ("cost saved", f"[green]${cost_usd:.2f}[/green]"),
             ("recall hooks", f"{_n(fired)} fired / {_n(with_hits)} hits"),
             ("strong hits", f"{_pct(strong_rate_pct)} (score >0.7)"),
-            ("memorias", f"[cyan]{unique_mems}[/cyan] unique"),
+            ("memories", f"[cyan]{unique_mems}[/cyan] unique"),
             ("grounding", f"{_pct(grounding_rate_pct)} answered"),
         ]
 

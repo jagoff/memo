@@ -128,7 +128,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Session & History",
-        ["history", "as-of", "diff", "historia", "session", "resume", "reflect", "mine-history"],
+        ["history", "as-of", "diff", "record-history", "session", "resume", "reflect", "mine-history"],
     ),
     (
         "Maintenance",
@@ -152,7 +152,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Visualization",
-        ["tui", "dashboard", "mapa", "logs", "hook-log"],
+        ["tui", "dashboard", "map", "logs", "hook-log"],
     ),
     (
         "Setup & Config",
@@ -260,6 +260,7 @@ cli.add_command(gaps_cmd)
 cli.add_command(outcome_cmd)
 cli.add_command(mandate_cmd)
 cli.add_command(mapa_cmd)
+cli.add_command(mapa_cmd, name="mapa")  # back-compat alias for `memo map`
 cli.add_command(tui)
 cli.add_command(hook_log)
 cli.add_command(logs)
@@ -271,6 +272,7 @@ cli.add_command(reflect)
 cli.add_command(resume)
 cli.add_command(diff_cmd)
 cli.add_command(historia_cmd)
+cli.add_command(historia_cmd, name="historia")  # back-compat alias for `memo record-history`
 cli.add_command(briefing)
 cli.add_command(init_cmd)
 cli.add_command(stats)
@@ -366,9 +368,9 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "capture-tick",
     "session",
     "ingest",
-    "historia",
+    "record-history",
     "briefing",
-    "mapa",
+    "map",
     "backend-native",
     "profile",
 }
@@ -415,7 +417,7 @@ def _run_picker_and_save() -> None:
     surrounding CLI invocation halts cleanly.
     """
     console.print(
-        "[bold]memo first-run setup[/bold] — pick where memorias should live.\n",
+        "[bold]memo first-run setup[/bold] — pick where memories should live.\n",
     )
     try:
         result = run_picker()

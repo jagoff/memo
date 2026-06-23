@@ -53,7 +53,7 @@ def graph_path(source: str, target: str, max_length: int, as_json: bool) -> None
     console.print()
     console.print(" → ".join(path.path))
     console.print()
-    console.print(f"[dim]Via {len(path.intermediate_memorias)} memoria(s)[/dim]")
+    console.print(f"[dim]Via {len(path.intermediate_memorias)} memory(s)[/dim]")
 
 
 @graph_group.command(name="neighbors")
@@ -86,7 +86,7 @@ def graph_neighbors(entity: str, max_neighbors: int, as_json: bool) -> None:
 
     table = Table()
     table.add_column("Neighbor", style="cyan")
-    table.add_column("Shared Memorias", style="green")
+    table.add_column("Shared Memories", style="green")
 
     for neighbor in neighbors.direct_neighbors[:20]:
         mem_count = len(neighbors.neighbor_memorias.get(neighbor, []))

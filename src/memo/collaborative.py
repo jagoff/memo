@@ -1,15 +1,15 @@
 """EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
 
-Memoria Social Colaborativa con Grafo de Conocimiento Compartido.
+Collaborative Social Memory with a Shared Knowledge Graph.
 
-Una red neural de memorias compartidas entre múltiples usuarios que aprende
-de las conexiones de todos.
+A neural network of shared memories across multiple users that learns
+from everyone's connections.
 
 ## Gamechanger
 
-- El conocimiento crece colectivamente, no solo individualmente
-- Conexiones que otros usuarios descubren te benefician a ti
-- Grafo de conocimiento compartido que evoluciona
+- Knowledge grows collectively, not just individually
+- Connections other users discover benefit you
+- A shared knowledge graph that evolves
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ _log = logging.getLogger(__name__)
 
 @dataclass
 class SharedConnection:
-    """Una conexión descubierta por otro usuario."""
+    """A connection discovered by another user."""
 
     connection_id: str
     from_user: str
@@ -39,7 +39,7 @@ class SharedConnection:
 
 @dataclass
 class CollectiveInsight:
-    """Un insight generado colectivamente."""
+    """A collectively generated insight."""
 
     insight_id: str
     content: str
@@ -51,7 +51,7 @@ class CollectiveInsight:
 
 @dataclass
 class UserProfile:
-    """Perfil de usuario en la red colaborativa."""
+    """User profile in the collaborative network."""
 
     user_id: str
     username: str
@@ -61,10 +61,10 @@ class UserProfile:
 
 
 class CollaborativeGraph:
-    """Grafo de conocimiento compartido entre usuarios.
+    """Shared knowledge graph across users.
 
     Args:
-        state_dir: Directorio para almacenar el grafo.
+        state_dir: Directory to store the graph.
     """
 
     def __init__(self, state_dir: Path) -> None:
@@ -76,7 +76,7 @@ class CollaborativeGraph:
         self._load()
 
     def _load(self) -> None:
-        """Carga el grafo desde disco."""
+        """Load the graph from disk."""
         if self.graph_file.is_file():
             try:
                 data = json.loads(self.graph_file.read_text(encoding="utf-8"))
@@ -98,7 +98,7 @@ class CollaborativeGraph:
                 self._users = {}
 
     def _save(self) -> None:
-        """Guarda el grafo a disco."""
+        """Save the graph to disk."""
         try:
             data = {
                 "connections": {cid: c.__dict__ for cid, c in self._connections.items()},
@@ -117,17 +117,17 @@ class CollaborativeGraph:
         relationship: str,
         confidence: float = 0.7,
     ) -> SharedConnection:
-        """Agrega una conexión descubierta por un usuario.
+        """Add a connection discovered by a user.
 
         Args:
-            from_user: Usuario que descubrió la conexión.
-            entity_a: Primera entidad.
-            entity_b: Segunda entidad.
-            relationship: Tipo de relación.
-            confidence: Confianza en la conexión.
+            from_user: User who discovered the connection.
+            entity_a: First entity.
+            entity_b: Second entity.
+            relationship: Type of relationship.
+            confidence: Confidence in the connection.
 
         Returns:
-            SharedConnection agregado.
+            The added SharedConnection.
         """
         import uuid
 
@@ -162,14 +162,14 @@ class CollaborativeGraph:
         return conn
 
     def vote_connection(self, connection_id: str, upvote: bool = True) -> bool:
-        """Vota por una conexión (upvote/downvote).
+        """Vote on a connection (upvote/downvote).
 
         Args:
-            connection_id: ID de la conexión.
-            upvote: True para upvote, False para downvote.
+            connection_id: ID of the connection.
+            upvote: True to upvote, False to downvote.
 
         Returns:
-            True si exitoso.
+            True if successful.
         """
         if connection_id not in self._connections:
             return False
@@ -187,13 +187,13 @@ class CollaborativeGraph:
         return True
 
     def get_connections_for_entity(self, entity: str) -> list[SharedConnection]:
-        """Obtiene todas las conexiones para una entidad.
+        """Get all connections for an entity.
 
         Args:
-            entity: Nombre de la entidad.
+            entity: Name of the entity.
 
         Returns:
-            Lista de SharedConnection.
+            List of SharedConnection.
         """
         return [
             c for c in self._connections.values() if c.entity_a == entity or c.entity_b == entity
@@ -204,14 +204,14 @@ class CollaborativeGraph:
         user_id: str,
         content: str,
     ) -> CollectiveInsight:
-        """Agrega un insight colectivo.
+        """Add a collective insight.
 
         Args:
-            user_id: ID del usuario.
-            content: Contenido del insight.
+            user_id: ID of the user.
+            content: Content of the insight.
 
         Returns:
-            CollectiveInsight agregado.
+            The added CollectiveInsight.
         """
         import uuid
 
@@ -229,14 +229,14 @@ class CollaborativeGraph:
         return insight
 
     def vote_insight(self, insight_id: str, upvote: bool = True) -> bool:
-        """Vota por un insight.
+        """Vote on an insight.
 
         Args:
-            insight_id: ID del insight.
-            upvote: True para upvote, False para downvote.
+            insight_id: ID of the insight.
+            upvote: True to upvote, False to downvote.
 
         Returns:
-            True si exitoso.
+            True if successful.
         """
         if insight_id not in self._insights:
             return False
@@ -251,13 +251,13 @@ class CollaborativeGraph:
         return True
 
     def get_top_insights(self, limit: int = 10) -> list[CollectiveInsight]:
-        """Obtiene los insights más votados.
+        """Get the most-voted insights.
 
         Args:
-            limit: Máximo de resultados.
+            limit: Maximum number of results.
 
         Returns:
-            Lista de CollectiveInsight ordenados por upvotes.
+            List of CollectiveInsight ordered by upvotes.
         """
         sorted_insights = sorted(
             self._insights.values(),
@@ -267,19 +267,19 @@ class CollaborativeGraph:
         return sorted_insights[:limit]
 
     def get_user_profile(self, user_id: str) -> UserProfile | None:
-        """Obtiene el perfil de un usuario.
+        """Get a user's profile.
 
         Args:
-            user_id: ID del usuario.
+            user_id: ID of the user.
 
         Returns:
-            UserProfile o None.
+            UserProfile or None.
         """
         return self._users.get(user_id)
 
 
 class CollaborativeFilter:
-    """Recomendaciones basadas en patrones colectivos.
+    """Recommendations based on collective patterns.
 
     Args:
         graph: CollaborativeGraph.
@@ -293,25 +293,25 @@ class CollaborativeFilter:
         entity: str,
         limit: int = 10,
     ) -> list[SharedConnection]:
-        """Recomienda conexiones basadas en patrones colectivos.
+        """Recommend connections based on collective patterns.
 
         Args:
-            entity: Entidad de interés.
-            limit: Máximo de resultados.
+            entity: Entity of interest.
+            limit: Maximum number of results.
 
         Returns:
-            Lista de SharedConnection recomendados.
+            List of recommended SharedConnection.
         """
-        # Obtener conexiones existentes para la entidad
+        # Get existing connections for the entity
         existing = self.graph.get_connections_for_entity(entity)
 
-        # Buscar conexiones similares de otros usuarios
+        # Look for similar connections from other users
         recommendations = []
         for conn in self.graph._connections.values():
             if conn.entity_a == entity or conn.entity_b == entity:
                 continue
 
-            # Si la conexión comparte una entidad con las existentes, recomendarla
+            # If the connection shares an entity with existing ones, recommend it
             for existing_conn in existing:
                 if (
                     conn.entity_a == existing_conn.entity_b
@@ -319,7 +319,7 @@ class CollaborativeFilter:
                 ):
                     recommendations.append(conn)
 
-        # Ordenar por votos y confianza
+        # Sort by votes and confidence
         recommendations.sort(
             key=lambda c: c.votes + c.confidence * 10,
             reverse=True,
@@ -332,16 +332,16 @@ class CollaborativeFilter:
         user_interests: list[str],
         limit: int = 10,
     ) -> list[CollectiveInsight]:
-        """Recomienda insights basados en intereses del usuario.
+        """Recommend insights based on the user's interests.
 
         Args:
-            user_interests: Lista de intereses del usuario.
-            limit: Máximo de resultados.
+            user_interests: List of the user's interests.
+            limit: Maximum number of results.
 
         Returns:
-            Lista de CollectiveInsight recomendados.
+            List of recommended CollectiveInsight.
         """
-        # Buscar insights que mencionen los intereses
+        # Find insights that mention the interests
         recommendations = []
         for insight in self.graph._insights.values():
             for interest in user_interests:
@@ -349,14 +349,14 @@ class CollaborativeFilter:
                     recommendations.append(insight)
                     break
 
-        # Ordenar por upvotes
+        # Sort by upvotes
         recommendations.sort(key=lambda i: i.upvotes - i.downvotes, reverse=True)
 
         return recommendations[:limit]
 
 
 class CollaborativeManager:
-    """Gestiona funcionalidad colaborativa.
+    """Manages collaborative functionality.
 
     Args:
         graph: CollaborativeGraph.
@@ -379,17 +379,17 @@ class CollaborativeManager:
         relationship: str,
         confidence: float = 0.7,
     ) -> SharedConnection:
-        """Comparte una conexión descubierta con la comunidad.
+        """Share a discovered connection with the community.
 
         Args:
-            user_id: ID del usuario.
-            entity_a: Primera entidad.
-            entity_b: Segunda entidad.
-            relationship: Tipo de relación.
-            confidence: Confianza.
+            user_id: ID of the user.
+            entity_a: First entity.
+            entity_b: Second entity.
+            relationship: Type of relationship.
+            confidence: Confidence.
 
         Returns:
-            SharedConnection compartido.
+            The shared SharedConnection.
         """
         return self.graph.add_connection(
             from_user=user_id,
@@ -400,48 +400,48 @@ class CollaborativeManager:
         )
 
     def get_shared_connections(self, entity: str) -> list[SharedConnection]:
-        """Obtiene conexiones compartidas para una entidad.
+        """Get shared connections for an entity.
 
         Args:
-            entity: Entidad de interés.
+            entity: Entity of interest.
 
         Returns:
-            Lista de SharedConnection.
+            List of SharedConnection.
         """
         return self.graph.get_connections_for_entity(entity)
 
     def get_recommended_connections(self, entity: str, limit: int = 10) -> list[SharedConnection]:
-        """Obtiene conexiones recomendadas.
+        """Get recommended connections.
 
         Args:
-            entity: Entidad de interés.
-            limit: Máximo de resultados.
+            entity: Entity of interest.
+            limit: Maximum number of results.
 
         Returns:
-            Lista de SharedConnection recomendados.
+            List of recommended SharedConnection.
         """
         return self.filter.recommend_connections(entity, limit)
 
     def share_insight(self, user_id: str, content: str) -> CollectiveInsight:
-        """Comparte un insight con la comunidad.
+        """Share an insight with the community.
 
         Args:
-            user_id: ID del usuario.
-            content: Contenido del insight.
+            user_id: ID of the user.
+            content: Content of the insight.
 
         Returns:
-            CollectiveInsight compartido.
+            The shared CollectiveInsight.
         """
         return self.graph.add_insight(user_id, content)
 
     def get_top_insights(self, limit: int = 10) -> list[CollectiveInsight]:
-        """Obtiene los insights más votados.
+        """Get the most-voted insights.
 
         Args:
-            limit: Máximo de resultados.
+            limit: Maximum number of results.
 
         Returns:
-            Lista de CollectiveInsight.
+            List of CollectiveInsight.
         """
         return self.graph.get_top_insights(limit)
 

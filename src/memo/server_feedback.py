@@ -21,7 +21,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         query: str,
         rating: str,
     ) -> dict[str, Any]:
-        """Record a feedback signal on a memoria for a given query text.
+        """Record a feedback signal on a memory for a given query text.
 
         Supported signal values for `rating`:
           "thumbs_up" / "up"  — explicit positive vote; boosts score ~0.15 per vote.

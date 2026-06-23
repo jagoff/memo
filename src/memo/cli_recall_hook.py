@@ -74,7 +74,7 @@ _RECALL_CONTEXTS: tuple[tuple[str, re.Pattern[str], set[str]], ...] = (
 
 @click.command(name="recall-hook")
 def recall_hook() -> None:
-    """UserPromptSubmit hook — inject relevant memorias as additionalContext."""
+    """UserPromptSubmit hook — inject relevant memories as additionalContext."""
     try:
         cfg = Config.from_env()
     except Exception:

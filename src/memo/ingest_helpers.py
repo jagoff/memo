@@ -15,7 +15,7 @@ Centralises three operations that previously lived inline in
 
 - `find_orphan_images` — walks a vault for image files NOT in the
   referenced set produced by `enrich_with_ocr`. Used to create
-  standalone memorias from screenshots that nobody linked.
+  standalone memories from screenshots that nobody linked.
 """
 
 from __future__ import annotations

@@ -1,16 +1,16 @@
-"""Helpers para resolver imágenes embebidas en notas Obsidian.
+"""Helpers for resolving images embedded in Obsidian notes.
 
-Obsidian usa la sintaxis `![[image.png]]` (con alias opcional `|alt`).
-La imagen puede vivir en:
+Obsidian uses the `![[image.png]]` syntax (with an optional `|alt` alias).
+The image can live in:
 
-1. La carpeta configurada en `.obsidian/app.json` → `attachmentFolderPath`
-   (relativa al vault root). Es el caso más común.
-2. El mismo directorio que la nota que la referencia.
-3. Cualquier carpeta del vault si el filename es único (Obsidian resuelve
-   por basename).
+1. The folder configured in `.obsidian/app.json` → `attachmentFolderPath`
+   (relative to the vault root). This is the most common case.
+2. The same directory as the note that references it.
+3. Any folder in the vault if the filename is unique (Obsidian resolves
+   by basename).
 
-Este módulo expone helpers puros — no toca disco salvo en
-:func:`resolve_image_path` que hace stat/rglob.
+This module exposes pure helpers — it doesn't touch disk except in
+:func:`resolve_image_path`, which does stat/rglob.
 """
 
 from __future__ import annotations

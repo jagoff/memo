@@ -27,7 +27,7 @@ def query_group() -> None:
 @query_group.command(name="save")
 @click.argument("name")
 @click.argument("query_text")
-@click.option("--type", "type_filter", help="Filter by memoria type")
+@click.option("--type", "type_filter", help="Filter by memory type")
 @click.option("--tags", "tags_filter", multiple=True, help="Filter by tags")
 @click.option("--date-from", help="Start date (ISO format)")
 @click.option("--date-to", help="End date (ISO format)")

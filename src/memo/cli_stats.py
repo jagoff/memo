@@ -68,7 +68,7 @@ def stats() -> None:
 
     console.print(f"  tokens saved      {tokens_saved:,}")
     console.print(f"  cost $          ${cost_usd:.2f}")
-    console.print(f"  memorias used   {len(usage_ids)} unique")
+    console.print(f"  memories used   {len(usage_ids)} unique")
 
     console.print("\n[bold]🎯 Recall Quality[/bold]")
     try:

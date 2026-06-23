@@ -1,9 +1,9 @@
-"""Historical transcript miner — backfill memorias from past Claude Code
+"""Historical transcript miner — backfill memories from past Claude Code
 conversations.
 
 `capture.py` only fires on the current Stop hook so it sees the active
 turn. Months of historical transcripts live in `~/.claude/projects/<hash>/*.jsonl`
-and never become memorias. This module walks them, runs the same
+and never become memories. This module walks them, runs the same
 prefilter → extract → dedup pipeline as `capture.run_capture`, and saves
 survivors.
 

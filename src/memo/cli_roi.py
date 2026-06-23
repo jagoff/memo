@@ -2,7 +2,7 @@
 
 Pure read over the recall→use→outcome ledger (recall.log + grounding.log +
 usage.log). Turns the raw signals into the numbers a user feels:
-  - grounding rate (answers that actually USED a surfaced memoria) — per client
+  - grounding rate (answers that actually USED a surfaced memory) — per client
   - re-derivations prevented (reask_avoided)
   - estimated time saved (conservative, clearly labeled an estimate)
   - per-client value table + silent gaps
@@ -137,7 +137,7 @@ def roi(*, limit: int = 500, window_turns: int = 4, as_json: bool = False) -> No
     g_rate = data["grounded_rate"]
     g_line = (
         f"{g_rate * 100:.0f}% grounded "
-        f"({data['grounded']}/{data['grounded_surfaced']} surfaced memorias used in the answer)"
+        f"({data['grounded']}/{data['grounded_surfaced']} surfaced memories used in the answer)"
         if g_rate is not None
         else "grounding: no correlatable data yet (needs new sessions post-P0)"
     )

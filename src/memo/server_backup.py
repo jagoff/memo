@@ -22,7 +22,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Create a backup of the entire vault.
 
-        Creates a compressed tar.gz archive of all memoria files and
+        Creates a compressed tar.gz archive of all memory files and
         databases. Returns metadata including checksum and size.
 
         Args:
@@ -50,11 +50,11 @@ def register(server: FastMCP, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Restore from a backup.
 
-        Restores memoria files and/or databases from a backup archive.
+        Restores memory files and/or databases from a backup archive.
 
         Args:
             backup_name: Name of the backup to restore.
-            restore_memorias: Whether to restore memoria files.
+            restore_memorias: Whether to restore memory files.
             restore_dbs: Whether to restore databases.
         """
         success = memory.backup.restore_backup(

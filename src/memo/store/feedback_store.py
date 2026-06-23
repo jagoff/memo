@@ -131,7 +131,7 @@ class _FeedbackMixin(_StoreBase):
 
         Cheap existence check on `idx_source_feedback_source` so the kNN vec
         scan in `find_feedback_for_source` only runs for sources that actually
-        have feedback. Most memorias have none, so this collapses a per-hit
+        have feedback. Most memories have none, so this collapses a per-hit
         N+1 of kNN queries into a single IN-list lookup.
         """
         ids = list(source_ids)

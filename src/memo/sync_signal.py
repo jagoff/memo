@@ -1,11 +1,11 @@
 """Cross-machine signal export/import (F3 of memo-sync).
 
-memo's `.md` memorias are the source of truth and sync between machines via git.
+memo's `.md` memories are the source of truth and sync between machines via git.
 The user-signal tables (`access`, `memory_health`, `source_feedback`) are PRIMARY
 data that live only in the local rebuildable `memvec.db` — a fresh clone + reindex
-on another Mac restores every memoria but zero signal. These helpers snapshot the
-signal to `signal/*.json` next to the memorias (so git carries it) and merge a
-peer's snapshot back by stable memoria id.
+on another Mac restores every memory but zero signal. These helpers snapshot the
+signal to `signal/*.json` next to the memories (so git carries it) and merge a
+peer's snapshot back by stable memory id.
 
 Merge is idempotent on re-pull (see `VecStore.merge_signal`):
   - access:          access_count = max(local, remote); last_accessed = max
@@ -37,7 +37,7 @@ _FILES = {
 
 
 def signal_dir_for(cfg: Config) -> Path:
-    """The `signal/` directory — sibling of the memorias dir under the repo root."""
+    """The `signal/` directory — sibling of the memories dir under the repo root."""
     return cfg.memory_dir.parent / "signal"
 
 

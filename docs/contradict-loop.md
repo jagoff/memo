@@ -1,7 +1,7 @@
 # Contradiction loop (memo + synapse)
 
 `memo contradict` maintains a persistent radar over the corpus — pairs
-of memorias that the LLM verdict marks as `contradiction` or
+of memories that the LLM verdict marks as `contradiction` or
 `evolution`, lifecycle-tracked in a sidecar SQLite DB. The triage
 walker turns them into resolutions (fuse / keep newer / dismiss / etc.).
 
@@ -50,7 +50,7 @@ synapse packet --query Q --json
 
 Each row memo returns is projected into a `RealityConflict` with
 `source_backend="memo"`, `source_uri="memo://contradiction/<pair-id>"`,
-and EvidenceRefs for both memorias.
+and EvidenceRefs for both memories.
 
 That projection runs *every time synapse builds a packet*. Memo just
 has to keep `contradictions.db` fresh — the rest is synapse's job.
@@ -59,7 +59,7 @@ has to keep `contradictions.db` fresh — the rest is synapse's job.
 
 Synapse → memo is the half memo controls. When a `RealityConflict` is
 marked `freeze_write=true` (`lifecycle ∈ {detected, acknowledged}`),
-synapse expects writers to refuse new memorias on that topic until the
+synapse expects writers to refuse new memories on that topic until the
 conflict is resolved.
 
 Memo respects the freeze via the GC4 protocol:

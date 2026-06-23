@@ -1,4 +1,4 @@
-"""`memo mapa` — interactive 2D semantic map of the corpus.
+"""`memo map` — interactive 2D semantic map of the corpus.
 
 Extracted from cli.py (3a/2b god-module decomposition). Registered onto the
 root group in cli.py via `cli.add_command(mapa_cmd)`. Self-contained: reads
@@ -13,12 +13,12 @@ from memo.cli_common import console
 from memo.config import Config
 
 
-@click.command(name="mapa")
+@click.command(name="map")
 @click.option(
     "--output",
     "-o",
     default=None,
-    help="Output HTML path. Default: ~/.local/share/memo/mapa.html",
+    help="Output HTML path. Default: ~/.local/share/memo/map.html",
 )
 @click.option(
     "--open/--no-open",
@@ -137,7 +137,7 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
     try:
         import numpy as np  # type: ignore[import-not-found]
     except ImportError as exc:
-        console.print("[red]numpy is required for mapa.[/red] Install: pip install numpy")
+        console.print("[red]numpy is required for the map.[/red] Install: pip install numpy")
         raise SystemExit(1) from exc
 
     mat = np.array(raw_vecs, dtype=np.float32)
@@ -205,7 +205,7 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
     }
 
     # ── Emit self-contained HTML ──────────────────────────────────────────
-    out_path = _Path(output) if output else cfg.state_dir / "mapa.html"
+    out_path = _Path(output) if output else cfg.state_dir / "map.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Encode data as JSON to embed in the HTML script block

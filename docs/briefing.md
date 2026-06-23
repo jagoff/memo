@@ -16,10 +16,10 @@ By default the panel composes the following, top to bottom:
    queue). Only present when synapse is reachable + returns data.
 3. **Open conflicts** — top-3 open `reality_conflicts` from the
    same packet, with severity + freeze-write flag.
-4. **Open loops** — recently updated memorias (`memo store
+4. **Open loops** — recently updated memories (`memo store
    list_recent`), windowed to the last N days.
 5. **Memory of the day** — date-seeded pick from the oldest-updated
-   memorias so the corpus is sampled over time.
+   memories so the corpus is sampled over time.
 6. **Interaction guide** — `give me loop N` / `/memo get` /
    `/memo ask` shortcuts.
 

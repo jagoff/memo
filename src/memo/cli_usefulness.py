@@ -81,25 +81,25 @@ def usefulness(*, limit: int = 500, as_json: bool = False) -> None:
         click.echo(f"\n⚠ Expected consumers with ZERO consults: {', '.join(silent)}")
         click.echo("  These layers are NOT reading memo as source-of-truth.")
 
-    # "Used", not just "shown": explicit fetch-through of a surfaced memoria.
+    # "Used", not just "shown": explicit fetch-through of a surfaced memory.
     # Lower bound — the model usually consumes injected recall text inline
     # without a fetch, so true usefulness is at least this.
     ref_rate = health.get("referenced_rate")
     if ref_rate is not None:
         click.echo(
             f"\nreferenced_rate={ref_rate} "
-            f"({health.get('referenced')}/{health.get('surfaced')} surfaced memorias "
+            f"({health.get('referenced')}/{health.get('surfaced')} surfaced memories "
             f"later fetched — lower bound on 'used')."
         )
 
-    # Outcome-based successor: the answer actually USED the surfaced memoria
+    # Outcome-based successor: the answer actually USED the surfaced memory
     # (Stop-hook grounding detector, lexical+embedding). Only correlatable rows
     # (session_id+turn) count, so it's null until new sessions accrue.
     g_rate = health.get("grounded_rate")
     if g_rate is not None:
         click.echo(
             f"grounded_rate={g_rate} "
-            f"({health.get('grounded')}/{health.get('grounded_surfaced')} surfaced memorias "
+            f"({health.get('grounded')}/{health.get('grounded_surfaced')} surfaced memories "
             f"used in the answer — outcome-based, not just shown)."
         )
 

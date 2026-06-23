@@ -74,13 +74,13 @@ memo restore ~/Desktop/memo-transfer.zip --reindex --yes
 memo doctor --strict-runtime
 ```
 
-The portable zip includes memoria Markdown files plus `memvec.db` and
+The portable zip includes memory Markdown files plus `memvec.db` and
 `history.db`. `--reindex` rebuilds vectors on the new machine, which is safer
 when model profiles or sqlite-vec versions changed.
 
 ### Option B: Synced Obsidian/iCloud/Git Folder
 
-If your memorias already live in a synced folder, let the folder finish syncing
+If your memories already live in a synced folder, let the folder finish syncing
 on the new Mac, then point memo at it:
 
 ```bash
@@ -132,7 +132,7 @@ Windsurf documents that config path and refresh flow in its MCP docs:
 
 | Path | Purpose |
 | --- | --- |
-| `~/Documents/memo` | Default Markdown memoria folder |
+| `~/Documents/memo` | Default Markdown memory folder |
 | `~/.config/memo/config.toml` | Stores the selected `data_dir` / `vault_path` |
 | `~/.local/share/memo/memvec.db` | sqlite-vec index; safe to rebuild |
 | `~/.local/share/memo/history.db` | Audit log used by time-machine |

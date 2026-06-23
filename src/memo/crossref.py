@@ -3,27 +3,27 @@
 Cross-reference and backlink system for memories.
 
 Detects and manages wikilinks between memories, enabling:
-- Automatic detection of [[wikilinks]] in memoria content
-- Backlink queries (what memorias reference this one)
-- Link suggestions when saving (suggest linking to related memorias)
+- Automatic detection of [[wikilinks]] in memory content
+- Backlink queries (what memories reference this one)
+- Link suggestions when saving (suggest linking to related memories)
 - Link graph visualization
 
 ## Wikilink Detection
 
-Parses memoria content for Obsidian-style wikilinks [[memoria-id]] or
-[[memoria-id|alias]]. Stores these in a separate index for fast backlink
+Parses memory content for Obsidian-style wikilinks [[memory-id]] or
+[[memory-id|alias]]. Stores these in a separate index for fast backlink
 queries.
 
 ## Backlink Index
 
 A separate table in the vec store (or a new DB) that tracks:
-- source_id: memoria that contains the link
-- target_id: memoria being referenced
+- source_id: memory that contains the link
+- target_id: memory being referenced
 - link_type: wikilink, entity mention, etc.
 
 ## Link Suggestions
 
-When saving a memoria, suggests linking to existing memorias based on:
+When saving a memory, suggests linking to existing memories based on:
 - Semantic similarity (high similarity = potential duplicate or related)
 - Shared entities
 - Recent context (if available)
@@ -41,16 +41,16 @@ _WIKILINK_PATTERN = re.compile(r"\[\[([^\]]+)\]\]")
 
 @dataclass
 class Wikilink:
-    """A detected wikilink in memoria content."""
+    """A detected wikilink in memory content."""
 
-    target: str  # The memoria ID or name being linked to
+    target: str  # The memory ID or name being linked to
     alias: str | None  # Optional display alias
     position: int  # Character position in content
 
 
 @dataclass
 class Backlink:
-    """A backlink to a memoria."""
+    """A backlink to a memory."""
 
     source_id: str
     source_title: str
@@ -61,7 +61,7 @@ class Backlink:
 
 @dataclass
 class LinkSuggestion:
-    """A suggestion to link to an existing memoria."""
+    """A suggestion to link to an existing memory."""
 
     memoria_id: str
     title: str
@@ -118,10 +118,10 @@ class CrossReferenceIndex:
         conn.commit()
 
     def index_wikilinks(self, memoria_id: str, content: str) -> list[Wikilink]:
-        """Detect and index wikilinks in memoria content.
+        """Detect and index wikilinks in memory content.
 
         Args:
-            memoria_id: The ID of the memoria containing the links.
+            memoria_id: The ID of the memory containing the links.
             content: The content to parse for wikilinks.
 
         Returns:
@@ -164,10 +164,10 @@ class CrossReferenceIndex:
         return wikilinks
 
     def get_backlinks(self, memoria_id: str) -> list[Backlink]:
-        """Get all memorias that reference this one.
+        """Get all memories that reference this one.
 
         Args:
-            memoria_id: The memoria ID to find backlinks for.
+            memoria_id: The memory ID to find backlinks for.
 
         Returns:
             List of Backlink objects.
@@ -193,10 +193,10 @@ class CrossReferenceIndex:
         return backlinks
 
     def get_outlinks(self, memoria_id: str) -> list[Wikilink]:
-        """Get all memorias that this one references.
+        """Get all memories that this one references.
 
         Args:
-            memoria_id: The memoria ID to find outlinks for.
+            memoria_id: The memory ID to find outlinks for.
 
         Returns:
             List of Wikilink objects.
@@ -220,10 +220,10 @@ class CrossReferenceIndex:
         return outlinks
 
     def remove_memoria(self, memoria_id: str) -> None:
-        """Remove all links for a memoria (when deleted).
+        """Remove all links for a memory (when deleted).
 
         Args:
-            memoria_id: The memoria ID to remove.
+            memoria_id: The memory ID to remove.
         """
         conn = self._get_conn()
         conn.execute("DELETE FROM backlinks WHERE source_id = ?", (memoria_id,))
@@ -249,7 +249,7 @@ class CrossReferenceIndex:
 
 
 class LinkSuggester:
-    """Suggests links to existing memorias when saving.
+    """Suggests links to existing memories when saving.
 
     Args:
         memory: The Memory instance to search.
@@ -267,12 +267,12 @@ class LinkSuggester:
         tags: list[str],
         limit: int = 5,
     ) -> list[LinkSuggestion]:
-        """Suggest links to existing memorias based on content.
+        """Suggest links to existing memories based on content.
 
         Args:
-            content: The memoria content being saved.
-            title: The memoria title.
-            tags: The memoria tags.
+            content: The memory content being saved.
+            title: The memory title.
+            tags: The memory tags.
             limit: Maximum suggestions to return.
 
         Returns:
@@ -308,14 +308,14 @@ class LinkSuggester:
         return unique_suggestions[:limit]
 
     def format_wikilink(self, memoria_id: str, title: str | None = None) -> str:
-        """Format a memoria ID as a wikilink.
+        """Format a memory ID as a wikilink.
 
         Args:
-            memoria_id: The memoria ID to link to.
+            memoria_id: The memory ID to link to.
             title: Optional display title (defaults to memoria_id).
 
         Returns:
-            Wikilink string like [[memoria-id]] or [[memoria-id|Title]].
+            Wikilink string like [[memory-id]] or [[memory-id|Title]].
         """
         if title and title != memoria_id:
             return f"[[{memoria_id}|{title}]]"

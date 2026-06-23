@@ -18,10 +18,10 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "ingest",
-        "When enabled, the `memo reindex` pipeline splits long curated memorias "
+        "When enabled, the `memo reindex` pipeline splits long curated memories "
         "into heading-aware chunks before embedding, so long multi-section notes "
         "get section-level retrieval granularity. Each chunk is stored as type='reference' "
-        "with extra.parent_id pointing back to the parent memoria. Default off preserves "
+        "with extra.parent_id pointing back to the parent memory. Default off preserves "
         "the whole-note-embed behaviour. `memo ingest` has its own --chunk/--no-chunk flag "
         "and is unaffected by this env var.",
     ),

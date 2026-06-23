@@ -12,7 +12,7 @@ Resolution precedence (highest first) for storage paths:
 
 `data_dir` and `vault_path` serve **different** roles:
 
-- `data_dir` (always set): the directory where memo's curated memorias
+- `data_dir` (always set): the directory where memo's curated memories
   (the `.md` files this tool creates) live by default. Source of record.
 - `vault_path` (optional): an Obsidian vault for the cross-vault
   `memo ingest` command. Non-Obsidian users leave it unset.
@@ -176,7 +176,7 @@ class Config(BaseModel):
     data_dir: Path = Field(
         default=_DEFAULT_DATA_DIR,
         description=(
-            "Directory where memo's curated memoria `.md` files live. "
+            "Directory where memo's curated memory `.md` files live. "
             "Source of record. Defaults to `~/Documents/memo/`. "
             "Override via `MEMO_DATA_DIR` or `~/.config/memo/config.toml`."
         ),
@@ -205,7 +205,7 @@ class Config(BaseModel):
     memories_in_vault: bool = Field(
         default=False,
         description=(
-            "When True AND `vault_path` is set, curated memoria `.md` files live "
+            "When True AND `vault_path` is set, curated memory `.md` files live "
             "INSIDE the Obsidian vault (`<vault>/<SYSTEM_DIR>/AI/memory`) rather "
             "than in `data_dir` — the vault becomes the human-editable source of "
             "truth and sqlite a rebuildable index. Toggled via "
@@ -375,17 +375,17 @@ class Config(BaseModel):
 
     @property
     def memory_dir(self) -> Path:
-        """Absolute path of the directory holding memoria `.md` files.
+        """Absolute path of the directory holding memory `.md` files.
 
         Default: equal to `data_dir`. When `memories_in_vault` is on AND a
-        `vault_path` is configured, memorias instead live under
+        `vault_path` is configured, memories instead live under
         `<vault>/<SYSTEM_DIR>/AI/memory` so the Obsidian vault is the
         human-editable source of truth (git/iCloud synced). The property
         exists so callers don't track which field is authoritative.
 
         Note: `AI_SUBDIR` already includes `SYSTEM_DIR` (e.g. `Obsidian/AI`),
         so this resolves to `<vault>/Obsidian/AI/memory`. `memo ingest`
-        excludes both `AI/` and any `id:`-frontmatter file, so memorias
+        excludes both `AI/` and any `id:`-frontmatter file, so memories
         placed here are never re-ingested as reference-tier rows.
         """
         if self.memories_in_vault and self.vault_path is not None:

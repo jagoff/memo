@@ -3,7 +3,7 @@
 ``memo gaps``     — knowledge-seeking prompts memo could NOT answer (what to
                     capture next). Pure read over recall.log + grounding.log.
 ``memo outcome``  — reconcile memory_health.roi_score from real grounding
-                    outcomes (promote memorias that ground answers, demote ones
+                    outcomes (promote memories that ground answers, demote ones
                     that surface but never help). The single write in the loop.
 """
 
@@ -49,7 +49,7 @@ def gaps(*, limit: int, min_count: int, top: int, as_json: bool) -> None:
 @click.option(
     "--archive-dead",
     is_flag=True,
-    help="Also reversibly forget dead-weight memorias (surfaced ≥ "
+    help="Also reversibly forget dead-weight memories (surfaced ≥ "
     "MEMO_OUTCOME_DEAD_MIN_SURFACED times, never grounded). Reverse with `memo unforget`.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
@@ -72,12 +72,12 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
             click.echo(_json.dumps({"dry_run": True, "dead_weight": dead, **u}, ensure_ascii=False, indent=2))
             return
         click.echo(
-            f"outcome (dry-run) — {scored} memorias with history; "
+            f"outcome (dry-run) — {scored} memories with history; "
             f"{helpful} grounded ≥1 answer; baseline grounded={u['prior_mean']}."
         )
         if dead:
             click.echo(
-                f"  dead weight: {len(dead)} memoria(s) surfaced >={min_surfaced}x without "
+                f"  dead weight: {len(dead)} memory(s) surfaced >={min_surfaced}x without "
                 f"ever grounding (candidates to archive with --apply --archive-dead)."
             )
         click.echo("Run with --apply to write roi_score from these outcomes.")
@@ -99,7 +99,7 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
         click.echo(_json.dumps({**res, "archived": archived}, ensure_ascii=False, indent=2))
         return
     click.echo(
-        f"outcome applied — roi_score updated for {res['updated']} memoria(s) "
+        f"outcome applied — roi_score updated for {res['updated']} memory(s) "
         f"(baseline grounded={res['prior_mean']}, range [{res['floor']},{res['cap']}])."
     )
     if archive_dead:

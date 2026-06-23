@@ -42,9 +42,9 @@ def analytics_summary(as_json: bool) -> None:
 
     console.print("[bold]Memory Analytics Summary[/bold]")
     console.print()
-    console.print(f"Total Memorias: {metrics.total_memorias}")
+    console.print(f"Total Memories: {metrics.total_memorias}")
     console.print(f"Total Entities: {metrics.total_entities}")
-    console.print(f"Growth Rate: {metrics.growth_rate:.2f} memorias/day")
+    console.print(f"Growth Rate: {metrics.growth_rate:.2f} memories/day")
     console.print(f"Average Access Count: {metrics.average_access_count:.2f}")
     console.print()
     console.print("[bold]Type Distribution[/bold]")

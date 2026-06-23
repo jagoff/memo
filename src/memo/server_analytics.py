@@ -19,7 +19,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_analytics_summary() -> dict[str, Any]:
         """Get analytics summary of the memory corpus.
 
-        Returns comprehensive metrics including total memorias,
+        Returns comprehensive metrics including total memories,
         entity counts, growth rate, and type distribution.
         """
         metrics = memory.analytics.compute_corpus_metrics()
@@ -31,7 +31,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Get growth data over time.
 
-        Returns memoria growth data grouped by date for the
+        Returns memory growth data grouped by date for the
         specified number of days.
 
         Args:

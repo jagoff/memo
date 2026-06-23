@@ -131,7 +131,7 @@ class _UpdateOpsMixin(_MemoryBase):
         if body_changed:
             delta["body_hash"] = (r["body_hash"], new_body_hash)
         # Track provenance churn so a re-route (e.g. Synapse re-issues a
-        # different trace_id on the same memoria) shows up in history.
+        # different trace_id on the same memory) shows up in history.
         old_prov = _extract_provenance(r.get("extra") or {})
         new_prov = _extract_provenance(new_extra)
         if old_prov != new_prov:
@@ -161,7 +161,7 @@ class _UpdateOpsMixin(_MemoryBase):
 
             emit_receipt(
                 "update",
-                text=f"Memo updated memoria {id_[:8]}: {', '.join(sorted(delta.keys()))}",
+                text=f"Memo updated memory {id_[:8]}: {', '.join(sorted(delta.keys()))}",
                 meta={
                     "id": id_,
                     "type": new_type,

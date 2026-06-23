@@ -64,7 +64,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             question: Free-text question.
             as_of: `YYYY-MM-DD` or full ISO 8601.
-            k: Top-k memorias to feed the model as context.
+            k: Top-k memories to feed the model as context.
         """
         from memo.time_machine import reconstruct
 

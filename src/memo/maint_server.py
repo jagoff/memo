@@ -1,6 +1,6 @@
 """Maintenance daemon — keeps the synthesis LLM out of the MCP resident set.
 
-`Memory.consolidate` clusters near-duplicate memorias and runs the synthesis
+`Memory.consolidate` clusters near-duplicate memories and runs the synthesis
 LLM (`MLXChat`, multi-GB, distinct from the embedder) over each cluster to
 propose merges. It is a READ/propose step — it writes nothing; the user
 applies a proposal later via `memo update`/`memo delete` (a cheap, in-process

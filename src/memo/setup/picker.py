@@ -4,7 +4,7 @@ Three branches:
 
 1. **Standard macOS path** (default highlight): `~/Documents/memo/`. Visible in
    Finder, iCloud-syncable. Recommended for users who don't use Obsidian.
-2. **An Obsidian vault** (one option per detected vault). Memorias land
+2. **An Obsidian vault** (one option per detected vault). Memories land
    under `<vault>/<subdir>/`, subdir prompted with default `AI/memory`.
 3. **Custom path…**: free-text absolute path.
 
@@ -31,7 +31,7 @@ class PickerResult:
 
 
 # Default subdir name when the user picks an Obsidian vault. memo's curated
-# memorias live in `<SYSTEM_DIR>/AI/memory/` (matching the real corpus location
+# memories live in `<SYSTEM_DIR>/AI/memory/` (matching the real corpus location
 # under the system root). Relative to the picked system-folder root → `AI/memory`.
 DEFAULT_VAULT_SUBDIR = "AI/memory"
 
@@ -67,7 +67,7 @@ def run_picker(
     choices.append(custom_label)
 
     answer = questionary.select(
-        "Where should memo store your memorias?",
+        "Where should memo store your memories?",
         choices=choices,
         default=std_label,
     ).ask()
@@ -95,7 +95,7 @@ def run_picker(
         raise RuntimeError(f"unexpected picker answer: {answer!r}")
 
     subdir = questionary.text(
-        f"Subfolder inside '{chosen_vault.name}' for memorias:",
+        f"Subfolder inside '{chosen_vault.name}' for memories:",
         default=default_vault_subdir,
     ).ask()
     if subdir is None:
@@ -103,7 +103,7 @@ def run_picker(
     subdir = subdir.strip().strip("/")
     if not subdir:
         # Empty subdir = vault root; allow it but warn the user is
-        # pasting memorias next to their actual notes. We don't block.
+        # pasting memories next to their actual notes. We don't block.
         subdir = ""
     data_dir = chosen_vault.path / subdir if subdir else chosen_vault.path
     return PickerResult(data_dir=data_dir, vault_path=chosen_vault.path)

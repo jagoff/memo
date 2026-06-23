@@ -27,7 +27,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         Unlike consolidation (which merges duplicates), synthesis asks:
         "what do these memories collectively imply that none states alone?"
 
-        Results are saved as type=synthesis memorias with provenance links to
+        Results are saved as type=synthesis memories with provenance links to
         the contributing source memories. Safe by default (dry_run=True).
 
         Args:
@@ -52,14 +52,14 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_synthesize_list(
         confidence: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List all existing synthesis memorias with their provenance.
+        """List all existing synthesis memories with their provenance.
 
         Returns synthesis memories (type=synthesis) including the source
         memory IDs that contributed to each insight.
 
         Args:
             confidence: Optional filter by confidence level: "low", "medium",
-                or "high". When None (default), all synthesis memorias are
+                or "high". When None (default), all synthesis memories are
                 returned regardless of confidence.
         """
         _valid_conf = {"low", "medium", "high"}
@@ -102,14 +102,14 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @server.tool()
     def memo_synthesize_delete(id: str) -> dict[str, Any]:
-        """Delete a synthesis memoria by ID.
+        """Delete a synthesis memory by ID.
 
         Only deletes memories of type=synthesis. Raises an error if the
-        given ID belongs to a non-synthesis memoria, preventing accidental
+        given ID belongs to a non-synthesis memory, preventing accidental
         deletion of regular memories through this tool.
 
         Args:
-            id: The ID (or unambiguous prefix) of the synthesis memoria to delete.
+            id: The ID (or unambiguous prefix) of the synthesis memory to delete.
 
         Returns:
             {"deleted": True, "id": "<full-id>"} on success, or
@@ -119,17 +119,17 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         resolved = memory.resolve_id(id)
         if resolved is None:
-            return {"deleted": False, "reason": f"No memoria found with id {id!r}"}
+            return {"deleted": False, "reason": f"No memory found with id {id!r}"}
 
         rec = memory.get(resolved)
         if rec is None:
-            return {"deleted": False, "reason": f"No memoria found with id {id!r}"}
+            return {"deleted": False, "reason": f"No memory found with id {id!r}"}
 
         if rec.type != "synthesis":
             return {
                 "deleted": False,
                 "reason": (
-                    f"Memoria {resolved!r} has type={rec.type!r}, not 'synthesis'. "
+                    f"Memory {resolved!r} has type={rec.type!r}, not 'synthesis'. "
                     "Use memo_delete to delete non-synthesis memories."
                 ),
             }

@@ -141,7 +141,7 @@ def test_should_expire_temp_tag(lifecycle_manager, mock_memory):
     # Recently created - should not expire
     should, reason = lifecycle_manager.should_expire(rec.id)
     assert should is False
-    assert "Not a temporary memoria" in reason
+    assert "Not a temporary memory" in reason
 
 
 def test_should_expire_regular_memoria(lifecycle_manager, mock_memory):

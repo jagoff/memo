@@ -69,7 +69,7 @@ def _parse_ts(s: str | datetime) -> datetime:
 
 @dataclass
 class SnapshotRecord:
-    """A reconstructed memoria record at a past point in time."""
+    """A reconstructed memory record at a past point in time."""
 
     id: str
     title: str
@@ -134,7 +134,7 @@ class CorpusSnapshot:
         if not hits:
             return {
                 "question": question,
-                "answer": f"(no relevant memorias existed at {self.as_of.date().isoformat()})",
+                "answer": f"(no relevant memories existed at {self.as_of.date().isoformat()})",
                 "sources": [],
                 "as_of": self.as_of.isoformat(),
                 "snapshot_size": len(self),
@@ -165,7 +165,7 @@ class CorpusSnapshot:
         as_of_iso = self.as_of.date().isoformat()
         user_msg = (
             f"User question (memory view as of {as_of_iso}):\n{question}\n\n"
-            f"Relevant memorias (top {len(hits)} from the historical snapshot):\n\n"
+            f"Relevant memories (top {len(hits)} from the historical snapshot):\n\n"
             + "\n---\n".join(snippet_lines)
         )
         system_msg = (

@@ -15,13 +15,13 @@ from memo.dashboard_logs import (
 STRONG_SCORE = 0.85
 # Reask/grounding-turn bar (kept moderate — used by reask_stats).
 GROUNDED_SCORE = 0.6
-# Utility bar: "the answer actually USED this memoria", not just topical overlap.
-# answer↔memoria similarity is a continuum dominated by shared topic (same-topic
+# Utility bar: "the answer actually USED this memory", not just topical overlap.
+# answer↔memory similarity is a continuum dominated by shared topic (same-topic
 # cosine ~0.7 is baseline), so a low bar marks ~everything "used" (the 100%
 # artifact). 0.8 requires a match well above topical baseline; a downstream
-# action (the turn opened/ran what the memoria named) always counts as used.
+# action (the turn opened/ran what the memory named) always counts as used.
 USED_SCORE_STRONG = 0.8
-# Paraphrase recovery: the answer matches the memoria at least this much MORE
+# Paraphrase recovery: the answer matches the memory at least this much MORE
 # than the question already did (cos(answer,mem) - cos(question,mem)). Catches
 # real use that paraphrases (modest absolute cosine, but clearly above the
 # topical baseline the prompt set), without crediting same-topic overlap.
@@ -172,17 +172,17 @@ def _is_knowledge_prompt(prompt: str) -> bool:
 
 
 def grounded_rate(state_dir) -> dict[str, Any]:
-    """Did surfaced memorias actually get USED in the answer?
+    """Did surfaced memories actually get USED in the answer?
 
-    Honest denominator: a surfaced memoria only counts if its turn was actually
-    grounding-scored (the Stop hook ran for it). Surfaced memorias on un-scored
+    Honest denominator: a surfaced memory only counts if its turn was actually
+    grounding-scored (the Stop hook ran for it). Surfaced memories on un-scored
     turns — other consumers / bails / turns the Stop hook never reached — are
     "not measured", NOT "not used", so they are excluded rather than counted as
     misses (which would crush the rate). Coverage is reported alongside so the
     exclusion is transparent.
 
-    Returns both the per-memoria rate (`grounded_rate`) and the per-answer rate
-    (`answer_rate` = turns that used ≥1 memoria / turns measured), the latter
+    Returns both the per-memory rate (`grounded_rate`) and the per-answer rate
+    (`answer_rate` = turns that used ≥1 memory / turns measured), the latter
     matching the "answers WITH memo vs WITHOUT" framing.
     """
     # Merge recall_hook.log (session-aware, started after commit 67b8507) with
@@ -442,9 +442,9 @@ def consumer_label(row: dict[str, Any]) -> str:
 def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
     rows = dedup_double_fire(read_recall_log(state_dir, limit=limit))
     # scored_turns = turns the grounding detector actually measured; grounded_keys
-    # = the subset where a memoria was used. Per-consumer grounded_rate divides by
+    # = the subset where a memory was used. Per-consumer grounded_rate divides by
     # SCORED-surfaced only, mirroring the honest denominator in grounded_rate():
-    # a memoria surfaced on an un-scored turn is "not measured", not "not used".
+    # a memory surfaced on an un-scored turn is "not measured", not "not used".
     scored_turns: set[tuple[str, int]] = set()
     grounded_keys: set[tuple[str, int, str]] = set()
     for g in read_grounding_log(state_dir):

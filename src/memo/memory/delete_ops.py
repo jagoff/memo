@@ -25,7 +25,7 @@ class _DeleteOpsMixin(_MemoryBase):
     # -- forget (soft, reversible) ------------------------------------------
 
     def forget(self, id_: str, *, reason: str | None = None) -> MemoryRecord | None:
-        """Soft-forget a memoria: keep the file + index, but exclude it from
+        """Soft-forget a memory: keep the file + index, but exclude it from
         `search` / recall / `list` by default.
 
         Distinct from `delete` (which removes file + index) — `forget` is
@@ -47,7 +47,7 @@ class _DeleteOpsMixin(_MemoryBase):
         return self.update(resolved, extra=merged)
 
     def unforget(self, id_: str) -> MemoryRecord | None:
-        """Reverse a `forget`: clear `is_forgotten` so the memoria is searchable
+        """Reverse a `forget`: clear `is_forgotten` so the memory is searchable
         again. Also clears `forget_after` / `forget_reason` so the next
         maintenance pass doesn't immediately re-forget it. No-op (returns the
         record) if it wasn't forgotten.
@@ -132,7 +132,7 @@ class _DeleteOpsMixin(_MemoryBase):
 
             emit_receipt(
                 "delete",
-                text=f"Memo deleted memoria {id_[:8]} ({r['type']}): {r['title']}",
+                text=f"Memo deleted memory {id_[:8]} ({r['type']}): {r['title']}",
                 meta={
                     "id": id_,
                     "type": r["type"],

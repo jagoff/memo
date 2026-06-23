@@ -2,7 +2,7 @@
 
 Memory versioning & diff UI — track changes, visualize diffs, rollback.
 
-Tracks version history for each memoria:
+Tracks version history for each memory:
 - Automatic version tracking on updates
 - Diff visualization between versions
 - Rollback to previous versions
@@ -21,7 +21,7 @@ from typing import Any
 
 @dataclass
 class Version:
-    """A version of a memoria."""
+    """A version of a memory."""
 
     version_id: int
     memoria_id: str
@@ -45,7 +45,7 @@ class DiffResult:
 
 
 class VersionStore:
-    """Stores version history for memorias.
+    """Stores version history for memories.
 
     Args:
         db_path: Path to the version SQLite database.
@@ -102,7 +102,7 @@ class VersionStore:
         body: str,
         reason: str | None = None,
     ) -> int:
-        """Save a new version of a memoria."""
+        """Save a new version of a memory."""
         conn = self._get_conn()
         cursor = conn.execute(
             """
@@ -124,7 +124,7 @@ class VersionStore:
         return cursor.lastrowid
 
     def get_versions(self, memoria_id: str, limit: int = 10) -> list[Version]:
-        """Get all versions of a memoria, most recent first."""
+        """Get all versions of a memory, most recent first."""
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT version_id, memoria_id, timestamp, title, type, tags, body, reason"
@@ -149,7 +149,7 @@ class VersionStore:
         return versions
 
     def get_version(self, memoria_id: str, version_id: int) -> Version | None:
-        """Get a specific version of a memoria."""
+        """Get a specific version of a memory."""
         conn = self._get_conn()
         row = conn.execute(
             "SELECT version_id, memoria_id, timestamp, title, type, tags, body, reason"
@@ -172,14 +172,14 @@ class VersionStore:
         )
 
     def delete_versions(self, memoria_id: str) -> None:
-        """Delete all versions for a memoria."""
+        """Delete all versions for a memory."""
         conn = self._get_conn()
         conn.execute("DELETE FROM versions WHERE memoria_id = ?", (memoria_id,))
         conn.commit()
 
 
 class VersionManager:
-    """Manages versioning for memorias.
+    """Manages versioning for memories.
 
     Args:
         memory: The Memory instance to operate on.
@@ -198,7 +198,7 @@ class VersionManager:
         body: str,
         reason: str | None = None,
     ) -> int:
-        """Track a memoria update by saving a new version."""
+        """Track a memory update by saving a new version."""
         return self.version_store.save_version(memoria_id, title, type, tags, body, reason)
 
     def diff_versions(
@@ -207,7 +207,7 @@ class VersionManager:
         version_a: int | None = None,
         version_b: int | None = None,
     ) -> DiffResult | None:
-        """Generate a diff between two versions of a memoria."""
+        """Generate a diff between two versions of a memory."""
         versions = self.version_store.get_versions(memoria_id, limit=10)
 
         if not versions:
@@ -258,7 +258,7 @@ class VersionManager:
         version_id: int,
         reason: str | None = None,
     ) -> bool:
-        """Rollback a memoria to a previous version."""
+        """Rollback a memory to a previous version."""
         version = self.version_store.get_version(memoria_id, version_id)
         if not version:
             return False
@@ -274,7 +274,7 @@ class VersionManager:
         return True
 
     def get_version_history(self, memoria_id: str, limit: int = 10) -> list[Version]:
-        """Get the version history for a memoria."""
+        """Get the version history for a memory."""
         return self.version_store.get_versions(memoria_id, limit=limit)
 
 

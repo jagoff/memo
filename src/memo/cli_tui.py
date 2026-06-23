@@ -28,7 +28,7 @@ from memo.config import Config
 def tui(refresh: float, no_clear: bool) -> None:
     """Live terminal dashboard — token savings, utility metrics, consumers.
 
-    Shows: tokens evitados, costo $, recall hooks, strong hits, memorias únicas,
+    Shows: tokens saved, cost $, recall hooks, strong hits, unique memories,
     grounding rate. Ctrl+C to exit.
     """
     from memo.dashboard import run_tui
@@ -52,7 +52,7 @@ def hook_log(limit: int, follow: bool) -> None:
     Fields printed per entry:
       ts       — ISO timestamp of the recall
       mode     — vec / bm25 / daemon (how the search ran)
-      hits     — number of memorias injected
+      hits     — number of memories injected
       latency  — round-trip latency if logged
       via      — subprocess or daemon
     """

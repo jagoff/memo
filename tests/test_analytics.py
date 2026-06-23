@@ -101,7 +101,7 @@ def test_analytics_engine_export_metrics_csv(tmp_path, analytics_engine):
 
     content = output_path.read_text(encoding="utf-8")
     assert "Metric,Value" in content
-    assert "Total Memorias" in content
+    assert "Total Memories" in content
 
 
 def test_dashboard_init(dashboard):
@@ -114,7 +114,7 @@ def test_dashboard_generate_summary(dashboard):
     summary = dashboard.generate_summary()
 
     assert "Memory Analytics Dashboard" in summary
-    assert "Total Memorias" in summary
+    assert "Total Memories" in summary
     assert "Type Distribution" in summary
 
 

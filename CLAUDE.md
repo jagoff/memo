@@ -138,7 +138,7 @@ writer.
 The `.md` files are canonical; the sqlite index is **derived and replayable**:
 
 - **Authority.** `save()` writes the `.md` first, then indexes — if indexing
-  fails, the memoria is stamped `_memo_embed_pending` on disk and `memo reindex`
+  fails, the memory is stamped `_memo_embed_pending` on disk and `memo reindex`
   replays it (the save never silently vanishes). `delete()` drops the derived
   index **first** and removes the canonical `.md` **last**, rolling the store
   back (`StorageError`) if the unlink fails — so the truth-bearing file is never
@@ -149,11 +149,11 @@ The `.md` files are canonical; the sqlite index is **derived and replayable**:
   rebuild from disk. It truncates only the markdown-derivable tables
   (`meta`/`vec`/`fts`) and preserves the **user-signal** tables — `access`,
   `memory_health`, `source_feedback*` — which are PRIMARY data not present in
-  markdown and re-join on the stable memoria `id`. A content-addressed embedding
+  markdown and re-join on the stable memory `id`. A content-addressed embedding
   cache (`repo_embedding_cache`, keyed on `model+dims+sha256(text)`) makes a warm
   rebuild issue ~zero embedder calls.
-- **Memorias in the vault.** `MEMO_MEMORIES_IN_VAULT=1` (needs `MEMO_VAULT_PATH`)
-  stores memorias under `<vault>/<SYSTEM_DIR>/AI/memory` so the human-editable
+- **Memories in the vault.** `MEMO_MEMORIES_IN_VAULT=1` (needs `MEMO_VAULT_PATH`)
+  stores memories under `<vault>/<SYSTEM_DIR>/AI/memory` so the human-editable
   Obsidian vault is the source of truth. Ingest already excludes `AI/` and any
   `id:`-frontmatter file, so they're never double-ingested as reference tier.
   `memo migrate --into-vault` moves an existing install there (non-destructive,
@@ -195,7 +195,7 @@ facts, preferences, learnings. It is consulted automatically (recall hook every
 prompt; El Briefing at SessionStart) and stays fresh on its own (`memo
 maintain` supersedes contradictions, merges duplicates, archives stale —
 reversibly). The injected recall block is labelled authoritative, so treat
-surfaced memorias as established facts: prefer them over assumptions, build on
+surfaced memories as established facts: prefer them over assumptions, build on
 them, and contradict one only explicitly.
 
 Role split (resolve the "first place to look" overlap by role, not rivalry):

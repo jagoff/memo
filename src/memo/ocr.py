@@ -1,12 +1,12 @@
-"""OCR de imágenes vía Apple Vision (PyObjC).
+"""OCR for images via Apple Vision (PyObjC).
 
-Usado por el indexer para extraer texto de screenshots/imágenes embebidas
-en notas Obsidian (`![[image.png]]`). Si PyObjC `Vision` no está instalado
-o el archivo no se puede leer, devuelve string vacío sin fallar — el
-indexer sigue con el body original.
+Used by the indexer to extract text from screenshots/images embedded in
+Obsidian notes (`![[image.png]]`). If PyObjC `Vision` isn't installed or
+the file can't be read, it returns an empty string without failing — the
+indexer continues with the original body.
 
-Cache key = SHA256 de los bytes de la imagen, persistido en
-`<cache_dir>/<hash>.txt`. Idempotente entre reindex full y forzado.
+Cache key = SHA256 of the image bytes, persisted at
+`<cache_dir>/<hash>.txt`. Idempotent between full and forced reindex.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ _VISION_OK = False
 
 
 def vision_available() -> bool:
-    """True si PyObjC Vision se puede importar en este intérprete."""
+    """True if PyObjC Vision can be imported in this interpreter."""
     global _VISION_CHECKED, _VISION_OK
     if _VISION_CHECKED:
         return _VISION_OK

@@ -120,7 +120,7 @@ class MemflowBackend:
     # -- write side --------------------------------------------------------
 
     def push(self, record: Any) -> bool:
-        """Persist a memoria to memflow via `memflow write fact`.
+        """Persist a memory to memflow via `memflow write fact`.
 
         Carries the memo id/type/title as meta so a later fetch can map the
         memflow memory back to its memo origin. Returns True on exit 0.
@@ -155,7 +155,7 @@ class MemflowBackend:
     # -- read side ---------------------------------------------------------
 
     def fetch(self, query: str, *, limit: int = 10) -> list[dict[str, Any]]:
-        """Read-through: pull candidate memorias from memflow via
+        """Read-through: pull candidate memories from memflow via
         `memflow ask --json --no-capture`.
 
         `--no-capture` keeps the read from being recorded as a memflow turn
@@ -191,7 +191,7 @@ class MemflowBackend:
         memflow's schema isn't guaranteed stable, so every field is read
         defensively across plausible spellings. Body is required (nothing to
         materialize without it). Meta carried by memo's own push (`memo_*`)
-        is preferred when present so a round-tripped memoria keeps its origin.
+        is preferred when present so a round-tripped memory keeps its origin.
         """
         meta = item.get("meta") or item.get("metadata") or {}
         if not isinstance(meta, dict):

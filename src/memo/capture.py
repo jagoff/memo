@@ -30,11 +30,11 @@ double-extract.
 
 ## Why dedup with the embedder, not the title
 
-Two memorias with different titles can describe the same fact. The
+Two memories with different titles can describe the same fact. The
 embedder is the only signal that catches "same fact, different
 phrasing". Threshold 0.85 is empirical: cosine sim between
 near-paraphrases is typically 0.85-0.95 with Qwen3-Embedding;
-genuinely-distinct memorias score below 0.75 even on the same topic.
+genuinely-distinct memories score below 0.75 even on the same topic.
 
 ## Failure modes
 

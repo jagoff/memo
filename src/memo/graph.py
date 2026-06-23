@@ -1,4 +1,4 @@
-"""Knowledge graph — entity index over memorias.
+"""Knowledge graph — entity index over memories.
 
 Schema lives in `~/.local/share/memo/graph.db` (separate file so write
 load doesn't share WAL with the hot vec store):
@@ -9,8 +9,8 @@ CREATE TABLE entities (
     name          TEXT NOT NULL,        -- canonical form, lower-cased
     type          TEXT NOT NULL,        -- person | project | technology | file | org | concept
     mention_count INTEGER NOT NULL DEFAULT 0,
-    first_seen    TEXT,                 -- ISO date of earliest memoria mention
-    last_seen     TEXT,                 -- ISO date of latest memoria mention
+    first_seen    TEXT,                 -- ISO date of earliest memory mention
+    last_seen     TEXT,                 -- ISO date of latest memory mention
     UNIQUE(name, type)
 );
 
@@ -96,7 +96,7 @@ VALID_ENTITY_TYPES = frozenset(
 
 @dataclass(frozen=True)
 class EntityMention:
-    """Entity linked to a memoria."""
+    """Entity linked to a memory."""
 
     name: str
     type: str
@@ -109,7 +109,7 @@ class GraphStore:
     `memoria_entities`.
 
     All writes idempotent on (memoria_id) — running extraction twice
-    on the same memoria refreshes the link set without duplicating.
+    on the same memory refreshes the link set without duplicating.
     """
 
     def __init__(self, db_path: Path) -> None:
@@ -146,10 +146,10 @@ class GraphStore:
         entities: list[dict[str, str]],
         extracted_at: str,
     ) -> int:
-        """Idempotently link a memoria to its extracted entities.
+        """Idempotently link a memory to its extracted entities.
 
         Steps under one tx:
-        1. Drop any existing entity_memoria links for this memoria
+        1. Drop any existing entity_memoria links for this memory
            (so re-extraction reflects current state).
         2. Upsert each (name, type) into `entities`.
         3. Insert entity_memoria links for all current entities.
@@ -160,7 +160,7 @@ class GraphStore:
         """
         n = 0
         with self._tx() as cx:
-            # Get current entity_ids for this memoria so we can
+            # Get current entity_ids for this memory so we can
             # decrement mention_count if any are removed.
             old_eids = [
                 r["entity_id"]
@@ -216,7 +216,7 @@ class GraphStore:
         return n
 
     def drop_for_memoria(self, memoria_id: str) -> int:
-        """Called when a memoria is deleted. Removes all entity_memoria
+        """Called when a memory is deleted. Removes all entity_memoria
         edges for it and decrements mention_count on each touched
         entity. Returns the number of edges removed."""
         with self._tx() as cx:
@@ -254,7 +254,7 @@ class GraphStore:
         return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
 
     def entity_memorias(self, name: str, type_: str | None = None) -> list[str]:
-        """Memoria IDs that mention `name` (and optionally a specific type)."""
+        """Memory IDs that mention `name` (and optionally a specific type)."""
         name = name.strip().lower()
         params: tuple[str, ...]
         if type_:

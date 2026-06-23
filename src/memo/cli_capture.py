@@ -53,7 +53,7 @@ def capture_stop() -> None:
 
     Hook output (stdout):
       `{}`  — always. Capture is silent; the user discovers new
-      memorias via `memo list` or the next ambient recall.
+      memories via `memo list` or the next ambient recall.
 
     Env vars:
       MEMO_CAPTURE_DISABLE  — set to "1" to make this a no-op.
@@ -96,7 +96,7 @@ def capture_stop() -> None:
         # notification the next recall-hook prepends to its context (the same
         # channel the user already sees). Without this, capture-stop — the path
         # that does most of the saving — is silent and the user can't tell it
-        # ran. Only fires when memorias were actually saved (not on dedup/cooldown).
+        # ran. Only fires when memories were actually saved (not on dedup/cooldown).
         titles = result.get("saved_titles") or []
         n = len(titles)
         # Always show notification to confirm capture ran
@@ -115,7 +115,7 @@ def capture_stop() -> None:
             print(f"# memo capture-stop failed: {exc}", file=_sys.stderr)
 
     # Grounding (P0): score how much the answer used this turn's recalled
-    # memorias → grounding.log (the outcome-based utility signal). Best-effort,
+    # memories → grounding.log (the outcome-based utility signal). Best-effort,
     # budget-guarded inside score_turn, never fails the turn.
     try:
         from memo import grounding
@@ -149,7 +149,7 @@ def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
     The Stop hook (`memo capture-stop`) only fires at session end, so a long
     or crashed session's durable insight never reaches `.md` (and thus the
     local index + git sync) until Stop. This mines the NEW turns since a
-    per-session watermark into memorias — reusing capture-stop's
+    per-session watermark into memories — reusing capture-stop's
     extract/dedup/save pipeline — so durable knowledge lands on disk
     mid-session, not only at the end.
 
@@ -231,7 +231,7 @@ def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
 # ── Session reflection (v0.5.0) ─────────────────────────────────────────────
 #
 # `memo reflect` — read a full session transcript, extract durable insights
-# (decisions, facts, bugs, follow-ups), and save them as memorias + a session
+# (decisions, facts, bugs, follow-ups), and save them as memories + a session
 # arc nota. Auto-idempotent via `reflected_at` stamp in the session snapshot.
 
 

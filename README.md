@@ -13,7 +13,7 @@
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
-`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your Mac**. Each memory is a plain Markdown file in an Obsidian-friendly folder; embeddings live in a single sqlite file; the LLM, embedder, and reranker run **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memorias never leave the machine.
+`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your Mac**. Each memory is a plain Markdown file in an Obsidian-friendly folder; embeddings live in a single sqlite file; the LLM, embedder, and reranker run **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
 
 ![How memo works](docs/how-memo-works.svg)
 
@@ -22,9 +22,9 @@
 memo is built to **spend fewer tokens, not more**. Two measured wins (real numbers from the shipped build, commits `ee78f05` + `1ad7bdf`):
 
 - **96.4% smaller MCP surface.** The default `agent` tool profile exposes **5 tools / ~589 schema tokens**, versus **118 tools / ~16,157 tokens** for a full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing. (`core` profile = 25 tools, ~2.4k vs ~35k tokens.)
-- **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memoria *before* the agent answers, on a tight **~160-token budget**, with the directive sent only on the first turn. The agent stops re-explaining what it already figured out last week.
+- **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**, with the directive sent only on the first turn. The agent stops re-explaining what it already figured out last week.
 
-On a ~200-memoria corpus, memo's ROI meter estimates **~80k tokens of model work avoided** (≈62.6k from 179 grounded facts + ≈17.1k from 19 re-asks it prevented; ~259 tokens/response). The estimate is corpus-specific — `memo roi` shows yours.
+On a ~200-memory corpus, memo's ROI meter estimates **~80k tokens of model work avoided** (≈62.6k from 179 grounded facts + ≈17.1k from 19 re-asks it prevented; ~259 tokens/response). The estimate is corpus-specific — `memo roi` shows yours.
 
 ## Install — one step
 
@@ -67,18 +67,18 @@ memo doctor                                  # self-check: models, vault path, s
 memo save 'MLX prefill ~30% faster than Ollama on M3 Max' --title 'MLX bench' -t mlx -t bench
 memo search 'how fast was the MLX benchmark'  # search by meaning, not just keywords
 memo list --limit 5                          # most recent
-memo ask 'what changed in the embedder this month?'   # RAG — cites memorias by id
+memo ask 'what changed in the embedder this month?'   # RAG — cites memories by id
 ```
 
 ## What you get
 
-- **Ambient recall** — with the Claude Code plugin, every prompt silently consults memory and injects the top memorias as context, with a warm **recall daemon** (<200 ms). No `/remember` calls.
+- **Ambient recall** — with the Claude Code plugin, every prompt silently consults memory and injects the top memories as context, with a warm **recall daemon** (<200 ms). No `/remember` calls.
 - **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate and saves them. The corpus grows on its own.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery for the last session.
 - **🕰️ Time-machine** — rewind the corpus to any past date: `memo as-of ask "..." --date 2026-02-01`, `memo diff --from … --to …`. No other agent-memory store offers this.
 - **Hybrid retrieval + reranker** — vec + BM25 (FTS5, diacritic-folding for Spanish) fused via RRF, then an optional MLX cross-encoder rerank.
 - **Markdown is the source of truth** — plain `.md` + frontmatter you can edit in Obsidian/vim; the sqlite index is rebuildable (`memo reindex`).
-- **Semantic map** — `memo mapa` renders an interactive 2D canvas (UMAP/PCA + Plotly) of the whole corpus.
+- **Semantic map** — `memo map` renders an interactive 2D canvas (UMAP/PCA + Plotly) of the whole corpus.
 
 ## Requirements
 
@@ -113,9 +113,9 @@ MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https:
 
 ## Español
 
-**memo** es memoria semántica persistente para agentes de IA: **100% local**, sobre Apple Silicon con MLX. Cada memoria es un archivo Markdown; los embeddings viven en un único sqlite; el LLM, el embedder y el reranker corren **en proceso vía MLX** — sin Ollama, sin nube, sin API keys. Tus prompts y memorias **nunca salen de la Mac**.
+**memo** es memory semántica persistente para agentes de IA: **100% local**, sobre Apple Silicon con MLX. Cada memory es un archivo Markdown; los embeddings viven en un único sqlite; el LLM, el embedder y el reranker corren **en proceso vía MLX** — sin Ollama, sin nube, sin API keys. Tus prompts y memories **nunca salen de la Mac**.
 
-**Por qué ahorra tokens:** la superficie MCP por defecto son 5 tools (~589 tokens) contra 118 (~16.157) → **96,4% menos** contexto por sesión; y el recall **inyecta la respuesta** (presupuesto ~160 tokens) en vez de que el agente la vuelva a deducir. En un corpus de ~200 memorias, `memo roi` estima **~80k tokens de trabajo del modelo evitados**.
+**Por qué ahorra tokens:** la superficie MCP por defecto son 5 tools (~589 tokens) contra 118 (~16.157) → **96,4% menos** contexto por sesión; y el recall **inyecta la respuesta** (presupuesto ~160 tokens) en vez de que el agente la vuelva a deducir. En un corpus de ~200 memories, `memo roi` estima **~80k tokens de trabajo del modelo evitados**.
 
 **Instalación en un paso:**
 

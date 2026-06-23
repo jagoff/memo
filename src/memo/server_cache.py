@@ -28,7 +28,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_cache_evict() -> dict[str, Any]:
         """Force a capacity-bound eviction pass now (coldest-first, per
         MEMO_CACHE_EVICTION). Dirty entries are flushed to the backing store
-        before removal. Returns the evicted memoria ids.
+        before removal. Returns the evicted memory ids.
 
         No-op unless MEMO_CACHE_MODE != off and MEMO_CACHE_MAX_ENTRIES > 0.
         """
@@ -37,7 +37,7 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @server.tool()
     def memo_cache_flush() -> dict[str, Any]:
-        """Push all dirty (write-back, un-persisted) memorias to the backing
+        """Push all dirty (write-back, un-persisted) memories to the backing
         store and clear their dirty flags. Returns {flushed, failed,
         dirty_remaining}. No-op when cache mode is off or no backend exists.
         """

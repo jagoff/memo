@@ -84,7 +84,7 @@ __all__ = [
 @click.command(name="init")
 @click.option("--force", is_flag=True, help="Overwrite existing config without confirmation.")
 def init_cmd(force: bool) -> None:
-    """(Re)configure where memo stores memorias."""
+    """(Re)configure where memo stores memories."""
     from memo.setup.config_io import _resolve_config_path
 
     cfg_path = _resolve_config_path()

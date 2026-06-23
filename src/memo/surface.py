@@ -13,7 +13,7 @@ CORE_CLI_COMMANDS: frozenset[str] = frozenset(
         "diff",
         "doctor",
         "get",
-        "historia",
+        "record-history",
         "history",
         "init",
         "install-mcp",

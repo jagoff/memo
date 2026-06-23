@@ -38,7 +38,7 @@ Reasonable threats memo aims to mitigate:
 Out of scope:
 
 - Whoever has write access to your `MEMO_DATA_DIR` can read and modify
-  your memorias. That is by design — the Markdown vault is the storage
+  your memories. That is by design — the Markdown vault is the storage
   of record.
 - Whoever can execute as your user can register an MCP client that talks
   to memo over stdio. memo trusts the caller.

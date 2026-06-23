@@ -45,7 +45,7 @@ def sync_group() -> None:
 def sync_export_signal(as_json: bool) -> None:
     """Dump local signal (access/health/feedback) to `signal/*.json` for git.
 
-    The `.md` memorias sync via git; this snapshots the signal tables that
+    The `.md` memories sync via git; this snapshots the signal tables that
     live only in the rebuildable `memvec.db` so a peer can restore ranking.
     """
     from memo.sync_signal import export_signal, signal_dir_for
@@ -109,7 +109,7 @@ def sync_diff(remote: str | None, as_json: bool) -> None:
 def sync_push(as_json: bool, quiet: bool) -> None:
     """Export signal + commit + git push the memo-sync repo (Stop hook).
 
-    Requires the memorias dir to live inside a git clone (see `memo sync clone`).
+    Requires the memories dir to live inside a git clone (see `memo sync clone`).
     """
     from memo.sync_git import SyncGitError
     from memo.sync_git import sync_push as _git_push
@@ -183,7 +183,7 @@ def sync_pull(remote: str | None, as_json: bool, quiet: bool) -> None:
 def sync_clone(url: str, dest: str | None, as_json: bool) -> None:
     """Bootstrap a new machine: clone the memo-sync repo (F6).
 
-    Prints the next steps (point MEMO_DATA_DIR at the cloned memorias dir, then
+    Prints the next steps (point MEMO_DATA_DIR at the cloned memories dir, then
     `memo reindex --rebuild && memo sync import-signal`). Does not touch config.
     """
     from pathlib import Path
@@ -196,7 +196,7 @@ def sync_clone(url: str, dest: str | None, as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(out, indent=2))
         return
-    console.print(f"[bold green]Cloned[/bold green] → {out['cloned']} ({out['memorias']} memorias)")
+    console.print(f"[bold green]Cloned[/bold green] → {out['cloned']} ({out['memories']} memories)")
     console.print("\n[bold]Next steps on this machine:[/bold]")
     console.print(f"  1. Set [cyan]MEMO_DATA_DIR={out['memorias_dir']}[/cyan] in your config / MCP env")
     console.print("  2. [cyan]memo reindex --rebuild[/cyan]   # build the index from the .md")
@@ -233,7 +233,7 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
         click.echo(json.dumps(out, indent=2))
         return
     verb = "Reused" if out.get("reused") else "Cloned"
-    console.print(f"[bold green]{verb}[/bold green] → {out['cloned']} ({out['memorias']} memorias)")
+    console.print(f"[bold green]{verb}[/bold green] → {out['cloned']} ({out['memories']} memories)")
     console.print(f"config → [cyan]{out['config']}[/cyan] (data_dir = {out['memorias_dir']})")
     console.print(f"reindexed: {out['reindexed']}")
     console.print(f"signal merged: {out['signal']}")
@@ -246,7 +246,7 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
 def sync_status(check_remote: bool, as_json: bool) -> None:
     """Is the GitHub sync healthy? Shows clone / ahead-behind / dirty / stranded.
 
-    Kills the silent no-op: if the memorias dir isn't a git clone, the
+    Kills the silent no-op: if the memories dir isn't a git clone, the
     SessionStart/Stop hooks soft-fail and nothing syncs — this says so plainly.
     """
     from memo.sync_git import sync_status as _status

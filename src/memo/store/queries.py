@@ -242,7 +242,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return _row_to_dict(row) if row else None
 
     def get_batch(self, ids: list[str]) -> list[dict[str, Any]]:
-        """Fetch multiple memorias by ID in a single query."""
+        """Fetch multiple memories by ID in a single query."""
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
@@ -293,7 +293,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         """Rows produced by `memo ingest` under a given vault `label`.
 
         Used by `ingest --prune` to find stale chunks (abs_path gone). Filters
-        on `source LIKE 'vault-ingest%'` so curated memorias (source NULL) are
+        on `source LIKE 'vault-ingest%'` so curated memories (source NULL) are
         never returned — they're managed by `memo reindex` / `doctor --gc`.
         Returns the minimal fields the prune needs: id, path, abs_path,
         parent_path, chunk_seq.
@@ -448,13 +448,13 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return out
 
     def clear_memoria_index(self) -> int:
-        """Truncate the markdown-DERIVABLE memoria tables (`meta`, `vec`, `fts`)
+        """Truncate the markdown-DERIVABLE memory tables (`meta`, `vec`, `fts`)
         so they can be fully replayed from the `.md` source of truth.
 
         Deliberately does NOT touch the user-signal tables — `access`,
         `memory_health`, `source_feedback`/`source_feedback_vec` — because those
         are PRIMARY data not present in markdown. They key on the stable
-        memoria `id`, so they re-join after the replay; rows whose memoria no
+        memory `id`, so they re-join after the replay; rows whose memory no
         longer exists on disk become harmless orphans (cleanable by `gc`).
         Repo corpus tables are untouched (separate ingest surface).
 
@@ -510,7 +510,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return existed
 
     def bulk_update_type(self, ids: list[str], new_type: str) -> int:
-        """Reclassify the `type` of many memorias in one transaction.
+        """Reclassify the `type` of many memories in one transaction.
 
         Only the `meta.type` column changes — the vec embedding and fts
         index are untouched (bodies are unchanged), so this is cheap and

@@ -19,13 +19,13 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_links_backlinks(
         memoria_id: str,
     ) -> list[dict[str, Any]]:
-        """Show all memorias that reference this one.
+        """Show all memories that reference this one.
 
-        Returns backlinks (incoming links) to the specified memoria.
-        Useful for understanding how a memoria is connected to others.
+        Returns backlinks (incoming links) to the specified memory.
+        Useful for understanding how a memory is connected to others.
 
         Args:
-            memoria_id: The memoria ID to find backlinks for.
+            memoria_id: The memory ID to find backlinks for.
         """
         backlinks = memory.crossref.get_backlinks(memoria_id)
         return [b.__dict__ for b in backlinks]
@@ -34,13 +34,13 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_links_outlinks(
         memoria_id: str,
     ) -> list[dict[str, Any]]:
-        """Show all memorias that this one references.
+        """Show all memories that this one references.
 
-        Returns outlinks (outgoing links) from the specified memoria.
-        Useful for understanding what a memoria connects to.
+        Returns outlinks (outgoing links) from the specified memory.
+        Useful for understanding what a memory connects to.
 
         Args:
-            memoria_id: The memoria ID to find outlinks for.
+            memoria_id: The memory ID to find outlinks for.
         """
         outlinks = memory.crossref.get_outlinks(memoria_id)
         return [o.__dict__ for o in outlinks]
@@ -52,16 +52,16 @@ def register(server: FastMCP, memory: Memory) -> None:
         tags: list[str] | None = None,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        """Suggest links to existing memorias based on content.
+        """Suggest links to existing memories based on content.
 
-        Returns suggested memorias to link to, based on semantic similarity
-        and other heuristics. Useful when saving a new memoria to discover
+        Returns suggested memories to link to, based on semantic similarity
+        and other heuristics. Useful when saving a new memory to discover
         related existing content.
 
         Args:
-            content: The memoria content being saved.
-            title: Optional title of the memoria.
-            tags: Optional tags of the memoria.
+            content: The memory content being saved.
+            title: Optional title of the memory.
+            tags: Optional tags of the memory.
             limit: Maximum suggestions to return.
         """
         suggestions = memory.link_suggester.suggest_links(
@@ -77,13 +77,13 @@ def register(server: FastMCP, memory: Memory) -> None:
         memoria_id: str,
         title: str | None = None,
     ) -> str:
-        """Format a memoria ID as a wikilink.
+        """Format a memory ID as a wikilink.
 
-        Returns a wikilink string like [[memoria-id]] or [[memoria-id|Title]].
-        Use this to insert links into memoria content.
+        Returns a wikilink string like [[memory-id]] or [[memory-id|Title]].
+        Use this to insert links into memory content.
 
         Args:
-            memoria_id: The memoria ID to format as a wikilink.
+            memoria_id: The memory ID to format as a wikilink.
             title: Optional display title for the link.
         """
         return memory.link_suggester.format_wikilink(memoria_id, title)

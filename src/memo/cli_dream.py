@@ -4,11 +4,11 @@ Bundles every maintenance pass into a single nightly run:
 
   1. Contradictions — scan + auto-resolve evolutions, supersede older sides.
   2. Duplicates — consolidate high-similarity clusters.
-  3. Staleness — archive memorias never accessed after 365 days.
+  3. Staleness — archive memories never accessed after 365 days.
   4. Synthesis — emergent cross-cluster insights (runs regardless of
      MEMO_SYNTHESIS_ENABLED; Dream mode always synthesises).
-  5. Entity backfill — extract entities for memorias not yet indexed.
-  6. ROI decay — multiply roi_score × 0.98 for memorias idle > 30 days
+  5. Entity backfill — extract entities for memories not yet indexed.
+  6. ROI decay — multiply roi_score × 0.98 for memories idle > 30 days
      so unaccessed knowledge gradually yields to frequently-used facts.
 
 `memo dream run` — run once (foreground).
@@ -149,7 +149,7 @@ def _run_prune_floor(
     min_age_days: int,
     dry_run: bool,
 ) -> list[dict]:
-    """Archive memorias below roi_floor with zero access and age >= min_age_days.
+    """Archive memories below roi_floor with zero access and age >= min_age_days.
 
     Returns list of {id, roi_score, days_old} candidates (even in dry-run).
     """
@@ -196,7 +196,7 @@ def _run_eviction(mem: Memory, max_count: int, dry_run: bool) -> list[dict]:
 
 
 def _run_compress(mem: Memory, threshold: int, dry_run: bool) -> list[dict]:
-    """Compress verbose memorias (body > threshold chars) to 2-3 sentences.
+    """Compress verbose memories (body > threshold chars) to 2-3 sentences.
 
     Returns list of {id, original_len, compressed_len}.
     """
@@ -456,7 +456,7 @@ def dream_run(
                 tbl = Table(show_header=False, box=None, padding=(0, 1))
                 tbl.add_column("", style="dim")
                 tbl.add_column("", justify="right")
-                tbl.add_row("total memorias", str(orientation["total"]))
+                tbl.add_row("total memories", str(orientation["total"]))
                 for t, n in sorted(orientation["by_type"].items()):
                     tbl.add_row(f"  {t}", str(n))
                 tbl.add_row("roi < 0.3", str(orientation["low_roi"]))
@@ -588,7 +588,7 @@ def dream_run(
 
             # 3. Staleness ---------------------------------------------------
             progress.update(
-                step, description="[3/6] stale memorias — detecting...", total=None, completed=0
+                step, description="[3/6] stale memories — detecting...", total=None, completed=0
             )
             try:
                 stale = mem.temporal.detect_stale_memorias(days_threshold=365, min_access_count=0)
@@ -648,7 +648,7 @@ def dream_run(
         if not skip_entities and not dry_run:
             progress.update(
                 step,
-                description="[5/6] entities — extracting from unindexed memorias...",
+                description="[5/6] entities — extracting from unindexed memories...",
                 total=None,
                 completed=0,
             )
@@ -688,7 +688,7 @@ def dream_run(
         if not skip_prune_floor and not dry_run:
             progress.update(
                 step,
-                description="[7] prune floor — finding memorias below the floor...",
+                description="[7] prune floor — finding memories below the floor...",
                 total=None,
                 completed=0,
             )
@@ -828,7 +828,7 @@ def dream_run(
         f"confidence penalized: {receipt['confidence_penalized']}"
     )
     console.print(f"  duplicate clusters merged: {len(receipt['merged'])}")
-    console.print(f"  stale memorias archived:   {len(receipt['archived_stale'])}")
+    console.print(f"  stale memories archived:   {len(receipt['archived_stale'])}")
     if receipt["synthesized"]:
         saved = sum(1 for s in receipt["synthesized"] if s.get("saved"))
         console.print(

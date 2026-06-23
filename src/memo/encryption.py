@@ -6,8 +6,8 @@ the memory pipeline yet; keep this vertical opt-in until that integration is
 complete.
 
 Enables:
-- Encrypt sensitive memorias with AES-256-GCM
-- Per-memoria encryption (tag-based) or global encryption
+- Encrypt sensitive memories with AES-256-GCM
+- Per-memory encryption (tag-based) or global encryption
 - Key derivation from password (PBKDF2)
 - Encrypt .md files on disk
 - Search over encrypted content (decrypt in memory)
@@ -15,8 +15,8 @@ Enables:
 ## Encryption Mode
 
 Two encryption modes:
-- Per-memoria: Only memorias with `encrypted` tag are encrypted
-- Global: All memorias are encrypted
+- Per-memory: Only memories with `encrypted` tag are encrypted
+- Global: All memories are encrypted
 
 ## Key Management
 
@@ -175,7 +175,7 @@ class KeyManager:
 
 
 class Encryptor:
-    """Encrypts and decrypts memoria content.
+    """Encrypts and decrypts memory content.
 
     Args:
         key_manager: KeyManager for key management.
@@ -348,10 +348,10 @@ class EncryptionManager:
         return self._is_unlocked
 
     def encrypt_memoria(self, memoria_id: str, content: str) -> tuple[str, EncryptionMetadata]:
-        """Encrypt a memoria's content.
+        """Encrypt a memory's content.
 
         Args:
-            memoria_id: The memoria ID.
+            memoria_id: The memory ID.
             content: The content to encrypt.
 
         Returns:
@@ -363,7 +363,7 @@ class EncryptionManager:
         return self.encryptor.encrypt(content)
 
     def decrypt_memoria(self, ciphertext: str, metadata: EncryptionMetadata) -> str:
-        """Decrypt a memoria's content.
+        """Decrypt a memory's content.
 
         Args:
             ciphertext: Hex-encoded ciphertext.

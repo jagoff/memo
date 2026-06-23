@@ -29,7 +29,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             threshold: Cosine similarity threshold (default 0.85).
             max_clusters: Maximum clusters to process (default 20).
-            type: Optional filter by memoria type.
+            type: Optional filter by memory type.
         """
         return memory.consolidator.consolidate_all(
             threshold=threshold,
@@ -49,7 +49,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Apply merge proposals to consolidate the corpus.
 
         Executes the consolidation pipeline: detect clusters, propose merges,
-        and apply them. Archives old memorias to an `archived/` subdirectory.
+        and apply them. Archives old memories to an `archived/` subdirectory.
 
         SAFE DEFAULT: `dry_run=True` — this previews the merges without
         mutating the corpus. Pass `dry_run=False` to actually merge and
@@ -58,7 +58,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             threshold: Cosine similarity threshold (default 0.85).
             max_clusters: Maximum clusters to process (default 20).
-            type: Optional filter by memoria type.
+            type: Optional filter by memory type.
             dry_run: If True (default), show what would happen without
                 applying changes. Set False to apply.
         """
@@ -72,10 +72,10 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @server.tool()
     def memo_consolidate_list_archived() -> list[dict[str, Any]]:
-        """List all archived memorias.
+        """List all archived memories.
 
-        Returns a list of archived memoria entries with metadata including
-        the replacement memoria ID and archival timestamp.
+        Returns a list of archived memory entries with metadata including
+        the replacement memory ID and archival timestamp.
         """
 
         import frontmatter

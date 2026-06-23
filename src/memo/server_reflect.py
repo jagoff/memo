@@ -1,4 +1,4 @@
-"""MCP tool: memo_reflect — synthesize a session transcript into durable memorias."""
+"""MCP tool: memo_reflect — synthesize a session transcript into durable memories."""
 
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ def register(server: FastMCP, memory: Memory) -> None:
         if_due: bool = False,
         dry_run: bool = False,
     ) -> dict[str, Any]:
-        """Synthesize a past coding session into durable memorias.
+        """Synthesize a past coding session into durable memories.
 
         Reads the full session transcript and extracts decisions, facts, bugs, and
-        follow-ups as structured memorias, then saves a session arc note linking them.
+        follow-ups as structured memories, then saves a session arc note linking them.
 
         Args:
             session_id: Specific session id (full or prefix). Omit to use the most recent.
