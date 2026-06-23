@@ -21,7 +21,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Synthesize a past coding session into durable memorias.
 
         Reads the full session transcript and extracts decisions, facts, bugs, and
-        follow-ups as structured memorias, then saves a session arc nota linking them.
+        follow-ups as structured memorias, then saves a session arc note linking them.
 
         Args:
             session_id: Specific session id (full or prefix). Omit to use the most recent.

@@ -1,7 +1,7 @@
 """Temporal reasoning & contradiction detection for memory corpus.
 
 Analyzes the temporal dimension of memorias to detect:
-- Contradictions between facts over time (e.g. "usé Ollama" → "migré a MLX")
+- Contradictions between facts over time (e.g. "used Ollama" → "migrated to MLX")
 - Evolution of decisions/opinions
 - Stale/outdated information
 - Temporal patterns in the user's knowledge

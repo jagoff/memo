@@ -1,19 +1,19 @@
-"""WhatsApp → notas legibles en el vault → índice de Memo.
+"""WhatsApp → human-readable notes in the vault → Memo index.
 
-Lee los mensajes del bridge local de `whatsapp-mcp` y escribe **una nota
-Markdown legible por contacto** en `Obsidian/Whatsapp/<contacto>.md` (transcript
-agrupado por fecha, sin `id:` en el frontmatter). Esas notas se indexan en Memo
-vía `memo ingest` (source=vault-ingest), así quedan buscables por `memo search`
-/ `ask` y por el chat de synapse en :8765 — y a la vez son navegables en
-Obsidian junto a los dossiers de `Obsidian/Contacts`.
+Reads messages from the local `whatsapp-mcp` bridge and writes **one
+human-readable Markdown note per contact** in `Obsidian/Whatsapp/<contact>.md`
+(transcript grouped by date, no `id:` in the frontmatter). Those notes are
+indexed in Memo via `memo ingest` (source=vault-ingest), so they become
+searchable by `memo search` / `ask` and by the synapse chat on :8765 — and at
+the same time browsable in Obsidian alongside the dossiers in `Obsidian/Contacts`.
 
-Sin dependencia de `rag`. El scope es opt-in (`include_chats` o `all_chats`).
-Las notas se regeneran completas en cada corrida (idempotente): re-ejecutar
-actualiza el archivo del contacto con todo lo nuevo. El `memo ingest` posterior
-re-embebe sólo lo que cambió (body_hash).
+No dependency on `rag`. The scope is opt-in (`include_chats` or `all_chats`).
+The notes are fully regenerated on every run (idempotent): re-running updates
+the contact's file with everything new. The subsequent `memo ingest` re-embeds
+only what changed (body_hash).
 
-Exclusiones fijas: `status@broadcast`, bot JID (`WHATSAPP_BOT_JID`), notes-inbox
-(`WA_LISTENER_NOTES_CHAT_JID`) y mensajes con prefijo U+200B (output del bot).
+Fixed exclusions: `status@broadcast`, bot JID (`WHATSAPP_BOT_JID`), notes-inbox
+(`WA_LISTENER_NOTES_CHAT_JID`) and messages prefixed with U+200B (bot output).
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ class WAMessage:
 
 
 def _parse_bridge_ts(raw: object) -> float | None:
-    """Parsea el `timestamp` del bridge (RFC3339 string o numérico) a epoch."""
+    """Parse the bridge `timestamp` (RFC3339 string or numeric) to epoch."""
     if raw is None:
         return None
     if isinstance(raw, (int, float)):
@@ -114,14 +114,14 @@ def read_messages(
     chat_jid: str | None = None,
     exclude_jids: frozenset[str] = HARDCODED_EXCLUDE_JIDS,
 ) -> list[WAMessage]:
-    """Carga mensajes del bridge (read-only). `since_ts` filtra por epoch
-    (exclusivo). Salta vacíos, chats excluidos y output del bot."""
+    """Load messages from the bridge (read-only). `since_ts` filters by epoch
+    (exclusive). Skips empties, excluded chats, and bot output."""
     if not bridge_db.is_file():
         return []
-    # mode=ro (NO immutable): el bridge escribe en WAL y mantiene los mensajes
-    # recientes ahí hasta el próximo checkpoint. `immutable=1` le promete a SQLite
-    # que el archivo no cambia y hace que IGNORE el -wal, así que la cola más nueva
-    # de cada chat queda invisible hasta un checkpoint → notas/índice desactualizados.
+    # mode=ro (NOT immutable): the bridge writes to WAL and keeps recent messages
+    # there until the next checkpoint. `immutable=1` promises SQLite the file
+    # doesn't change and makes it IGNORE the -wal, so the newest tail of each chat
+    # stays invisible until a checkpoint → stale notes/index.
     conn = sqlite3.connect(f"file:{bridge_db}?mode=ro", uri=True)
     try:
         conn.row_factory = sqlite3.Row
@@ -167,7 +167,7 @@ def read_messages(
     return out
 
 
-# ── Render de notas ───────────────────────────────────────────────────────────
+# ── Note rendering ────────────────────────────────────────────────────────────
 
 
 def _mask_phone(sender: str) -> str:
@@ -176,9 +176,9 @@ def _mask_phone(sender: str) -> str:
 
 
 def _speaker_label(msg: WAMessage) -> str:
-    """yo / nombre del contacto (1:1) / últimos 4 dígitos (grupo)."""
+    """me / contact name (1:1) / last 4 digits (group)."""
     if msg.is_from_me:
-        return "yo"
+        return "me"
     is_group = msg.chat_jid.endswith("@g.us")
     if not is_group and msg.chat_name and msg.chat_name != msg.chat_jid:
         return msg.chat_name
@@ -191,7 +191,7 @@ def _safe_filename(chat_name: str, chat_jid: str) -> str:
 
 
 def render_chat_note(chat_jid: str, chat_name: str, msgs: list[WAMessage]) -> str:
-    """Una nota legible: frontmatter (sin `id:`) + transcript agrupado por día."""
+    """A human-readable note: frontmatter (no `id:`) + transcript grouped by day."""
     msgs = sorted(msgs, key=lambda m: m.timestamp)
     first_iso = datetime.fromtimestamp(msgs[0].timestamp).isoformat(timespec="seconds")
     last_iso = datetime.fromtimestamp(msgs[-1].timestamp).isoformat(timespec="seconds")
@@ -212,10 +212,10 @@ def render_chat_note(chat_jid: str, chat_name: str, msgs: list[WAMessage]) -> st
     lines.append(f"# WhatsApp · {chat_name}")
     lines.append("")
     if not is_group:
-        # link blando al dossier en Obsidian/Contacts (no rompe si no existe)
-        lines.append(f"> Contacto: [[{chat_name}]] · `{chat_jid}`")
+        # soft link to the dossier in Obsidian/Contacts (doesn't break if absent)
+        lines.append(f"> Contact: [[{chat_name}]] · `{chat_jid}`")
     else:
-        lines.append(f"> Grupo · `{chat_jid}`")
+        lines.append(f"> Group · `{chat_jid}`")
     lines.append("")
 
     cur_day = ""
@@ -233,16 +233,16 @@ def render_chat_note(chat_jid: str, chat_name: str, msgs: list[WAMessage]) -> st
     return "\n".join(lines)
 
 
-# ── Orquestación ──────────────────────────────────────────────────────────────
+# ── Orchestration ─────────────────────────────────────────────────────────────
 
 
 def resolve_notes_dir(mem: Any) -> Path:
-    """`<SYSTEM_DIR>/Whatsapp` en la raíz del vault. Override: MEMO_WHATSAPP_NOTES_DIR.
+    """`<SYSTEM_DIR>/Whatsapp` at the vault root. Override: MEMO_WHATSAPP_NOTES_DIR.
 
-    El vault root se deriva de `data_dir` buscando el ancestro `<SYSTEM_DIR>`
-    (ej. `Obsidian`) y tomando su parent — robusto a la profundidad del
-    subdir de memorias (`<SYSTEM_DIR>/Memory`, `<SYSTEM_DIR>/AI/memory`, …).
-    Si la estructura no contiene `<SYSTEM_DIR>`, usar el env var.
+    The vault root is derived from `data_dir` by finding the `<SYSTEM_DIR>`
+    ancestor (e.g. `Obsidian`) and taking its parent — robust to the depth of
+    the memorias subdir (`<SYSTEM_DIR>/Memory`, `<SYSTEM_DIR>/AI/memory`, …).
+    If the structure doesn't contain `<SYSTEM_DIR>`, use the env var.
     """
     from memo.config import SYSTEM_DIR
     from memo.flags import flag_str
@@ -251,14 +251,14 @@ def resolve_notes_dir(mem: Any) -> Path:
     if env:
         return Path(env).expanduser()
     data_dir = Path(mem.cfg.data_dir)
-    # …/Notes/<SYSTEM_DIR>/Memory  → vault_root = …/Notes (parent del SYSTEM_DIR).
+    # …/Notes/<SYSTEM_DIR>/Memory  → vault_root = …/Notes (parent of SYSTEM_DIR).
     vault_root = data_dir
     for anc in data_dir.parents:
         if anc.name == SYSTEM_DIR:
             vault_root = anc.parent
             break
     else:
-        # Layout inesperado (sin SYSTEM_DIR en el path): fallback al previo.
+        # Unexpected layout (no SYSTEM_DIR in the path): fall back to the previous one.
         vault_root = data_dir.parents[2] if len(data_dir.parents) > 2 else data_dir
     return vault_root / SYSTEM_DIR / "Whatsapp"
 
@@ -275,12 +275,12 @@ def run(
     notes_dir: Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Escribe una nota legible por chat en `Obsidian/Whatsapp`. Devuelve resumen.
-    El indexado en Memo (`memo ingest`) lo dispara la capa CLI."""
+    """Write a human-readable note per chat in `Obsidian/Whatsapp`. Returns a summary.
+    Indexing into Memo (`memo ingest`) is triggered by the CLI layer."""
     if not include_chats and not all_chats:
         raise ValueError(
-            "scope requerido: pasá include_chats=(...) o all_chats=True "
-            "(no ingesto todos los chats por defecto)"
+            "scope required: pass include_chats=(...) or all_chats=True "
+            "(I don't ingest all chats by default)"
         )
 
     from memo.flags import flag_str
@@ -292,7 +292,7 @@ def run(
                 f"WhatsApp DB not found: {db}. "
                 "Set MEMO_WHATSAPP_DB env var to the path of your whatsapp-mcp messages.db."
             )
-        raise FileNotFoundError(f"bridge DB no encontrada: {db}")
+        raise FileNotFoundError(f"bridge DB not found: {db}")
 
     out_dir = notes_dir or resolve_notes_dir(mem)
 
@@ -301,7 +301,7 @@ def run(
         try:
             since_ts = max(since_ts, datetime.strptime(since, "%Y-%m-%d").timestamp())
         except ValueError as exc:
-            raise ValueError(f"--since debe ser YYYY-MM-DD, got {since!r}") from exc
+            raise ValueError(f"--since must be YYYY-MM-DD, got {since!r}") from exc
 
     messages = read_messages(
         db, since_ts=since_ts, exclude_jids=HARDCODED_EXCLUDE_JIDS | set(exclude_chats)

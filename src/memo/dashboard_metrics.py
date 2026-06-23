@@ -26,7 +26,7 @@ USED_SCORE_STRONG = 0.8
 # real use that paraphrases (modest absolute cosine, but clearly above the
 # topical baseline the prompt set), without crediting same-topic overlap.
 SPECIFIC_MARGIN = 0.06
-# Verdict thresholds — drive the "¿funciona memo?" panel. memo is judged USEFUL
+# Verdict thresholds — drive the "DOES memo WORK?" panel. memo is judged USEFUL
 # only when it is both read enough (volume) and actually helping (grounded).
 VERDICT_MIN_CONSULTS = 20
 VERDICT_MIN_GROUNDED = 0.10
@@ -371,9 +371,9 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
 
 # Rows produced by the auto-firing recall-hook (the user's ambient recall),
 # as opposed to an explicit tool/agent search (synapse `cli:search`, `mcp:*`).
-# The "¿funciona como TU memoria?" story — funnel, gaps, verdict volume — scopes
+# The "does memo work as YOUR memory?" story — funnel, gaps, verdict volume — scopes
 # to these so an agent's eval traffic (e.g. synapse hammering memo with a generic
-# eval corpus) can't distort the picture. The "¿quién usa memo?" panel still
+# eval corpus) can't distort the picture. The "who uses memo?" panel still
 # counts every reader via consult_breakdown.
 _AMBIENT_VIA = frozenset({"daemon", "subprocess", "bail", "daemon_error"})
 
@@ -537,25 +537,25 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
     consults_total = sum(int(row.get("consultas") or 0) for row in daily.values())
     activations_total = sum(int(row.get("activado") or 0) for row in daily.values())
     # Volume that gates the verdict = ambient prompts (yours), not the all-tools
-    # total. "¿Funciona como TU memoria?" needs enough of YOUR usage to judge;
+    # total. "Does memo work as YOUR memory?" needs enough of YOUR usage to judge;
     # an agent's eval flood shouldn't unlock or distort the verdict. The all-tools
-    # per-consumer total stays in consult_breakdown for "¿quién usa memo?".
+    # per-consumer total stays in consult_breakdown for "who uses memo?".
     consults_sampled = int(health.get("sampled") or 0)
     grounded = health.get("grounded_rate")
     measured_turns = int(health.get("measured_turns") or 0)
     measurement_coverage = health.get("measurement_coverage")
 
     if consults_sampled < VERDICT_MIN_CONSULTS:
-        status, label = "unused", "❌ NO SE USA"
+        status, label = "unused", "❌ NOT USED"
     elif (
         measured_turns < VERDICT_MIN_MEASURED_TURNS
         or (measurement_coverage or 0.0) < VERDICT_MIN_MEASUREMENT_COVERAGE
     ):
-        status, label = "unmeasured", "⚠️ SE LEE PERO NO SE MIDE"
+        status, label = "unmeasured", "⚠️ READ BUT NOT MEASURED"
     elif (grounded or 0.0) < VERDICT_MIN_GROUNDED:
-        status, label = "weak", "⚠️ SE LEE PERO NO AYUDA"
+        status, label = "weak", "⚠️ READ BUT NOT HELPING"
     else:
-        status, label = "ok", "✅ ÚTIL"
+        status, label = "ok", "✅ USEFUL"
 
     readers = [str(c.get("consumer")) for c in cb.get("consumers", [])]
     silent = list(cb.get("silent") or [])

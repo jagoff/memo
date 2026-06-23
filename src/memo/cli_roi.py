@@ -154,7 +154,7 @@ def roi(*, limit: int = 500, window_turns: int = 4, as_json: bool = False) -> No
         f"(est: {data['secs_per_grounded']}s/grounded + {data['secs_per_reask']}s/re-ask avoided)"
     )
     avg_tok = data.get("avg_answer_tokens")
-    avg_note = f", medido ~{avg_tok} tok/respuesta" if avg_tok else ""
+    avg_note = f", measured ~{avg_tok} tok/answer" if avg_tok else ""
     click.echo(
         f"  estimated tokens  ~{data['tokens_saved_human']} saved "
         f"(est: {data['tokens_per_grounded']}/grounded + {data['tokens_per_reask']}/re-ask{avg_note})"

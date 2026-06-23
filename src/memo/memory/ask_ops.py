@@ -72,7 +72,7 @@ class _AskOpsMixin(_MemoryBase):
         if not question.strip():
             status = "unavailable"
             synthesis_error = "empty question"
-        elif answer.startswith("(error consultando el modelo:"):
+        elif answer.startswith("(error querying the model:"):
             status = "error"
             synthesis_error = answer
         elif not answer:
@@ -209,7 +209,7 @@ class _AskOpsMixin(_MemoryBase):
         answer = "".join(accum_parts).strip()
         if had_error:
             status = "error"
-        elif answer.startswith("(error consultando el modelo:"):
+        elif answer.startswith("(error querying the model:"):
             status = "error"
             synthesis_error = answer
         elif not answer:
@@ -539,8 +539,8 @@ class _AskOpsMixin(_MemoryBase):
             )
 
         user_msg = (
-            f"Pregunta del user:\n{question}\n\n"
-            f"Contexto relevante ({len(hits)} memorias, {len(repo_hits)} snippets de repo):\n\n"
+            f"User question:\n{question}\n\n"
+            f"Relevant context ({len(hits)} memories, {len(repo_hits)} repo snippets):\n\n"
             + "\n---\n".join(snippet_lines)
         )
         if cache_key is not None and sources:
@@ -638,7 +638,7 @@ class _AskOpsMixin(_MemoryBase):
 
             {
                 "question": str,
-                "answer": str,            # may say "no encuentro ..."
+                "answer": str,            # may say "I couldn't find ..."
                 "sources": [               # the snippets the LLM saw
                     {id, title, type, score, snippet}, ...
                 ],
@@ -694,7 +694,7 @@ class _AskOpsMixin(_MemoryBase):
             )
             answer = ((out.get("message") or {}).get("content") or "").strip()
         except Exception as exc:
-            answer = f"(error consultando el modelo: {type(exc).__name__})"
+            answer = f"(error querying the model: {type(exc).__name__})"
 
         return {
             "question": norm_question,
@@ -739,7 +739,7 @@ class _AskOpsMixin(_MemoryBase):
         if not sources:
             yield {
                 "event": "done",
-                "answer": "no encuentro la respuesta en las memorias guardadas",
+                "answer": "I couldn't find the answer in the saved memories",
                 "sources": [],
             }
             return

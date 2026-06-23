@@ -140,6 +140,6 @@ def test_memory_chat_ask_no_hits_returns_unavailable(mem: Memory):
 
     assert out["schema"] == "memo.chat_ask.v2"
     assert out["synthesis_status"] == "unavailable"
-    assert "no encuentro" in out["answer"].lower()
+    assert "couldn't find" in out["answer"].lower()
     assert out["sources"] == []
     assert out["citations"] == []

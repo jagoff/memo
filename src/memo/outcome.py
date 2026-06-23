@@ -239,16 +239,16 @@ def detect_gaps(
             reason_raw = r.get("reason") or ""
             if "min_sim" not in reason_raw and "no hits" not in reason_raw:
                 continue  # slash command / short prompt → not a knowledge gap
-            reason = "sin coincidencias"
+            reason = "no matches"
         elif not hits:
-            reason = "0 resultados"
+            reason = "0 results"
         elif (
             sid
             and isinstance(turn, int)
             and (sid, turn) in scored_turns
             and (sid, turn) not in grounded_turns
         ):
-            reason = "encontró algo pero no se usó"
+            reason = "found something but it wasn't used"
         else:
             continue
         raw.append({"prompt": prompt, "reason": reason, "ts": r.get("ts")})
@@ -261,8 +261,8 @@ def detect_gaps(
                 c["count"] += 1
                 # Single reason = the latest occurrence's state. The same prompt
                 # can recall 0 results once and surface-but-unused another time;
-                # unioning them renders the contradictory "0 resultados, encontró
-                # algo pero no se usó". The most recent state is the truthful one.
+                # unioning them renders the contradictory "0 results, found
+                # something but it wasn't used". The most recent state is the truthful one.
                 if (g["ts"] or "") > (c["last_seen"] or ""):
                     c["last_seen"] = g["ts"]
                     c["prompt"] = g["prompt"]

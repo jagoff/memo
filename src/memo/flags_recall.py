@@ -114,7 +114,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "recall",
-        "On a zero-hit recall, retry once with recent open-loop titles prepended so bare continuity prompts ('seguimos', 'qué queda pendiente') re-anchor instead of bailing. Fallback-only: queries that already recall are untouched.",
+        "On a zero-hit recall, retry once with recent open-loop titles prepended so bare continuity prompts ('continue', 'what is left') re-anchor instead of bailing. Fallback-only: queries that already recall are untouched.",
         opt_out=True,
     ),
     _spec(

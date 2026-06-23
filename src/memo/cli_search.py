@@ -140,13 +140,13 @@ def ask(question: str, k: int, type_: str | None, as_json: bool, source: str | N
         return
     console.print(
         Panel.fit(
-            out["answer"] or "[dim](sin respuesta)[/dim]",
+            out["answer"] or "[dim](no answer)[/dim]",
             title=f"❓ {question[:60]}",
             border_style="cyan",
         )
     )
     if out["sources"]:
-        console.print("[dim]fuentes:[/dim]")
+        console.print("[dim]sources:[/dim]")
         for s in out["sources"]:
             console.print(
                 f"  [dim][{s['id_short']}][/dim] {s['title'][:60]}  "
@@ -168,7 +168,7 @@ def embed_cmd(text: str | None, batch_json) -> None:
     """Compute embedding vector(s) using memo's MLX embedder.
 
     Single (asymmetric query prefix):
-        memo embed "hablame de Grecia"
+        memo embed "tell me about Greece"
 
     Batch (symmetric document prefix, single MLX forward pass):
         echo '["alpha","beta","gamma"]' | memo embed --batch-json -
@@ -316,13 +316,13 @@ def chat_ask(
         return
     console.print(
         Panel.fit(
-            envelope["answer"] or "[dim](sin respuesta)[/dim]",
+            envelope["answer"] or "[dim](no answer)[/dim]",
             title=f"❓ {question[:60]}",
             border_style="magenta",
         )
     )
     if envelope["sources"]:
-        console.print("[dim]fuentes:[/dim]")
+        console.print("[dim]sources:[/dim]")
         for s in envelope["sources"]:
             console.print(
                 f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "

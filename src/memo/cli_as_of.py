@@ -74,7 +74,7 @@ def as_of_search(
     tbl = Table(
         show_lines=False,
         expand=True,
-        title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias existían",
+        title=f"snapshot @ {snap.as_of.date().isoformat()} · {len(snap)} memorias existed",
     )
     tbl.add_column("score", justify="right", width=6)
     tbl.add_column("type", width=10)
@@ -110,7 +110,7 @@ def as_of_ask(question: str, as_of: str, k: int, as_json: bool) -> None:
 
     console.print(
         Panel.fit(
-            out["answer"] or "[dim](sin respuesta)[/dim]",
+            out["answer"] or "[dim](no answer)[/dim]",
             title=f"✓ as-of {snap.as_of.date().isoformat()} ({len(snap)} memorias in scope)",
             border_style="magenta",
         )

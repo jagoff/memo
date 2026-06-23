@@ -128,6 +128,6 @@ def test_chat_ask_stream_no_hits_short_circuits(
     kinds = [e["event"] for e in events]
     assert kinds == ["done"]
     done = events[0]
-    assert "no encuentro" in done["answer"].lower()
+    assert "couldn't find" in done["answer"].lower()
     assert done["sources"] == []
     assert done["synthesis_status"] == "unavailable"

@@ -261,7 +261,7 @@ def resume(
     cwd_filter: str | None,
     as_json: bool,
 ) -> None:
-    """Recent sessions to retomar — picker for the SessionStart flow.
+    """Recent sessions to resume — picker for the SessionStart flow.
 
     With no argument, prints a table of the most recent sessions
     (cwd / branch / summary / id). Pass SESSION_ID (full or unique
@@ -309,9 +309,9 @@ def resume(
         )
         if sid:
             console.print(
-                f"\n[bold green]Para retomar:[/bold green]  "
+                f"\n[bold green]To resume:[/bold green]  "
                 f"[cyan]claude --resume {sid}[/cyan]\n"
-                f"[dim](copy-paste; corré el comando desde "
+                f"[dim](copy-paste; run the command from "
                 f"`{snap.get('cwd') or '?'}`)[/dim]",
             )
         return
@@ -350,12 +350,12 @@ def resume(
         top = same_cwd[0]
         sid = top.get("session_id") or ""
         console.print(
-            f"[bold green]Última en este proyecto[/bold green]  "
+            f"[bold green]Latest in this project[/bold green]  "
             f"[dim]({format_relative(top.get('updated'))})[/dim]: "
             f"{(top.get('summary') or top.get('last_user_msg') or '—')[:80]}",
         )
         console.print(
-            f"[bold green]Para retomar:[/bold green]  [cyan]claude --resume {sid}[/cyan]\n",
+            f"[bold green]To resume:[/bold green]  [cyan]claude --resume {sid}[/cyan]\n",
         )
 
     tbl = Table(show_lines=False, expand=True)
@@ -376,6 +376,6 @@ def resume(
         )
     console.print(tbl)
     console.print(
-        "[dim]Detalle: `memo resume <id|prefix>`  ·  "
-        "Retomar: `claude --resume <session_id>` (copy desde la tabla).[/dim]",
+        "[dim]Detail: `memo resume <id|prefix>`  ·  "
+        "Resume: `claude --resume <session_id>` (copy from the table).[/dim]",
     )

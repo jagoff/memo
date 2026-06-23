@@ -32,16 +32,16 @@ def gaps(*, limit: int, min_count: int, top: int, as_json: bool) -> None:
         click.echo(_json.dumps(found[:top], ensure_ascii=False, indent=2))
         return
     if not found:
-        click.echo("Sin vacíos detectados — memo respondió todo lo que se le preguntó. ✅")
+        click.echo("No gaps detected — memo answered everything it was asked. ✅")
         return
-    click.echo(f"memo gaps — {len(found)} tema(s) que memo no pudo responder\n")
-    click.echo(f"  {'veces':>5}  {'motivo':<30} pregunta")
+    click.echo(f"memo gaps — {len(found)} topic(s) memo could not answer\n")
+    click.echo(f"  {'times':>5}  {'reason':<30} question")
     click.echo("  " + "-" * 78)
     for g in found[:top]:
         reason = ", ".join(g["reasons"])[:30]
         prompt = (g["prompt"] or "")[:60]
         click.echo(f"  {g['count']:>5}  {reason:<30} {prompt}")
-    click.echo("\nCapturá estos temas con `memo save` para que dejen de ser vacíos.")
+    click.echo("\nCapture these topics with `memo save` so they stop being gaps.")
 
 
 @click.command(name="outcome")
@@ -72,19 +72,19 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
             click.echo(_json.dumps({"dry_run": True, "dead_weight": dead, **u}, ensure_ascii=False, indent=2))
             return
         click.echo(
-            f"outcome (dry-run) — {scored} memorias con historial; "
-            f"{helpful} aterrizaron ≥1 respuesta; baseline grounded={u['prior_mean']}."
+            f"outcome (dry-run) — {scored} memorias with history; "
+            f"{helpful} grounded ≥1 answer; baseline grounded={u['prior_mean']}."
         )
         if dead:
             click.echo(
-                f"  peso muerto: {len(dead)} memoria(s) surfaceadas >={min_surfaced}x sin "
-                f"aterrizar nunca (candidatas a archivar con --apply --archive-dead)."
+                f"  dead weight: {len(dead)} memoria(s) surfaced >={min_surfaced}x without "
+                f"ever grounding (candidates to archive with --apply --archive-dead)."
             )
-        click.echo("Corré con --apply para escribir roi_score desde estos outcomes.")
+        click.echo("Run with --apply to write roi_score from these outcomes.")
         if not flag_bool("MEMO_OUTCOME_RANKING_ENABLED"):
             click.echo(
-                "Nota: MEMO_OUTCOME_RANKING_ENABLED está OFF — el ranking sigue usando "
-                "el roi por acceso. Activalo para que los outcomes manden."
+                "Note: MEMO_OUTCOME_RANKING_ENABLED is OFF — ranking still uses "
+                "access-based roi. Enable it so outcomes take precedence."
             )
         return
 
@@ -93,19 +93,19 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
     archived: list[str] = []
     if archive_dead:
         for d in dead_weight(mem, min_surfaced=min_surfaced):
-            if mem.forget(d["id"], reason=f"outcome: surfaced {d['surfaced']}x sin grounding") is not None:
+            if mem.forget(d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding") is not None:
                 archived.append(d["id"])
     if as_json:
         click.echo(_json.dumps({**res, "archived": archived}, ensure_ascii=False, indent=2))
         return
     click.echo(
-        f"outcome aplicado — roi_score actualizado para {res['updated']} memoria(s) "
-        f"(baseline grounded={res['prior_mean']}, rango [{res['floor']},{res['cap']}])."
+        f"outcome applied — roi_score updated for {res['updated']} memoria(s) "
+        f"(baseline grounded={res['prior_mean']}, range [{res['floor']},{res['cap']}])."
     )
     if archive_dead:
-        click.echo(f"  peso muerto archivado (reversible con `memo unforget`): {len(archived)}")
+        click.echo(f"  dead weight archived (reversible with `memo unforget`): {len(archived)}")
     if not flag_bool("MEMO_OUTCOME_RANKING_ENABLED"):
         click.echo(
-            "Nota: MEMO_OUTCOME_RANKING_ENABLED está OFF — escribí roi_score pero el "
-            "boost-por-acceso lo va a re-pisar. Activá el flag para que mande el outcome."
+            "Note: MEMO_OUTCOME_RANKING_ENABLED is OFF — wrote roi_score but the "
+            "access-boost will overwrite it. Enable the flag so the outcome takes precedence."
         )

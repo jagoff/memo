@@ -124,7 +124,7 @@ def test_verdict_unmeasured_when_reads_exist_without_grounding(tmp_path: Path) -
     v = verdict(tmp_path, limit=500)
 
     assert v["status"] == "unmeasured"
-    assert "NO SE MIDE" in v["label"]
+    assert "NOT MEASURED" in v["label"]
     assert v["measurement_coverage"] == 0.0
 
 

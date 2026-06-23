@@ -1,15 +1,15 @@
-"""Memoria Multi-Modal con Embeddings Universales.
+"""Multi-modal memoria with universal embeddings.
 
 NOTE: Covered by test suite (tests/test_multimodal.py). Not exposed via MCP yet.
 
-Captura información que no es texto (diagramas, capturas, audio) y permite
-búsqueda semántica cruzada entre modalidades.
+Captures non-text information (diagrams, screenshots, audio) and enables
+cross-modal semantic search across modalities.
 
 ## Gamechanger
 
-- Unifica texto, imágenes, audio y video en un solo espacio semántico
-- Busca en un modalidad, encuentra en otras (ej: busca "gráfico de arquitectura" → encuentra imágenes)
-- Embeddings universales que entienden contenido visual/auditivo
+- Unifies text, images, audio, and video in a single semantic space
+- Search in one modality, find in others (e.g. search "architecture diagram" → find images)
+- Universal embeddings that understand visual/auditory content
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ _log = logging.getLogger(__name__)
 
 
 class Modality(Enum):
-    """Tipos de modalidad de contenido."""
+    """Content modality types."""
 
     TEXT = "text"
     IMAGE = "image"
@@ -37,20 +37,20 @@ class Modality(Enum):
 
 @dataclass
 class MultiModalContent:
-    """Contenido multi-modal con embedding."""
+    """Multi-modal content with embedding."""
 
     id: str
-    memoria_id: str | None  # Si está asociado a una memoria
+    memoria_id: str | None  # If associated with a memoria
     modality: str
-    content: bytes  # Datos binarios (imagen, audio, video)
-    embedding: list[float]  # Embedding universal
+    content: bytes  # Binary data (image, audio, video)
+    embedding: list[float]  # Universal embedding
     metadata: dict[str, Any]
     created_at: str
 
 
 @dataclass
 class CrossModalResult:
-    """Resultado de búsqueda cross-modal."""
+    """Cross-modal search result."""
 
     content_id: str
     modality: str
@@ -59,10 +59,10 @@ class CrossModalResult:
 
 
 class MultiModalStore:
-    """Almacena y busca contenido multi-modal.
+    """Stores and searches multi-modal content.
 
     Args:
-        state_dir: Directorio para almacenar embeddings.
+        state_dir: Directory to store embeddings.
     """
 
     def __init__(self, state_dir: Path) -> None:
@@ -73,12 +73,12 @@ class MultiModalStore:
         self._load()
 
     def _load(self) -> None:
-        """Carga contenido desde disco."""
+        """Load content from disk."""
         if self.content_file.is_file():
             try:
                 data = json.loads(self.content_file.read_text(encoding="utf-8"))
                 for cid, cdata in data.items():
-                    # content está en base64
+                    # content is base64-encoded
                     content_bytes = base64.b64decode(cdata["content"])
                     self._contents[cid] = MultiModalContent(
                         id=cid,
@@ -93,7 +93,7 @@ class MultiModalStore:
                 self._contents = {}
 
     def _save(self) -> None:
-        """Guarda contenido a disco."""
+        """Save content to disk."""
         try:
             data = {}
             for cid, content in self._contents.items():
@@ -118,17 +118,17 @@ class MultiModalStore:
         memoria_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MultiModalContent:
-        """Agrega contenido multi-modal.
+        """Add multi-modal content.
 
         Args:
-            content: Datos binarios del contenido.
-            modality: Tipo de modalidad.
-            embedding: Embedding universal.
-            memoria_id: ID de memoria asociada (opcional).
-            metadata: Metadatos adicionales.
+            content: Binary content data.
+            modality: Modality type.
+            embedding: Universal embedding.
+            memoria_id: Associated memoria ID (optional).
+            metadata: Additional metadata.
 
         Returns:
-            MultiModalContent agregado.
+            The added MultiModalContent.
         """
         import uuid
 
@@ -147,13 +147,13 @@ class MultiModalStore:
         return mmc
 
     def get_content(self, content_id: str) -> MultiModalContent | None:
-        """Obtiene contenido por ID.
+        """Get content by ID.
 
         Args:
-            content_id: ID del contenido.
+            content_id: The content ID.
 
         Returns:
-            MultiModalContent o None.
+            MultiModalContent or None.
         """
         return self._contents.get(content_id)
 
@@ -163,15 +163,15 @@ class MultiModalStore:
         modality_filter: str | None = None,
         limit: int = 10,
     ) -> list[CrossModalResult]:
-        """Busca por similitud de embedding.
+        """Search by embedding similarity.
 
         Args:
-            query_embedding: Embedding de query.
-            modality_filter: Filtrar por modalidad (opcional).
-            limit: Máximo de resultados.
+            query_embedding: Query embedding.
+            modality_filter: Filter by modality (optional).
+            limit: Maximum number of results.
 
         Returns:
-            Lista de CrossModalResult.
+            List of CrossModalResult.
         """
         results = []
 
@@ -179,7 +179,7 @@ class MultiModalStore:
             if modality_filter and content.modality != modality_filter:
                 continue
 
-            # Calcular similitud coseno
+            # Compute cosine similarity
             sim = self._cosine_similarity(query_embedding, content.embedding)
 
             results.append(
@@ -195,7 +195,7 @@ class MultiModalStore:
         return results[:limit]
 
     def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        """Calcula similitud coseno entre dos embeddings."""
+        """Compute cosine similarity between two embeddings."""
         import math
 
         dot = sum(x * y for x, y in zip(a, b, strict=False))
@@ -208,24 +208,24 @@ class MultiModalStore:
         return dot / (mag_a * mag_b)
 
     def list_by_memoria(self, memoria_id: str) -> list[MultiModalContent]:
-        """Lista todo el contenido asociado a una memoria.
+        """List all content associated with a memoria.
 
         Args:
-            memoria_id: ID de la memoria.
+            memoria_id: The memoria ID.
 
         Returns:
-            Lista de MultiModalContent.
+            List of MultiModalContent.
         """
         return [c for c in self._contents.values() if c.memoria_id == memoria_id]
 
     def delete_content(self, content_id: str) -> bool:
-        """Elimina contenido.
+        """Delete content.
 
         Args:
-            content_id: ID del contenido.
+            content_id: The content ID.
 
         Returns:
-            True si eliminado.
+            True if deleted.
         """
         if content_id in self._contents:
             del self._contents[content_id]
@@ -235,19 +235,19 @@ class MultiModalStore:
 
 
 class UniversalEmbedder:
-    """Genera embeddings universales multi-modales.
+    """Generates universal multi-modal embeddings.
 
-    Para una implementación real, esto usaría CLIP (OpenAI) o
-    modelos similares que generan embeddings compartidos entre
-    texto, imágenes, audio y video.
+    A real implementation would use CLIP (OpenAI) or similar models
+    that generate shared embeddings across text, images, audio, and
+    video.
 
     Args:
-        model_name: Nombre del modelo a usar.
+        model_name: Name of the model to use.
     """
 
     def __init__(self, model_name: str = "clip-base") -> None:
         self.model_name = model_name
-        # En una implementación real, cargaríamos el modelo aquí
+        # In a real implementation, we would load the model here
 
     def _hash_embedding(self, payload: bytes, dims: int = 512) -> list[float]:
         import hashlib
@@ -265,46 +265,46 @@ class UniversalEmbedder:
         return vector
 
     def embed_text(self, text: str) -> list[float]:
-        """Genera embedding para texto.
+        """Generate an embedding for text.
 
         Args:
-            text: Texto a embeddear.
+            text: Text to embed.
 
         Returns:
             Embedding vector.
         """
-        # Placeholder: en implementación real usaríamos CLIP o similar
-        # Por ahora, generamos un embedding determinista basado en hash
+        # Placeholder: a real implementation would use CLIP or similar
+        # For now, generate a deterministic hash-based embedding
         return self._hash_embedding(text.encode("utf-8"))
 
     def embed_image(self, image_bytes: bytes) -> list[float]:
-        """Genera embedding para imagen.
+        """Generate an embedding for an image.
 
         Args:
-            image_bytes: Bytes de la imagen.
+            image_bytes: The image bytes.
 
         Returns:
             Embedding vector.
         """
-        # Placeholder: en implementación real usaríamos CLIP vision encoder
-        # Por ahora, generamos embedding basado en hash del contenido
+        # Placeholder: a real implementation would use the CLIP vision encoder
+        # For now, generate a hash-based embedding of the content
         return self._hash_embedding(image_bytes)
 
     def embed_audio(self, audio_bytes: bytes) -> list[float]:
-        """Genera embedding para audio.
+        """Generate an embedding for audio.
 
         Args:
-            audio_bytes: Bytes del audio.
+            audio_bytes: The audio bytes.
 
         Returns:
             Embedding vector.
         """
-        # Placeholder: en implementación real usaríamos modelo de audio
+        # Placeholder: a real implementation would use an audio model
         return self._hash_embedding(audio_bytes)
 
 
 class CrossModalSearch:
-    """Búsqueda cross-modal entre diferentes modalidades.
+    """Cross-modal search across different modalities.
 
     Args:
         store: MultiModalStore.
@@ -320,14 +320,14 @@ class CrossModalSearch:
         query: str,
         limit: int = 10,
     ) -> list[CrossModalResult]:
-        """Busca con texto, encuentra imágenes.
+        """Search with text, find images.
 
         Args:
-            query: Query de texto.
-            limit: Máximo de resultados.
+            query: Text query.
+            limit: Maximum number of results.
 
         Returns:
-            Lista de CrossModalResult de imágenes.
+            List of image CrossModalResult.
         """
         query_embedding = self.embedder.embed_text(query)
         return self.store.search_by_embedding(
@@ -341,14 +341,14 @@ class CrossModalSearch:
         query: str,
         limit: int = 10,
     ) -> list[CrossModalResult]:
-        """Busca con texto, encuentra audio.
+        """Search with text, find audio.
 
         Args:
-            query: Query de texto.
-            limit: Máximo de resultados.
+            query: Text query.
+            limit: Maximum number of results.
 
         Returns:
-            Lista de CrossModalResult de audio.
+            List of audio CrossModalResult.
         """
         query_embedding = self.embedder.embed_text(query)
         return self.store.search_by_embedding(
@@ -362,14 +362,14 @@ class CrossModalSearch:
         image_bytes: bytes,
         limit: int = 10,
     ) -> list[CrossModalResult]:
-        """Busca con imagen, encuentra texto.
+        """Search with an image, find text.
 
         Args:
-            image_bytes: Bytes de la imagen query.
-            limit: Máximo de resultados.
+            image_bytes: The query image bytes.
+            limit: Maximum number of results.
 
         Returns:
-            Lista de CrossModalResult de texto.
+            List of text CrossModalResult.
         """
         query_embedding = self.embedder.embed_image(image_bytes)
         return self.store.search_by_embedding(
@@ -383,14 +383,14 @@ class CrossModalSearch:
         query: str,
         limit: int = 10,
     ) -> dict[str, list[CrossModalResult]]:
-        """Busca en todas las modalidades.
+        """Search across all modalities.
 
         Args:
-            query: Query de texto.
-            limit: Máximo de resultados por modalidad.
+            query: Text query.
+            limit: Maximum number of results per modality.
 
         Returns:
-            Dict con resultados por modalidad.
+            Dict with results per modality.
         """
         query_embedding = self.embedder.embed_text(query)
 
@@ -408,7 +408,7 @@ class CrossModalSearch:
 
 
 class MultiModalManager:
-    """Gestiona funcionalidad multi-modal.
+    """Manages multi-modal functionality.
 
     Args:
         store: MultiModalStore.
@@ -432,15 +432,15 @@ class MultiModalManager:
         memoria_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MultiModalContent:
-        """Agrega imagen al corpus multi-modal.
+        """Add an image to the multi-modal corpus.
 
         Args:
-            image_path: Path a la imagen.
-            memoria_id: ID de memoria asociada.
-            metadata: Metadatos adicionales.
+            image_path: Path to the image.
+            memoria_id: Associated memoria ID.
+            metadata: Additional metadata.
 
         Returns:
-            MultiModalContent agregado.
+            The added MultiModalContent.
         """
         image_bytes = image_path.read_bytes()
         embedding = self.embedder.embed_image(image_bytes)
@@ -459,15 +459,15 @@ class MultiModalManager:
         memoria_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MultiModalContent:
-        """Agrega audio al corpus multi-modal.
+        """Add audio to the multi-modal corpus.
 
         Args:
-            audio_path: Path al audio.
-            memoria_id: ID de memoria asociada.
-            metadata: Metadatos adicionales.
+            audio_path: Path to the audio.
+            memoria_id: Associated memoria ID.
+            metadata: Additional metadata.
 
         Returns:
-            MultiModalContent agregado.
+            The added MultiModalContent.
         """
         audio_bytes = audio_path.read_bytes()
         embedding = self.embedder.embed_audio(audio_bytes)

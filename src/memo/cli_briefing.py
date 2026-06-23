@@ -99,16 +99,16 @@ def briefing(*, compact: bool) -> None:
             )
             state = (top.get("running_summary") or "").replace("\n", " ")
             compact_lines.append(
-                f"Última sesión ({format_relative(top.get('updated'))}): "
+                f"Last session ({format_relative(top.get('updated'))}): "
                 f"{compact_text(summary, max_chars=160)}"
             )
             if state:
-                compact_lines.append(f"Estado: {compact_text(state, max_chars=200)}")
+                compact_lines.append(f"State: {compact_text(state, max_chars=200)}")
             sid = str(top.get("session_id") or "")
             if sid:
-                compact_lines.append(f"Retomar: `claude --resume {sid}`")
+                compact_lines.append(f"Resume: `claude --resume {sid}`")
         else:
-            compact_lines.append("Sin sesión reciente en este proyecto.")
+            compact_lines.append("No recent session in this project.")
         context = compact_text("\n".join(compact_lines), max_chars=480)
         output = {
             "hookSpecificOutput": {

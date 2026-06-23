@@ -35,7 +35,7 @@ def stats() -> None:
     console.print(f"  embedder  {mem.cfg.embedder_model.split('/')[-1]}")
     console.print(f"  llm      {mem.cfg.llm_model.split('/')[-1]}")
 
-    console.print("\n[bold]⚡ Utility (últimos 7 días)[/bold]")
+    console.print("\n[bold]⚡ Utility (last 7 days)[/bold]")
     total_tokens = 0
     try:
         for e in read_context_cost_log(state_dir, limit=2000):
@@ -66,9 +66,9 @@ def stats() -> None:
     tokens_saved = total_tokens
     cost_usd = tokens_saved * 0.00001
 
-    console.print(f"  tokens evitados   {tokens_saved:,}")
-    console.print(f"  costo $         ${cost_usd:.2f}")
-    console.print(f"  memorias usadas {len(usage_ids)} únicas")
+    console.print(f"  tokens saved      {tokens_saved:,}")
+    console.print(f"  cost $          ${cost_usd:.2f}")
+    console.print(f"  memorias used   {len(usage_ids)} unique")
 
     console.print("\n[bold]🎯 Recall Quality[/bold]")
     try:
@@ -81,7 +81,7 @@ def stats() -> None:
             console.print(f"  strong hits   {strong_pct:.0f}% (score >0.7)")
             console.print(f"  latency p50  {h.get('p50_latency_ms', '—')}ms")
         else:
-            console.print("  (sin datos)")
+            console.print("  (no data)")
     except Exception as e:
         console.print(f"  [dim](error: {e})[/dim]")
 
@@ -97,7 +97,7 @@ def stats() -> None:
                 hit_s = f"{hit*100:.0f}%" if hit else "—"
                 console.print(f"  {name:<15} {consults:>4} consults {hit_s:>5} hit")
         else:
-            console.print("  [dim](sin datos)[/dim]")
+            console.print("  [dim](no data)[/dim]")
     except Exception as exc:
         _log.debug("consult breakdown failed: %s", exc)
         console.print("  [dim](sin datos)[/dim]")

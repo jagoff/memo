@@ -47,11 +47,11 @@ def context_hash(title: str, body: str) -> str:
 def build_context_prompt(title: str, body: str) -> str:
     body_snippet = str(body or "").strip()[:MAX_BODY_CHARS]
     return (
-        f"Nota: {title.strip() or 'untitled'}\n\n"
+        f"Note: {title.strip() or 'untitled'}\n\n"
         f"<MEMORIA>\n{body_snippet}\n</MEMORIA>\n\n"
-        "Dame una sola oración corta, máximo 30 palabras, que ubique esta "
-        "memoria dentro del archivo personal del usuario para mejorar búsqueda "
-        "semántica. Respondé solo la oración."
+        "Give a single short sentence, at most 30 words, that situates this "
+        "memoria within the user's personal archive to improve semantic "
+        "search. Respond with only the sentence."
     )
 
 

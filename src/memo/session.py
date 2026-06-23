@@ -678,18 +678,18 @@ def refresh_summary(
         content = msg.get("content") if isinstance(msg, dict) else None
         text = _extract_text(content)
         if text:
-            label = "Usuario" if role == "user" else "Asistente"
+            label = "User" if role == "user" else "Assistant"
             exchanges.append(f"[{label}] {text[:300]}")
     if not exchanges:
         return False
 
     recent = "\n\n".join(exchanges[-10:])
     llm_prompt = (
-        "Basado en esta sesión de trabajo, escribe UN PÁRRAFO breve (2-3 oraciones) "
-        "en español que resuma: (1) qué se estaba trabajando, (2) qué decisiones o "
-        "progreso hubo, (3) qué quedó pendiente o era el siguiente paso.\n\n"
-        f"Sesión:\n{recent}\n\n"
-        "Resumen (2-3 oraciones, sin viñetas ni encabezados):"
+        "Based on this work session, write ONE brief PARAGRAPH (2-3 sentences) "
+        "in English that summarizes: (1) what was being worked on, (2) what decisions or "
+        "progress were made, (3) what was left pending or was the next step.\n\n"
+        f"Session:\n{recent}\n\n"
+        "Summary (2-3 sentences, no bullets or headings):"
     )
 
     try:

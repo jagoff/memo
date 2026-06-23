@@ -122,13 +122,13 @@ def chat_ask(
         return
     console.print(
         Panel.fit(
-            envelope["answer"] or "[dim](sin respuesta)[/dim]",
+            envelope["answer"] or "[dim](no answer)[/dim]",
             title=f"? {question[:60]}",
             border_style="magenta",
         )
     )
     if envelope["sources"]:
-        console.print("[dim]fuentes:[/dim]")
+        console.print("[dim]sources:[/dim]")
         for s in envelope["sources"]:
             console.print(
                 f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "

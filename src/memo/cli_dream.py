@@ -394,7 +394,7 @@ def dream_run(
     """
     cfg = Config.from_env()
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
-    console.print(f"{tag}[bold cyan]memo dream[/bold cyan] — iniciando pipeline...")
+    console.print(f"{tag}[bold cyan]memo dream[/bold cyan] — starting pipeline...")
 
     from memo.flags import flag_int
 
@@ -439,14 +439,14 @@ def dream_run(
 
     with _make_progress() as progress:
         overall = progress.add_task("[bold cyan]pipeline[/bold cyan]", total=active_steps)
-        step = progress.add_task("cargando memoria...", total=None)
+        step = progress.add_task("loading memory...", total=None)
 
         mem = _get_memory(cfg)
-        progress.update(step, description="[green]memoria cargada ✓[/green]")
+        progress.update(step, description="[green]memory loaded ✓[/green]")
 
         # Orientation — read-only inventory before mutations -----------------
         if not skip_orientation:
-            progress.update(step, description="[dim]orientación — inventariando corpus...[/dim]")
+            progress.update(step, description="[dim]orientation — inventorying corpus...[/dim]")
             try:
                 orientation = _build_orientation(mem)
                 receipt["orientation"] = orientation
@@ -456,15 +456,15 @@ def dream_run(
                 tbl = Table(show_header=False, box=None, padding=(0, 1))
                 tbl.add_column("", style="dim")
                 tbl.add_column("", justify="right")
-                tbl.add_row("memorias totales", str(orientation["total"]))
+                tbl.add_row("total memorias", str(orientation["total"]))
                 for t, n in sorted(orientation["by_type"].items()):
                     tbl.add_row(f"  {t}", str(n))
                 tbl.add_row("roi < 0.3", str(orientation["low_roi"]))
                 tbl.add_row("stale candidates (>365d)", str(orientation["stale_candidates"]))
-                tbl.add_row("contradicciones abiertas", str(orientation["open_contradictions"]))
-                tbl.add_row("sin entidades indexadas", str(orientation["unindexed_entities"]))
+                tbl.add_row("open contradictions", str(orientation["open_contradictions"]))
+                tbl.add_row("unindexed entities", str(orientation["unindexed_entities"]))
                 console.print(
-                    Panel(tbl, title="[bold cyan]Inventario pre-dream[/bold cyan]", expand=False)
+                    Panel(tbl, title="[bold cyan]Pre-dream inventory[/bold cyan]", expand=False)
                 )
             except Exception as exc:
                 receipt["errors"].append(f"orientation: {type(exc).__name__}: {exc}")
@@ -505,13 +505,13 @@ def dream_run(
 
         if not skip_maintain:
             # 1. Contradictions ----------------------------------------------
-            progress.update(step, description="[1/6] contradicciones — escaneando corpus...")
+            progress.update(step, description="[1/6] contradictions — scanning corpus...")
             try:
 
                 def _contradict_progress(current: int, total: int, _title: str) -> None:
                     progress.update(
                         step,
-                        description=f"[1/6] contradicciones — {current}/{total}...",
+                        description=f"[1/6] contradictions — {current}/{total}...",
                         total=total,
                         completed=current,
                     )
@@ -549,19 +549,19 @@ def dream_run(
                 progress.update(
                     step,
                     description=(
-                        f"[1/6] contradicciones [green]✓[/green]  "
+                        f"[1/6] contradictions [green]✓[/green]  "
                         f"{len(receipt['superseded'])} superseded, {len(receipt['evolved'])} evolved"
                     ),
                 )
             except Exception as exc:
-                progress.update(step, description="[1/6] contradicciones [yellow]warn[/yellow]")
+                progress.update(step, description="[1/6] contradictions [yellow]warn[/yellow]")
                 receipt["errors"].append(f"contradict: {type(exc).__name__}: {exc}")
             progress.advance(overall)
 
             # 2. Duplicates --------------------------------------------------
             progress.update(
                 step,
-                description="[2/6] duplicados — consolidando clusters...",
+                description="[2/6] duplicates — consolidating clusters...",
                 total=None,
                 completed=0,
             )
@@ -578,17 +578,17 @@ def dream_run(
                 progress.update(
                     step,
                     description=(
-                        f"[2/6] duplicados [green]✓[/green]  {len(receipt['merged'])} merged"
+                        f"[2/6] duplicates [green]✓[/green]  {len(receipt['merged'])} merged"
                     ),
                 )
             except Exception as exc:
-                progress.update(step, description="[2/6] duplicados [yellow]warn[/yellow]")
+                progress.update(step, description="[2/6] duplicates [yellow]warn[/yellow]")
                 receipt["errors"].append(f"consolidate: {type(exc).__name__}: {exc}")
             progress.advance(overall)
 
             # 3. Staleness ---------------------------------------------------
             progress.update(
-                step, description="[3/6] memorias stale — detectando...", total=None, completed=0
+                step, description="[3/6] stale memorias — detecting...", total=None, completed=0
             )
             try:
                 stale = mem.temporal.detect_stale_memorias(days_threshold=365, min_access_count=0)
@@ -604,7 +604,7 @@ def dream_run(
                 progress.update(
                     step,
                     description=(
-                        f"[3/6] stale [green]✓[/green]  {len(receipt['archived_stale'])} archivadas"
+                        f"[3/6] stale [green]✓[/green]  {len(receipt['archived_stale'])} archived"
                     ),
                 )
             except Exception as exc:
@@ -615,7 +615,7 @@ def dream_run(
             # 4. Emergent synthesis ------------------------------------------
             progress.update(
                 step,
-                description="[4/6] síntesis emergente — generando insights...",
+                description="[4/6] emergent synthesis — generating insights...",
                 total=None,
                 completed=0,
             )
@@ -635,12 +635,12 @@ def dream_run(
                 progress.update(
                     step,
                     description=(
-                        f"[4/6] síntesis [green]✓[/green]  "
-                        f"{saved_n} guardadas, {len(receipt['synthesized'])} propuestas"
+                        f"[4/6] synthesis [green]✓[/green]  "
+                        f"{saved_n} saved, {len(receipt['synthesized'])} proposed"
                     ),
                 )
             except Exception as exc:
-                progress.update(step, description="[4/6] síntesis [yellow]warn[/yellow]")
+                progress.update(step, description="[4/6] synthesis [yellow]warn[/yellow]")
                 receipt["errors"].append(f"synthesize: {type(exc).__name__}: {exc}")
             progress.advance(overall)
 
@@ -648,7 +648,7 @@ def dream_run(
         if not skip_entities and not dry_run:
             progress.update(
                 step,
-                description="[5/6] entidades — extrayendo de memorias sin indexar...",
+                description="[5/6] entities — extracting from unindexed memorias...",
                 total=None,
                 completed=0,
             )
@@ -658,25 +658,25 @@ def dream_run(
                 progress.update(
                     step,
                     description=(
-                        f"[5/6] entidades [green]✓[/green]  {receipt['entities_extracted']} extraídas"
+                        f"[5/6] entities [green]✓[/green]  {receipt['entities_extracted']} extracted"
                     ),
                 )
             except Exception as exc:
-                progress.update(step, description="[5/6] entidades [yellow]warn[/yellow]")
+                progress.update(step, description="[5/6] entities [yellow]warn[/yellow]")
                 receipt["errors"].append(f"entities: {type(exc).__name__}: {exc}")
             progress.advance(overall)
         else:
-            progress.update(step, description="[5/6] entidades [dim]skip[/dim]")
+            progress.update(step, description="[5/6] entities [dim]skip[/dim]")
 
         # 6. ROI decay -------------------------------------------------------
         if not skip_decay and not dry_run:
             progress.update(
-                step, description="[6/6] ROI decay — ajustando scores...", total=None, completed=0
+                step, description="[6/6] ROI decay — adjusting scores...", total=None, completed=0
             )
             try:
                 n = mem.store.decay_roi(factor=0.98, older_than_days=30)
                 receipt["roi_decayed"] = n
-                progress.update(step, description=(f"[6/6] ROI decay [green]✓[/green]  {n} filas"))
+                progress.update(step, description=(f"[6/6] ROI decay [green]✓[/green]  {n} rows"))
             except Exception as exc:
                 progress.update(step, description="[6/6] ROI decay [yellow]warn[/yellow]")
                 receipt["errors"].append(f"roi_decay: {type(exc).__name__}: {exc}")
@@ -688,7 +688,7 @@ def dream_run(
         if not skip_prune_floor and not dry_run:
             progress.update(
                 step,
-                description="[7] prune floor — buscando memorias bajo el piso...",
+                description="[7] prune floor — finding memorias below the floor...",
                 total=None,
                 completed=0,
             )
@@ -703,7 +703,7 @@ def dream_run(
                 receipt["pruned_floor"] = pruned
                 progress.update(
                     step,
-                    description=f"[7] prune floor [green]✓[/green]  {len(pruned)} archivadas",
+                    description=f"[7] prune floor [green]✓[/green]  {len(pruned)} archived",
                 )
             except Exception as exc:
                 progress.update(step, description="[7] prune floor [yellow]warn[/yellow]")
@@ -716,7 +716,7 @@ def dream_run(
         if not skip_evict and _evict_max > 0:
             progress.update(
                 step,
-                description=f"[8] eviction — cap={_evict_max}, buscando excedente LFU...",
+                description=f"[8] eviction — cap={_evict_max}, finding LFU excess...",
                 total=None,
                 completed=0,
             )
@@ -725,7 +725,7 @@ def dream_run(
                 receipt["evicted"] = evicted
                 progress.update(
                     step,
-                    description=f"[8] eviction [green]✓[/green]  {len(evicted)} archivadas",
+                    description=f"[8] eviction [green]✓[/green]  {len(evicted)} archived",
                 )
             except Exception as exc:
                 progress.update(step, description="[8] eviction [yellow]warn[/yellow]")
@@ -747,7 +747,7 @@ def dream_run(
                 receipt["compressed"] = compressed
                 progress.update(
                     step,
-                    description=f"[9] compress [green]✓[/green]  {len(compressed)} comprimidas",
+                    description=f"[9] compress [green]✓[/green]  {len(compressed)} compressed",
                 )
             except Exception as exc:
                 progress.update(step, description="[9] compress [yellow]warn[/yellow]")
@@ -760,7 +760,7 @@ def dream_run(
         if not skip_prewarm and _prewarm_n > 0:
             progress.update(
                 step,
-                description=f"[10] prewarm — pre-embebiendo top {_prewarm_n} queries...",
+                description=f"[10] prewarm — pre-embedding top {_prewarm_n} queries...",
                 total=None,
                 completed=0,
             )
@@ -782,7 +782,7 @@ def dream_run(
         if not skip_presynthesis and _presynthesis_n > 0:
             progress.update(
                 step,
-                description=f"[11] pre-síntesis — top {_presynthesis_n} queries...",
+                description=f"[11] pre-synthesis — top {_presynthesis_n} queries...",
                 total=None,
                 completed=0,
             )
@@ -791,14 +791,14 @@ def dream_run(
                 receipt["presynthesis"] = ps
                 progress.update(
                     step,
-                    description=f"[11] pre-síntesis [green]✓[/green]  {len(ps)} clusters",
+                    description=f"[11] pre-synthesis [green]✓[/green]  {len(ps)} clusters",
                 )
             except Exception as exc:
-                progress.update(step, description="[11] pre-síntesis [yellow]warn[/yellow]")
+                progress.update(step, description="[11] pre-synthesis [yellow]warn[/yellow]")
                 receipt["errors"].append(f"presynthesis: {type(exc).__name__}: {exc}")
             progress.advance(overall)
         else:
-            progress.update(step, description="[11] pre-síntesis [dim]skip[/dim]")
+            progress.update(step, description="[11] pre-synthesis [dim]skip[/dim]")
 
         # Mark step task complete so spinner stops
         progress.update(step, total=1, completed=1)

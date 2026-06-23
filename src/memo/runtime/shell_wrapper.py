@@ -23,10 +23,10 @@ _memo_reltime() {
     local iso="${1:0:19}" then now diff
     then=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$iso" "+%s" 2>/dev/null) || { echo "?"; return; }
     now=$(date +%s); diff=$(( now - then ))
-    (( diff < 60    )) && { echo "ahora"; return; }
-    (( diff < 3600  )) && { printf "hace %dm" $(( diff/60   )); return; }
-    (( diff < 86400 )) && { printf "hace %dh" $(( diff/3600 )); return; }
-                           printf "hace %dd"  $(( diff/86400 ))
+    (( diff < 60    )) && { echo "now"; return; }
+    (( diff < 3600  )) && { printf "%dm ago" $(( diff/60   )); return; }
+    (( diff < 86400 )) && { printf "%dh ago" $(( diff/3600 )); return; }
+                           printf "%dd ago"  $(( diff/86400 ))
 }
 
 # One │ padded-content │ row. Reads _CW, C, R from caller scope (dynamic).
@@ -73,12 +73,12 @@ function claude() {
         summary=$( printf '%s' "$raw" | jq -r '.[0].summary // .[0].last_user_msg // "—"')
 
         _memo_bl ""
-        _memo_bl "  ${project}  ·  ${branch}  ·  ${when}  ·  ${turns} turnos" "${D}"
+        _memo_bl "  ${project}  ·  ${branch}  ·  ${when}  ·  ${turns} turns" "${D}"
         _memo_bl "  ${summary}" "${B}${W}"
         _memo_bl ""
         printf "  ${C}╰${_HL}╯${R}\n"
 
-        printf "\n  ${G}${B}¿Continuar?${R}  ${B}Y${R}${G} retomar  ${GR}n nueva sesión${R}  "
+        printf "\n  ${G}${B}Continue?${R}  ${B}Y${R}${G} resume  ${GR}n new session${R}  "
         local ans; read -rk1 ans; printf "\n\n"
 
         if [[ "$ans" == [yY] || "$ans" == $'\n' || "$ans" == $'\r' || -z "$ans" ]]; then
@@ -89,7 +89,7 @@ function claude() {
 
     else
         local sw=$(( _CW - 2 - 1 - 8 - 1 - 12 - 1 ))  # 35 chars for summary
-        _memo_bl "  ${count} sesiones anteriores — elegí cuál retomar" "${D}"
+        _memo_bl "  ${count} previous sessions — pick which to resume" "${D}"
         _memo_bl ""
 
         local i idx r_branch r_when r_summary pn pw pb ps
@@ -108,11 +108,11 @@ function claude() {
         done
 
         _memo_bl ""
-        _memo_bl "  n  nueva sesión" "${GR}"
+        _memo_bl "  n  new session" "${GR}"
         _memo_bl ""
         printf "  ${C}╰${_HL}╯${R}\n"
 
-        printf "\n  ${G}${B}Elegí${R}  ${GR}[1-${count}] retomar  n nueva${R}  "
+        printf "\n  ${G}${B}Choose${R}  ${GR}[1-${count}] resume  n new${R}  "
         local choice; read choice; printf "\n"
 
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
@@ -139,7 +139,7 @@ def install_shell_wrapper(do_print: bool, do_write: bool, shell_kind: str, force
         click.echo(snippet)
         if not do_print:
             click.echo(
-                "\n(pasale `--write` para instalar en ~/.zsh/memo-wrapper.zsh + ~/.zshrc.)",
+                "\n(pass `--write` to install into ~/.zsh/memo-wrapper.zsh + ~/.zshrc.)",
                 err=True,
             )
         return
@@ -154,23 +154,23 @@ def install_shell_wrapper(do_print: bool, do_write: bool, shell_kind: str, force
     if wrapper_path.is_file():
         existing = wrapper_path.read_text(encoding="utf-8")
         if existing == snippet:
-            console.print(f"[dim]✓ {wrapper_path} ya está al día[/dim]")
+            console.print(f"[dim]✓ {wrapper_path} already up to date[/dim]")
         elif not force:
             console.print(
-                f"[red]✗[/red] {wrapper_path} existe con contenido distinto. "
-                f"Pasale [bold]--force[/bold] para sobrescribir.",
+                f"[red]✗[/red] {wrapper_path} exists with different content. "
+                f"Pass [bold]--force[/bold] to overwrite.",
             )
             sys.exit(2)
         else:
             wrapper_path.write_text(snippet, encoding="utf-8")
-            console.print(f"[yellow]↻[/yellow] {wrapper_path} sobrescrito (--force)")
+            console.print(f"[yellow]↻[/yellow] {wrapper_path} overwritten (--force)")
     else:
         wrapper_path.write_text(snippet, encoding="utf-8")
-        console.print(f"[green]✓[/green] {wrapper_path} creado")
+        console.print(f"[green]✓[/green] {wrapper_path} created")
 
     rc_existing = rc_path.read_text(encoding="utf-8") if rc_path.is_file() else ""
     if source_line in rc_existing:
-        console.print(f"[dim]✓ {rc_path} ya tiene la línea source[/dim]")
+        console.print(f"[dim]✓ {rc_path} already has the source line[/dim]")
     else:
         with rc_path.open("a", encoding="utf-8") as fh:
             if rc_existing and not rc_existing.endswith("\n"):

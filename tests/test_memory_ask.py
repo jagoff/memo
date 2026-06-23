@@ -117,7 +117,7 @@ def test_ask_dedups_repo_chunks_when_no_vault_overlap(mem_with_stub: Memory, mon
 
 def test_ask_returns_no_answer_when_no_hits(mem_with_stub: Memory):
     out = mem_with_stub.ask("pregunta sin contexto")
-    assert "no encuentro" in out["answer"].lower()
+    assert "couldn't find" in out["answer"].lower()
     assert out["sources"] == []
 
 

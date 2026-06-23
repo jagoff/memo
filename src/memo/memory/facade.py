@@ -398,11 +398,11 @@ class Memory(
                 if flag_bool("MEMO_SUPPRESS_LEGACY_WARN"):
                     return
                 print(
-                    f"[memo] heads-up: tu índice apunta a paths antiguos "
-                    f"(data_dir={self.cfg.data_dir}). Corré `memo reindex` "
-                    f"para re-embeder, o `memo migrate-vault <nuevo-dir>` si "
-                    f"moviste el vault. Esto NO es un error — sólo un aviso "
-                    f"de inconsistencia entre disco e índice.",
+                    f"[memo] heads-up: your index points to old paths "
+                    f"(data_dir={self.cfg.data_dir}). Run `memo reindex` "
+                    f"to re-embed, or `memo migrate-vault <new-dir>` if "
+                    f"you moved the vault. This is NOT an error — just a "
+                    f"notice that disk and index are out of sync.",
                     file=sys.stderr,
                 )
         except Exception:

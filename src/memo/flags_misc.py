@@ -262,7 +262,7 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_ASK_FALLBACK_MSG",
         "str",
-        "no encuentro la respuesta en las memorias guardadas",
+        "I couldn't find an answer in the saved memories",
         "misc",
         "Message returned by memo_ask when no relevant sources are found.",
     ),

@@ -164,14 +164,14 @@ class CorpusSnapshot:
 
         as_of_iso = self.as_of.date().isoformat()
         user_msg = (
-            f"Pregunta del user (vista de la memoria al {as_of_iso}):\n{question}\n\n"
-            f"Memorias relevantes (top {len(hits)} del snapshot histórico):\n\n"
+            f"User question (memory view as of {as_of_iso}):\n{question}\n\n"
+            f"Relevant memorias (top {len(hits)} from the historical snapshot):\n\n"
             + "\n---\n".join(snippet_lines)
         )
         system_msg = (
             _ASK_SYSTEM_PROMPT
-            + f"\n\nIMPORTANTE: estás respondiendo desde una vista histórica de la memoria al {as_of_iso}. "
-            "NO menciones hechos que sólo se conocieron después de esa fecha aunque los sepas."
+            + f"\n\nIMPORTANT: you are answering from a historical view of the memory as of {as_of_iso}. "
+            "Do NOT mention facts that only became known after that date, even if you know them."
         )
 
         mem = self._memory
@@ -187,7 +187,7 @@ class CorpusSnapshot:
             )
             answer = ((out.get("message") or {}).get("content") or "").strip()
         except Exception as exc:
-            answer = f"(error consultando el modelo: {type(exc).__name__})"
+            answer = f"(error querying the model: {type(exc).__name__})"
 
         return {
             "question": question,

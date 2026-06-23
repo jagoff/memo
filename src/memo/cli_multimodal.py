@@ -17,15 +17,15 @@ from memo.config import Config
 
 @click.group(name="multimodal")
 def multimodal_group() -> None:
-    """Memoria Multi-Modal con Embeddings Universales."""
+    """Multi-modal memoria with universal embeddings."""
     pass
 
 
 @multimodal_group.command(name="add-image")
 @click.argument("image_path", type=click.Path(exists=True))
-@click.option("--memoria-id", help="ID de memoria asociada")
+@click.option("--memoria-id", help="Associated memoria ID")
 def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
-    """Agrega imagen al corpus multi-modal.
+    """Add an image to the multi-modal corpus.
 
     Example: memo multimodal add-image /path/to/image.png --memoria-id abc123
     """
@@ -43,9 +43,9 @@ def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
 
 @multimodal_group.command(name="add-audio")
 @click.argument("audio_path", type=click.Path(exists=True))
-@click.option("--memoria-id", help="ID de memoria asociada")
+@click.option("--memoria-id", help="Associated memoria ID")
 def multimodal_add_audio(audio_path: str, memoria_id: str | None) -> None:
-    """Agrega audio al corpus multi-modal.
+    """Add audio to the multi-modal corpus.
 
     Example: memo multimodal add-audio /path/to/audio.mp3 --memoria-id abc123
     """
@@ -63,9 +63,9 @@ def multimodal_add_audio(audio_path: str, memoria_id: str | None) -> None:
 
 @multimodal_group.command(name="search-images")
 @click.argument("query")
-@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+@click.option("--limit", type=int, default=10, help="Maximum number of results")
 def multimodal_search_images(query: str, limit: int) -> None:
-    """Busca con texto, encuentra imágenes.
+    """Search by text, find images.
 
     Example: memo multimodal search-images "architecture diagram"
     """
@@ -81,9 +81,9 @@ def multimodal_search_images(query: str, limit: int) -> None:
 
 @multimodal_group.command(name="search-audio")
 @click.argument("query")
-@click.option("--limit", type=int, default=10, help="Máximo de resultados")
+@click.option("--limit", type=int, default=10, help="Maximum number of results")
 def multimodal_search_audio(query: str, limit: int) -> None:
-    """Busca con texto, encuentra audio.
+    """Search by text, find audio.
 
     Example: memo multimodal search-audio "meeting notes"
     """
@@ -99,9 +99,9 @@ def multimodal_search_audio(query: str, limit: int) -> None:
 
 @multimodal_group.command(name="search-all")
 @click.argument("query")
-@click.option("--limit", type=int, default=10, help="Máximo de resultados por modalidad")
+@click.option("--limit", type=int, default=10, help="Maximum results per modality")
 def multimodal_search_all(query: str, limit: int) -> None:
-    """Busca en todas las modalidades.
+    """Search across all modalities.
 
     Example: memo multimodal search-all "project documentation"
     """

@@ -230,7 +230,7 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
     html = _MAPA_HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
     out_path.write_text(html, encoding="utf-8")
 
-    console.print(f"[green]✓[/green] Mapa saved → [bold]{out_path}[/bold]")
+    console.print(f"[green]✓[/green] Map saved → [bold]{out_path}[/bold]")
     console.print(
         f"[dim]{n_pts} memories · {method_name}[/dim]"
         + (" [dim]· animation enabled[/dim]" if animate and frames_data else "")
@@ -241,10 +241,10 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
 
 
 _MAPA_HTML_TEMPLATE = r"""<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>El Mapa — memo</title>
+<title>The Map — memo</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -276,21 +276,21 @@ _MAPA_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
 <div id="header">
-  <h1>El Mapa</h1>
+  <h1>The Map</h1>
   <span class="meta" id="meta-label"></span>
-  <input id="search-box" type="search" placeholder="Filtrar memorias…" />
+  <input id="search-box" type="search" placeholder="Filter memories…" />
 </div>
 <div id="plot"></div>
 <div id="sidebar">
   <span id="sidebar-close" onclick="closeSidebar()">✕</span>
-  <h2>Memoria</h2>
+  <h2>Memory</h2>
   <div id="sidebar-title"></div>
   <div id="sidebar-meta"></div>
-  <div id="sidebar-id" onclick="copyId()" title="Click para copiar ID"></div>
+  <div id="sidebar-id" onclick="copyId()" title="Click to copy ID"></div>
   <div id="sidebar-tags"></div>
 </div>
-<div id="legend"><h3>Tipos</h3><div id="legend-items"></div></div>
-<div id="toast">ID copiado</div>
+<div id="legend"><h3>Types</h3><div id="legend-items"></div></div>
+<div id="toast">ID copied</div>
 
 <script>
 const DATA = __DATA_JSON__;
@@ -305,7 +305,7 @@ Object.entries(DATA.type_colors).forEach(([type, color]) => {
   li.appendChild(item);
 });
 document.getElementById('meta-label').textContent =
-  `${DATA.n} memorias · ${DATA.method}`;
+  `${DATA.n} memories · ${DATA.method}`;
 
 // Point colours from type
 const colors = DATA.types.map(t => DATA.type_colors[t] || '#94a3b8');
@@ -366,7 +366,7 @@ if (DATA.frames && DATA.frames.length > 1) {
     len: 0.9,
     bgcolor: '#1e293b', bordercolor: '#334155',
     font: { color: '#64748b', size: 10 },
-    currentvalue: { prefix: 'Hasta: ', font: { color: '#94a3b8', size: 11 }, xanchor: 'center' },
+    currentvalue: { prefix: 'Up to: ', font: { color: '#94a3b8', size: 11 }, xanchor: 'center' },
   }];
   layout.sliders = sliders;
 }
@@ -382,7 +382,7 @@ document.getElementById('plot').on('plotly_click', function(data) {
   currentId = DATA.ids[idx];
   document.getElementById('sidebar-title').textContent = DATA.titles[idx];
   document.getElementById('sidebar-meta').textContent =
-    `${DATA.types[idx]} · creado ${DATA.created[idx]} · actualizado ${DATA.updated[idx]}`;
+    `${DATA.types[idx]} · created ${DATA.created[idx]} · updated ${DATA.updated[idx]}`;
   document.getElementById('sidebar-id').textContent = `/memo get ${currentId}`;
   const tagsEl = document.getElementById('sidebar-tags');
   tagsEl.innerHTML = '';

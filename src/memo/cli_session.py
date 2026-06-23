@@ -19,7 +19,7 @@ from memo.flags import flag_bool, flag_int
 @click.command(name="continuity")
 @click.option("--limit", default=12, show_default=True, help="Sessions to scan for this cwd.")
 def continuity_cmd(limit: int) -> None:
-    """¿Qué venía haciendo? — resume the latest session for this directory.
+    """What was I working on? — resume the latest session for this directory.
 
     Native-to-memo parity with memflow's flow_continuity, rendered from memo's
     own session snapshots (cwd / branch / running summary / open loops). Reads
@@ -267,12 +267,12 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
             "additionalContext": (
-                "## ⚠️ Snapshot automático\n\n"
-                f"El transcript de esta sesión supera los {size_kb} KB "
-                f"(umbral: {threshold_kb} KB) — contexto próximo al límite. "
-                "Lancé `memo capture-stop` en segundo plano para preservar "
-                "los insights más importantes. Podés continuar con normalidad; "
-                "si hay compactación automática, lo esencial ya está en memo.\n"
+                "## ⚠️ Automatic snapshot\n\n"
+                f"This session's transcript exceeds {size_kb} KB "
+                f"(threshold: {threshold_kb} KB) — context near the limit. "
+                "I launched `memo capture-stop` in the background to preserve "
+                "the most important insights. You can continue as normal; "
+                "if auto-compaction occurs, the essentials are already in memo.\n"
             ),
         }
     }
@@ -609,12 +609,12 @@ def session_recent(limit: int | None) -> None:
         summary = _clean_summary(top, 120)
         lines.extend(
             [
-                "## Sesión anterior detectada — ¿continuar?",
+                "## Previous session detected — continue?",
                 "",
-                f"Había una sesión activa en este directorio ({when}):",
-                f"- **Resumen**: {summary}",
-                f"- **Branch**: `{branch}`  |  **Turnos**: {turns}",
-                f"- **Para retomar** (en una nueva terminal): `claude --resume {sid}`",
+                f"There was an active session in this directory ({when}):",
+                f"- **Summary**: {summary}",
+                f"- **Branch**: `{branch}`  |  **Turns**: {turns}",
+                f"- **To resume** (in a new terminal): `claude --resume {sid}`",
                 "",
             ]
         )
@@ -624,9 +624,9 @@ def session_recent(limit: int | None) -> None:
             lines.append("")
         lines.extend(
             [
-                "> **Acción**: Al iniciar esta conversación, pregunta al usuario si quiere "
-                "retomar la sesión anterior (ejecutando el comando de arriba en la terminal) "
-                "o continuar con esta sesión nueva.",
+                "> **Action**: When starting this conversation, ask the user whether they want to "
+                "resume the previous session (by running the command above in the terminal) "
+                "or continue with this new session.",
                 "",
             ]
         )
@@ -638,7 +638,7 @@ def session_recent(limit: int | None) -> None:
             [
                 f"### {title}",
                 "",
-                "| cuándo | proyecto | branch | resumen | id |",
+                "| when | project | branch | summary | id |",
                 "|--------|----------|--------|---------|----|",
             ]
         )
@@ -662,9 +662,9 @@ def session_recent(limit: int | None) -> None:
             if (r.get("cwd") or "") == cur_cwd or (r.get("project") or "") == cur_project
         ]
         others = [r for r in remaining if r not in this_project][:8]
-        _render_table("Sesiones recientes en este proyecto", this_project)
-        _render_table("Otros proyectos", others)
-        lines.append("_`memo resume <id>` para ver detalles. `claude --resume <id>` para retomar._")
+        _render_table("Recent sessions in this project", this_project)
+        _render_table("Other projects", others)
+        lines.append("_`memo resume <id>` to see details. `claude --resume <id>` to resume._")
 
     output = {
         "hookSpecificOutput": {

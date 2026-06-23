@@ -135,7 +135,7 @@ def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
         click.echo(json.dumps([r.to_dict() for r in items], ensure_ascii=False, indent=2))
         return
     if not items:
-        console.print("[dim]vacío[/dim]")
+        console.print("[dim]empty[/dim]")
         return
     tbl = Table(show_lines=False, expand=True)
     tbl.add_column("updated", width=20)

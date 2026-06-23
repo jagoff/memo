@@ -334,7 +334,7 @@ def maintain_cmd(
                 receipt["outcome_reconciled"] = reconcile_roi(mem).get("updated", 0)
                 for d in dead:
                     if mem.forget(
-                        d["id"], reason=f"outcome: surfaced {d['surfaced']}x sin grounding"
+                        d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
                     ) is not None:
                         receipt["dead_archived"].append(d["id"])
         except Exception as exc:
