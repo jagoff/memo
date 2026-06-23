@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 720" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+
+  <style>
+    .title    { font-size: 22px; font-weight: 700; fill: #0f172a; }
+    .sub      { font-size: 13px; fill: #64748b; }
+    .section  { font-size: 12px; font-weight: 700; fill: #475569; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box      { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+    .box-md   { fill: #f0fdf4; stroke: #bbf7d0; stroke-width: 1.5; }
+    .box-blue { fill: #eff6ff; stroke: #bfdbfe; stroke-width: 1.5; }
+    .box-soft { fill: #f8fafc; stroke: #e2e8f0; stroke-width: 1.5; }
+    .label    { font-size: 14px; font-weight: 600; fill: #0f172a; text-anchor: middle; }
+    .label-l  { font-size: 14px; font-weight: 600; fill: #0f172a; text-anchor: start; }
+    .meta     { font-size: 11px; fill: #64748b; text-anchor: middle; }
+    .meta-l   { font-size: 11.5px; fill: #475569; text-anchor: start; }
+    .green    { fill: #16a34a; }
+    .blue     { fill: #2563eb; }
+    .flow     { stroke: #475569; stroke-width: 1.6; fill: none; }
+    .flow-b   { stroke: #2563eb; stroke-width: 1.6; fill: none; }
+  </style>
+
+  <rect x="0" y="0" width="960" height="720" fill="#ffffff"/>
+
+  <!-- Header -->
+  <text x="48" y="50" class="title">How memo works</text>
+  <text x="48" y="74" class="sub">Markdown is the source of truth · sqlite-vec is a rebuildable index · LLM + embedder + reranker run in-process via Apple MLX — 100% local.</text>
+
+  <!-- ====================== WRITE PATH ====================== -->
+  <text x="48" y="116" class="section">1 · Write path</text>
+
+  <!-- A: agent -->
+  <rect class="box" x="40" y="130" width="176" height="66" rx="10" filter="url(#shadow)"/>
+  <text x="128" y="160" class="label">Agent · CLI · MCP</text>
+  <text x="128" y="180" class="meta">memo save · a decision</text>
+
+  <!-- B: md (source of truth) -->
+  <rect class="box-md" x="256" y="130" width="176" height="66" rx="10" filter="url(#shadow)"/>
+  <text x="344" y="158" class="label">.md file</text>
+  <text x="344" y="178" class="meta green">written first — source of truth</text>
+
+  <!-- C: embed -->
+  <rect class="box" x="472" y="130" width="176" height="66" rx="10" filter="url(#shadow)"/>
+  <text x="560" y="158" class="label">MLX embed</text>
+  <text x="560" y="178" class="meta">query-prefix · in-process</text>
+
+  <!-- D: index -->
+  <rect class="box" x="688" y="130" width="200" height="66" rx="10" filter="url(#shadow)"/>
+  <text x="788" y="158" class="label">sqlite-vec index</text>
+  <text x="788" y="178" class="meta">vec + BM25 · one file</text>
+
+  <line class="flow" x1="216" y1="163" x2="252" y2="163" marker-end="url(#arrow)"/>
+  <line class="flow" x1="432" y1="163" x2="468" y2="163" marker-end="url(#arrow)"/>
+  <line class="flow" x1="648" y1="163" x2="684" y2="163" marker-end="url(#arrow)"/>
+
+  <!-- rebuild note -->
+  <text x="788" y="214" class="meta">rebuildable: <tspan font-style="italic">memo reindex</tspan> from .md</text>
+
+  <!-- ====================== RECALL PATH ====================== -->
+  <text x="48" y="280" class="section">2 · Recall path  —  fires on every prompt, before the agent answers</text>
+
+  <!-- E: hook -->
+  <rect class="box" x="40" y="296" width="176" height="66" rx="10" filter="url(#shadow)"/>
+  <text x="128" y="324" class="label">UserPromptSubmit</text>
+  <text x="128" y="344" class="meta">hook · ~5s budget</text>
+
+  <!-- F: hybrid search -->
+  <rect class="box" x="256" y="296" width="176" height="66" rx="10" filter="url(#shadow)"/>
+  <text x="344" y="324" class="label">Hybrid search</text>
+  <text x="344" y="344" class="meta">vec + BM25 · RRF</text>
+
+  <!-- G: rerank -->
+  <rect class="box" x="472" y="296" width="176" height="66" rx="10" filter="url(#shadow)"/>
+  <text x="560" y="324" class="label">Rerank</text>
+  <text x="560" y="344" class="meta">cross-encoder (opt)</text>
+
+  <!-- H: inject -->
+  <rect class="box-blue" x="688" y="296" width="200" height="66" rx="10" filter="url(#shadow)"/>
+  <text x="788" y="324" class="label">Inject ## Memory</text>
+  <text x="788" y="344" class="meta blue">~160-token budget</text>
+
+  <line class="flow" x1="216" y1="329" x2="252" y2="329" marker-end="url(#arrow)"/>
+  <line class="flow" x1="432" y1="329" x2="468" y2="329" marker-end="url(#arrow)"/>
+  <line class="flow" x1="648" y1="329" x2="684" y2="329" marker-end="url(#arrow)"/>
+
+  <!-- index feeds recall: D bottom -> F top -->
+  <path class="flow-b" d="M788,196 C788,250 344,242 344,294" marker-end="url(#arrow-blue)"/>
+  <text x="566" y="250" class="meta blue" text-anchor="middle">reads the index</text>
+
+  <!-- ====================== SURFACES + MAINTENANCE ====================== -->
+  <text x="48" y="426" class="section">3 · Always-on surfaces</text>
+  <rect class="box-soft" x="40" y="442" width="412" height="96" rx="10" filter="url(#shadow)"/>
+  <text x="60" y="470" class="label-l">Surfaces</text>
+  <text x="60" y="494" class="meta-l">memo CLI — same API in your shell</text>
+  <text x="60" y="512" class="meta-l">memo-mcp — stdio server for any MCP client</text>
+  <text x="60" y="530" class="meta-l">recall daemon — warm embedder over a socket (&lt;200 ms)</text>
+
+  <text x="476" y="426" class="section">4 · Nightly maintenance  ·  reversible</text>
+  <rect class="box-soft" x="476" y="442" width="412" height="96" rx="10" filter="url(#shadow)"/>
+  <text x="496" y="470" class="label-l">Self-healing corpus</text>
+  <text x="496" y="498" class="meta-l">contradict-scan  →  dedup  →  consolidate</text>
+  <text x="496" y="520" class="meta-l">supersede stale, merge duplicates — one MLX cold-load, all undoable</text>
+
+  <!-- ====================== TOKEN ECONOMY BANNER ====================== -->
+  <rect x="40" y="572" width="848" height="104" rx="12" fill="#0f172a"/>
+  <text x="64" y="606" font-size="13" font-weight="700" fill="#e2e8f0" letter-spacing="0.06em" style="text-transform:uppercase">Token economy</text>
+  <text x="64" y="636" font-size="15" font-weight="600" fill="#ffffff">Default MCP surface: 5 tools · ~589 tokens   vs   full 118 tools · ~16,157 tokens</text>
+  <text x="64" y="660" font-size="13" fill="#94a3b8">≈ 96.4% less schema context per session · recall injects the answer the agent would otherwise re-derive (~160-token budget).</text>
+  <text x="788" y="636" font-size="34" font-weight="800" fill="#38bdf8" text-anchor="middle">96.4%</text>
+  <text x="788" y="658" font-size="11" fill="#94a3b8" text-anchor="middle">less context overhead</text>
+</svg>

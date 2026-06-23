@@ -32,7 +32,7 @@ class Identity:
 
     @property
     def label(self) -> str:
-        """Human/commit-friendly label, e.g. ``HOST·a1b2c3d4``."""
+        """Human/commit-friendly label, e.g. ``MacBook-Pro·a1b2c3d4``."""
         s = self.hostname
         if self.session_id:
             s = f"{s}·{self.session_id[:8]}"

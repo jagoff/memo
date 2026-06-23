@@ -71,7 +71,7 @@
   <rect x="40" y="225" width="880" height="65" class="group-rect"/>
 
   <rect x="80" y="235" width="600" height="45" class="box box-entry"/>
-  <text x="380" y="258" class="label">memo-mcp (FastMCP stdio server) — 13 tools: memory_save · search · list · get · update · delete · reindex · ask · stats · …</text>
+  <text x="380" y="258" class="label">memo-mcp (FastMCP stdio server) — 13 tools: memo_save · search · list · get · update · delete · reindex · ask · stats · …</text>
   <text x="380" y="273" class="meta">used by every MCP client above</text>
 
   <rect x="710" y="235" width="190" height="45" class="box box-entry"/>

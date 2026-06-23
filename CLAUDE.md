@@ -261,7 +261,6 @@ across the whole regression set — never per-question.
 
 Saved orchestration scripts in `.claude/workflows/`, invoked as `/`-commands:
 
-- `/data-integrity-audit` — read-only health sweep over memo + memflow data (dup/near-empty chunks, stale entries, sync/heartbeat anomalies); reports exact fix commands, never mutates.
 - `/demonolith-split [path]` — map a god-file and propose a clean in-repo package split (plan only). No arg → largest source file (e.g. `cli_capture.py`).
 
 The trinity-wide `/trinity-green` and `/trinity-review` live in the synapse repo. Enable auto-orchestration for a session with `/effort ultracode`. List runs with `/workflows`.

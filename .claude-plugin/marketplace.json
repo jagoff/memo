@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "memo",
-      "description": "Persistent semantic memory. Slash command `/memo` + MCP tools `mcp__memo__memory_*`.",
+      "description": "Persistent semantic memory. Slash command `/memo` + MCP tools `mcp__memo__memo_*`.",
       "source": "./",
       "category": "memory"
     }

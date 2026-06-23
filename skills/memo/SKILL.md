@@ -1,6 +1,6 @@
 ---
 name: memo
-description: "Route `/memo` requests to the local memo MCP memory server. Use for searching, asking, saving, listing, getting, updating, deleting, reindexing, stats, and doctor commands. Prefer `mcp__memo__memory_*` tools; use the `memo` CLI only for maintenance commands not exposed over MCP."
+description: "Route `/memo` requests to the local memo MCP memory server. Use for searching, asking, saving, listing, getting, updating, deleting, reindexing, stats, and doctor commands. Prefer `mcp__memo__memo_*` tools; use the `memo` CLI only for maintenance commands not exposed over MCP."
 argument-hint: "(empty = smart capture) | <query> | ask <question> | save <text> | get <id> | doctor"
 ---
 
@@ -10,7 +10,7 @@ Route the request through memo's minimal MCP surface.
 
 ## Preflight
 
-If `mcp__memo__memory_*` tools are unavailable, tell the user to run:
+If `mcp__memo__memo_*` tools are unavailable, tell the user to run:
 
 ```bash
 memo install-slash --client codex

@@ -59,6 +59,9 @@ memo-backup-*.zip
 # graphify tool output (local analysis cache)
 graphify-out/
 
+# understand-anything tool output (local knowledge-graph cache)
+.understand-anything/
+
 # Zero-config repo mode defaults (auto-created on first run)
 memorias/
 .memo-state/

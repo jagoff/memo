@@ -1,4 +1,4 @@
-# El Briefing — unified session-start panel
+# Session briefing — unified session-start panel
 
 `memo briefing` is the `SessionStart` hook output: a markdown panel
 the agent (Claude Code, Cursor, …) sees at the top of every new
@@ -9,18 +9,18 @@ agent to issue any extra MCP calls.
 
 By default the panel composes the following, top to bottom:
 
-1. **Última sesión en este proyecto** — last session-checkpoint that
+1. **Last session in this project** — last session-checkpoint that
    matches the current `cwd`, plus the `claude --resume` command.
-2. **Estado actual (Synapse)** — top-3 `present_state` items from
+2. **Current state (Synapse)** — top-3 `present_state` items from
    `synapse packet` (memflow handoffs, current focus, attention
    queue). Only present when synapse is reachable + returns data.
-3. **Conflictos abiertos** — top-3 open `reality_conflicts` from the
+3. **Open conflicts** — top-3 open `reality_conflicts` from the
    same packet, with severity + freeze-write flag.
-4. **Loops abiertos** — recently updated memorias (`memo store
+4. **Open loops** — recently updated memorias (`memo store
    list_recent`), windowed to the last N days.
-5. **Memoria del día** — date-seeded pick from the oldest-updated
+5. **Memory of the day** — date-seeded pick from the oldest-updated
    memorias so the corpus is sampled over time.
-6. **Interaction guide** — `dame el loop N` / `/memo get` /
+6. **Interaction guide** — `give me loop N` / `/memo get` /
    `/memo ask` shortcuts.
 
 A trailing `_Synapse: ready · trace=<short>_` line is appended when

@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Template: nightly `memo dream run` LaunchAgent (macOS).
+  Replace __HOME__ with your home directory (e.g. /Users/you) and __MEMO_BIN__
+  with the absolute path to the `memo` binary (`command -v memo`), then:
+
+    cp com.memo.dream.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.memo.dream.plist
+-->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -6,7 +14,7 @@
   <string>com.memo.dream</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/USER/.local/bin/memo</string>
+    <string>__MEMO_BIN__</string>
     <string>dream</string>
     <string>run</string>
   </array>
@@ -19,9 +27,9 @@
     <integer>0</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/USER/Library/Logs/memo/dream.log</string>
+  <string>__HOME__/Library/Logs/memo/dream.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/USER/Library/Logs/memo/dream.err</string>
+  <string>__HOME__/Library/Logs/memo/dream.err</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>MEMO_NONINTERACTIVE</key>
@@ -33,7 +41,7 @@
     <key>PYTHONUNBUFFERED</key>
     <string>1</string>
     <key>PATH</key>
-    <string>/Users/USER/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
 </dict>
 </plist>
