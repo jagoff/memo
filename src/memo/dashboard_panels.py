@@ -22,10 +22,10 @@ from memo.dashboard_logs import (
     read_usage_log,
 )
 from memo.dashboard_metrics import consult_breakdown, reask_stats, recall_health, verdict
+from memo.watcher import _PLIST_LABEL as _WATCH_LABEL
 
 _log = logging.getLogger(__name__)
 _SPARK = "▁▂▃▄▅▆▇█"
-_WATCH_LABEL = "com.memo.watch"
 
 
 @dataclass

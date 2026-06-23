@@ -405,20 +405,20 @@ def test_render_active_memory_includes_session_context():
             }
         )
     )
-    assert "Memoria activa" in md
+    assert "Active memory" in md
     assert "Se dejó listo" in md
     assert "memo" in md and "master" in md
     assert "session.py" in md and "cli_session.py" in md
-    assert "Última respuesta" in md and "verificado" in md
-    assert "Loops abiertos (sesión)" in md and "tercer loop" in md
+    assert "Last reply" in md and "verificado" in md
+    assert "Open loops (session)" in md and "tercer loop" in md
 
 
 def test_format_relative_buckets():
     now = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
-    assert format_relative((now - timedelta(seconds=30)).isoformat(), now=now) == "hace <1m"
-    assert format_relative((now - timedelta(minutes=5)).isoformat(), now=now) == "hace 5m"
-    assert format_relative((now - timedelta(hours=3)).isoformat(), now=now) == "hace 3h"
-    assert format_relative((now - timedelta(days=2)).isoformat(), now=now) == "hace 2d"
+    assert format_relative((now - timedelta(seconds=30)).isoformat(), now=now) == "<1m ago"
+    assert format_relative((now - timedelta(minutes=5)).isoformat(), now=now) == "5m ago"
+    assert format_relative((now - timedelta(hours=3)).isoformat(), now=now) == "3h ago"
+    assert format_relative((now - timedelta(days=2)).isoformat(), now=now) == "2d ago"
     assert format_relative(None) == "—"
     assert format_relative("garbage") == "—"
 

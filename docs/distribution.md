@@ -53,5 +53,5 @@ containerizing the MLX runtime.
     - `memo install-slash --client opencode --dry-run`
     - `WINDSURF_MCP_CONFIG=$(mktemp) memo install-slash --client windsurf`
 
-The live PyPI package is currently `0.6.0`; do not update Homebrew to `0.7.0`
-until the `0.7.0` sdist exists on PyPI.
+Only bump the Homebrew formula to a version once that version's sdist actually
+exists on PyPI — never ahead of the published release.

@@ -388,6 +388,7 @@ class ShareManager:
             expires_hours=expires_hours,
             password=password,
         )
+        # Placeholder host: this experimental feature is not wired to a live service.
         return f"https://memo.app/share/{link.link_token}"
 
     def validate_link(self, link_token: str, password: str | None = None) -> ShareLink | None:

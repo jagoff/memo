@@ -49,9 +49,9 @@ def synapse_briefing_lines(
     Empty list when synapse is unavailable or returns nothing useful.
     Sections (each only present if the packet had data for it):
 
-    * `### Estado actual (Synapse)` — top present_state items
+    * `### Current state (Synapse)` — top present_state items
       (memflow focus / handoffs / current work).
-    * `### Conflictos abiertos` — top reality_conflicts.
+    * `### Open conflicts` — top reality_conflicts.
     * `_Synapse: ready · trace=<short>_` — health footer.
     """
     if not synapse_client.is_available():
@@ -83,7 +83,7 @@ def _present_state_section(rows: Any) -> list[str]:
     items = _coerce_rows(rows)[:_MAX_ITEMS]
     if not items:
         return []
-    out: list[str] = ["### Estado actual (Synapse)", ""]
+    out: list[str] = ["### Current state (Synapse)", ""]
     for i, item in enumerate(items, 1):
         source = str(item.get("source") or "?")
         title = str(item.get("title") or "—").strip() or "—"
@@ -104,7 +104,7 @@ def _conflicts_section(rows: Any) -> list[str]:
     ][:_MAX_ITEMS]
     if not open_items:
         return []
-    out: list[str] = ["### Conflictos abiertos", ""]
+    out: list[str] = ["### Open conflicts", ""]
     for i, c in enumerate(open_items, 1):
         cid = str(c.get("conflict_id") or "?")
         summary = str(c.get("summary") or c.get("title") or "—").strip()

@@ -113,5 +113,5 @@ def multimodal_search_all(query: str, limit: int) -> None:
     console.print("[bold]Results across modalities[/bold]")
     for modality, mod_results in results.items():
         console.print(f"\n[cyan]{modality}:[/cyan] {len(mod_results)} results")
-    for r in mod_results[:5]:
-        console.print(f"  {r.content_id[:8]} - similarity: {r.similarity:.2f}")
+        for r in mod_results[:5]:
+            console.print(f"  {r.content_id[:8]} - similarity: {r.similarity:.2f}")

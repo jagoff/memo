@@ -139,10 +139,12 @@ The `.md` files are canonical; the sqlite index is **derived and replayable**:
 
 - **Authority.** `save()` writes the `.md` first, then indexes — if indexing
   fails, the memoria is stamped `_memo_embed_pending` on disk and `memo reindex`
-  replays it (the save never silently vanishes). `delete()` removes the `.md`
-  **first** and aborts (`StorageError`) if the file can't be removed, so the
-  index never outlives its truth-bearing file. A hand-edit in Obsidian wins on
-  the next `reindex` (body_hash mismatch → disk overwrites the index).
+  replays it (the save never silently vanishes). `delete()` drops the derived
+  index **first** and removes the canonical `.md` **last**, rolling the store
+  back (`StorageError`) if the unlink fails — so the truth-bearing file is never
+  lost to a partial delete (a leftover index row is recoverable via `reindex`).
+  A hand-edit in Obsidian wins on the next `reindex` (body_hash mismatch → disk
+  overwrites the index).
 - **Rebuild, don't `rm`.** Use `memo reindex --rebuild` (not `rm memvec.db`) to
   rebuild from disk. It truncates only the markdown-derivable tables
   (`meta`/`vec`/`fts`) and preserves the **user-signal** tables — `access`,
@@ -229,7 +231,7 @@ Contract for any layer above memo (synapse, memflow, agents):
 memo deliberately keeps cognition OFF its MCP surface
 (`test_brain_like_mcp_tools_are_not_registered`): no `suggest`/`agent`/
 `cognitive` verbs. Proactivity lives in memo's own recall/briefing output (the
-"También en tu memoria" nudge), not as a brain tool — memo is the store, the
+"Also in your memory" nudge), not as a brain tool — memo is the store, the
 layer above is the cognition.
 
 ## CI gates

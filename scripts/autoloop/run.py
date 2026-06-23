@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Autonomous chat-precision self-debug loop.
 
-Samples random notes, asks Ollama to generate a Spanish question per note,
-runs the synapse chat pipeline on those questions, scores via the
-label-free signal "seed note id in actual_top_10", buckets failures by
-root cause, and twiddles one env-var knob per round.
+TRINITY-INTERNAL — not part of the public memo product. This harness drives the
+*synapse* chat pipeline (not memo) and requires Ollama plus a local ~/.synapse
+runtime, so it will not run on a stock memo install. Kept for maintainer use.
 
-State persists to ~/.synapse/state/eval/autoloop/. Resumable.
-
-Plan: ~/.claude/plans/valiant-puzzling-blossom.md
+Samples random notes, asks a local model to generate a question per note, runs
+the synapse chat pipeline on those questions, scores via the label-free signal
+"seed note id in actual_top_10", buckets failures by root cause, and twiddles
+one env-var knob per round. State persists to ~/.synapse/state/eval/autoloop/.
+Resumable.
 """
 from __future__ import annotations
 

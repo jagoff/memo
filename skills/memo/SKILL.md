@@ -13,7 +13,7 @@ Route the request through memo's minimal MCP surface.
 If `mcp__memo__memo_*` tools are unavailable, tell the user to run:
 
 ```bash
-memo install-slash --client codex
+memo install-slash --client claude-code
 ```
 
 Then start a new session.

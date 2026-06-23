@@ -290,7 +290,7 @@ _MAPA_HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div id="sidebar-tags"></div>
 </div>
 <div id="legend"><h3>Tipos</h3><div id="legend-items"></div></div>
-<div id="toast" id="toast">ID copiado</div>
+<div id="toast">ID copiado</div>
 
 <script>
 const DATA = __DATA_JSON__;

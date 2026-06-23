@@ -52,7 +52,7 @@ def register(server: FastMCP, memory: Memory) -> None:
                 "status": "dry_run",
                 "session_id": sid,
                 "would_capture": True,
-                "transcript_path": transcript,
+                "transcript_path": str(transcript),
             }
 
         # Thread-safe lazy init

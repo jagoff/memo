@@ -1,4 +1,4 @@
-"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+"""EXPERIMENTAL — not covered by the test suite. API may change without notice.
 
 Persistent contradiction & staleness radar for the memory corpus.
 

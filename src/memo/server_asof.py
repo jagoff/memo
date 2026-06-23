@@ -94,11 +94,3 @@ def register(server: FastMCP, memory: Memory) -> None:
             "removed": [{"id": r.id, "title": r.title, "type": r.type} for r in d.removed],
             "updated": d.updated,
         }
-
-    # -- resources --------------------------------------------------------------
-    #
-    # Resources let MCP clients (Claude Desktop, Cursor, …) pin/list
-    # memorias without paying a tool-call round-trip per access. Each
-    # memoria is addressable as `memo://memory/<id>` and the recent
-    # feed is at `memo://recent`. Clients show resources in their UI;
-    # users can drag them into context.

@@ -261,7 +261,7 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     )
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
     # top-3 in the main block, next 2 in the related nudge
-    nudge_line = context.split("relacionado):", 1)[1]
+    nudge_line = context.split("related):", 1)[1]
     assert "hit 3" in nudge_line and "hit 4" in nudge_line
     assert "hit 0" not in nudge_line  # top hits stay in the main block
 

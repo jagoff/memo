@@ -96,9 +96,3 @@ def register(server: FastMCP, memory: Memory) -> None:
             return {"error": "remote is required (path to remote memo state dir)"}
         diff = memory.sync.sync_from_remote(remote_db)
         return diff.__dict__
-
-    # -- cache-tier tools ----------------------------------------------------------
-    # Opt-in (MEMO_CACHE_MODE != off): memo as a bounded cache fronting an
-    # authoritative backing store. These are store-management verbs (not the
-    # "brain-like" cognition verbs blocked by test_architecture_boundaries),
-    # so they belong on memo's MCP surface.

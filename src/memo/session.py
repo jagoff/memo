@@ -551,7 +551,7 @@ def prune_lru(state_dir: Path, *, cap: int = _LRU_CAP_DEFAULT) -> int:
 
 
 def format_relative(updated_iso: str | None, now: datetime | None = None) -> str:
-    """`updated` → `"hace 5m"` / `"hace 2h"` / `"hace 3d"` for the picker.
+    """`updated` → `"5m ago"` / `"2h ago"` / `"3d ago"` for the picker.
     Falls back to `"—"` on parse failure."""
     if not updated_iso:
         return "—"
@@ -565,12 +565,12 @@ def format_relative(updated_iso: str | None, now: datetime | None = None) -> str
     delta = now - ts
     secs = int(delta.total_seconds())
     if secs < 60:
-        return "hace <1m"
+        return "<1m ago"
     if secs < 3600:
-        return f"hace {secs // 60}m"
+        return f"{secs // 60}m ago"
     if secs < 86400:
-        return f"hace {secs // 3600}h"
-    return f"hace {secs // 86400}d"
+        return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
 
 
 _AUTOSAVE_THRESHOLD_KB_DEFAULT = 1024  # ~1MB -> roughly 50-200 turns
@@ -795,13 +795,13 @@ def render_active_memory(snapshot: dict[str, Any]) -> list[str]:
     if not snapshot:
         return []
 
-    lines = ["### Memoria activa", ""]
-    lines.append(f"- **En curso**: {_clean_snapshot_summary(snapshot, 140)}")
+    lines = ["### Active memory", ""]
+    lines.append(f"- **In progress**: {_clean_snapshot_summary(snapshot, 140)}")
 
     project = snapshot.get("project") or "—"
     branch = snapshot.get("branch") or "—"
     turns = snapshot.get("turn_count") or 0
-    lines.append(f"- **Contexto**: `{project}` · `{branch}` · {turns} turnos")
+    lines.append(f"- **Context**: `{project}` · `{branch}` · {turns} turns")
 
     modified_files = [
         str(path).strip()
@@ -809,13 +809,13 @@ def render_active_memory(snapshot: dict[str, Any]) -> list[str]:
         if isinstance(path, str) and path.strip()
     ][:4]
     if modified_files:
-        lines.append("- **Archivos tocados**: " + ", ".join(f"`{path}`" for path in modified_files))
+        lines.append("- **Files touched**: " + ", ".join(f"`{path}`" for path in modified_files))
 
     last_assistant_tail = snapshot.get("last_assistant_tail")
     if last_assistant_tail and not is_command_noise(last_assistant_tail):
         tail = _strip_command_wrappers(str(last_assistant_tail)).replace("\n", " ")[:160]
         if tail:
-            lines.append(f"- **Última respuesta**: {tail}")
+            lines.append(f"- **Last reply**: {tail}")
 
     trail = [
         str(prompt).strip()
@@ -823,7 +823,7 @@ def render_active_memory(snapshot: dict[str, Any]) -> list[str]:
         if isinstance(prompt, str) and prompt.strip()
     ]
     if trail:
-        lines.append("- **Loops abiertos (sesión)**:")
+        lines.append("- **Open loops (session)**:")
         for i, prompt in enumerate(reversed(trail[-_PROMPT_TRAIL_MAX:]), 1):
             lines.append(f"  {i}. {prompt[:120]}")
 
@@ -831,7 +831,7 @@ def render_active_memory(snapshot: dict[str, Any]) -> list[str]:
 
 
 def render_continuity(rows: list[dict[str, Any]], cwd: str) -> str:
-    """Render "¿qué venía haciendo?" for the latest session in `cwd`.
+    """Render "what was I working on?" for the latest session in `cwd`.
 
     Native-to-memo parity with memflow's flow_continuity, built on memo's own
     session snapshots (cwd / branch / running_summary / open-loop prompt_trail).
@@ -840,15 +840,15 @@ def render_continuity(rows: list[dict[str, Any]], cwd: str) -> str:
     """
     same = [r for r in rows if (r.get("cwd") or "") == cwd]
     if not same:
-        return "Sin sesión previa en este directorio."
+        return "No previous session in this directory."
     top = same[0]
 
     lines = [
-        f"## Venías haciendo ({format_relative(top.get('updated'))})",
+        f"## What you were doing ({format_relative(top.get('updated'))})",
         "",
-        f"- **Resumen**: {_clean_snapshot_summary(top, 160)}",
-        f"- **Branch**: `{top.get('branch') or '—'}`  |  **Turnos**: {top.get('turn_count') or 0}",
-        f"- **Retomar**: `claude --resume {top.get('session_id') or ''}`",
+        f"- **Summary**: {_clean_snapshot_summary(top, 160)}",
+        f"- **Branch**: `{top.get('branch') or '—'}`  |  **Turns**: {top.get('turn_count') or 0}",
+        f"- **Resume**: `claude --resume {top.get('session_id') or ''}`",
     ]
     active_memory = render_active_memory(top)
     if active_memory:

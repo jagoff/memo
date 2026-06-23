@@ -1,11 +1,13 @@
-"""`memo sync` command group — multi-machine sync via audit-log replay.
+"""`memo sync` command group — multi-machine sync.
 
 Extracted from cli.py (3a god-module decomposition). Registered onto the
 root group in cli.py via `cli.add_command(sync_group)`.
 
-The sync model is pull-only: a machine replays the events missing from its
-local store that exist in a remote `history.db`. There is no file diff and no
-push (the remote machine pulls instead).
+Two tiers (see CLAUDE.md):
+- Git remote (`memo sync push` / `pull`, via `memo.sync_git`): the cross-machine
+  channel — pull-rebase-before-push under a per-machine flock.
+- Legacy audit-log replay (`export-signal` / `import-signal` / `diff`): the
+  `--remote <path>` fallback that replays events missing from the local store.
 """
 
 from __future__ import annotations

@@ -64,12 +64,25 @@ def test_brain_like_cli_groups_are_not_public() -> None:
 
 
 def test_brain_like_mcp_tools_are_not_registered() -> None:
-    source = (REPO_ROOT / "src" / "memo" / "server.py").read_text(encoding="utf-8")
+    # MCP tools live across server.py + server_*.py (registered via @server.tool()
+    # def memo_*) and mcp_tools.py (ToolSpec name="memo_*"). Scan all of them so the
+    # guard keeps biting after the monolith split + the memory_*->memo_* rename.
+    memo_dir = REPO_ROOT / "src" / "memo"
+    sources = [memo_dir / "server.py", memo_dir / "mcp_tools.py", *sorted(memo_dir.glob("server_*.py"))]
     forbidden = ("agent", "cognitive", "federation", "lifecycle", "suggest")
 
-    for prefix in forbidden:
-        pattern = rf"@server\.tool\(\)\s+def memory_{re.escape(prefix)}"
-        assert re.search(pattern, source) is None
+    for path in sources:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for prefix in forbidden:
+            esc = re.escape(prefix)
+            assert re.search(rf"\bdef memo_{esc}", text) is None, (
+                f"brain-like MCP tool memo_{prefix}* defined in {path.name}"
+            )
+            assert re.search(rf'name="memo_{esc}', text) is None, (
+                f"brain-like MCP tool memo_{prefix}* registered in {path.name}"
+            )
 
 
 def test_repo_index_does_not_write_memflow_receipts() -> None:

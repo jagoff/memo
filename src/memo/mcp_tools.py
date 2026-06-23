@@ -220,12 +220,12 @@ def _handle_feedback_implicit(memory: Memory, args: dict[str, Any]) -> dict[str,
 
 _TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
-        name="memory_entity_search",
+        name="memo_entity_search",
         description=(
             "Search memorias with entity-aware boosting. Extracts named entities "
             "(persons, technologies, projects) from the query and boosts results "
             "whose stored entities overlap. Useful for 'what do I know about "
-            "Fernando and React?' style queries."
+            "Alice and React?' style queries."
         ),
         params=(
             Param("query", "string", description="Search query text"),
@@ -237,7 +237,7 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
         handler=_handle_entity_search,
     ),
     ToolSpec(
-        name="memory_feedback_implicit",
+        name="memo_feedback_implicit",
         description=(
             "Record an implicit feedback signal (click or ignore) on a memoria "
             "for a given query. Use 'click' when the user viewed/used this result; "

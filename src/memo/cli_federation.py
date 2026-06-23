@@ -1,7 +1,9 @@
-"""`memo federation` command group — multi-vault federation.
+"""`memo federation` command group — multi-vault federation (EXPERIMENTAL).
 
-Extracted from cli.py (3a god-module decomposition). Registered onto the
-root group in cli.py via `cli.add_command(federation_group)`.
+Intentionally NOT registered onto the root group in cli.py: `federation` is a
+cross-system/orchestration concern that belongs to Synapse, and the architecture
+boundary guard (`test_brain_like_cli_groups_are_not_public`) forbids it on memo's
+public CLI surface. Kept here as a building block, not wired in.
 """
 
 from __future__ import annotations

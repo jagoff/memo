@@ -28,7 +28,7 @@ __all__ = [
 # -- Regex patterns for dependency-free entity extraction -------------------
 
 # Sequences of ≥2 consecutive capitalized words (proper noun phrases).
-# "Fernando Ferrari", "React Native", "Apple Silicon"
+# "Ada Lovelace", "React Native", "Apple Silicon"
 _PROPER_NOUN_RE = re.compile(
     r"\b[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-ZÁÉÍÓÚÜÑ]+(?:\s+[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-ZÁÉÍÓÚÜÑ]+)+"
 )

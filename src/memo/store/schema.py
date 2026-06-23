@@ -571,7 +571,7 @@ class _SchemaMixin(_StoreBase):
             return
 
         # The store layer cannot import memo.flags (circular dep risk), so
-        # read the env var directly (same pattern as _env_float above).
+        # read the env var directly (same pattern as bm25_queries._env_float).
         current_model: str = getattr(self, "embedder_model", "") or ""
         current_dims: int = self.dims
 

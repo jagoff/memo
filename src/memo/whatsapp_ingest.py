@@ -46,17 +46,12 @@ DEFAULT_BRIDGE_DB = _resolve_bridge_db()
 
 DEFAULT_RETENTION_DAYS = 180
 
-_BOT_JID = os.environ.get("WHATSAPP_BOT_JID", "120363426178035051@g.us")
-_LISTENER_NOTES_CHAT_JID = os.environ.get(
-    "WA_LISTENER_NOTES_CHAT_JID",
-    "5493425153999-1539438783@g.us",
-)
+# Your own bot/listener group JIDs to exclude from ingest. No personal
+# identifiers are baked into source — set these env vars to your own JIDs.
+_BOT_JID = os.environ.get("WHATSAPP_BOT_JID", "")
+_LISTENER_NOTES_CHAT_JID = os.environ.get("WA_LISTENER_NOTES_CHAT_JID", "")
 HARDCODED_EXCLUDE_JIDS = frozenset(
-    {
-        "status@broadcast",
-        _BOT_JID,
-        _LISTENER_NOTES_CHAT_JID,
-    }
+    jid for jid in {"status@broadcast", _BOT_JID, _LISTENER_NOTES_CHAT_JID} if jid
 )
 
 _ANTILOOP_MARKER = "​"  # U+200B

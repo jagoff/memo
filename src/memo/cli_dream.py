@@ -13,7 +13,7 @@ Bundles every maintenance pass into a single nightly run:
 
 `memo dream run` — run once (foreground).
 `memo dream status` — when did it last run, what did it change.
-`memo dream --if-due` — no-op unless > 24h since last run (for launchd).
+`memo dream if-due` — no-op unless > 24h since last run (for launchd).
 """
 
 from __future__ import annotations

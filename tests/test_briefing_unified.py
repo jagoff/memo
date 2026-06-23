@@ -113,7 +113,7 @@ def test_renders_present_state_section(monkeypatch):
     monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: _packet_fixture())
     out = briefing_mod.synapse_briefing_lines("/tmp")
     md = "\n".join(out)
-    assert "### Estado actual (Synapse)" in md
+    assert "### Current state (Synapse)" in md
     assert "Current focus: Memo GC5 briefing unification" in md
     assert "Pending handoff from MacBook Air" in md
     # Item 4 must be dropped (top-3 cap).
@@ -125,7 +125,7 @@ def test_renders_conflicts_filtering_resolved_and_archived(monkeypatch):
     monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: _packet_fixture())
     out = briefing_mod.synapse_briefing_lines("/tmp")
     md = "\n".join(out)
-    assert "### Conflictos abiertos" in md
+    assert "### Open conflicts" in md
     assert "C-open-1" in md
     assert "C-ack-2" in md
     assert "C-resolved-3" not in md
@@ -216,7 +216,7 @@ def test_mcp_unified_briefing_returns_payload(tmp_cfg, monkeypatch):
     fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
     out = fn(cwd="/tmp/sample")
     assert out["available"] is True
-    assert "Conflictos abiertos" in out["markdown"]
+    assert "Open conflicts" in out["markdown"]
     assert isinstance(out["lines"], list)
     assert len(out["lines"]) > 0
     assert len(out["markdown"]) <= 480
@@ -274,10 +274,10 @@ def test_cli_briefing_emits_active_memory_block(tmp_cfg, monkeypatch, tmp_path):
     assert result.exit_code == 0
     payload = json.loads(result.output)
     md = payload["hookSpecificOutput"]["additionalContext"]
-    assert "Memoria activa" in md
-    assert "Última sesión en este proyecto" in md
+    assert "Active memory" in md
+    assert "Last session in this project" in md
     assert "Quedó integrada" in md
-    assert "Loops abiertos (sesión)" in md
+    assert "Open loops (session)" in md
 
 
 def test_cli_compact_briefing_caps_context_and_skips_synapse(tmp_cfg, monkeypatch, tmp_path):
@@ -321,7 +321,7 @@ def test_cli_compact_briefing_caps_context_and_skips_synapse(tmp_cfg, monkeypatc
     md = payload["hookSpecificOutput"]["additionalContext"]
     assert len(md) <= 480
     assert "sid-compact" in md
-    assert "Memoria del día" not in md
+    assert "Memory of the day" not in md
 
 
 def test_compact_text_preserves_limit_and_ellipsis() -> None:

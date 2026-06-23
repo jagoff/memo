@@ -25,19 +25,19 @@ def _rows():
 
 def test_render_continuity_for_matching_cwd():
     out = render_continuity(_rows(), "/repos/memo")
-    assert "Venías haciendo" in out
-    assert "- **Resumen**: Se trabajó en el fix de sync y el instalador MCP." in out
-    assert "`master`" in out and "Turnos**: 7" in out
+    assert "What you were doing" in out
+    assert "- **Summary**: Se trabajó en el fix de sync y el instalador MCP." in out
+    assert "`master`" in out and "Turns**: 7" in out
     assert "claude --resume abc12345" in out
-    assert "Memoria activa" in out
-    assert "Archivos tocados" in out and "cli_session.py" in out
-    assert "Última respuesta" in out and "Cerré el ajuste" in out
-    assert "Loops abiertos (sesión)" in out and "segundo loop" in out
+    assert "Active memory" in out
+    assert "Files touched" in out and "cli_session.py" in out
+    assert "Last reply" in out and "Cerré el ajuste" in out
+    assert "Open loops (session)" in out and "segundo loop" in out
 
 
 def test_render_continuity_no_prior_session_for_cwd():
-    assert render_continuity(_rows(), "/nowhere") == "Sin sesión previa en este directorio."
+    assert render_continuity(_rows(), "/nowhere") == "No previous session in this directory."
 
 
 def test_render_continuity_empty_rows():
-    assert "Sin sesión previa" in render_continuity([], "/repos/memo")
+    assert "No previous session" in render_continuity([], "/repos/memo")

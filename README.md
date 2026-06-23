@@ -58,7 +58,7 @@ memo install-slash                    # register MCP + /memo for every client fo
 
 `memo install-slash` configures **Claude Code, Codex, Devin, Windsurf, and OpenCode** where each supports it — it writes the MCP server entry (pinned to the absolute `memo-mcp` path) and the `/memo` skill, forwarding your `MEMO_*` env so GUI clients inherit the right model profile. Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md](docs/reference.md#mcp-setup)**.
 
-After install, tools surface inside the agent as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_ask`, `memo_get`, `memo_briefing`).
+After install, tools surface inside the agent as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_ask`, `memo_get`, `memo_unified_briefing`).
 
 ## Quick start
 

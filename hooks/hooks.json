@@ -122,7 +122,7 @@
             "command": "MEMO_NONINTERACTIVE=1 memo session refresh-summary",
             "timeout": 20,
             "async": true,
-            "statusMessage": "memo: actualizando resumen de sesión…"
+            "statusMessage": "memo: updating session summary…"
           },
           {
             "type": "command",

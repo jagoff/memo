@@ -78,7 +78,7 @@ class TrinityServer(socketserver.ThreadingUnixStreamServer):
         # Cache miss or stale: fetch fresh
         try:
             from memo.synapse_client import get_packet
-            packet = get_packet(self._cfg)
+            packet = get_packet()
             if packet:
                 with self._cache_lock:
                     self._state_cache["synapse_packet"] = packet

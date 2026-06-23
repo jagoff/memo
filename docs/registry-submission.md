@@ -45,7 +45,7 @@ lists third-party MCP servers under
 ```markdown
 ## What
 
-`memo` is a local MCP memory server for Apple Silicon Macs. It exposes 13 tools (`memo_save`, `memo_search`, `memo_list`, `memo_ask`, etc.) plus two resources (`memo://recent`, `memo://memory/{id}`) over stdio.
+`memo` is a local MCP memory server for Apple Silicon Macs. It exposes a focused set of MCP tools (`memo_save`, `memo_search`, `memo_list`, `memo_ask`, …; 5 in the default `agent` profile, more under `core`/`full`) plus two resources (`memo://recent`, `memo://memory/{id}`) over stdio.
 
 ## Why it's different
 
@@ -153,7 +153,7 @@ Differentiators:
 - Markdown is the storage of record (Obsidian-compatible vault).
 - Hybrid retrieval out of the box: sqlite-vec + BM25 (FTS5) fused via RRF
   with cross-encoder rerank.
-- 13 MCP tools + 2 resources. Windsurf install already supported via
+- Focused MCP tool surface (5-tool `agent` default) + 2 resources. Windsurf install already supported via
   `memo install-slash --client windsurf`.
 
 Happy to provide a demo video or additional metadata. Thanks!

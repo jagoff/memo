@@ -10,7 +10,8 @@
 - Your first action in every task should be a memory search or asking a question to the memory store.
 
 ## Main Technologies
-...
+
+- **Language:** Python 3.13+
 - **ML Framework:** [Apple MLX](https://github.com/ml-explore/mlx) (MLX-native LLM, embedder, and reranker)
 - **Database:** SQLite with [`sqlite-vec`](https://github.com/asg017/sqlite-vec) for vector storage and FTS5 for BM25 keyword search.
 - **Protocol:** [Model Context Protocol (MCP)](https://modelcontextprotocol.io) for agent interaction.
