@@ -384,8 +384,18 @@ main() {
       warn "Re-run after auth: memo sync bootstrap $MEMO_SYNC_REMOTE --dest $sync_dest"
     fi
   else
-    say "no shared corpus wired (memo starts empty). To join an existing corpus on"
-    say "  a fresh Mac, re-run with: MEMO_SYNC_REMOTE=<git-url> ./install.sh"
+    # No remote requested this run — but a prior install may already have wired
+    # one (data_dir inside a git clone). Detect that so we don't tell a working
+    # install it "starts empty".
+    local sync_state sync_remote
+    sync_state="$(env MEMO_NONINTERACTIVE=1 "$memo_bin" sync status 2>/dev/null || true)"
+    if printf '%s' "$sync_state" | grep -q 'remote:'; then
+      sync_remote="$(printf '%s\n' "$sync_state" | sed -n 's/.*remote:[[:space:]]*//p' | head -1)"
+      ok "shared corpus already wired: ${sync_remote:-git clone} — SessionStart pull / Stop push keep it in sync"
+    else
+      say "no shared corpus wired (memo starts empty). To join an existing corpus on"
+      say "  a fresh Mac, re-run with: MEMO_SYNC_REMOTE=<git-url> ./install.sh"
+    fi
   fi
 
   printf '\n%s%s  ✓ memo is ready%s\n' "$BOLD" "$GREEN" "$RESET"
