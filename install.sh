@@ -196,6 +196,26 @@ resolve_memo_bin() {
   return 1
 }
 
+# Detect which agent CLIs/apps are present on PATH so the install can report
+# coverage. `memo install-slash --client all` is still the source of truth (it
+# skips absent clients); this is purely a human-readable summary. Sets the global
+# DETECTED_AGENTS to a comma-separated list (empty when none found).
+DETECTED_AGENTS=""
+detect_agents() {
+  local agent found=()
+  for agent in claude codex opencode devin blackbox cursor gemini; do
+    if command -v "$agent" >/dev/null 2>&1; then
+      found+=("$agent")
+    fi
+  done
+  if [[ ${#found[@]} -gt 0 ]]; then
+    local joined; printf -v joined '%s, ' "${found[@]}"
+    DETECTED_AGENTS="${joined%, }"
+  else
+    DETECTED_AGENTS=""
+  fi
+}
+
 # Ask Y/n on a TTY. Returns 0 for yes, 1 for no.
 # If stdin is not a TTY (e.g. `curl | bash`), uses default ($2, "Y" or "n").
 ask_yes_no() {
@@ -368,6 +388,15 @@ main() {
 
   phase "Configuring agent clients"
   if [[ "${MEMO_INSTALL_SKIP_AGENT_CONFIG:-0}" != "1" ]]; then
+    # Probe which agent CLIs/apps are on PATH so the user sees coverage before
+    # wiring. install-slash --client all is the source of truth (it skips absent
+    # clients); detection is only a report and never gates the wiring.
+    detect_agents
+    if [[ -n "$DETECTED_AGENTS" ]]; then
+      say "detected agents: $DETECTED_AGENTS"
+    else
+      say "no agent CLIs detected on PATH — wiring anyway (install-slash skips absent clients)"
+    fi
     # Configure every supported client (claude-code, codex, devin, opencode,
     # windsurf, blackbox) so the MCP lands in all tools present on the machine.
     # `devin` covers the devin CLI and Devin Desktop (ex-Windsurf), which share
@@ -376,7 +405,11 @@ main() {
       env MEMO_NONINTERACTIVE=1 "$memo_bin" install-slash \
       --client all \
       --best-effort; then
-      ok "agent clients configured"
+      if [[ -n "$DETECTED_AGENTS" ]]; then
+        ok "agent clients configured (detected: $DETECTED_AGENTS)"
+      else
+        ok "agent clients configured"
+      fi
     else
       warn "agent client configuration did not complete."
       warn "Re-run after installing clients: memo install-slash --client all --best-effort"
@@ -396,6 +429,9 @@ main() {
     warn "statusline install did not complete (non-fatal)."
     warn "Re-run manually: memo install-statusline"
   fi
+  say "only Claude Code exposes a native statusline; other agents (Codex/OpenCode/"
+  say "  Devin/Gemini/Blackbox) have no status bar — memo runs there as an MCP server"
+  say "  (visible in the agent's tool list), just without a persistent badge."
 
   phase "Shared corpus"
   # Cross-Mac corpus: clone the git-synced memo-sync repo and point this
@@ -414,18 +450,48 @@ main() {
     # No remote requested this run — but a prior install may already have wired
     # one (data_dir inside a git clone). Detect that so we don't tell a working
     # install it "starts empty".
-    local sync_state sync_remote
+    local sync_state sync_remote sync_url sync_dest
     sync_state="$(env MEMO_NONINTERACTIVE=1 "$memo_bin" sync status 2>/dev/null || true)"
     if printf '%s' "$sync_state" | grep -q 'remote:'; then
       sync_remote="$(printf '%s\n' "$sync_state" | sed -n 's/.*remote:[[:space:]]*//p' | head -1)"
       ok "shared corpus already wired: ${sync_remote:-git clone} — SessionStart pull / Stop push keep it in sync"
+    elif [[ -t 0 ]] && ask_yes_no "  ${YELLOW}?${RESET} Connect a git repo for cross-device memory sync? [y/N]" n; then
+      read -rp "  git remote URL (e.g. git@github.com:you/memo-sync.git): " sync_url || sync_url=""
+      if [[ -n "$sync_url" ]]; then
+        sync_dest="${MEMO_SYNC_DEST:-$HOME/repos/memo-sync}"
+        if spin "wiring corpus: $sync_url" \
+          env MEMO_NONINTERACTIVE=1 "$memo_bin" sync bootstrap "$sync_url" --dest "$sync_dest"; then
+          ok "corpus wired; SessionStart pull / Stop push hooks keep it in sync"
+        else
+          warn "sync bootstrap failed — private repo needs git creds (SSH key/PAT) on this Mac."
+          warn "Re-run after auth: memo sync bootstrap $sync_url --dest $sync_dest"
+        fi
+      else
+        say "no URL entered — skipping cross-device sync (memo stays local)."
+      fi
+    elif [[ -t 0 ]]; then
+      say "skipping cross-device sync (memo stays local). Re-run with"
+      say "  MEMO_SYNC_REMOTE=<url> or \`memo sync bootstrap <url>\` to enable later."
     else
       say "no shared corpus wired (memo starts empty). To join an existing corpus on"
       say "  a fresh Mac, re-run with: MEMO_SYNC_REMOTE=<git-url> ./install.sh"
     fi
   fi
 
+  # Final recap — derive sync state fresh so it reflects whatever this run wired
+  # (env path, interactive prompt, or a pre-existing clone).
+  local recap_state recap_sync
+  recap_state="$(env MEMO_NONINTERACTIVE=1 "$memo_bin" sync status 2>/dev/null || true)"
+  if printf '%s' "$recap_state" | grep -q 'remote:'; then
+    recap_sync="git: $(printf '%s\n' "$recap_state" | sed -n 's/.*remote:[[:space:]]*//p' | head -1)"
+  else
+    recap_sync="local-only"
+  fi
+
   printf '\n%s%s  ✓ memo is ready%s\n' "$BOLD" "$GREEN" "$RESET"
+  say "version:  $("$memo_bin" --version)"
+  say "agents:   ${DETECTED_AGENTS:-configured via install-slash} · tagline on Claude Code (others: MCP-only)"
+  say "sync:     $recap_sync"
   printf '  %sMCP registration command (manual fallback):%s\n' "$DIM" "$RESET"
   env MEMO_NONINTERACTIVE=1 "$memo_bin" mcp-command
 }
