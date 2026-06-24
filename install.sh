@@ -213,30 +213,60 @@ ask_yes_no() {
 # begins so the user understands the wait and the disk usage.
 explain_models() {
   printf '  %smemo needs local MLX models to work — without them, retrieval and%s\n' "$DIM" "$RESET"
-  printf '  %sambient recall cannot run. The following download once to your%s\n' "$DIM" "$RESET"
-  printf '  %sHugging Face cache (~/.cache/huggingface):%s\n' "$DIM" "$RESET"
-  printf '      %s•%s embedder   Qwen3-Embedding-0.6B-4bit   ~0.4 GB  %s(required)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
-  printf '      %s•%s reranker   cross-encoder                ~0.2 GB  %s(required)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
-  printf '      %s•%s chat LLM   7B + 3B helper               ~6   GB  %s(for `memo ask`)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
-  printf '  %s~7 GB total · 5–15 min on a fast connection · later installs reuse the cache.%s\n' "$DIM" "$RESET"
-  printf '  %sLive download progress streams below.%s\n' "$DIM" "$RESET"
+  printf '  %sambient recall cannot run. Downloads land in ~/.cache/huggingface:%s\n' "$DIM" "$RESET"
+  printf '      %s•%s embedder   Qwen3-Embedding-0.6B-4bit   ~0.4 GB  %s(required · now)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
+  printf '      %s•%s reranker   Qwen3-Reranker-0.6B          ~0.6 GB  %s(required · now)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
+  printf '      %s•%s chat LLM   7B + 4B helper               ~6   GB  %s(for `memo ask` · background)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
+  printf '  %sRequired models (~1 GB) download now (~3 min); chat models continue%s\n' "$DIM" "$RESET"
+  printf '  %sin the background so the install finishes without waiting on them.%s\n' "$DIM" "$RESET"
+  printf '  %sNote: large weight files can sit at 0%% a while as they transfer —%s\n' "$DIM" "$RESET"
+  printf '  %sthat is normal, not a hang.%s\n' "$DIM" "$RESET"
 }
 
-# Decide whether to download MLX models during install.
-# Models are part of memo's structure (embedder + reranker + chat are required
-# for retrieval and ambient recall), so the default answer is yes. The user can
-# decline interactively or force a value via MEMO_INSTALL_DOWNLOAD_MODELS.
+# Hugging Face throttles unauthenticated downloads (~5 MB/s), which is the main
+# reason the model download feels stuck. Nudge the user toward a token; it is
+# inherited from the environment by the prewarm subprocesses when set.
+hf_token_note() {
+  if [[ -z "${HF_TOKEN:-}" && -z "${HUGGING_FACE_HUB_TOKEN:-}" ]]; then
+    warn "no HF_TOKEN set — Hugging Face throttles unauthenticated downloads (~5 MB/s)."
+    warn "Export HF_TOKEN=<token> before re-running to download large models faster."
+  fi
+}
+
+# Download the chat LLM models (7B + 4B helper, ~6 GB) in a detached background
+# process so the install completes immediately. memo's retrieval runs without
+# them; they're only needed for `memo ask`, which also lazy-loads on first use.
+# Opt out with MEMO_INSTALL_DOWNLOAD_CHAT=0.
+start_chat_download_bg() {
+  case "${MEMO_INSTALL_DOWNLOAD_CHAT:-auto}" in
+    no|false|0|n|N)
+      say "chat models: skipped (MEMO_INSTALL_DOWNLOAD_CHAT=0) — they load on first \`memo ask\`."
+      return 0
+      ;;
+  esac
+  local log="${MEMO_STATE_DIR:-$HOME/.local/share/memo}/chat-download.log"
+  mkdir -p "$(dirname "$log")"
+  nohup env MEMO_NONINTERACTIVE=1 "$1" prewarm --download-all >"$log" 2>&1 </dev/null &
+  disown 2>/dev/null || true
+  ok "chat models (~6 GB) downloading in the background → $log"
+  say "\`memo ask\` works once it finishes · follow with: tail -f $log"
+}
+
+# Decide whether to download MLX models during install. The embedder + reranker
+# are required for retrieval and ambient recall, so the default is yes; the chat
+# models (handled separately, in the background) are only for `memo ask`. The
+# user can decline interactively or force a value via MEMO_INSTALL_DOWNLOAD_MODELS.
 should_download_models() {
   case "${MEMO_INSTALL_DOWNLOAD_MODELS:-auto}" in
     yes|true|1|Y|y) return 0 ;;
     no|false|0|N|n) return 1 ;;
     auto|"")
-      # Skip prompt if models are already cached
+      # Skip prompt if the required embedder is already cached
       if [[ -d "$HOME/.cache/huggingface/hub/models--mlx-community--Qwen3-Embedding-0.6B-4bit-DWQ" ]]; then
-        ok "models already cached — skipping download"
+        ok "required models already cached — skipping download"
         return 1
       fi
-      ask_yes_no "  ${YELLOW}?${RESET} Download MLX models now (~7 GB, required for retrieval)? [Y/n]" Y
+      ask_yes_no "  ${YELLOW}?${RESET} Download required MLX models now (~1 GB; chat models download in the background)? [Y/n]" Y
       ;;
     *)
       warn "unknown MEMO_INSTALL_DOWNLOAD_MODELS='${MEMO_INSTALL_DOWNLOAD_MODELS}', defaulting to yes"
@@ -281,13 +311,19 @@ main() {
   phase "MLX models (required for retrieval)"
   if should_download_models; then
     explain_models
+    hf_token_note
     printf '\n'
-    if env MEMO_NONINTERACTIVE=1 "$memo_bin" prewarm --download-all; then
-      ok "models ready"
+    # Required models (embedder + reranker, ~1 GB) — synchronous so retrieval
+    # works the moment the install finishes. Streamed (not spinner-wrapped) so
+    # Hugging Face's live progress bars show real percentages.
+    if env MEMO_NONINTERACTIVE=1 "$memo_bin" prewarm; then
+      ok "required models ready (embedder + reranker)"
     else
-      warn "model download did not complete — models will download on first use."
-      warn "Re-run: MEMO_NONINTERACTIVE=1 memo prewarm --download-all"
+      warn "required model download did not complete — they load lazily on first use."
+      warn "Re-run: MEMO_NONINTERACTIVE=1 memo prewarm"
     fi
+    # Chat models (~6 GB, only for `memo ask`) — detached background download.
+    start_chat_download_bg "$memo_bin"
   else
     say "skipping MLX model download (models will load lazily on first use)."
     say "Run later: MEMO_NONINTERACTIVE=1 memo prewarm --download-all"
