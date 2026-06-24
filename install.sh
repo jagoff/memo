@@ -324,6 +324,20 @@ main() {
   if should_download_models; then
     explain_models
     hf_token_note
+    # The mlx-community model repos are Xet-backed; Xet's chunked transfer is
+    # slow and bursty on some links. hf_transfer (parallel multi-connection HTTP)
+    # saturates the link, but only on the classic LFS path — so disable Xet for
+    # the install-time download. Scoped to this process (export here is inherited
+    # by the prewarm children); runtime sessions keep Xet's dedup. Opt out with
+    # MEMO_INSTALL_FAST_DOWNLOAD=0.
+    if [[ "${MEMO_INSTALL_FAST_DOWNLOAD:-1}" != "0" ]]; then
+      if run_pipx inject "$APP_NAME" hf_transfer >/dev/null 2>&1; then
+        export HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1
+        ok "fast downloads enabled (hf_transfer, parallel HTTP)"
+      else
+        warn "hf_transfer install failed — downloads use the default backend (slower)."
+      fi
+    fi
     printf '\n'
     # Required models (embedder + reranker, ~1 GB) — synchronous so retrieval
     # works the moment the install finishes. Streamed (not spinner-wrapped) so
@@ -354,17 +368,20 @@ main() {
 
   phase "Configuring agent clients"
   if [[ "${MEMO_INSTALL_SKIP_AGENT_CONFIG:-0}" != "1" ]]; then
-    if spin "wiring MCP: Claude Code, Codex, OpenCode, Windsurf" \
+    # Devin (CLI + Devin Desktop GUI, ex-Windsurf) share ~/.devin/mcp.json via the
+    # `devin mcp add` client. The old `windsurf` client writes ~/.codeium/windsurf,
+    # which only the retired Windsurf.app reads — so wire `devin`, not `windsurf`.
+    if spin "wiring MCP: Claude Code, Codex, OpenCode, Devin" \
       env MEMO_NONINTERACTIVE=1 "$memo_bin" install-slash \
       --client claude-code \
       --client codex \
       --client opencode \
-      --client windsurf \
+      --client devin \
       --best-effort; then
       ok "agent clients configured"
     else
       warn "agent client configuration did not complete."
-      warn "Re-run after installing clients: memo install-slash --client claude-code --client codex --client opencode --client windsurf"
+      warn "Re-run after installing clients: memo install-slash --client claude-code --client codex --client opencode --client devin"
     fi
   else
     say "skipping agent client configuration (MEMO_INSTALL_SKIP_AGENT_CONFIG=1)"
