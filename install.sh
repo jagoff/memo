@@ -8,17 +8,75 @@ GIT_SPEC="git+https://github.com/jagoff/memo.git"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13
 
-say() {
-  printf '[memo install] %s\n' "$*"
+# ── UI / feedback ────────────────────────────────────────────────────────────
+# Colors + spinners are enabled only on an interactive, color-capable TTY.
+# `curl | bash` (no TTY), NO_COLOR, or TERM=dumb fall back to plain log lines.
+STEP=0
+TOTAL=8
+USE_FANCY=false
+BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; RESET=""
+
+setup_ui() {
+  if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+    USE_FANCY=true
+    BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+    YELLOW=$'\033[33m'; BLUE=$'\033[34m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
+    trap 'tput cnorm 2>/dev/null || true' EXIT
+  fi
 }
 
-warn() {
-  printf '[memo install] warning: %s\n' "$*" >&2
+banner() {
+  printf '\n%s%s  memo%s\n' "$BOLD" "$CYAN" "$RESET"
+  printf '%s  local-first semantic memory · installer%s\n' "$DIM" "$RESET"
+  printf '%s  ────────────────────────────────────────%s\n' "$DIM" "$RESET"
 }
+
+phase() {
+  STEP=$((STEP + 1))
+  printf '\n%s%s▶ [%d/%d] %s%s\n' "$BOLD" "$BLUE" "$STEP" "$TOTAL" "$1" "$RESET"
+}
+
+say() { printf '  %s·%s %s\n' "$DIM" "$RESET" "$*"; }
+ok()  { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$*"; }
+
+warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$*" >&2; }
 
 die() {
-  printf '[memo install] error: %s\n' "$*" >&2
+  printf '  %s✗ error:%s %s\n' "$RED" "$RESET" "$*" >&2
   exit 1
+}
+
+# Run a command behind an animated spinner, capturing its output. On success the
+# line collapses to a ✓; on failure the captured log is printed so the error is
+# visible. Falls back to a plain log line + streamed output when not on a TTY.
+# Usage: spin "message" cmd args...   (cmd may be a function or `env VAR=v prog`)
+spin() {
+  local msg="$1"; shift
+  if [[ "$USE_FANCY" != true ]]; then
+    say "$msg"
+    "$@"
+    return $?
+  fi
+  local log; log="$(mktemp)"
+  "$@" >"$log" 2>&1 &
+  local pid=$! frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0 start=$SECONDS
+  tput civis 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r  %s%s%s %s %s(%ds)%s' \
+      "$CYAN" "${frames:i++%${#frames}:1}" "$RESET" "$msg" "$DIM" "$((SECONDS - start))" "$RESET"
+    sleep 0.1
+  done
+  local rc=0; wait "$pid" || rc=$?
+  tput cnorm 2>/dev/null || true
+  if [[ $rc -eq 0 ]]; then
+    printf '\r\033[K  %s✓%s %s %s(%ds)%s\n' \
+      "$GREEN" "$RESET" "$msg" "$DIM" "$((SECONDS - start))" "$RESET"
+  else
+    printf '\r\033[K  %s✗%s %s\n' "$RED" "$RESET" "$msg"
+    sed 's/^/      /' "$log" >&2
+  fi
+  rm -f "$log"
+  return $rc
 }
 
 is_macos_arm64() {
@@ -56,11 +114,13 @@ run_pipx() {
 ensure_pipx() {
   if command -v pipx >/dev/null 2>&1; then
     PIPX_BIN="$(command -v pipx)"
+    ok "pipx found: $PIPX_BIN"
     return 0
   fi
 
   if "$PYTHON_BIN" -m pipx --version >/dev/null 2>&1; then
     PIPX_BIN=""
+    ok "pipx available via $PYTHON_BIN -m pipx"
     return 0
   fi
 
@@ -69,14 +129,15 @@ ensure_pipx() {
   fi
 
   if command -v brew >/dev/null 2>&1; then
-    say "pipx not found; installing pipx with Homebrew"
-    brew install pipx
+    spin "pipx not found — installing with Homebrew" brew install pipx \
+      || die "Homebrew pipx install failed (see log above)"
     PIPX_BIN="$(command -v pipx)"
     return 0
   fi
 
-  say "pipx not found; installing pipx with ${PYTHON_BIN} -m pip --user"
-  "$PYTHON_BIN" -m pip install --user pipx
+  spin "pipx not found — installing with ${PYTHON_BIN} -m pip --user" \
+    "$PYTHON_BIN" -m pip install --user pipx \
+    || die "pip pipx install failed (see log above)"
   PIPX_BIN=""
 }
 
@@ -94,8 +155,8 @@ install_spec() {
 
 clean_old_pipx_package() {
   if run_pipx list --short 2>/dev/null | awk '{print $1}' | grep -qx "$OLD_APP_NAME"; then
-    say "removing old pipx package: $OLD_APP_NAME"
-    run_pipx uninstall "$OLD_APP_NAME"
+    spin "removing old pipx package: $OLD_APP_NAME" run_pipx uninstall "$OLD_APP_NAME" \
+      || warn "could not remove old package $OLD_APP_NAME (non-fatal)"
   fi
 }
 
@@ -114,9 +175,9 @@ inject_contracts() {
     say "consciousness-contracts not found at $cc — skipping (memo runs with fallbacks; set MEMO_CONTRACTS_PATH to enable)"
     return 0
   fi
-  say "injecting consciousness-contracts from $cc (enables install-mcp + shared cache)"
-  if run_pipx inject "$APP_NAME" -e "$cc" >/dev/null 2>&1; then
-    say "consciousness-contracts injected"
+  if spin "injecting consciousness-contracts (enables install-mcp + shared cache)" \
+    run_pipx inject "$APP_NAME" -e "$cc"; then
+    ok "consciousness-contracts injected"
   else
     warn "consciousness-contracts inject failed (non-fatal; memo runs with fallbacks)."
     warn "Re-run manually: pipx inject $APP_NAME -e $cc"
@@ -147,6 +208,20 @@ ask_yes_no() {
   [[ "$reply" =~ ^[Yy]$ ]]
 }
 
+# Informative (not a question) explanation of why memo needs to download models,
+# what they are, and roughly how long it takes. Shown right before the download
+# begins so the user understands the wait and the disk usage.
+explain_models() {
+  printf '  %smemo needs local MLX models to work — without them, retrieval and%s\n' "$DIM" "$RESET"
+  printf '  %sambient recall cannot run. The following download once to your%s\n' "$DIM" "$RESET"
+  printf '  %sHugging Face cache (~/.cache/huggingface):%s\n' "$DIM" "$RESET"
+  printf '      %s•%s embedder   Qwen3-Embedding-0.6B-4bit   ~0.4 GB  %s(required)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
+  printf '      %s•%s reranker   cross-encoder                ~0.2 GB  %s(required)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
+  printf '      %s•%s chat LLM   7B + 3B helper               ~6   GB  %s(for `memo ask`)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
+  printf '  %s~7 GB total · 5–15 min on a fast connection · later installs reuse the cache.%s\n' "$DIM" "$RESET"
+  printf '  %sLive download progress streams below.%s\n' "$DIM" "$RESET"
+}
+
 # Decide whether to download MLX models during install.
 # Models are part of memo's structure (embedder + reranker + chat are required
 # for retrieval and ambient recall), so the default answer is yes. The user can
@@ -158,10 +233,10 @@ should_download_models() {
     auto|"")
       # Skip prompt if models are already cached
       if [[ -d "$HOME/.cache/huggingface/hub/models--mlx-community--Qwen3-Embedding-0.6B-4bit-DWQ" ]]; then
-        say "models already cached, skipping download"
+        ok "models already cached — skipping download"
         return 1
       fi
-      ask_yes_no "[memo install] Download MLX models now (~7 GB, required for retrieval)? [Y/n]" Y
+      ask_yes_no "  ${YELLOW}?${RESET} Download MLX models now (~7 GB, required for retrieval)? [Y/n]" Y
       ;;
     *)
       warn "unknown MEMO_INSTALL_DOWNLOAD_MODELS='${MEMO_INSTALL_DOWNLOAD_MODELS}', defaulting to yes"
@@ -171,36 +246,44 @@ should_download_models() {
 }
 
 main() {
+  setup_ui
+  banner
+
+  phase "Checking environment"
   if [[ "${MEMO_INSTALL_SKIP_PLATFORM_CHECK:-0}" != "1" ]] && ! is_macos_arm64; then
     die "memo requires macOS on Apple Silicon (Darwin arm64). Set MEMO_INSTALL_SKIP_PLATFORM_CHECK=1 to bypass."
   fi
+  ok "platform: $(uname -s) $(uname -m)"
 
   PYTHON_BIN="$(find_python)" || die "Python >= 3.13 is required. Install python@3.13 or python@3.14 first."
   export PYTHON_BIN
-  say "using Python: $PYTHON_BIN"
+  ok "Python: $PYTHON_BIN"
 
+  phase "Preparing pipx"
   ensure_pipx
   clean_old_pipx_package
 
+  phase "Installing $APP_NAME"
   local spec
   spec="$(install_spec)"
-  say "installing $APP_NAME with pipx spec: $spec"
-  run_pipx install --force "$spec"
+  spin "installing from $spec" run_pipx install --force "$spec" \
+    || die "pipx install failed (see log above)"
   run_pipx ensurepath >/dev/null 2>&1 || true
-
-  inject_contracts
-  ensure_default_dirs
 
   local memo_bin
   memo_bin="$(resolve_memo_bin)" || die "memo was installed but no memo binary was found in PATH or ~/.local/bin"
+  ok "installed: $("$memo_bin" --version)"
 
-  say "installed: $("$memo_bin" --version)"
+  phase "Linking consciousness-contracts"
+  inject_contracts
+  ensure_default_dirs
 
+  phase "MLX models (required for retrieval)"
   if should_download_models; then
-    say "downloading MLX models (~7 GB, first install may take 5–15 min)…"
-    say "(embedder + reranker load now; chat models download in background)"
-    if MEMO_NONINTERACTIVE=1 "$memo_bin" prewarm --download-all; then
-      say "models ready"
+    explain_models
+    printf '\n'
+    if env MEMO_NONINTERACTIVE=1 "$memo_bin" prewarm --download-all; then
+      ok "models ready"
     else
       warn "model download did not complete — models will download on first use."
       warn "Re-run: MEMO_NONINTERACTIVE=1 memo prewarm --download-all"
@@ -210,18 +293,20 @@ main() {
     say "Run later: MEMO_NONINTERACTIVE=1 memo prewarm --download-all"
   fi
 
-  say "runtime check:"
-  MEMO_NONINTERACTIVE=1 "$memo_bin" doctor --strict-runtime
+  phase "Runtime check"
+  env MEMO_NONINTERACTIVE=1 "$memo_bin" doctor --strict-runtime \
+    || die "runtime check failed — see output above"
 
+  phase "Configuring agent clients"
   if [[ "${MEMO_INSTALL_SKIP_AGENT_CONFIG:-0}" != "1" ]]; then
-    say "configuring MCP clients: Claude Code, Codex, OpenCode, Windsurf"
-    if MEMO_NONINTERACTIVE=1 "$memo_bin" install-slash \
+    if spin "wiring MCP: Claude Code, Codex, OpenCode, Windsurf" \
+      env MEMO_NONINTERACTIVE=1 "$memo_bin" install-slash \
       --client claude-code \
       --client codex \
       --client opencode \
       --client windsurf \
       --best-effort; then
-      say "agent clients configured"
+      ok "agent clients configured"
     else
       warn "agent client configuration did not complete."
       warn "Re-run after installing clients: memo install-slash --client claude-code --client codex --client opencode --client windsurf"
@@ -230,14 +315,15 @@ main() {
     say "skipping agent client configuration (MEMO_INSTALL_SKIP_AGENT_CONFIG=1)"
   fi
 
+  phase "Shared corpus"
   # Cross-Mac corpus: clone the git-synced memo-sync repo and point this
   # install at it (opt-in, mirrors memflow's MEMFLOW_DATA_REMOTE cutover).
   # Idempotent — re-running reuses the existing clone.
   if [[ -n "${MEMO_SYNC_REMOTE:-}" ]]; then
     local sync_dest="${MEMO_SYNC_DEST:-$HOME/repos/memo-sync}"
-    say "wiring git-synced corpus: $MEMO_SYNC_REMOTE → $sync_dest"
-    if MEMO_NONINTERACTIVE=1 "$memo_bin" sync bootstrap "$MEMO_SYNC_REMOTE" --dest "$sync_dest"; then
-      say "corpus wired; SessionStart pull / Stop push hooks keep it in sync"
+    if spin "wiring git-synced corpus: $MEMO_SYNC_REMOTE → $sync_dest" \
+      env MEMO_NONINTERACTIVE=1 "$memo_bin" sync bootstrap "$MEMO_SYNC_REMOTE" --dest "$sync_dest"; then
+      ok "corpus wired; SessionStart pull / Stop push hooks keep it in sync"
     else
       warn "sync bootstrap failed — private repo needs git creds (SSH key/PAT) on this Mac."
       warn "Re-run after auth: memo sync bootstrap $MEMO_SYNC_REMOTE --dest $sync_dest"
@@ -247,8 +333,9 @@ main() {
     say "  a fresh Mac, re-run with: MEMO_SYNC_REMOTE=<git-url> ./install.sh"
   fi
 
-  say "MCP registration command (manual fallback):"
-  MEMO_NONINTERACTIVE=1 "$memo_bin" mcp-command
+  printf '\n%s%s  ✓ memo is ready%s\n' "$BOLD" "$GREEN" "$RESET"
+  printf '  %sMCP registration command (manual fallback):%s\n' "$DIM" "$RESET"
+  env MEMO_NONINTERACTIVE=1 "$memo_bin" mcp-command
 }
 
 main "$@"
