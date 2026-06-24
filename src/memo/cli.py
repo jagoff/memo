@@ -104,6 +104,7 @@ from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
 from memo.cli_session import continuity_cmd, session_group
 from memo.cli_share import share_group
 from memo.cli_stats import stats
+from memo.cli_statusline import install_statusline
 from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
@@ -158,8 +159,8 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
         "Setup & Config",
         [
             "init", "config", "install-mcp", "install-watcher", "uninstall-watcher",
-            "install-slash", "install-shell-wrapper", "migrate", "migrate-vault",
-            "self-update", "watch",
+            "install-slash", "install-statusline", "install-shell-wrapper", "migrate",
+            "migrate-vault", "upgrade", "watch",
         ],
     ),
     (
@@ -197,7 +198,11 @@ class SurfaceGroup(click.Group):
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         from memo.surface import cli_command_visible
 
-        visible = set(self.list_commands(ctx))
+        visible = {
+            name
+            for name in self.list_commands(ctx)
+            if not getattr(self.get_command(ctx, name), "hidden", False)
+        }
 
         # Collect commands per section, then an overflow "Other" bucket.
         overflow: list[str] = [
@@ -282,7 +287,18 @@ cli.add_command(migrate_vault, name="migrate")  # alias
 cli.add_command(mcp_command)
 cli.add_command(install_slash)
 cli.add_command(install_mcp)
+cli.add_command(install_statusline)
 cli.add_command(self_update)
+# Back-compat: keep the old `memo self-update` name working (now hidden) so any
+# auto-update path or muscle memory still resolves. Same callback as `upgrade`.
+_self_update_alias = click.Command(
+    "self-update",
+    callback=self_update.callback,
+    params=self_update.params,
+    help=self_update.help,
+    hidden=True,
+)
+cli.add_command(_self_update_alias)
 cli.add_command(watch)
 cli.add_command(install_watcher)
 cli.add_command(uninstall_watcher_cmd)
@@ -360,6 +376,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "mcp-command",
     "install-slash",
     "install-mcp",
+    "install-statusline",
     "continuity",
     "prewarm",
     "recall-hook",

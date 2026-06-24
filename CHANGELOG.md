@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-06-24
+
+### Added
+
+- **install.sh: progress spinners + step counter.** Each install phase now shows a numbered step and an animated spinner so it's clear something is happening during slow operations.
+- **install.sh: model-download explainer.** Before the download phase, install.sh prints a human-readable breakdown of what is being fetched and why, including sizes and the rationale for deferring the chat model.
+- **install.sh: fast model downloads via `hf_transfer`.** `HF_HUB_ENABLE_HF_TRANSFER=1` (plus `HF_HUB_DISABLE_XET=1`) are set for the duration of install, giving 3–5× faster Hugging Face downloads. Both flags are scoped to install time and not persisted to user config.
+- **install.sh: wire MCP into all supported clients via `--client all`.** Replaces the retired Windsurf-only wiring; now covers Claude Code, Cursor, Devin Desktop, Blackbox, and any other client registered in `install_mcp.py`. `--client all` is the new default for the full-install path.
+- **install.sh: factory memo statusline badge.** After install, a `[MEMO <version>]` badge is written to the user's statusline config so the active version is visible at a glance in the terminal.
+- **CLI: `memo upgrade` command.** Renames the former `memo self-update` to `memo upgrade` for discoverability. The old name is kept as a hidden alias for backward compatibility. `memo update <ID>` (edit a stored memory) is unchanged.
+
+### Fixed
+
+- **install.sh: eliminated the "0% hang".** Previously the installer triggered a synchronous download of all models, including the ~6–7 GB chat model, which appeared to stall at 0% with no feedback. Now only the required models (embedder + reranker, ~1–2 GB) are downloaded synchronously; the chat model is fetched in a detached background process and the user is told when to expect it.
+- **install.sh: HF_TOKEN warning.** When `HF_TOKEN` is unset, install.sh now emits an informational warning (not a hard failure) explaining that gated models may not download.
+- **install.sh: clean-reinstall path for the pipx/uv venv backend.** On a reinstall over an existing pipx-managed environment, the installer now runs `pipx uninstall` and removes the stale venv directory before reinstalling, preventing version-mismatch ghosts from the old environment.
+- **install.sh: runtime check is informational, not a hard gate.** `memo doctor` output during install is now advisory; a non-zero exit from doctor no longer aborts the install script.
+
 ## [1.0.2] - 2026-06-22
 
 ### Fixed

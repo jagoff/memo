@@ -2,7 +2,7 @@
 
 When ``MEMO_AUTO_UPDATE`` is enabled, memo-mcp checks (throttled) whether a
 newer **tagged** release exists in the git repo and, if so, spawns a detached
-``memo self-update --to-tag <tag>`` in the background. The running process keeps
+``memo upgrade --to-tag <tag>`` in the background. The running process keeps
 the old code (you can't hot-swap a live interpreter) — the new version takes
 effect on the NEXT memo-mcp start.
 
@@ -133,12 +133,12 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
         if not tag or not is_newer(tag, __version__):
             return False
 
-        _log.info("auto-update: %s → %s (spawning background self-update)", __version__, tag)
+        _log.info("auto-update: %s → %s (spawning background upgrade)", __version__, tag)
         log_file = cfg.state_dir / "auto_update.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(log_file, "a") as fh:
             subprocess.Popen(
-                [sys.executable, "-m", "memo.cli", "self-update", "--to-tag", tag],
+                [sys.executable, "-m", "memo.cli", "upgrade", "--to-tag", tag],
                 stdout=fh,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,

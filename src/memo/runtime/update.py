@@ -41,7 +41,7 @@ def _prewarm_after_update() -> None:
     subprocess.run(cmd, check=False)
 
 
-@click.command(name="self-update")
+@click.command(name="upgrade")
 @click.option("--check", is_flag=True, help="Check for a newer version without installing.")
 @click.option(
     "--to-tag",

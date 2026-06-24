@@ -12,7 +12,7 @@ MIN_PYTHON_MINOR=13
 # Colors + spinners are enabled only on an interactive, color-capable TTY.
 # `curl | bash` (no TTY), NO_COLOR, or TERM=dumb fall back to plain log lines.
 STEP=0
-TOTAL=8
+TOTAL=9
 USE_FANCY=false
 BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; RESET=""
 
@@ -383,6 +383,18 @@ main() {
     fi
   else
     say "skipping agent client configuration (MEMO_INSTALL_SKIP_AGENT_CONFIG=1)"
+  fi
+
+  phase "Statusline badge"
+  # Install the memo version-badge statusline into Claude Code (no-clobber: a
+  # user with an existing statusLine keeps it). Best-effort — never fail the
+  # install over a cosmetic badge.
+  if spin "installing the [MEMO <version>] statusline badge (no-clobber)" \
+    env MEMO_NONINTERACTIVE=1 "$memo_bin" install-statusline; then
+    ok "statusline badge installed"
+  else
+    warn "statusline install did not complete (non-fatal)."
+    warn "Re-run manually: memo install-statusline"
   fi
 
   phase "Shared corpus"
