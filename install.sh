@@ -342,8 +342,15 @@ main() {
   fi
 
   phase "Runtime check"
-  env MEMO_NONINTERACTIVE=1 "$memo_bin" doctor --strict-runtime \
-    || die "runtime check failed — see output above"
+  # Informational, not a gate: doctor reports non-fatal issues too (data_dir not
+  # yet bootstrapped, chat models still downloading in the background, a stale
+  # recall socket). Aborting here would skip agent-client config and corpus
+  # wiring for problems the user can resolve later, so report and continue.
+  if env MEMO_NONINTERACTIVE=1 "$memo_bin" doctor --strict-runtime; then
+    ok "runtime healthy"
+  else
+    warn "runtime check reported issues (above) — install continues; resolve with \`memo doctor\`."
+  fi
 
   phase "Configuring agent clients"
   if [[ "${MEMO_INSTALL_SKIP_AGENT_CONFIG:-0}" != "1" ]]; then
