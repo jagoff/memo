@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-06-24
+
+### Changed
+
+- **CLI: renamed commands for clarity.** `memo edit <ID>` now edits a stored memory (was `memo update`), and `memo update` now updates the memo software to the latest release (was `memo upgrade` / `memo self-update`). `upgrade` and `self-update` remain as hidden back-compat aliases.
+
 ## [1.0.4] - 2026-06-24
 
 ### Changed

@@ -121,7 +121,7 @@ from memo.setup import run_picker, write_config_file
 _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
         "Core",
-        ["save", "search", "ask", "get", "update", "delete", "list"],
+        ["save", "search", "ask", "get", "edit", "delete", "list"],
     ),
     (
         "Recall & Hooks",
@@ -160,7 +160,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
         [
             "init", "config", "install-mcp", "install-watcher", "uninstall-watcher",
             "install-slash", "install-statusline", "install-shell-wrapper", "migrate",
-            "migrate-vault", "upgrade", "watch",
+            "migrate-vault", "update", "watch",
         ],
     ),
     (
@@ -288,9 +288,18 @@ cli.add_command(mcp_command)
 cli.add_command(install_slash)
 cli.add_command(install_mcp)
 cli.add_command(install_statusline)
-cli.add_command(self_update)
-# Back-compat: keep the old `memo self-update` name working (now hidden) so any
-# auto-update path or muscle memory still resolves. Same callback as `upgrade`.
+cli.add_command(self_update)  # primary name: "update"
+# Back-compat: keep the old `memo upgrade` / `memo self-update` names working
+# (now hidden) so any auto-update path or muscle memory still resolves. Same
+# callback as the primary `update` command.
+_upgrade_alias = click.Command(
+    "upgrade",
+    callback=self_update.callback,
+    params=self_update.params,
+    help=self_update.help,
+    hidden=True,
+)
+cli.add_command(_upgrade_alias)
 _self_update_alias = click.Command(
     "self-update",
     callback=self_update.callback,

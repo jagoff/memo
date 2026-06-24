@@ -31,10 +31,10 @@ CORE_CLI_COMMANDS: frozenset[str] = frozenset(
         "restore",
         "save",
         "search",
-        "upgrade",
+        "update",
         "stats",
         "uninstall-watcher",
-        "update",
+        "edit",
         "watch",
     },
 )

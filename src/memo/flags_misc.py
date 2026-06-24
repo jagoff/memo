@@ -36,13 +36,13 @@ SPECS: tuple[FlagSpec, ...] = (
         "Maximum cumulative feedback boost.",
         min_val=0.0,
     ),
-    # auto-update (memo-mcp upgrade on start, gated + throttled)
+    # auto-update (memo-mcp update on start, gated + throttled)
     _spec(
         "MEMO_AUTO_UPDATE",
         "bool",
         False,
         "update",
-        "On memo-mcp start, check for a newer git TAG and upgrade in the "
+        "On memo-mcp start, check for a newer git TAG and update in the "
         "background (takes effect next start). Default off; enable per-machine.",
     ),
     _spec(

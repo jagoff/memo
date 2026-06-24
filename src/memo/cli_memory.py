@@ -178,7 +178,7 @@ def get(id_: str, as_json: bool) -> None:
     )
 
 
-@click.command()
+@click.command(name="edit")
 @click.argument("id_")
 @click.option("--title", default=None)
 @click.option(

@@ -41,7 +41,8 @@ def _prewarm_after_update() -> None:
     subprocess.run(cmd, check=False)
 
 
-@click.command(name="upgrade")
+@click.command(name="update")
+@click.argument("stray", required=False, metavar="")
 @click.option("--check", is_flag=True, help="Check for a newer version without installing.")
 @click.option(
     "--to-tag",
@@ -49,7 +50,12 @@ def _prewarm_after_update() -> None:
     help="Install a specific git tag (e.g. v1.0.1) from the memo repo, bypassing "
     "PyPI. Used by the memo-mcp auto-update path (git installs aren't on PyPI).",
 )
-def self_update(check: bool, to_tag: str | None) -> None:
+def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
+    # `memo update` is the software self-updater. If someone passes a memory ID
+    # (old muscle memory — `update` used to patch a memory), nudge them to the
+    # renamed memory-edit command instead of silently self-updating.
+    if stray is not None:
+        raise click.ClickException(f"did you mean `memo edit {stray}`?")
     current_version = importlib.metadata.version("mlx-memo")
     console.print(f"[dim]current version:[/dim] {current_version}")
 
