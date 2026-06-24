@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from click.testing import CliRunner
 
 import memo.cli_runtime as cli_mod
 import memo.runtime.install as install_mod
+import memo.runtime.mcp as mcp_mod
 from memo.cli import cli
 
 
@@ -309,6 +311,85 @@ def test_install_slash_claude_uses_add_json(monkeypatch):
     assert "claude mcp remove -s user memo" in result.output
     assert "claude mcp add-json -s user memo" in result.output
     assert '"MEMO_NONINTERACTIVE":"1"' in result.output
+
+
+def _fake_run_factory(calls: list[list[str]], remove_stderr: str):
+    """Subprocess stub: a `mcp remove` exits non-zero (no prior entry on a clean
+    machine), everything else succeeds. Records every argv for assertions."""
+
+    def fake_run(args, check, capture_output, text):
+        argv = [str(a) for a in args]
+        calls.append(argv)
+        if "remove" in argv:
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr=remove_stderr)
+        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+
+    return fake_run
+
+
+def test_install_slash_claude_proceeds_to_add_when_remove_fails(monkeypatch):
+    """Clean machine: `claude mcp remove` fails (no prior entry) but the client
+    must still run `mcp add` and report as configured, not skipped."""
+    _clear_memo_env(monkeypatch)
+    repo = Path.cwd()
+    monkeypatch.setattr(
+        install_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        mcp_mod.subprocess,
+        "run",
+        _fake_run_factory(calls, 'No MCP server named "memo" in user scope'),
+    )
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        # invoked WITHOUT --best-effort: this is the default fresh-install path
+        result = runner.invoke(
+            cli, ["install-slash", "--client", "claude-code", "--repo", str(repo)]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert any("remove" in argv for argv in calls)
+    assert any("add-json" in argv for argv in calls)
+    assert "skipped clients" not in result.output
+    assert "agent-client install complete" in result.output
+
+
+def test_install_slash_devin_proceeds_to_add_when_remove_fails(monkeypatch, tmp_path):
+    """Clean machine: `devin mcp remove` fails with Devin's distinct message but
+    the client must still run `mcp add` and report as configured, not skipped."""
+    _clear_memo_env(monkeypatch)
+    repo = Path.cwd()
+    monkeypatch.setattr(install_mod.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        install_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        mcp_mod.subprocess,
+        "run",
+        _fake_run_factory(
+            calls,
+            "Error: Server 'memo' is not in the user config. It is configured by Claude.",
+        ),
+    )
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            cli, ["install-slash", "--client", "devin", "--repo", str(repo)]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert any("remove" in argv for argv in calls)
+    assert any("add" in argv and "remove" not in argv for argv in calls)
+    assert "skipped clients" not in result.output
+    assert "agent-client install complete" in result.output
 
 
 def test_install_slash_windsurf_writes_mcp_config(monkeypatch, tmp_path):

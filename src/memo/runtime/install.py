@@ -217,7 +217,7 @@ def install_slash(
         console.print("[bold]Codex[/bold]")
         _copy_slash_skill(root, _codex_home() / "skills" / "memo" / "SKILL.md", dry_run=dry_run)
         _install_codex_plugin(root, dry_run=dry_run)
-        _run_agent_command(["codex", "mcp", "remove", "memo"], dry_run=dry_run, ok_errors=_MISSING_MCP_OK_ERRORS)
+        _run_agent_command(["codex", "mcp", "remove", "memo"], dry_run=dry_run, best_effort=True)
         _run_agent_command(_mcp_add_command("codex", memo_mcp, {**env, "MEMO_SOURCE": "codex"}), dry_run=dry_run)
         console.print(
             "[yellow]![/yellow] Codex CLI's TUI slash menu currently lists only built-in "
@@ -230,14 +230,14 @@ def install_slash(
         console.print("[bold]Claude Code[/bold]")
         _run_agent_command(["claude", "plugin", "marketplace", "add", root], dry_run=dry_run, ok_errors=("already", "exists"))
         _run_agent_command(["claude", "plugin", "install", "memo@memo", "-s", "user"], dry_run=dry_run, ok_errors=("already", "installed", "exists"))
-        _run_agent_command(["claude", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, ok_errors=_MISSING_MCP_OK_ERRORS)
+        _run_agent_command(["claude", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, best_effort=True)
         _run_agent_command(_mcp_add_command("claude-code", memo_mcp, env), dry_run=dry_run)
 
     def install_devin() -> None:
         assert root is not None
         console.print("[bold]Devin[/bold]")
         _copy_slash_skill(root, Path.home() / ".config" / "devin" / "skills" / "memo" / "SKILL.md", dry_run=dry_run)
-        _run_agent_command(["devin", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, ok_errors=_MISSING_MCP_OK_ERRORS)
+        _run_agent_command(["devin", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, best_effort=True)
         _run_agent_command(_mcp_add_command("devin", memo_mcp, {**env, "MEMO_SOURCE": "devin"}), dry_run=dry_run)
 
     def install_windsurf() -> None:

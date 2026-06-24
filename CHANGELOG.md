@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-06-24
+
+### Fixed
+
+- **install: `mcp remove` is now best-effort before `mcp add`.** The pre-wiring cleanup step that removes any prior MCP entry is no longer fatal. Claude Code returns `No MCP server named "memo"` and Devin returns `not in the user config` on a clean machine; both caused a non-zero exit that was treated as a hard failure, skipping the client entirely and leaving memo unavailable in those agents after a fresh install. The step now logs the exit and proceeds regardless.
+
 ## [1.0.5] - 2026-06-24
 
 ### Changed

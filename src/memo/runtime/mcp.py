@@ -130,6 +130,7 @@ def _run_agent_command(
     *,
     dry_run: bool,
     ok_errors: tuple[str, ...] = (),
+    best_effort: bool = False,
 ) -> None:
     if dry_run:
         console.print(f"[dim]$ {_format_command(args)}[/dim]")
@@ -146,7 +147,13 @@ def _run_agent_command(
             f"`{args[0]}` not found on PATH; install that client first."
         ) from exc
     combined = f"{proc.stdout}\n{proc.stderr}".lower()
-    if proc.returncode != 0 and not any(token in combined for token in ok_errors):
+    # best_effort: a non-zero exit is tolerated regardless of the message. This is
+    # for the pre-`add` `mcp remove` cleanup, where a fresh machine has no prior
+    # entry and the client emits an error string we can't enumerate (e.g. Claude's
+    # `No MCP server named "memo" in user scope`, Devin's `not in the user config.
+    # It is configured by Claude.`). The flow must still proceed to `mcp add`.
+    tolerated = best_effort or any(token in combined for token in ok_errors)
+    if proc.returncode != 0 and not tolerated:
         detail = (proc.stderr or proc.stdout or "").strip()
         raise click.ClickException(
             f"Command failed ({proc.returncode}): {_format_command(args)}"
