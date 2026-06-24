@@ -129,7 +129,7 @@ class _SearchOpsMixin(_MemoryBase):
             # is enabled we widen the input pool to `rerank_input_k` so
             # the cross-encoder has more candidates to discriminate
             # between; the final `limit` is applied AFTER rerank.
-            input_k = self.cfg.rerank_input_k if self.cfg.reranker_enabled else limit
+            input_k = max(self.cfg.rerank_input_k, limit) if self.cfg.reranker_enabled else limit
             k_each = max(input_k * 2, 20)
             try:
                 emb = self.embedder.embed_query(query)

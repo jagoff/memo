@@ -130,9 +130,13 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "",
         "recall",
-        # DEPRECATED: not wired — MicroEmbedder stub is not integrated in the production recall path.
-        # Kept for backward compat; setting this has no effect.
-        "DEPRECATED (no effect): Lightweight embedder model for cold-start fallback. Not wired in production.",
+        # Experimental opt-in: when set, the recall daemon uses this lighter model to
+        # re-rank BM25 candidates during cold-start (main MLX embedder not yet warm).
+        # A dim mismatch between this model's output and cfg.embedder_dims gracefully
+        # falls back to the normal embedder path instead of returning empty recall.
+        "Experimental cold-start micro-embedder. When set and the main embedder is cold, "
+        "the daemon uses this lighter model to re-rank BM25 candidates. "
+        "Dim mismatch with the main model falls back gracefully to the main embedder.",
     ),
     _spec(
         "MEMO_RECALL_LOCK_TIMEOUT_MS",

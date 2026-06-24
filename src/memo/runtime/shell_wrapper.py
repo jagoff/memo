@@ -131,7 +131,7 @@ function claude() {
 @click.command(name="install-shell-wrapper")
 @click.option("--print", "do_print", is_flag=True, help="Print the wrapper snippet to stdout. Default mode when neither --print nor --write is set.")
 @click.option("--write", "do_write", is_flag=True, help="Write ~/.zsh/memo-wrapper.zsh and append the matching `source` line to ~/.zshrc (idempotent).")
-@click.option("--shell", "shell_kind", type=click.Choice(["zsh", "bash"]), default="zsh", show_default=True, help="Target shell. zsh is the macOS default.")
+@click.option("--shell", "shell_kind", type=click.Choice(["zsh"]), default="zsh", show_default=True, help="Target shell. Only zsh is supported (the wrapper uses zsh-specific builtins).")
 @click.option("--force", is_flag=True, help="Overwrite ~/.zsh/memo-wrapper.zsh even if its content differs from what we would write.")
 def install_shell_wrapper(do_print: bool, do_write: bool, shell_kind: str, force: bool) -> None:
     snippet = _WRAPPER_SNIPPET_ZSH

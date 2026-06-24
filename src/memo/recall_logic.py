@@ -262,21 +262,36 @@ def _recall_logic(
                         body = mem._read_body(h.path)
                     candidate_bodies.append(f"{h.title}\n{body}")
                 doc_vecs = micro_embedder.embed(candidate_bodies)
-                # Validate embedding dimensions match expected (skip for test stubs with tiny dims)
+                # Validate embedding dimensions match cfg.embedder_dims.
+                # The micro-embedder may produce a different dim than the main model;
+                # instead of raising ValueError (which empties recall via the outer
+                # except), gracefully fall back to the normal embedder path.
                 mem_cfg = getattr(mem, "cfg", None)
                 expected_dims = getattr(mem_cfg, "embedder_dims", 1024) if mem_cfg is not None else 1024
+                _use_micro_scored = True
                 if expected_dims > 10:  # Skip validation for test stubs (e.g., 2-dim)
-                    for d_vec in doc_vecs:
-                        if len(d_vec) != expected_dims:
-                            raise ValueError(f"micro_embedder produced dim={len(d_vec)} but expected {expected_dims}")
-                    if len(q_vec) != expected_dims:
-                        raise ValueError(f"micro_embedder query produced dim={len(q_vec)} but expected {expected_dims}")
-                scored = [
-                    replace(h, score=sum(x * y for x, y in zip(q_vec, d_vec, strict=True)))
-                    for h, d_vec in zip(candidates, doc_vecs, strict=True)
-                ]
-                scored.sort(key=lambda x: x.score or 0.0, reverse=True)
-                qualifying = _deduplicate_synthesis(_rank(scored))
+                    _dim_mismatch = (
+                        any(len(d_vec) != expected_dims for d_vec in doc_vecs)
+                        or len(q_vec) != expected_dims
+                    )
+                    if _dim_mismatch:
+                        _logger.warning(
+                            "recall-daemon: micro_embedder dim mismatch (expected=%d); "
+                            "skipping micro path, falling back to main embedder",
+                            expected_dims,
+                        )
+                        _use_micro_scored = False
+                if _use_micro_scored:
+                    scored = [
+                        replace(h, score=sum(x * y for x, y in zip(q_vec, d_vec, strict=True)))
+                        for h, d_vec in zip(candidates, doc_vecs, strict=True)
+                    ]
+                    scored.sort(key=lambda x: x.score or 0.0, reverse=True)
+                    qualifying = _deduplicate_synthesis(_rank(scored))
+                else:
+                    qualifying = _deduplicate_synthesis(_rank(
+                        mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
+                    ))
         else:
             qualifying = _deduplicate_synthesis(_rank(mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)))
     except Exception as exc:

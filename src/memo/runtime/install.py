@@ -107,7 +107,7 @@ def init_cmd(force: bool) -> None:
 @click.option(
     "--client",
     type=click.Choice(
-        ["claude-code", "claude-desktop", "codex", "devin", "opencode", "windsurf", "blackbox", "json"]
+        ["claude-code", "claude-desktop", "codex", "devin", "opencode", "windsurf", "json"]
     ),
     default="claude-code",
     show_default=True,
@@ -157,9 +157,6 @@ def mcp_command(client: str) -> None:
         return
     if client == "opencode":
         click.echo(_format_command(_mcp_add_command("opencode", memo_mcp, {**env, "MEMO_SOURCE": "opencode"})))
-        return
-    if client == "blackbox":
-        click.echo(_format_command(_mcp_add_command("blackbox", memo_mcp, {**env, "MEMO_SOURCE": "blackbox"})))
         return
     click.echo(_format_command(_mcp_add_command("claude-code", memo_mcp, env)))
 
