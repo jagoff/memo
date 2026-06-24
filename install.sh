@@ -296,7 +296,19 @@ main() {
   phase "Installing $APP_NAME"
   local spec
   spec="$(install_spec)"
-  spin "installing from $spec" run_pipx install --force "$spec" \
+  # pipx 1.13 uses uv as its venv backend, and `pipx install --force` can fail to
+  # recreate an existing venv: uv refuses to clobber one "not created in this
+  # session" ("A virtual environment already exists"). Uninstall first — and
+  # hard-remove any stale venv dir — so a re-install always starts from a clean
+  # slate. (First-time installs simply skip the uninstall.)
+  if run_pipx list --short 2>/dev/null | awk '{print $1}' | grep -qx "$APP_NAME"; then
+    spin "removing existing $APP_NAME (clean reinstall)" run_pipx uninstall "$APP_NAME" || true
+  fi
+  local venvs_dir
+  venvs_dir="$(run_pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null || true)"
+  [[ -n "$venvs_dir" ]] || venvs_dir="$HOME/.local/pipx/venvs"
+  [[ -d "$venvs_dir/$APP_NAME" ]] && rm -rf "$venvs_dir/$APP_NAME"
+  spin "installing from $spec" run_pipx install "$spec" \
     || die "pipx install failed (see log above)"
   run_pipx ensurepath >/dev/null 2>&1 || true
 
