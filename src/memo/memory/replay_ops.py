@@ -77,7 +77,7 @@ class _ReplayOpsMixin(_MemoryBase):
             resource_id = parts.resource_id or ""
             subpath = parts.subpath or ""
 
-            if resource_type == "memory":
+            if resource_type == "memoria":
                 if not resource_id:
                     return payload("missing", "memo://memoria URI did not include an id.")
                 try:
@@ -93,7 +93,7 @@ class _ReplayOpsMixin(_MemoryBase):
                     "found",
                     f"resolved memory: {rec.id}",
                     content_hash=_stable_content_hash(rec.to_dict()),
-                    target={"kind": "memory", "id": rec.id, "path": rec.path},
+                    target={"kind": "memoria", "id": rec.id, "path": rec.path},
                 )
 
             elif resource_type == "repo-index":
@@ -180,7 +180,7 @@ class _ReplayOpsMixin(_MemoryBase):
                     "found",
                     f"resolved memory: {rec.id}",
                     content_hash=_stable_content_hash(rec.to_dict()),
-                    target={"kind": "memory", "id": rec.id, "path": rec.path},
+                    target={"kind": "memoria", "id": rec.id, "path": rec.path},
                 )
 
             if uri.startswith(repo_index_prefix):

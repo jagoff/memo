@@ -77,7 +77,7 @@ _BackendName = Literal["memo", "memflow", "synapse"]
 # itself migrates to consciousness_contracts (then both can flip together).
 # The typed objects below ensure shape stays in sync with the contract package.
 _WRITE_RECEIPT_LEGACY_SCHEMA = "synapse.memory_write_receipt.v1"
-_EVIDENCE_URI_PREFIX = "memo://memory/"
+_EVIDENCE_URI_PREFIX = "memo://memoria/"
 _DEFAULT_TYPE = "note"
 # Kinds synapse uses that don't map 1:1 to memo's frozenset of types are
 # coerced to `note` and the original kind is preserved as a tag so the

@@ -315,11 +315,6 @@ class Memory(
         return self.capability("query_composer")
 
     @property
-    def federation(self) -> Any:
-        """Lazy accessor for FederationSearcher."""
-        return self.capability("federation")
-
-    @property
     def backup(self) -> Any:
         """Lazy accessor for BackupManager."""
         return self.capability("backup")

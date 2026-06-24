@@ -534,6 +534,11 @@ class _SchemaMixin(_StoreBase):
     def _validate_vec_dims(self) -> None:
         import os
 
+        # Raw os.environ read is intentional: the store layer cannot import
+        # memo.flags (circular dep risk — store is imported by Memory/Config
+        # which the flags system depends on).  The env var is registered in
+        # flags_misc.py for documentation/audit but gated through config.py
+        # for production use; this bypass is only for dev/test toggling.
         if os.environ.get("MEMO_SKIP_MODEL_VERSION_CHECK", "").lower() in {
             "1",
             "true",

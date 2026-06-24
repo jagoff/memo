@@ -78,6 +78,10 @@ def _lock_path() -> Path:
     the lock). `MEMO_GPU_LOCK_PATH` overrides it (test isolation / edge setups).
     Read at call time so the override takes effect per call.
     """
+    # Raw os.environ reads: mlx_gpu is a pure-stdlib leaf module that must not
+    # import memo.flags (would create a cycle — memo.flags depends on config
+    # which indirectly imports store which would import memo.flags...). The
+    # flags registry in flags_ingest.py documents both vars for auditability.
     override = os.environ.get("MEMO_GPU_LOCK_PATH", "").strip()
     if override:
         return Path(override)

@@ -57,7 +57,6 @@ from memo.errors import (  # noqa: F401
     ValidationError,
     WriteRefused,
 )
-from memo.federation import FederationConfig, FederationSearcher  # noqa: F401
 from memo.graph import GraphStore  # noqa: F401
 from memo.import_export import ImportExportManager  # noqa: F401
 from memo.lifecycle import (  # noqa: F401

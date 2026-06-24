@@ -200,7 +200,7 @@ def sync_clone(url: str, dest: str | None, as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(out, indent=2))
         return
-    console.print(f"[bold green]Cloned[/bold green] → {out['cloned']} ({out['memories']} memories)")
+    console.print(f"[bold green]Cloned[/bold green] → {out['cloned']} ({out['memorias']} memories)")
     console.print("\n[bold]Next steps on this machine:[/bold]")
     console.print(f"  1. Set [cyan]MEMO_DATA_DIR={out['memorias_dir']}[/cyan] in your config / MCP env")
     console.print("  2. [cyan]memo reindex --rebuild[/cyan]   # build the index from the .md")
@@ -237,7 +237,7 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
         click.echo(json.dumps(out, indent=2))
         return
     verb = "Reused" if out.get("reused") else "Cloned"
-    console.print(f"[bold green]{verb}[/bold green] → {out['cloned']} ({out['memories']} memories)")
+    console.print(f"[bold green]{verb}[/bold green] → {out['cloned']} ({out['memorias']} memories)")
     console.print(f"config → [cyan]{out['config']}[/cyan] (data_dir = {out['memorias_dir']})")
     console.print(f"reindexed: {out['reindexed']}")
     console.print(f"signal merged: {out['signal']}")

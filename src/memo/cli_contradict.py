@@ -59,7 +59,11 @@ def _fmt_pair_header(rec_a, rec_b, pair) -> str:
     help="Skip pairs whose updates are within N days (default: 1)",
 )
 @click.option(
-    "--max-memories", type=int, default=2000, help="Cap on memories visited (default: 2000)"
+    "--max-memories",
+    "max_memorias",
+    type=int,
+    default=2000,
+    help="Cap on memories visited (default: 2000)",
 )
 @click.option(
     "--max-pairs", type=int, default=500, help="Cap on pairs sent to the LLM (default: 500)"

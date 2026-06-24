@@ -42,12 +42,6 @@ def _query_composer(memory: Any) -> Any:
     return QueryComposer(memory, QueryStore(memory.cfg.state_dir))
 
 
-def _federation(memory: Any) -> Any:
-    from memo.federation import FederationConfig, FederationSearcher
-
-    return FederationSearcher(FederationConfig(memory.cfg.state_dir / "federation.json"))
-
-
 def _backup(memory: Any) -> Any:
     from memo.sync import BackupManager
 
@@ -126,7 +120,6 @@ OPTIONAL_CAPABILITIES: dict[str, CapabilityFactory] = {
     "crossref": _crossref,
     "dashboard": _dashboard,
     "encryption": _encryption,
-    "federation": _federation,
     "import_export": _import_export,
     "lifecycle": _lifecycle,
     "link_suggester": _link_suggester,

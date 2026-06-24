@@ -44,7 +44,6 @@ class _MemoryBase:
     cache: Any
     versioning: Any
     query_composer: Any
-    federation: Any
     backup: Any
     sync: Any
     encryption: Any

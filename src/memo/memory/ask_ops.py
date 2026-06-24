@@ -290,6 +290,12 @@ class _AskOpsMixin(_MemoryBase):
                 metadata["path"] = source.get("path")
             if source.get("repo_name"):
                 metadata["repo_name"] = source.get("repo_name")
+            # Provenance trail — surfaced so the consumer can trace which agent
+            # session / route produced the memory that fed this answer.
+            for prov_key in ("synapse_trace_id", "synapse_agent_id"):
+                val = source.get(prov_key)
+                if val:
+                    metadata[prov_key] = val
             citations.append(
                 {
                     "n": index,
@@ -487,6 +493,7 @@ class _AskOpsMixin(_MemoryBase):
             snippet_lines.append(
                 f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}{graph_info}\n{snippet}\n"
             )
+            extra = h.extra or {}
             sources.append(
                 {
                     "source": "memory",
@@ -496,7 +503,9 @@ class _AskOpsMixin(_MemoryBase):
                     "type": h.type,
                     "score": h.score,
                     "snippet": snippet,
-                    "graph_expanded": bool(h.extra.get("graph_expanded")),
+                    "graph_expanded": bool(extra.get("graph_expanded")),
+                    "synapse_trace_id": extra.get("synapse_trace_id") or "",
+                    "synapse_agent_id": extra.get("synapse_agent_id") or "",
                 }
             )
             seen_paths.update(_vault_dedup_keys(h))
