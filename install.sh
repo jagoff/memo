@@ -368,20 +368,18 @@ main() {
 
   phase "Configuring agent clients"
   if [[ "${MEMO_INSTALL_SKIP_AGENT_CONFIG:-0}" != "1" ]]; then
-    # Devin (CLI + Devin Desktop GUI, ex-Windsurf) share ~/.devin/mcp.json via the
-    # `devin mcp add` client. The old `windsurf` client writes ~/.codeium/windsurf,
-    # which only the retired Windsurf.app reads — so wire `devin`, not `windsurf`.
-    if spin "wiring MCP: Claude Code, Codex, OpenCode, Devin" \
+    # Configure every supported client (claude-code, codex, devin, opencode,
+    # windsurf, blackbox) so the MCP lands in all tools present on the machine.
+    # `devin` covers the devin CLI and Devin Desktop (ex-Windsurf), which share
+    # ~/.devin/mcp.json. --best-effort skips clients that aren't installed.
+    if spin "wiring MCP into all available clients (best-effort)" \
       env MEMO_NONINTERACTIVE=1 "$memo_bin" install-slash \
-      --client claude-code \
-      --client codex \
-      --client opencode \
-      --client devin \
+      --client all \
       --best-effort; then
       ok "agent clients configured"
     else
       warn "agent client configuration did not complete."
-      warn "Re-run after installing clients: memo install-slash --client claude-code --client codex --client opencode --client devin"
+      warn "Re-run after installing clients: memo install-slash --client all --best-effort"
     fi
   else
     say "skipping agent client configuration (MEMO_INSTALL_SKIP_AGENT_CONFIG=1)"
