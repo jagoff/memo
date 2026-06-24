@@ -371,9 +371,11 @@ class _ConsolidateOpsMixin(_MemoryBase):
             prompt = "Cluster:\n\n" + "\n---\n".join(_included)
             try:
                 chat = self._ensure_chat()
+                from memo.flags import flag_int
+
                 chat_out = chat_with_timeout(
                     chat,
-                    timeout=180,
+                    timeout=flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180,
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _CONSOLIDATE_SYSTEM_PROMPT},
@@ -536,9 +538,11 @@ class _ConsolidateOpsMixin(_MemoryBase):
             prompt = "Cluster:\n\n" + "\n---\n".join(_included)
 
             try:
+                from memo.flags import flag_int
+
                 chat_out = chat_with_timeout(
                     chat,
-                    timeout=180,
+                    timeout=flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180,
                     model=self.cfg.helper_model,
                     messages=[
                         {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},

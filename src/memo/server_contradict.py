@@ -107,8 +107,8 @@ def register(server: FastMCP, memory: Memory) -> None:
           - `dismissed`   — false positive
 
         This tool only updates the sidecar; it does NOT itself delete the
-        memories or run a merge. Use `memo_consolidate_apply` or
-        `memo_delete` first if the resolution implies destructive ops.
+        memories or run a merge. Use `memo_consolidate` or `memo_delete`
+        first if the resolution implies destructive ops.
 
         Args:
             pair_id: The integer pair_id returned by `memo_contradict_list`.

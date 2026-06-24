@@ -11,6 +11,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from memo.errors import MemoError
 from memo.memory import Memory
 
 
@@ -41,7 +42,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             expires_days=expires_days,
         )
         if not share:
-            raise ValueError(f"Failed to share {memoria_id[:8]}")
+            raise MemoError(f"Failed to share {memoria_id[:8]}")
         return share.__dict__
 
     @server.tool()
@@ -125,7 +126,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             parent_id=parent_id,
         )
         if not comment:
-            raise ValueError(f"Failed to add comment to {memoria_id[:8]}")
+            raise MemoError(f"Failed to add comment to {memoria_id[:8]}")
         return comment.__dict__
 
     @server.tool()

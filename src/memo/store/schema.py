@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS access (
 
 CREATE INDEX IF NOT EXISTS idx_access_last  ON access(last_accessed);
 CREATE INDEX IF NOT EXISTS idx_access_count ON access(access_count);
+CREATE INDEX IF NOT EXISTS idx_access_count_last ON access(access_count, last_accessed);
 
 CREATE TABLE IF NOT EXISTS memory_health (
     id          TEXT PRIMARY KEY,
@@ -301,8 +302,8 @@ class _SchemaMixin(_StoreBase):
 
     def _init_schema_locked(self) -> None:
         if not self._schema_ready():
-            with self._conn:
-                self._conn.executescript(_SCHEMA_DDL)
+            with self._tx() as cx:
+                cx.executescript(_SCHEMA_DDL)
                 # `vec0` virtual tables are created out of the static DDL string
                 # because their dimensionality is dynamic (see
                 # `_create_vec_tables`). `IF NOT EXISTS` means an existing vec
@@ -355,8 +356,37 @@ class _SchemaMixin(_StoreBase):
     _SECONDARY_INDICES: tuple[tuple[str, str], ...] = (
         ("idx_meta_path", "CREATE INDEX IF NOT EXISTS idx_meta_path ON meta(path)"),
         (
+            "idx_meta_path_nocase",
+            "CREATE INDEX IF NOT EXISTS idx_meta_path_nocase ON meta(path COLLATE NOCASE)",
+        ),
+        (
             "idx_meta_type_updated",
             "CREATE INDEX IF NOT EXISTS idx_meta_type_updated ON meta(type, updated)",
+        ),
+        (
+            "idx_meta_extra_vault",
+            "CREATE INDEX IF NOT EXISTS idx_meta_extra_vault "
+            "ON meta(json_extract(extra_json, '$.vault'))",
+        ),
+        (
+            "idx_meta_extra_source",
+            "CREATE INDEX IF NOT EXISTS idx_meta_extra_source "
+            "ON meta(json_extract(extra_json, '$.source'))",
+        ),
+        (
+            "idx_meta_extra_parent_path",
+            "CREATE INDEX IF NOT EXISTS idx_meta_extra_parent_path "
+            "ON meta(json_extract(extra_json, '$.parent_path'))",
+        ),
+        (
+            "idx_meta_extra_parent_id",
+            "CREATE INDEX IF NOT EXISTS idx_meta_extra_parent_id "
+            "ON meta(json_extract(extra_json, '$.parent_id'))",
+        ),
+        (
+            "idx_access_count_last",
+            "CREATE INDEX IF NOT EXISTS idx_access_count_last "
+            "ON access(access_count, last_accessed)",
         ),
     )
 
@@ -370,9 +400,9 @@ class _SchemaMixin(_StoreBase):
         missing = [ddl for name, ddl in self._SECONDARY_INDICES if name not in present]
         if not missing:
             return
-        with self._conn:
+        with self._tx() as cx:
             for ddl in missing:
-                self._conn.execute(ddl)
+                cx.execute(ddl)
 
     def _schema_ready(self) -> bool:
         rows = self._conn.execute(
@@ -490,11 +520,11 @@ class _SchemaMixin(_StoreBase):
             payload = [
                 (r["pk"], r["newval"], r["emb"]) for r in rows if r["emb"] is not None
             ]
-            with self._conn:
-                self._conn.execute(f"DROP TABLE {table}")
-                self._create_vec_tables(self._conn)
+            with self._tx() as cx:
+                cx.execute(f"DROP TABLE {table}")
+                self._create_vec_tables(cx)
                 if payload:
-                    self._conn.executemany(
+                    cx.executemany(
                         f"INSERT INTO {table} ({pk_col}, {new_col}, {vec_col}) "
                         f"VALUES (?, ?, ?)",
                         payload,
@@ -541,8 +571,8 @@ class _SchemaMixin(_StoreBase):
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'"
         ).fetchone()
         if row is None:
-            with self._conn:
-                self._conn.execute(
+            with self._tx() as cx:
+                cx.execute(
                     "CREATE TABLE IF NOT EXISTS schema_meta ("
                     "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
                 )
@@ -580,12 +610,12 @@ class _SchemaMixin(_StoreBase):
         if not current_model or "stub" in current_model.lower():
             return
 
-        with self._conn:
-            self._conn.execute(
+        with self._tx() as cx:
+            cx.execute(
                 "INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?, ?)",
                 ("embedder_model", current_model),
             )
-            self._conn.execute(
+            cx.execute(
                 "INSERT OR IGNORE INTO schema_meta (key, value) VALUES (?, ?)",
                 ("embedder_dims", str(current_dims)),
             )

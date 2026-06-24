@@ -92,7 +92,7 @@ class Param:
         schema: dict[str, Any] = {"type": type_field}
         if self.json_type == "array":
             schema["items"] = {"type": self.item_type}
-        if self.default is not MISSING and self.default is not None:
+        if self.default is not MISSING:
             schema["default"] = self.default
         if self.description:
             schema["description"] = self.description
@@ -125,8 +125,10 @@ def coerce_args(spec: ToolSpec, raw: dict[str, Any]) -> dict[str, Any]:
     for param in spec.params:
         if param.name not in raw or raw[param.name] is None:
             if param.required:
-                kwargs[param.name] = "" if param.json_type == "string" else None
-            elif param.default is not MISSING:
+                raise ValueError(
+                    f"required parameter '{param.name}' missing or None for tool '{spec.name}'"
+                )
+            if param.default is not MISSING:
                 kwargs[param.name] = None if param.default is None else param.default
             continue
         kwargs[param.name] = _coerce_value(param, raw[param.name])

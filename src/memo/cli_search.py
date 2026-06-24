@@ -72,14 +72,7 @@ def search(
     source: str | None,
 ) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
-    import os
     import time
-
-    # Apply --rerank / --no-rerank override before Config.from_env() reads it.
-    if use_rerank is True:
-        os.environ["MEMO_RERANKER_ENABLED"] = "1"
-    elif use_rerank is False:
-        os.environ["MEMO_RERANKER_ENABLED"] = "0"
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)

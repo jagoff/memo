@@ -109,11 +109,24 @@ def register(server: Any, memory: Memory) -> None:
         threshold: float = 0.85,
         max_clusters: int = 20,
         type: str | None = None,
-    ) -> list[dict[str, Any]]:
-        return memory.consolidate(
+    ) -> dict[str, Any]:
+        """Detect near-duplicate clusters and propose merges.
+
+        Read-only — returns proposals without modifying the corpus.
+        Uses the AdvancedConsolidator under the hood (same as
+        ``memo_consolidate_list_archived``).
+
+        Args:
+            threshold: Cosine similarity threshold (default 0.85).
+            max_clusters: Maximum clusters to process (default 20).
+            type: Optional filter by memory type.
+        """
+        return memory.consolidator.consolidate_all(
             threshold=threshold,
             max_clusters=max_clusters,
             type_=type,
+            auto_apply=False,
+            dry_run=True,
         )
 
     @server.tool()

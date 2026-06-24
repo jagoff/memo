@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -110,10 +111,13 @@ class TemporalAnalyzer:
     def __init__(self, memory: Any, chat: MLXChat | None = None) -> None:
         self.memory = memory
         self._chat = chat
+        self._chat_lock = threading.Lock()
 
     def _ensure_chat(self) -> MLXChat:
         if self._chat is None:
-            self._chat = MLXChat()
+            with self._chat_lock:
+                if self._chat is None:
+                    self._chat = MLXChat()
         return self._chat
 
     def detect_entity_contradictions(

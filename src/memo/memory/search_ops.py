@@ -90,6 +90,7 @@ class _SearchOpsMixin(_MemoryBase):
             _add_trace("final", output_count=0)
             return []
         limit = limit or self.cfg.search_default_limit
+        emb = None  # set in vec/hybrid branches; consumed by feedback boost below
 
         if mode == "bm25":
             rows = self.store.search_bm25(
@@ -122,6 +123,7 @@ class _SearchOpsMixin(_MemoryBase):
             rows = self.store.search(emb, limit=limit, type_=type_, exclude_types=exclude_types)
             _add_trace("candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows))
         else:
+            emb = None  # set below in hybrid's vec branch; used by feedback boost
             # hybrid — fetch a wider candidate set from each side and
             # fuse with reciprocal rank fusion (RRF). When the reranker
             # is enabled we widen the input pool to `rerank_input_k` so
@@ -275,15 +277,14 @@ class _SearchOpsMixin(_MemoryBase):
         # on this path would blow the recall hook's 5s budget. Feedback matching
         # is itself vector-based, so applying it only when a query vector already
         # exists is consistent.
-        fb_emb = locals().get("emb")
-        if out and fb_emb is not None and not flag_bool("MEMO_FEEDBACK_DISABLED"):
+        if out and emb is not None and not flag_bool("MEMO_FEEDBACK_DISABLED"):
             try:
                 before = len(out)
-                out = self._apply_source_feedback(out, fb_emb)
+                out = self._apply_source_feedback(out, emb)
                 _add_trace("feedback", input_count=before, output_count=len(out))
             except Exception as exc:
                 _log.warning("source_feedback failed: %s", exc, exc_info=True)
-        elif out and fb_emb is None:
+        elif out and emb is None:
             _log.debug(
                 "Source feedback boost skipped: query embedding unavailable in mode=%s",
                 mode,

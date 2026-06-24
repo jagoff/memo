@@ -103,7 +103,12 @@ def _acquire_flock() -> None:
         # rather than block every MLX call — correctness-best-effort.
         _lock_fd = None
         return
-    fcntl.flock(fd, fcntl.LOCK_EX)  # blocks until other processes release
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)  # blocks until other processes release
+    except OSError:
+        os.close(fd)
+        _lock_fd = None
+        return
     _lock_fd = fd
 
 
@@ -138,7 +143,7 @@ def gpu_guard(timeout: float | None = None) -> Iterator[None]:
     """
     global _depth
     effective_timeout: float | None = timeout if timeout is not None else getattr(_gpu_tl, "timeout", None)
-    acquired = _GPU_LOCK.acquire(timeout=effective_timeout if effective_timeout is not None else -1)
+    acquired = _GPU_LOCK.acquire(timeout=effective_timeout if effective_timeout is not None else -1.0)
     if not acquired:
         raise TimeoutError(
             f"GPU lock not acquired within {effective_timeout}s — an abandoned MLX thread "

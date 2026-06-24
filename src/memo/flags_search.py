@@ -194,7 +194,7 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_CONTRADICT_PENALTY_ENABLED",
         "bool",
-        False,
+        True,
         "search",
         "Penalise the older side of open contradiction pairs among retrieved results. Requires `memo contradict scan` to have populated the sidecar DB.",
     ),

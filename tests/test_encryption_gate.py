@@ -56,7 +56,7 @@ def _tool(server, name):
 _CLI_CMDS = (
     ["encrypt", "status"],
     ["encrypt", "lock"],
-    ["encrypt", "unlock", "pw"],
+    ["encrypt", "unlock"],
 )
 
 

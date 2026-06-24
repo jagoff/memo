@@ -89,25 +89,19 @@ class _DeleteOpsMixin(_MemoryBase):
         # matched the blob, so the embedding was silently dropped on rollback.)
         stored_embedding: list[float] = []
         stored_body_text: str = ""
-        if self.store.has_vector(id_):
-            vec_row = self.store._conn.execute(
-                "SELECT embedding FROM vec WHERE id = ?", (id_,)
-            ).fetchone()
-            raw = vec_row["embedding"] if vec_row is not None else None
-            if isinstance(raw, (bytes, bytearray)):
-                import struct
+        blob = self.store.get_embedding_blob(id_) if self.store.has_vector(id_) else None
+        if isinstance(blob, (bytes, bytearray)):
+            import struct
 
-                stored_embedding = list(struct.unpack(f"<{len(raw) // 4}f", raw))
-            elif isinstance(raw, (list, tuple)):
-                stored_embedding = list(raw)
-        fts_row = self.store._conn.execute(
-            "SELECT body FROM fts WHERE id = ?", (id_,)
-        ).fetchone()
-        stored_body_text = fts_row["body"] if fts_row is not None else ""
+            stored_embedding = list(struct.unpack(f"<{len(blob) // 4}f", blob))
+        elif isinstance(blob, (list, tuple)):
+            stored_embedding = list(blob)
+        stored_body_text = self.store.get_fts_body(id_)
 
         # Step 1: drop the derived index row + edges first (reversible via reindex)
         existed = self.store.delete(id_)
         if not existed:
+            self._write_gen += 1
             return False
 
         # Step 2: log history (before file delete for audit trail)
@@ -201,4 +195,5 @@ class _DeleteOpsMixin(_MemoryBase):
                 "Manual cleanup may be needed."
             ) from exc
 
+        self._write_gen += 1
         return True

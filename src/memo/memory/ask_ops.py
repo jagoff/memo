@@ -569,7 +569,13 @@ class _AskOpsMixin(_MemoryBase):
     def _corpus_version(self) -> str:
         """Cheap corpus fingerprint: row count + latest update timestamp.
         Any save/update/delete moves it, invalidating cached retrievals.
-        Includes repo source state so repo index/embed/delete busts the cache."""
+        Includes repo source state so repo index/embed/delete busts the cache.
+        Memoized per-instance; auto-invalidated by the write generation
+        counter (bumped on save/update/delete)."""
+        gen = getattr(self, "_write_gen", 0)
+        cached: tuple[int, str] | None = getattr(self, "_corpus_version_cached", None)
+        if cached is not None and cached[0] == gen:
+            return cached[1]
         try:
             meta = self.store._conn.execute(
                 "SELECT COUNT(*), COALESCE(MAX(updated), '') FROM meta"
@@ -584,6 +590,7 @@ class _AskOpsMixin(_MemoryBase):
             ver += f":r{repo[0]}:{repo[1]}"
         except Exception:
             ver += ":r0:"
+        self._corpus_version_cached = (gen, ver)
         return ver
 
     def _verbatim_short_circuit(

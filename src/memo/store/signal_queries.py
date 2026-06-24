@@ -298,15 +298,17 @@ class _SignalQueriesMixin(_StoreBase):
     ) -> list[dict[str, Any]]:
         """Return memories below roi_floor, never accessed, and older than min_age_days.
 
-        Always excludes 'synthesis' and 'reference' types. Returns list of
-        {id, roi_score, days_old}.
+        Always excludes 'synthesis' and 'reference' types. Uses INNER JOIN
+        because every meta row now has guaranteed access + memory_health rows
+        (seeded on upsert since v2, backfilled for legacy rows). Returns list
+        of {id, roi_score, days_old}.
         """
         excluded = (exclude_types or set()) | {"synthesis", "reference"}
         placeholders = ",".join("?" for _ in excluded)
         rows = self._conn.execute(
             f"""
             SELECT m.id,
-                   COALESCE(h.roi_score, 1.0)                        AS roi_score,
+                   h.roi_score                                      AS roi_score,
                    CAST(julianday('now') - julianday(m.updated) AS INTEGER) AS days_old
               FROM meta m
               LEFT JOIN memory_health h ON h.id = m.id
@@ -329,25 +331,27 @@ class _SignalQueriesMixin(_StoreBase):
     ) -> list[dict[str, Any]]:
         """Return up to `limit` memories coldest-first under the given policy.
 
-        Joins `meta` LEFT against `access` so never-accessed rows participate,
-        falling back to `meta.updated` as their effective last-access time
-        (a row written long ago and never read is genuinely cold).
+        Uses LEFT JOIN for safety (legacy rows may lack access row before
+        migration v2 runs).  Since the upsert seed and backfill both set
+        ``last_accessed = updated``, every access row has a non-NULL value
+        once migration completes, so ORDER BY uses the indexed column
+        directly instead of a cross-table COALESCE.
 
-          - lru: order by effective last-access ASC (coldest first).
-          - lfu: order by access_count ASC, then effective last-access ASC.
+          - lru: order by last_accessed ASC (coldest first).
+          - lfu: order by access_count ASC, then last_accessed ASC.
           - ttl: same ordering as lru; the age cutoff is applied by the caller.
 
         Returns dicts: {id, type, access_count, last_accessed, updated}.
         """
         if policy not in {"lru", "lfu", "ttl"}:
             raise ValueError(f"unknown eviction policy: {policy!r}")
-        eff = "COALESCE(a.last_accessed, m.updated)"
-        # lru and ttl share coldest-first-by-recency ordering
-        order = f"COALESCE(a.access_count, 0) ASC, {eff} ASC" if policy == "lfu" else f"{eff} ASC"
+        order = ("COALESCE(a.access_count, 0) ASC, COALESCE(a.last_accessed, m.updated) ASC"
+                 if policy == "lfu"
+                 else "COALESCE(a.last_accessed, m.updated) ASC")
         sql = (
             "SELECT m.id AS id, m.type AS type, "
             "COALESCE(a.access_count, 0) AS access_count, "
-            "a.last_accessed AS last_accessed, m.updated AS updated "
+            "COALESCE(a.last_accessed, m.updated) AS last_accessed, m.updated AS updated "
             "FROM meta m LEFT JOIN access a ON a.id = m.id "
         )
         params: list[Any] = []

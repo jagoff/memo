@@ -45,7 +45,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             top_n: How many memories to return in each list (default 10).
         """
         store = memory.store
-        conn = store._conn
+        conn = store.connection
 
         rows_low = conn.execute(
             "SELECT h.id, h.confidence, h.roi_score, m.title, m.type, m.updated "

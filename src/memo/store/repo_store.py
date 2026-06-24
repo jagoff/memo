@@ -580,7 +580,7 @@ class _RepoStoreMixin(_StoreBase):
         out: list[dict[str, Any]] = []
         for r in rows:
             d = _repo_row_to_dict(r)
-            d["score"] = 1.0 - float(r["distance"])
+            d["score"] = max(0.0, 1.0 - float(r["distance"]))
             d["match_type"] = "chunk"
             out.append(d)
         return out

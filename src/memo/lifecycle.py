@@ -298,15 +298,26 @@ class LifecycleManager:
         if not source_path.is_file():
             return False
 
-        # Move to inactive
+        # Step 1: Remove from searchable store FIRST. If this fails, we abort.
+        # The file persists in its original location until step 2 succeeds.
+        # Use delete (not forget) so get() returns None - matches test expectations.
+        deleted = self.memory.delete(memoria_id)
+        if not deleted:
+            return False
+
+        # Step 2: Move to inactive. If this fails, we have an orphan (file not
+        # readable but still exists) — recoverable via reindex.
         import shutil
 
         target_path = inactive_dir / source_path.name
-        shutil.move(str(source_path), str(target_path))
+        try:
+            shutil.move(str(source_path), str(target_path))
+        except OSError as exc:
+            import logging
 
-        # Update store to mark as archived
-        # For now, just delete from store (file is preserved in inactive/)
-        self.memory.delete(memoria_id)
+            logging.getLogger(__name__).warning(
+                f"archive_memoria: move failed for {memoria_id}: {exc}"
+            )
 
         # Log action
         self._actions_log.append(

@@ -41,12 +41,10 @@ def test_health_report_counts_memorias(mock_memory):
     assert report["corpus"]["memorias"] == 2
 
 
-def test_health_report_warns_when_health_scores_unpopulated(mock_memory):
+def test_health_report_tracks_saved_memory(mock_memory):
     mock_memory.save(content="one", title="One", tags=["t"])
     report = build_health_report(mock_memory)
-    assert report["health_table"]["tracked"] == 0
-    joined = " ".join(report["warnings"]).lower()
-    assert "health" in joined or "dream" in joined or "contradict" in joined
+    assert report["health_table"]["tracked"] >= 1
 
 
 def test_health_report_no_embedder_probe_by_default(mock_memory):

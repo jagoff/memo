@@ -30,12 +30,6 @@ def _lifecycle(memory: Any) -> Any:
     return LifecycleManager(memory)
 
 
-def _proactive(memory: Any) -> Any:
-    from memo.proactive import ProactiveSuggester
-
-    return ProactiveSuggester(memory, memory._ensure_chat())
-
-
 def _versioning(memory: Any) -> Any:
     from memo.versioning import VersionManager
 
@@ -137,7 +131,6 @@ OPTIONAL_CAPABILITIES: dict[str, CapabilityFactory] = {
     "lifecycle": _lifecycle,
     "link_suggester": _link_suggester,
     "multimodal": _multimodal,
-    "proactive": _proactive,
     "query_composer": _query_composer,
     "sharing": _sharing,
     "sync": _sync,

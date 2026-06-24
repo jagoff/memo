@@ -64,9 +64,10 @@ def test_get_days_since_access(lifecycle_manager, mock_memory):
         tags=["test"],
     )
 
-    # New memoria should return None for days since access (never accessed)
+    # New memoria has last_accessed seeded from updated (same day)
     days = lifecycle_manager.get_days_since_access(rec.id)
-    assert days is None
+    assert days is not None
+    assert isinstance(days, int)
 
 
 def test_get_days_since_update(lifecycle_manager, mock_memory):

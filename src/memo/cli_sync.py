@@ -88,13 +88,14 @@ def sync_import_signal(as_json: bool) -> None:
         console.print(f"  source_feedback_vec: {rebuilt}")
 
 
-@sync_group.command(name="diff")
+@sync_group.command(name="diff", hidden=True)
 @click.option("--remote", help="Path to remote memo state dir")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def sync_diff(remote: str | None, as_json: bool) -> None:
-    """Not supported in the replay sync model (no precomputed diff).
+    """Deprecated: replay sync model has no precomputed diff.
 
-    Use `memo sync pull` to apply missing remote events.
+    Use `memo sync pull` to apply missing remote events. Will be removed in a
+    future release.
     """
     msg = "replay sync model has no precomputed diff; use `memo sync pull`"
     if as_json:
@@ -150,7 +151,10 @@ def sync_pull(remote: str | None, as_json: bool, quiet: bool) -> None:
 
     if remote:  # legacy audit-log replay
         remote_db = _resolve_remote_history_db(remote)
-        assert remote_db is not None
+        if remote_db is None:
+            raise click.ClickException(
+                f"Remote history DB not found at: {remote}"
+            )
         diff = mem.sync.sync_from_remote(remote_db)
         console.print("[bold]Pull Sync (replay)[/bold]")
         console.print(f"Applied: {diff.applied}")
@@ -385,13 +389,14 @@ def sync_auto(as_json: bool) -> None:
         click.echo(json.dumps(did))
 
 
-@sync_group.command(name="both")
+@sync_group.command(name="both", hidden=True)
 @click.option("--remote", required=True, help="Path to remote memo state dir")
 def sync_both(remote: str) -> None:
-    """Sync from a remote machine (replay model alias for pull).
+    """Deprecated alias for ``sync pull``.
 
     In the replay model "both directions" is achieved by each machine pulling
-    the other's audit log; from this side that is a pull.
+    the other's audit log; from this side that is a pull. Will be removed in a
+    future release.
 
     Example: memo sync both --remote /path/to/remote/memo
     """

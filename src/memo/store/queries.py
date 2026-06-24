@@ -91,6 +91,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
                 (id_, title, " ".join(tags), body_text),
             )
+            # Seed signal rows so prune/eviction queries don't need COALESCE.
+            cx.execute(
+                "INSERT OR IGNORE INTO access (id, access_count, last_accessed) VALUES (?, 0, ?)",
+                (id_, updated),
+            )
+            cx.execute(
+                "INSERT OR IGNORE INTO memory_health (id, confidence, roi_score, updated_at) "
+                "VALUES (?, 1.0, 1.0, datetime('now'))",
+                (id_,),
+            )
         # Dual-write to tantivy (outside the sqlite tx — separate index).
         with self._tantivy_write_lock:
             tantivy = self._get_tantivy()
@@ -152,6 +162,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             # see the old body. Callers that later embed will re-insert via
             # upsert() with the correct vector.
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+            # Seed signal rows so prune/eviction queries don't need COALESCE.
+            cx.execute(
+                "INSERT OR IGNORE INTO access (id, access_count, last_accessed) VALUES (?, 0, ?)",
+                (id_, updated),
+            )
+            cx.execute(
+                "INSERT OR IGNORE INTO memory_health (id, confidence, roi_score, updated_at) "
+                "VALUES (?, 1.0, 1.0, datetime('now'))",
+                (id_,),
+            )
         # Dual-write to tantivy.
         with self._tantivy_write_lock:
             tantivy = self._get_tantivy()
@@ -167,6 +187,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
     def has_vector(self, id_: str) -> bool:
         row = self._conn.execute("SELECT 1 FROM vec WHERE id = ? LIMIT 1", (id_,)).fetchone()
         return row is not None
+
+    def get_embedding_blob(self, id_: str) -> bytes | None:
+        """Return the raw embedding blob for ``id_``, or None if missing."""
+        row = self._conn.execute("SELECT embedding FROM vec WHERE id = ?", (id_,)).fetchone()
+        return row["embedding"] if row else None
+
+    def get_fts_body(self, id_: str) -> str:
+        """Return the FTS body text for ``id_``, or empty string."""
+        row = self._conn.execute("SELECT body FROM fts WHERE id = ?", (id_,)).fetchone()
+        return str(row["body"]) if row else ""
 
     def update_meta(
         self,
@@ -443,7 +473,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         out: list[dict[str, Any]] = []
         for r in rows:
             d = _row_to_dict(r)
-            d["score"] = 1.0 - float(r["distance"])
+            d["score"] = max(0.0, 1.0 - float(r["distance"]))
             out.append(d)
         return out
 
@@ -523,7 +553,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 "UPDATE meta SET type = ? WHERE id = ?",
                 [(new_type, i) for i in ids],
             )
-            # Sync vec.type for every id that has a vector
+            # Batch delete + insert for vec.type: read embeddings, then
+            # issue two executemany calls instead of 2×N individual stmts.
             placeholders = ",".join("?" for _ in ids)
             vec_rows = {
                 r["id"]: r["embedding"]
@@ -531,12 +562,11 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     f"SELECT id, embedding FROM vec WHERE id IN ({placeholders})", ids
                 ).fetchall()
             }
-            for id_ in ids:
-                emb = vec_rows.get(id_)
-                if emb is not None:
-                    cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
-                    cx.execute(
-                        "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
-                        (id_, emb, new_type),
-                    )
+            to_update = [(id_,) for id_ in ids if id_ in vec_rows]
+            if to_update:
+                cx.executemany("DELETE FROM vec WHERE id = ?", to_update)
+                cx.executemany(
+                    "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+                    [(id_, vec_rows[id_], new_type) for id_, in to_update],
+                )
         return len(ids)

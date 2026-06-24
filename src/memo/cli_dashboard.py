@@ -87,15 +87,19 @@ def _spawn_background(port: int, interval: int, log_path: Path) -> int:
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log = open(log_path, "ab")  # noqa: SIM115 - handed to the child, closed on exit
-    args = [
-        sys.argv[0], "dashboard",
-        "--no-open", "--foreground-only",
-        "--port", str(port), "--interval", str(interval),
-    ]
-    proc = subprocess.Popen(
-        args, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-        start_new_session=True,  # detach from the controlling terminal
-    )
+    try:
+        args = [
+            sys.argv[0], "dashboard",
+            "--no-open", "--foreground-only",
+            "--port", str(port), "--interval", str(interval),
+        ]
+        proc = subprocess.Popen(
+            args, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+            start_new_session=True,  # detach from the controlling terminal
+        )
+    except Exception:
+        log.close()
+        raise
     return proc.pid
 
 

@@ -364,11 +364,13 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
 
         return result
 
-    def unload(self) -> None:
-        """Drop the model + tokenizer; clear the MLX cache. Idempotent."""
+    def unload(self) -> None:  # type: ignore[no-redef]
+        """Drop the model + tokenizer + query cache; clear the MLX cache. Idempotent."""
         with self._load_lock:
             self._model = None
             self._tokenizer = None
+            if self._query_cache is not None:
+                self._query_cache = None
             try:
                 import mlx.core as mx
 

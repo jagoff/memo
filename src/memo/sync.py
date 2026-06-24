@@ -6,6 +6,7 @@ replaying missing events from a remote `history.db`.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -47,9 +48,33 @@ class BackupManager:
         self.memory_dir = memory_dir
         self.db_dir = db_dir
         self.backup_dir = backup_dir
-        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self._lock_file = backup_dir / ".backup.lock"
+        self._lock_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _acquire_lock(self, fh):
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+
+    def _release_lock(self, fh):
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
     def create_backup(
+        self,
+        compress: bool = True,
+        name: str | None = None,
+    ) -> BackupMetadata:
+        fh = self._lock_file.open("w")  # type: ignore[call-overload]
+        try:
+            self._acquire_lock(fh)
+        except OSError as exc:
+            fh.close()
+            raise RuntimeError(f"Could not acquire backup lock: {exc}") from exc
+        try:
+            return self._create_backup_inner(compress, name)
+        finally:
+            self._release_lock(fh)
+            fh.close()
+
+    def _create_backup_inner(
         self,
         compress: bool = True,
         name: str | None = None,

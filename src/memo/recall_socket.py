@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import socketserver
@@ -16,6 +17,7 @@ from memo.daemon_common import serve_until_shutdown as _serve_until_shutdown
 from memo.recall_logic import _recall_logic
 from memo.recall_stats import _STATS_DEFAULT_PERSIST_INTERVAL_S, _DaemonStats, _stats_persister
 
+_log = logging.getLogger(__name__)
 _MAX_LINE_BYTES = 1 << 20
 
 
@@ -107,7 +109,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                 latency_ms=int((time.time() - t0) * 1000),
             )
         except Exception:
-            pass
+            _log.debug("recall socket: stats recording failed", exc_info=True)
         return json.dumps({"results": results}, ensure_ascii=False)
 
     def _embed_batch(self, req: dict[str, Any]) -> str:
@@ -321,7 +323,7 @@ class _SimpleLockWrapper:
 
     def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
         # Ignores priority parameter for simple lock
-        return self._lock.acquire(timeout=timeout if timeout is not None else -1)
+        return self._lock.acquire(timeout=timeout if timeout is not None else -1.0)
 
     def release(self) -> None:
         self._lock.release()

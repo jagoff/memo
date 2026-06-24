@@ -45,7 +45,7 @@ def _inject_notification_into_result(result_json: str, notif: str) -> str:
             hso["additionalContext"] = f"{notif}\n\n{ctx}" if ctx else notif
             return json.dumps(obj, ensure_ascii=False)
     except (json.JSONDecodeError, TypeError):
-        pass
+        _log.debug("recall hook: failed to parse existing result_json, falling back to bare notification")
     # Fallback: emit the notification as its own hook output.
     return json.dumps(
         {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": notif}},
@@ -325,7 +325,7 @@ def recall_hook() -> None:
                     if days > staleness_days and (h.score or 0.0) < stale_threshold:
                         continue
                 except Exception:
-                    pass
+                    _log.debug("recall hook: excluding hit %s due to date parse error", h.id[:8], exc_info=True)
                 filtered.append(h)
             rel = filtered
         from memo.recall_server import dedup_hits
@@ -462,6 +462,6 @@ def recall_hook() -> None:
             new_ids = {h.id: _turn for h in relevant if h.id not in _prev_recalled}
             _session_mod.mark_ids_recalled(cfg.state_dir, _sid, new_ids)
         except Exception:
-            pass
+            _log.debug("recall hook: mark_ids_recalled failed for session %s", _sid[:8], exc_info=True)
 
     sys.exit(0)

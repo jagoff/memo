@@ -18,6 +18,7 @@ Merge is idempotent on re-pull (see `VecStore.merge_signal`):
 
 from __future__ import annotations
 
+import fcntl
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -44,6 +45,22 @@ def signal_dir_for(cfg: Config) -> Path:
 def export_signal(store: VecStore, signal_dir: Path) -> dict[str, int]:
     """Dump every signal table to `signal_dir/<table>.json`. Returns row counts."""
     signal_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = signal_dir / ".signal.lock"
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    fh = lock_file.open("w")  # type: ignore[call-overload]
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+    except OSError as exc:
+        fh.close()
+        raise RuntimeError(f"Could not acquire signal lock: {signal_dir}") from exc
+    try:
+        return _export_signal_inner(store, signal_dir)
+    finally:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        fh.close()
+
+
+def _export_signal_inner(store: VecStore, signal_dir: Path) -> dict[str, int]:
     dump = store.dump_signal()
     counts: dict[str, int] = {}
     for table, filename in _FILES.items():

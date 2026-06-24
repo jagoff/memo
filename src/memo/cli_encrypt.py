@@ -35,15 +35,13 @@ def encrypt_group() -> None:
 
 
 @encrypt_group.command(name="unlock")
-@click.argument("password")
-def encrypt_unlock(password: str) -> None:
-    """Unlock the vault with password.
+def encrypt_unlock() -> None:
+    """Unlock the vault with password (prompted, hidden input).
 
     Derives master key from password and stores in memory.
-
-    Example: memo encrypt unlock mypassword
     """
     _require_enabled()
+    password = click.prompt("Password", hide_input=True)
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 

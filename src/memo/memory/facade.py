@@ -148,6 +148,9 @@ class Memory(
         # Serialises unique-path allocation + .md creation in save() so two
         # concurrent same-title saves can't race the path probe (see write_ops).
         self._save_path_lock = threading.Lock()
+        # Write-generation counter; bumped by save/update/delete to bust the
+        # RAG cache's corpus-version memo (see _corpus_version in ask_ops).
+        self._write_gen = 0
 
     def _ensure_chat(self) -> MLXChat:
         """Construct the chat wrapper without loading model weights yet.
@@ -300,11 +303,6 @@ class Memory(
 
             self._cache = CacheManager(self)
         return self._cache
-
-    @property
-    def proactive(self) -> Any:
-        """Lazy accessor for ProactiveSuggester."""
-        return self.capability("proactive")
 
     @property
     def versioning(self) -> Any:

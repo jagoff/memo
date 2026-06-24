@@ -95,8 +95,17 @@ def chunk_markdown(
             seq += 1
         else:
             # Section overflows target — sub-split into smaller chunks.
-            for sub_body in _group_into_chunks(sec_text, target_chars):
-                chunks.append(Chunk(seq=seq, heading=current_heading, body=sub_body))
+            sub_bodies = _group_into_chunks(sec_text, target_chars)
+            for i, sub_body in enumerate(sub_bodies):
+                body = sub_body
+                # Append overlap from previous chunk's tail so context
+                # carries across chunk boundaries.
+                if overlap_chars > 0 and i > 0:
+                    prev = sub_bodies[i - 1]
+                    tail = prev[-overlap_chars:].lstrip()
+                    if tail:
+                        body = tail + "\n" + body
+                chunks.append(Chunk(seq=seq, heading=current_heading, body=body))
                 seq += 1
 
     if not chunks:

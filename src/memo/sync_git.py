@@ -200,11 +200,13 @@ def sync_once(
     lock_file = _lock_path(cfg)
     try:
         lock_file.parent.mkdir(parents=True, exist_ok=True)
-        fh = lock_file.open("w")
+        fh = lock_file.open("w")  # type: ignore[call-overload]
     except OSError as exc:
         return {"tier": "remote", "skipped": f"lock open failed: {exc}"}
     try:
         try:
+            flags = fcntl.fcntl(fh.fileno(), fcntl.F_GETFD)
+            fcntl.fcntl(fh.fileno(), fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             # Another process on this machine owns the git step right now. Our
@@ -330,6 +332,11 @@ def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
     has_unpushed = unpushed.isdigit() and int(unpushed) > 0
     if n_files == 0 and not has_unpushed and not _pending_marker(cfg).is_file():
         return {"pushed": False, "reason": "nothing to commit", "branch": branch}
+
+    # Stamp pending marker BEFORE push attempt — if we crash between now and
+    # the push, the retry mechanism will catch it on next trigger.
+    with contextlib.suppress(OSError):
+        _pending_marker(cfg).write_text(branch, encoding="utf-8")
 
     # push; set upstream on first push
     push = _git(root, "push", remote, branch, check=False)

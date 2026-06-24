@@ -13,6 +13,7 @@ from __future__ import annotations
 import concurrent.futures as _futures
 import logging
 import re
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -252,27 +253,29 @@ def _recency_key(rec: MemoryRecord) -> str:
 # -- LLM-call helpers (shared by the maintain/consolidate/synthesize loops) ----
 
 _CHAT_EXECUTOR: _futures.ThreadPoolExecutor | None = None
+_EXECUTOR_LOCK = threading.Lock()
 
 
 def _get_chat_executor() -> _futures.ThreadPoolExecutor:
     global _CHAT_EXECUTOR
-    if _CHAT_EXECUTOR is None:
-        _CHAT_EXECUTOR = _futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="chat-timeout"
-        )
-    return _CHAT_EXECUTOR
+    with _EXECUTOR_LOCK:
+        if _CHAT_EXECUTOR is None:
+            _CHAT_EXECUTOR = _futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="chat-timeout"
+            )
+        return _CHAT_EXECUTOR
 
 
 def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, Any] | None:
     """Run ``chat.chat(**kwargs)`` with a hard wall-clock timeout.
 
     Returns the result dict, or ``None`` if it exceeds ``timeout``. On timeout
-    the worker thread is abandoned (``shutdown(wait=False)``) — an MLX forward
-    pass can't be interrupted mid-flight. To prevent the abandoned thread from
-    causing the NEXT call to deadlock on the GPU lock indefinitely, the
-    submitted thread sets ``_gpu_tl.timeout`` (a thread-local read by
-    ``gpu_guard()``) so lock acquisitions in subsequent calls time out and raise
-    ``TimeoutError`` rather than blocking forever.
+    the executor is shut down (``shutdown(wait=False)``) and replaced with a
+    fresh one — an MLX forward pass can't be interrupted mid-flight, but the
+    next caller gets a full timeout budget instead of queueing behind the
+    abandoned thread.  The submitted thread sets ``_gpu_tl.timeout`` so
+    ``gpu_guard()`` imposes a deadline on the GPU lock rather than blocking
+    forever.
 
     Errors raised by ``chat.chat`` propagate (caller's try/except handles them).
     """
@@ -291,10 +294,25 @@ def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, 
         return chat.chat(**kwargs)
 
     ex = _get_chat_executor()
+    if getattr(ex, "_shutdown", False):
+        with _EXECUTOR_LOCK:
+            _CHAT_EXECUTOR = None
+            _CHAT_EXECUTOR = _futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="chat-timeout"
+            )
+            ex = _CHAT_EXECUTOR
     fut = ex.submit(_run)
     try:
         return fut.result(timeout=timeout)
     except _futures.TimeoutError:
+        # Shutdown the executor so the next caller doesn't queue behind
+        # the abandoned MLX thread.  An MLX forward pass can't be
+        # interrupted in-flight, so the old thread runs to completion in
+        # the background, but the next call gets a fresh executor+worker
+        # and its full timeout budget instead of cascading.
+        with _EXECUTOR_LOCK:
+            ex.shutdown(wait=False)
+            _CHAT_EXECUTOR = None
         return None
 
 

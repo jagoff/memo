@@ -79,20 +79,4 @@ def register(server: FastMCP, memory: Memory) -> None:
         diff = memory.sync.sync_from_remote(remote_db)
         return diff.__dict__
 
-    @server.tool()
-    def memo_sync_both(
-        remote: str | None = None,
-    ) -> dict[str, Any]:
-        """Sync from a remote machine (replay model alias for pull).
 
-        In the replay model "both directions" is achieved by each machine
-        pulling the other's audit log; from this side that is a pull.
-
-        Args:
-            remote: Path to remote memo state dir (or its ``history.db``).
-        """
-        remote_db = _resolve_remote_history_db(remote)
-        if remote_db is None:
-            return {"error": "remote is required (path to remote memo state dir)"}
-        diff = memory.sync.sync_from_remote(remote_db)
-        return diff.__dict__

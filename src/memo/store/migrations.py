@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 from ._base import _StoreBase
+
+_log = logging.getLogger(__name__)
 
 
 class _MigrationsMixin(_StoreBase):
@@ -14,6 +18,10 @@ class _MigrationsMixin(_StoreBase):
     #       Reads use the `Memory._resolve_existing` legacy fallback.
     #   1 — post-`memo migrate-vault`. Paths in `meta.path` are relative
     #       to `cfg.memory_dir` directly. Set after a successful reindex.
+    #   2 — signal-table rows (access, memory_health) seeded on every meta
+    #       upsert so prune/eviction queries can use direct column access
+    #       instead of COALESCE over LEFT JOIN.  Migration backfills any
+    #       meta rows that predate this change.
 
     def get_user_version(self) -> int:
         """Return the on-disk schema version (0 by default)."""
@@ -25,8 +33,7 @@ class _MigrationsMixin(_StoreBase):
         """Bump the on-disk schema version. Run inside a write tx."""
         if not isinstance(version, int) or version < 0:
             raise ValueError(f"user_version must be a non-negative int, got {version!r}")
-        with self._conn:
-            self._conn.execute(f"PRAGMA user_version = {version}")
+        self._conn.execute(f"PRAGMA user_version = {version}")
 
     def _run_migrations(self) -> None:
         """Run pending schema migrations in order.
@@ -39,5 +46,22 @@ class _MigrationsMixin(_StoreBase):
         if current == 0:
             row = self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()
             if row and int(row[0]) == 0:
-                # Fresh DB — stamp at version 1 immediately.
-                self.set_user_version(1)
+                # Fresh DB — stamp at version 2 immediately (skips 1,
+                # which was only about migratable paths).
+                self.set_user_version(2)
+                return
+
+        # v1 → v2: backfill access + memory_health rows for meta rows
+        # that predate the auto-seed on upsert.
+        if current < 2:
+            with self._tx() as cx:
+                cx.execute(
+                    "INSERT OR IGNORE INTO access (id, access_count, last_accessed) "
+                    "SELECT id, 0, updated FROM meta"
+                )
+                cx.execute(
+                    "INSERT OR IGNORE INTO memory_health (id, confidence, roi_score, updated_at) "
+                    "SELECT id, 1.0, 1.0, datetime('now') FROM meta"
+                )
+                self.set_user_version(2)
+            _log.info("backfilled signal rows for v2: access + memory_health")

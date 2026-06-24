@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -116,6 +117,18 @@ class VecStore(
         self._tantivy_write_lock: threading.Lock = threading.Lock()
         self._tantivy_healthy: bool = True
         self._maybe_rebuild_tantivy()
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """Return the calling thread's connection for ad-hoc queries.
+
+        The connection is thread-local (one per thread, lazily created).
+        Use this instead of accessing ``_conn`` directly for read-only
+        queries that VecStore doesn't expose via a public method.  Write
+        operations must go through the public API (``upsert``, ``delete``,
+        etc.) or ``_tx()`` for transactional safety.
+        """
+        return self._conn
 
     # -- tantivy wiring --------------------------------------------------------
 

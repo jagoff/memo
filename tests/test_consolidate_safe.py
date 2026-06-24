@@ -42,15 +42,16 @@ def _patch_cli_memory(monkeypatch) -> _SpyMem:
 # ── MCP server default ────────────────────────────────────────────────────
 
 
-def test_server_consolidate_apply_defaults_to_dry_run():
+def test_server_consolidate_defaults_to_read_only():
+    """memo_consolidate (core) must default to dry_run=True — no mutation without opt-in."""
     from fastmcp import FastMCP
 
-    from memo import server_consolidate
+    from memo import server_core_records
 
     spy = _SpyMem()
     server = FastMCP("t")
-    server_consolidate.register(server, spy)
-    tool = asyncio.run(server.get_tool("memo_consolidate_apply")).fn
+    server_core_records.register(server, spy)
+    tool = asyncio.run(server.get_tool("memo_consolidate")).fn
     tool()  # no dry_run arg → must default to a non-destructive preview
     assert spy.consolidator.calls[0]["dry_run"] is True
 

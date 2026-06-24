@@ -5,12 +5,15 @@ Registered by ``build_server()`` via ``register(server, memory)``.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import frontmatter
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+
+_log = logging.getLogger(__name__)
 
 
 def register(server: FastMCP, memory: Memory) -> None:
@@ -66,7 +69,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         if confidence is not None and confidence not in _valid_conf:
             raise ValueError(f"confidence must be one of {sorted(_valid_conf)} or None, got {confidence!r}")
 
-        store_conn = memory.store._conn
+        store_conn = memory.store.connection
         rows = store_conn.execute(
             "SELECT meta.id, meta.title, meta.path, meta.created, meta.updated "
             "FROM meta WHERE meta.type = 'synthesis' ORDER BY meta.updated DESC",
@@ -94,7 +97,7 @@ def register(server: FastMCP, memory: Memory) -> None:
                         entry["rationale"] = ex.get("synthesis_rationale")
                         entry["body"] = post.content[:300] if post.content else ""
                     except Exception:
-                        pass
+                        _log.debug("synthesis list: failed to read %s", r["path"], exc_info=True)
             if confidence is not None and entry["confidence"] != confidence:
                 continue
             results.append(entry)

@@ -241,6 +241,25 @@ class MLXReranker:
             out = out[:top_n]
         return out
 
+    def unload(self) -> None:
+        """Release the loaded model and clear GPU caches.
+
+        Idempotent — safe to call even when not loaded. Mirrors the
+        pattern from ``MLXEmbedder.unload()`` so the ``memo-mcp``
+        daemon can cycle models without restarting.
+        """
+        self._model = None
+        self._tokenizer = None
+        self._yes_id = None
+        self._no_id = None
+        self._loaded_at = None
+        from contextlib import suppress
+
+        with suppress(ImportError, AttributeError):
+            import mlx.core as mx
+
+            mx.clear_cache()
+
     def warmup(self) -> None:
         """Force-load + run one tiny scoring pass so the first real
         query in a session doesn't pay the JIT/graph-construction cost.

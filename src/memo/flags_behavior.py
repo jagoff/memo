@@ -150,6 +150,16 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_CONSOLIDATE_TIMEOUT",
+        "int",
+        180,
+        "maintain",
+        "Seconds per LLM call during consolidation (merge proposal, classification, synthesis). "
+        "Increase for large LLMs that cold-load slowly or generate long outputs.",
+        min_val=30,
+        max_val=3600,
+    ),
+    _spec(
         "MEMO_MAINT_SYNTHESIZE",
         "bool",
         False,

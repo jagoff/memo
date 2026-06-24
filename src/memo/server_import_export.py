@@ -7,11 +7,49 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+
+# Allowed base dirs for import/export file paths. The LLM can only read/write
+# within these directories — path traversal to /etc/shadow is blocked.
+_ALLOWED_BASE_DIRS: tuple[Path, ...] = (
+    Path.cwd(),
+    Path.home() / "Downloads",
+    Path.home() / "Desktop",
+    Path.home() / "Documents",
+)
+
+
+def _resolve_safe_path(raw: str, purpose: str) -> Path:
+    """Resolve ``raw`` to an absolute :class:`Path`, rejecting traversal
+    outside allowed base directories. Raises ``ValueError`` with a clear
+    message when the path is unsafe."""
+    p = Path(raw).expanduser().resolve(strict=False)
+    allowed = any(
+        p == base or _is_subdir(p, base) for base in _ALLOWED_BASE_DIRS
+    )
+    if not allowed:
+        raise ValueError(
+            f"Unsafe {purpose} path: {raw}. "
+            f"Must be under one of: {', '.join(str(d) for d in _ALLOWED_BASE_DIRS)}."
+        )
+    if p.is_dir():
+        raise ValueError(f"{purpose} path must be a file, not a directory: {raw}")
+    if purpose == "import" and not p.exists():
+        raise ValueError(f"Import file does not exist: {raw}")
+    return p
+
+
+def _is_subdir(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def register(server: FastMCP, memory: Memory) -> None:
@@ -25,11 +63,11 @@ def register(server: FastMCP, memory: Memory) -> None:
         for each item in the file.
 
         Args:
-            input_path: Path to JSON file.
+            input_path: Path to JSON file (under current dir, Downloads,
+                Desktop, or Documents).
         """
-        from pathlib import Path
-
-        result = memory.import_export.import_from(Path(input_path), "json")
+        safe = _resolve_safe_path(input_path, "import")
+        result = memory.import_export.import_from(safe, "json")
         return result.__dict__
 
     @server.tool()
@@ -42,11 +80,11 @@ def register(server: FastMCP, memory: Memory) -> None:
         for each row in the file.
 
         Args:
-            input_path: Path to CSV file.
+            input_path: Path to CSV file (under current dir, Downloads,
+                Desktop, or Documents).
         """
-        from pathlib import Path
-
-        result = memory.import_export.import_from(Path(input_path), "csv")
+        safe = _resolve_safe_path(input_path, "import")
+        result = memory.import_export.import_from(safe, "csv")
         return result.__dict__
 
     @server.tool()
@@ -58,11 +96,11 @@ def register(server: FastMCP, memory: Memory) -> None:
         Exports all memories to a JSON file with complete metadata.
 
         Args:
-            output_path: Path to write JSON file.
+            output_path: Path to write JSON file (under current dir, Downloads,
+                Desktop, or Documents).
         """
-        from pathlib import Path
-
-        result = memory.import_export.export_to(Path(output_path), "json")
+        safe = _resolve_safe_path(output_path, "export")
+        result = memory.import_export.export_to(safe, "json")
         return result.__dict__
 
     @server.tool()
@@ -75,11 +113,11 @@ def register(server: FastMCP, memory: Memory) -> None:
         id, title, body, tags, type, created, updated.
 
         Args:
-            output_path: Path to write CSV file.
+            output_path: Path to write CSV file (under current dir, Downloads,
+                Desktop, or Documents).
         """
-        from pathlib import Path
-
-        result = memory.import_export.export_to(Path(output_path), "csv")
+        safe = _resolve_safe_path(output_path, "export")
+        result = memory.import_export.export_to(safe, "csv")
         return result.__dict__
 
     @server.tool()
@@ -92,9 +130,9 @@ def register(server: FastMCP, memory: Memory) -> None:
         .md files with frontmatter metadata.
 
         Args:
-            output_path: Path to write zip file.
+            output_path: Path to write zip file (under current dir, Downloads,
+                Desktop, or Documents).
         """
-        from pathlib import Path
-
-        result = memory.import_export.export_to(Path(output_path), "markdown_bundle")
+        safe = _resolve_safe_path(output_path, "export")
+        result = memory.import_export.export_to(safe, "markdown_bundle")
         return result.__dict__

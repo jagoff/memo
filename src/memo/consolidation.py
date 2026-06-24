@@ -156,24 +156,33 @@ class AdvancedConsolidator:
             {"role": "user", "content": prompt},
         ]
 
-        # timeout=180 must cover a COLD load of cfg.llm_model: with the 30B MoE
-        # the weight read (~17GB) alone exceeds 60s, so a tighter budget would
-        # kill the load before it can warm and every cluster would re-cold-load.
-        # The first call warms the model; the rest reuse it in seconds.
+        # max_tokens=1024 keeps generation fast (~25-35s on a 7B) so the
+        # 180s timeout is never hit even on cold model load (~60s for 30B).
+        # The merged body can be concise; overly long output is wasteful.
         #
         # Greedy decode (temp=0.0) is deterministic, so a cluster whose output
         # truncates into invalid JSON fails identically on every run. One sampled
         # retry (temp=0.3) breaks that determinism and recovers it; a still-bad
         # second output degrades to a skipped cluster (never a crash).
+        # Cap prompt to avoid blowing context on large clusters.
+        # Members already carry body_preview at ~600 chars each, so 20
+        # members ≈ 12K chars — well within most windows.
+        _MAX_PROMPT_CHARS = 16_000
+        if len(prompt) > _MAX_PROMPT_CHARS:
+            prompt = prompt[:_MAX_PROMPT_CHARS] + "\n… [truncated]"
+
+        from memo.flags import flag_int
+
+        timeout_s = flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180
         data: dict[str, Any] | None = None
         for attempt, temperature in enumerate((0.0, 0.3)):
             try:
                 out = chat_with_timeout(
                     chat,
-                    timeout=180,
+                    timeout=timeout_s,
                     model=self.memory.cfg.llm_model,
                     messages=messages,
-                    options={"temperature": temperature, "max_tokens": 4096, "thinking": False},
+                    options={"temperature": temperature, "max_tokens": 1024, "thinking": False},
                 )
             except Exception as exc:
                 _log.warning("consolidation: merge-proposal LLM call failed: %s", exc)
@@ -192,7 +201,7 @@ class AdvancedConsolidator:
                         data = parsed
                         break
                 except (ValueError, TypeError):
-                    pass
+                    _log.debug("consolidation: unparseable merge proposal attempt %d", attempt)
             if attempt == 0:
                 _log.info(
                     "consolidation: merge-proposal greedy output unparseable; "
@@ -207,7 +216,7 @@ class AdvancedConsolidator:
         return MergeProposal(
             cluster_id=cluster.get("cluster_id", 0),
             memoria_ids=[m["id"] for m in members],
-            merged_title=data.get("merged_title", members[0]["title"]),
+            merged_title=data.get("merged_title", members[0]["title"] if members else ""),
             merged_body=data.get("merged_body", ""),
             merge_strategy=data.get("merge_strategy", "synthesis"),
             rationale=data.get("rationale", ""),

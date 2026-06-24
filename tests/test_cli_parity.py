@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -208,23 +207,16 @@ class TestSearchRerankFlag:
         call_kwargs = mock_mem.search.call_args[1]
         assert call_kwargs.get("disable_reranker") is True
 
-    def test_search_rerank_sets_env_and_passes_disable_false(
+    def test_search_rerank_passes_disable_false(
         self, runner_env: dict[str, str]
     ) -> None:
-        """--rerank must set MEMO_RERANKER_ENABLED=1 and pass disable_reranker=False."""
+        """--rerank must pass disable_reranker=False (no MEMO_RERANKER_ENABLED mutation)."""
         runner = CliRunner()
-        captured_env: dict = {}
-
-        def _fake_from_env():
-            captured_env["MEMO_RERANKER_ENABLED"] = os.environ.get("MEMO_RERANKER_ENABLED")
-            cfg = MagicMock()
-            cfg.reranker_enabled = True
-            return cfg
 
         with patch("memo.cli_search.Config") as mock_cfg_cls, patch(
             "memo.cli_search._get_memory"
         ) as mock_get_mem:
-            mock_cfg_cls.from_env.side_effect = _fake_from_env
+            mock_cfg_cls.from_env.return_value = MagicMock(reranker_enabled=True)
             mock_mem = MagicMock()
             mock_mem.search.return_value = []
             mock_get_mem.return_value = mock_mem
@@ -236,7 +228,6 @@ class TestSearchRerankFlag:
             )
 
         assert result.exit_code == 0, result.output
-        assert captured_env.get("MEMO_RERANKER_ENABLED") == "1"
         call_kwargs = mock_mem.search.call_args[1]
         assert call_kwargs.get("disable_reranker") is False
 

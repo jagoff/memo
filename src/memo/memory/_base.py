@@ -29,6 +29,7 @@ class _MemoryBase:
     _temporal: Any
     _contradict_store: Any
     _save_path_lock: Any
+    _write_gen: int
 
     # -- lazy @property managers (defined on the facade) -------------------
     temporal: Any
@@ -41,7 +42,6 @@ class _MemoryBase:
     link_suggester: Any
     lifecycle: Any
     cache: Any
-    proactive: Any
     versioning: Any
     query_composer: Any
     federation: Any

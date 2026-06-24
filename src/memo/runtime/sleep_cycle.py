@@ -118,14 +118,10 @@ def _get_last_activity(mem: Memory, cfg: Config) -> float:
 
     # 2. Check last write in the store (durable updates)
     try:
-        # Use direct SQL for speed
-        row = mem.store._conn.execute(
-            "SELECT MAX(updated) FROM meta",
-        ).fetchone()
-        if row and row[0]:
-            # SQLite updated is ISO8601 string
+        recent = mem.store.list_recent(limit=1)
+        if recent:
             from datetime import datetime
-            dt = datetime.fromisoformat(row[0].replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(recent[0]["updated"].replace("Z", "+00:00"))
             last_activity = max(last_activity, dt.timestamp())
     except Exception:
         pass

@@ -110,10 +110,13 @@ def default_socket_path() -> Path:
     explicit = os.environ.get("MEMFLOW_EMBED_SOCKET", "").strip()
     if explicit:
         return Path(explicit).expanduser()
-    state_dir = os.environ.get("MEMO_STATE_DIR", "").strip()
-    if state_dir:
-        return _socket_path_for_state_dir(Path(state_dir).expanduser())
-    return _socket_path_for_state_dir(Path.home() / ".local" / "share" / "memo")
+    try:
+        from memo.config import Config
+
+        state_dir = Config.from_env().state_dir
+    except Exception:
+        state_dir = Path(os.environ.get("MEMO_STATE_DIR", "").strip() or "~/.local/share/memo")
+    return _socket_path_for_state_dir(state_dir.expanduser())
 
 
 def encode_request(op: str, **fields: Any) -> bytes:

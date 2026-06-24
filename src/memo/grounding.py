@@ -79,7 +79,8 @@ _STOP = frozenset(
 def _budget_ms() -> int:
     from memo.flags import flag_int
 
-    return flag_int("MEMO_GROUNDING_BUDGET_MS") or 8000
+    v = flag_int("MEMO_GROUNDING_BUDGET_MS")
+    return v if v is not None else 8000
 
 
 def _salient_tokens(text: str) -> set[str]:

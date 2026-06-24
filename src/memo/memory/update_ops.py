@@ -171,4 +171,5 @@ class _UpdateOpsMixin(_MemoryBase):
             )
             # M2b: also emit to the unified trinity ledger.
             self._emit_ledger("update", updated_rec, new_prov)
+        self._write_gen += 1
         return updated_rec

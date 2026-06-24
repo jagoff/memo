@@ -60,7 +60,7 @@ class TrinityServer(socketserver.ThreadingUnixStreamServer):
             def __init__(self, lock: threading.Lock):
                 self._lock = lock
             def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
-                return self._lock.acquire(timeout=timeout if timeout is not None else -1)
+                return self._lock.acquire(timeout=timeout if timeout is not None else -1.0)
             def release(self) -> None:
                 self._lock.release()
         return FakePriorityLock(threading.Lock())

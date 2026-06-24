@@ -214,6 +214,7 @@ class _WriteOpsMixin(_MemoryBase):
                 trace_id=str(extra.get("synapse_trace_id") or ""),
             )
         if type is not None:
+            _log.warning("save: `type=` is deprecated, use `type_=`")
             if type_ != "note" and type_ != type:
                 raise ValueError("Pass either `type_` or `type`, not conflicting values")
             type_ = type
@@ -498,6 +499,7 @@ class _WriteOpsMixin(_MemoryBase):
                 self.cache.evict_if_needed()
             except Exception as exc:
                 _log.warning("cache eviction skipped after save: %s", exc)
+        self._write_gen += 1
         return rec
 
     def _save_index_pending(
@@ -582,6 +584,7 @@ class _WriteOpsMixin(_MemoryBase):
             extra=extra_for_store,
         )
         self._emit_save_receipt(rec, deferred=True, disabled=skip_memflow_receipt)
+        self._write_gen += 1
         return rec
 
     def _emit_save_receipt(
@@ -633,7 +636,7 @@ class _WriteOpsMixin(_MemoryBase):
             op,
             subject_uri=f"memo://memoria/{rec.id}",
             trace_id=(prov or {}).get("synapse_trace_id", "") or "",
-            actor=(prov or {}).get("synapse_agent_id", "") or "memo",
+            actor=(prov or {}).get("synapse_agent_id") or "memo",
             payload={
                 "id": rec.id,
                 "type": rec.type,
@@ -735,7 +738,7 @@ class _WriteOpsMixin(_MemoryBase):
             if row and row["body"]:
                 return str(row["body"])
         except sqlite3.Error:
-            pass
+            _log.warning("read_body_fallback: DB error for %s", rel_path, exc_info=True)
         return ""
 
 
