@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-06-24
+
+### Changed
+
+- **install: auto-update on by default in MCP server env.** `MEMO_AUTO_UPDATE=1` is now set in `_mcp_server_env` so `memo-mcp` self-upgrades to the latest git tag on start (tag-gated, throttled). Keeps the `[MEMO <version>]` statusline badge in sync with releases automatically. Opt out with `MEMO_AUTO_UPDATE=0` in the client env.
+
 ## [1.0.3] - 2026-06-24
 
 ### Added

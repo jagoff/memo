@@ -55,6 +55,11 @@ def _mcp_server_env() -> dict[str, str]:
     env = {
         "MEMO_NONINTERACTIVE": "1",
         "MEMO_MCP_PROFILE": flag_str("MEMO_MCP_PROFILE") or "agent",
+        # Keep installs current: memo-mcp checks for a newer git TAG on start and
+        # self-upgrades (tag-gated + throttled). This is what makes the [MEMO <ver>]
+        # statusline badge follow releases automatically. Set MEMO_AUTO_UPDATE=0 in
+        # the client env to opt out.
+        "MEMO_AUTO_UPDATE": "1",
     }
     for key in _MCP_ENV_FORWARD_KEYS:
         val = os.environ.get(key)
