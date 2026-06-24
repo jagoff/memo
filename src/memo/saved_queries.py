@@ -183,7 +183,7 @@ class QueryComposer:
                     if to_dt is not None and hit_date > to_dt:
                         continue
                 except (ValueError, AttributeError):
-                    pass
+                    _log.debug("saved_queries: unparseable date for hit %s", hit.id[:8])
             filtered.append(hit)
             if len(filtered) >= query.limit:
                 break

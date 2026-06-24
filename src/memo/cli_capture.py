@@ -228,13 +228,6 @@ def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
     _sys.exit(0)
 
 
-# ── Session reflection (v0.5.0) ─────────────────────────────────────────────
-#
-# `memo reflect` — read a full session transcript, extract durable insights
-# (decisions, facts, bugs, follow-ups), and save them as memories + a session
-# arc nota. Auto-idempotent via `reflected_at` stamp in the session snapshot.
-
-
 @click.command(name="resume")
 @click.argument("session_id", required=False)
 @click.option(
@@ -331,7 +324,7 @@ def resume(
         return
 
     # When the caller passed an explicit --cwd, the list is already
-    # filtered to that cwd — printing a "Última en este proyecto"
+    # filtered to that cwd — printing a "Latest in this project"
     # banner on top of a homogeneous list would be redundant.
     if cwd_filter:
         same_cwd = []

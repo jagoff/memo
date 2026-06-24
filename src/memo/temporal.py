@@ -174,7 +174,7 @@ class TemporalAnalyzer:
                     if abs((d2 - d1).days) < 1:
                         continue
                 except (ValueError, TypeError, AttributeError):
-                    pass
+                    _log.debug("temporal: skip pair date parse error")
 
                 contr = self._classify_pair(r1, r2)
                 if contr and contr.confidence >= confidence_threshold:
@@ -389,7 +389,7 @@ Body: {(r2.body or "")[:1000]}
                 key = f"{dt.year}-{dt.month:02d}"
                 monthly[key] += 1
             except (ValueError, TypeError, AttributeError):
-                pass
+                _log.debug("temporal: skip record with unparseable created date")
 
         # Type distribution over time
         type_over_time: defaultdict[str, defaultdict[str, int]] = defaultdict(
@@ -401,7 +401,7 @@ Body: {(r2.body or "")[:1000]}
                 key = f"{dt.year}-{dt.month:02d}"
                 type_over_time[key][rec.type] += 1
             except (ValueError, TypeError, AttributeError):
-                pass
+                _log.debug("temporal: skip type-over-time record with unparseable created date")
 
         # Most active entities (by number of memories)
         entity_counts: defaultdict[str, int] = defaultdict(int)

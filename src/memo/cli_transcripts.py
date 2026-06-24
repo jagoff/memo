@@ -333,7 +333,7 @@ def _reflect_session(
             else:
                 saved_ids.append(f"(dry-run) {title}")
 
-    # Arc nota — a single nota linking the session narrative.
+    # Arc note — a single note linking the session narrative.
     arc_id: str | None = None
     if arc_summary and not dry_run:
         project = snap.get("project") or "unknown"
@@ -350,7 +350,7 @@ def _reflect_session(
             arc_rec = mem.save(content=arc_body, title=arc_title, type_="note", tags=arc_tags)
             arc_id = arc_rec.id
             if debug:
-                print(f"# memo reflect: arc nota [{arc_id[:8]}] {arc_title}", file=sys.stderr)
+                print(f"# memo reflect: arc note [{arc_id[:8]}] {arc_title}", file=sys.stderr)
         except Exception as exc:
             if debug:
                 print(f"# memo reflect: arc save failed: {exc}", file=sys.stderr)
@@ -400,7 +400,7 @@ def reflect(
 
     Reads the full session transcript (not just the last 3 turns),
     extracts decisions/facts/bugs/follow-ups, deduplicates against the
-    existing corpus, and saves survivors plus a session arc nota.
+    existing corpus, and saves survivors plus a session arc note.
 
     Idempotent: a `reflected_at` stamp prevents re-processing the same
     session. Pass `--if-due` to skip cleanly when already reflected.
@@ -501,12 +501,3 @@ def reflect(
         f"[dim]arc:[/dim]     {arc_id[:8] if arc_id else '—'}"
     )
     console.print(Panel.fit(body, title="✓ reflect", border_style="green"))
-
-
-# ── Session checkpoints (v0.4.0) ───────────────────────────────────────────
-#
-# `memo session ...` — short-lived "what was I working on" snapshots, written
-# on every Claude Code Stop hook. Survive a closed/crashed session so the
-# next SessionStart can show a picker of recent work. Storage is sidecar
-# JSON in `state_dir/sessions/`, NOT memories (different lifecycle, different
-# query pattern — looked up by recency, never by semantic similarity).

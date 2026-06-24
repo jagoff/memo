@@ -545,6 +545,7 @@ class _WriteOpsMixin(_MemoryBase):
         # Re-stamp the on-disk frontmatter with the pending marker so a later
         # `memo reindex` knows to re-embed. Best-effort: if even this rewrite
         # fails, the original .md is still on disk and reindex picks it up by
+        # re-scanning disk on its next run.
         with contextlib.suppress(Exception):
             post["extra"] = extra_for_store
             abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
@@ -740,6 +741,3 @@ class _WriteOpsMixin(_MemoryBase):
         except sqlite3.Error:
             _log.warning("read_body_fallback: DB error for %s", rel_path, exc_info=True)
         return ""
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────

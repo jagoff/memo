@@ -79,7 +79,7 @@ def _short(text: str, n: int = 120) -> str:
 
 def _parse_as_of_date(s: str) -> str:
     """Accept date-only (`2026-03-01`) or full ISO. Return ISO with
-    a stable noon-UTC anchor for date-only inputs."""
+    a stable end-of-day UTC anchor for date-only inputs."""
     from datetime import UTC
     from datetime import datetime as _dt
 

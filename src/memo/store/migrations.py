@@ -39,7 +39,7 @@ class _MigrationsMixin(_StoreBase):
         """Run pending schema migrations in order.
 
         Called from _init_schema_locked after DDL creation. Fresh databases
-        (version 0, empty meta table) are stamped at version 1 immediately.
+        (version 0, empty meta table) are stamped at version 2 immediately.
         Existing databases are migrated version-by-version.
         """
         current = self.get_user_version()

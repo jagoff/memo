@@ -471,7 +471,7 @@ def dream_run(
 
         # Phase 0 — Signal gather: mine new transcripts since last dream run --
         if not skip_signal_gather and not dry_run:
-            progress.update(step, description="[0] signal gather — minando transcripts...")
+            progress.update(step, description="[0] signal gather — mining transcripts...")
             try:
                 ts_file = _state_path(cfg) / ".last_run_ts"
                 try:

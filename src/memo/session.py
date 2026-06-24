@@ -153,7 +153,7 @@ def gather_git_state(cwd: Path) -> dict[str, Any]:
 # User "turns" in a Claude Code transcript include slash-command plumbing
 # (the wrapper tags below), tool_result echoes, and harness-injected blocks
 # (task notifications, system reminders) — none of which are a real typed
-# prompt. Surfacing them as the session "resumen" produces garbage like
+# prompt. Surfacing them as the session "summary" produces garbage like
 # `<local-command-stdout>Enabled plan mode</local-command-stdout>`.
 _COMMAND_WRAPPER_PREFIXES = (
     "<command-name>",
@@ -346,7 +346,7 @@ def checkpoint(
 
     # prompt_trail: ring buffer of last N user prompts, crash-resilient
     # because it's updated on UserPromptSubmit (not just Stop). Slash-command
-    # plumbing is stripped so "Loops abiertos" never lists wrapper noise.
+    # plumbing is stripped so "Open loops" never lists wrapper noise.
     trail = list(existing.get("prompt_trail") or [])
     if prompt:
         clean_prompt = _strip_command_wrappers(prompt.strip())
@@ -609,7 +609,7 @@ def check_autosave(
                 if elapsed < cooldown_secs:
                     return False, size_kb
             except (ValueError, TypeError):
-                pass
+                _log.debug("session: unparseable transcript line, skipping")
 
     return True, size_kb
 

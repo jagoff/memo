@@ -273,5 +273,3 @@ class _ReplayOpsMixin(_MemoryBase):
                 "pending_chunks": pending_chunks,
             },
         }
-
-    # -- synapse freeze-write protocol -------------------------------------

@@ -292,7 +292,7 @@ class ImportExportManager:
 
         Args:
             input_path: Path to input file.
-            format: Format (json, csv, markdown_bundle). If None, auto-detect.
+            format: Format (json, csv, markdown_bundle). Falls back to the file extension.
 
         Returns:
             ImportResult with statistics.

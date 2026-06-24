@@ -100,4 +100,4 @@ def stats() -> None:
             console.print("  [dim](no data)[/dim]")
     except Exception as exc:
         _log.debug("consult breakdown failed: %s", exc)
-        console.print("  [dim](sin datos)[/dim]")
+        console.print("  [dim](no data)[/dim]")

@@ -113,6 +113,3 @@ def recall_daemon_serve() -> None:
     from memo.recall_server import run_server
 
     run_server()
-
-
-# ── Embed daemon — observability over the shared embedder sidecar ────────────

@@ -127,7 +127,7 @@ def test_mlx_gpu_is_pure_stdlib_leaf() -> None:
 LAZY_SUBSYSTEMS = [
     "temporal", "consolidator", "contradict_store", "contradict_scanner",
     "navigator", "contextual", "crossref", "link_suggester", "lifecycle",
-    "versioning", "query_composer", "federation", "backup",
+    "versioning", "query_composer", "backup",
     "sync", "encryption", "sharing", "analytics", "dashboard",
     "import_export", "multimodal", "collaborative",
 ]
@@ -171,7 +171,6 @@ def test_optional_memory_capabilities_live_in_registry(mock_memory) -> None:
         "backup",
         "collaborative",
         "dashboard",
-        "federation",
         "import_export",
         "lifecycle",
         "multimodal",

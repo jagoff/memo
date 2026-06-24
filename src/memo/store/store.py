@@ -136,20 +136,6 @@ class VecStore(
         """Mark the tantivy index as stale so search falls back to FTS5."""
         self._tantivy_healthy = False
 
-    def _write_tantivy(self, fn: object) -> None:
-        """Execute a tantivy write operation under the write lock.
-
-        Serialises all tantivy mutations (add/delete/commit) across threads
-        so concurrent upserts don't corrupt the index.
-        """
-        with self._tantivy_write_lock:
-            fn()  # type: ignore[operator]
-
-    def _rebuild_tantivy(self) -> None:
-        """Rebuild tantivy from SQLite FTS5 and mark healthy."""
-        self._rebuild_tantivy_from_sqlite()
-        self._tantivy_healthy = True
-
     def close(self) -> None:
         """Close sqlite connection and tantivy index."""
         tantivy = getattr(self, "_tantivy_inst", None)

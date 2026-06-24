@@ -529,7 +529,7 @@ class Config(BaseModel):
             if vp and sd:
                 kwargs["data_dir"] = str(Path(vp).expanduser() / sd)
 
-        # Step 5: explicit overrides win over everything.
+        # Step 6: explicit overrides win over everything.
         kwargs.update(overrides)
         cfg = cls(**kwargs)
 

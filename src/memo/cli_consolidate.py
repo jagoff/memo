@@ -156,7 +156,6 @@ def consolidate_apply(
         click.echo(json.dumps(result, indent=2))
         return
 
-    result.get("proposals", [])
     results = result.get("results", [])
 
     if dry_run:

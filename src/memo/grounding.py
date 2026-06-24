@@ -268,6 +268,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                 turn=turn,
             )
         except Exception as exc:
+            import logging
             logging.getLogger(__name__).debug("grounding: failed to write diag log: %s", exc)
         out: dict[str, Any] = {"scored": 0, "bailed": reason}
         if session_id:

@@ -341,6 +341,7 @@ def _panel_recall_quality(state_dir: Path) -> Panel:
 _VERDICT_STYLE = {
     "ok": ("green", "bold green"),
     "weak": ("yellow", "bold yellow"),
+    "unmeasured": ("yellow", "bold yellow"),
     "unused": ("red", "bold red"),
 }
 
@@ -551,7 +552,7 @@ def _panel_utility(state_dir: Path) -> Panel:
             ("tokens saved", f"[yellow]{tokens_saved:,}[/yellow]"),
             ("cost saved", f"[green]${cost_usd:.2f}[/green]"),
             ("recall hooks", f"{_n(fired)} fired / {_n(with_hits)} hits"),
-            ("strong hits", f"{_pct(strong_rate_pct)} (score >0.7)"),
+            ("strong hits", f"{_pct(strong_rate_pct)} (score >0.85)"),
             ("memories", f"[cyan]{unique_mems}[/cyan] unique"),
             ("grounding", f"{_pct(grounding_rate_pct)} answered"),
         ]

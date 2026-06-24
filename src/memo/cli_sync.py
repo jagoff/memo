@@ -270,7 +270,7 @@ def sync_status(check_remote: bool, as_json: bool) -> None:
     if st["pending"]:
         verdict, color = "STRANDED — push failed, will retry", "red"
     elif ahead or dirty:
-        verdict, color = f"behind remote by {ahead} commit(s) unpushed", "yellow"
+        verdict, color = f"ahead of remote by {ahead} commit(s) unpushed", "yellow"
     elif behind:
         verdict, color = f"{behind} remote commit(s) to pull", "yellow"
     else:

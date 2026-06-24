@@ -176,8 +176,8 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
             a different hidden size — guards against accidental swap to
             an incompatible model that would silently produce garbage.
         max_seq_len: Tokens kept per input; longer inputs are
-            tail-truncated (preserves the most semantically dense end of
-            the document for retrieval). 512 is the Qwen3-Embedding
+            tail-truncated (preserves the title-like start of the
+            document for retrieval). 512 is the Qwen3-Embedding
             training context.
     """
 

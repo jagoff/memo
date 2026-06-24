@@ -753,9 +753,11 @@ class _AskOpsMixin(_MemoryBase):
             session_id=session_id,
         )
         if not sources:
+            from memo.flags import flag_str
+
             yield {
                 "event": "done",
-                "answer": "I couldn't find the answer in the saved memories",
+                "answer": flag_str("MEMO_ASK_FALLBACK_MSG"),
                 "sources": [],
             }
             return

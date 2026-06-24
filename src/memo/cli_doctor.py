@@ -218,7 +218,7 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
             if n_stale_synth:
                 verb = "archived" if fix else "found"
                 console.print(
-                    f"[yellow]{verb} {n_stale_synth} stale synthesis memori{'a' if n_stale_synth == 1 else 'as'}[/yellow] "
+                    f"[yellow]{verb} {n_stale_synth} stale synthesis memor{'y' if n_stale_synth == 1 else 'ies'}[/yellow] "
                     f"(synthesis sources deleted — use `memo gc --fix` to archive)",
                 )
                 for sid in report.get("stale_synthesis", [])[:20]:
