@@ -109,6 +109,13 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     default=200,
     help="Max contradiction candidate pairs to scan (default 200).",
 )
+@click.option(
+    "--max-scan-seconds",
+    type=float,
+    default=None,
+    help="Wall-clock timeout for the contradiction scan pass in seconds. "
+    "Stops early if exceeded (default: no limit).",
+)
 @click.option("--skip-contradict", is_flag=True, help="Skip the contradiction pass.")
 @click.option("--skip-consolidate", is_flag=True, help="Skip the duplicate-merge pass.")
 @click.option("--skip-stale", is_flag=True, help="Skip the staleness pass.")
@@ -132,6 +139,7 @@ def maintain_cmd(
     stale_days: int,
     dup_threshold: float,
     max_pairs: int,
+    max_scan_seconds: float | None,
     skip_contradict: bool,
     skip_consolidate: bool,
     skip_stale: bool,
@@ -166,7 +174,9 @@ def maintain_cmd(
             # spawns before the detached run finishes (it re-stamps on completion).
             ts_file.write_text(str(time.time()), encoding="utf-8")
             _sp.Popen(
-                ["memo", "maintain"],  # safe defaults: archive-only, no --hard-delete
+                # safe defaults: archive-only, no --hard-delete
+                # cap LLM work: 50 pairs × ~7s = ~350s max, plus 300s wall-clock guard
+                ["memo", "maintain", "--max-pairs", "50", "--max-scan-seconds", "300"],
                 stdin=_sp.DEVNULL,
                 stdout=_sp.DEVNULL,
                 stderr=_sp.DEVNULL,
@@ -209,6 +219,7 @@ def maintain_cmd(
             mem.contradict_scanner.scan_corpus(
                 confidence_threshold=min_confidence,
                 max_pairs=max_pairs,
+                max_seconds=max_scan_seconds,
             )
             for pair in mem.contradict_store.list_open(min_confidence=min_confidence):
                 rel = (pair.relationship or "").lower()

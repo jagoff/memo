@@ -48,6 +48,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
@@ -357,6 +358,7 @@ class ScanResult:
     pairs_skipped_resolved: int
     contradictions_found: int
     evolutions_found: int
+    time_limited: bool = False
 
 
 class ContradictionScanner:
@@ -402,6 +404,7 @@ class ContradictionScanner:
         type_: str | None = None,
         progress: Any = None,
         persist: bool = True,
+        max_seconds: float | None = None,
     ) -> ScanResult:
         """Walk the corpus, classify near-neighbors, persist contradictions.
 
@@ -442,6 +445,8 @@ class ContradictionScanner:
 
         seen_pairs: set[tuple[str, str]] = set()
         total = len(records)
+        _deadline = time.monotonic() + max_seconds if max_seconds else None
+        _time_limited = False
 
         for idx, rec in enumerate(records):
             scanned += 1
@@ -450,6 +455,15 @@ class ContradictionScanner:
                     progress(idx + 1, total, rec.title)
 
             if examined >= max_pairs:
+                break
+
+            if _deadline and time.monotonic() >= _deadline:
+                _time_limited = True
+                _log.warning(
+                    "scan_corpus: wall-clock limit %.0fs reached after %d pairs examined",
+                    max_seconds,
+                    examined,
+                )
                 break
 
             body = rec.body or rec.title
@@ -534,6 +548,7 @@ class ContradictionScanner:
             pairs_skipped_resolved=skipped_resolved,
             contradictions_found=contradictions,
             evolutions_found=evolutions,
+            time_limited=_time_limited,
         )
 
 
