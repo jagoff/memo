@@ -15,44 +15,6 @@ from memo.flags import flag_bool, flag_float, flag_int, flag_str
 _log = logging.getLogger("memo.cli_recall_hook")
 
 
-def _pop_pending_notification(state_dir) -> str:
-    """Read + delete the pending idle-capture notification, returning its text
-    (or '' if none). Surfaced on the next recall regardless of which path serves
-    it — the warm-daemon fast path used to exit before this, so the capture
-    notification almost never reached the user."""
-    path = state_dir / "pending_idle_notification.txt"
-    if not path.exists():
-        return ""
-    try:
-        text = path.read_text(encoding="utf-8").strip()
-        path.unlink(missing_ok=True)
-        return text
-    except OSError:
-        return ""
-
-
-def _inject_notification_into_result(result_json: str, notif: str) -> str:
-    """Prepend `notif` to the additionalContext of a recall result JSON string
-    (the daemon's pre-formatted hook output). Returns the result unchanged if
-    there's no notification or the JSON can't be parsed."""
-    if not notif:
-        return result_json
-    try:
-        obj = json.loads(result_json)
-        hso = obj.get("hookSpecificOutput")
-        if isinstance(hso, dict):
-            ctx = hso.get("additionalContext") or ""
-            hso["additionalContext"] = f"{notif}\n\n{ctx}" if ctx else notif
-            return json.dumps(obj, ensure_ascii=False)
-    except (json.JSONDecodeError, TypeError):
-        _log.debug("recall hook: failed to parse existing result_json, falling back to bare notification")
-    # Fallback: emit the notification as its own hook output.
-    return json.dumps(
-        {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": notif}},
-        ensure_ascii=False,
-    )
-
-
 _RECALL_CONTEXTS: tuple[tuple[str, re.Pattern[str], set[str]], ...] = (
     (
         "code",
@@ -97,22 +59,6 @@ def recall_hook() -> None:
                 )
             except Exception as exc:
                 _log.debug("bail recall-log write failed: %s", exc)
-        # Surface any pending idle-capture notification even when the recall
-        # bails (short prompts, no matches) — otherwise it piles up forever.
-        _notif = _pop_pending_notification(cfg.state_dir)
-        if _notif:
-            print(
-                json.dumps(
-                    {
-                        "hookSpecificOutput": {
-                            "hookEventName": "UserPromptSubmit",
-                            "additionalContext": _notif,
-                        }
-                    },
-                    ensure_ascii=False,
-                )
-            )
-            sys.exit(0)
         print("{}")
         sys.exit(0)
 
@@ -203,14 +149,7 @@ def recall_hook() -> None:
             _latency_ms = int((time.time() - _t0) * 1000)
             if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: daemon hit ({_latency_ms} ms)", file=sys.stderr)
-            # Surface any pending idle-capture notification here too — the warm
-            # daemon serves nearly every recall, so without this the capture
-            # confirmation (written by capture-stop / idle-capture) was never seen.
-            print(
-                _inject_notification_into_result(
-                    _daemon_result, _pop_pending_notification(cfg.state_dir)
-                )
-            )
+            print(_daemon_result)
             sys.exit(0)
     except Exception as _daemon_exc:
         try:
@@ -426,11 +365,6 @@ def recall_hook() -> None:
     if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
         approx = _est_tokens(context)
         print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=sys.stderr)
-
-    # Prepend any pending notification from a previous async idle-maintenance run.
-    _notif = _pop_pending_notification(cfg.state_dir)
-    if _notif:
-        context = f"{_notif}\n\n{context}"
 
     try:
         from memo.dashboard import append_context_cost_log

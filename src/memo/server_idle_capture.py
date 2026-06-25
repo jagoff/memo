@@ -269,12 +269,11 @@ def run_idle_capture_loop() -> None:
                     )
                 _log.debug("idle daemon: scanned (0 new insights)")
 
-            # Always write pending notification so recall hook can show it
+            # Write pending notification for headless clients (opencode, Devin)
+            # to read via memo_pop_notification MCP tool.
             (cfg.state_dir / "pending_idle_notification.txt").write_text(
                 notif + "\n", encoding="utf-8"
             )
-            # Also print to stderr so user sees it in their terminal
-            print(notif, file=sys.stderr)
 
         except Exception as exc:
             _log.error("idle daemon: error: %s", exc)
