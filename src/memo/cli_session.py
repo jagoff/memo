@@ -487,7 +487,18 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
                 _notif = f"※ auto save (idle): {_shown}"
             else:
                 _notif = "※ auto save (idle): scanned (0 new insights)"
-            print(_notif, file=_sys.stderr)
+            # Write to the terminal TTY if captured by the memo shim; fall back
+            # to stderr (which Claude Code captures to its log, not the terminal).
+            import os as _os
+            _tty = _os.environ.get("MEMO_AGENT_TTY") or _os.environ.get("MEMFLOW_AGENT_TTY")
+            if _tty:
+                try:
+                    with open(_tty, "w") as _tty_f:
+                        _tty_f.write(_notif + "\n")
+                except OSError:
+                    print(_notif, file=_sys.stderr)
+            else:
+                print(_notif, file=_sys.stderr)
             if _titles:
                 from memo.cli_capture import _write_capture_notification
                 _write_capture_notification(cfg.state_dir, _titles, idle=True)

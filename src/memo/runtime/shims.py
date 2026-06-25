@@ -26,10 +26,16 @@ _SHIM_MARKER = "# memo-shim"
 
 _SHIM_TEMPLATE = """\
 #!/usr/bin/env bash
-# memo-shim v1 — written by `memo install-shims`. Do not edit manually.
+# memo-shim v2 — written by `memo install-shims`. Do not edit manually.
 set -euo pipefail
 _MEMO_BIN_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 _AGENT="$(basename "$0")"
+# Capture the TTY before the agent changes it, so async hooks can write
+# idle-capture notifications directly to this terminal (same pattern as memflow).
+if [ -z "${MEMO_AGENT_TTY:-}" ] && [ -t 2 ]; then
+    MEMO_AGENT_TTY="$(tty 2>/dev/null || true)"
+    export MEMO_AGENT_TTY
+fi
 _NEXT=""
 IFS=':' read -ra _DIRS <<< "$PATH"
 for _D in "${_DIRS[@]:-}"; do

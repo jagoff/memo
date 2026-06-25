@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-06-24
+
+### Fixed
+
+- **Idle auto-save notification now appears in the actual terminal.** When memo agent shims (`memo install-shims`) are active they export `MEMO_AGENT_TTY` (the terminal PTY path, captured before the agent changes it). The idle-maintenance worker now writes the `※ auto save (idle): …` notification directly to that TTY, bypassing Claude Code's hook stderr capture. Falls back to stderr when no `MEMO_AGENT_TTY` is set.
+
+### Changed
+
+- **Startup-banner shims (v2)** capture and export `MEMO_AGENT_TTY` at launch, so async background workers know which terminal to write notifications to.
+
 ## [1.0.7] - 2026-06-24
 
 ### Changed
