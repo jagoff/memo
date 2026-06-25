@@ -89,8 +89,10 @@ def briefing(*, compact: bool) -> None:
         from memo.session import format_relative, list_sessions
 
         cur_cwd = str(_Path(_os.getcwd()).resolve())
-        sessions = list_sessions(cfg.state_dir, limit=20)
-        same_proj = [r for r in sessions if (r.get("cwd") or "") == cur_cwd]
+        # Targeted lookup first so the project session is never buried by
+        # sessions from other repos (avoids false "No recent session" when
+        # the project session is past the global limit).
+        same_proj = list_sessions(cfg.state_dir, cwd=cur_cwd, limit=1)
         compact_lines = ["## Memo"]
         if same_proj:
             top = same_proj[0]

@@ -622,6 +622,15 @@ def session_recent(limit: int | None) -> None:
 
     cur_cwd = str(_Path(_os.getcwd()).resolve())
     same_cwd = [r for r in rows if (r.get("cwd") or "") == cur_cwd]
+    # If none found in the limited list, do a targeted cwd lookup (handles the
+    # case where the project session is buried past the global limit by sessions
+    # from other projects).
+    if not same_cwd:
+        try:
+            cwd_rows = list_sessions(cfg.state_dir, cwd=cur_cwd, limit=1)
+            same_cwd = cwd_rows
+        except Exception:
+            pass
     top = same_cwd[0] if same_cwd else None
 
     def _clean_summary(r: dict, width: int) -> str:
