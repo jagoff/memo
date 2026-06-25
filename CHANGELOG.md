@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-06-25
+
+### Added
+
+- **Version check — notify when newer git tag is available.** `memo update --check` queries git tags to detect if a newer release exists and exits without installing. Result is also surfaced in the startup banner so users see an upgrade prompt at session start.
+
 ## [1.0.10] - 2026-06-25
 
 ### Fixed

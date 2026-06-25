@@ -22,7 +22,9 @@ def startup_banner_cmd(agent: str) -> None:
         version = "?"
 
     sync_str = _fast_sync_state()
-    memo_line = f"[MEMO {version}] | sync {sync_str}"
+    update_tag = _pending_update_tag()
+    update_str = f" | ⬆ {update_tag} available — run: memo update" if update_tag else ""
+    memo_line = f"[MEMO {version}] | sync {sync_str}{update_str}"
     label = f"─── memo / {agent} " if agent else "─── memo "
     width = max(len(memo_line) + 2, len(label) + 4, 44)
     pad = max(0, width - len(label))
@@ -30,6 +32,17 @@ def startup_banner_cmd(agent: str) -> None:
     sys.stderr.write(f"{label}{'─' * pad}\n")
     sys.stderr.write(f"{memo_line}\n")
     sys.stderr.write(f"{'─' * width}\n")
+
+
+def _pending_update_tag() -> str | None:
+    """Read the pending update notification file. Fast, no network."""
+    try:
+        from memo.config import Config
+        from memo.runtime.autoupdate import pending_update_tag
+
+        return pending_update_tag(Config.from_env())
+    except Exception:
+        return None
 
 
 def _fast_sync_state() -> str:

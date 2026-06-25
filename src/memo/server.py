@@ -241,10 +241,13 @@ def main() -> None:
     """
     from memo.flags import flag_int, flag_str
 
-    # Auto-update check (gated by MEMO_AUTO_UPDATE, throttled, detached spawn —
-    # never raises, never blocks). A newer git tag takes effect on the NEXT start.
-    from memo.runtime.autoupdate import maybe_auto_update
+    # Version check: always throttled-check for newer git tags (writes
+    # update_available file for banner). Auto-install only if MEMO_AUTO_UPDATE=1.
+    from memo.runtime.autoupdate import maybe_auto_update, notify_if_newer
 
+    import threading
+
+    threading.Thread(target=notify_if_newer, daemon=True).start()
     maybe_auto_update()
 
     transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()

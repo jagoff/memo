@@ -92,6 +92,17 @@ def _detect_install_method() -> str | None:
     return None
 
 
+def _clear_update_notify() -> None:
+    """Remove the pending-update notification file after a successful update."""
+    try:
+        from memo.config import Config
+        from memo.runtime.autoupdate import _clear_notify
+
+        _clear_notify(Config.from_env())
+    except Exception:
+        pass
+
+
 def _prewarm_after_update() -> None:
     memo_bin = shutil.which("memo") or sys.executable
     cmd = (
@@ -120,6 +131,19 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     current_version = importlib.metadata.version("mlx-memo")
     console.print(f"[dim]current version:[/dim] {current_version}")
 
+    if check and not to_tag:
+        from memo.config import Config
+        from memo.runtime.autoupdate import notify_if_newer
+
+        cfg = Config.from_env()
+        tag = notify_if_newer(cfg, force=True)
+        if tag:
+            console.print(f"[yellow]Update available:[/yellow] {current_version} → {tag}")
+            console.print("[dim]Run [bold]memo update[/bold] to install.[/dim]")
+        else:
+            console.print("[green]memo is up to date.[/green]")
+        return
+
     # Git-tag path: reinstall the isolated runtime straight from the tagged ref.
     # PyPI is skipped (these installs come from git+https://…/memo.git).
     if to_tag:
@@ -145,6 +169,7 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
             )
         if proc.returncode != 0:
             raise click.ClickException(f"git-tag install of {to_tag} failed.")
+        _clear_update_notify()
         console.print(f"[green]✓[/green] updated to {to_tag}. Pre-warming MLX models…")
         _prewarm_after_update()
         return
@@ -248,5 +273,6 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         )
         return
 
+    _clear_update_notify()
     console.print("[green]✓[/green] upgrade complete. Pre-warming MLX models…")
     _prewarm_after_update()

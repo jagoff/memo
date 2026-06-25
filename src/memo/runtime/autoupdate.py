@@ -27,6 +27,7 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_REPO = "https://github.com/jagoff/memo.git"
 _CHECK_STAMP = "auto_update_check"
+_NOTIFY_FILE = "update_available"
 
 
 def _parse_semver(tag: str) -> tuple[int, int, int] | None:
@@ -106,6 +107,69 @@ def _record_check(cfg: Config, now: float) -> None:
         _log.debug("auto-update: could not write check stamp: %s", exc)
 
 
+def _write_notify(cfg: Config, tag: str) -> None:
+    path = cfg.state_dir / _NOTIFY_FILE
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(tag)
+    except OSError as exc:
+        _log.debug("auto-update: could not write notify file: %s", exc)
+
+
+def _clear_notify(cfg: Config) -> None:
+    path = cfg.state_dir / _NOTIFY_FILE
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def pending_update_tag(cfg: Config | None = None) -> str | None:
+    """Return the pending update tag if one was recorded, else None.
+
+    Fast (no network) — reads the notify file written by ``notify_if_newer``
+    or ``maybe_auto_update``. Used by the startup banner and status commands.
+    """
+    try:
+        cfg = cfg or Config.from_env()
+        path = cfg.state_dir / _NOTIFY_FILE
+        tag = path.read_text().strip()
+        return tag if tag else None
+    except (OSError, Exception):
+        return None
+
+
+def notify_if_newer(cfg: Config | None = None, *, force: bool = False) -> str | None:
+    """Check git tags and write a notify file if a newer version exists.
+
+    Throttled to once per ``MEMO_AUTO_UPDATE_INTERVAL_S`` (default 6h) unless
+    ``force=True``. Returns the newer tag if found, else None. Never raises.
+    """
+    try:
+        cfg = cfg or Config.from_env()
+        import time
+
+        now = time.time()
+        interval = flag_int("MEMO_AUTO_UPDATE_INTERVAL_S") or 21600
+        if not force and not _should_check(cfg, interval, now):
+            return pending_update_tag(cfg)
+        _record_check(cfg, now)
+
+        from memo import __version__
+
+        repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
+        tag = latest_remote_tag(repo)
+        if tag and is_newer(tag, __version__):
+            _write_notify(cfg, tag)
+            return tag
+        else:
+            _clear_notify(cfg)
+            return None
+    except Exception as exc:
+        _log.debug("notify-if-newer: skipped (%s)", exc)
+        return None
+
+
 def maybe_auto_update(cfg: Config | None = None) -> bool:
     """Entry point called at memo-mcp startup. Gated, throttled, non-blocking.
 
@@ -131,8 +195,10 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
         repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
         tag = latest_remote_tag(repo)
         if not tag or not is_newer(tag, __version__):
+            _clear_notify(cfg)
             return False
 
+        _write_notify(cfg, tag)
         _log.info("auto-update: %s → %s (spawning background update)", __version__, tag)
         log_file = cfg.state_dir / "auto_update.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
