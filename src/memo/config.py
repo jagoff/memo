@@ -589,8 +589,22 @@ class Config(BaseModel):
         Does NOT validate `vault_path` — that's only used by `memo ingest`
         and the ingest command does its own check. Non-Obsidian users
         never need a `vault_path`.
+
+        Raises `RuntimeError` with a human-readable message if any directory
+        cannot be created (permission denied, read-only FS, etc.) so callers
+        see "data_dir is not writable" rather than a raw OSError from deep in
+        pathlib.
         """
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        # When memories live in the vault, memory_dir != data_dir — create it too.
-        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        for attr, path in (
+            ("state_dir", self.state_dir),
+            ("data_dir", self.data_dir),
+            ("memory_dir", self.memory_dir),
+        ):
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"memo: cannot create {attr} at {path}: {exc}\n"
+                    f"Check filesystem permissions or set MEMO_DATA_DIR / MEMO_STATE_DIR "
+                    f"to a writable location."
+                ) from exc

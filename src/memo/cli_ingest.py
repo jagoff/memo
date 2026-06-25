@@ -256,6 +256,20 @@ def ingest(
             console.print(f"  · …and {len(md_files) - 5} more")
         if pdf_files:
             console.print(f"  · PDFs: {len(pdf_files)}")
+        # Pre-flight: warn if existing index has different dims than current
+        # config — a real ingest would fail at the first upsert with a
+        # cryptic "dimension mismatch" error. Catching it here makes dry-run
+        # actually useful for smoke-testing before a production ingest.
+        from memo.config import _index_embedder_profile
+        profile = _index_embedder_profile(cfg.db_path)
+        if profile is not None:
+            _, index_dims = profile
+            if index_dims != cfg.embedder_dims:
+                console.print(
+                    f"[red]⚠ dims mismatch:[/red] index is {index_dims}D "
+                    f"but config expects {cfg.embedder_dims}D — "
+                    f"run 'memo reindex --rebuild' before ingesting."
+                )
         return
 
     embedder = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
@@ -623,6 +637,10 @@ def ingest(
     if added or updated or pdf_added or orphan_added:
         with contextlib.suppress(Exception):
             store.set_user_version(1)
+        # Flush WAL after a productive ingest so a subsequent crash doesn't
+        # leave a large un-checkpointed WAL (~1MB per ~100 records written).
+        with contextlib.suppress(Exception):
+            store._checkpoint()
 
     click.echo(
         "done "

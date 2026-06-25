@@ -173,6 +173,24 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     for tool_name in mcp_tools_to_remove():
         server.local_provider.remove_tool(tool_name)
 
+    @server.custom_route("/health", methods=["GET"])
+    async def health_route(request):  # type: ignore[no-untyped-def]
+        """Lightweight liveness probe for HTTP transport.
+
+        Returns HTTP 200 + JSON ``{"ok": true, "version": "x.y.z"}`` so
+        external monitors and CI can confirm the daemon is alive without
+        calling a real tool (which may touch the embedder or DB).
+        """
+        import importlib.metadata
+
+        from starlette.responses import JSONResponse
+
+        try:
+            version = importlib.metadata.version("mlx-memo")
+        except Exception:
+            version = "unknown"
+        return JSONResponse({"ok": True, "version": version})
+
     @server.custom_route("/chat/stream", methods=["POST"])
     async def chat_stream_route(request):  # type: ignore[no-untyped-def]
         """Real token streaming for chat synthesis (SSE).

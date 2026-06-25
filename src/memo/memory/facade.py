@@ -468,5 +468,7 @@ class Memory(
             return
         merged = dict(r.get("extra") or {})
         merged[CACHE_DIRTY_KEY] = True
-        with contextlib.suppress(Exception):
+        try:
             self.update(id_, extra=merged)
+        except Exception as exc:
+            _log.debug("_mark_dirty(%s): failed to set dirty bit — %s", id_[:8], exc)

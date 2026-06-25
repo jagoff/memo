@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-06-25
+
+### Fixed
+
+- **Reliability + UX improvements.** `ensure_dirs` now raises on failure instead of silently succeeding; `_mark_dirty` logs instead of suppressing errors; WAL checkpoint runs after ingest to prevent unbounded WAL growth; `/health` REST endpoint added to the MCP HTTP transport; `--dry-run` flag validates dims configuration without writing to the store.
+
 ## [1.0.11] - 2026-06-25
 
 ### Added
