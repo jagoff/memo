@@ -81,10 +81,10 @@
           },
           {
             "type": "command",
-            "command": "MEMO_NONINTERACTIVE=1 memo session idle-maintenance --mode capture",
+            "command": "MEMO_NONINTERACTIVE=1 MEMO_AGENT_TTY=$(tty 2>/dev/null || true) memo session idle-maintenance --mode capture",
             "timeout": 30,
             "async": true,
-            "comment": "Idle capture: waits for a quiet window (MEMO_SESSION_IDLE_CAPTURE_SECS, default 10s) after the turn finishes and then mines the current session chunk into durable memorias. Stale workers self-cancel if a newer prompt updated the session snapshot. Async + soft-fail so it never touches the recall 5s budget. Disable with MEMO_CAPTURE_DISABLE=1."
+            "comment": "Idle capture: waits for a quiet window (MEMO_SESSION_IDLE_CAPTURE_SECS, default 10s) after the turn finishes and then mines the current session chunk into durable memorias. MEMO_AGENT_TTY captures the terminal PTY so the notification writes directly to the user's terminal. Stale workers self-cancel if a newer prompt updated the session snapshot. Async + soft-fail. Disable with MEMO_CAPTURE_DISABLE=1."
           },
           {
             "type": "command",
@@ -134,10 +134,10 @@
           },
           {
             "type": "command",
-            "command": "MEMO_NONINTERACTIVE=1 memo session idle-maintenance --mode reflect",
+            "command": "MEMO_NONINTERACTIVE=1 MEMO_AGENT_TTY=$(tty 2>/dev/null || true) memo session idle-maintenance --mode reflect",
             "timeout": 360,
             "async": true,
-            "comment": "Longer idle consolidation: waits for a longer quiet window (MEMO_SESSION_IDLE_REFLECT_SECS, default 5m) after the turn finishes and then synthesizes the active session into a durable arc note. Stale workers self-cancel if a newer prompt updated the session snapshot. Async + soft-fail so it never touches the recall 5s budget. Disable with MEMO_CAPTURE_DISABLE=1."
+            "comment": "Longer idle consolidation: waits for a longer quiet window (MEMO_SESSION_IDLE_REFLECT_SECS, default 5m) after the turn finishes and then synthesizes the active session into a durable arc note. MEMO_AGENT_TTY for terminal notifications. Stale workers self-cancel if a newer prompt updated the session snapshot. Async + soft-fail. Disable with MEMO_CAPTURE_DISABLE=1."
           },
           {
             "type": "command",
