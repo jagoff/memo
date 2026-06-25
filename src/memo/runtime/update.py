@@ -2,37 +2,98 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import shutil
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import click
 
 from memo.cli_common import console
 
+_PIPX_CANDIDATES = [
+    Path.home() / ".local/bin/pipx",
+    Path("/opt/homebrew/bin/pipx"),
+    Path("/usr/local/bin/pipx"),
+    Path("/usr/bin/pipx"),
+]
+
+
+def _find_pipx() -> str | None:
+    """Return path to the pipx binary, checking PATH then common locations."""
+    found = shutil.which("pipx")
+    if found:
+        return found
+    for candidate in _PIPX_CANDIDATES:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _find_uv() -> str | None:
+    """Return path to the uv binary, checking PATH then common locations."""
+    found = shutil.which("uv")
+    if found:
+        return found
+    for candidate in [
+        Path.home() / ".local/bin/uv",
+        Path.home() / ".cargo/bin/uv",
+        Path("/opt/homebrew/bin/uv"),
+        Path("/usr/local/bin/uv"),
+    ]:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _read_pipx_venv_metadata() -> dict | None:
+    """Read mlx-memo's pipx metadata directly from the venv JSON (no pipx binary needed)."""
+    meta_path = Path.home() / ".local/pipx/venvs/mlx-memo/pipx_metadata.json"
+    if not meta_path.is_file():
+        return None
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _version_ge(a: str, b: str) -> bool:
+    """Return True if version a >= b, using packaging if available, else string compare."""
+    try:
+        from packaging.version import Version
+
+        return Version(a) >= Version(b)
+    except Exception:
+        return a >= b
+
 
 def _detect_install_method() -> str | None:
     """``"pipx"`` / ``"uv"`` / None — how mlx-memo's isolated runtime was installed."""
-    try:
-        res = subprocess.run(["pipx", "list", "--short"], capture_output=True, text=True, timeout=10)
-        if "mlx-memo" in res.stdout:
-            return "pipx"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    try:
-        res = subprocess.run(["uv", "tool", "list"], capture_output=True, text=True, timeout=10)
-        if "mlx-memo" in res.stdout:
-            return "uv"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    pipx = _find_pipx()
+    if pipx:
+        try:
+            res = subprocess.run([pipx, "list", "--short"], capture_output=True, text=True, timeout=10)
+            if "mlx-memo" in res.stdout:
+                return "pipx"
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    if _read_pipx_venv_metadata() is not None:
+        return "pipx"
+    uv = _find_uv()
+    if uv:
+        try:
+            res = subprocess.run([uv, "tool", "list"], capture_output=True, text=True, timeout=10)
+            if "mlx-memo" in res.stdout:
+                return "uv"
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
     return None
 
 
 def _prewarm_after_update() -> None:
-    import shutil as _shutil
-
-    memo_bin = _shutil.which("memo") or sys.executable
+    memo_bin = shutil.which("memo") or sys.executable
     cmd = (
         [memo_bin, "prewarm", "--download-all"]
         if memo_bin.endswith("memo")
@@ -69,13 +130,15 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         spec = f"git+{repo}@{to_tag}"
         method = _detect_install_method()
         if method == "uv":
+            uv = _find_uv() or "uv"
             console.print(f"[dim]Installing {to_tag} via uv tool…[/dim]")
             proc = subprocess.run(
-                ["uv", "tool", "install", spec, "--force", "--reinstall"], check=False
+                [uv, "tool", "install", spec, "--force", "--reinstall"], check=False
             )
         elif method == "pipx":
+            pipx = _find_pipx() or "pipx"
             console.print(f"[dim]Installing {to_tag} via pipx…[/dim]")
-            proc = subprocess.run(["pipx", "install", "--force", spec], check=False)
+            proc = subprocess.run([pipx, "install", "--force", spec], check=False)
         else:
             raise click.ClickException(
                 "Could not detect install method (pipx/uv) for git-tag update."
@@ -98,59 +161,80 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         latest_version = None
 
     if latest_version:
-        console.print(f"[dim]latest version:[/dim]  {latest_version}")
-        if current_version == latest_version:
+        console.print(f"[dim]latest PyPI version:[/dim]  {latest_version}")
+        if _version_ge(current_version, latest_version):
             console.print("[green]memo is already up to date.[/green]")
-            if check:
-                return
-        else:
-            console.print(f"[yellow]Update available:[/yellow] {current_version} → {latest_version}")
-            if check:
-                return
+            return
+        console.print(f"[yellow]Update available:[/yellow] {current_version} → {latest_version}")
+        if check:
+            return
 
+    # --- detect install method + git source URL ---
     installed_via: str | None = None
     pipx_source_url: str | None = None
-    try:
-        res = subprocess.run(["pipx", "list", "--json"], capture_output=True, text=True, timeout=10)
-        if res.returncode == 0:
-            import json as _json
+    pipx_bin: str | None = _find_pipx()
 
-            _data = _json.loads(res.stdout)
-            _pkg = _data.get("venvs", {}).get("mlx-memo", {}).get("metadata", {}).get(
-                "main_package", {}
-            )
-            if _pkg:
-                installed_via = "pipx"
-                _url = _pkg.get("package_or_url", "")
-                if _url.startswith("git+"):
-                    pipx_source_url = _url
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
-        pass
-
-    if installed_via is None:
+    if pipx_bin:
         try:
-            res = subprocess.run(["uv", "tool", "list"], capture_output=True, text=True, timeout=10)
-            if "mlx-memo" in res.stdout:
-                installed_via = "uv"
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+            res = subprocess.run(
+                [pipx_bin, "list", "--json"], capture_output=True, text=True, timeout=10
+            )
+            if res.returncode == 0:
+                _data = json.loads(res.stdout)
+                _pkg = (
+                    _data.get("venvs", {})
+                    .get("mlx-memo", {})
+                    .get("metadata", {})
+                    .get("main_package", {})
+                )
+                if _pkg:
+                    installed_via = "pipx"
+                    _url = _pkg.get("package_or_url", "")
+                    if _url.startswith("git+"):
+                        pipx_source_url = _url
+        except Exception:
             pass
 
+    # Fallback: read venv metadata JSON directly (pipx not in PATH)
+    if installed_via is None:
+        meta = _read_pipx_venv_metadata()
+        if meta:
+            installed_via = "pipx"
+            _url = meta.get("main_package", {}).get("package_or_url", "")
+            if _url.startswith("git+"):
+                pipx_source_url = _url
+
+    if installed_via is None:
+        uv_bin = _find_uv()
+        if uv_bin:
+            try:
+                res = subprocess.run(
+                    [uv_bin, "tool", "list"], capture_output=True, text=True, timeout=10
+                )
+                if "mlx-memo" in res.stdout:
+                    installed_via = "uv"
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
+    # --- run the upgrade ---
     if installed_via == "pipx":
+        pipx = pipx_bin or _find_pipx() or "pipx"
         if pipx_source_url:
             console.print("[dim]Re-installing from git source via pipx…[/dim]")
             result = subprocess.run(
-                ["pipx", "install", "--force", pipx_source_url], check=False
+                [pipx, "install", "--force", pipx_source_url], check=False
             )
             if result.returncode != 0:
                 raise click.ClickException("pipx install --force failed.")
         else:
             console.print("[dim]Upgrading via pipx…[/dim]")
-            result = subprocess.run(["pipx", "upgrade", "mlx-memo"], check=False)
+            result = subprocess.run([pipx, "upgrade", "mlx-memo"], check=False)
             if result.returncode != 0:
                 raise click.ClickException("pipx upgrade failed.")
     elif installed_via == "uv":
+        uv = _find_uv() or "uv"
         console.print("[dim]Upgrading via uv tool…[/dim]")
-        result = subprocess.run(["uv", "tool", "upgrade", "mlx-memo"], check=False)
+        result = subprocess.run([uv, "tool", "upgrade", "mlx-memo"], check=False)
         if result.returncode != 0:
             raise click.ClickException("uv tool upgrade failed.")
     else:
@@ -159,18 +243,10 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
             "Re-run the installer:\n"
             "  curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash\n"
             "or:\n"
-            "  pipx install --force mlx-memo\n"
-            "  uv tool install --force mlx-memo"
+            "  pipx install --force git+https://github.com/jagoff/memo.git\n"
+            "  uv tool install --force git+https://github.com/jagoff/memo.git"
         )
         return
 
     console.print("[green]✓[/green] upgrade complete. Pre-warming MLX models…")
-    import shutil as _shutil
-
-    memo_bin = _shutil.which("memo") or sys.executable
-    _prewarm_cmd = (
-        [memo_bin, "prewarm", "--download-all"]
-        if memo_bin.endswith("memo")
-        else [memo_bin, "-m", "memo.cli", "prewarm", "--download-all"]
-    )
-    subprocess.run(_prewarm_cmd, check=False)
+    _prewarm_after_update()
