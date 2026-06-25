@@ -100,7 +100,7 @@ def clone_bootstrap(url: str, dest: Path) -> dict:
     return {"cloned": str(dest), "memorias_dir": str(memorias), "memorias": n_md}
 
 
-def bootstrap_clone(url: str, dest: Path, *, config_path: Path | None = None) -> dict:
+def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> dict:
     """One-step new-machine bootstrap: clone the memo-sync repo (or reuse an
     existing clone at `dest`) and point `config.toml`'s `data_dir` at its
     `memorias/`.
@@ -135,7 +135,7 @@ def bootstrap_clone(url: str, dest: Path, *, config_path: Path | None = None) ->
             f"`git -C {dest} restore .`, or `rm -rf {dest}` then re-run bootstrap."
         )
     else:
-        summary = clone_bootstrap(url, dest)
+        summary = bootstrap_clone(url, dest)
         summary["reused"] = False
 
     existing = (load_config_file(config_path) or {}).get("storage", {})
@@ -443,3 +443,38 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     export_signal(store, signal_dir_for(cfg))
 
     return {"pulled": True, "branch": branch, "reindexed": reindexed, "pruned": len(pruned)}
+
+
+def sync_init_home(cfg: Config, private: bool = True) -> dict:
+    """Initialize a new memo-sync repo: create GitHub repo + init local git + first push.
+
+    Uses `gh repo create` to create the remote, initializes the local
+    memories dir as a git repo, and pushes. Returns the repo URL for cloning
+    on other machines.
+    """
+    import subprocess
+
+    root = git_root_for(cfg)
+
+    owner = "private" if private else "public"
+    repo_name = "memo-sync"
+
+    gh_cmd = subprocess.run(
+        ["gh", "repo", "create", repo_name, f"--{owner}", "--source", str(root), "--push"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if gh_cmd.returncode != 0:
+        raise SyncGitError(f"gh repo create failed: {gh_cmd.stderr.strip()}")
+
+    remote_url = ""
+    for line in gh_cmd.stdout.split("\n"):
+        if "github.com/" in line:
+            remote_url = line.strip()
+            break
+
+    if not remote_url:
+        remote_url = _git(root, "remote", "get-url", "origin").stdout.strip()
+
+    return {"repo_url": remote_url, "branch": _current_branch(root), "local_dir": str(root)}

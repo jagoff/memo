@@ -244,6 +244,33 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
     console.print("[bold green]Ready.[/bold green] memo now reads the git-synced corpus.")
 
 
+@sync_group.command(name="init")
+@click.option("--public", is_flag=True, help="Create a public repo (default is private)")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def sync_init(public: bool, as_json: bool) -> None:
+    """Initialize cloud sync: create GitHub repo and push your memories.
+
+    Creates a private repo on your GitHub account, initializes git in your
+    memories directory, and pushes. Use the displayed URL to `memo sync clone`
+    on other devices.
+    """
+    from memo.sync_git import SyncGitError, sync_init_home
+
+    cfg = Config.from_env()
+    try:
+        out = sync_init_home(cfg, private=not public)
+    except SyncGitError as e:
+        raise click.ClickException(str(e)) from e
+
+    if as_json:
+        click.echo(json.dumps(out, indent=2))
+        return
+    console.print("[bold green]Listo![/bold green] Repo creado en GitHub")
+    console.print(f"  URL: [cyan]{out['repo_url']}[/cyan]")
+    console.print("\n[bold]Para usar en otras Mac:[/bold]")
+    console.print(f"  [cyan]memo sync clone {out['repo_url']}[/cyan]")
+
+
 @sync_group.command(name="status")
 @click.option("--check-remote", is_flag=True, help="Probe the remote (network) for reachability.")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")

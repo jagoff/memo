@@ -422,6 +422,22 @@ def reflect(
 
     cfg = Config.from_env()
 
+    # Prevent concurrent reflects: multiple sessions fire simultaneously on startup
+    # and all pass the reflected_at check before any stamps it (race condition).
+    # LOCK_NB: bail immediately if another reflect is running — don't queue up.
+    import fcntl
+
+    _lock_path = Path(cfg.state_dir) / "reflect.lock"
+    _lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _lock_fd = open(_lock_path, "w")  # noqa: SIM115
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        if quiet:
+            click.echo(json.dumps({"status": "skipped_concurrent"}))
+        _lock_fd.close()
+        return
+
     # Resolve which session to reflect on.
     target_id: str | None = session_id
     if not target_id:

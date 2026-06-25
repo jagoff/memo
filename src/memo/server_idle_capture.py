@@ -147,6 +147,8 @@ def register(server: FastMCP, memory: Memory) -> None:
             prompt=None,
         )
 
+        is_git_clone = (cfg.memory_dir.parent / ".git").exists()
+
         return {
             "status": "started",
             "session_id": session_id,
@@ -154,6 +156,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "project": result.get("project"),
             "head_commit": result.get("head_commit", "")[:12],
             "created": datetime.now(UTC).isoformat(timespec="seconds"),
+            "needs_cloud_setup": not is_git_clone,
         }
 
     @server.tool()
@@ -202,7 +205,6 @@ def run_idle_capture_loop() -> None:
     Runs capture every MEMO_SESSION_IDLE_CAPTURE_SECS (default 10s).
     """
     import logging
-    import sys
     import time
     from pathlib import Path
 

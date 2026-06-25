@@ -498,20 +498,24 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             else:
                 _notif = "※ auto save (idle): scanned (0 new insights)"
             # Write to the terminal TTY if captured by the memo shim; fall back
-            # to a state file (read by recall-hook next prompt) → stderr last resort.
+            # to stderr only if TTY is unavailable or failed.
             import os as _os
             _tty = (
                 _os.environ.get("MEMO_AGENT_TTY")
                 or _os.environ.get("MEMFLOW_AGENT_TTY")
                 or _read_agent_tty_file(cfg.state_dir)
             )
+            _tty_written = False
             if _tty and _tty.startswith("/dev/"):
                 try:
                     with open(_tty, "w") as _tty_f:
                         _tty_f.write(_notif + "\n")
+                    _tty_written = True
                 except OSError:
                     pass
-            print(_notif, file=_sys.stderr)
+            # Only print to stderr as fallback when TTY wasn't available
+            if not _tty_written:
+                print(_notif, file=_sys.stderr)
             # Also write pending file for headless clients (opencode, Devin)
             # that can read it via memo_pop_notification MCP tool.
             if _titles:
