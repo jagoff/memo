@@ -228,6 +228,19 @@ def run_idle_capture_loop() -> None:
     log_file = Path(cfg.state_dir / "idle_capture.log")
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    # Rotate log when it exceeds 256 KB — keep the last 200 lines.
+    # Without rotation the log grows indefinitely (~820 KB/day at 10s interval).
+    _LOG_MAX_BYTES = 256 * 1024
+    _LOG_KEEP_LINES = 200
+
+    def _maybe_rotate() -> None:
+        try:
+            if log_file.exists() and log_file.stat().st_size > _LOG_MAX_BYTES:
+                lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+                log_file.write_text("\n".join(lines[-_LOG_KEEP_LINES:]) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
     while True:
         try:
             # Get most recent session
@@ -249,13 +262,16 @@ def run_idle_capture_loop() -> None:
             titles = result.get("saved_titles") or []
             n = len(titles)
 
-            # Log result
+            # Log result — only write when something was actually captured.
+            # Logging every 10s for 0-capture scans is the dominant source of
+            # unbounded log growth; debug level is enough for the no-op case.
             ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             if titles:
                 shown = "; ".join(t for t in titles[:3])
                 if n > 3:
                     shown += f"; +{n - 3} more"
                 notif = f"※ auto save (idle): {shown}"
+                _maybe_rotate()
                 with open(log_file, "a") as f:
                     f.write(
                         f'{{"ts": "{ts}", "stage": "captured", "sid": "{sid}", '
@@ -264,11 +280,6 @@ def run_idle_capture_loop() -> None:
                 _log.info("idle daemon: captured %d insights", n)
             else:
                 notif = "※ auto save (idle): scanned (0 new insights)"
-                with open(log_file, "a") as f:
-                    f.write(
-                        f'{{"ts": "{ts}", "stage": "scanned", "sid": "{sid}", '
-                        f'"status": "{result.get("status")}", "saved": 0}}\n'
-                    )
                 _log.debug("idle daemon: scanned (0 new insights)")
 
             # Write pending notification for headless clients (opencode, Devin)
