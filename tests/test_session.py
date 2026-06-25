@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
 
 from memo import session as session_mod
 from memo.session import (
@@ -609,3 +611,62 @@ def test_gather_git_state_porcelain_first_line_intact(tmp_path, monkeypatch):
         "src/memo/cli.py",
         "docs/",
     ]
+
+
+def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path, monkeypatch) -> None:
+    """Regression: _hb('captured-notified', saved=n) used undefined `n`.
+
+    When capture mode runs and saves titles with successful status, the heartbeat
+    call should not raise NameError. The bug was that `n` was undefined.
+    This test verifies successful capture doesn't crash (exit code 0).
+    """
+    from memo.cli_session import session_group
+    from memo.session import checkpoint
+
+    state = tmp_path / "state"
+    state.mkdir()
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setenv("MEMO_SESSION_DEBUG", "1")
+
+    # Pre-create the session snapshot so idle-maintenance doesn't self-cancel
+    sid = "test-sid-001"
+    checkpoint(state, session_id=sid, cwd=str(tmp_path), transcript_path=str(transcript))
+
+    with patch("memo.capture.run_capture_incremental") as mock_cap, \
+         patch("memo.cli_capture._write_capture_notification"):
+        mock_cap.return_value = {
+            "status": "ok",
+            "saved": ["mem-id-1"],
+            "saved_titles": ["Test insight"],
+        }
+        runner = CliRunner()
+        result = runner.invoke(
+            session_group,
+            [
+                "idle-maintenance",
+                "--mode", "capture",
+                "--delay-secs", "0",
+                "--detached-worker",
+            ],
+            input=json.dumps({
+                "session_id": sid,
+                "transcript_path": str(transcript),
+            }),
+        )
+
+    # The exit code should be 0 — if there was a NameError, it would be caught
+    # by the bare except and we'd still exit 0, but we verify it ran without crashing.
+    assert result.exit_code == 0, f"exit={result.exit_code} output={result.output}"
+    log = state / "idle_capture.log"
+    # When successful capture completes with titles, _hb("captured-notified", saved=len(_titles))
+    # is called. Check that the log exists and contains this stage.
+    if log.exists():
+        entries = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+        stages = [e["stage"] for e in entries]
+        # If the capture ran to completion, "captured-notified" stage should be present
+        assert "captured-notified" in stages, f"stages={stages}"

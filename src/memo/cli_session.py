@@ -6,7 +6,6 @@ root group in cli.py via `cli.add_command(session_group)`.
 
 from __future__ import annotations
 
-import contextlib
 import sys
 from typing import Any
 
@@ -489,44 +488,29 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             _titles: list[str] = []
             if result.get("status") == "ok":
                 _titles = result.get("saved_titles") or []
-            n = len(_titles)
             if _titles:
-                _shown = "; ".join(t for t in _titles[:3])
-                if n > 3:
-                    _shown += f"; +{n - 3} more"
-                _notif = f"※ auto save (idle): {_shown}"
-            else:
-                _notif = "※ auto save (idle): scanned (0 new insights)"
-            # Write to the terminal TTY if captured by the memo shim; fall back
-            # to stderr only if TTY is unavailable or failed.
-            import os as _os
-            _tty = (
-                _os.environ.get("MEMO_AGENT_TTY")
-                or _os.environ.get("MEMFLOW_AGENT_TTY")
-                or _read_agent_tty_file(cfg.state_dir)
-            )
-            _tty_written = False
-            if _tty and _tty.startswith("/dev/"):
-                try:
-                    with open(_tty, "w") as _tty_f:
-                        _tty_f.write(_notif + "\n")
-                    _tty_written = True
-                except OSError:
-                    pass
-            # Only print to stderr as fallback when TTY wasn't available
-            if not _tty_written:
-                print(_notif, file=_sys.stderr)
-            # Also write pending file for headless clients (opencode, Devin)
-            # that can read it via memo_pop_notification MCP tool.
-            if _titles:
+                _notif = "※ MEMO auto-saved"
+                # Write to the terminal TTY if captured by the memo shim; fall back
+                # to stderr only if TTY is unavailable or failed.
+                import os as _os
+                _tty = (
+                    _os.environ.get("MEMO_AGENT_TTY")
+                    or _os.environ.get("MEMFLOW_AGENT_TTY")
+                    or _read_agent_tty_file(cfg.state_dir)
+                )
+                _tty_written = False
+                if _tty and _tty.startswith("/dev/"):
+                    try:
+                        with open(_tty, "w") as _tty_f:
+                            _tty_f.write(_notif + "\n")
+                        _tty_written = True
+                    except OSError:
+                        pass
+                if not _tty_written:
+                    print(_notif, file=_sys.stderr)
                 from memo.cli_capture import _write_capture_notification
                 _write_capture_notification(cfg.state_dir, _titles, idle=True)
-            else:
-                with contextlib.suppress(OSError):
-                    (cfg.state_dir / "pending_idle_notification.txt").write_text(
-                        _notif + "\n", encoding="utf-8"
-                    )
-            _hb("captured-notified", saved=n)
+            _hb("captured-notified", saved=len(_titles))
             print("{}")
         else:
             from memo.cli_transcripts import _reflect_session
