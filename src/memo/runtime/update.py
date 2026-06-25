@@ -109,11 +109,22 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
                 return
 
     installed_via: str | None = None
+    pipx_source_url: str | None = None
     try:
-        res = subprocess.run(["pipx", "list", "--short"], capture_output=True, text=True, timeout=10)
-        if "mlx-memo" in res.stdout:
-            installed_via = "pipx"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        res = subprocess.run(["pipx", "list", "--json"], capture_output=True, text=True, timeout=10)
+        if res.returncode == 0:
+            import json as _json
+
+            _data = _json.loads(res.stdout)
+            _pkg = _data.get("venvs", {}).get("mlx-memo", {}).get("metadata", {}).get(
+                "main_package", {}
+            )
+            if _pkg:
+                installed_via = "pipx"
+                _url = _pkg.get("package_or_url", "")
+                if _url.startswith("git+"):
+                    pipx_source_url = _url
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
         pass
 
     if installed_via is None:
@@ -125,10 +136,18 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
             pass
 
     if installed_via == "pipx":
-        console.print("[dim]Upgrading via pipx…[/dim]")
-        result = subprocess.run(["pipx", "upgrade", "mlx-memo"], check=False)
-        if result.returncode != 0:
-            raise click.ClickException("pipx upgrade failed.")
+        if pipx_source_url:
+            console.print("[dim]Re-installing from git source via pipx…[/dim]")
+            result = subprocess.run(
+                ["pipx", "install", "--force", pipx_source_url], check=False
+            )
+            if result.returncode != 0:
+                raise click.ClickException("pipx install --force failed.")
+        else:
+            console.print("[dim]Upgrading via pipx…[/dim]")
+            result = subprocess.run(["pipx", "upgrade", "mlx-memo"], check=False)
+            if result.returncode != 0:
+                raise click.ClickException("pipx upgrade failed.")
     elif installed_via == "uv":
         console.print("[dim]Upgrading via uv tool…[/dim]")
         result = subprocess.run(["uv", "tool", "upgrade", "mlx-memo"], check=False)
