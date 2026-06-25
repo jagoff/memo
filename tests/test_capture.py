@@ -296,7 +296,7 @@ def test_write_capture_notification_lists_titles(tmp_path: Path) -> None:
 
     _write_capture_notification(tmp_path, ["Falso negativo en grounding", "Floor de tokens"])
     notif = (tmp_path / "pending_idle_notification.txt").read_text(encoding="utf-8")
-    assert notif.startswith("※ auto save:")  # muted single line, not a heading
+    assert notif.startswith("※ MEMO: auto save:")  # muted single line, not a heading
     assert "Falso negativo en grounding" in notif
     assert "Floor de tokens" in notif
 
@@ -306,7 +306,7 @@ def test_write_capture_notification_idle_tag(tmp_path: Path) -> None:
 
     _write_capture_notification(tmp_path, ["Insight"], idle=True)
     notif = (tmp_path / "pending_idle_notification.txt").read_text(encoding="utf-8")
-    assert notif.startswith("※ auto save (idle):")
+    assert notif.startswith("※ MEMO: auto save (idle):")
 
 
 def test_write_capture_notification_truncates_and_counts(tmp_path: Path) -> None:
@@ -350,7 +350,7 @@ def test_capture_stop_writes_notification_when_saved(tmp_path: Path, monkeypatch
 
     assert result.exit_code == 0
     notif = (state / "pending_idle_notification.txt").read_text(encoding="utf-8")
-    assert notif.startswith("※ auto save:") and "Insight uno" in notif
+    assert notif.startswith("※ MEMO: auto save:") and "Insight uno" in notif
 
 
 def test_capture_stop_no_notification_when_nothing_saved(tmp_path: Path, monkeypatch) -> None:

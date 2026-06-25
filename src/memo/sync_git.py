@@ -135,7 +135,7 @@ def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> di
             f"`git -C {dest} restore .`, or `rm -rf {dest}` then re-run bootstrap."
         )
     else:
-        summary = bootstrap_clone(url, dest)
+        summary = clone_bootstrap(url, dest)
         summary["reused"] = False
 
     existing = (load_config_file(config_path) or {}).get("storage", {})
