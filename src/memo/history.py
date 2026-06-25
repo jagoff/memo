@@ -272,5 +272,9 @@ class HistoryStore:
         with suppress(Exception):
             self._conn.close()
 
+    def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
+        with suppress(Exception):
+            self.close()
+
 
 __all__ = ["HistoryStore"]

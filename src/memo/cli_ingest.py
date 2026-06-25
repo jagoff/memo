@@ -624,8 +624,8 @@ def ingest(
         with contextlib.suppress(Exception):
             store.set_user_version(1)
 
-    console.print(
-        f"\n[green]done[/] "
+    click.echo(
+        "done "
         f"added={added} updated={updated} "
         f"skipped_unchanged={skipped_unchanged} "
         f"skipped_id={skipped_id} skipped_empty={skipped_empty} "

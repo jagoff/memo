@@ -68,12 +68,14 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
     try:
         import sqlite3
 
-        import sqlite_vec  # type: ignore[import-untyped]
+        from memo.sqlite_compat import import_sqlite_vec
 
         conn = sqlite3.connect(":memory:")
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.close()
+        try:
+            conn.enable_load_extension(True)
+            import_sqlite_vec().load(conn)
+        finally:
+            conn.close()
         console.print("[green]✓[/green] sqlite-vec loadable")
     except Exception as exc:
         console.print(f"[red]✗[/red] sqlite-vec: {exc}")
@@ -97,6 +99,9 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
         ok = False
 
     try:
+        from memo.mlx_gpu import suppress_swig_deprecation_warnings
+
+        suppress_swig_deprecation_warnings()
         import mlx.core  # noqa: F401
         import mlx_lm  # noqa: F401
 

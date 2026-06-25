@@ -427,8 +427,10 @@ def _doctor_report(
         # metadata-column kNN filtering the store now relies on (alpha vec0
         # API) — a too-old sqlite-vec would load but fail these, so a plain
         # `import + load` check would pass while real queries break.
-        import sqlite_vec  # type: ignore[import-untyped]
-        from sqlite_vec import serialize_float32
+        from memo.sqlite_compat import import_sqlite_vec
+
+        sqlite_vec = import_sqlite_vec()
+        serialize_float32 = sqlite_vec.serialize_float32
 
         conn = sqlite3.connect(":memory:")
         try:
@@ -451,6 +453,9 @@ def _doctor_report(
             conn.close()
 
     def check_mlx() -> None:
+        from memo.mlx_gpu import suppress_swig_deprecation_warnings
+
+        suppress_swig_deprecation_warnings()
         import mlx.core  # noqa: F401
         import mlx_lm  # noqa: F401
 

@@ -71,7 +71,7 @@ def _iso_to_dt(value: str) -> datetime | None:
 def _read_vectors(db_path: Path, limit: int) -> list[dict[str, Any]]:
     """Pull embeddings + metadata straight from sqlite-vec (no MLX load)."""
     try:
-        import sqlite_vec
+        from memo.sqlite_compat import import_sqlite_vec
     except ImportError:
         return []
     if not db_path.is_file():
@@ -79,7 +79,7 @@ def _read_vectors(db_path: Path, limit: int) -> list[dict[str, Any]]:
     conn = sqlite3.connect(str(db_path), timeout=10.0)
     try:
         conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
+        import_sqlite_vec().load(conn)
         conn.enable_load_extension(False)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -833,17 +833,24 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
         projection = None
         type_counts = {}
         # Cheap vector count for corpus pillar (no blob reads, no PCA)
-        try:
-            import sqlite3 as _sqlite3
-            import sqlite_vec as _sv
-            _conn = _sqlite3.connect(str(cfg.db_path))
-            _conn.enable_load_extension(True)
-            _sv.load(_conn)
-            _conn.enable_load_extension(False)
-            _vec_count = _conn.execute("SELECT COUNT(*) FROM vec").fetchone()[0]
-            _conn.close()
-        except Exception:
-            _vec_count = 0
+        _vec_count = 0
+        if cfg.db_path.is_file():
+            _conn = None
+            try:
+                import sqlite3 as _sqlite3
+
+                from memo.sqlite_compat import import_sqlite_vec
+
+                _conn = _sqlite3.connect(f"file:{cfg.db_path}?mode=ro", uri=True)
+                _conn.enable_load_extension(True)
+                import_sqlite_vec().load(_conn)
+                _conn.enable_load_extension(False)
+                _vec_count = _conn.execute("SELECT COUNT(*) FROM vec").fetchone()[0]
+            except Exception:
+                _vec_count = 0
+            finally:
+                if _conn is not None:
+                    _conn.close()
 
     pillars = [
         _pillar_vector_db(doctor, drift),
@@ -933,11 +940,12 @@ def _imports_probe() -> list[dict[str, Any]]:
 
 
 def _probe_sqlite_vec() -> None:
-    import sqlite_vec
+    from memo.sqlite_compat import import_sqlite_vec
+
     conn = sqlite3.connect(":memory:")
     try:
         conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
+        import_sqlite_vec().load(conn)
     finally:
         conn.close()
 

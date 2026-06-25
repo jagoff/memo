@@ -14,7 +14,9 @@ from memo.crossref import (
 @pytest.fixture
 def crossref_index(tmp_cfg):
     """Fixture providing CrossReferenceIndex instance."""
-    return CrossReferenceIndex(tmp_cfg.crossref_db)
+    index = CrossReferenceIndex(tmp_cfg.crossref_db)
+    yield index
+    index.close()
 
 
 @pytest.fixture
@@ -22,7 +24,9 @@ def link_suggester(mock_memory):
     """Fixture providing LinkSuggester instance."""
     from memo.crossref import CrossReferenceIndex
     crossref = CrossReferenceIndex(mock_memory.cfg.crossref_db)
-    return LinkSuggester(mock_memory, crossref)
+    suggester = LinkSuggester(mock_memory, crossref)
+    yield suggester
+    crossref.close()
 
 
 def test_crossref_index_init(crossref_index):
@@ -102,14 +106,20 @@ def test_crossref_persistence(tmp_cfg):
 
     # Create first instance and index links
     index1 = CrossReferenceIndex(db_path)
-    index1.index_wikilinks("source", "See [[target]]")
+    try:
+        index1.index_wikilinks("source", "See [[target]]")
 
-    # Create second instance and verify data persisted
-    index2 = CrossReferenceIndex(db_path)
-    backlinks = index2.get_backlinks("target")
+        # Create second instance and verify data persisted
+        index2 = CrossReferenceIndex(db_path)
+        try:
+            backlinks = index2.get_backlinks("target")
 
-    assert len(backlinks) == 1
-    assert backlinks[0].source_id == "source"
+            assert len(backlinks) == 1
+            assert backlinks[0].source_id == "source"
+        finally:
+            index2.close()
+    finally:
+        index1.close()
 
 
 def test_link_suggester_init(link_suggester):

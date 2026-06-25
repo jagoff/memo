@@ -181,6 +181,10 @@ class ContradictionStore:
         with suppress(Exception):
             self._conn.close()
 
+    def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
+        with suppress(Exception):
+            self.close()
+
     def upsert_open(
         self,
         memoria_id_a: str,

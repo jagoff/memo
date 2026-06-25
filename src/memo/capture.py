@@ -562,7 +562,10 @@ def run_capture(
 
     # Lazy heavy imports: only paid past pre-filter.
     mem = Memory(cfg)
-    result = _extract_and_save(mem, cfg, user_text, assistant_text, debug=debug)
+    try:
+        result = _extract_and_save(mem, cfg, user_text, assistant_text, debug=debug)
+    finally:
+        mem.close()
 
     state["last_hash"] = h
     if result["saved"]:
@@ -689,6 +692,9 @@ def run_capture_incremental(
         return {"status": "no_trigger", "exchange_count": total}
 
     mem = Memory(cfg)
-    result = _extract_and_save(mem, cfg, combined_user, combined_assistant, debug=debug)
+    try:
+        result = _extract_and_save(mem, cfg, combined_user, combined_assistant, debug=debug)
+    finally:
+        mem.close()
     _stamp()
     return {"status": "ok", "processed_turns": len(new), "exchange_count": total, **result}

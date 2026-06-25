@@ -194,7 +194,8 @@ def logs(source: str, tail: int, paths: bool) -> None:
                     tail_str = f'  [dim]"{prompt}"[/dim]' if prompt else ""
                 console.print(
                     f"  [dim]{ts}[/dim] via=[cyan]{via}[/cyan] "
-                    f"hits=[bold]{hits}[/bold]{latency_str}{tail_str}"
+                    f"hits=[bold]{hits}[/bold]{latency_str}{tail_str}",
+                    highlight=False,
                 )
         if source == "all":
             console.print()

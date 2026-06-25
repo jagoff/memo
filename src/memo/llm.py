@@ -36,7 +36,7 @@ from collections import OrderedDict
 from collections.abc import Iterator
 from typing import Any
 
-from memo.mlx_gpu import gpu_guard
+from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
 
 _log = logging.getLogger(__name__)
 _MAX_LOADED_MODELS = 2
@@ -151,6 +151,7 @@ class MLXChat:
         self._prompt_cache[model] = (cache, full_tokens, id(m))
 
     def _ensure_model(self, model: str) -> tuple[Any, Any]:
+        suppress_swig_deprecation_warnings()
         if model in self._loaded:
             return self._loaded[model]
         # Timeout after 30s to avoid indefinite hang if load stalls
@@ -216,6 +217,7 @@ class MLXChat:
         Returns Ollama-shape dict (`{"message": {"content": "..."}}`)
         for trivial drop-in compatibility with existing call sites.
         """
+        suppress_swig_deprecation_warnings()
         from mlx_lm import generate as _mlx_generate
         from mlx_lm.sample_utils import make_sampler
 
@@ -332,6 +334,7 @@ class MLXChat:
         Raises `RuntimeError` if the installed `mlx_lm` lacks
         `stream_generate` (mlx-lm < 0.18).
         """
+        suppress_swig_deprecation_warnings()
         try:
             from mlx_lm import stream_generate as _mlx_stream
         except ImportError as exc:

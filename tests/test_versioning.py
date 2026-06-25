@@ -13,13 +13,17 @@ from memo.versioning import (
 @pytest.fixture
 def version_store(tmp_cfg):
     """Fixture providing VersionStore instance."""
-    return VersionStore(tmp_cfg.state_dir / "versions.db")
+    store = VersionStore(tmp_cfg.state_dir / "versions.db")
+    yield store
+    store.close()
 
 
 @pytest.fixture
 def version_manager(mock_memory):
     """Fixture providing VersionManager instance."""
-    return VersionManager(mock_memory)
+    manager = VersionManager(mock_memory)
+    yield manager
+    manager.close()
 
 
 def test_version_store_init(version_store):

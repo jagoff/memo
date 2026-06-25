@@ -55,7 +55,7 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from memo.mlx_gpu import gpu_guard
+from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
 
 _log = logging.getLogger(__name__)
 
@@ -133,6 +133,7 @@ class MLXReranker:
         try:
             if self._model is not None:
                 return
+            suppress_swig_deprecation_warnings()
             from mlx_lm import load  # deferred — Apple-Silicon-only import
 
             t0 = time.time()

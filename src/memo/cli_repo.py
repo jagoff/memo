@@ -223,7 +223,8 @@ def repo_index_cmd(
         f"lines={out['indexed_lines']} embedded={out['embedded_chunks']} "
         f"model={out.get('model_chunks', 0)} cached={out.get('cached_chunks', 0)} "
         f"pending={out['pending_chunks']} status={out['semantic_status']} "
-        f"errors={out['errors']}"
+        f"errors={out['errors']}",
+        highlight=False,
     )
     console.print(f"[dim]receipt[/dim] {receipt['uri']}")
 
@@ -254,7 +255,8 @@ def repo_embed_cmd(repo: str, force: bool, as_json: bool) -> None:
         f"[green]done[/green] repo={out['name']} embedded={out['embedded_chunks']} "
         f"model={out.get('model_chunks', 0)} cached={out.get('cached_chunks', 0)} "
         f"total={out['total_chunks']} pending={out['pending_chunks']} "
-        f"status={out['semantic_status']}"
+        f"status={out['semantic_status']}",
+        highlight=False,
     )
 
 

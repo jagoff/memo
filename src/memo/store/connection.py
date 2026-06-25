@@ -5,6 +5,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 
+from ..sqlite_compat import import_sqlite_vec
 from ._base import _StoreBase
 
 _log = logging.getLogger(__name__)
@@ -15,13 +16,29 @@ _log = logging.getLogger(__name__)
 # so existing JSON-written rows stay readable; no migration needed.
 
 
+class _ConnectionHolder:
+    """Close a thread-local connection when its owning thread exits."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn: sqlite3.Connection | None = conn
+
+    def close(self) -> None:
+        conn, self.conn = self.conn, None
+        if conn is not None:
+            with suppress(Exception):
+                conn.close()
+
+    def __del__(self) -> None:  # pragma: no cover - thread-exit cleanup
+        self.close()
+
+
 class _ConnectionMixin(_StoreBase):
     @property
     def _conn(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = self._connect()
-        return conn
+        holder = getattr(self._local, "conn_holder", None)
+        if holder is None or holder.conn is None:
+            return self._connect()
+        return holder.conn
 
     def _connect(self) -> sqlite3.Connection:
         """Open + configure a connection for the calling thread, load vec0,
@@ -42,11 +59,11 @@ class _ConnectionMixin(_StoreBase):
         except Exception:
             conn.close()
             raise
-        self._local.conn = conn
+        self._local.conn_holder = _ConnectionHolder(conn)
         return conn
 
     def _load_vec0(self, conn: sqlite3.Connection) -> None:
-        import sqlite_vec  # type: ignore[import-not-found]
+        sqlite_vec = import_sqlite_vec()
 
         # `enable_load_extension` must be called BEFORE `load_extension`.
         # Wrapped in try/except because some Python builds disable it
@@ -91,8 +108,7 @@ class _ConnectionMixin(_StoreBase):
         # Closes the calling thread's connection. Other threads' connections
         # are released when their threads end (or at process exit) — adequate
         # for the daemon/CLI lifecycles that use this store.
-        conn = getattr(self._local, "conn", None)
-        if conn is not None:
-            with suppress(Exception):
-                conn.close()
-            self._local.conn = None
+        holder = getattr(self._local, "conn_holder", None)
+        if holder is not None:
+            holder.close()
+            self._local.conn_holder = None

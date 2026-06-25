@@ -4,11 +4,12 @@ import json
 import logging
 from typing import Any
 
-from sqlite_vec import serialize_float32
-
+from ..sqlite_compat import import_sqlite_vec
 from .bm25_queries import _BM25QueriesMixin
 from .rows import _row_to_dict
 from .signal_queries import _SignalQueriesMixin
+
+serialize_float32 = import_sqlite_vec().serialize_float32
 
 _log = logging.getLogger(__name__)
 

@@ -5,8 +5,7 @@ import logging
 import sqlite3
 from typing import Any
 
-from sqlite_vec import serialize_float32
-
+from ..sqlite_compat import import_sqlite_vec
 from ._base import _StoreBase
 from .rows import (
     _batches,
@@ -21,6 +20,8 @@ from .schema import (
     _BM25_REPO_NAME_WEIGHT,
     _BM25_UNINDEXED_WEIGHT,
 )
+
+serialize_float32 = import_sqlite_vec().serialize_float32
 
 _log = logging.getLogger(__name__)
 

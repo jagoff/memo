@@ -5,9 +5,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlite_vec import serialize_float32
-
+from ..sqlite_compat import import_sqlite_vec
 from ._base import _StoreBase
+
+serialize_float32 = import_sqlite_vec().serialize_float32
 
 
 class _FeedbackMixin(_StoreBase):

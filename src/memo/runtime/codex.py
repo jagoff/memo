@@ -23,7 +23,7 @@ def _codex_home() -> Path:
 def _copy_slash_skill(root: Path, dst: Path, *, dry_run: bool) -> None:
     src = root / "skills" / "memo" / "SKILL.md"
     if dry_run:
-        console.print(f"[dim]copy {src} -> {dst}  # /memo[/dim]")
+        click.echo(f"copy {src} -> {dst}  # /memo")
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
@@ -102,9 +102,7 @@ def _install_codex_plugin(root: Path, *, dry_run: bool) -> None:
         raise click.ClickException(f"Codex marketplace manifest not found: {marketplace}")
     args = ["codex", "app-server", "--listen", "stdio://", "--enable", "plugins"]
     if dry_run:
-        console.print(
-            f"[dim]$ {_format_command(args)}  # plugin/install memo from {marketplace}[/dim]"
-        )
+        click.echo(f"$ {_format_command(args)}  # plugin/install memo from {marketplace}")
         return
 
     try:

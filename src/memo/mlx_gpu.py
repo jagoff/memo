@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import os
 import threading
+import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -58,6 +59,23 @@ _GPU_LOCK = threading.RLock()
 # `chat.chat()` so that `gpu_guard()` uses a matching deadline without
 # requiring signature changes to `MLXChat.chat()`.
 _gpu_tl: threading.local = threading.local()
+
+
+def suppress_swig_deprecation_warnings() -> None:
+    """Silence Python 3.14 metadata noise from generated SWIG helpers.
+
+    sqlite-vec and tokenizer dependencies emit these warnings during import
+    and again at interpreter shutdown; their generated types are outside
+    memo's control.
+    """
+    warnings.filterwarnings(
+        "ignore",
+        message=(
+            r"builtin type (?:SwigPyPacked|SwigPyObject|swigvarlink) "
+            r"has no __module__ attribute"
+        ),
+        category=DeprecationWarning,
+    )
 
 # Cross-process flock state, only ever touched while holding `_GPU_LOCK`.
 _depth = 0

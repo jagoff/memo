@@ -31,6 +31,7 @@ from memo.cli_analytics import analytics_group
 from memo.cli_as_of import as_of_group
 from memo.cli_backend_native import backend_native_group
 from memo.cli_backup import backup_group
+from memo.cli_banner import startup_banner_cmd
 from memo.cli_briefing import briefing
 from memo.cli_capture import capture_stop, capture_tick, resume
 from memo.cli_chat import chat_group
@@ -100,7 +101,6 @@ from memo.cli_runtime import (
     uninstall_watcher_cmd,
     watch,
 )
-from memo.runtime.shims import install_shims_cmd
 from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
 from memo.cli_session import continuity_cmd, session_group
 from memo.cli_share import share_group
@@ -110,11 +110,11 @@ from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
 from memo.cli_transcripts import mine_history, reflect
-from memo.cli_banner import startup_banner_cmd
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_version import version_group
 from memo.cli_viz import mapa_cmd
+from memo.runtime.shims import install_shims_cmd
 
 # Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
 # `run_picker` itself defers the heavy `questionary` import until called.

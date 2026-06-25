@@ -191,4 +191,5 @@ def install_shell_wrapper(do_print: bool, do_write: bool, shell_kind: str, force
             f"  The wrapper function will shadow it. To preserve those flags,\n"
             f"  remove the alias and use [bold]MEMO_CLAUDE_EXTRA_ARGS[/bold]:\n"
             f"    [dim]export MEMO_CLAUDE_EXTRA_ARGS=(--your-flag --other-flag)[/dim]",
+            highlight=False,
         )

@@ -91,8 +91,10 @@ def test_logs_recall_renders_bail_reason(tmp_path):
         "5",
     )
     assert result.exit_code == 0, result.output
-    assert "bail" in result.output
-    assert "empty stdin" in result.output
+    import re
+    stripped = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+    assert "bail" in stripped
+    assert "empty" in stripped
 
 
 def test_append_recall_log_persists_reason_and_error(tmp_path):

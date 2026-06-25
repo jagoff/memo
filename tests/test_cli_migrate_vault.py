@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -226,11 +228,8 @@ def test_consolidate_db_merges_sidecars_and_is_idempotent(
     )
     # Seeding three memorias wrote history events (+ created graph.db).
     assert (cfg.state_dir / "history.db").is_file()
-    import sqlite3
-
-    n_events = sqlite3.connect(cfg.state_dir / "history.db").execute(
-        "SELECT count(*) FROM events"
-    ).fetchone()[0]
+    with closing(sqlite3.connect(cfg.state_dir / "history.db")) as conn:
+        n_events = conn.execute("SELECT count(*) FROM events").fetchone()[0]
     assert n_events >= 3
 
     cfg_file = tmp_path / "memo-config.toml"
@@ -241,9 +240,8 @@ def test_consolidate_db_merges_sidecars_and_is_idempotent(
     # Legacy renamed aside; events now live inside memvec.db.
     assert (cfg.state_dir / "history.db.bak").is_file()
     assert not (cfg.state_dir / "history.db").is_file()
-    merged = sqlite3.connect(cfg.state_dir / "memvec.db").execute(
-        "SELECT count(*) FROM events"
-    ).fetchone()[0]
+    with closing(sqlite3.connect(cfg.state_dir / "memvec.db")) as conn:
+        merged = conn.execute("SELECT count(*) FROM events").fetchone()[0]
     assert merged == n_events
     # Config flipped on.
     assert "single_db = true" in cfg_file.read_text(encoding="utf-8")
@@ -251,9 +249,8 @@ def test_consolidate_db_merges_sidecars_and_is_idempotent(
     # Idempotent: re-running doesn't error or duplicate.
     r2 = CliRunner().invoke(cli, ["migrate", "--consolidate-db"], env=env)
     assert r2.exit_code == 0, r2.output
-    merged2 = sqlite3.connect(cfg.state_dir / "memvec.db").execute(
-        "SELECT count(*) FROM events"
-    ).fetchone()[0]
+    with closing(sqlite3.connect(cfg.state_dir / "memvec.db")) as conn:
+        merged2 = conn.execute("SELECT count(*) FROM events").fetchone()[0]
     assert merged2 == n_events
 
 

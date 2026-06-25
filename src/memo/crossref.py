@@ -32,6 +32,7 @@ When saving a memory, suggests linking to existing memories based on:
 from __future__ import annotations
 
 import re
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -246,6 +247,10 @@ class CrossReferenceIndex:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
+        with suppress(Exception):
+            self.close()
 
 
 class LinkSuggester:

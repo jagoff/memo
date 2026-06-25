@@ -405,7 +405,9 @@ def test_repo_cli_index_search_and_get(tmp_path: Path, monkeypatch):
 
     result = runner.invoke(cli, ["repo", "index", str(repo), "--name", "sample"], env=env)
     assert result.exit_code == 0, result.output
-    assert "repo=sample" in result.output
+    import re
+    stripped = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+    assert "repo=sample" in stripped
 
     result = runner.invoke(
         cli,

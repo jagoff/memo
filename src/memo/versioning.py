@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import difflib
 import json
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -177,6 +178,16 @@ class VersionStore:
         conn.execute("DELETE FROM versions WHERE memoria_id = ?", (memoria_id,))
         conn.commit()
 
+    def close(self) -> None:
+        """Close the backing SQLite connection."""
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
+        with suppress(Exception):
+            self.close()
+
 
 class VersionManager:
     """Manages versioning for memories.
@@ -276,6 +287,10 @@ class VersionManager:
     def get_version_history(self, memoria_id: str, limit: int = 10) -> list[Version]:
         """Get the version history for a memory."""
         return self.version_store.get_versions(memoria_id, limit=limit)
+
+    def close(self) -> None:
+        """Close owned resources."""
+        self.version_store.close()
 
 
 __all__ = [

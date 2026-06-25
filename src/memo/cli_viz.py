@@ -66,11 +66,11 @@ def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) 
     # FLOAT[N] columns as raw 4-byte little-endian blobs.
     console.print("[dim]Reading corpus from DB…[/dim]")
     try:
-        import sqlite_vec as _sv  # type: ignore[import-untyped]
+        from memo.sqlite_compat import import_sqlite_vec
 
         conn = _sqlite3.connect(str(db_path), timeout=10.0)
         conn.enable_load_extension(True)
-        _sv.load(conn)
+        import_sqlite_vec().load(conn)
         conn.enable_load_extension(False)
         conn.row_factory = _sqlite3.Row
     except Exception as exc:

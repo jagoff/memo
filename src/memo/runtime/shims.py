@@ -59,7 +59,16 @@ exec "$_NEXT" "$@"
 
 _PATH_MARKER = "# memo-shims PATH"
 _TTY_MARKER = "# memo-agent-tty"
-_TTY_SNIPPET = "\n{m}\n[ -t 1 ] && export MEMO_AGENT_TTY=\"$(tty 2>/dev/null || true)\"  {m}\n"
+# Writes TTY to env AND to state file so Claude Code hooks (which don't inherit
+# shell env) can still find the active terminal via _read_agent_tty_file().
+_TTY_SNIPPET = (
+    "\n{m}\n"
+    "[ -t 1 ] && export MEMO_AGENT_TTY=\"$(tty 2>/dev/null || true)\""
+    " && printf '%s' \"$MEMO_AGENT_TTY\""
+    " > \"${{XDG_DATA_HOME:-$HOME/.local/share}}/memo/agent_tty\" 2>/dev/null || true"
+    "  {m}\n"
+)
+_TTY_SNIPPET_V1 = "[ -t 1 ] && export MEMO_AGENT_TTY="  # old snippet without file write
 
 
 def install_path_snippet(
@@ -82,11 +91,24 @@ def install_path_snippet(
     existing = rc_path.read_text(encoding="utf-8") if rc_path.is_file() else ""
     path_present = _PATH_MARKER in existing
     tty_present = _TTY_MARKER in existing
-    if path_present and tty_present:
+    # Detect v1 snippet (no file write) and upgrade it in-place.
+    tty_needs_upgrade = tty_present and _TTY_SNIPPET_V1 in existing and "agent_tty" not in existing
+
+    if path_present and tty_present and not tty_needs_upgrade:
         return "already"
     if dry_run:
         return f"would-write:{rc_path}"
     try:
+        if tty_needs_upgrade:
+            import re
+            new_content = re.sub(
+                rf"{re.escape(_TTY_MARKER)}.*?{re.escape(_TTY_MARKER)}",
+                tty_snippet.strip("\n"),
+                existing,
+                flags=re.DOTALL,
+            )
+            rc_path.write_text(new_content, encoding="utf-8")
+            return f"upgraded:{rc_path}"
         with rc_path.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
                 fh.write("\n")
@@ -184,7 +206,7 @@ def install_shims_cmd(agents: str, bin_dir: str, dry_run: bool) -> None:
         console.print(f"[green]wrote[/green] PATH snippet → {path_status.split(':', 1)[1]}")
         console.print(f"[dim]Reload shell or run: source {path_status.split(':', 1)[1]}[/dim]")
     elif path_status == "already":
-        console.print(f"[dim]✓ PATH snippet already in shell rc[/dim]")
+        console.print("[dim]✓ PATH snippet already in shell rc[/dim]")
     else:
         console.print(
             f"\n[bold]Add to your shell rc (before other agent dirs):[/bold]\n"

@@ -109,5 +109,7 @@ def test_install_shell_wrapper_warns_on_existing_alias(tmp_path, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(cli, ["install-shell-wrapper", "--write"])
     assert result.exit_code == 0
-    assert "MEMO_CLAUDE_EXTRA_ARGS" in result.output
-    assert "alias claude" in result.output
+    import re
+    stripped = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+    assert "MEMO_CLAUDE_EXTRA_ARGS" in stripped
+    assert "alias claude" in stripped

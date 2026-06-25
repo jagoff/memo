@@ -36,7 +36,7 @@ import time
 from collections.abc import Sequence
 from typing import Any, cast
 
-from memo.mlx_gpu import gpu_guard
+from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
 
 try:
     from consciousness_contracts.cache import (
@@ -118,6 +118,7 @@ class MicroEmbedder:
             if self._model is not None:
                 return
             try:
+                suppress_swig_deprecation_warnings()
                 from mlx_lm import load as _mlx_load
 
                 # Load with very conservative settings for speed
@@ -224,6 +225,7 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         try:
             if self._model is not None:
                 return
+            suppress_swig_deprecation_warnings()
             from mlx_lm import load as _mlx_load
 
             loaded = _mlx_load(self.model_path)

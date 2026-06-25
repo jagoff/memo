@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -65,9 +66,10 @@ def test_profile_repair_plan_flags_db_dimension_mismatch(tmp_path: Path) -> None
         embedder_dims=2560,
     )
     cfg.state_dir.mkdir(parents=True)
-    with sqlite3.connect(cfg.db_path) as conn:
+    with closing(sqlite3.connect(cfg.db_path)) as conn:
         conn.execute("CREATE TABLE vec (id TEXT PRIMARY KEY, embedding FLOAT[1024])")
         conn.execute("CREATE TABLE repo_vec (id TEXT PRIMARY KEY, embedding FLOAT[1024])")
+        conn.commit()
 
     plan = _profile_repair_plan(cfg)
 

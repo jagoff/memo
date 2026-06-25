@@ -22,8 +22,12 @@ Public API:
     hits = mem.search("query", limit=10)
 """
 
-from memo.config import Config
-from memo.memory import Memory, MemoryRecord
+from memo.mlx_gpu import suppress_swig_deprecation_warnings
+
+suppress_swig_deprecation_warnings()
+
+from memo.config import Config  # noqa: E402
+from memo.memory import Memory, MemoryRecord  # noqa: E402
 
 # Single source of truth lives in pyproject.toml `[project] version`.
 # Resolve at import time from the installed distribution metadata so

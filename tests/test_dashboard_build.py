@@ -20,6 +20,7 @@ def test_poll_mode_skips_projection(tmp_cfg: Config):
     data = build.collect_data(tmp_cfg, include_projection=False)
     assert data["projection"] is None
     assert data["type_counts"] == {}
+    assert not tmp_cfg.db_path.exists()
 
 
 def test_poll_mode_keeps_cheap_metrics(tmp_cfg: Config):

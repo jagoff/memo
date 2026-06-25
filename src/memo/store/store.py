@@ -144,6 +144,10 @@ class VecStore(
                 tantivy.close()
         super().close()
 
+    def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
+        with contextlib.suppress(Exception):
+            self.close()
+
     def _get_tantivy(self) -> TantivyFTSIndex | None:
         """Return the live TantivyFTSIndex, or None to fall back to FTS5.
 

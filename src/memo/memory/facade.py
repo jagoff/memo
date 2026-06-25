@@ -430,6 +430,12 @@ class Memory(
         if self._contradict_store is not None:
             with contextlib.suppress(Exception):
                 self._contradict_store.close()
+        if "versioning" in self._capabilities:
+            with contextlib.suppress(Exception):
+                self._capabilities["versioning"].close()
+        if "crossref" in self._capabilities:
+            with contextlib.suppress(Exception):
+                self._capabilities["crossref"].close()
 
     def _mark_dirty(self, id_: str) -> None:
         """Flag a memory as written-locally-but-not-yet-on-backing-store

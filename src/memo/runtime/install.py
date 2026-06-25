@@ -282,7 +282,7 @@ def install_slash(
     if path_status.startswith("written"):
         console.print(f"  [green]✓[/green] PATH snippet → {path_status.split(':', 1)[1]}")
     elif path_status == "already":
-        console.print(f"  [dim]✓ ~/.memo/bin already in PATH snippet[/dim]")
+        console.print("  [dim]✓ ~/.memo/bin already in PATH snippet[/dim]")
     else:
         console.print(f"  [yellow]![/yellow] PATH: {path_status} — add manually: export PATH=\"$HOME/.memo/bin:$PATH\"")
 

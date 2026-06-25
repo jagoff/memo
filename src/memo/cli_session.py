@@ -17,6 +17,16 @@ from memo.config import Config
 from memo.flags import flag_bool, flag_int
 
 
+def _read_agent_tty_file(state_dir: Any) -> str:
+    """Read the TTY path written by .zshrc on interactive session start."""
+    import pathlib
+    try:
+        tty = pathlib.Path(state_dir, "agent_tty").read_text(encoding="utf-8").strip()
+        return tty if tty else ""
+    except OSError:
+        return ""
+
+
 @click.command(name="continuity")
 @click.option("--limit", default=12, show_default=True, help="Sessions to scan for this cwd.")
 def continuity_cmd(limit: int) -> None:
@@ -488,10 +498,14 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             else:
                 _notif = "※ auto save (idle): scanned (0 new insights)"
             # Write to the terminal TTY if captured by the memo shim; fall back
-            # to stderr (which Claude Code captures to its log, not the terminal).
+            # to a state file (read by recall-hook next prompt) → stderr last resort.
             import os as _os
-            _tty = _os.environ.get("MEMO_AGENT_TTY") or _os.environ.get("MEMFLOW_AGENT_TTY")
-            if _tty:
+            _tty = (
+                _os.environ.get("MEMO_AGENT_TTY")
+                or _os.environ.get("MEMFLOW_AGENT_TTY")
+                or _read_agent_tty_file(cfg.state_dir)
+            )
+            if _tty and _tty.startswith("/dev/"):
                 try:
                     with open(_tty, "w") as _tty_f:
                         _tty_f.write(_notif + "\n")

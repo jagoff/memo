@@ -133,7 +133,7 @@ def _run_agent_command(
     best_effort: bool = False,
 ) -> None:
     if dry_run:
-        console.print(f"[dim]$ {_format_command(args)}[/dim]")
+        click.echo(f"$ {_format_command(args)}")
         return
     try:
         proc = subprocess.run(

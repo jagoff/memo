@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from memo.cli_diag import _db_health_report
@@ -19,7 +20,7 @@ def _cfg(tmp_path: Path, *, dims: int = 4) -> Config:
 def test_db_health_checks_integrity_and_vector_dims(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
-    with sqlite3.connect(cfg.db_path) as conn:
+    with closing(sqlite3.connect(cfg.db_path)) as conn:
         conn.execute("CREATE TABLE meta (id TEXT PRIMARY KEY, updated TEXT)")
         conn.execute("CREATE TABLE repo_sources (id TEXT PRIMARY KEY, indexed_at TEXT)")
         conn.execute("CREATE TABLE repo_chunks (id TEXT PRIMARY KEY)")
@@ -27,6 +28,7 @@ def test_db_health_checks_integrity_and_vector_dims(tmp_path: Path) -> None:
         conn.execute("CREATE TABLE repo_vec (id TEXT PRIMARY KEY, embedding FLOAT[4])")
         conn.execute("INSERT INTO meta VALUES ('m1', '2026-05-24T00:00:00Z')")
         conn.execute("INSERT INTO repo_sources VALUES ('r1', '2026-05-24T01:00:00Z')")
+        conn.commit()
 
     report = {item["label"]: item for item in _db_health_report(cfg)}
 
@@ -40,9 +42,10 @@ def test_db_health_checks_integrity_and_vector_dims(tmp_path: Path) -> None:
 def test_db_health_flags_embedding_dimension_mismatch(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
-    with sqlite3.connect(cfg.db_path) as conn:
+    with closing(sqlite3.connect(cfg.db_path)) as conn:
         conn.execute("CREATE TABLE vec (id TEXT PRIMARY KEY, embedding FLOAT[4])")
         conn.execute("CREATE TABLE repo_vec (id TEXT PRIMARY KEY, embedding FLOAT[4])")
+        conn.commit()
 
     report = {item["label"]: item for item in _db_health_report(_cfg(tmp_path, dims=8))}
 
