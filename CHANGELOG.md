@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-06-25
+
+### Fixed
+
+- **Test suite: 12 failures resolved.** Fixed `XDG_DATA_HOME` `KeyError` in shims tests, architecture boundary violations, f-string syntax errors, and import ordering issues.
+- **TTY guard in `recall_socket.py`.** Now checks `path.startswith("/dev/")` before calling `open()`, preventing creation of a literal `not a tty` file in the working directory.
+- **hooks.json TTY filter.** Pipes `tty(1)` output through `grep '^/dev/'` so `MEMO_AGENT_TTY` is only set when a real PTY path is returned, never the string `"not a tty"`.
+- **`memo update` git-installed pipx detection.** When memo was installed from a git spec (not PyPI), `pipx upgrade` fails; the updater now reads `pipx_metadata.json` directly (checking common pipx paths when `pipx` is not on `PATH`) and falls back to `pipx install --force` for git-spec installs.
+- **No-downgrade version guard.** `memo update` now uses `packaging.version.Version` for comparison, refusing to install a version older than the currently running one.
+- **`agent_assets/` removed from package tree.** The directory was accidentally included in the wheel via a glob, causing duplicate-inclusion build failures. Excluded explicitly in `pyproject.toml`.
+
 ## [1.0.8] - 2026-06-24
 
 ### Fixed
