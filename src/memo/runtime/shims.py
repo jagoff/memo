@@ -51,6 +51,43 @@ exec "$_NEXT" "$@"
 """
 
 
+_PATH_MARKER = "# memo-shims PATH"
+_PATH_SNIPPET = (
+    "\n{marker}\nexport PATH=\"$HOME/.memo/bin:$PATH\"  {marker}\n"
+)
+
+
+def install_path_snippet(
+    bin_dir: Path = _DEFAULT_BIN_DIR,
+    *,
+    dry_run: bool = False,
+) -> str:
+    """Prepend bin_dir to PATH in ~/.zshrc / ~/.bashrc. Idempotent.
+
+    Returns a short status string: "written", "already", or "skipped:<reason>".
+    """
+    import os
+
+    shell = Path(os.environ.get("SHELL", "")).name
+    rc_name = ".zshrc" if shell == "zsh" else ".bashrc"
+    rc_path = Path.home() / rc_name
+    snippet = f'\n{_PATH_MARKER}\nexport PATH="{bin_dir}:$PATH"  {_PATH_MARKER}\n'
+
+    existing = rc_path.read_text(encoding="utf-8") if rc_path.is_file() else ""
+    if _PATH_MARKER in existing:
+        return "already"
+    if dry_run:
+        return f"would-write:{rc_path}"
+    try:
+        with rc_path.open("a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(snippet)
+        return f"written:{rc_path}"
+    except OSError as exc:
+        return f"skipped:{exc}"
+
+
 def install_shims(
     agents: tuple[str, ...] = _AGENTS,
     bin_dir: Path = _DEFAULT_BIN_DIR,
@@ -131,7 +168,13 @@ def install_shims_cmd(agents: str, bin_dir: str, dry_run: bool) -> None:
         else:
             console.print(f"[green]wrote[/green] {path}")
 
-    if not dry_run and results:
+    path_status = install_path_snippet(bin_path, dry_run=dry_run)
+    if path_status.startswith("written"):
+        console.print(f"[green]wrote[/green] PATH snippet → {path_status.split(':', 1)[1]}")
+        console.print(f"[dim]Reload shell or run: source {path_status.split(':', 1)[1]}[/dim]")
+    elif path_status == "already":
+        console.print(f"[dim]✓ PATH snippet already in shell rc[/dim]")
+    else:
         console.print(
             f"\n[bold]Add to your shell rc (before other agent dirs):[/bold]\n"
             f"  [cyan]export PATH=\"{bin_path}:$PATH\"[/cyan]"

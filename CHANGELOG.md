@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-06-24
+
+### Changed
+
+- **`memo install-slash` now installs startup-banner shims automatically.** Running `memo install-slash` (or `memo install-slash --client all`) now writes bash shims to `~/.memo/bin/` for codex, devin, opencode, gemini, and blackbox, and appends an `export PATH="$HOME/.memo/bin:$PATH"` snippet to `~/.zshrc` / `~/.bashrc` (idempotent). Re-opening the shell picks up the PATH change and agents show `[MEMO ver]` at launch.
+- **`memo install-shims` adds PATH snippet automatically.** The `install_path_snippet()` helper now writes the PATH line directly instead of only printing it.
+
 ## [1.0.6] - 2026-06-24
 
 ### Fixed
