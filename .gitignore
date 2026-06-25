@@ -14,6 +14,9 @@ build/
 dist/
 dist.v*/
 
+# Dev-tree asset symlinks — wheel gets these via force-include in pyproject.toml
+src/memo/agent_assets/
+
 # Environments
 .venv/
 venv/
