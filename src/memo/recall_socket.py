@@ -288,7 +288,6 @@ class PriorityLock:
         with self._lock:
             if priority > 0:
                 self._high_priority_waiters += 1
-            acquired = False
             try:
                 while self._busy or (priority == 0 and self._high_priority_waiters > 0):
                     wait_timeout = None
@@ -299,7 +298,6 @@ class PriorityLock:
                     if not self._cond.wait(timeout=wait_timeout):
                         return False
                 self._busy = True
-                acquired = True
                 return True
             finally:
                 if priority > 0:

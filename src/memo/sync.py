@@ -6,6 +6,7 @@ replaying missing events from a remote `history.db`.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -309,10 +310,8 @@ class SyncManager:
             return SyncDiff(0, 0, 1)
         finally:
             if remote_store is not None:
-                try:
+                with contextlib.suppress(Exception):
                     remote_store.close()
-                except Exception:
-                    pass
 
 
 __all__ = [

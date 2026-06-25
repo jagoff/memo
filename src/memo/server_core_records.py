@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
 from memo.memory import AmbiguousIdError, Memory

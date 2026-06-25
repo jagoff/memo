@@ -16,6 +16,7 @@ Design choices (2026-06-22):
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import subprocess
 import sys
@@ -118,10 +119,8 @@ def _write_notify(cfg: Config, tag: str) -> None:
 
 def _clear_notify(cfg: Config) -> None:
     path = cfg.state_dir / _NOTIFY_FILE
-    try:
+    with contextlib.suppress(OSError):
         path.unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 def pending_update_tag(cfg: Config | None = None) -> str | None:

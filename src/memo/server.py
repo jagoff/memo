@@ -257,13 +257,13 @@ def main() -> None:
     127.0.0.1:18768). One ``Memory`` instance is built here and reused across
     every request, so the embedder / reranker / synthesis LLM stay resident.
     """
+    import threading
+
     from memo.flags import flag_int, flag_str
 
     # Version check: always throttled-check for newer git tags (writes
     # update_available file for banner). Auto-install only if MEMO_AUTO_UPDATE=1.
     from memo.runtime.autoupdate import maybe_auto_update, notify_if_newer
-
-    import threading
 
     threading.Thread(target=notify_if_newer, daemon=True).start()
     maybe_auto_update()
