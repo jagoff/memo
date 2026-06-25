@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **install: `mcp remove` is now best-effort before `mcp add`.** The pre-wiring cleanup step that removes any prior MCP entry is no longer fatal. Claude Code returns `No MCP server named "memo"` and Devin returns `not in the user config` on a clean machine; both caused a non-zero exit that was treated as a hard failure, skipping the client entirely and leaving memo unavailable in those agents after a fresh install. The step now logs the exit and proceeds regardless.
+- **session idle-maintenance: notification now appears in the terminal.** The detached capture worker was spawned with `stderr=DEVNULL`, silently discarding the `※ auto save (idle): …` notification. Changed to `stderr=None` so the child inherits the terminal's stderr and the message actually appears.
+
+### Added
+
+- **`memo startup-banner --agent <name>`** — prints a `[MEMO ver] | sync …` status line to stderr at agent startup. Fast (no MLX: only `importlib.metadata` + local git).
+- **`memo install-shims [--agents …] [--bin-dir …]`** — writes idempotent bash shims to `~/.memo/bin/`. Each shim wraps the next binary in PATH: if that binary is a memflow shim, it executes it directly (memflow already shows a combined memo+memflow banner); otherwise it calls `memo startup-banner` first. Disable with `MEMO_STARTUP_BANNER=0`.
 
 ## [1.0.5] - 2026-06-24
 

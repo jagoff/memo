@@ -100,6 +100,7 @@ from memo.cli_runtime import (
     uninstall_watcher_cmd,
     watch,
 )
+from memo.runtime.shims import install_shims_cmd
 from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
 from memo.cli_session import continuity_cmd, session_group
 from memo.cli_share import share_group
@@ -109,6 +110,7 @@ from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
 from memo.cli_transcripts import mine_history, reflect
+from memo.cli_banner import startup_banner_cmd
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_version import version_group
@@ -159,8 +161,8 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
         "Setup & Config",
         [
             "init", "config", "install-mcp", "install-watcher", "uninstall-watcher",
-            "install-slash", "install-statusline", "install-shell-wrapper", "migrate",
-            "migrate-vault", "update", "watch",
+            "install-slash", "install-statusline", "install-shell-wrapper", "install-shims",
+            "startup-banner", "migrate", "migrate-vault", "update", "watch",
         ],
     ),
     (
@@ -369,6 +371,8 @@ cli.add_command(export_group)
 cli.add_command(multimodal_group)
 cli.add_command(collaborative_group)
 cli.add_command(contradict_group)
+cli.add_command(startup_banner_cmd)
+cli.add_command(install_shims_cmd)
 
 
 # Subcommands that must NEVER trigger the first-run picker — either
@@ -399,6 +403,8 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "map",
     "backend-native",
     "profile",
+    "startup-banner",
+    "install-shims",
 }
 
 

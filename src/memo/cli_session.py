@@ -6,6 +6,7 @@ root group in cli.py via `cli.add_command(session_group)`.
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from typing import Any
 
@@ -388,7 +389,7 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
                 ],
                 stdin=_sp.PIPE,
                 stdout=_sp.DEVNULL,
-                stderr=_sp.DEVNULL,
+                stderr=None,  # inherit parent stderr → appears in terminal
                 start_new_session=True,
                 env={**_os.environ, "MEMO_NONINTERACTIVE": "1"},
             )
@@ -475,22 +476,27 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
                 _Path(str(transcript)).expanduser(), str(sid), debug=flag_bool("MEMO_SESSION_DEBUG")
             )
             _hb("captured", status=str(result.get("status")), saved=len(result.get("saved", [])))
+            _titles: list[str] = []
             if result.get("status") == "ok":
                 _titles = result.get("saved_titles") or []
-                n = len(_titles)
-                # Always show notification to confirm capture ran
-                if _titles:
-                    shown = "; ".join(t for t in _titles[:3])
-                    if n > 3:
-                        shown += f"; +{n - 3} more"
-                    console.print(f"[dim]※ auto save (idle): {shown}[/dim]")
-                else:
-                    console.print("[dim]※ auto save (idle): scanned (0 new insights)[/dim]")
-                # Also write pending notification if there were saved titles
-                if _titles:
-                    from memo.cli_capture import _write_capture_notification
-                    _write_capture_notification(cfg.state_dir, _titles, idle=True)
-            _hb("captured-notified", saved=len(result.get("saved_titles") or []))
+            n = len(_titles)
+            if _titles:
+                _shown = "; ".join(t for t in _titles[:3])
+                if n > 3:
+                    _shown += f"; +{n - 3} more"
+                _notif = f"※ auto save (idle): {_shown}"
+            else:
+                _notif = "※ auto save (idle): scanned (0 new insights)"
+            print(_notif, file=_sys.stderr)
+            if _titles:
+                from memo.cli_capture import _write_capture_notification
+                _write_capture_notification(cfg.state_dir, _titles, idle=True)
+            else:
+                with contextlib.suppress(OSError):
+                    (cfg.state_dir / "pending_idle_notification.txt").write_text(
+                        _notif + "\n", encoding="utf-8"
+                    )
+            _hb("captured-notified", saved=n)
             print("{}")
         else:
             from memo.cli_transcripts import _reflect_session
