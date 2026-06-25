@@ -223,6 +223,10 @@ def test_behavior_flags_are_not_read_directly_from_environ() -> None:
         SRC / "store" / "schema.py": {"MEMO_SKIP_MODEL_VERSION_CHECK"},
         # MEMO_AGENT_TTY is set by the shim, not user-configurable; read here for IPC.
         SRC / "cli_session.py": {"MEMO_AGENT_TTY"},
+        # Three-way check (explicit 1 / explicit 0 / auto-detect) cannot use flag_bool
+        # because it collapses unset → False; raw env read is the only way to distinguish
+        # "not set" from "explicitly off".
+        SRC / "memory" / "facade.py": {"MEMO_EMBEDDER_VIA_DAEMON"},
     }
     violations: list[str] = []
 

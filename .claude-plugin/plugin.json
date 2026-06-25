@@ -1,7 +1,7 @@
 {
   "name": "memo",
   "description": "Local MCP memory for AI agents — MLX-native on Apple Silicon, sqlite-vec store, markdown-on-disk in your Obsidian vault. Zero Ollama, zero cloud APIs.",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "author": {
     "name": "Fernando Ferrari",
     "url": "https://github.com/jagoff"

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-06-25
+
+### Fixed
+
+- **`Memory.__init__` auto-detects recall daemon socket.** When the recall daemon is running, `Memory` now automatically switches to `SocketEmbedder` (via a fast ping check) without requiring `MEMO_EMBEDDER_VIA_DAEMON=1`. Eliminates per-process cold MLX loads in `idle-daemon` and other long-lived processes that share a machine with the daemon.
+
 ## [1.0.9] - 2026-06-25
 
 ### Fixed

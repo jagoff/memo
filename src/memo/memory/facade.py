@@ -80,14 +80,35 @@ class Memory(
         cfg.ensure_dirs()
         self._close_lock = threading.Lock()
         self._closed = False
-        # MEMO_EMBEDDER_VIA_DAEMON=1: embed via the recall daemon socket
-        # instead of loading a second in-process copy of the embedder. Used by
-        # the warm memo-mcp chat daemon so its resident footprint is just the
-        # synthesis model — the recall daemon already holds the embedder warm.
-        # Falls back in-process automatically if the socket is down.
-        from memo.flags import flag_bool
+        # Prefer the recall-daemon socket over a second in-process MLX copy.
+        # Priority:
+        #   1. MEMO_EMBEDDER_VIA_DAEMON=1 → always use socket (explicit opt-in)
+        #   2. MEMO_EMBEDDER_VIA_DAEMON=0 → always use in-process (explicit opt-out)
+        #   3. unset → auto-detect: use socket if the daemon is already alive,
+        #      otherwise load MLX in-process (zero configuration required).
+        #
+        # Auto-detect is safe for the recall-daemon itself because cleanup() removes
+        # the old socket before Memory.__init__ runs, so ping() returns None and
+        # the daemon loads MLX directly (as it must).
+        # os.environ.get gives the raw value (None if unset) which is exactly the
+        # three-way check we need: explicit "1", explicit "0", or auto-detect.
+        # flag_bool() can't do this because it collapses unset → False (the default).
+        import os as _os
 
-        if flag_bool("MEMO_EMBEDDER_VIA_DAEMON"):
+        _via_daemon_raw = _os.environ.get("MEMO_EMBEDDER_VIA_DAEMON")
+        if _via_daemon_raw == "1":
+            _use_socket = True
+        elif _via_daemon_raw == "0":
+            _use_socket = False
+        else:
+            # Auto-detect: probe the socket with a cheap ping (< 1 ms on loopback).
+            # Returns None when the daemon is absent — including during the daemon's
+            # own startup, where cleanup() has already removed the old socket file.
+            from memo.embedder_client import ping as _ping
+
+            _use_socket = _ping(state_dir=cfg.state_dir) is not None
+
+        if _use_socket:
             from memo.embedder_client import SocketEmbedder
 
             self.embedder: Any = SocketEmbedder(
