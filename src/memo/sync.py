@@ -39,6 +39,7 @@ class BackupMetadata:
     checksum: str
     compressed_size: int
     original_size: int
+    name: str = ""
 
 
 class BackupManager:
@@ -141,7 +142,9 @@ class BackupManager:
 
     def _read_directory_metadata(self, backup_path: Path) -> BackupMetadata:
         data = json.loads((backup_path / "metadata.json").read_text(encoding="utf-8"))
-        return BackupMetadata(**data)
+        meta = BackupMetadata(**data)
+        meta.name = backup_path.name
+        return meta
 
     def _read_archive_metadata(self, archive: Path) -> BackupMetadata:
         import tarfile
@@ -153,10 +156,14 @@ class BackupManager:
                         if extracted:
                             data = json.loads(extracted.read().decode("utf-8"))
                             data["compressed_size"] = archive.stat().st_size
-                            return BackupMetadata(**data)
+                            meta = BackupMetadata(**data)
+                            meta.name = archive.stem
+                            return meta
         except Exception:
             pass
-        return BackupMetadata(datetime.now(UTC).isoformat(), 0, "", archive.stat().st_size, 0)
+        meta = BackupMetadata(datetime.now(UTC).isoformat(), 0, "", archive.stat().st_size, 0)
+        meta.name = archive.name.replace(".tar.gz", "")
+        return meta
 
     def restore_backup(
         self,
@@ -242,12 +249,9 @@ class SyncManager:
             return SyncDiff(0, 0, 1)
 
         # 1. Open remote history
+        remote_store = None
         try:
             remote_store = HistoryStore(remote_history_db)
-            # A foreign history.db opened by path alone reports device_id
-            # "unknown" (the id is constructor-supplied, persisted only per-row).
-            # Resolve the real remote device from its own events, otherwise the
-            # `device_id=` filter below matches nothing and sync silently no-ops.
             remote_device_id = remote_store.device_id
             if remote_device_id == "unknown":
                 sample = remote_store.list_recent(limit=1)
@@ -260,14 +264,10 @@ class SyncManager:
                 _log.info("sync: remote device id matches local, skipping loopback sync")
                 return SyncDiff(0, 0, 0)
 
-            # 2. Get last LSN seen from this device
             last_lsn = self.mem.history.get_sync_state(remote_device_id)
-
-            # 3. Fetch missing events (limit 1000 per pass)
             new_events = remote_store.list_recent(
                 after_lsn=last_lsn, device_id=remote_device_id, limit=1000
             )
-            # list_recent returns DESC (newest first), we want ASC for replay
             new_events.reverse()
 
             applied = 0
@@ -285,12 +285,6 @@ class SyncManager:
                         self.mem.history.update_sync_state(remote_device_id, ev["id"])
                         continue
 
-                    # save/update: the canonical `.md` (named `<date>-<slug>.md`,
-                    # carrying `id: <record_id>` in frontmatter) is assumed to have
-                    # arrived via the file-sync layer (iCloud/git). `reindex()`
-                    # indexes any unknown `.md` UNDER ITS FRONTMATTER ID and re-embeds
-                    # edited ones — so it never mints a fresh uuid (the old `save()`
-                    # path forked a duplicate on every replay). Run it once per batch.
                     if not reindexed:
                         self.mem.reindex()
                         reindexed = True
@@ -299,9 +293,6 @@ class SyncManager:
                         applied += 1
                         self.mem.history.update_sync_state(remote_device_id, ev["id"])
                     else:
-                        # File not synced to this machine yet — transient. Stop here
-                        # WITHOUT advancing the cursor so the event is retried next
-                        # pass, and later events stay in order (no permanent skip).
                         _log.info(
                             "sync: record %s not present locally yet; deferring to next pass",
                             record_id,
@@ -310,13 +301,18 @@ class SyncManager:
                 except Exception as exc:
                     _log.error("sync: failed to apply event %s: %s", ev["id"], exc)
                     errors += 1
-                    # Preserve replay order: don't advance past a failing event.
                     break
 
             return SyncDiff(applied, conflicts, errors)
         except Exception as exc:
             _log.error("sync: global failure: %s", exc)
             return SyncDiff(0, 0, 1)
+        finally:
+            if remote_store is not None:
+                try:
+                    remote_store.close()
+                except Exception:
+                    pass
 
 
 __all__ = [

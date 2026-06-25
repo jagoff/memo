@@ -253,9 +253,11 @@ class Encryptor:
         plaintext = file_path.read_text(encoding="utf-8")
         ciphertext, meta = self.encrypt(plaintext)
 
-        # Write encrypted file with header
+        # Write encrypted file with header (atomic: temp → replace)
         header = f"ENC::{meta.version}::{meta.nonce}::{meta.auth_tag}::\n"
-        file_path.write_text(header + ciphertext, encoding="utf-8")
+        tmp = file_path.with_suffix(file_path.suffix + ".enc.tmp")
+        tmp.write_text(header + ciphertext, encoding="utf-8")
+        tmp.rename(file_path)
 
         return meta
 
@@ -288,8 +290,10 @@ class Encryptor:
 
         plaintext = self.decrypt(ciphertext, metadata)
 
-        # Write decrypted content
-        file_path.write_text(plaintext, encoding="utf-8")
+        # Write decrypted content (atomic: temp → replace)
+        tmp = file_path.with_suffix(file_path.suffix + ".dec.tmp")
+        tmp.write_text(plaintext, encoding="utf-8")
+        tmp.rename(file_path)
 
         return plaintext, metadata
 

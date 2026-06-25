@@ -56,7 +56,11 @@ class VersionStore:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = None
-        self._init_schema()
+        try:
+            self._init_schema()
+        except Exception:
+            self.close()
+            raise
 
     def _get_conn(self):
         import sqlite3

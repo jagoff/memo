@@ -73,7 +73,7 @@ FIELD_ERROR = "error"
 # float vectors) can be large, so this is generous — far above any legitimate
 # line, but bounded so a peer that never sends a newline can't make us buffer
 # unboundedly.
-MAX_LINE_BYTES = 64 * 1024 * 1024
+MAX_LINE_BYTES = 1 * 1024 * 1024
 
 DEFAULT_TIMEOUT_S = 5.0
 PING_TIMEOUT_S = 0.5

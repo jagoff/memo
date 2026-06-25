@@ -177,7 +177,12 @@ def gpu_guard(timeout: float | None = None) -> Iterator[None]:
         _depth += 1
         try:
             yield
-        finally:
+        except BaseException:
+            _depth -= 1
+            if _depth == 0:
+                _release_flock()
+            raise
+        else:
             _depth -= 1
             if _depth == 0:
                 _release_flock()

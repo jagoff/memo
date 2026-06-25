@@ -404,7 +404,8 @@ def sync_both(remote: str) -> None:
     mem = _get_memory(cfg)
 
     remote_db = _resolve_remote_history_db(remote)
-    assert remote_db is not None  # --remote is required
+    if remote_db is None:
+        raise click.ClickException("--remote path is required for sync both")
     diff = mem.sync.sync_from_remote(remote_db)
 
     console.print("[bold]Sync (replay)[/bold]")

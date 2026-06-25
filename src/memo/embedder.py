@@ -217,8 +217,6 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
     # -- internal -----------------------------------------------------------
 
     def _ensure_loaded(self) -> None:
-        if self._model is not None:
-            return
         # Timeout after 30s to avoid indefinite hang if load stalls
         if not self._load_lock.acquire(timeout=30.0):
             raise RuntimeError("Embedder model load timed out after 30s")

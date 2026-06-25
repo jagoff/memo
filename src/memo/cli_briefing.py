@@ -93,6 +93,7 @@ def briefing(*, compact: bool) -> None:
         # sessions from other repos (avoids false "No recent session" when
         # the project session is past the global limit).
         same_proj = list_sessions(cfg.state_dir, cwd=cur_cwd, limit=1)
+        sid = ""
         compact_lines = ["## Memo"]
         if same_proj:
             top = same_proj[0]

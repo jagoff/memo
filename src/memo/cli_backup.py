@@ -139,7 +139,7 @@ def backup_list(as_json: bool) -> None:
 
     for b in backups[:20]:
         table.add_row(
-            b.timestamp[:19],
+            b.name if b.name else b.timestamp[:19],
             b.timestamp[:19],
             f"{b.compressed_size:,} bytes",
         )

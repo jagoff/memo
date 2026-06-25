@@ -49,8 +49,6 @@ def register(server: Any, memory: Memory) -> None:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
         if not rec:
             return None
-        with contextlib.suppress(Exception):
-            memory.contextual.record_click(rec.id)
         return rec.to_dict()
 
     @server.tool()

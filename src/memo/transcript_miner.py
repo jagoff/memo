@@ -68,20 +68,25 @@ def find_transcripts(
     return files
 
 
-def iter_exchanges(transcript_path: Path) -> Iterator[tuple[str, str]]:
+def iter_exchanges(transcript_path: Path, text: str | None = None) -> Iterator[tuple[str, str]]:
     """Yield (user_text, assistant_text) pairs from a transcript.
 
     Walks forward. When a user msg is followed by one or more assistant
     msgs (possibly interleaved with tool_use/tool_result blocks), all
     assistant text is concatenated into a single "response" for that
     user turn.
+
+    Pass ``text`` to avoid re-opening the file when the caller already
+    has its content in memory.
     """
-    if not transcript_path.is_file():
-        return
-    try:
-        lines = transcript_path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return
+    if text is None:
+        if not transcript_path.is_file():
+            return
+        try:
+            text = transcript_path.read_text(encoding="utf-8")
+        except Exception:
+            return
+    lines = text.splitlines()
 
     pending_user: str | None = None
     pending_assist: list[str] = []
@@ -171,15 +176,16 @@ def mine_transcripts(
         key = str(f)
         prev_count = state.get(key, {}).get("lines_processed", 0)
         try:
-            with f.open(encoding="utf-8") as fh:
-                line_count = sum(1 for _ in fh)
+            text = f.read_text(encoding="utf-8")
+            line_count = text.count("\n") + 1 if text else 0
         except OSError:
+            text = ""
             line_count = 0
         if line_count <= prev_count:
             files_skipped += 1
             continue
 
-        for user_text, assist_text in iter_exchanges(f):
+        for user_text, assist_text in iter_exchanges(f, text=text):
             if not _passes_prefilter(assist_text):
                 continue
             h = _hash_assistant(assist_text)

@@ -107,7 +107,7 @@ class VecStore(
         try:
             self._connect()
             self._init_schema()
-        except BaseException:
+        except Exception:
             self.close()
             raise
         # Tantivy FTS index — optional, lives next to the sqlite DB.

@@ -302,7 +302,7 @@ class PriorityLock:
                 acquired = True
                 return True
             finally:
-                if priority > 0 and not acquired:
+                if priority > 0:
                     self._high_priority_waiters -= 1
 
     def release(self) -> None:

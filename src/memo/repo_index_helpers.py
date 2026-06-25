@@ -192,7 +192,7 @@ def _tracked_files(clone_path: Path) -> list[str]:
         return sorted(paths)
     return sorted(
         p.relative_to(clone_path).as_posix() for p in clone_path.rglob("*") if p.is_file()
-    )
+    )[:20000]
 
 
 # ---------------------------------------------------------------------------

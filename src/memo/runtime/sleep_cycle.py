@@ -6,7 +6,9 @@ tasks when the system is not in use.
 
 from __future__ import annotations
 
+import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -33,7 +35,15 @@ def run_sleep_cycle(debug: bool = False) -> None:
             file=sys.stderr,
         )
 
-    while True:
+    stop = threading.Event()
+
+    def _sigterm(signum: int, frame: object) -> None:
+        stop.set()
+
+    signal.signal(signal.SIGTERM, _sigterm)
+    signal.signal(signal.SIGINT, _sigterm)
+
+    while not stop.is_set():
         last_activity = _get_last_activity(mem, cfg)
         idle_secs = time.time() - last_activity
 
@@ -71,6 +81,7 @@ def run_sleep_cycle(debug: bool = False) -> None:
                 )
 
         time.sleep(interval)
+    mem.close()
 
 
 def _ingest_memflow_sessions(mem: Memory, cfg: Config, debug: bool = False) -> None:
