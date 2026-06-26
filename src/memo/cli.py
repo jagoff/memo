@@ -89,6 +89,7 @@ from memo.cli_release import release_group
 from memo.cli_repo import repo_group
 from memo.cli_retier import retier_cmd
 from memo.cli_roi import roi as roi_cmd
+from memo.cli_token_savings import token_savings_cmd
 from memo.cli_runtime import (
     init_cmd,
     install_shell_wrapper,
@@ -139,7 +140,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Analysis & Quality",
-        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "usefulness", "gaps", "outcome", "profile"],
+        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "token-savings", "usefulness", "gaps", "outcome", "profile"],
     ),
     (
         "Knowledge Graph",
@@ -283,6 +284,7 @@ cli.add_command(historia_cmd, name="historia")  # back-compat alias for `memo re
 cli.add_command(briefing)
 cli.add_command(init_cmd)
 cli.add_command(stats)
+cli.add_command(token_savings_cmd)
 cli.add_command(doctor)
 cli.add_command(migrate_vault)
 cli.add_command(migrate_vault, name="migrate")  # alias

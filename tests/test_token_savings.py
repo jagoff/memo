@@ -1,0 +1,102 @@
+"""Tests for `memo token-savings` command."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from memo.cli_token_savings import token_savings_cmd
+from memo.dashboard_logs import append_context_cost_log
+
+
+def _run(state_dir: Path, data_dir: Path) -> tuple[int, str]:
+    runner = CliRunner()
+    result = runner.invoke(
+        token_savings_cmd,
+        [],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_STATE_DIR": str(state_dir),
+            "MEMO_DATA_DIR": str(data_dir),
+        },
+        catch_exceptions=False,
+    )
+    return result.exit_code, result.output
+
+
+def test_token_savings_empty_log(tmp_path: Path) -> None:
+    """Command exits 0 with no log entries and prints a helpful message."""
+    state = tmp_path / "state"
+    state.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+
+    exit_code, output = _run(state, data)
+
+    assert exit_code == 0
+    # Either the header or the "no entries" message
+    assert "memo token savings" in output or "No recall injections" in output
+
+
+def test_token_savings_header_no_entries(tmp_path: Path) -> None:
+    """With no log file, the no-entries message is shown."""
+    state = tmp_path / "state"
+    state.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+
+    exit_code, output = _run(state, data)
+
+    assert exit_code == 0
+    assert "No recall injections" in output
+
+
+def test_token_savings_with_recall_entries(tmp_path: Path) -> None:
+    """With 3 recall log entries, output contains '3 prompts'."""
+    state = tmp_path / "state"
+    state.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+
+    for _ in range(3):
+        append_context_cost_log(state, kind="recall", chars=1200)
+
+    exit_code, output = _run(state, data)
+
+    assert exit_code == 0
+    assert "3" in output
+    assert "prompts" in output
+
+
+def test_token_savings_header_with_entries(tmp_path: Path) -> None:
+    """With recall entries, output shows the 'memo token savings' header."""
+    state = tmp_path / "state"
+    state.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+
+    append_context_cost_log(state, kind="recall", chars=800)
+
+    exit_code, output = _run(state, data)
+
+    assert exit_code == 0
+    assert "memo token savings" in output
+
+
+def test_token_savings_ignores_non_recall_kinds(tmp_path: Path) -> None:
+    """Entries with kind != 'recall' are not counted."""
+    state = tmp_path / "state"
+    state.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+
+    # Add a non-recall entry
+    append_context_cost_log(state, kind="briefing", chars=500)
+
+    exit_code, output = _run(state, data)
+
+    assert exit_code == 0
+    assert "No recall injections" in output

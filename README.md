@@ -117,6 +117,16 @@ MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https:
 
 **Por qué ahorra tokens:** la superficie MCP por defecto son 5 tools (~589 tokens) contra 118 (~16.157) → **96,4% menos** contexto por sesión; y el recall **inyecta la respuesta** (presupuesto ~160 tokens) en vez de que el agente la vuelva a deducir. En un corpus de ~200 memories, `memo roi` estima **~80k tokens de trabajo del modelo evitados**.
 
+**Token economy — techniques that reduce session cost:**
+
+| Technique | How to enable | Typical saving |
+|---|---|---|
+| Compact recall format | `export MEMO_RECALL_FORMAT=compact` | ~65% per injection |
+| Trivial prompt gate | On by default | ~25% fewer injections |
+| Context file compression | `memo compress-context CLAUDE.md` | 30–40% smaller context |
+
+Run `memo token-savings` to see your session's recall injection stats.
+
 **Instalación en un paso:**
 
 ```bash
