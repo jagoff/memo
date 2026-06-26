@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`memo install-shell-wrapper --shell bash`.** The session-resume wrapper now installs for bash (`~/.bash/memo-wrapper.bash` + `~/.bashrc`), not just zsh. The snippet is portable across both shells except the single-key prompt read (zsh `read -rk1` → bash `read -rn1`), derived from one source so the two can't drift.
+
 ### Removed
 
 - **Dead/experimental feature surfaces purged (M4).** Removed the wired-but-unbacked experimental verticals that were never part of the stable core contract (see `experimental_index.md`): at-rest **encryption** (`encryption.py`, `memo encrypt` CLI group, `memo_encrypt_*` MCP tools, `MEMO_ENCRYPTION_ENABLED`), memory **sharing** (`sharing.py`, `memo share` CLI group, `memo_share_*` MCP tools), and multi-vault **federation** (`federation.py`, the never-registered `cli_federation`, `FederationError`). The full MCP surface drops from ~118 to **110** tools; `memo doctor`/`install-mcp` now report the honest count.

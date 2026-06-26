@@ -49,6 +49,34 @@ def test_install_shell_wrapper_write_creates_files(tmp_path, monkeypatch):
     assert f"source {wrapper}" in rc.read_text(encoding="utf-8")
 
 
+def test_install_shell_wrapper_bash_print_uses_bash_read():
+    """The bash variant swaps the zsh single-key read (`read -rk1`) for the
+    bash form (`read -rn1`); the rest of the snippet is portable."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["install-shell-wrapper", "--shell", "bash", "--print"])
+    assert result.exit_code == 0
+    assert "read -rn1 ans" in result.output
+    assert "read -rk1" not in result.output
+    assert "function claude()" in result.output
+
+
+def test_install_shell_wrapper_bash_write_creates_bash_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = CliRunner()
+    result = runner.invoke(cli, ["install-shell-wrapper", "--write", "--shell", "bash"])
+    assert result.exit_code == 0, result.output
+
+    wrapper = tmp_path / ".bash" / "memo-wrapper.bash"
+    assert wrapper.is_file()
+    assert "read -rn1 ans" in wrapper.read_text(encoding="utf-8")
+
+    rc = tmp_path / ".bashrc"
+    assert rc.is_file()
+    assert f"source {wrapper}" in rc.read_text(encoding="utf-8")
+    # zsh files are untouched when targeting bash.
+    assert not (tmp_path / ".zsh").exists()
+
+
 def test_install_shell_wrapper_idempotent_write(tmp_path, monkeypatch):
     """Calling --write twice produces exactly one source line."""
     monkeypatch.setenv("HOME", str(tmp_path))

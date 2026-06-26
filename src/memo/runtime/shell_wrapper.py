@@ -128,26 +128,43 @@ function claude() {
 """
 
 
+def _wrapper_snippet(shell_kind: str) -> str:
+    """Return the wrapper for ``shell_kind``. The snippet is portable across
+    zsh and bash except for the single-key read: zsh ``read -rk1`` vs bash
+    ``read -rn1``. Deriving the bash variant from one source avoids keeping
+    two ~115-line copies in sync."""
+    if shell_kind == "bash":
+        return _WRAPPER_SNIPPET_ZSH.replace("read -rk1 ans", "read -rn1 ans")
+    return _WRAPPER_SNIPPET_ZSH
+
+
+def _wrapper_paths(home: Path, shell_kind: str) -> tuple[Path, Path]:
+    """``(wrapper_path, rc_path)`` for ``shell_kind``."""
+    if shell_kind == "bash":
+        return home / ".bash" / "memo-wrapper.bash", home / ".bashrc"
+    return home / ".zsh" / "memo-wrapper.zsh", home / ".zshrc"
+
+
 @click.command(name="install-shell-wrapper")
 @click.option("--print", "do_print", is_flag=True, help="Print the wrapper snippet to stdout. Default mode when neither --print nor --write is set.")
-@click.option("--write", "do_write", is_flag=True, help="Write ~/.zsh/memo-wrapper.zsh and append the matching `source` line to ~/.zshrc (idempotent).")
-@click.option("--shell", "shell_kind", type=click.Choice(["zsh"]), default="zsh", show_default=True, help="Target shell. Only zsh is supported (the wrapper uses zsh-specific builtins).")
-@click.option("--force", is_flag=True, help="Overwrite ~/.zsh/memo-wrapper.zsh even if its content differs from what we would write.")
+@click.option("--write", "do_write", is_flag=True, help="Write the wrapper file (~/.zsh/memo-wrapper.zsh or ~/.bash/memo-wrapper.bash) and append the matching `source` line to the shell rc (idempotent).")
+@click.option("--shell", "shell_kind", type=click.Choice(["zsh", "bash"]), default="zsh", show_default=True, help="Target shell. zsh and bash are supported (they differ only in the single-key read builtin).")
+@click.option("--force", is_flag=True, help="Overwrite the wrapper file even if its content differs from what we would write.")
 def install_shell_wrapper(do_print: bool, do_write: bool, shell_kind: str, force: bool) -> None:
-    snippet = _WRAPPER_SNIPPET_ZSH
+    snippet = _wrapper_snippet(shell_kind)
     if not do_write:
         click.echo(snippet)
         if not do_print:
+            wrapper_path, rc_path = _wrapper_paths(Path.home(), shell_kind)
             click.echo(
-                "\n(pass `--write` to install into ~/.zsh/memo-wrapper.zsh + ~/.zshrc.)",
+                f"\n(pass `--write` to install into {wrapper_path} + {rc_path}.)",
                 err=True,
             )
         return
 
     home = Path.home()
-    wrapper_dir = home / ".zsh"
-    wrapper_path = wrapper_dir / "memo-wrapper.zsh"
-    rc_path = home / (".zshrc" if shell_kind == "zsh" else ".bashrc")
+    wrapper_path, rc_path = _wrapper_paths(home, shell_kind)
+    wrapper_dir = wrapper_path.parent
     source_line = f"[[ -f {wrapper_path} ]] && source {wrapper_path}"
 
     wrapper_dir.mkdir(parents=True, exist_ok=True)
