@@ -100,6 +100,17 @@ find_python() {
       fi
     fi
   done
+  # uv manages its own Python runtimes — check if uv can provide one.
+  local uv_bin
+  uv_bin="$(command -v uv 2>/dev/null || echo "${HOME}/.local/bin/uv")"
+  if [[ -x "$uv_bin" ]]; then
+    local uv_py
+    uv_py="$("$uv_bin" python find ">=${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}" 2>/dev/null)" || true
+    if [[ -n "$uv_py" ]] && python_ok "$uv_py"; then
+      printf '%s\n' "$uv_py"
+      return 0
+    fi
+  fi
   return 1
 }
 
