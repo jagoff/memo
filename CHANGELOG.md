@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.13] - 2026-06-25
+
+### Fixed
+
+- **Auto-save notification format.** Aligned the last `_write_capture_notification` docstring leftover to the standard `※ MEMO auto-saved` line (was `※ MEMO: auto save…`). Version bumped because the prior `1.0.12` build shipped the old `※ auto save (idle): …` strings — reusing the version number across content changes hid the stale install; a clean reinstall now matches source.
+
 ## [1.0.12] - 2026-06-25
 
 ### Fixed
