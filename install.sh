@@ -8,6 +8,11 @@ GIT_SPEC="git+https://github.com/jagoff/memo.git"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13
 
+# Installer backend: "uv" (preferred) or "pipx" (fallback).
+# Detected at main() start — set here so helper functions can reference it.
+USE_UV=0
+UV_BIN=""
+
 # ── UI / feedback ────────────────────────────────────────────────────────────
 # Colors + spinners are enabled only on an interactive, color-capable TTY.
 # `curl | bash` (no TTY), NO_COLOR, or TERM=dumb fall back to plain log lines.
@@ -186,12 +191,23 @@ inject_contracts() {
     say "consciousness-contracts not found at $cc — skipping (memo runs with fallbacks; set MEMO_CONTRACTS_PATH to enable)"
     return 0
   fi
-  if spin "injecting consciousness-contracts (enables install-mcp + shared cache)" \
-    run_pipx inject "$APP_NAME" -e "$cc"; then
-    ok "consciousness-contracts injected"
+  if [[ "$USE_UV" == "1" ]]; then
+    local uv_venv="$HOME/.local/share/uv/tools/$APP_NAME"
+    if spin "injecting consciousness-contracts (enables install-mcp + shared cache)" \
+      "$UV_BIN" pip install --python "$uv_venv" -e "$cc"; then
+      ok "consciousness-contracts injected"
+    else
+      warn "consciousness-contracts inject failed (non-fatal; memo runs with fallbacks)."
+      warn "Re-run manually: uv pip install --python ~/.local/share/uv/tools/$APP_NAME -e $cc"
+    fi
   else
-    warn "consciousness-contracts inject failed (non-fatal; memo runs with fallbacks)."
-    warn "Re-run manually: pipx inject $APP_NAME -e $cc"
+    if spin "injecting consciousness-contracts (enables install-mcp + shared cache)" \
+      run_pipx inject "$APP_NAME" -e "$cc"; then
+      ok "consciousness-contracts injected"
+    else
+      warn "consciousness-contracts inject failed (non-fatal; memo runs with fallbacks)."
+      warn "Re-run manually: pipx inject $APP_NAME -e $cc"
+    fi
   fi
 }
 
@@ -316,32 +332,47 @@ main() {
   fi
   ok "platform: $(uname -s) $(uname -m)"
 
-  PYTHON_BIN="$(find_python)" || die "Python >= 3.13 is required. Install python@3.13 or python@3.14 first."
-  export PYTHON_BIN
-  ok "Python: $PYTHON_BIN"
-
-  phase "Preparing pipx"
-  ensure_pipx
-  clean_old_pipx_package
+  # Prefer uv when available — it manages its own Python so no system Python
+  # >= 3.13 is required, and it's not subject to PEP 668 externally-managed errors.
+  UV_BIN="$(command -v uv 2>/dev/null || echo "")"
+  [[ -z "$UV_BIN" && -x "$HOME/.local/bin/uv" ]] && UV_BIN="$HOME/.local/bin/uv"
+  if [[ -n "$UV_BIN" && -x "$UV_BIN" ]]; then
+    USE_UV=1
+    ok "uv found: $UV_BIN (using uv tool install)"
+  else
+    USE_UV=0
+    PYTHON_BIN="$(find_python)" || die "Python >= 3.13 is required. Install python@3.13 or python@3.14 first."
+    export PYTHON_BIN
+    ok "Python: $PYTHON_BIN"
+    phase "Preparing pipx"
+    ensure_pipx
+    clean_old_pipx_package
+  fi
 
   phase "Installing $APP_NAME"
   local spec
   spec="$(install_spec)"
-  # pipx 1.13 uses uv as its venv backend, and `pipx install --force` can fail to
-  # recreate an existing venv: uv refuses to clobber one "not created in this
-  # session" ("A virtual environment already exists"). Uninstall first — and
-  # hard-remove any stale venv dir — so a re-install always starts from a clean
-  # slate. (First-time installs simply skip the uninstall.)
-  if run_pipx list --short 2>/dev/null | awk '{print $1}' | grep -qx "$APP_NAME"; then
-    spin "removing existing $APP_NAME (clean reinstall)" run_pipx uninstall "$APP_NAME" || true
+  if [[ "$USE_UV" == "1" ]]; then
+    # Remove any existing uv tool install so --force always starts clean.
+    "$UV_BIN" tool uninstall "$APP_NAME" 2>/dev/null || true
+    spin "installing from $spec" "$UV_BIN" tool install "$spec" --force \
+      || die "uv tool install failed (see log above)"
+    # Ensure ~/.local/bin is on PATH for this session.
+    export PATH="$HOME/.local/bin:$PATH"
+  else
+    # pipx 1.13 uses uv as its venv backend; uninstall + hard-remove stale venv
+    # so --force always starts from a clean slate.
+    if run_pipx list --short 2>/dev/null | awk '{print $1}' | grep -qx "$APP_NAME"; then
+      spin "removing existing $APP_NAME (clean reinstall)" run_pipx uninstall "$APP_NAME" || true
+    fi
+    local venvs_dir
+    venvs_dir="$(run_pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null || true)"
+    [[ -n "$venvs_dir" ]] || venvs_dir="$HOME/.local/pipx/venvs"
+    [[ -d "$venvs_dir/$APP_NAME" ]] && rm -rf "$venvs_dir/$APP_NAME"
+    spin "installing from $spec" run_pipx install "$spec" \
+      || die "pipx install failed (see log above)"
+    run_pipx ensurepath >/dev/null 2>&1 || true
   fi
-  local venvs_dir
-  venvs_dir="$(run_pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null || true)"
-  [[ -n "$venvs_dir" ]] || venvs_dir="$HOME/.local/pipx/venvs"
-  [[ -d "$venvs_dir/$APP_NAME" ]] && rm -rf "$venvs_dir/$APP_NAME"
-  spin "installing from $spec" run_pipx install "$spec" \
-    || die "pipx install failed (see log above)"
-  run_pipx ensurepath >/dev/null 2>&1 || true
 
   local memo_bin
   memo_bin="$(resolve_memo_bin)" || die "memo was installed but no memo binary was found in PATH or ~/.local/bin"
@@ -362,7 +393,14 @@ main() {
     # by the prewarm children); runtime sessions keep Xet's dedup. Opt out with
     # MEMO_INSTALL_FAST_DOWNLOAD=0.
     if [[ "${MEMO_INSTALL_FAST_DOWNLOAD:-1}" != "0" ]]; then
-      if run_pipx inject "$APP_NAME" hf_transfer >/dev/null 2>&1; then
+      local hf_ok=0
+      if [[ "$USE_UV" == "1" ]]; then
+        local uv_venv="$HOME/.local/share/uv/tools/$APP_NAME"
+        "$UV_BIN" pip install --python "$uv_venv" hf_transfer >/dev/null 2>&1 && hf_ok=1 || true
+      else
+        run_pipx inject "$APP_NAME" hf_transfer >/dev/null 2>&1 && hf_ok=1 || true
+      fi
+      if [[ "$hf_ok" == "1" ]]; then
         export HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1
         ok "fast downloads enabled (hf_transfer, parallel HTTP)"
       else
