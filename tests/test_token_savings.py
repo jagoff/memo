@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from memo.cli_token_savings import token_savings_cmd
-from memo.dashboard_logs import append_context_cost_log
+from memo.dashboard_logs import append_context_cost_log, recall_hook_log_path
 
 
 def _run(state_dir: Path, data_dir: Path) -> tuple[int, str]:
@@ -100,3 +100,52 @@ def test_token_savings_ignores_non_recall_kinds(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "No recall injections" in output
+
+
+def _append_bail_entry(state: Path, reason: str = "trivial prompt") -> None:
+    """Write a bail entry directly to the recall hook log."""
+    path = recall_hook_log_path(state)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+        "via": "bail",
+        "reason": reason,
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def test_token_savings_trivial_bails_counted(tmp_path: Path) -> None:
+    """With 3 recall entries + 2 trivial bail entries, output shows 2 prompts skipped."""
+    state = tmp_path / "state"
+    state.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+
+    for _ in range(3):
+        append_context_cost_log(state, kind="recall", chars=1200)
+    for _ in range(2):
+        _append_bail_entry(state, reason="trivial prompt")
+
+    exit_code, output = _run(state, data)
+
+    assert exit_code == 0
+    assert "Trivial bails:" in output
+    assert "2" in output
+    assert "prompts skipped" in output
+
+
+def test_token_savings_estimated_total_shown(tmp_path: Path) -> None:
+    """With recall entries, output contains 'Estimated total:' line."""
+    state = tmp_path / "state"
+    state.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+
+    for _ in range(2):
+        append_context_cost_log(state, kind="recall", chars=1600)
+
+    exit_code, output = _run(state, data)
+
+    assert exit_code == 0
+    assert "Estimated total:" in output

@@ -1,7 +1,8 @@
 """`memo token-savings` — show recall injection stats and token-saving techniques.
 
-Read-only over context_cost.log; prints a human-readable summary of how
-much context space recall injections consumed and what techniques reduce it.
+Read-only over context_cost.log and recall_hook.log; prints a brief table of
+how much context space recall injections consumed, how many trivial prompts were
+skipped, and an estimated total tokens saved.
 """
 
 from __future__ import annotations
@@ -11,22 +12,30 @@ from datetime import UTC, datetime, timedelta
 import click
 
 from .config import Config
-from .dashboard import read_context_cost_log
+from .dashboard import read_context_cost_log, read_recall_hook_log
 
 
 @click.command(name="token-savings")
 def token_savings_cmd() -> None:
     """Show recall injection stats and token economy tips (last 7 days)."""
     cfg = Config.from_env()
-    entries = read_context_cost_log(cfg.state_dir)
+    cost_log = read_context_cost_log(cfg.state_dir)
+    hook_log = read_recall_hook_log(cfg.state_dir, limit=4000)
 
     cutoff = datetime.now(UTC) - timedelta(days=7)
     recall_entries = [
         e
-        for e in entries
+        for e in cost_log
         if e.get("kind") == "recall"
         and _parse_ts(e.get("ts", "")) >= cutoff
     ]
+    trivial_bails = sum(
+        1
+        for e in hook_log
+        if e.get("via") == "bail"
+        and e.get("reason") == "trivial prompt"
+        and _parse_ts(e.get("ts", "")) >= cutoff
+    )
 
     if not recall_entries:
         click.echo(
@@ -43,22 +52,20 @@ def token_savings_cmd() -> None:
     compact_chars_saved = int(total_chars * compact_savings_pct / 100)
     compact_tokens_saved = compact_chars_saved // 4
 
+    avg_tokens_per_injection = avg_chars // 4 if avg_chars else 40
+    total_tokens_saved = compact_tokens_saved + trivial_bails * avg_tokens_per_injection
+
     click.echo("memo token savings (last 7 days)")
     click.echo("")
-    click.echo(f"  Recall injections:    {n_injections:,} prompts")
-    click.echo(f"  Avg context chars:    {avg_chars:,} per injection")
+    click.echo(f"  Recall injections:  {n_injections:,} prompts")
+    click.echo(f"  Context chars:      {avg_chars:,} avg per injection")
+    click.echo(f"  Compact savings:    ~{compact_savings_pct}%  (if MEMO_RECALL_FORMAT=compact)")
+    click.echo(f"  Trivial bails:      {trivial_bails}  (prompts skipped)")
     click.echo("")
-    click.echo("  Compact format savings (MEMO_RECALL_FORMAT=compact):")
-    click.echo(f"    ~{compact_savings_pct}% fewer chars  →  ~{compact_tokens_saved:,} tokens saved")
-    click.echo("")
-    click.echo("  Trivial bail gate (on by default):")
-    click.echo("    Skips ~25% of confirmation prompts automatically")
-    click.echo("")
-    click.echo("  compress-context (one-time):")
-    click.echo("    Run: memo compress-context CLAUDE.md")
-    click.echo("    Typical saving: 30-40% of context file size")
+    click.echo(f"  Estimated total:    ~{total_tokens_saved:,} tokens saved")
     click.echo("")
     click.echo("  Enable compact: export MEMO_RECALL_FORMAT=compact")
+    click.echo("  Run:            memo compress-context CLAUDE.md  (one-time context file shrink)")
 
 
 def _parse_ts(ts: str) -> datetime:
