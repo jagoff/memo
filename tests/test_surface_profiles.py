@@ -78,6 +78,8 @@ def test_mcp_core_profile_hides_advanced_tools(tmp_path, monkeypatch) -> None:
 
 
 def test_mcp_agent_profile_is_default_and_exposes_core_tools(tmp_path, monkeypatch) -> None:
+    from memo.surface import AGENT_MCP_TOOLS
+
     cfg = Config(
         data_dir=tmp_path / "data",
         state_dir=tmp_path / "state",
@@ -90,18 +92,8 @@ def test_mcp_agent_profile_is_default_and_exposes_core_tools(tmp_path, monkeypat
     try:
         tools = asyncio.run(build_server(memory=mem).list_tools())
         tool_names = {tool.name for tool in tools}
-        # Core tools every profile must have
-        assert tool_names.issuperset({
-            "memo_ask",
-            "memo_get",
-            "memo_save",
-            "memo_search",
-            "memo_unified_briefing",
-            "memo_idle_capture",
-            "memo_pop_notification",
-            "memo_start_session",
-            "memo_save_text",
-        })
+        # Definition must equal runtime — no silent drift either way.
+        assert tool_names == set(AGENT_MCP_TOOLS)
         # Advanced tools the agent profile must NOT have
         assert "memo_graph_nodes" not in tool_names
         assert "memo_contradict_scan" not in tool_names
@@ -124,3 +116,20 @@ def test_mcp_full_profile_keeps_advanced_tools(tmp_path, monkeypatch) -> None:
         assert asyncio.run(server.get_tool("memo_collaborative_connections")) is not None
     finally:
         mem.close()
+
+
+def test_agent_tools_definition_is_nine_and_excludes_idle_from_removal(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_MCP_PROFILE", "agent")
+    monkeypatch.delenv("MEMO_MCP_SLIM", raising=False)
+    from memo.surface import AGENT_MCP_TOOLS, mcp_tools_to_remove
+
+    removed = mcp_tools_to_remove()
+    assert len(AGENT_MCP_TOOLS) == 9
+    for name in (
+        "memo_idle_capture",
+        "memo_pop_notification",
+        "memo_start_session",
+        "memo_save_text",
+    ):
+        assert name in AGENT_MCP_TOOLS
+        assert name not in removed

@@ -49,6 +49,12 @@ AGENT_MCP_TOOLS: frozenset[str] = frozenset(
         "memo_save",
         "memo_search",
         "memo_unified_briefing",
+        # Session/notification plumbing registered by _srv_idle_capture outside
+        # the advanced gate and never removed — so the real agent surface is 9.
+        "memo_idle_capture",
+        "memo_pop_notification",
+        "memo_start_session",
+        "memo_save_text",
     }
 )
 

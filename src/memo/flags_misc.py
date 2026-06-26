@@ -84,7 +84,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 5 tools) | core/slim (stable core) | full/default (all tools).",
+        "MCP surface profile: agent (default, 9 tools) | core/slim (stable core) | full/default (all tools).",
     ),
     _spec(
         "MEMO_CLI_PROFILE",
