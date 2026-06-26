@@ -19,6 +19,7 @@ def test_flag_returns_default_when_unset() -> None:
     assert flags.flag("MEMO_RECALL_MIN_SIM", env=env) == 0.5
     assert flags.flag("MEMO_RECALL_MODE", env=env) == "vec"
     assert flags.flag("MEMO_RECALL_DISABLE", env=env) is False
+    assert flags.flag("MEMO_RECALL_TOKEN_BUDGET", env=env) == 600
     # opt-out default-on bool
     assert flags.flag("MEMO_EMIT_LEDGER", env=env) is True
     assert flags.flag_int("MEMO_DREAM_COMPRESS_THRESHOLD", env=env) == 0
