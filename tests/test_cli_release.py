@@ -58,7 +58,6 @@ def test_release_bump_dry_run_writes_nothing(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setenv("MEMO_DEV_REPO", str(repo))
     result = CliRunner().invoke(release_group, ["bump", "patch", "--dry-run"])
     assert result.exit_code == 0
-    assert '1.2.3" ' not in (repo / "pyproject.toml").read_text()  # unchanged
     assert 'version = "1.2.3"' in (repo / "pyproject.toml").read_text()
 
 

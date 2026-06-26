@@ -50,7 +50,7 @@ def _read_current_version(repo: Path) -> str:
 
 
 def _sub_exact(text: str, pattern: str, repl: str, *, count: int, flags: int = 0) -> str:
-    new, n = re.subn(pattern, repl, text, count=count, flags=flags)
+    new, n = re.subn(pattern, repl, text, flags=flags)
     if n != count:
         raise ValueError(f"expected {count} match(es) for {pattern!r}, got {n}")
     return new
@@ -113,12 +113,12 @@ def release_bump(level: str, dry_run: bool, date: str | None) -> None:
     when = date or datetime.date.today().isoformat()
     edits = plan_release_edits(repo, old, new, when)
     console.print(f"[bold]{old} → {new}[/bold] ({level})")
-    for path in edits:
-        verb = "would update" if dry_run else "updated"
-        console.print(f"  {verb}: {path.relative_to(repo)}")
     if dry_run:
+        for path in edits:
+            console.print(f"  would update: {path.relative_to(repo)}")
         console.print("[dim]dry-run: no files written[/dim]")
         return
     for path, content in edits.items():
         path.write_text(content, encoding="utf-8")
+        console.print(f"  updated: {path.relative_to(repo)}")
     console.print("[green]✓[/green] version synced; edit the CHANGELOG TODO before committing")
