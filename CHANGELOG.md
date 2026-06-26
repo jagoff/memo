@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-26
+
+### Added
+
+- **`memo doctor` install-freshness guard.** With `MEMO_DEV_REPO` set, `memo doctor` warns when the installed package differs from the repo source at the **same** version — the stale-build trap behind the 1.0.12 incident (a reinstall with an unchanged version number hid the old build). Pure content-hash comparison; degrades to "skipped" when no dev repo is configured.
+- **`memo doctor` MCP config path check.** Flags MCP configs (`~/.claude.json`, devin, opencode, mcp-gateway) whose `memo`/`memo-mcp` command points inside a managed venv (pipx, **uv tool**, `.venv`, site-packages) or at a missing file, and suggests the stable `~/.local/bin` shim — the failure mode that orphaned four configs when pipx was uninstalled.
+- **`memo release bump <level>`.** Syncs the four version source-of-truth files (`pyproject.toml`, `.claude-plugin/plugin.json`, `server.json`, `CHANGELOG.md`) and seeds a changelog section, computing all edits before writing so a partial failure can't ship the four files out of sync.
+
 ## [1.0.13] - 2026-06-25
 
 ### Fixed
