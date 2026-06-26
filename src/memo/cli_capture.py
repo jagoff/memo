@@ -22,19 +22,13 @@ from memo.config import Config
 def _write_capture_notification(state_dir: Path, titles: list[str], *, idle: bool = False) -> None:
     """Write a pending notification the next recall-hook surfaces, so passive
     auto-capture is visible to the user. Rendered as a single muted line
-    (``※ auto save…``) rather than a heading, to stay unobtrusive in the
+    (``※ MEMO: auto save…``) rather than a heading, to stay unobtrusive in the
     console. Best-effort; never raises."""
     if not titles:
         return
-    n = len(titles)
-    shown = "; ".join(t for t in titles[:3])
-    if n > 3:
-        shown += f"; +{n - 3} more"
-    tag = "auto save (idle)" if idle else "auto save"
-    body = f"※ {tag}: {shown}\n"
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "pending_idle_notification.txt").write_text(body, encoding="utf-8")
+        (state_dir / "pending_idle_notification.txt").write_text("※ MEMO auto-saved\n", encoding="utf-8")
     except OSError:
         pass
 
@@ -98,18 +92,8 @@ def capture_stop() -> None:
         # that does most of the saving — is silent and the user can't tell it
         # ran. Only fires when memories were actually saved (not on dedup/cooldown).
         titles = result.get("saved_titles") or []
-        n = len(titles)
-        # Always show notification to confirm capture ran
         if titles:
-            shown = "; ".join(t for t in titles[:3])
-            if n > 3:
-                shown += f"; +{n - 3} more"
-            console.print(f"[dim]※ auto save: {shown}[/dim]")
-        else:
-            console.print("[dim]※ auto save: scanned (0 new insights)[/dim]")
-        # Also write pending notification if there were saved titles
-        if titles:
-            _write_capture_notification(Config.from_env().state_dir, titles)
+            console.print("[dim]※ MEMO auto-saved[/dim]")
     except Exception as exc:
         if debug:
             print(f"# memo capture-stop failed: {exc}", file=_sys.stderr)
