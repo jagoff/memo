@@ -29,6 +29,7 @@ _log = logging.getLogger(__name__)
 DEFAULT_REPO = "https://github.com/jagoff/memo.git"
 _CHECK_STAMP = "auto_update_check"
 _NOTIFY_FILE = "update_available"
+_SPAWNED_STAMP = "auto_update_spawned"  # tag last spawned; prevents re-spawn same tag
 
 
 def _parse_semver(tag: str) -> tuple[int, int, int] | None:
@@ -89,8 +90,28 @@ def latest_remote_tag(repo_url: str, *, timeout: int = 10) -> str | None:
     return best_tag
 
 
-def _should_check(cfg: Config, interval_s: int, now: float) -> bool:
-    """Throttle: True if no check stamp or it's older than ``interval_s``."""
+def latest_pypi_version(*, timeout: int = 10) -> str | None:
+    """Latest version from PyPI, or None on any failure."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("https://pypi.org/pypi/mlx-memo/json", timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data["info"]["version"]
+    except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError) as exc:
+        _log.debug("auto-update: PyPI fetch failed: %s", exc)
+        return None
+
+
+def _should_check(cfg: Config, interval_s: int, now: float, force: bool = False) -> bool:
+    """Throttle: True if no check stamp or it's older than ``interval_s``.
+    
+    If force=True, bypass the throttle (for explicit update --check).
+    """
+    if force:
+        return True
     stamp = cfg.state_dir / _CHECK_STAMP
     try:
         last = float(stamp.read_text().strip())
@@ -170,7 +191,11 @@ def notify_if_newer(cfg: Config | None = None, *, force: bool = False) -> str | 
 
 
 def maybe_auto_update(cfg: Config | None = None) -> bool:
-    """Entry point called at memo-mcp startup. Gated, throttled, non-blocking.
+    """Entry point called at memo-mcp startup. Gated, non-blocking.
+
+    Checks for a newer tag on every startup (git ls-remote is cheap). Guards
+    against re-spawning the same tag via a per-tag stamp so repeated startups
+    during an in-progress install don't pile up subprocess.Popen calls.
 
     Returns True iff a background update was spawned (mainly for tests). Never
     raises — any failure is logged at debug and swallowed so a startup is never
@@ -180,14 +205,6 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
         if not flag_bool("MEMO_AUTO_UPDATE"):
             return False
         cfg = cfg or Config.from_env()
-        import time
-
-        now = time.time()
-        interval = flag_int("MEMO_AUTO_UPDATE_INTERVAL_S") or 21600
-        if not _should_check(cfg, interval, now):
-            return False
-        # Record the check up front so a slow/looping spawn can't re-trigger.
-        _record_check(cfg, now)
 
         from memo import __version__
 
@@ -197,8 +214,22 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
             _clear_notify(cfg)
             return False
 
+        # Don't re-spawn an install we already triggered for this exact tag.
+        spawned_stamp = cfg.state_dir / _SPAWNED_STAMP
+        try:
+            if spawned_stamp.read_text().strip() == tag:
+                _write_notify(cfg, tag)  # keep banner visible
+                return False
+        except OSError:
+            pass
+
         _write_notify(cfg, tag)
         _log.info("auto-update: %s → %s (spawning background update)", __version__, tag)
+        try:
+            spawned_stamp.parent.mkdir(parents=True, exist_ok=True)
+            spawned_stamp.write_text(tag)
+        except OSError as exc:
+            _log.debug("auto-update: could not write spawned stamp: %s", exc)
         log_file = cfg.state_dir / "auto_update.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
         with open(log_file, "a") as fh:

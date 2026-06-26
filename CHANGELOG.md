@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-06-26
+
+### Fixed
+
+- **Auto-update race condition.** `maybe_auto_update` no longer writes the shared throttle stamp, eliminating the race where a concurrent `notify_if_newer` thread could read a stale stamp and suppress the update notification. Replaced with a per-tag spawned guard so each tag is tried at most once per process lifetime.
+
 ## [1.1.5] - 2026-06-26
 
 ### Added
