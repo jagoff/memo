@@ -516,11 +516,28 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             if flag_bool("MEMO_MAINTAIN_DISABLE"):
                 print(_json.dumps({"status": "skipped_maintain_disabled"}))
                 _sys.exit(0)
-            from memo.cli_transcripts import _reflect_session
-            from memo.memory import Memory
+            # Prevent concurrent reflects across sessions (same lock used by `memo reflect` CLI).
+            # idle-maintenance is the primary reflect entry-point (called from hooks), so the
+            # flock must live here — not only in the `memo reflect` CLI command.
+            import fcntl as _fcntl
 
-            mem = Memory(cfg)
-            _reflect_session(str(sid), mem, cfg, debug=flag_bool("MEMO_SESSION_DEBUG"))
+            _rlock_path = _Path(cfg.state_dir) / "reflect.lock"
+            _rlock_path.parent.mkdir(parents=True, exist_ok=True)
+            _rlock_fd = open(_rlock_path, "w")  # noqa: SIM115
+            try:
+                _fcntl.flock(_rlock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            except OSError:
+                _rlock_fd.close()
+                print(_json.dumps({"status": "skipped_concurrent"}))
+                _sys.exit(0)
+            try:
+                from memo.cli_transcripts import _reflect_session
+                from memo.memory import Memory
+
+                mem = Memory(cfg)
+                _reflect_session(str(sid), mem, cfg, debug=flag_bool("MEMO_SESSION_DEBUG"))
+            finally:
+                _rlock_fd.close()
     except Exception as exc:
         if flag_bool("MEMO_SESSION_DEBUG"):
             print(f"# memo session idle-maintenance failed: {exc}", file=_sys.stderr)

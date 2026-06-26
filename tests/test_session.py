@@ -715,3 +715,59 @@ def test_idle_maintenance_reflect_mode_respects_maintain_disable(tmp_path: Path,
     assert not reflect_called[0], "reflect must not be called when MEMO_MAINTAIN_DISABLE=1"
     out = json.loads(result.output.strip()) if result.output.strip() else {}
     assert out.get("status") == "skipped_maintain_disabled", f"output={result.output!r}"
+
+
+def test_reflect_flock_prevents_concurrent_reflect(tmp_path: Path, monkeypatch) -> None:
+    """Regression: idle-maintenance reflect must skip when reflect.lock is held.
+
+    Without flock in idle-maintenance, N sessions all pass the reflected_at check
+    before any stamps it → N concurrent LLM loads (OOM risk on 16GB Macs).
+    """
+    import fcntl
+    import threading
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    (tmp_path / "data").mkdir(parents=True)
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+
+    # Create a real session so the worker reaches the flock check (not exits early on "not found").
+    sid = "test-sid-flock-003"
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+    checkpoint(state, session_id=sid, cwd=str(tmp_path), transcript_path=str(transcript))
+
+    # Pre-hold the reflect.lock to simulate another session already running reflect.
+    lock_path = state / "reflect.lock"
+    lock_path.touch()
+    lock_fd = open(lock_path, "w")
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+    results: list[str | None] = []
+
+    def try_reflect() -> None:
+        runner = CliRunner()
+        r = runner.invoke(
+            session_group,
+            ["idle-maintenance", "--mode", "reflect", "--delay-secs", "0", "--detached-worker"],
+            input=json.dumps({"session_id": sid, "transcript_path": str(transcript)}),
+        )
+        out: dict[str, object] = {}
+        try:
+            out = json.loads(r.output.strip())
+        except Exception:
+            pass
+        results.append(out.get("status"))  # type: ignore[arg-type]
+
+    t = threading.Thread(target=try_reflect)
+    t.start()
+    t.join(timeout=5)
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    lock_fd.close()
+
+    assert not t.is_alive(), "idle-maintenance reflect hung instead of skipping under held lock"
+    assert results, "idle-maintenance produced no output"
+    assert results[0] == "skipped_concurrent", f"expected skipped_concurrent, got {results[0]!r}"
