@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-06-26
+
 ### Added
 
 - **Co-recall ranking boost (M5).** `MEMO_GRAPH_CO_RECALL` now also *uses* the co-recall edges it records: at search time, candidates frequently co-recalled with the top hit get a score bump (scaled by the strongest edge in the set, capped at `MEMO_CO_RECALL_BOOST_WEIGHT`, default 0.1), so relationally-associated memories surface together. Read side of a flag that previously only wrote edges. Off by default; one extra graph query when on.
