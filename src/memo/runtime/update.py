@@ -70,7 +70,28 @@ def _version_ge(a: str, b: str) -> bool:
 
 
 def _detect_install_method() -> str | None:
-    """``"pipx"`` / ``"uv"`` / None — how mlx-memo's isolated runtime was installed."""
+    """``"pipx"`` / ``"uv"`` / None — how mlx-memo's isolated runtime was installed.
+
+    Checks ``sys.executable`` first — if the running Python lives inside the uv
+    tool venv, return "uv" immediately.  This prevents a stale pipx venv (left
+    over from a migration) from shadowing a live uv-managed install.
+    """
+    uv_tool_prefix = Path.home() / ".local" / "share" / "uv" / "tools" / "mlx-memo"
+    try:
+        if Path(sys.executable).is_relative_to(uv_tool_prefix):
+            return "uv"
+    except (TypeError, ValueError):
+        pass
+
+    uv = _find_uv()
+    if uv:
+        try:
+            res = subprocess.run([uv, "tool", "list"], capture_output=True, text=True, timeout=10)
+            if "mlx-memo" in res.stdout:
+                return "uv"
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
     pipx = _find_pipx()
     if pipx:
         try:
@@ -81,14 +102,6 @@ def _detect_install_method() -> str | None:
             pass
     if _read_pipx_venv_metadata() is not None:
         return "pipx"
-    uv = _find_uv()
-    if uv:
-        try:
-            res = subprocess.run([uv, "tool", "list"], capture_output=True, text=True, timeout=10)
-            if "mlx-memo" in res.stdout:
-                return "uv"
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
     return None
 
 
@@ -224,39 +237,10 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         return
     console.print(f"[yellow]Update available:[/yellow] {current_version} → {latest_version}")
 
-    # --- detect install method ---
-    installed_via: str | None = None
-    pipx_bin: str | None = _find_pipx()
-
-    if pipx_bin:
-        try:
-            res = subprocess.run(
-                [pipx_bin, "list", "--json"], capture_output=True, text=True, timeout=10
-            )
-            if res.returncode == 0:
-                _data = json.loads(res.stdout)
-                if _data.get("venvs", {}).get("mlx-memo"):
-                    installed_via = "pipx"
-        except Exception:  # noqa: S110
-            pass
-
-    if installed_via is None and _read_pipx_venv_metadata() is not None:
-        installed_via = "pipx"
-
-    if installed_via is None:
-        uv_bin = _find_uv()
-        if uv_bin:
-            try:
-                res = subprocess.run(
-                    [uv_bin, "tool", "list"], capture_output=True, text=True, timeout=10
-                )
-                if "mlx-memo" in res.stdout:
-                    installed_via = "uv"
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
+    installed_via = _detect_install_method()
 
     if installed_via == "pipx":
-        pipx = pipx_bin or _find_pipx() or "pipx"
+        pipx = _find_pipx() or "pipx"
         console.print("[dim]Upgrading via pipx…[/dim]")
         result = subprocess.run([pipx, "upgrade", "mlx-memo"], check=False)
         if result.returncode != 0:

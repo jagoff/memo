@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-06-26
+
+### Fixed
+
+- **uv tool install detection.** `memo update` now inspects `sys.executable` to detect a uv-managed install before falling back to `pipx list`, preventing a stale pipx venv from shadowing a uv-managed install.
+
+### Changed
+
+- **Deduplicated install-method detection.** The PyPI update path now calls `_detect_install_method` for both the notification and update flows, removing duplicated detection logic.
+
 ## [1.1.6] - 2026-06-26
 
 ### Fixed
