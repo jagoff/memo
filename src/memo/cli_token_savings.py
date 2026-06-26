@@ -62,7 +62,7 @@ def token_savings_cmd() -> None:
     click.echo(f"  Compact savings:    ~{compact_savings_pct}%  (if MEMO_RECALL_FORMAT=compact)")
     click.echo(f"  Trivial bails:      {trivial_bails}  (prompts skipped)")
     click.echo("")
-    click.echo(f"  Estimated total:    ~{total_tokens_saved:,} tokens saved")
+    click.echo(f"  Estimated total:    ~{total_tokens_saved:,} tokens saved vs. model rederiving context")
     click.echo("")
     click.echo("  Enable compact: export MEMO_RECALL_FORMAT=compact")
     click.echo("  Run:            memo compress-context CLAUDE.md  (one-time context file shrink)")
