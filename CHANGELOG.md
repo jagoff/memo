@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-06-26
+
+### Fixed
+
+- **`memo install-mcp` embedder config.** `install-mcp` now reads `MEMO_EMBEDDER_MODEL` and `MEMO_EMBEDDER_DIMS` from the live index (`schema_meta` table) instead of forwarding raw env vars at install time, preventing dimension mismatches when the shell environment has a different model configured than what the actual index was built with (`runtime/mcp.py`).
+
 ## [1.1.7] - 2026-06-26
 
 ### Fixed

@@ -23,8 +23,10 @@ _MCP_ENV_FORWARD_KEYS = (
     "MEMO_MODEL_PROFILE",
     "MEMO_LLM_MODEL",
     "MEMO_HELPER_MODEL",
-    "MEMO_EMBEDDER_MODEL",
-    "MEMO_EMBEDDER_DIMS",
+    # MEMO_EMBEDDER_MODEL / MEMO_EMBEDDER_DIMS are NOT forwarded from env here —
+    # they are derived from the live index (schema_meta) by _actual_embedder_config()
+    # so the installed config always matches the existing index, regardless of what
+    # the shell env has at install time.
     "MEMO_RERANKER_ENABLED",
     "MEMO_RERANKER_MODEL",
     "MEMO_RERANKER_REVISION",
@@ -49,6 +51,43 @@ _MISSING_MCP_OK_ERRORS = (
 )
 
 
+def _actual_embedder_config() -> dict[str, str]:
+    """Read embedder model+dims from the live index (schema_meta).
+
+    Returns {} on any failure so callers can fall back gracefully.  Reading
+    from the index — not from env vars — is the only way to guarantee the MCP
+    config matches the vectors already on disk.
+    """
+    try:
+        import sqlite3
+
+        from memo.config import Config
+
+        cfg = Config.from_env()
+        db = cfg.db_path
+        if not db.is_file():
+            return {}
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        try:
+            model_row = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'embedder_model'"
+            ).fetchone()
+            dims_row = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'embedder_dims'"
+            ).fetchone()
+        finally:
+            conn.close()
+        result: dict[str, str] = {}
+        if model_row and model_row["value"]:
+            result["MEMO_EMBEDDER_MODEL"] = model_row["value"]
+        if dims_row and dims_row["value"]:
+            result["MEMO_EMBEDDER_DIMS"] = dims_row["value"]
+        return result
+    except Exception:
+        return {}
+
+
 def _mcp_server_env() -> dict[str, str]:
     from memo.flags import flag_str
 
@@ -65,6 +104,9 @@ def _mcp_server_env() -> dict[str, str]:
         val = os.environ.get(key)
         if val:
             env[key] = val
+    # Derive embedder model/dims from the live index so the installed config
+    # always matches existing vectors, overriding any env var set at install time.
+    env.update(_actual_embedder_config())
     return env
 
 
