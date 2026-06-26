@@ -41,6 +41,7 @@ from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
+from memo.cli_compress_context import compress_context_cmd
 from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_dashboard import dashboard_cmd
 from memo.cli_dedupe import dedupe_cmd
@@ -354,6 +355,7 @@ cli.add_command(temporal_group)
 cli.add_command(consolidate_group)
 cli.add_command(health_cmd)
 cli.add_command(dashboard_cmd)
+cli.add_command(compress_context_cmd)
 cli.add_command(cross_dedup_cmd)
 cli.add_command(dedupe_cmd)
 cli.add_command(contextual_group)
