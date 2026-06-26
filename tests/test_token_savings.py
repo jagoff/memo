@@ -9,7 +9,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from memo.cli_token_savings import token_savings_cmd
-from memo.dashboard_logs import append_context_cost_log, recall_hook_log_path
+from memo.dashboard_logs import append_context_cost_log, recall_log_path
 
 
 def _run(state_dir: Path, data_dir: Path) -> tuple[int, str]:
@@ -103,8 +103,8 @@ def test_token_savings_ignores_non_recall_kinds(tmp_path: Path) -> None:
 
 
 def _append_bail_entry(state: Path, reason: str = "trivial prompt") -> None:
-    """Write a bail entry directly to the recall hook log."""
-    path = recall_hook_log_path(state)
+    """Write a bail entry to the recall log (no session_id → recall.log only)."""
+    path = recall_log_path(state)
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = {
         "ts": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -149,3 +149,31 @@ def test_token_savings_estimated_total_shown(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "Estimated total:" in output
+
+
+def test_token_savings_compact_savings_shows_potential_when_format_not_set(
+    tmp_path: Path,
+) -> None:
+    """When MEMO_RECALL_FORMAT is unset (default 'full'), compact savings line shows 'potential'."""
+    state = tmp_path / "state"
+    state.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+
+    append_context_cost_log(state, kind="recall", chars=1200)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        token_savings_cmd,
+        [],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_STATE_DIR": str(state),
+            "MEMO_DATA_DIR": str(data),
+            "MEMO_RECALL_FORMAT": "",  # unset → default 'full'
+        },
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    assert "potential" in result.output

@@ -12,7 +12,8 @@ from datetime import UTC, datetime, timedelta
 import click
 
 from .config import Config
-from .dashboard import read_context_cost_log, read_recall_hook_log
+from .dashboard import read_context_cost_log, read_recall_log
+from .flags import flag_str
 
 
 @click.command(name="token-savings")
@@ -20,7 +21,7 @@ def token_savings_cmd() -> None:
     """Show recall injection stats and token economy tips (last 7 days)."""
     cfg = Config.from_env()
     cost_log = read_context_cost_log(cfg.state_dir)
-    hook_log = read_recall_hook_log(cfg.state_dir, limit=4000)
+    hook_log = read_recall_log(cfg.state_dir, limit=4000)
 
     cutoff = datetime.now(UTC) - timedelta(days=7)
     recall_entries = [
@@ -53,18 +54,31 @@ def token_savings_cmd() -> None:
     compact_tokens_saved = compact_chars_saved // 4
 
     avg_tokens_per_injection = avg_chars // 4 if avg_chars else 40
-    total_tokens_saved = compact_tokens_saved + trivial_bails * avg_tokens_per_injection
+    recall_format = flag_str("MEMO_RECALL_FORMAT")
+    is_compact = recall_format == "compact"
+    if is_compact:
+        total_tokens_saved = compact_tokens_saved + trivial_bails * avg_tokens_per_injection
+    else:
+        compact_tokens_saved = 0
+        total_tokens_saved = trivial_bails * avg_tokens_per_injection
 
     click.echo("memo token savings (last 7 days)")
     click.echo("")
     click.echo(f"  Recall injections:  {n_injections:,} prompts")
     click.echo(f"  Context chars:      {avg_chars:,} avg per injection")
-    click.echo(f"  Compact savings:    ~{compact_savings_pct}%  (if MEMO_RECALL_FORMAT=compact)")
+    if is_compact:
+        click.echo(f"  Compact savings:    ~{compact_savings_pct}%  (active)")
+    else:
+        click.echo(
+            f"  Compact savings:    ~{compact_savings_pct}% potential"
+            "  (enable: export MEMO_RECALL_FORMAT=compact)"
+        )
     click.echo(f"  Trivial bails:      {trivial_bails}  (prompts skipped)")
     click.echo("")
     click.echo(f"  Estimated total:    ~{total_tokens_saved:,} tokens saved vs. model rederiving context")
     click.echo("")
-    click.echo("  Enable compact: export MEMO_RECALL_FORMAT=compact")
+    if not is_compact:
+        click.echo("  Enable compact: export MEMO_RECALL_FORMAT=compact")
     click.echo("  Run:            memo compress-context CLAUDE.md  (one-time context file shrink)")
 
 

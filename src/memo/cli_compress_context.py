@@ -47,12 +47,25 @@ def compress(content: str) -> str:
     lines = content.splitlines()
     out: list[str] = []
     blank_run = 0
+    in_frontmatter = False
 
-    for line in lines:
+    for idx, line in enumerate(lines):
         # 1. Strip trailing whitespace
         line = line.rstrip()
 
-        # 2. Remove horizontal rules
+        # Frontmatter guard: a leading ``---`` on line 0 opens YAML frontmatter;
+        # the next ``---`` closes it.  Lines inside are kept unchanged.
+        if idx == 0 and line == "---":
+            in_frontmatter = True
+            out.append(line)
+            continue
+        if in_frontmatter:
+            if line == "---":
+                in_frontmatter = False
+            out.append(line)
+            continue
+
+        # 2. Remove horizontal rules (safe: frontmatter fences already handled above)
         if _HORIZ_RULE.match(line):
             continue
 
