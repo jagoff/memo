@@ -459,12 +459,17 @@ def sync_init_home(cfg: Config, private: bool = True) -> dict:
     owner = "private" if private else "public"
     repo_name = "memo-sync"
 
-    gh_cmd = subprocess.run(
-        ["gh", "repo", "create", repo_name, f"--{owner}", "--source", str(root), "--push"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    try:
+        gh_cmd = subprocess.run(
+            ["gh", "repo", "create", repo_name, f"--{owner}", "--source", str(root), "--push"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except OSError:
+        raise SyncGitError(
+            "gh CLI not found — install it: https://cli.github.com or `brew install gh`"
+        )
     if gh_cmd.returncode != 0:
         raise SyncGitError(f"gh repo create failed: {gh_cmd.stderr.strip()}")
 
