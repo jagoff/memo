@@ -144,6 +144,16 @@ def test_token_cost_recognizes_agent() -> None:
     assert reduced is True
 
 
+def test_token_cost_core_and_slim_are_reduced() -> None:
+    from memo.surface import mcp_profile_token_cost
+
+    for profile in ("core", "slim"):
+        count, cost, reduced = mcp_profile_token_cost(profile)
+        assert count == "~25"
+        assert cost == "~2.4k"
+        assert reduced is True
+
+
 def test_token_cost_full_is_not_reduced() -> None:
     from memo.surface import mcp_profile_token_cost
 
@@ -161,4 +171,5 @@ def test_token_cost_active_default_resolves_to_agent(monkeypatch) -> None:
 
     count, cost, reduced = mcp_profile_token_cost()
     assert count == "~9"
+    assert cost == "~2.4k"
     assert reduced is True

@@ -287,8 +287,9 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
             console.print(
                 f"[yellow]![/yellow] token cost: {_profile_label}  {_tool_count} tools "
                 f"({_tok_cost} tokens/connection)  "
-                "[dim](set MEMO_MCP_PROFILE=agent or use `memo install-mcp --profile core` "
-                "to reduce to ~9 tools / ~2.4k tokens for constrained clients)[/dim]"
+                "[dim](set MEMO_MCP_PROFILE=agent for ~9 tools, or "
+                "`memo install-mcp --profile core` for ~25 tools / ~2.4k tokens — "
+                "for constrained clients)[/dim]"
             )
         try:
             from memo.cli_roi import compute_roi
