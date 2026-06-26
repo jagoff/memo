@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from memo.cli_compress_context import compress, compress_context_cmd
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for the compress() function
@@ -37,7 +35,7 @@ def test_long_list_item_truncated() -> None:
     long_body = "x" * 130
     content = f"- {long_body}\n"
     result = compress(content)
-    lines = [l for l in result.splitlines() if l.strip()]
+    lines = [ln for ln in result.splitlines() if ln.strip()]
     assert len(lines) == 1
     assert lines[0].endswith("…")
     # Total line length should be <= 120 + len("- ") but in practice the prefix is part of 120
