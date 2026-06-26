@@ -114,13 +114,7 @@ def init_cmd(force: bool) -> None:
     help="Emit a client-specific MCP registration command or raw JSON config.",
 )
 def mcp_command(client: str) -> None:
-    memo_mcp = _resolved_memo_mcp()
-    if memo_mcp is None:
-        console.print(
-            "[red]memo-mcp not found.[/red] Install memo as an isolated tool: "
-            "`pipx install mlx-memo` or `uv tool install mlx-memo`.",
-        )
-        raise click.exceptions.Exit(1)
+    memo_mcp = _require_isolated_memo_mcp()
     env = _mcp_server_env()
     if client == "json":
         click.echo(
@@ -193,12 +187,7 @@ def install_slash(
 
     needs_assets = bool(selected & {"claude-code", "codex", "devin"})
     root = _agent_asset_root(repo) if needs_assets else None
-    memo_mcp = _resolved_memo_mcp()
-    if memo_mcp is None:
-        raise click.ClickException(
-            "memo-mcp not found. Install memo as an isolated tool first: "
-            "`pipx install mlx-memo` or `uv tool install mlx-memo`."
-        )
+    memo_mcp = _require_isolated_memo_mcp()
     env = _mcp_server_env()
 
     failures: list[str] = []
@@ -297,3 +286,32 @@ def install_slash(
         )
     else:
         console.print("[green]✓[/green] agent-client install complete. Open a new agent session to reload.")
+
+
+def _require_isolated_memo_mcp() -> Path:
+    """Return a persistent-safe memo-mcp path or raise with the unsafe fallback.
+
+    Commands here emit text copied into long-lived agent configs. A project
+    `.venv/bin/memo-mcp` works only while this checkout exists and has matching
+    deps, so prefer the isolated resolver shared with `install-mcp`.
+    """
+    from memo.cli_install_mcp import _resolve_isolated_memo_mcp
+
+    fallback = _resolved_memo_mcp()
+    if fallback is not None and not _is_project_venv_path(fallback):
+        return fallback
+
+    memo_mcp = _resolve_isolated_memo_mcp()
+    if memo_mcp is not None:
+        return memo_mcp
+
+    found = f" Found: {fallback}" if fallback is not None else ""
+    raise click.ClickException(
+        "isolated memo-mcp not found. Install memo as an isolated tool first: "
+        "`pipx install mlx-memo` or `uv tool install mlx-memo`; a project .venv "
+        f"must not be written into agent configs.{found}"
+    )
+
+
+def _is_project_venv_path(path: Path) -> bool:
+    return any(part in {".venv", "venv"} for part in path.parts)

@@ -74,6 +74,7 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch):
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
+        reranker_enabled=False,
     )
 
     def _stub_embed(self, inputs):

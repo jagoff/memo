@@ -8,7 +8,9 @@ Covers three properties:
 from __future__ import annotations
 
 import json
-import threading
+import os
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -81,28 +83,26 @@ def test_recall_hook_returns_json_when_embedder_raises(
 def test_recall_hook_concurrent_invocations(recall_env: Config) -> None:
     """Multiple concurrent recall-hook CLI invocations must not deadlock or raise.
 
-    Uses empty stdin so each thread bails early (before any sqlite access),
-    which avoids the sys.stdin global-replacement race inherent in CliRunner's
-    multi-threaded use.  The assertion is simply: all 3 threads complete with
-    exit_code 0 and no uncaught exceptions.
+    Use real subprocesses instead of invoking Click's test runner from multiple
+    threads: agent hooks execute independent CLI processes, while CliRunner
+    mutates process-global stdin/stdout and is not a thread-safe surface.
     """
-    errors: list[str] = []
-    exit_codes: list[int] = []
+    env = os.environ.copy()
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-m", "memo.cli", "recall-hook"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        for _ in range(3)
+    ]
 
-    def run_hook() -> None:
-        try:
-            runner = CliRunner()
-            r = runner.invoke(cli, ["recall-hook"])
-            exit_codes.append(r.exit_code)
-        except Exception as exc:
-            errors.append(f"{type(exc).__name__}: {exc}")
+    results = []
+    for proc in procs:
+        stdout, stderr = proc.communicate(input="", timeout=15)
+        results.append((proc.returncode, stdout, stderr))
 
-    threads = [threading.Thread(target=run_hook) for _ in range(3)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=15)
-
-    assert not errors, f"Concurrent recall-hook errors: {errors}"
-    assert all(code == 0 for code in exit_codes), f"Non-zero exit codes: {exit_codes}"
-    assert len(exit_codes) == 3, "Not all threads completed in time"
+    assert all(code == 0 for code, _stdout, _stderr in results), results

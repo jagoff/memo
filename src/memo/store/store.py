@@ -47,6 +47,7 @@ import contextlib
 import logging
 import sqlite3
 import threading
+import weakref
 from pathlib import Path
 
 from .connection import _ConnectionMixin
@@ -104,6 +105,8 @@ class VecStore(
         # The CLI and recall daemon are single-threaded / lock-serialised,
         # so they simply reuse their one thread-local connection.
         self._local = threading.local()
+        self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
+        self._conn_holders_lock = threading.Lock()
         try:
             self._connect()
             self._init_schema()

@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **De-duplicated `memo doctor` freshness wiring.** The install-freshness check (resolve installed version + package dir + `MEMO_DEV_REPO`) lived verbatim in both the human and `--json` doctor paths; it's now a single `freshness_report()` helper, so the two outputs can't drift.
 - **`MEMO_CACHE_MODE` description corrected (not removed).** The flag and its `read_through`/`write_through`/`write_back` modes are in fact wired and tested (`cache.py` + `Memory.save`/`Memory.search`); the prior "DEPRECATED — only off is wired / smart·prefetch·aggressive dead" text was stale and wrong. The cache tier stays; only the misleading docs were fixed.
 
+## [1.1.1] - 2026-06-26
+
+### Fixed
+
+- **`memo install-mcp` no longer requires `consciousness-contracts`** — the private dev package is now an optional extra; public users can run `memo install-mcp --agent <client>` without it. Fallback to a local dataclass shape when the package is absent.
+- **Reject project `.venv` paths in persistent agent configs** — `memo mcp-command` and `memo install-slash` now raise if the resolved `memo-mcp` path is inside a `.venv` directory; only isolated tool installations are written into long-lived agent configs.
+- **Proper connection cleanup for FastMCP HTTP workers** — `VecStore` now tracks all per-thread connection holders via a `WeakSet`; `close()` closes every live connection, not just the calling thread's, preventing file-handle leaks when HTTP worker threads outlive their request.
+- **Test isolation: `CliRunner` concurrency replaced with subprocesses** — the concurrent `recall-hook` test now spawns real subprocesses instead of using `CliRunner` from multiple threads (which mutates process-global stdin/stdout unsafely).
+
 ## [1.1.0] - 2026-06-26
 
 ### Added

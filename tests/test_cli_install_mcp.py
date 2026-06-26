@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
-
-pytest.importorskip("consciousness_contracts")
 
 from memo import cli_install_mcp
 from memo.cli import cli
@@ -67,6 +66,64 @@ def test_install_mcp_with_mandate_targets_selected_agents(monkeypatch, tmp_path)
     assert res.output.count("AGENTS.md") == 1
 
 
+def test_install_mcp_dry_run_works_without_consciousness_contracts(monkeypatch, tmp_path):
+    """The public installer must not require a dev-only local package."""
+    iso = tmp_path / ".local" / "bin" / "memo-mcp"
+    iso.parent.mkdir(parents=True)
+    iso.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "consciousness_contracts" or name.startswith("consciousness_contracts."):
+            raise ImportError("forced missing consciousness_contracts")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "codex"])
+
+    assert res.exit_code == 0, res.output
+    assert "memo MCP" in res.output
+    assert "codex mcp add memo" in res.output
+    assert "consciousness-contracts" not in res.output
+
+
+def test_install_slash_rejects_project_venv_memo_mcp(monkeypatch, tmp_path):
+    """install-slash writes persistent configs, so it must reject repo .venv paths."""
+    venv_mcp = tmp_path / ".venv" / "bin" / "memo-mcp"
+    venv_mcp.parent.mkdir(parents=True)
+    venv_mcp.write_text("#!/bin/sh\n")
+    monkeypatch.setattr("memo.runtime.install._resolved_memo_mcp", lambda: venv_mcp)
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(cli_install_mcp.shutil, "which", lambda _name: str(venv_mcp))
+    monkeypatch.setattr(cli_install_mcp, "_resolved_memo_mcp", lambda: venv_mcp)
+
+    res = CliRunner().invoke(cli, ["install-slash", "--client", "opencode", "--dry-run"])
+
+    assert res.exit_code != 0
+    assert "isolated" in res.output
+    assert ".venv" in res.output
+
+
+def test_mcp_command_rejects_project_venv_memo_mcp(monkeypatch, tmp_path):
+    """mcp-command is copied into persistent configs, so it must not print .venv paths."""
+    venv_mcp = tmp_path / ".venv" / "bin" / "memo-mcp"
+    venv_mcp.parent.mkdir(parents=True)
+    venv_mcp.write_text("#!/bin/sh\n")
+    monkeypatch.setattr("memo.runtime.install._resolved_memo_mcp", lambda: venv_mcp)
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(cli_install_mcp.shutil, "which", lambda _name: str(venv_mcp))
+    monkeypatch.setattr(cli_install_mcp, "_resolved_memo_mcp", lambda: venv_mcp)
+
+    res = CliRunner().invoke(cli, ["mcp-command", "--client", "codex"])
+
+    assert res.exit_code != 0
+    assert "isolated" in res.output
+    assert ".venv" in res.output
+
+
 # ---------------------------------------------------------------------------
 # Profile tests
 # ---------------------------------------------------------------------------
@@ -101,7 +158,7 @@ def _captured_servers(monkeypatch, tmp_path: Path, cli_args: list[str]) -> list[
         }
 
     # Patch at the import site inside install_mcp (it imports inside the function).
-    import consciousness_contracts as cc
+    cc = pytest.importorskip("consciousness_contracts")
 
     monkeypatch.setattr(cc, "register_agent_mcp", fake_register)
 

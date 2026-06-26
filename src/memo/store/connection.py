@@ -59,7 +59,13 @@ class _ConnectionMixin(_StoreBase):
         except Exception:
             conn.close()
             raise
-        self._local.conn_holder = _ConnectionHolder(conn)
+        holder = _ConnectionHolder(conn)
+        self._local.conn_holder = holder
+        holders = getattr(self, "_conn_holders", None)
+        holders_lock = getattr(self, "_conn_holders_lock", None)
+        if holders is not None and holders_lock is not None:
+            with holders_lock:
+                holders.add(holder)
         return conn
 
     def _load_vec0(self, conn: sqlite3.Connection) -> None:
@@ -105,9 +111,16 @@ class _ConnectionMixin(_StoreBase):
             self._conn.execute("PRAGMA wal_checkpoint(RESTART)")
 
     def close(self) -> None:
-        # Closes the calling thread's connection. Other threads' connections
-        # are released when their threads end (or at process exit) — adequate
-        # for the daemon/CLI lifecycles that use this store.
+        # Close every live thread-local holder this store has opened. FastMCP
+        # HTTP worker threads may outlive the request that created them, so
+        # process shutdown cannot rely on thread-exit cleanup alone.
+        holders = getattr(self, "_conn_holders", None)
+        holders_lock = getattr(self, "_conn_holders_lock", None)
+        if holders is not None and holders_lock is not None:
+            with holders_lock:
+                for tracked in list(holders):
+                    tracked.close()
+                holders.clear()
         holder = getattr(self._local, "conn_holder", None)
         if holder is not None:
             holder.close()

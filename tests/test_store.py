@@ -342,6 +342,43 @@ def test_concurrent_writes_and_reads_do_not_collide(store: VecStore):
     assert len(conn_ids) == 8
 
 
+def test_close_closes_live_worker_thread_connections(tmp_path: Path):
+    """Closing the store must close thread-local connections owned by live workers.
+
+    FastMCP HTTP transports keep worker threads alive across requests. If shutdown
+    closes only the caller's thread-local connection, worker connections survive
+    until process GC and surface as ResourceWarning/unclosed sqlite databases.
+    """
+    import threading
+
+    store = VecStore(tmp_path / "vec.db", dims=4)
+    ready = threading.Event()
+    proceed = threading.Event()
+    results: list[str] = []
+
+    def worker() -> None:
+        conn = store._conn
+        conn.execute("SELECT 1").fetchone()
+        ready.set()
+        proceed.wait(timeout=5)
+        try:
+            conn.execute("SELECT 1").fetchone()
+        except sqlite3.ProgrammingError:
+            results.append("closed")
+        else:
+            results.append("open")
+
+    t = threading.Thread(target=worker)
+    t.start()
+    assert ready.wait(timeout=5)
+
+    store.close()
+    proceed.set()
+    t.join(timeout=5)
+
+    assert results == ["closed"]
+
+
 def _legacy_vec_db(path: Path) -> None:
     """Hand-build a pre-upgrade DB: vec0 tables WITHOUT the `type` metadata
     column / `source_id` partition key, plus the companion rows the in-place

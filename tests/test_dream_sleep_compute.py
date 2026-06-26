@@ -148,25 +148,34 @@ class TestDreamEviction:
         from memo.cli_dream import _run_eviction
 
         mem = self._make_mem_with_corpus(tmp_path, n=5)
-        evicted = _run_eviction(mem, max_count=10, dry_run=False)
-        assert evicted == []
-        mem.lifecycle.archive_memoria.assert_not_called()
+        try:
+            evicted = _run_eviction(mem, max_count=10, dry_run=False)
+            assert evicted == []
+            mem.lifecycle.archive_memoria.assert_not_called()
+        finally:
+            mem.store.close()
 
     def test_eviction_archives_excess_lfu(self, tmp_path):
         from memo.cli_dream import _run_eviction
 
         mem = self._make_mem_with_corpus(tmp_path, n=10)
-        evicted = _run_eviction(mem, max_count=7, dry_run=False)
-        assert len(evicted) == 3
-        assert mem.lifecycle.archive_memoria.call_count == 3
+        try:
+            evicted = _run_eviction(mem, max_count=7, dry_run=False)
+            assert len(evicted) == 3
+            assert mem.lifecycle.archive_memoria.call_count == 3
+        finally:
+            mem.store.close()
 
     def test_eviction_dry_run_no_archive(self, tmp_path):
         from memo.cli_dream import _run_eviction
 
         mem = self._make_mem_with_corpus(tmp_path, n=10)
-        evicted = _run_eviction(mem, max_count=5, dry_run=True)
-        assert len(evicted) == 5
-        mem.lifecycle.archive_memoria.assert_not_called()
+        try:
+            evicted = _run_eviction(mem, max_count=5, dry_run=True)
+            assert len(evicted) == 5
+            mem.lifecycle.archive_memoria.assert_not_called()
+        finally:
+            mem.store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -250,8 +259,11 @@ class TestVerboseCompression:
         mem.store = store
         mem.get.return_value = MagicMock(body="short body")
 
-        results = _run_compress(mem, threshold=2000, dry_run=False)
-        assert results == []
+        try:
+            results = _run_compress(mem, threshold=2000, dry_run=False)
+            assert results == []
+        finally:
+            store.close()
 
     def test_compress_dry_run_does_not_update(self, tmp_path):
         from memo.cli_dream import _run_compress
@@ -274,14 +286,17 @@ class TestVerboseCompression:
         mem.store = store
         mem.get.return_value = mock_rec
 
-        with patch("memo.memory.record.chat_with_timeout", return_value=chat_out):
-            results = _run_compress(mem, threshold=100, dry_run=True)
+        try:
+            with patch("memo.memory.record.chat_with_timeout", return_value=chat_out):
+                results = _run_compress(mem, threshold=100, dry_run=True)
 
-        # dry_run → no update call
-        mem.update.assert_not_called()
-        assert len(results) == 1
-        assert results[0]["id"] == "long01"
-        assert results[0]["original_len"] > 100
+            # dry_run -> no update call
+            mem.update.assert_not_called()
+            assert len(results) == 1
+            assert results[0]["id"] == "long01"
+            assert results[0]["original_len"] > 100
+        finally:
+            store.close()
 
 
 # ---------------------------------------------------------------------------

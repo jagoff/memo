@@ -14,16 +14,47 @@ in MCP" (see CLAUDE.md). Dry-run by default; pass ``--write`` to apply.
 from __future__ import annotations
 
 import dataclasses
+import json
 import shutil
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import click
 
 from memo.runtime.detect import _resolved_memo_mcp
-from memo.runtime.mcp import _mcp_server_env
+from memo.runtime.mcp import (
+    _mcp_add_command,
+    _mcp_server_env,
+    _mcp_server_json,
+    _run_agent_command,
+)
 
 CONSTRAINED_CLIENTS: frozenset[str] = frozenset({"codex", "opencode"})
+_FALLBACK_SUPPORTED_AGENTS: tuple[str, ...] = (
+    "claude-code",
+    "claude-desktop",
+    "codex",
+    "cursor",
+    "devin",
+    "gemini",
+    "opencode",
+    "windsurf",
+)
+
+
+@dataclass(frozen=True)
+class _AgentMcpServer:
+    name: str
+    command: str
+    env: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _GenericPreset:
+    config_path: str
+    json_key: str = "mcpServers"
 
 
 def _effective_profile(profile: str, agent: str) -> str:
@@ -61,14 +92,16 @@ def _resolve_isolated_memo_mcp() -> Path | None:
 
 
 def _build_server() -> Any:
-    """Construct the contract's AgentMcpServer for memo, or raise if the
-    contract / isolated runtime is unavailable."""
+    """Construct an AgentMcpServer-compatible value.
+
+    `consciousness_contracts` is a local/dev integration package. The public
+    `mlx-memo` install path must not require it just to print or write an MCP
+    config, so fall back to the tiny dataclass shape the installer needs.
+    """
     try:
         from consciousness_contracts import AgentMcpServer
-    except ImportError as exc:  # pragma: no cover - optional dep
-        raise click.ClickException(
-            "consciousness-contracts not installed; install it to use `install-mcp`."
-        ) from exc
+    except ImportError:  # pragma: no cover - depends on optional local package
+        AgentMcpServer = _AgentMcpServer
     memo_mcp = _resolve_isolated_memo_mcp()
     if memo_mcp is None:
         raise click.ClickException(
@@ -77,6 +110,107 @@ def _build_server() -> Any:
             "must not be written into agent configs)."
         )
     return AgentMcpServer(name="memo", command=str(memo_mcp), env=_mcp_server_env())
+
+
+def _generic_preset(config_path: str, json_key: str = "mcpServers") -> _GenericPreset:
+    return _GenericPreset(config_path=config_path, json_key=json_key)
+
+
+def _config_path(raw: str) -> Path:
+    p = Path(raw).expanduser()
+    return p if p.is_absolute() else Path.home() / p
+
+
+def _write_mcp_json(path: Path, server: Any, *, json_key: str, include_type: bool) -> str:
+    data: dict[str, Any]
+    if path.is_file() and path.read_text(encoding="utf-8").strip():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(f"MCP config is not valid JSON: {path} ({exc})") from exc
+        if not isinstance(loaded, dict):
+            raise click.ClickException(f"MCP config must be a JSON object: {path}")
+        data = loaded
+        action = "updated"
+    else:
+        data = {}
+        action = "created"
+
+    servers = data.setdefault(json_key, {})
+    if not isinstance(servers, dict):
+        raise click.ClickException(f"`{json_key}` must be a JSON object in {path}")
+    servers[server.name] = _mcp_server_json(Path(server.command), server.env, include_type=include_type)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return action
+
+
+def _fallback_register_agent_mcp(
+    agent: str,
+    server: Any,
+    *,
+    write: bool = False,
+    preset: _GenericPreset | None = None,
+) -> dict[str, Any]:
+    """Minimal installer used when consciousness_contracts is absent."""
+    try:
+        if agent == "generic":
+            if preset is None:
+                return {"ok": False, "agent": agent, "error": "missing generic preset"}
+            path = _config_path(preset.config_path)
+            if not write:
+                return {
+                    "ok": True,
+                    "agent": agent,
+                    "action": "dry-run",
+                    "would": "write",
+                    "path": str(path),
+                }
+            action = _write_mcp_json(path, server, json_key=preset.json_key, include_type=True)
+            return {"ok": True, "agent": agent, "action": action, "path": str(path)}
+
+        if agent in {"claude-code", "codex", "devin", "opencode"}:
+            argv = _mcp_add_command(agent, Path(server.command), server.env)
+            if not write:
+                return {
+                    "ok": True,
+                    "agent": agent,
+                    "action": "dry-run",
+                    "strategy": "cli",
+                    "argv": [str(arg) for arg in argv],
+                }
+            _run_agent_command(argv, dry_run=False)
+            return {"ok": True, "agent": agent, "action": "installed", "strategy": "cli"}
+
+        config_targets: dict[str, tuple[Path, bool]] = {
+            "claude-desktop": (
+                Path.home()
+                / "Library"
+                / "Application Support"
+                / "Claude"
+                / "claude_desktop_config.json",
+                False,
+            ),
+            "cursor": (Path.home() / ".cursor" / "mcp.json", True),
+            "gemini": (Path.home() / ".gemini" / "settings.json", True),
+            "windsurf": (Path.home() / ".codeium" / "windsurf" / "mcp_config.json", False),
+        }
+        if agent in config_targets:
+            path, include_type = config_targets[agent]
+            if not write:
+                return {
+                    "ok": True,
+                    "agent": agent,
+                    "action": "dry-run",
+                    "would": "write",
+                    "path": str(path),
+                }
+            action = _write_mcp_json(path, server, json_key="mcpServers", include_type=include_type)
+            return {"ok": True, "agent": agent, "action": action, "path": str(path)}
+
+        return {"ok": False, "agent": agent, "skipped": True, "error": "unsupported agent"}
+    except (click.ClickException, subprocess.SubprocessError, OSError) as exc:
+        return {"ok": False, "agent": agent, "error": str(exc)}
 
 
 def _report(result: dict[str, Any]) -> None:
@@ -135,13 +269,10 @@ def install_mcp(
             generic_preset,
             register_agent_mcp,
         )
-    except ImportError as exc:
-        raise click.ClickException(
-            "consciousness-contracts not installed in memo's runtime. Install it "
-            "into the isolated env: `pipx inject mlx-memo -e "
-            "<path>/consciousness-contracts` (or `uv tool install mlx-memo --with "
-            "<path>/consciousness-contracts`)."
-        ) from exc
+    except ImportError:
+        SUPPORTED_AGENTS = _FALLBACK_SUPPORTED_AGENTS
+        generic_preset = _generic_preset
+        register_agent_mcp = _fallback_register_agent_mcp
 
     server = _build_server()
 
