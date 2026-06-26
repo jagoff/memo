@@ -33,6 +33,7 @@ from memo.memory.replay_ops import _ReplayOpsMixin
 from memo.memory.repo_ops import _RepoOpsMixin
 from memo.memory.rerank_ops import _RerankOpsMixin
 from memo.memory.search_ops import _SearchOpsMixin
+from memo.memory.search_scoring_ops import _SearchScoringMixin
 from memo.memory.update_ops import _UpdateOpsMixin
 from memo.memory.write_ops import _WriteOpsMixin
 from memo.store import VecStore
@@ -46,6 +47,7 @@ class Memory(
     _UpdateOpsMixin,
     _DeleteOpsMixin,
     _SearchOpsMixin,
+    _SearchScoringMixin,
     _AskOpsMixin,
     _RerankOpsMixin,
     _RepoOpsMixin,

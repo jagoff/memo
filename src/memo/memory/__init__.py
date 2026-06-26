@@ -11,6 +11,9 @@ Layout:
 - `_base`        — `_MemoryBase`, the typed contract for the op mixins.
 - `write_ops`    — `_WriteOpsMixin` (save / update / forget / delete).
 - `search_ops`   — `_SearchOpsMixin` (search / list / get / resolve_id).
+- `search_scoring_ops` — `_SearchScoringMixin` (post-fetch graph expansion,
+                   penalties, entity/retrieval/health re-scoring, access,
+                   cache read-through).
 - `ask_ops`      — `_AskOpsMixin` (ask / chat_ask + helpers).
 - `rerank_ops`   — `_RerankOpsMixin` (rerank + source feedback).
 - `repo_ops`     — `_RepoOpsMixin` (repo corpus).

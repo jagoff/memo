@@ -64,8 +64,14 @@ class _MemoryBase:
     def ask_stream(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def repo_search(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
 
+    def _apply_contradict_penalty(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _apply_entity_boost(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _apply_graph_expansion(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _apply_health_scores(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _apply_retrieval_boost(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_source_feedback(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_write_policy(self, *a: Any, **k: Any) -> Any: ...
+    def _fetch_graph_candidates(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _build_ask_context(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _build_rel_path(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _cache_backend(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
