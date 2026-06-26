@@ -4,8 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def _make_server_and_tools():
     """Return a (server_mock, tools_dict) pair.
@@ -66,7 +64,6 @@ def test_register_exposes_all_four_tools(tmp_cfg) -> None:
 
 def test_no_module_level_mlx_imports() -> None:
     """server_idle_capture must not have module-level MLX imports (deferred-import invariant)."""
-    import importlib.util
     import sys
 
     # Ensure it's not cached
@@ -93,9 +90,8 @@ def test_no_module_level_mlx_imports() -> None:
             for alias in node.names:
                 if alias.name.startswith("mlx"):
                     violations.append(f"line {node.lineno}: import {alias.name}")
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.startswith("mlx"):
-                violations.append(f"line {node.lineno}: from {node.module} import ...")
+        elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("mlx"):
+            violations.append(f"line {node.lineno}: from {node.module} import ...")
 
     assert not violations, f"Module-level MLX imports found: {violations}"
 

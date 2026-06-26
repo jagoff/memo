@@ -20,7 +20,7 @@ def _make_pkg(root: Path, version: str, body: str) -> Path:
 def test_fresh_when_version_and_content_match(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    pkg = _make_pkg(repo, "1.2.3", "X = 1\n")
+    _make_pkg(repo, "1.2.3", "X = 1\n")
     # Installed dir = a byte-identical copy of the repo package.
     installed = tmp_path / "site" / "memo"
     installed.mkdir(parents=True)

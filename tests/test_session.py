@@ -20,6 +20,7 @@ exercises the same code paths.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -743,7 +744,9 @@ def test_reflect_flock_prevents_concurrent_reflect(tmp_path: Path, monkeypatch) 
     # Pre-hold the reflect.lock to simulate another session already running reflect.
     lock_path = state / "reflect.lock"
     lock_path.touch()
-    lock_fd = open(lock_path, "w")
+    # Held open intentionally (not a `with`): the lock must persist across the
+    # concurrent-reflect simulation below; unlocked and closed at the test's end.
+    lock_fd = open(lock_path, "w")  # noqa: SIM115
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
     results: list[str | None] = []
@@ -756,10 +759,8 @@ def test_reflect_flock_prevents_concurrent_reflect(tmp_path: Path, monkeypatch) 
             input=json.dumps({"session_id": sid, "transcript_path": str(transcript)}),
         )
         out: dict[str, object] = {}
-        try:
+        with contextlib.suppress(Exception):
             out = json.loads(r.output.strip())
-        except Exception:
-            pass
         results.append(out.get("status"))  # type: ignore[arg-type]
 
     t = threading.Thread(target=try_reflect)

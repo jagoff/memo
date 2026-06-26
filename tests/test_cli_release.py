@@ -32,7 +32,7 @@ def _fake_repo(root: Path, version: str) -> Path:
         encoding="utf-8",
     )
     (root / "CHANGELOG.md").write_text(
-        "# Changelog\n\n## [Unreleased]\n\n## [%s] - 2026-01-01\n\n- prior\n" % version,
+        f"# Changelog\n\n## [Unreleased]\n\n## [{version}] - 2026-01-01\n\n- prior\n",
         encoding="utf-8",
     )
     return root

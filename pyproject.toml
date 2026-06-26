@@ -172,3 +172,13 @@ ignore = [
     #       expected to be on PATH in the managed runtime environment)
     "S607",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately hardcode throwaway paths/credentials and swallow errors in
+# best-effort cleanup — the flake8-bandit security rules are noise here, not in src.
+"tests/**" = [
+    "S105",  # hardcoded "password"-looking test fixtures (fake tokens)
+    "S108",  # hardcoded /tmp paths in fixtures (never real temp-file handling)
+    "S110",  # try/except/pass in test cleanup
+    "SIM117",  # nested `with patch(...)` reads clearer than one combined with
+]

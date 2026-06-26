@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def recall_env(tmp_cfg: "Config", monkeypatch: pytest.MonkeyPatch) -> "Config":
+def recall_env(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> Config:
     """Minimal environment for recall-hook: stub embedder, no MLX, isolated storage.
 
     Sets MEMO_DATA_DIR and MEMO_STATE_DIR so Config.from_env() inside the hook
@@ -39,7 +39,7 @@ def recall_env(tmp_cfg: "Config", monkeypatch: pytest.MonkeyPatch) -> "Config":
     return tmp_cfg
 
 
-def test_recall_hook_returns_valid_json_on_empty_corpus(recall_env: "Config") -> None:
+def test_recall_hook_returns_valid_json_on_empty_corpus(recall_env: Config) -> None:
     """recall-hook must return valid JSON (or empty string) with no memories saved."""
     runner = CliRunner()
     payload = json.dumps(
@@ -54,7 +54,7 @@ def test_recall_hook_returns_valid_json_on_empty_corpus(recall_env: "Config") ->
 
 
 def test_recall_hook_returns_json_when_embedder_raises(
-    recall_env: "Config", monkeypatch: pytest.MonkeyPatch
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """recall-hook must not crash when the embedder raises — degrade to empty JSON."""
 
@@ -78,7 +78,7 @@ def test_recall_hook_returns_json_when_embedder_raises(
         json.loads(output)  # must be valid JSON if anything was printed
 
 
-def test_recall_hook_concurrent_invocations(recall_env: "Config") -> None:
+def test_recall_hook_concurrent_invocations(recall_env: Config) -> None:
     """Multiple concurrent recall-hook CLI invocations must not deadlock or raise.
 
     Uses empty stdin so each thread bails early (before any sqlite access),

@@ -24,7 +24,7 @@ def test_gpu_guard_is_reentrant_on_same_thread() -> None:
     # embed_query()->embed() and rerank()->score() re-enter on one thread.
     # The nesting is the assertion (a second acquire must not block), so keep
     # the two `with` blocks separate rather than collapsing them.
-    with gpu_guard():  # noqa: SIM117
+    with gpu_guard():
         with gpu_guard():
             entered = True
     assert entered
@@ -86,7 +86,7 @@ def test_gpu_guard_reentrant_does_not_deadlock_on_flock(tmp_path, monkeypatch) -
     # flock is not reentrant at the fd level; nested guards on one process must
     # not try to re-acquire it (that would deadlock under LOCK_EX).
     monkeypatch.setenv("MEMO_GPU_LOCK_PATH", str(tmp_path / "gpu.lock"))
-    with gpu_guard():  # noqa: SIM117
+    with gpu_guard():
         with gpu_guard():
             assert _other_process_can_lock(tmp_path) is False
 
