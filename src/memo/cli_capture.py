@@ -22,7 +22,7 @@ from memo.config import Config
 def _write_capture_notification(state_dir: Path, titles: list[str], *, idle: bool = False) -> None:
     """Write a pending notification the next recall-hook surfaces, so passive
     auto-capture is visible to the user. Rendered as a single muted line
-    (``※ MEMO: auto save…``) rather than a heading, to stay unobtrusive in the
+    (``※ MEMO auto-saved``) rather than a heading, to stay unobtrusive in the
     console. Best-effort; never raises."""
     if not titles:
         return
