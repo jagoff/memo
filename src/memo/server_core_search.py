@@ -10,10 +10,12 @@ _log = logging.getLogger(__name__)
 
 
 def _read_notification(memory: Memory) -> str:
-    """Read pending idle-capture notification without deleting it."""
+    """Read and consume the pending idle-capture notification (deletes after read)."""
     notif_path = memory.cfg.state_dir / "pending_idle_notification.txt"
     try:
-        return notif_path.read_text(encoding="utf-8").strip()
+        text = notif_path.read_text(encoding="utf-8").strip()
+        notif_path.unlink(missing_ok=True)
+        return text
     except Exception:
         return ""
 

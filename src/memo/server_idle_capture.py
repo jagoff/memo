@@ -68,24 +68,16 @@ def register(server: FastMCP, memory: Memory) -> None:
         # Format response
         titles = result.get("saved_titles") or []
         n = len(titles)
-        if titles:
-            shown = "; ".join(t for t in titles[:3])
-            if n > 3:
-                shown += f"; +{n - 3} more"
-            notification = f"※ auto save (idle): {shown}"
-        else:
-            notification = "※ auto save (idle): scanned (0 new insights)"
+        notification = "※ MEMO auto-saved" if titles else ""
 
-        # Write pending notification so memo_pop_notification and search/ask
-        # tools can surface it to the user. Also print to stderr for clients
-        # that display daemon output (opencode, Claude Desktop).
-        import contextlib as _contextlib
-        with _contextlib.suppress(OSError):
-            (cfg.state_dir / "pending_idle_notification.txt").write_text(
-                notification + "\n", encoding="utf-8"
-            )
-        import sys as _sys
-        print(notification, file=_sys.stderr)
+        if titles:
+            import contextlib as _contextlib
+            with _contextlib.suppress(OSError):
+                (cfg.state_dir / "pending_idle_notification.txt").write_text(
+                    notification + "\n", encoding="utf-8"
+                )
+            import sys as _sys
+            print(notification, file=_sys.stderr)
 
         return {
             "status": result.get("status"),
@@ -267,10 +259,6 @@ def run_idle_capture_loop() -> None:
             # unbounded log growth; debug level is enough for the no-op case.
             ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             if titles:
-                shown = "; ".join(t for t in titles[:3])
-                if n > 3:
-                    shown += f"; +{n - 3} more"
-                notif = f"※ auto save (idle): {shown}"
                 _maybe_rotate()
                 with open(log_file, "a") as f:
                     f.write(
@@ -278,15 +266,11 @@ def run_idle_capture_loop() -> None:
                         f'"status": "{result.get("status")}", "saved": {n}}}\n'
                     )
                 _log.info("idle daemon: captured %d insights", n)
+                (cfg.state_dir / "pending_idle_notification.txt").write_text(
+                    "※ MEMO auto-saved\n", encoding="utf-8"
+                )
             else:
-                notif = "※ auto save (idle): scanned (0 new insights)"
                 _log.debug("idle daemon: scanned (0 new insights)")
-
-            # Write pending notification for headless clients (opencode, Devin)
-            # to read via memo_pop_notification MCP tool.
-            (cfg.state_dir / "pending_idle_notification.txt").write_text(
-                notif + "\n", encoding="utf-8"
-            )
 
         except Exception as exc:
             _log.error("idle daemon: error: %s", exc)
