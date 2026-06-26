@@ -216,6 +216,16 @@ def _handle_feedback_implicit(memory: Memory, args: dict[str, Any]) -> dict[str,
     return memory.feedback_record(source_id, query_text=query, rating=signal)
 
 
+def _handle_version(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
+    """Get memo version info — version string and backend protocol version."""
+    from memo import __version__ as _memo_version
+    from memo.memory import NATIVE_BACKEND_PROTOCOL_VERSION
+    return {
+        "version": _memo_version,
+        "backend_protocol_version": NATIVE_BACKEND_PROTOCOL_VERSION,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
@@ -258,7 +268,38 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
         ),
         handler=_handle_feedback_implicit,
     ),
+    ToolSpec(
+        name="memo_version",
+        description=(
+            "Get memo version info — the package version and the backend protocol version. "
+            "Use this to check which version of memo is running."
+        ),
+        params=(),
+        handler=_handle_version,
+    ),
 )
+
+
+def _register_spec(server: Any, memory: Memory, spec: ToolSpec) -> None:
+    sig, annotations = _signature_from_spec(spec)
+
+    def _make_wrapper(s: ToolSpec, sig: Any, annotations: dict[str, Any]) -> Callable[..., Any]:
+        def _wrapper(**kwargs: Any) -> Any:
+            return s.handler(memory, kwargs)
+
+        _wrapper.__name__ = s.name
+        _wrapper.__doc__ = s.description
+        _wrapper.__signature__ = sig  # type: ignore[attr-defined]
+        _wrapper.__annotations__ = annotations
+        return _wrapper
+
+    server.tool()(_make_wrapper(spec, sig, annotations))
+
+
+def register_version(server: Any, memory: Memory) -> None:
+    """Register only memo_version — available in all profiles including core."""
+    spec = next(s for s in _TOOL_SPECS if s.name == "memo_version")
+    _register_spec(server, memory, spec)
 
 
 def register_all(server: Any, memory: Memory) -> None:
@@ -268,21 +309,4 @@ def register_all(server: Any, memory: Memory) -> None:
     introspect, so the advertised JSON schema matches schema_from_spec.
     """
     for spec in _TOOL_SPECS:
-        sig, annotations = _signature_from_spec(spec)
-
-        def _make_wrapper(
-            s: ToolSpec,
-            sig: Any,
-            annotations: dict[str, Any],
-        ) -> Callable[..., Any]:
-            def _wrapper(**kwargs: Any) -> Any:
-                return s.handler(memory, kwargs)
-
-            _wrapper.__name__ = s.name
-            _wrapper.__doc__ = s.description
-            _wrapper.__signature__ = sig  # type: ignore[attr-defined]
-            _wrapper.__annotations__ = annotations
-            return _wrapper
-
-        wrapper = _make_wrapper(spec, sig, annotations)
-        server.tool()(wrapper)
+        _register_spec(server, memory, spec)

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-06-26
+
+### Fixed
+
+- **`memo_version` available in all MCP profiles.** `memo_version` is now registered unconditionally in `mcp_tools.py` so clients using `MEMO_MCP_PROFILE=core` (e.g. Devin Desktop) can call it; previously it was only wired in the `full`/`default` profile path (`server.py`, `mcp_tools.py`).
+
 ## [1.1.8] - 2026-06-26
 
 ### Fixed
