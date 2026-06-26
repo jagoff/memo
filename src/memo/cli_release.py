@@ -8,6 +8,7 @@ Registered in cli.py via `cli.add_command(release_group)`.
 from __future__ import annotations
 
 import datetime
+import os
 import re
 from pathlib import Path
 
@@ -60,6 +61,25 @@ def _sub_exact(text: str, pattern: str, repl: str, *, count: int, flags: int = 0
     if n != count:
         raise ValueError(f"expected {count} match(es) for {pattern!r}, got {n}")
     return new
+
+
+def _atomic_write_all(edits: dict[Path, str]) -> None:
+    """Write every file atomically. Stage all contents to sibling ``*.tmp``
+    files first, so a failure while staging touches no real file; then
+    ``os.replace`` each temp into place (each replace is atomic on POSIX).
+    Cleans up staged temps if staging fails."""
+    staged: dict[Path, Path] = {}
+    try:
+        for path, content in edits.items():
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(content, encoding="utf-8")
+            staged[path] = tmp
+    except OSError:
+        for tmp in staged.values():
+            tmp.unlink(missing_ok=True)
+        raise
+    for path, tmp in staged.items():
+        os.replace(tmp, path)
 
 
 def plan_release_edits(repo: Path, old: str, new: str, date: str) -> dict[Path, str]:
@@ -127,7 +147,7 @@ def release_bump(level: str, dry_run: bool, date: str | None) -> None:
             console.print(f"  would update: {path.relative_to(repo)}")
         console.print("[dim]dry-run: no files written[/dim]")
         return
-    for path, content in edits.items():
-        path.write_text(content, encoding="utf-8")
+    _atomic_write_all(edits)
+    for path in edits:
         console.print(f"  updated: {path.relative_to(repo)}")
     console.print("[green]✓[/green] version synced; edit the CHANGELOG TODO before committing")

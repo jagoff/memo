@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`memo release bump` writes are now atomic.** All four version files are staged to sibling `*.tmp` files first and then `os.replace`d into place, so an I/O failure mid-bump can no longer leave the source-of-truth files torn or out of sync (follow-up to the M2 "compute-all-edits-first" guard).
+- **De-duplicated `memo doctor` freshness wiring.** The install-freshness check (resolve installed version + package dir + `MEMO_DEV_REPO`) lived verbatim in both the human and `--json` doctor paths; it's now a single `freshness_report()` helper, so the two outputs can't drift.
 - **`MEMO_CACHE_MODE` description corrected (not removed).** The flag and its `read_through`/`write_through`/`write_back` modes are in fact wired and tested (`cache.py` + `Memory.save`/`Memory.search`); the prior "DEPRECATED — only off is wired / smart·prefetch·aggressive dead" text was stale and wrong. The cache tier stays; only the misleading docs were fixed.
 
 ## [1.1.0] - 2026-06-26

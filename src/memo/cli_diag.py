@@ -414,6 +414,22 @@ def _json_import_check(label: str, check: Callable[[], None]) -> dict[str, Any]:
     return {"label": label, "ok": True, "error": ""}
 
 
+def freshness_report() -> dict[str, str]:
+    """Resolve installed version + package dir + ``MEMO_DEV_REPO`` and run the
+    install-freshness check. The single wiring shared by both ``memo doctor``
+    output paths (human and ``--json``), so they can never drift apart."""
+    from memo import __version__ as _installed_version
+    from memo.flags import flag_str
+    from memo.runtime.freshness import check_install_freshness, installed_package_dir
+
+    _dev_repo = flag_str("MEMO_DEV_REPO")
+    return check_install_freshness(
+        installed_version=_installed_version,
+        installed_pkg_dir=installed_package_dir(),
+        repo_root=Path(_dev_repo).expanduser() if _dev_repo else None,
+    )
+
+
 def _doctor_report(
     cfg: Config,
     *,
@@ -422,16 +438,7 @@ def _doctor_report(
     do_gc: bool,
     fix: bool,
 ) -> dict[str, Any]:
-    from memo import __version__ as _installed_version
-    from memo.flags import flag_str
-    from memo.runtime.freshness import check_install_freshness, installed_package_dir
-
-    _dev_repo = flag_str("MEMO_DEV_REPO")
-    _freshness = check_install_freshness(
-        installed_version=_installed_version,
-        installed_pkg_dir=installed_package_dir(),
-        repo_root=Path(_dev_repo).expanduser() if _dev_repo else None,
-    )
+    _freshness = freshness_report()
 
     from memo.runtime.mcp_config import scan_mcp_configs
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from memo.cli_release import bump_version, plan_release_edits, release_group
+from memo.cli_release import _atomic_write_all, bump_version, plan_release_edits, release_group
 
 
 def test_bump_version_levels() -> None:
@@ -59,6 +59,27 @@ def test_release_bump_dry_run_writes_nothing(tmp_path: Path, monkeypatch: pytest
     result = CliRunner().invoke(release_group, ["bump", "patch", "--dry-run"])
     assert result.exit_code == 0
     assert 'version = "1.2.3"' in (repo / "pyproject.toml").read_text()
+
+
+def test_atomic_write_all_writes_and_leaves_no_temps(tmp_path: Path) -> None:
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    _atomic_write_all({a: "AAA", b: "BBB"})
+    assert a.read_text() == "AAA"
+    assert b.read_text() == "BBB"
+    # No staged *.tmp siblings survive a successful write.
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_atomic_write_all_aborts_without_touching_files(tmp_path: Path) -> None:
+    good = tmp_path / "good.txt"
+    good.write_text("OLD", encoding="utf-8")
+    # A target whose parent dir is missing makes staging raise mid-batch.
+    bad = tmp_path / "missing_dir" / "bad.txt"
+    with pytest.raises(OSError):
+        _atomic_write_all({good: "NEW", bad: "NEW"})
+    # The pre-existing file is untouched and no temp leaks behind.
+    assert good.read_text() == "OLD"
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
 def test_release_bump_writes_all_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

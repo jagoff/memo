@@ -6,13 +6,15 @@ from pathlib import Path
 
 import click
 
-from memo import __version__ as _installed_version
 from memo.cli_common import console
-from memo.cli_diag import _db_health_report, _doctor_report, _recall_daemon_health
+from memo.cli_diag import (
+    _db_health_report,
+    _doctor_report,
+    _recall_daemon_health,
+    freshness_report,
+)
 from memo.cli_runtime import _print_runtime_install_report, _runtime_install_report
 from memo.config import Config
-from memo.flags import flag_str
-from memo.runtime.freshness import check_install_freshness, installed_package_dir
 from memo.runtime.mcp_config import scan_mcp_configs
 
 
@@ -58,12 +60,7 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
     if strict_runtime and runtime_report["warnings"]:
         ok = False
 
-    _dev_repo = flag_str("MEMO_DEV_REPO")
-    _fresh = check_install_freshness(
-        installed_version=_installed_version,
-        installed_pkg_dir=installed_package_dir(),
-        repo_root=Path(_dev_repo).expanduser() if _dev_repo else None,
-    )
+    _fresh = freshness_report()
     if _fresh["status"] == "stale":
         console.print(f"[yellow]![/yellow] install freshness: {_fresh['message']}")
     elif _fresh["status"] in ("fresh", "repo-ahead"):
