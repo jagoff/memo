@@ -657,6 +657,7 @@ def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path, monke
                 "session_id": sid,
                 "transcript_path": str(transcript),
             }),
+            catch_exceptions=False,
         )
 
     # The exit code should be 0 — if there was a NameError, it would be caught
@@ -665,8 +666,8 @@ def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path, monke
     log = state / "idle_capture.log"
     # When successful capture completes with titles, _hb("captured-notified", saved=len(_titles))
     # is called. Check that the log exists and contains this stage.
-    if log.exists():
-        entries = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
-        stages = [e["stage"] for e in entries]
-        # If the capture ran to completion, "captured-notified" stage should be present
-        assert "captured-notified" in stages, f"stages={stages}"
+    assert log.exists(), "heartbeat log was not written"
+    entries = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    stages = [e["stage"] for e in entries]
+    # If the capture ran to completion, "captured-notified" stage should be present
+    assert "captured-notified" in stages, f"stages={stages}"
