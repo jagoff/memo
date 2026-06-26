@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **De-duplicated `memo doctor` freshness wiring.** The install-freshness check (resolve installed version + package dir + `MEMO_DEV_REPO`) lived verbatim in both the human and `--json` doctor paths; it's now a single `freshness_report()` helper, so the two outputs can't drift.
 - **`MEMO_CACHE_MODE` description corrected (not removed).** The flag and its `read_through`/`write_through`/`write_back` modes are in fact wired and tested (`cache.py` + `Memory.save`/`Memory.search`); the prior "DEPRECATED — only off is wired / smart·prefetch·aggressive dead" text was stale and wrong. The cache tier stays; only the misleading docs were fixed.
 
+## [1.1.2] - 2026-06-26
+
+### Added
+- `MEMO_RECALL_FORMAT=compact` — ultra-compact recall block (~65% smaller; one line per hit). Opt-in, default `full`.
+- `MEMO_RECALL_TRIVIAL_BAIL` — skip recall for trivial confirmation prompts (`yes`, `ok`, `sí`, `dale`, etc.). On by default; ~25% fewer injections in typical sessions.
+- `memo compress-context <path>` — rule-based context file compression (removes HR rules, truncates long list items and blockquotes, collapses blank lines). `--dry-run` and `--backup` flags.
+- `memo token-savings` — shows recall injection stats and estimated token savings for the last 7 days.
+
+### Changed
+- `MEMO_RECALL_TOKEN_BUDGET` default restored to 600 (was accidentally changed in a prior commit).
+
 ## [1.1.1] - 2026-06-26
 
 ### Fixed
