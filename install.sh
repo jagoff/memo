@@ -17,7 +17,7 @@ UV_BIN=""
 # Colors + spinners are enabled only on an interactive, color-capable TTY.
 # `curl | bash` (no TTY), NO_COLOR, or TERM=dumb fall back to plain log lines.
 STEP=0
-TOTAL=9
+TOTAL=8
 USE_FANCY=false
 BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; RESET=""
 
