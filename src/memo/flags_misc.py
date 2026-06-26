@@ -462,6 +462,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "session, not user-configured; registered here so `memo config validate` "
         "recognizes it instead of flagging it as an unknown MEMO_* var.",
     ),
+    _spec(
+        "MEMO_DEV_REPO",
+        "str",
+        "",
+        "session",
+        "Path to the memo source checkout (e.g. ~/repos/memo). When set, "
+        "`memo doctor` compares the installed package against this repo and "
+        "warns if they differ at the SAME version (stale build), and "
+        "`memo release bump` targets this repo. Empty = checks skipped.",
+    ),
     # WhatsApp ingest
     _spec(
         "MEMO_WHATSAPP_DB",

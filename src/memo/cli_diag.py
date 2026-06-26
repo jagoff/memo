@@ -470,6 +470,17 @@ def _doctor_report(
         finally:
             conn.close()
 
+    from memo import __version__ as _installed_version
+    from memo.flags import flag_str
+    from memo.runtime.freshness import check_install_freshness, installed_package_dir
+
+    _dev_repo = flag_str("MEMO_DEV_REPO")
+    _freshness = check_install_freshness(
+        installed_version=_installed_version,
+        installed_pkg_dir=installed_package_dir(),
+        repo_root=Path(_dev_repo).expanduser() if _dev_repo else None,
+    )
+
     from memo.cli_runtime import _runtime_install_report
 
     runtime = _runtime_install_report()
@@ -509,6 +520,7 @@ def _doctor_report(
         "db": db_report,
         "gc": gc_report,
         "recall_daemon": daemon,
+        "freshness": _freshness,
     }
 
 
