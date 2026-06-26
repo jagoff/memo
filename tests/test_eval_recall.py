@@ -144,6 +144,53 @@ def test_recommend_warns_when_winner_blows_hook_budget():
     assert "recall-hook budget" not in eval_recall.recommend(fast)
 
 
+# --- regression gate ---------------------------------------------------------
+
+
+def _rows(*pairs):
+    return [
+        eval_recall.Row(config=f"cfg{i}", precision_at_k=p, noise_at_k=n)
+        for i, (p, n) in enumerate(pairs)
+    ]
+
+
+def test_best_row_picks_highest_precision_then_lowest_noise():
+    rows = _rows((0.4, 0.0), (0.8, 0.2), (0.8, 0.1))
+    assert eval_recall.best_row(rows).config == "cfg2"  # 0.8 prec, lower noise
+
+
+def test_gate_metrics_returns_best_pair():
+    rows = _rows((0.4, 0.3), (0.9, 0.1))
+    assert eval_recall.gate_metrics(rows) == {"precision_at_k": 0.9, "noise_at_k": 0.1}
+
+
+def test_check_gate_passes_when_metrics_hold():
+    rows = _rows((0.6, 0.1))
+    res = eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1})
+    assert res.passed
+    assert "PASS" in res.message
+
+
+def test_check_gate_passes_when_metrics_improve():
+    rows = _rows((0.8, 0.0))
+    res = eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1})
+    assert res.passed
+
+
+def test_check_gate_fails_on_precision_drop():
+    rows = _rows((0.5, 0.1))
+    res = eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1})
+    assert not res.passed
+    assert "precision@k" in res.message
+
+
+def test_check_gate_fails_on_noise_rise():
+    rows = _rows((0.6, 0.3))
+    res = eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1})
+    assert not res.passed
+    assert "noise@k" in res.message
+
+
 # --- end-to-end (isolated, stubbed embedder) --------------------------------
 
 
@@ -185,6 +232,8 @@ def test_cli_eval_recall_help_lists_options():
     assert result.exit_code == 0, result.output
     assert "--labels" in result.output
     assert "--force" in result.output
+    assert "--gate" in result.output
+    assert "--update-baseline" in result.output
 
 
 def test_cli_eval_recall_rejects_malformed_labels(tmp_path: Path):

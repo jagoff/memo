@@ -14,6 +14,7 @@ eval-chat`, `SYNAPSE_*` knobs, Ollama) — it belongs in synapse, not memo.
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -29,6 +30,12 @@ _CACHE_TTL_S = 24 * 3600
 
 def _cache_path(cfg: Config) -> Path:
     return cfg.state_dir / "eval" / "recall.json"
+
+
+def _baseline_path(cfg: Config) -> Path:
+    # Machine-local: the gate runs against THIS machine's live index, so the
+    # baseline can't be a committed repo file — it lives under state_dir.
+    return cfg.state_dir / "eval" / "recall_baseline.json"
 
 
 def _load_cache(cfg: Config) -> dict:
@@ -68,14 +75,39 @@ def eval_group() -> None:
 @click.option("--detail", is_flag=True, help="Print per-prompt top-K.")
 @click.option("--force", is_flag=True, help="Ignore cached results and re-run.")
 @click.option("--no-cache", is_flag=True, help="Neither read nor write the cache.")
+@click.option(
+    "--gate",
+    is_flag=True,
+    help="Regression gate: exit non-zero if precision@K dropped or noise@K rose "
+    "vs the saved baseline. Re-runs fresh (no cache).",
+)
+@click.option(
+    "--update-baseline",
+    is_flag=True,
+    help="Save the current best precision@K / noise@K as the gate baseline.",
+)
 def eval_recall_cmd(
-    k: int, labels_path: str | None, as_json: bool, detail: bool, force: bool, no_cache: bool
+    k: int,
+    labels_path: str | None,
+    as_json: bool,
+    detail: bool,
+    force: bool,
+    no_cache: bool,
+    gate: bool,
+    update_baseline: bool,
 ) -> None:
     """Precision@K / noise@K per retrieval config over labeled prompts.
 
     Example: memo eval recall --k 3 --labels mylabels.json --json
+
+    Gate (local pre-commit, runs against the live index):
+      memo eval recall --labels eval/regression_labels.json --update-baseline
+      memo eval recall --labels eval/regression_labels.json --gate
     """
     cfg = Config.from_env()
+    # The gate compares fresh numbers — never trust a stale cache for a pass/fail.
+    if gate or update_baseline:
+        force = True
 
     if labels_path:
         try:
@@ -108,6 +140,38 @@ def eval_recall_cmd(
             cache = _load_cache(cfg)
             cache[cache_key] = {"ts": time.time(), "k": k, "rows": [r.__dict__ for r in rows]}
             _save_cache(cfg, cache)
+
+    if update_baseline:
+        metrics = eval_recall.gate_metrics(rows)
+        payload = {**metrics, "k": k, "labels_fingerprint": labels.fingerprint()}
+        bp = _baseline_path(cfg)
+        bp.parent.mkdir(parents=True, exist_ok=True)
+        bp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(
+            f"[green]✓[/green] baseline saved: prec@{k} {metrics['precision_at_k']} / "
+            f"noise@{k} {metrics['noise_at_k']} → {bp}"
+        )
+        return
+
+    if gate:
+        bp = _baseline_path(cfg)
+        if not bp.exists():
+            raise click.ClickException(
+                f"no gate baseline at {bp} — seed it once with "
+                "`memo eval recall --labels <set> --update-baseline`"
+            )
+        try:
+            baseline = json.loads(bp.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise click.ClickException(f"unreadable baseline {bp}: {exc}") from exc
+        result = eval_recall.check_gate(rows, baseline)
+        if as_json:
+            click.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+        else:
+            color = "green" if result.passed else "red"
+            mark = "✓" if result.passed else "✗"
+            console.print(f"[{color}]{mark}[/{color}] recall gate: {result.message}")
+        sys.exit(0 if result.passed else 1)
 
     if as_json:
         click.echo(

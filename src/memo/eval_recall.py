@@ -306,6 +306,11 @@ def rows_to_table(rows: list[Row], k: int) -> str:
 _HOOK_SEARCH_BUDGET_MS = 3000.0
 
 
+def best_row(rows: list[Row]) -> Row:
+    """The winning config: highest precision@K, tie-break lowest noise@K."""
+    return max(rows, key=lambda r: (r.precision_at_k, -r.noise_at_k))
+
+
 def recommend(rows: list[Row]) -> str:
     """Concrete next-step suggestion: pick the config with the best
     precision (tie-break: lower noise), and if it beats the baseline, map it
@@ -314,7 +319,7 @@ def recommend(rows: list[Row]) -> str:
     if not rows:
         return "no configs evaluated."
     baseline = rows[0]
-    best = max(rows, key=lambda r: (r.precision_at_k, -r.noise_at_k))
+    best = best_row(rows)
     if best.config == baseline.config:
         return "Baseline config already wins — no knob change recommended."
     dp = best.precision_at_k - baseline.precision_at_k
@@ -333,6 +338,55 @@ def recommend(rows: list[Row]) -> str:
             f"`memo ask`/chat, but keep a faster mode for the hook."
         )
     return out
+
+
+# --- Regression gate ---------------------------------------------------------
+
+
+@dataclass
+class GateResult:
+    passed: bool
+    message: str
+    precision_at_k: float
+    noise_at_k: float
+    baseline_precision: float
+    baseline_noise: float
+
+
+def gate_metrics(rows: list[Row]) -> dict[str, float]:
+    """The single (precision@K, noise@K) pair the gate tracks — the best config."""
+    b = best_row(rows)
+    return {"precision_at_k": b.precision_at_k, "noise_at_k": b.noise_at_k}
+
+
+def check_gate(
+    rows: list[Row], baseline: dict[str, float], *, tol: float = 1e-9
+) -> GateResult:
+    """Compare the current best config against a saved baseline.
+
+    The gate FAILS if precision@K dropped below, or noise@K rose above, the
+    baseline (beyond `tol`). `tol` absorbs float noise; widen it to allow a
+    small accepted drift.
+    """
+    m = gate_metrics(rows)
+    bp = float(baseline.get("precision_at_k", 0.0))
+    bn = float(baseline.get("noise_at_k", 1.0))
+    prec_ok = m["precision_at_k"] >= bp - tol
+    noise_ok = m["noise_at_k"] <= bn + tol
+    passed = prec_ok and noise_ok
+    if passed:
+        message = (
+            f"PASS — prec@k {m['precision_at_k']:.3f} >= {bp:.3f}, "
+            f"noise@k {m['noise_at_k']:.3f} <= {bn:.3f}"
+        )
+    else:
+        parts = []
+        if not prec_ok:
+            parts.append(f"precision@k {m['precision_at_k']:.3f} < baseline {bp:.3f}")
+        if not noise_ok:
+            parts.append(f"noise@k {m['noise_at_k']:.3f} > baseline {bn:.3f}")
+        message = "FAIL — " + "; ".join(parts)
+    return GateResult(passed, message, m["precision_at_k"], m["noise_at_k"], bp, bn)
 
 
 def fingerprint_corpus(mem: Any) -> str:

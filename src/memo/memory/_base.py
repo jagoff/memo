@@ -64,6 +64,7 @@ class _MemoryBase:
     def ask_stream(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def repo_search(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
 
+    def _apply_co_recall_boost(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_contradict_penalty(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_entity_boost(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_graph_expansion(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]

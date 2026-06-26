@@ -234,6 +234,38 @@ class _SearchScoringMixin(_MemoryBase):
             _log.exception("retrieval boost failed, returning unboosted results")
             return results
 
+    def _apply_co_recall_boost(self, results: list[MemoryRecord]) -> list[MemoryRecord]:
+        """Boost candidates frequently co-recalled with the top hit.
+
+        Memories that have surfaced together in past searches reinforce each
+        other: the more often a candidate was co-recalled with the current top
+        result, the larger its bump (scaled by the strongest co-recall edge in
+        the set, capped at MEMO_CO_RECALL_BOOST_WEIGHT). This is the read side
+        of MEMO_GRAPH_CO_RECALL — the write side records the edges in `search`.
+        Best-effort: any failure returns the unboosted results.
+        """
+        if len(results) < 3:
+            return results
+        try:
+            anchor = results[0]
+            counts = self.graph.co_recall_counts(anchor.id, [r.id for r in results[1:]])
+            max_c = max(counts.values(), default=0)
+            if max_c <= 0:
+                return results
+            weight = flag_float("MEMO_CO_RECALL_BOOST_WEIGHT") or 0.1
+            boosted: list[MemoryRecord] = [anchor]
+            for r in results[1:]:
+                c = counts.get(r.id, 0)
+                if c > 0:
+                    bump = weight * (c / max_c)
+                    r = replace(r, score=round((r.score or 0.0) + bump, 6))
+                boosted.append(r)
+            boosted.sort(key=lambda r: r.score or 0.0, reverse=True)
+            return boosted
+        except Exception:
+            _log.exception("co-recall boost failed, returning unboosted results")
+            return results
+
     def _apply_retrieval_boost(
         self,
         query: str,

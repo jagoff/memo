@@ -549,10 +549,20 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "graph",
-        "Record co-recall edges in graph.db whenever a search returns 2+ results. "
-        "Pairs of co-recalled memory IDs are stored in the `co_recall` table with "
-        "incrementing counts. Off by default to avoid graph DB write overhead on the "
-        "recall-hook hot path.",
+        "Record co-recall edges in graph.db whenever a search returns 2+ results, "
+        "AND boost candidates frequently co-recalled with the top hit so relationally-"
+        "associated memories surface together. Pairs of co-recalled memory IDs are "
+        "stored in the `co_recall` table with incrementing counts. Off by default to "
+        "avoid graph DB write overhead on the recall-hook hot path.",
+    ),
+    _spec(
+        "MEMO_CO_RECALL_BOOST_WEIGHT",
+        "float",
+        0.1,
+        "graph",
+        "Max score bump added to a candidate co-recalled with the top hit, scaled by "
+        "its share of the strongest co-recall edge in the result set. Only applied when "
+        "MEMO_GRAPH_CO_RECALL is on.",
     ),
     # schema / embedding version check
     _spec(

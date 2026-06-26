@@ -5,10 +5,11 @@
     {
       "text": "donde se hace el deploy de las lambda",
       "relevant": true,
-      "expect_ids": ["231d4534"],
+      "expect_ids": [
+        "231d4534"
+      ],
       "_note": "2026-06-08 incident: garbled AWS-console OCR screenshots (99-Attachments) outranked the real note 'Deploy nuevas lambda' (work/03-Resources), causing a fabricated answer (us-east-1, lambda-athena-billing-report). Fixed by the OCR confidence gate (6a7fcaa). This prompt guards the whole class."
     },
-
     {
       "text": "what did I decide about the MLX embedder model",
       "relevant": true,
@@ -153,7 +154,30 @@
       "expect_ids": [],
       "_note": "Tooling lookup — uv package manager usage in memo dev workflow."
     },
-
+    {
+      "text": "how does the reranker work in memo",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Architecture lookup — cross-encoder rerank stage over the RRF candidate pool."
+    },
+    {
+      "text": "qué hace el reranker en memo",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Spanish variant of the reranker architecture query."
+    },
+    {
+      "text": "what does memo dream do at night",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Maintenance lookup — the dream pipeline (contradict/consolidate/stale/synthesize/decay)."
+    },
+    {
+      "text": "how does memo handle contradictions and stale memories",
+      "relevant": true,
+      "expect_ids": [],
+      "_note": "Freshness lookup — contradiction scan + supersede/archive, the authoritative freshness state."
+    },
     {
       "text": "best pasta recipe for tonight",
       "relevant": false,
@@ -171,13 +195,49 @@
     }
   ],
   "relevant_terms": [
-    "lambda", "deploy", "dev-publiccloudinfrastructure", "publiccloudinfrastructure",
-    "mlx", "sqlite-vec", "qwen3", "embedding", "embedder",
-    "memo", "memflow", "synapse", "obsidian",
-    "recall", "hook", "daemon", "bm25", "rrf",
-    "macbook", "m3", "vault", "uv"
+    "lambda",
+    "deploy",
+    "dev-publiccloudinfrastructure",
+    "publiccloudinfrastructure",
+    "mlx",
+    "sqlite-vec",
+    "qwen3",
+    "embedding",
+    "embedder",
+    "memo",
+    "memflow",
+    "synapse",
+    "obsidian",
+    "recall",
+    "hook",
+    "daemon",
+    "bm25",
+    "rrf",
+    "macbook",
+    "m3",
+    "vault",
+    "uv",
+    "reranker",
+    "rerank",
+    "dream",
+    "maintain",
+    "contradiction",
+    "freshness",
+    "synthesis",
+    "consolidation"
   ],
-  "noise_tags": ["standalone-image", "04-archive", "garbled-ocr"],
-  "noise_path_fragments": ["99-Attachments/", "/99-Attachments/", "/04-archive/", "04-archive/", "/old/", "/companies/"],
+  "noise_tags": [
+    "standalone-image",
+    "04-archive",
+    "garbled-ocr"
+  ],
+  "noise_path_fragments": [
+    "99-Attachments/",
+    "/99-Attachments/",
+    "/04-archive/",
+    "04-archive/",
+    "/old/",
+    "/companies/"
+  ],
   "session_context": "trabajo: deploy de lambdas en el entorno dev-PublicCloudInfrastructure"
 }

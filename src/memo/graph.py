@@ -328,6 +328,29 @@ class GraphStore:
                 )
         return len(pairs)
 
+    def co_recall_counts(self, anchor_id: str, candidate_ids: list[str]) -> dict[str, int]:
+        """Co-recall counts between `anchor_id` and each candidate id.
+
+        Returns a {candidate_id: count} map for candidates that have ever been
+        co-recalled with the anchor (absent candidates have an implicit 0). One
+        query — used by the search-time co-recall ranking boost.
+        """
+        ids = [c for c in candidate_ids if c != anchor_id]
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        rows = self._conn.execute(
+            f"SELECT id_a, id_b, count FROM co_recall "  # noqa: S608 (placeholders are bound params)
+            f"WHERE (id_a = ? AND id_b IN ({placeholders})) "
+            f"OR (id_b = ? AND id_a IN ({placeholders}))",
+            (anchor_id, *ids, anchor_id, *ids),
+        ).fetchall()
+        counts: dict[str, int] = {}
+        for r in rows:
+            other = r["id_b"] if r["id_a"] == anchor_id else r["id_a"]
+            counts[other] = int(r["count"])
+        return counts
+
     def top_co_recalled(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return the most frequently co-recalled pairs."""
         rows = self._conn.execute(

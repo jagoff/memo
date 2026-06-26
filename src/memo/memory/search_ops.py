@@ -396,6 +396,13 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._apply_health_scores(out)
             _add_trace("health", input_count=before, output_count=len(out))
+        # Co-recall ranking boost: surface memories relationally associated with
+        # the top hit. Read side of MEMO_GRAPH_CO_RECALL; cheap (one graph query),
+        # behind the same flag so default behaviour is unchanged.
+        if out and flag_bool("MEMO_GRAPH_CO_RECALL"):
+            before = len(out)
+            out = self._apply_co_recall_boost(out)
+            _add_trace("co_recall_boost", input_count=before, output_count=len(out))
         self._record_access([r.id for r in out])
         # Co-recall graph edges: record which memories surface together.
         # Gated by flag so the graph DB write stays opt-in (off by default).

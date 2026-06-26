@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Co-recall ranking boost (M5).** `MEMO_GRAPH_CO_RECALL` now also *uses* the co-recall edges it records: at search time, candidates frequently co-recalled with the top hit get a score bump (scaled by the strongest edge in the set, capped at `MEMO_CO_RECALL_BOOST_WEIGHT`, default 0.1), so relationally-associated memories surface together. Read side of a flag that previously only wrote edges. Off by default; one extra graph query when on.
+- **`memo eval recall --gate` / `--update-baseline` (M5).** Promotes the recall eval to a real local regression gate: `--update-baseline` snapshots the current best precision@K / noise@K (machine-local, under `state_dir/eval/`), and `--gate` re-runs fresh and exits non-zero if precision dropped or noise rose versus that baseline — wireable into a pre-commit hook. Grew `eval/regression_labels.json` to 32 prompts.
 - **`memo install-shell-wrapper --shell bash`.** The session-resume wrapper now installs for bash (`~/.bash/memo-wrapper.bash` + `~/.bashrc`), not just zsh. The snippet is portable across both shells except the single-key prompt read (zsh `read -rk1` → bash `read -rn1`), derived from one source so the two can't drift.
 
 ### Removed

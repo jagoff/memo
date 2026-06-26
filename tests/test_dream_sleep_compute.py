@@ -73,6 +73,60 @@ class TestCoRecallGraph:
         assert pairs[0]["count"] == 2
         assert pairs[1]["count"] == 1
 
+    def test_co_recall_counts_maps_anchor_to_candidates(self, tmp_path):
+        from memo.graph import GraphStore
+
+        g = GraphStore(tmp_path / "graph.db")
+        g.record_co_recall(["A", "C"])
+        g.record_co_recall(["A", "C"])  # A-C co-recalled twice
+        g.record_co_recall(["A", "B"])  # A-B once
+        counts = g.co_recall_counts("A", ["B", "C", "D"])
+        assert counts.get("C") == 2
+        assert counts.get("B") == 1
+        assert "D" not in counts  # never co-recalled with A
+        assert "A" not in counts  # the anchor is excluded
+
+    def test_co_recall_counts_empty_when_no_candidates(self, tmp_path):
+        from memo.graph import GraphStore
+
+        g = GraphStore(tmp_path / "graph.db")
+        assert g.co_recall_counts("A", []) == {}
+        assert g.co_recall_counts("A", ["A"]) == {}  # only the anchor
+
+
+class TestCoRecallBoost:
+    """Read side of MEMO_GRAPH_CO_RECALL: _apply_co_recall_boost reorders
+    candidates by co-recall affinity to the top hit."""
+
+    def _rec(self, rid: str, score: float):
+        from memo.memory.record import MemoryRecord
+
+        return MemoryRecord(
+            id=rid, path=f"{rid}.md", title=rid, type="fact", tags=[],
+            created="2026-01-01T00:00:00+00:00", updated="2026-01-01T00:00:00+00:00",
+            body="", score=score,
+        )
+
+    def test_boost_promotes_associated_candidate(self, mock_memory):
+        # C has a higher co-recall affinity to the anchor A than B, but a lower
+        # base score; the boost should lift it above B.
+        mock_memory.graph.record_co_recall(["A", "C"])
+        mock_memory.graph.record_co_recall(["A", "C"])
+        results = [self._rec("A", 1.0), self._rec("B", 0.50), self._rec("C", 0.45)]
+        out = mock_memory._apply_co_recall_boost(results)
+        assert [r.id for r in out] == ["A", "C", "B"]
+        assert (out[1].score or 0.0) > 0.50  # C was bumped above B
+
+    def test_boost_noop_without_edges(self, mock_memory):
+        results = [self._rec("A", 1.0), self._rec("B", 0.5), self._rec("C", 0.4)]
+        out = mock_memory._apply_co_recall_boost(results)
+        assert [r.id for r in out] == ["A", "B", "C"]  # unchanged
+        assert [r.score for r in out] == [1.0, 0.5, 0.4]
+
+    def test_boost_noop_under_three_results(self, mock_memory):
+        results = [self._rec("A", 1.0), self._rec("B", 0.5)]
+        assert mock_memory._apply_co_recall_boost(results) is results
+
 
 # ---------------------------------------------------------------------------
 # D: Eviction automation

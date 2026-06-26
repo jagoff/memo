@@ -254,6 +254,11 @@ across the whole regression set — never per-question.
   A retrieval/ingest change must keep **precision@K** high and **noise@K** low
   across ALL prompts. Baseline today: prec@5=0.2 (max for a single-answer
   prompt), noise@5=0.0. Runs against the live index (machine-local, not GitHub CI).
+- **Enforced gate (machine-local, opt-in):** seed once with
+  `memo eval recall --labels eval/regression_labels.json --k 5 --update-baseline`,
+  then `--gate` (instead of printing) exits non-zero if precision dropped or
+  noise rose vs the saved baseline — wire it into a pre-commit hook. The
+  baseline lives under `state_dir/eval/` (per-machine; it tracks *your* corpus).
 - Split of concerns: retrieval-class regressions (right note buried, garbage
   crowding) gate here; synthesis-class regressions (fabrication, refusal,
   wrong format) gate in synapse `eval-chat` with `require_substrings` /
