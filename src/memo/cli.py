@@ -85,6 +85,7 @@ from memo.cli_profile import profile_group
 from memo.cli_query import query_group
 from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_recall_hook import recall_hook
+from memo.cli_release import release_group
 from memo.cli_repo import repo_group
 from memo.cli_retier import retier_cmd
 from memo.cli_roi import roi as roi_cmd
@@ -360,6 +361,7 @@ cli.add_command(dedupe_cmd)
 cli.add_command(contextual_group)
 cli.add_command(links_group)
 cli.add_command(version_group)
+cli.add_command(release_group)
 cli.add_command(query_group)
 cli.add_command(backup_group)
 cli.add_command(sync_group)
