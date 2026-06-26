@@ -13,6 +13,7 @@ from memo.cli_runtime import _print_runtime_install_report, _runtime_install_rep
 from memo.config import Config
 from memo.flags import flag_str
 from memo.runtime.freshness import check_install_freshness, installed_package_dir
+from memo.runtime.mcp_config import scan_mcp_configs
 
 
 @click.command()
@@ -67,6 +68,16 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
         console.print(f"[yellow]![/yellow] install freshness: {_fresh['message']}")
     elif _fresh["status"] in ("fresh", "repo-ahead"):
         console.print(f"[green]✓[/green] install freshness: {_fresh['message']}")
+
+    _mcp_issues = scan_mcp_configs()
+    if not _mcp_issues:
+        console.print("[green]✓[/green] mcp config paths: stable")
+    else:
+        for _f in _mcp_issues:
+            console.print(
+                f"[yellow]![/yellow] mcp config: {_f['config']} → {_f['command']} "
+                f"({_f['issue']}); use {_f['suggestion']}"
+            )
 
     if cfg.data_dir.is_dir():
         console.print(f"[green]✓[/green] data_dir: {cfg.data_dir}")

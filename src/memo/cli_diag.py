@@ -433,6 +433,10 @@ def _doctor_report(
         repo_root=Path(_dev_repo).expanduser() if _dev_repo else None,
     )
 
+    from memo.runtime.mcp_config import scan_mcp_configs
+
+    _mcp_config_issues = scan_mcp_configs()
+
     def check_sqlite_vec() -> None:
         # Probe that the extension loads AND supports the PARTITION KEY /
         # metadata-column kNN filtering the store now relies on (alpha vec0
@@ -521,6 +525,7 @@ def _doctor_report(
         "gc": gc_report,
         "recall_daemon": daemon,
         "freshness": _freshness,
+        "mcp_config_issues": _mcp_config_issues,
     }
 
 
