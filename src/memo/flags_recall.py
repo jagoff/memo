@@ -44,7 +44,7 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_TOKEN_BUDGET",
         "int",
-        600,
+        160,
         "recall",
         "Token budget for injected context (0 = off).",
     ),
@@ -232,5 +232,12 @@ SPECS: tuple[FlagSpec, ...] = (
         "recall",
         "Time budget (ms) for grounding/citation work on the recall path.",
         min_val=0,
+    ),
+    _spec(
+        "MEMO_RECALL_FORMAT",
+        "str",
+        "full",
+        "recall",
+        "Recall block format: 'full' (default, rich markdown) or 'compact' (one line per hit, ~65% fewer tokens).",
     ),
 )

@@ -255,6 +255,7 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
     monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")  # isolate from prefs
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "0")
 
     result, _log = _recall_logic(
         "q", cwd=None, mem=StubMemory(), cfg=SimpleNamespace(state_dir=tmp_path), debug=False
@@ -368,3 +369,172 @@ def test_project_tag_failure_is_logged_not_silent(monkeypatch, tmp_path, caplog)
     assert "Surfaced" in json.loads(result)["hookSpecificOutput"]["additionalContext"]
     # but the failure is now observable
     assert any("project_tag resolution failed" in r.message for r in caplog.records)
+
+
+def test_subprocess_path_bails_when_session_dedup_removes_every_hit(tmp_cfg, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from memo.cli_recall_hook import recall_hook
+    from memo.memory import MemoryRecord
+
+    hit = MemoryRecord(
+        id="ff00112233445566",
+        path="notes/dup.md",
+        title="Duplicate Memory",
+        type="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="Duplicate body that should never surface twice.",
+        extra={},
+        score=0.95,
+    )
+
+    env = {
+        "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+        "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_RECALL_DISABLE": "0",
+        "MEMO_RECALL_TOKEN_BUDGET": "0",
+        "MEMO_RECALL_MIN_BODY_CHARS": "0",
+        "MEMO_RECALL_MIN_SIM": "0.0",
+        "MEMO_RECALL_SKIP_BELOW": "0.0",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "MEMO_RECALL_EXPAND_CONTEXT": "0",
+        "MEMO_RECALL_ADAPTIVE_CONTEXT": "0",
+        "MEMO_RECALL_CONTEXTUAL": "0",
+        "MEMO_RECALL_FEEDBACK_HINT": "0",
+        "MEMO_RECALL_DIRECTIVE_ONCE": "0",
+    }
+
+    class StubMemory:
+        def __init__(self, cfg):
+            pass
+
+        def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
+            return [hit]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", StubMemory)
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: None)
+    monkeypatch.setattr("memo.recall_server.dedup_hits", lambda hits: hits)
+    monkeypatch.setattr("memo.session.get_recalled_ids", lambda state_dir, sid: {hit.id: 1})
+
+    runner = CliRunner()
+    payload = json.dumps(
+        {
+            "prompt": "what do you know about this topic",
+            "session_id": "sid-dedup",
+            "cwd": str(tmp_cfg.data_dir),
+        }
+    )
+
+    result = runner.invoke(recall_hook, input=payload, env=env, catch_exceptions=False)
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "{}"
+
+
+# ---------------------------------------------------------------------------
+# Compact format tests
+# ---------------------------------------------------------------------------
+
+from memo.recall_logic import render_recall_compact  # noqa: E402
+
+
+def _rich_rec(id_: str, title: str, score: float, body: str = "") -> MemoryRecord:
+    return MemoryRecord(
+        id=id_,
+        path=f"notes/{id_}.md",
+        title=title,
+        type="note",
+        tags=["tag1"],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body=body or ("substantial body text for " * 5),
+        extra={},
+        score=score,
+    )
+
+
+def test_compact_format_one_line_per_hit_no_headers_tags_scores() -> None:
+    hits = [
+        _rich_rec("aabbccdd11223344", "First fact", 0.90),
+        _rich_rec("eeff001122334455", "Second fact", 0.80),
+        _rich_rec("ffee998877665544", "Third fact", 0.70),
+    ]
+    block = render_recall_compact(hits, token_budget=0)
+
+    assert block.startswith("<memo-recall readonly>\n")
+    assert block.endswith("\n</memo-recall>")
+
+    inner_lines = block.split("\n")[1:-1]
+    assert len(inner_lines) == 3
+
+    for hit, line in zip(hits, inner_lines):
+        assert line.startswith(f"[{hit.id[:8]}]"), f"line {line!r} should start with id8"
+        assert "score" not in line.lower()
+        assert "tag1" not in line
+        assert "##" not in line
+        assert "_Saved" not in line
+
+
+def test_compact_format_respects_token_budget() -> None:
+    # Each line is ~40 chars; token_budget=1 means max_chars=4 → only fits wrapper
+    # token_budget=4 means max_chars=16 → still too small for any hit line
+    # Use a budget large enough for 2 but not 3 hits
+    hits = [
+        _rich_rec("aaaa000011112222", "Hit alpha", 0.90, "body alpha"),
+        _rich_rec("bbbb000022223333", "Hit beta", 0.80, "body beta"),
+        _rich_rec("cccc000033334444", "Hit gamma", 0.70, "body gamma"),
+    ]
+    # Build a budget that accommodates the first 2 but not the 3rd
+    two_hit_block = render_recall_compact(hits[:2], token_budget=0)
+    # Ceiling division so max_chars = budget_tokens * 4 >= len(two_hit_block)
+    budget_tokens = (len(two_hit_block) + 3) // 4
+
+    block = render_recall_compact(hits, token_budget=budget_tokens)
+    inner_lines = block.split("\n")[1:-1]
+
+    assert len(inner_lines) == 2
+    assert "[aaaa0000]" in block
+    assert "[bbbb0000]" in block
+    assert "[cccc0000]" not in block
+
+
+def test_compact_format_full_unchanged_regression(monkeypatch, tmp_path) -> None:
+    """render_recall_context (full format) still emits ## Memory header and directive."""
+    from memo.recall_logic import render_recall_context, RECALL_DIRECTIVE, RECALL_HEADER
+
+    hits = [_rich_rec("reg00001aabbccdd", "Regression fact", 0.85)]
+    monkeypatch.setenv("MEMO_RECALL_FEEDBACK_HINT", "0")
+    monkeypatch.setenv("MEMO_RECALL_DIRECTIVE_ONCE", "0")
+
+    block = render_recall_context(hits, [], turn=1, body_chars=400, token_budget=0)
+
+    assert RECALL_HEADER in block
+    assert RECALL_DIRECTIVE in block
+    assert "## Memory" in block
+    assert "score" in block.lower()
+
+
+def test_compact_format_is_much_smaller_than_full() -> None:
+    # Use long bodies so the full block is large; compact truncates to 60 chars.
+    long_body = "This is a very detailed explanation of the fact in question. " * 5
+    hits = [
+        _rich_rec("c1111111aaaabbbb", "Compact fact one", 0.90, long_body),
+        _rich_rec("c2222222ccccdddd", "Compact fact two", 0.85, long_body),
+        _rich_rec("c3333333eeeeffff", "Compact fact three", 0.80, long_body),
+    ]
+    from memo.recall_logic import render_recall_context
+
+    full_block = render_recall_context(hits, [], turn=None, body_chars=400, token_budget=0)
+    compact_block = render_recall_compact(hits, token_budget=0)
+
+    ratio = len(compact_block) / len(full_block)
+    assert ratio <= 0.30, (
+        f"compact ({len(compact_block)} chars) should be ≤30% of full ({len(full_block)} chars), "
+        f"got {ratio:.0%}"
+    )

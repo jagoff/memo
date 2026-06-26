@@ -96,6 +96,37 @@ def render_recall_context(
     return context
 
 
+def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
+    """Compact recall format: one line per hit, no headers/tags/scores/body prose.
+
+    Format::
+
+        <memo-recall readonly>
+        [id8] title · first 60 chars of body
+        ...
+        </memo-recall>
+
+    Token budget still applies; tail hits are dropped when over budget.
+    """
+    max_chars = token_budget * 4 if token_budget > 0 else None
+    hit_lines: list[str] = []
+
+    for hit in relevant:
+        body = (hit.body or "").strip().replace("\n", " ")
+        short_body = body[:60].rstrip() if body else ""
+        line = f"[{hit.id[:8]}] {hit.title}" + (f" · {short_body}" if short_body else "")
+
+        candidate_lines = [*hit_lines, line]
+        candidate = "<memo-recall readonly>\n" + "\n".join(candidate_lines) + "\n</memo-recall>"
+
+        if max_chars is not None and len(candidate) > max_chars:
+            break
+
+        hit_lines.append(line)
+
+    return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
+
+
 def _apply_project_boost(hits: list[Any], project_tag: str | None, project_boost: float) -> list[Any]:
     if not project_tag:
         return list(hits)

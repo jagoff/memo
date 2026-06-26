@@ -349,19 +349,26 @@ def recall_hook() -> None:
             _prev_recalled = {}
     if _prev_recalled:
         relevant = [h for h in relevant if h.id not in _prev_recalled]
+        if not relevant:
+            _bail("all hits already recalled")
+            return
 
-    from memo.recall_logic import render_recall_context
+    from memo.recall_logic import render_recall_compact, render_recall_context
 
     def _est_tokens(s: str) -> int:
         return max(1, len(s) // 4)
 
-    context = render_recall_context(
-        relevant,
-        [],
-        turn=_turn,
-        body_chars=body_chars,
-        token_budget=token_budget,
-    )
+    _recall_format = flag_str("MEMO_RECALL_FORMAT") or "full"
+    if _recall_format == "compact":
+        context = render_recall_compact(relevant, token_budget=token_budget)
+    else:
+        context = render_recall_context(
+            relevant,
+            [],
+            turn=_turn,
+            body_chars=body_chars,
+            token_budget=token_budget,
+        )
     if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
         approx = _est_tokens(context)
         print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=sys.stderr)
