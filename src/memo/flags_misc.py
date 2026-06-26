@@ -127,10 +127,10 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "off",
         "cache",
-        # DEPRECATED: only 'off' is tested/used; smart/prefetch/aggressive modes are dead code.
-        # Kept for backward compat. Any value other than 'off' has no effect.
-        "Cache tier mode: off (default, durable store). Other values (read_through/write_through/write_back) "
-        "are DEPRECATED and have no effect — only 'off' is wired.",
+        "Cache tier mode (opt-in; default off = durable store, nothing evicted). "
+        "read_through fills from the backing store on a local miss (ask/chat); "
+        "write_through pushes saves to the backing store now; write_back marks them "
+        "dirty for a later flush. Only consulted when != off (see MEMO_CACHE_BACKEND).",
     ),
     _spec(
         "MEMO_CACHE_MAX_ENTRIES",
@@ -161,13 +161,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "Authoritative backing store the cache fronts: memflow (flow_* shared consciousness) | vault (remote vault path) | none. Only consulted when MEMO_CACHE_MODE != off.",
     ),
     # misc behavior
-    _spec(
-        "MEMO_ENCRYPTION_ENABLED",
-        "bool",
-        False,
-        "misc",
-        "Enable the at-rest encryption vertical (EXPERIMENTAL). When off (default) the `memo encrypt` CLI group and `memory_encrypt_*` MCP tools refuse with a disabled message instead of touching the key manager; the EncryptionManager is still constructed so the facade/store wiring is unchanged.",
-    ),
     _spec(
         "MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True
     ),

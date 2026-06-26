@@ -12,22 +12,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "Extract entities from queries and boost results whose extra['entities'] overlap. Prerequisite for graph expansion.",
     ),
     _spec(
-        "MEMO_ENTITY_GLINER",
-        "bool",
-        False,
-        "entity",
-        # DEPRECATED: not wired — GLiNER is not integrated; entity extraction always uses the LLM path.
-        # Kept for backward compat; setting this has no effect.
-        "DEPRECATED (no effect): Use GLiNER for entity extraction. GLiNER not wired; LLM path always used.",
-    ),
-    _spec(
-        "MEMO_ENTITY_GLINER_MODEL",
-        "str",
-        "urchade/gliner_medium-v2.1",
-        "entity",
-        "GLiNER model id used when MEMO_ENTITY_GLINER=1.",
-    ),
-    _spec(
         "MEMO_GRAPH_RETRIEVAL_ENABLED",
         "bool",
         False,

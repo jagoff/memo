@@ -1,7 +1,6 @@
 """Tests for entity_extractor — regex path + flag gating + match scoring.
 
-GLiNER/LLM paths are not exercised (optional dep); the default regex extractor
-is dependency-free and is what ships enabled.
+The regex extractor is dependency-free and is the only extraction path.
 """
 
 from __future__ import annotations
@@ -20,33 +19,25 @@ def test_entity_retrieval_enabled_reads_flag(monkeypatch: pytest.MonkeyPatch) ->
     assert ee.entity_retrieval_enabled() is False
 
 
-def test_gliner_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MEMO_ENTITY_GLINER", raising=False)
-    assert ee._gliner_enabled() is False
-
-
 def test_extract_entities_empty() -> None:
     assert ee.extract_entities("") == []
     assert ee.extract_entities("   ") == []
 
 
-def test_extract_entities_regex_finds_proper_nouns(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MEMO_ENTITY_GLINER", raising=False)  # force regex path
+def test_extract_entities_regex_finds_proper_nouns() -> None:
     ents = ee.extract_entities("Fernando works on Synapse and Memflow in Buenos Aires")
     low = {e.lower() for e in ents}
     assert "synapse" in low
     assert "memflow" in low
 
 
-def test_extract_entities_backtick_identifiers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MEMO_ENTITY_GLINER", raising=False)
+def test_extract_entities_backtick_identifiers() -> None:
     ents = ee.extract_entities("the `VecStore` class uses `sqlite-vec`")
     assert "VecStore" in ents
     assert "sqlite-vec" in ents
 
 
-def test_extract_entities_dedups(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MEMO_ENTITY_GLINER", raising=False)
+def test_extract_entities_dedups() -> None:
     ents = ee.extract_entities("Synapse Synapse Synapse")
     assert ents.count("Synapse") == 1
 

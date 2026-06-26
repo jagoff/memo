@@ -128,7 +128,7 @@ LAZY_SUBSYSTEMS = [
     "temporal", "consolidator", "contradict_store", "contradict_scanner",
     "navigator", "contextual", "crossref", "link_suggester", "lifecycle",
     "versioning", "query_composer", "backup",
-    "sync", "encryption", "sharing", "analytics", "dashboard",
+    "sync", "analytics", "dashboard",
     "import_export", "multimodal", "collaborative",
 ]
 
@@ -175,7 +175,6 @@ def test_optional_memory_capabilities_live_in_registry(mock_memory) -> None:
         "lifecycle",
         "multimodal",
         "query_composer",
-        "sharing",
         "sync",
         "versioning",
     }

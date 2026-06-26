@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dead/experimental feature surfaces purged (M4).** Removed the wired-but-unbacked experimental verticals that were never part of the stable core contract (see `experimental_index.md`): at-rest **encryption** (`encryption.py`, `memo encrypt` CLI group, `memo_encrypt_*` MCP tools, `MEMO_ENCRYPTION_ENABLED`), memory **sharing** (`sharing.py`, `memo share` CLI group, `memo_share_*` MCP tools), and multi-vault **federation** (`federation.py`, the never-registered `cli_federation`, `FederationError`). The full MCP surface drops from ~118 to **110** tools; `memo doctor`/`install-mcp` now report the honest count.
+- **GLiNER entity-extraction backend.** Dropped the optional, never-installed `gliner` code path and its `MEMO_ENTITY_GLINER` / `MEMO_ENTITY_GLINER_MODEL` flags from `entity_extractor.py`. The dependency-free regex extractor (wired into the search entity-boost) is unchanged.
+
+### Changed
+
+- **`MEMO_CACHE_MODE` description corrected (not removed).** The flag and its `read_through`/`write_through`/`write_back` modes are in fact wired and tested (`cache.py` + `Memory.save`/`Memory.search`); the prior "DEPRECATED — only off is wired / smart·prefetch·aggressive dead" text was stale and wrong. The cache tier stays; only the misleading docs were fixed.
+
 ## [1.1.0] - 2026-06-26
 
 ### Added

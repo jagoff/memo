@@ -40,7 +40,6 @@ from memo import server_contradict as _srv_contradict
 from memo import server_core_history as _srv_core_history
 from memo import server_core_records as _srv_core_records
 from memo import server_core_search as _srv_core_search
-from memo import server_encrypt as _srv_encrypt
 from memo import server_entities as _srv_entities
 from memo import server_feedback as _srv_feedback
 from memo import server_graph as _srv_graph
@@ -53,7 +52,6 @@ from memo import server_query as _srv_query
 from memo import server_reflect as _srv_reflect
 from memo import server_repo as _srv_repo
 from memo import server_resources as _srv_resources
-from memo import server_share as _srv_share
 from memo import server_sync as _srv_sync
 from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
@@ -129,7 +127,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     # Stable and advanced domain tool modules register their @server.tool()
     # closures here. Presence on the MCP surface does not by itself mean a
     # feature is part of memo's stable core contract; see experimental_index.md.
-    # Skip when MEMO_MCP_SLIM=1 — reduces ~116 tools to ~26 core inline tools
+    # Skip when MEMO_MCP_SLIM=1 — reduces ~110 tools to ~25 core inline tools
     # for local/constrained LLMs where tool-definition tokens are expensive.
     from memo.surface import mcp_include_advanced_tools
 
@@ -150,8 +148,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         _srv_backup.register(server, memory)
         _srv_sync.register(server, memory)
         _srv_cache.register(server, memory)
-        _srv_encrypt.register(server, memory)
-        _srv_share.register(server, memory)
         _srv_analytics.register(server, memory)
         _srv_import_export.register(server, memory)
         _srv_feedback.register(server, memory)

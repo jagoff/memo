@@ -11,7 +11,6 @@ from memo import errors
     errors.NotFoundError,
     errors.ValidationError,
     errors.StorageError,
-    errors.FederationError,
     errors.AmbiguousIdError,
     errors.WriteRefused,
 ])
@@ -25,7 +24,6 @@ def test_builtin_bases_preserved() -> None:
     assert issubclass(errors.AmbiguousIdError, ValueError)
     assert issubclass(errors.NotFoundError, KeyError)
     assert issubclass(errors.StorageError, RuntimeError)
-    assert issubclass(errors.FederationError, RuntimeError)
     assert issubclass(errors.WriteRefused, RuntimeError)
 
 

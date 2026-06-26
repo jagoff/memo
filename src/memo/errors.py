@@ -34,10 +34,6 @@ class StorageError(MemoError, RuntimeError):
     `sqlite3.OperationalError` with no hint of what memo was doing."""
 
 
-class FederationError(MemoError, RuntimeError):
-    """A cross-vault federation operation (remote search / sync) failed."""
-
-
 class AmbiguousIdError(MemoError, ValueError):
     """Raised when an id prefix matches more than one record. Carries
     the candidate matches so the caller can surface them in an error."""

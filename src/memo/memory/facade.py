@@ -346,16 +346,6 @@ class Memory(
         return self.capability("sync")
 
     @property
-    def encryption(self) -> Any:
-        """Lazy accessor for EncryptionManager."""
-        return self.capability("encryption")
-
-    @property
-    def sharing(self) -> Any:
-        """Lazy accessor for ShareManager."""
-        return self.capability("sharing")
-
-    @property
     def analytics(self) -> Any:
         """Lazy accessor for AnalyticsEngine."""
         return self.capability("analytics")

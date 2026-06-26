@@ -34,27 +34,6 @@ connections across multiple users so that discoveries made by one user can
 surface for others. Requires a shared storage backend that is not yet
 implemented in the core.
 
-## federation.py
-
-Multi-vault federation. Aggregates search results from several independent
-memo vaults (different machines or projects) into a single ranked list with
-deduplication. Vault discovery and connection management are placeholder
-implementations.
-
-## sharing.py
-
-Memory sharing and permissions. Lets users share individual memories with
-other users via temporary links or explicit permission grants, with optional
-expiration and comment threads. Requires a network transport layer that is
-not bundled.
-
-## encryption.py
-
-AES-256-GCM per-memory encryption. Encrypts sensitive memories on disk
-using a password-derived key (PBKDF2), with support for tag-based selective
-encryption or full-corpus encryption. Key management and rotation are not
-yet hardened for production use.
-
 ## contradict.py
 
 Contradiction and staleness radar. Scans the corpus for pairs of memories

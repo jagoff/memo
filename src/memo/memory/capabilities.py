@@ -58,20 +58,6 @@ def _sync(memory: Any) -> Any:
     return SyncManager(memory)
 
 
-def _encryption(memory: Any) -> Any:
-    from memo.encryption import EncryptionManager, Encryptor, KeyManager
-
-    key_manager = KeyManager(memory.cfg.state_dir)
-    encryptor = Encryptor(key_manager)
-    return EncryptionManager(key_manager, encryptor)
-
-
-def _sharing(memory: Any) -> Any:
-    from memo.sharing import ShareManager, ShareStore
-
-    return ShareManager(ShareStore(memory.cfg.state_dir))
-
-
 def _analytics(memory: Any) -> Any:
     from memo.analytics import AnalyticsEngine
 
@@ -119,13 +105,11 @@ OPTIONAL_CAPABILITIES: dict[str, CapabilityFactory] = {
     "contextual": _contextual,
     "crossref": _crossref,
     "dashboard": _dashboard,
-    "encryption": _encryption,
     "import_export": _import_export,
     "lifecycle": _lifecycle,
     "link_suggester": _link_suggester,
     "multimodal": _multimodal,
     "query_composer": _query_composer,
-    "sharing": _sharing,
     "sync": _sync,
     "versioning": _versioning,
 }

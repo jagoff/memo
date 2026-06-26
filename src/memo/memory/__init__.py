@@ -47,10 +47,8 @@ from memo.contextual_retrieval import (  # noqa: F401
 from memo.contradict import ContradictionScanner, ContradictionStore  # noqa: F401
 from memo.crossref import CrossReferenceIndex, LinkSuggester  # noqa: F401
 from memo.embedder import MLXEmbedder, assert_valid_embedding  # noqa: F401
-from memo.encryption import EncryptionManager, Encryptor, KeyManager  # noqa: F401
 from memo.errors import (  # noqa: F401
     AmbiguousIdError,
-    FederationError,
     MemoError,
     NotFoundError,
     StorageError,
@@ -112,7 +110,6 @@ from memo.multimodal import (  # noqa: F401
 )
 from memo.navigation import GraphNavigator  # noqa: F401
 from memo.saved_queries import QueryComposer, QueryStore  # noqa: F401
-from memo.sharing import ShareManager, ShareStore  # noqa: F401
 from memo.store import VecStore  # noqa: F401
 from memo.sync import BackupManager, SyncManager  # noqa: F401
 from memo.temporal import TemporalAnalyzer  # noqa: F401

@@ -48,7 +48,6 @@ from memo.cli_diag import _recall_daemon_health  # noqa: F401 — used in daemon
 from memo.cli_doctor import doctor
 from memo.cli_dream import dream_cmd
 from memo.cli_embed_daemon import embed_daemon_group
-from memo.cli_encrypt import encrypt_group
 from memo.cli_entities import entities, entity, extract_entities
 from memo.cli_eval import eval_group
 from memo.cli_export import export_group
@@ -104,7 +103,6 @@ from memo.cli_runtime import (
 )
 from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
 from memo.cli_session import continuity_cmd, session_group
-from memo.cli_share import share_group
 from memo.cli_stats import stats
 from memo.cli_statusline import install_statusline
 from memo.cli_sync import sync_group
@@ -152,7 +150,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Import / Export / Sync",
-        ["import", "export", "backup", "restore", "sync", "ingest", "share"],
+        ["import", "export", "backup", "restore", "sync", "ingest"],
     ),
     (
         "Visualization",
@@ -173,7 +171,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
         "Other",
         [
-            "backend-native", "collaborative", "encrypt", "feedback", "query",
+            "backend-native", "collaborative", "feedback", "query",
             "mandate", "sleep-cycle", "ocr-image", "provenance", "mcp-command",
         ],
     ),
@@ -365,8 +363,6 @@ cli.add_command(release_group)
 cli.add_command(query_group)
 cli.add_command(backup_group)
 cli.add_command(sync_group)
-cli.add_command(encrypt_group)
-cli.add_command(share_group)
 cli.add_command(analytics_group)
 cli.add_command(import_group)
 cli.add_command(export_group)

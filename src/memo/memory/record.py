@@ -330,7 +330,6 @@ def strip_llm_output(text: str) -> str:
 # keep working. New code may import from either module.
 from memo.errors import (  # noqa: E402, F401
     AmbiguousIdError,
-    FederationError,
     MemoError,
     NotFoundError,
     StorageError,

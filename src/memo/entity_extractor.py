@@ -5,10 +5,6 @@ boosts in the search pipeline. Dependency-free: uses regex patterns
 that work well for personal knowledge bases (person names, technology
 names, project names, quoted identifiers).
 
-Optional GLiNER upgrade: if `gliner` is installed and
-MEMO_ENTITY_GLINER=1, uses the zero-shot NER model for higher recall
-at the cost of ~200ms cold-load. Falls back silently to regex.
-
 Feature flag: MEMO_ENTITY_RETRIEVAL_ENABLED (default 0).
 """
 
@@ -94,12 +90,6 @@ def entity_retrieval_enabled() -> bool:
     return flag_bool("MEMO_ENTITY_RETRIEVAL_ENABLED")
 
 
-def _gliner_enabled() -> bool:
-    from memo.flags import flag_bool
-
-    return flag_bool("MEMO_ENTITY_GLINER")
-
-
 def _extract_regex(text: str) -> list[str]:
     """Regex-based entity extraction (dependency-free)."""
     found: list[str] = []
@@ -127,52 +117,15 @@ def _extract_regex(text: str) -> list[str]:
     return found
 
 
-def _extract_gliner(text: str, labels: list[str]) -> list[str]:
-    """GLiNER-based extraction (requires `pip install gliner`)."""
-    try:
-        import gliner  # type: ignore[import]
-    except ImportError:
-        # Expected when the optional dependency isn't installed — regex fallback.
-        return _extract_regex(text)
-    try:
-        from memo.flags import flag_str
-
-        model_name = flag_str("MEMO_ENTITY_GLINER_MODEL")
-        # Module-level singleton to avoid repeated model loads.
-        _model = getattr(_extract_gliner, "_model", None)
-        if _model is None or getattr(_model, "_model_name", "") != model_name:
-            _model = gliner.GLiNER.from_pretrained(model_name)
-            _model._model_name = model_name  # type: ignore[attr-defined]
-            _extract_gliner._model = _model  # type: ignore[attr-defined]
-        entities = _model.predict_entities(text[:2000], labels, threshold=0.5)
-        return list({e["text"] for e in entities if e.get("text")})
-    except Exception as exc:
-        # Model load / prediction failure (OOM, shape mismatch, bad model name):
-        # surface it as a warning rather than silently degrading to regex.
-        _log.warning("GLiNER extraction failed, falling back to regex: %s", exc)
-        return _extract_regex(text)
-
-
-def extract_entities(
-    text: str,
-    *,
-    labels: list[str] | None = None,
-) -> list[str]:
+def extract_entities(text: str) -> list[str]:
     """Extract entity mentions from ``text``.
 
-    Returns a deduplicated list of entity strings. Falls back to regex
-    extraction when GLiNER is unavailable.
-
-    Args:
-        text: The text to extract entities from.
-        labels: Entity type labels for GLiNER (default: person, org,
-                location, technology, project). Ignored in regex mode.
+    Returns a deduplicated list of entity strings using dependency-free
+    regex extraction (proper nouns, CamelCase, acronyms, quoted/backticked
+    identifiers).
     """
     if not text or not text.strip():
         return []
-    if _gliner_enabled():
-        _labels = labels or ["person", "organization", "location", "technology", "project"]
-        return _extract_gliner(text, _labels)
     return _extract_regex(text)
 
 

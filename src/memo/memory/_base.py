@@ -46,8 +46,6 @@ class _MemoryBase:
     query_composer: Any
     backup: Any
     sync: Any
-    encryption: Any
-    sharing: Any
     analytics: Any
     dashboard: Any
     import_export: Any
