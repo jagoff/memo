@@ -23,7 +23,7 @@ KNOWN_MCP_CONFIGS: tuple[str, ...] = (
 _MEMO_BIN_PATH = re.compile(r"(/[^\s\"':,]*?/(?:memo-mcp|memo))(?=[\s\"':,]|$)")
 
 # Fragile: points inside a managed venv instead of the stable shim.
-_VENV_INTERNAL = re.compile(r"/(?:pipx/venvs|\.venv|site-packages)/")
+_VENV_INTERNAL = re.compile(r"/(?:pipx/venvs|uv/tools|\.venv|site-packages)/")
 
 
 def extract_memo_command_paths(text: str) -> list[str]:

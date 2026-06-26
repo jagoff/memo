@@ -42,10 +42,16 @@ def bump_version(current: str, level: str) -> str:
 
 
 def _read_current_version(repo: Path) -> str:
-    text = (repo / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject = repo / "pyproject.toml"
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise click.ClickException(
+            f"no pyproject.toml at {repo} — run from the memo checkout or set MEMO_DEV_REPO"
+        ) from exc
     m = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
     if not m:
-        raise ValueError("could not find version in pyproject.toml")
+        raise click.ClickException("could not find version in pyproject.toml")
     return m.group(1)
 
 
@@ -87,12 +93,15 @@ def plan_release_edits(repo: Path, old: str, new: str, date: str) -> dict[Path, 
 
     changelog = repo / "CHANGELOG.md"
     section = f"## [{new}] - {date}\n\n### Fixed\n\n- TODO: describe changes\n\n"
-    edits[changelog] = _sub_exact(
-        changelog.read_text(encoding="utf-8"),
+    cl_text = changelog.read_text(encoding="utf-8")
+    cl_new, cl_n = re.subn(
         r"## \[Unreleased\]\n\n",
-        f"## [Unreleased]\n\n{section}",
-        count=1,
+        lambda _m: f"## [Unreleased]\n\n{section}",
+        cl_text,
     )
+    if cl_n != 1:
+        raise ValueError(f"expected 1 Unreleased section, got {cl_n}")
+    edits[changelog] = cl_new
     return edits
 
 

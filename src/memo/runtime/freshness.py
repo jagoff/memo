@@ -49,7 +49,10 @@ def installed_package_dir() -> Path | None:
     """Directory of the importable ``memo`` package, or None if not locatable."""
     import importlib.util
 
-    spec = importlib.util.find_spec("memo")
+    try:
+        spec = importlib.util.find_spec("memo")
+    except (ValueError, ImportError):
+        return None
     if spec is None or not spec.origin:
         return None
     return Path(spec.origin).parent

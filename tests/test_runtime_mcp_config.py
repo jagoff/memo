@@ -43,5 +43,14 @@ def test_scan_reports_dead_path(tmp_path: Path) -> None:
     assert findings[0]["suggestion"].endswith("/memo-mcp")
 
 
+def test_classify_uv_tools_internal() -> None:
+    assert (
+        classify_command_path(
+            "/Users/x/.local/share/uv/tools/mlx-memo/bin/memo-mcp"
+        )
+        == "venv-internal"
+    )
+
+
 def test_scan_skips_missing_config(tmp_path: Path) -> None:
     assert scan_mcp_configs((str(tmp_path / "nope.json"),)) == []
