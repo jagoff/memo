@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.11] - 2026-06-26
+
+### Fixed
+
+- Auto-update now clears the spawned-tag guard (`auto_update_spawned`) after a successful install so a newer release can be picked up without the stale stamp blocking it (`runtime/update.py`).
+- `maybe_auto_update()` uses the cached `update_available` file (written by `notify_if_newer` every 6h) as a fast path before making a network call, so long-running MCP sessions detect new versions on the next in-session check cycle (`runtime/autoupdate.py`).
+
 ## [1.1.10] - 2026-06-26
 
 ### Fixed

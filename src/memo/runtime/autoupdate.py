@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import subprocess
 import sys
 
@@ -197,19 +198,35 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
     against re-spawning the same tag via a per-tag stamp so repeated startups
     during an in-progress install don't pile up subprocess.Popen calls.
 
+    Auto-update is ON by default when installed via pipx or uv. Can be disabled
+    by setting MEMO_AUTO_UPDATE=0.
+
     Returns True iff a background update was spawned (mainly for tests). Never
     raises — any failure is logged at debug and swallowed so a startup is never
     delayed or broken by the updater.
     """
     try:
-        if not flag_bool("MEMO_AUTO_UPDATE"):
-            return False
         cfg = cfg or Config.from_env()
+        
+        # Default to ON if not explicitly disabled. Check MEMO_AUTO_UPDATE env
+        # first; if not set, default to True (pipx/uv installs auto-update).
+        auto_update_enabled = (
+            True if os.environ.get("MEMO_AUTO_UPDATE") is None
+            else flag_bool("MEMO_AUTO_UPDATE")
+        )
+        if not auto_update_enabled:
+            return False
+        
+        # Ensure state_dir exists for stamps
+        with contextlib.suppress(OSError):
+            cfg.state_dir.mkdir(parents=True, exist_ok=True)
 
         from memo import __version__
 
         repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
-        tag = latest_remote_tag(repo)
+        # Fast path: if notify_if_newer already confirmed a newer version
+        # (wrote the update_available file), trust it and skip the network call.
+        tag = pending_update_tag(cfg) or latest_remote_tag(repo)
         if not tag or not is_newer(tag, __version__):
             _clear_notify(cfg)
             return False

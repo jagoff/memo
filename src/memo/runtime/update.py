@@ -106,12 +106,17 @@ def _detect_install_method() -> str | None:
 
 
 def _clear_update_notify() -> None:
-    """Remove the pending-update notification file after a successful update."""
+    """Remove update notification and spawned-stamp after a successful update."""
     try:
         from memo.config import Config
-        from memo.runtime.autoupdate import _clear_notify
+        from memo.runtime.autoupdate import _SPAWNED_STAMP, _clear_notify
 
-        _clear_notify(Config.from_env())
+        cfg = Config.from_env()
+        _clear_notify(cfg)
+        # Clear the per-tag spawned guard so the next startup can pick up
+        # a newer release without being blocked by a stale stamp.
+        with __import__("contextlib").suppress(OSError):
+            (cfg.state_dir / _SPAWNED_STAMP).unlink(missing_ok=True)
     except Exception:  # noqa: S110
         pass
 
