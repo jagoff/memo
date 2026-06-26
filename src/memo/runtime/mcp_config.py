@@ -54,9 +54,9 @@ def scan_mcp_configs(
     shim = str(Path(shim_dir).expanduser())
     for cfg_str in config_paths:
         cfg_path = Path(cfg_str).expanduser()
-        if not cfg_path.exists():
-            continue
         try:
+            if not cfg_path.exists():
+                continue
             text = cfg_path.read_text(encoding="utf-8")
         except OSError:
             continue

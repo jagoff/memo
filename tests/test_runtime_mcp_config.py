@@ -17,8 +17,7 @@ def test_extract_finds_memo_and_memo_mcp_paths() -> None:
     ]
 
 
-def test_classify_venv_internal(tmp_path: Path) -> None:
-    p = tmp_path / "venv-like"
+def test_classify_venv_internal() -> None:
     # The path string itself signals a venv-internal location.
     assert classify_command_path("/Users/x/.local/pipx/venvs/mlx-memo/bin/memo-mcp") == "venv-internal"
 
