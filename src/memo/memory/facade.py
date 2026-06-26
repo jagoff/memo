@@ -25,6 +25,7 @@ from memo.graph import GraphStore
 from memo.llm import MLXChat
 from memo.memory.ask_ops import _AskOpsMixin
 from memo.memory.capabilities import OPTIONAL_CAPABILITIES
+from memo.memory.chat_ask_ops import _ChatAskOpsMixin
 from memo.memory.consolidate_ops import _ConsolidateOpsMixin
 from memo.memory.delete_ops import _DeleteOpsMixin
 from memo.memory.maintain_ops import _MaintainOpsMixin
@@ -49,6 +50,7 @@ class Memory(
     _SearchOpsMixin,
     _SearchScoringMixin,
     _AskOpsMixin,
+    _ChatAskOpsMixin,
     _RerankOpsMixin,
     _RepoOpsMixin,
     _MaintainOpsMixin,

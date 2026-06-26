@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Split the four remaining god-files under the repo's 800-line limit (M3).** Behavior-preserving, pure code moves with re-exports / sibling mixins so every public and internal import resolves unchanged: `cli_dream.py`→`cli_dream_passes.py` (maintenance passes), `memory/search_ops.py`→`memory/search_scoring_ops.py` (`_SearchScoringMixin`), `session.py`→`session_sources.py` (git/transcript readers), `memory/ask_ops.py`→`memory/chat_ask_ops.py` (`_ChatAskOpsMixin`). No source file now exceeds 800 lines.
 - **`memo release bump` writes are now atomic.** All four version files are staged to sibling `*.tmp` files first and then `os.replace`d into place, so an I/O failure mid-bump can no longer leave the source-of-truth files torn or out of sync (follow-up to the M2 "compute-all-edits-first" guard).
 - **De-duplicated `memo doctor` freshness wiring.** The install-freshness check (resolve installed version + package dir + `MEMO_DEV_REPO`) lived verbatim in both the human and `--json` doctor paths; it's now a single `freshness_report()` helper, so the two outputs can't drift.
 - **`MEMO_CACHE_MODE` description corrected (not removed).** The flag and its `read_through`/`write_through`/`write_back` modes are in fact wired and tested (`cache.py` + `Memory.save`/`Memory.search`); the prior "DEPRECATED — only off is wired / smart·prefetch·aggressive dead" text was stale and wrong. The cache tier stays; only the misleading docs were fixed.

@@ -14,7 +14,9 @@ Layout:
 - `search_scoring_ops` — `_SearchScoringMixin` (post-fetch graph expansion,
                    penalties, entity/retrieval/health re-scoring, access,
                    cache read-through).
-- `ask_ops`      — `_AskOpsMixin` (ask / chat_ask + helpers).
+- `ask_ops`      — `_AskOpsMixin` (ask / ask_stream + context building).
+- `chat_ask_ops` — `_ChatAskOpsMixin` (chat_ask / chat_ask_stream + history/
+                   retrieval-question/citation helpers).
 - `rerank_ops`   — `_RerankOpsMixin` (rerank + source feedback).
 - `repo_ops`     — `_RepoOpsMixin` (repo corpus).
 - `maintain_ops` — `_MaintainOpsMixin` (reindex / lint / gc / entities /
