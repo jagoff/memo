@@ -99,7 +99,7 @@ def _clear_update_notify() -> None:
         from memo.runtime.autoupdate import _clear_notify
 
         _clear_notify(Config.from_env())
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
 
@@ -176,7 +176,7 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
 
     try:
         url = "https://pypi.org/pypi/mlx-memo/json"
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 — hardcoded HTTPS URL to PyPI, not user-controlled
             data = json.loads(resp.read().decode("utf-8"))
         latest_version = data["info"]["version"]
     except (urllib.error.URLError, KeyError, json.JSONDecodeError, OSError) as exc:
@@ -217,7 +217,7 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
                     _url = _pkg.get("package_or_url", "")
                     if _url.startswith("git+"):
                         pipx_source_url = _url
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     # Fallback: read venv metadata JSON directly (pipx not in PATH)

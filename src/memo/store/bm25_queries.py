@@ -99,7 +99,7 @@ class _BM25QueriesMixin(_StoreBase):
         id_score = {h["id"]: h["score"] for h in hits}
         placeholders = ",".join("?" for _ in id_score)
         sql = (
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "  # noqa: S608
             f"FROM meta WHERE id IN ({placeholders})"
         )
         params: list[Any] = list(id_score.keys())
@@ -249,7 +249,7 @@ class _BM25QueriesMixin(_StoreBase):
         id_score = {h["id"]: h["score"] for h in hits}
         placeholders = ",".join("?" for _ in id_score)
         sql = (
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "  # noqa: S608
             f"FROM meta WHERE id IN ({placeholders})"
         )
         params: list[Any] = list(id_score.keys())

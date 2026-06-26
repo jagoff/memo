@@ -419,7 +419,7 @@ class Memory(
                     f"notice that disk and index are out of sync.",
                     file=sys.stderr,
                 )
-        except Exception:
+        except Exception:  # noqa: S110
             # Probe failures must never block startup — they're advisory.
             pass
 

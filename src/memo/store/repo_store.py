@@ -99,7 +99,7 @@ class _RepoStoreMixin(_StoreBase):
         if not force:
             where += " AND repo_vec.id IS NULL"
         rows = self._conn.execute(
-            "SELECT repo_chunks.id, repo_chunks.repo_id, repo_sources.name AS repo_name, "
+            "SELECT repo_chunks.id, repo_chunks.repo_id, repo_sources.name AS repo_name, "  # noqa: S608
             "       repo_chunks.file_id, repo_chunks.path, repo_chunks.chunk_seq, "
             "       repo_chunks.line_start, repo_chunks.line_end, repo_chunks.body_text "
             "FROM repo_chunks "
@@ -124,7 +124,7 @@ class _RepoStoreMixin(_StoreBase):
         for batch in _batches(list(dict.fromkeys(input_hashes))):
             placeholders = ",".join("?" for _ in batch)
             rows = self._conn.execute(
-                "SELECT input_hash, embedding FROM repo_embedding_cache "
+                "SELECT input_hash, embedding FROM repo_embedding_cache "  # noqa: S608
                 f"WHERE model = ? AND dims = ? AND input_hash IN ({placeholders})",
                 (model, dims, *batch),
             ).fetchall()
@@ -504,14 +504,14 @@ class _RepoStoreMixin(_StoreBase):
             chunk_ids = [
                 r["id"]
                 for r in cx.execute(
-                    f"SELECT id FROM repo_chunks WHERE file_id IN ({placeholders})",
+                    f"SELECT id FROM repo_chunks WHERE file_id IN ({placeholders})",  # noqa: S608
                     batch,
                 ).fetchall()
             ]
             line_ids = [
                 r["id"]
                 for r in cx.execute(
-                    f"SELECT id FROM repo_lines WHERE file_id IN ({placeholders})",
+                    f"SELECT id FROM repo_lines WHERE file_id IN ({placeholders})",  # noqa: S608
                     batch,
                 ).fetchall()
             ]

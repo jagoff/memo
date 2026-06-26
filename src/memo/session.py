@@ -754,7 +754,7 @@ def mark_ids_recalled(
                 recalled[mid] = turn
         existing["recalled_ids"] = recalled
         _write(state_dir, session_id, existing)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
 

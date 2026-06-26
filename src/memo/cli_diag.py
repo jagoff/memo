@@ -51,14 +51,14 @@ def _sqlite_table_exists(conn: Any, table: str) -> bool:
 def _sqlite_table_count(conn: Any, table: str) -> int | None:
     if not _sqlite_table_exists(conn, table):
         return None
-    row = conn.execute(f"SELECT count(*) FROM [{table}]").fetchone()
+    row = conn.execute(f"SELECT count(*) FROM [{table}]").fetchone()  # noqa: S608
     return int(row[0]) if row else 0
 
 
 def _sqlite_max_text(conn: Any, table: str, column: str) -> str:
     if not _sqlite_table_exists(conn, table):
         return ""
-    row = conn.execute(f"SELECT max([{column}]) FROM [{table}]").fetchone()
+    row = conn.execute(f"SELECT max([{column}]) FROM [{table}]").fetchone()  # noqa: S608
     return str(row[0] or "") if row else ""
 
 

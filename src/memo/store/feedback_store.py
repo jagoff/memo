@@ -140,7 +140,7 @@ class _FeedbackMixin(_StoreBase):
             return set()
         placeholders = ",".join("?" * len(ids))
         rows = self._conn.execute(
-            "SELECT DISTINCT source_id FROM source_feedback "
+            "SELECT DISTINCT source_id FROM source_feedback "  # noqa: S608
             f"WHERE source_id IN ({placeholders})",
             ids,
         ).fetchall()
@@ -214,11 +214,11 @@ class _FeedbackMixin(_StoreBase):
                 return 0
             placeholders = ",".join("?" * len(ids))
             cx.execute(
-                f"DELETE FROM source_feedback_vec WHERE feedback_id IN ({placeholders})",
+                f"DELETE FROM source_feedback_vec WHERE feedback_id IN ({placeholders})",  # noqa: S608
                 ids,
             )
             cx.execute(
-                f"DELETE FROM source_feedback WHERE id IN ({placeholders})",
+                f"DELETE FROM source_feedback WHERE id IN ({placeholders})",  # noqa: S608
                 ids,
             )
         return len(ids)

@@ -70,7 +70,7 @@ def _spawn_key_reader(stop_event: threading.Event) -> None:
             if ch in ("q", "Q", "\x1b"):
                 stop_event.set()
                 return
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     finally:
         with contextlib.suppress(Exception):

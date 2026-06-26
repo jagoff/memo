@@ -134,7 +134,7 @@ class _DeleteOpsMixin(_MemoryBase):
                     "path": r["path"],
                 },
             )
-        except Exception:
+        except Exception:  # noqa: S110
             pass  # non-critical: file deletion is the authoritative step
 
         try:
@@ -154,7 +154,7 @@ class _DeleteOpsMixin(_MemoryBase):
                     "path": r["path"],
                 },
             )
-        except Exception:
+        except Exception:  # noqa: S110
             pass  # non-critical: file deletion is the authoritative step
 
         # Step 6 (final, authoritative): remove the canonical .md

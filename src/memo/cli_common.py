@@ -66,7 +66,7 @@ def log_cli_consult(
             source=src,
             latency_ms=int(time.time() * 1000) - t0_ms,
         )
-    except Exception:
+    except Exception:  # noqa: S110
         # Telemetry must never break a read command.
         pass
 

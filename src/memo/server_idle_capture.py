@@ -230,7 +230,7 @@ def run_idle_capture_loop() -> None:
             if log_file.exists() and log_file.stat().st_size > _LOG_MAX_BYTES:
                 lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
                 log_file.write_text("\n".join(lines[-_LOG_KEEP_LINES:]) + "\n", encoding="utf-8")
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     while True:

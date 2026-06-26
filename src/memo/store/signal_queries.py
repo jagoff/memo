@@ -170,7 +170,7 @@ class _SignalQueriesMixin(_StoreBase):
             return {}
         placeholders = ",".join("?" for _ in ids)
         rows = self._conn.execute(
-            f"SELECT id, confidence, roi_score FROM memory_health WHERE id IN ({placeholders})",
+            f"SELECT id, confidence, roi_score FROM memory_health WHERE id IN ({placeholders})",  # noqa: S608
             ids,
         ).fetchall()
         return {
@@ -317,7 +317,7 @@ class _SignalQueriesMixin(_StoreBase):
                AND COALESCE(a.access_count, 0) = 0
                AND m.updated < datetime('now', '-' || ? || ' days')
                AND m.type NOT IN ({placeholders})
-            """,
+            """,  # noqa: S608
             (roi_floor, min_age_days, *excluded),
         ).fetchall()
         return [{"id": r["id"], "roi_score": r["roi_score"], "days_old": r["days_old"]} for r in rows]

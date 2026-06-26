@@ -289,7 +289,7 @@ def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, 
             from memo.mlx_gpu import _gpu_tl
 
             _gpu_tl.timeout = _timeout
-        except Exception:
+        except Exception:  # noqa: S110
             pass
         return chat.chat(**kwargs)
 

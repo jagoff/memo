@@ -157,7 +157,7 @@ class FederationSearcher:
             try:
                 vault_results = self._search_vault(vault, query, limit, mode)
                 all_results.extend(vault_results)
-            except Exception:
+            except Exception:  # noqa: S112
                 # Skip vaults that fail to load/search
                 continue
 

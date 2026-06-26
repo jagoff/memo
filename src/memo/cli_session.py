@@ -16,16 +16,6 @@ from memo.config import Config
 from memo.flags import flag_bool, flag_int
 
 
-def _read_agent_tty_file(state_dir: Any) -> str:
-    """Read the TTY path written by .zshrc on interactive session start."""
-    import pathlib
-    try:
-        tty = pathlib.Path(state_dir, "agent_tty").read_text(encoding="utf-8").strip()
-        return tty if tty else ""
-    except OSError:
-        return ""
-
-
 @click.command(name="continuity")
 @click.option("--limit", default=12, show_default=True, help="Sessions to scan for this cwd.")
 def continuity_cmd(limit: int) -> None:
@@ -127,7 +117,7 @@ def session_checkpoint(
                 sid = _fb.get("session_id")
                 cwd_resolved = cwd_resolved or _fb.get("cwd") or _os.getcwd()
                 transcript = transcript or _fb.get("transcript_path")
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     if not sid:
@@ -224,7 +214,7 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
                 ensure_ascii=False,
             )
             (cfg.state_dir / "last_hook_payload.json").write_text(_payload_data, encoding="utf-8")
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
         should_save, size_kb = check_autosave(
@@ -358,7 +348,7 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
                 _fallback = _json.loads(_pfile.read_text(encoding="utf-8"))
                 sid = sid or _fallback.get("session_id")
                 transcript = transcript or _fallback.get("transcript_path")
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     if not sid:
@@ -437,7 +427,7 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             if _log.stat().st_size > 1024 * 200:
                 _lines = _log.read_text(encoding="utf-8").splitlines()[-500:]
                 _log.write_text("\n".join(_lines) + "\n", encoding="utf-8")
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     _hb("start", delay=delay)
@@ -489,25 +479,6 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             if result.get("status") == "ok":
                 _titles = result.get("saved_titles") or []
             if _titles:
-                _notif = "※ MEMO auto-saved"
-                # Write to the terminal TTY if captured by the memo shim; fall back
-                # to stderr only if TTY is unavailable or failed.
-                import os as _os
-                _tty = (
-                    _os.environ.get("MEMO_AGENT_TTY")
-                    or _os.environ.get("MEMFLOW_AGENT_TTY")
-                    or _read_agent_tty_file(cfg.state_dir)
-                )
-                _tty_written = False
-                if _tty and _tty.startswith("/dev/"):
-                    try:
-                        with open(_tty, "w") as _tty_f:
-                            _tty_f.write(_notif + "\n")
-                        _tty_written = True
-                    except OSError:
-                        pass
-                if not _tty_written:
-                    print(_notif, file=_sys.stderr)
                 from memo.cli_capture import _write_capture_notification
                 _write_capture_notification(cfg.state_dir, _titles, idle=True)
             _hb("captured-notified", saved=len(_titles))
@@ -633,7 +604,7 @@ def session_recent(limit: int | None) -> None:
         try:
             cwd_rows = list_sessions(cfg.state_dir, cwd=cur_cwd, limit=1)
             same_cwd = cwd_rows
-        except Exception:
+        except Exception:  # noqa: S110
             pass
     top = same_cwd[0] if same_cwd else None
 

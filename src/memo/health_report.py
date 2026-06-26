@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 def _count(conn, table: str, where: str = "") -> int | None:
     """COUNT(*) for `table`, optionally filtered. None if the table is absent."""
-    sql = f"SELECT COUNT(*) FROM [{table}]"
+    sql = f"SELECT COUNT(*) FROM [{table}]"  # noqa: S608
     if where:
         sql += f" WHERE {where}"
     try:
@@ -32,7 +32,7 @@ def _count(conn, table: str, where: str = "") -> int | None:
 
 def _max_text(conn, table: str, column: str) -> str | None:
     try:
-        row = conn.execute(f"SELECT MAX([{column}]) FROM [{table}]").fetchone()
+        row = conn.execute(f"SELECT MAX([{column}]) FROM [{table}]").fetchone()  # noqa: S608
         return str(row[0]) if row and row[0] is not None else None
     except Exception:
         return None

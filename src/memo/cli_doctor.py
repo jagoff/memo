@@ -278,9 +278,9 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
                     f"[green]✓[/green] tokens saved: ~{_saved} "
                     f"(from {_grounded} grounded recalls — run `memo roi` for details)"
                 )
-        except Exception:
+        except Exception:  # noqa: S110
             pass
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     sys.exit(0 if ok else 1)

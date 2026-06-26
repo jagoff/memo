@@ -278,7 +278,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             return []
         placeholders = ",".join("?" for _ in ids)
         rows = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "  # noqa: S608
             f"FROM meta WHERE id IN ({placeholders})",
             ids,
         ).fetchall()
@@ -560,7 +560,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             vec_rows = {
                 r["id"]: r["embedding"]
                 for r in cx.execute(
-                    f"SELECT id, embedding FROM vec WHERE id IN ({placeholders})", ids
+                    f"SELECT id, embedding FROM vec WHERE id IN ({placeholders})", ids  # noqa: S608
                 ).fetchall()
             }
             to_update = [(id_,) for id_ in ids if id_ in vec_rows]

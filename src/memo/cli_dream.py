@@ -71,7 +71,7 @@ def _build_orientation(mem: Memory) -> dict:
     try:
         row = conn.execute("SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'").fetchone()
         result["total"] = int(row["n"]) if row else 0
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     try:
@@ -79,7 +79,7 @@ def _build_orientation(mem: Memory) -> dict:
             "SELECT type, COUNT(*) AS n FROM meta WHERE type != 'reference' GROUP BY type"
         ).fetchall()
         result["by_type"] = {r["type"]: int(r["n"]) for r in rows}
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     try:
@@ -89,7 +89,7 @@ def _build_orientation(mem: Memory) -> dict:
             "WHERE COALESCE(h.roi_score, 1.0) < 0.3 AND m.type != 'reference'"
         ).fetchone()
         result["low_roi"] = int(row["n"]) if row else 0
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     try:
@@ -101,13 +101,13 @@ def _build_orientation(mem: Memory) -> dict:
             "AND m.type != 'reference'"
         ).fetchone()
         result["stale_candidates"] = int(row["n"]) if row else 0
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     try:
         pairs = mem.contradict_store.list_open()
         result["open_contradictions"] = len(pairs)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     try:
@@ -121,7 +121,7 @@ def _build_orientation(mem: Memory) -> dict:
             ")"
         ).fetchone()
         result["unindexed_entities"] = int(row["n"]) if row else 0
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     return result
@@ -282,7 +282,7 @@ def _run_prewarm_queries(cfg: Any, mem: Memory, n: int) -> dict:
             try:
                 mem.embedder.embed_query(q)
                 warmed += 1
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
         return {"queries_warmed": warmed, "queries_available": len(seen)}
     except Exception as exc:
@@ -911,5 +911,5 @@ def dream_if_due() -> None:
             start_new_session=True,
             env={**_os.environ, "MEMO_NONINTERACTIVE": "1"},
         )
-    except Exception:
+    except Exception:  # noqa: S110
         pass

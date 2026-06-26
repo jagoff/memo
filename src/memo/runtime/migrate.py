@@ -53,7 +53,7 @@ def _consolidate_sidecar_dbs() -> None:
                 for tbl in tables:
                     if tbl not in present:
                         continue
-                    conn.execute(f"INSERT OR IGNORE INTO main.{tbl} SELECT * FROM legacy.{tbl}")
+                    conn.execute(f"INSERT OR IGNORE INTO main.{tbl} SELECT * FROM legacy.{tbl}")  # noqa: S608
                 conn.commit()
             finally:
                 conn.execute("DETACH DATABASE legacy")

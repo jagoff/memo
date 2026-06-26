@@ -124,7 +124,7 @@ def _get_last_activity(mem: Memory, cfg: Config) -> float:
         log_path = cfg.state_dir / "recall.log"
         if log_path.exists():
             last_activity = max(last_activity, log_path.stat().st_mtime)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     # 2. Check last write in the store (durable updates)
@@ -134,7 +134,7 @@ def _get_last_activity(mem: Memory, cfg: Config) -> float:
             from datetime import datetime
             dt = datetime.fromisoformat(recent[0]["updated"].replace("Z", "+00:00"))
             last_activity = max(last_activity, dt.timestamp())
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     return last_activity

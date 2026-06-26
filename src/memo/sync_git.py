@@ -466,10 +466,10 @@ def sync_init_home(cfg: Config, private: bool = True) -> dict:
             text=True,
             timeout=120,
         )
-    except OSError:
+    except OSError as exc:
         raise SyncGitError(
             "gh CLI not found — install it: https://cli.github.com or `brew install gh`"
-        )
+        ) from exc
     if gh_cmd.returncode != 0:
         raise SyncGitError(f"gh repo create failed: {gh_cmd.stderr.strip()}")
 

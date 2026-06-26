@@ -514,7 +514,7 @@ class _SchemaMixin(_StoreBase):
                 new_col,
             )
             rows = self._conn.execute(
-                f"SELECT v.{pk_col} AS pk, v.{vec_col} AS emb, s.{src_col} AS newval "
+                f"SELECT v.{pk_col} AS pk, v.{vec_col} AS emb, s.{src_col} AS newval "  # noqa: S608
                 f"FROM {table} v LEFT JOIN {src_table} s ON s.{src_key} = v.{pk_col}"
             ).fetchall()
             payload = [
@@ -525,7 +525,7 @@ class _SchemaMixin(_StoreBase):
                 self._create_vec_tables(cx)
                 if payload:
                     cx.executemany(
-                        f"INSERT INTO {table} ({pk_col}, {new_col}, {vec_col}) "
+                        f"INSERT INTO {table} ({pk_col}, {new_col}, {vec_col}) "  # noqa: S608
                         f"VALUES (?, ?, ?)",
                         payload,
                     )

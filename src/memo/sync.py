@@ -160,7 +160,7 @@ class BackupManager:
                             meta = BackupMetadata(**data)
                             meta.name = archive.stem
                             return meta
-        except Exception:
+        except Exception:  # noqa: S110
             pass
         meta = BackupMetadata(datetime.now(UTC).isoformat(), 0, "", archive.stat().st_size, 0)
         meta.name = archive.name.replace(".tar.gz", "")
@@ -200,7 +200,7 @@ class BackupManager:
                     target = (tmp_root / member.name).resolve()
                     if not str(target).startswith(str(tmp_root)):
                         raise ValueError(f"Unsafe path in backup archive: {member.name}")
-                tar.extractall(tmp_root)
+                tar.extractall(tmp_root)  # noqa: S202 — member paths validated in the loop above
 
             extracted_path = tmp_root / archive_path.name.removesuffix(".tar.gz")
             if not extracted_path.is_dir():

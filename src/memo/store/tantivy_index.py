@@ -179,7 +179,7 @@ class TantivyFTSIndex:
             try:
                 doc = searcher.doc(addr)
                 id_val = doc.get_first("id")
-            except Exception:
+            except Exception:  # noqa: S112
                 continue
             if id_val is None:
                 continue

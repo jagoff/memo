@@ -156,8 +156,19 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "S"]
 # E501: line length handled by formatter, not enforced.
 # RUF002/RUF003: ambiguous-unicode in docstrings/comments — false positives on
 # intentional math notation (× for "N angles × M candidates") and Spanish prose.
-ignore = ["E501", "RUF002", "RUF003"]
+ignore = [
+    "E501",
+    "RUF002",
+    "RUF003",
+    # S101: assert used intentionally in internal guard checks
+    "S101",
+    # S603: subprocess with trusted internal args (no user input in argv)
+    "S603",
+    # S607: partial executable paths are intentional (git, gh, memo, memflow, etc.
+    #       expected to be on PATH in the managed runtime environment)
+    "S607",
+]

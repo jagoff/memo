@@ -239,7 +239,7 @@ class ContradictionStore:
         min_confidence: float = 0.0,
         relationship: str | None = None,
     ) -> list[PairRecord]:
-        sql = f"SELECT {_PAIR_COLS} FROM pairs WHERE status='open' AND confidence >= ? "
+        sql = f"SELECT {_PAIR_COLS} FROM pairs WHERE status='open' AND confidence >= ? "  # noqa: S608
         params: list[Any] = [min_confidence]
         if relationship:
             sql += "AND relationship = ? "
@@ -254,7 +254,7 @@ class ContradictionStore:
         status: str | None = None,
         limit: int = 200,
     ) -> list[PairRecord]:
-        sql = f"SELECT {_PAIR_COLS} FROM pairs "
+        sql = f"SELECT {_PAIR_COLS} FROM pairs "  # noqa: S608
         params: list[Any] = []
         if status:
             sql += "WHERE status = ? "
@@ -266,7 +266,7 @@ class ContradictionStore:
 
     def get(self, pair_id: int) -> PairRecord | None:
         row = self._conn.execute(
-            f"SELECT {_PAIR_COLS} FROM pairs WHERE pair_id=?",
+            f"SELECT {_PAIR_COLS} FROM pairs WHERE pair_id=?",  # noqa: S608
             (pair_id,),
         ).fetchone()
         return self._row_to_record(row) if row else None
@@ -321,7 +321,7 @@ class ContradictionStore:
             return []
         placeholders = ",".join("?" * len(ids))
         sql = (
-            f"SELECT {_PAIR_COLS} FROM pairs WHERE status=? "
+            f"SELECT {_PAIR_COLS} FROM pairs WHERE status=? "  # noqa: S608
             f"AND (memoria_id_a IN ({placeholders}) OR memoria_id_b IN ({placeholders}))"
         )
         rows = self._conn.execute(sql, [status, *ids, *ids]).fetchall()
