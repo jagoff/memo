@@ -513,6 +513,9 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
             _hb("captured-notified", saved=len(_titles))
             print("{}")
         else:
+            if flag_bool("MEMO_MAINTAIN_DISABLE"):
+                print(_json.dumps({"status": "skipped_maintain_disabled"}))
+                _sys.exit(0)
             from memo.cli_transcripts import _reflect_session
             from memo.memory import Memory
 

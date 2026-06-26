@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from memo import session as session_mod
+from memo.cli_session import session_group
 from memo.session import (
     checkpoint,
     format_relative,
@@ -671,3 +673,45 @@ def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path, monke
     stages = [e["stage"] for e in entries]
     # If the capture ran to completion, "captured-notified" stage should be present
     assert "captured-notified" in stages, f"stages={stages}"
+
+
+def test_idle_maintenance_reflect_mode_respects_maintain_disable(tmp_path: Path, monkeypatch) -> None:
+    """Regression: MEMO_MAINTAIN_DISABLE=1 must skip reflect mode to prevent OOM.
+
+    Without this gate, every idle session spawns a full LLM load after 300s.
+    On a 16GB Mac with multiple sessions this causes OOM kernel panics.
+    """
+    state = tmp_path / "state"
+    state.mkdir()
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setenv("MEMO_MAINTAIN_DISABLE", "1")
+
+    # Pre-create the session snapshot so idle-maintenance doesn't self-cancel
+    sid = "test-sid-reflect-002"
+    checkpoint(state, session_id=sid, cwd=str(tmp_path), transcript_path=str(transcript))
+
+    reflect_called = []
+
+    with patch("memo.cli_transcripts._reflect_session") as mock_reflect:
+        runner = CliRunner()
+        result = runner.invoke(
+            session_group,
+            [
+                "idle-maintenance",
+                "--mode", "reflect",
+                "--delay-secs", "0",
+                "--detached-worker",
+            ],
+            input=json.dumps({"session_id": sid, "transcript_path": str(transcript)}),
+        )
+        reflect_called.append(mock_reflect.called)
+
+    assert result.exit_code == 0
+    assert not reflect_called[0], "reflect must not be called when MEMO_MAINTAIN_DISABLE=1"
+    out = json.loads(result.output.strip()) if result.output.strip() else {}
+    assert out.get("status") == "skipped_maintain_disabled", f"output={result.output!r}"
