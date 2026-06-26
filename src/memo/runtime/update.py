@@ -174,29 +174,58 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         _prewarm_after_update()
         return
 
+    # Check git tags first — canonical for git-installed memo; also works for PyPI installs.
+    from memo.flags import flag_str
+    from memo.runtime.autoupdate import DEFAULT_REPO, is_newer, latest_remote_tag
+
+    repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
+    latest_tag = latest_remote_tag(repo)
+    if latest_tag is not None:
+        console.print(f"[dim]latest tag:[/dim]           {latest_tag}")
+        if not is_newer(latest_tag, current_version):
+            console.print("[green]memo is already up to date.[/green]")
+            return
+        console.print(f"[yellow]Update available:[/yellow] {current_version} → {latest_tag}")
+        spec = f"git+{repo}@{latest_tag}"
+        method = _detect_install_method()
+        if method == "uv":
+            uv = _find_uv() or "uv"
+            console.print(f"[dim]Installing {latest_tag} via uv tool…[/dim]")
+            proc = subprocess.run(
+                [uv, "tool", "install", spec, "--force", "--reinstall"], check=False
+            )
+        elif method == "pipx":
+            pipx = _find_pipx() or "pipx"
+            console.print(f"[dim]Installing {latest_tag} via pipx…[/dim]")
+            proc = subprocess.run([pipx, "install", "--force", spec], check=False)
+        else:
+            raise click.ClickException("Could not detect install method (pipx/uv).")
+        if proc.returncode != 0:
+            raise click.ClickException(f"git-tag install of {latest_tag} failed.")
+        _clear_update_notify()
+        console.print(f"[green]✓[/green] updated to {latest_tag}. Pre-warming MLX models…")
+        _prewarm_after_update()
+        return
+
+    # Git unreachable — fall back to PyPI.
+    console.print("[dim]Could not reach git; checking PyPI…[/dim]")
     try:
         url = "https://pypi.org/pypi/mlx-memo/json"
-        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 — hardcoded HTTPS URL to PyPI, not user-controlled
+        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
             data = json.loads(resp.read().decode("utf-8"))
         latest_version = data["info"]["version"]
     except (urllib.error.URLError, KeyError, json.JSONDecodeError, OSError) as exc:
-        console.print(f"[red]Could not fetch PyPI version:[/red] {exc}")
-        if check:
-            return
-        latest_version = None
+        console.print(f"[red]Could not fetch version info:[/red] {exc}")
+        return
 
-    if latest_version:
-        console.print(f"[dim]latest PyPI version:[/dim]  {latest_version}")
-        if _version_ge(current_version, latest_version):
-            console.print("[green]memo is already up to date.[/green]")
-            return
-        console.print(f"[yellow]Update available:[/yellow] {current_version} → {latest_version}")
-        if check:
-            return
+    console.print(f"[dim]latest PyPI version:[/dim]  {latest_version}")
+    if _version_ge(current_version, latest_version):
+        console.print("[green]memo is already up to date.[/green]")
+        return
+    console.print(f"[yellow]Update available:[/yellow] {current_version} → {latest_version}")
 
-    # --- detect install method + git source URL ---
+    # --- detect install method ---
     installed_via: str | None = None
-    pipx_source_url: str | None = None
     pipx_bin: str | None = _find_pipx()
 
     if pipx_bin:
@@ -206,28 +235,13 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
             )
             if res.returncode == 0:
                 _data = json.loads(res.stdout)
-                _pkg = (
-                    _data.get("venvs", {})
-                    .get("mlx-memo", {})
-                    .get("metadata", {})
-                    .get("main_package", {})
-                )
-                if _pkg:
+                if _data.get("venvs", {}).get("mlx-memo"):
                     installed_via = "pipx"
-                    _url = _pkg.get("package_or_url", "")
-                    if _url.startswith("git+"):
-                        pipx_source_url = _url
         except Exception:  # noqa: S110
             pass
 
-    # Fallback: read venv metadata JSON directly (pipx not in PATH)
-    if installed_via is None:
-        meta = _read_pipx_venv_metadata()
-        if meta:
-            installed_via = "pipx"
-            _url = meta.get("main_package", {}).get("package_or_url", "")
-            if _url.startswith("git+"):
-                pipx_source_url = _url
+    if installed_via is None and _read_pipx_venv_metadata() is not None:
+        installed_via = "pipx"
 
     if installed_via is None:
         uv_bin = _find_uv()
@@ -241,21 +255,12 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass
 
-    # --- run the upgrade ---
     if installed_via == "pipx":
         pipx = pipx_bin or _find_pipx() or "pipx"
-        if pipx_source_url:
-            console.print("[dim]Re-installing from git source via pipx…[/dim]")
-            result = subprocess.run(
-                [pipx, "install", "--force", pipx_source_url], check=False
-            )
-            if result.returncode != 0:
-                raise click.ClickException("pipx install --force failed.")
-        else:
-            console.print("[dim]Upgrading via pipx…[/dim]")
-            result = subprocess.run([pipx, "upgrade", "mlx-memo"], check=False)
-            if result.returncode != 0:
-                raise click.ClickException("pipx upgrade failed.")
+        console.print("[dim]Upgrading via pipx…[/dim]")
+        result = subprocess.run([pipx, "upgrade", "mlx-memo"], check=False)
+        if result.returncode != 0:
+            raise click.ClickException("pipx upgrade failed.")
     elif installed_via == "uv":
         uv = _find_uv() or "uv"
         console.print("[dim]Upgrading via uv tool…[/dim]")

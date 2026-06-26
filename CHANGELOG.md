@@ -25,6 +25,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **De-duplicated `memo doctor` freshness wiring.** The install-freshness check (resolve installed version + package dir + `MEMO_DEV_REPO`) lived verbatim in both the human and `--json` doctor paths; it's now a single `freshness_report()` helper, so the two outputs can't drift.
 - **`MEMO_CACHE_MODE` description corrected (not removed).** The flag and its `read_through`/`write_through`/`write_back` modes are in fact wired and tested (`cache.py` + `Memory.save`/`Memory.search`); the prior "DEPRECATED — only off is wired / smart·prefetch·aggressive dead" text was stale and wrong. The cache tier stays; only the misleading docs were fixed.
 
+## [1.1.3] - 2026-06-26
+
+### Added
+
+- **`list_sessions_without_watermark()` in `capture.py`.** Returns sessions that have never been captured (no watermark file), up to a configurable limit, sorted by most recent first.
+- **Idle capture daemon: catch-up scan for un-watermarked sessions.** Every 60 seconds the daemon checks up to 5 past sessions with no watermark and runs `run_capture_incremental` on each, so insights from sessions that were open when the daemon wasn't running are no longer silently dropped.
+- **`MEMO_RESOURCE_BODY_CHARS` flag (default 1200).** Controls how many body characters are exposed by the `memo://memory/{id}` MCP resource; the full body is still accessible via `memo get <id>`.
+- **`MEMO_SEARCH_JSON_BODY_CHARS` flag (default 280).** Default body preview length for JSON search and recall output (`memo search --json`, `memo recall --json`).
+- **`MEMO_ASK_SNIPPET_CHARS` flag (default 800).** Default snippet length fed to the LLM in `ask` / `chat-ask` retrieval payloads.
+- **`memo search --body-chars` / `memo recall --body-chars`.** CLI flags (default 280, pass -1 for full bodies) to truncate JSON body output per invocation, overriding `MEMO_SEARCH_JSON_BODY_CHARS`.
+- **`memo ask --snippet-chars` / `memo chat-ask --snippet-chars`.** CLI flags (default 800) for retrieval snippet length, overriding `MEMO_ASK_SNIPPET_CHARS`.
+- **`memo_ask` MCP tool: `session_id` parameter.** Allows callers to pass the current session ID so the ask pipeline can surface session-relevant context.
+- **`memo_chat_ask` MCP tool: `snippet_chars` and `session_id` parameters.** Exposes snippet-length control and session attribution at the MCP layer.
+
+### Changed
+
+- **`memo://memory/{id}` resource truncates at `MEMO_RESOURCE_BODY_CHARS`.** Long bodies show a preview note ("preview only; use `memo get <id>` for the full body.") rather than silently flooding the context window.
+- **`memo update` checks git tags before PyPI.** `memo update` now queries the upstream git repo for the latest tag first; PyPI is the fallback when git is unreachable. This makes tag-based installs (uv/pipx from a git spec) update in-kind rather than pulling from the registry.
+- **MCP profile token cost corrected: `core`/`slim` now shows ~6.7k tokens.** The prior ~2.4k figure understated the actual cost; `memo doctor` and `memo install-mcp --help` now report the correct estimate.
+
 ## [1.1.2] - 2026-06-26
 
 ### Added
