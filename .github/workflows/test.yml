@@ -41,3 +41,45 @@ jobs:
         # -n auto: parallelize across cores. --timeout: kill hung MLX/socket
         # tests. --cov + fail_under (pyproject) gates coverage regressions.
         run: .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120 --cov=memo --cov-report=term-missing
+
+  test-with-contracts:
+    # The default `test` job mirrors a CLEAN install: consciousness_contracts is
+    # absent, so every contract import takes its fallback branch and the
+    # INTEGRATION path (cache / uri / ledger / run_json / EmbedderProfile) is
+    # never exercised. That blind spot is the launchd-fleet crash class — a
+    # runtime that *does* have the contract but wires it wrong.
+    #
+    # consciousness-contracts is a PRIVATE sibling repo, so a public-repo CI
+    # can't read it with the default GITHUB_TOKEN. This job is therefore a
+    # green no-op until a `CONTRACTS_TOKEN` secret (a fine-grained PAT with read
+    # access to jagoff/consciousness-contracts) is set; then it installs the
+    # contract and runs the suite WITH the integration path live.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: pip install uv
+      - name: Install package + dev deps + consciousness_contracts
+        id: install
+        env:
+          CONTRACTS_TOKEN: ${{ secrets.CONTRACTS_TOKEN }}
+        run: |
+          if [ -z "$CONTRACTS_TOKEN" ]; then
+            echo "::notice::CONTRACTS_TOKEN not set — skipping the with-contracts run."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          uv venv .venv
+          uv pip install -e '.[dev]'
+          uv pip install "consciousness-contracts @ git+https://x-access-token:${CONTRACTS_TOKEN}@github.com/jagoff/consciousness-contracts.git"
+      - name: Verify contract API + run suite with integration path live
+        if: steps.install.outputs.enabled == 'true'
+        run: |
+          # The contract API surface memo depends on must import cleanly.
+          .venv/bin/python -c "from consciousness_contracts import EmbedderProfile, run_json, ConsciousnessEvent, LedgerWriter, BackendError; print('consciousness_contracts API ok')"
+          .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120

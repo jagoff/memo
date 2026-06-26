@@ -236,7 +236,16 @@ layer above is the cognition.
 
 ## CI gates
 
-`pytest`, `mypy`, and coverage run per commit. Keep the suite green.
+`pytest`, `mypy`, `ruff` (on `src/` **and** `tests/`), and coverage run per
+commit. Keep the suite green.
+
+The default `test` job runs in a CLEAN env (no `consciousness_contracts`), so it
+only exercises the import-guard fallbacks. A second job, **`test-with-contracts`**,
+installs the (private) shared contract and re-runs the suite with the integration
+path live — catching the runtime-mismatch class that crash-looped the launchd
+fleet. It's a green no-op until a repo secret **`CONTRACTS_TOKEN`** (a
+fine-grained PAT with read access to `jagoff/consciousness-contracts`) is set;
+add it once in repo Settings → Secrets to activate.
 
 ## Retrieval-regression discipline (every failed search → a system change, measured)
 
