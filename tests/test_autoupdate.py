@@ -70,9 +70,11 @@ def test_throttle_first_check_then_blocked(tmp_cfg):
     assert au._should_check(tmp_cfg, 3600, now=1000.0 + 4000) is True  # past window
 
 
-def test_maybe_auto_update_disabled_by_default(tmp_cfg, monkeypatch):
+def test_maybe_auto_update_enabled_by_default(tmp_cfg, monkeypatch):
     monkeypatch.delenv("MEMO_AUTO_UPDATE", raising=False)
+    monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: None)
     spawned = au.maybe_auto_update(tmp_cfg)
+    # default is now True; returns False only because no newer tag was found
     assert spawned is False
 
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-06-26
+
+### Added
+
+- **`memo_version` MCP tool.** Returns the installed package version and backend protocol version. Lets callers confirm which memo is running without shelling out.
+- **`list_sessions_without_watermark()` in `capture.py`.** Returns sessions that have never been captured (no watermark file), up to a configurable limit, sorted most-recent-first.
+- **Idle capture daemon: catch-up scan for un-watermarked sessions.** Every 60 seconds the daemon checks up to 5 past sessions with no watermark and runs incremental capture on each, so insights from sessions that were open when the daemon was not running are no longer silently dropped.
+- **`MEMO_RESOURCE_BODY_CHARS` flag (default 1200).** Controls how many body characters are exposed by the `memo://memory/{id}` MCP resource; `memo get <id>` still returns the full body.
+- **`MEMO_SEARCH_JSON_BODY_CHARS` flag (default 280).** Default body preview length for JSON search and recall output (`memo search --json`, `memo recall --json`).
+- **`MEMO_ASK_SNIPPET_CHARS` flag (default 800).** Default snippet length fed to the LLM in `ask` / `chat-ask` retrieval payloads.
+- **`memo search --body-chars` / `memo recall --body-chars`.** Per-invocation body truncation for JSON output (default 280, pass `-1` for full bodies), overriding `MEMO_SEARCH_JSON_BODY_CHARS`.
+- **`memo ask --snippet-chars` / `memo chat-ask --snippet-chars`.** Per-invocation snippet length (default 800), overriding `MEMO_ASK_SNIPPET_CHARS`.
+- **`GraphNavigator` fallback to graphify code graph.** When the memo knowledge graph has no path or neighbors for a given entity, `find_path` and `get_neighbors` now fall back to the graphify code graph (via `graphify_loader`), so graph navigation works even on sparse memo graphs.
+
+### Changed
+
+- **`MEMO_AUTO_UPDATE` default changed to `True`.** Auto-update on `memo-mcp` start is now on by default. Set `MEMO_AUTO_UPDATE=0` to opt out. Previously required explicit opt-in.
+
 ## [1.1.4] - 2026-06-26
 
 ### Added

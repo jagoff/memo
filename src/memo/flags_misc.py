@@ -40,10 +40,10 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_AUTO_UPDATE",
         "bool",
-        False,
+        True,
         "update",
         "On memo-mcp start, check for a newer git TAG and update in the "
-        "background (takes effect next start). Default off; enable per-machine.",
+        "background (takes effect next start). Default on; set =0 to opt out.",
     ),
     _spec(
         "MEMO_AUTO_UPDATE_INTERVAL_S",
@@ -85,6 +85,27 @@ SPECS: tuple[FlagSpec, ...] = (
         "agent",
         "mcp",
         "MCP surface profile: agent (default, 9 tools) | core/slim (stable core) | full/default (all tools).",
+    ),
+    _spec(
+        "MEMO_RESOURCE_BODY_CHARS",
+        "int",
+        1200,
+        "mcp",
+        "Max body chars exposed by memo://memory/{id}; explicit memo_get still returns the full body.",
+    ),
+    _spec(
+        "MEMO_SEARCH_JSON_BODY_CHARS",
+        "int",
+        280,
+        "mcp",
+        "Default body preview length for JSON search / recall output.",
+    ),
+    _spec(
+        "MEMO_ASK_SNIPPET_CHARS",
+        "int",
+        800,
+        "retrieval",
+        "Default snippet length for ask/chat retrieval payloads.",
     ),
     _spec(
         "MEMO_CLI_PROFILE",
