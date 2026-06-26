@@ -15,6 +15,14 @@ from memo.flags import flag_bool, flag_float, flag_int, flag_str
 _log = logging.getLogger("memo.cli_recall_hook")
 
 
+_TRIVIAL_WORDS: frozenset[str] = frozenset(
+    {
+        "yes", "no", "ok", "sure", "yep", "nope", "continue", "go",
+        "ahead", "proceed", "sí", "si", "dale", "listo", "gracias",
+        "thanks", "k", "cool", "perfect",
+    }
+)
+
 _RECALL_CONTEXTS: tuple[tuple[str, re.Pattern[str], set[str]], ...] = (
     (
         "code",
@@ -114,6 +122,13 @@ def recall_hook() -> None:
             prompt = expanded
         else:
             _bail(f"prompt too short ({len(prompt)} < {min_chars})")
+            return
+
+    if flag_bool("MEMO_RECALL_TRIVIAL_BAIL"):
+        _stripped = re.sub(r"[^\w\s]", "", prompt)
+        _words = _stripped.split()
+        if len(_words) <= 3 and any(w.lower() in _TRIVIAL_WORDS for w in _words):
+            _bail("trivial prompt")
             return
 
     _client = flag_str("MEMO_RECALL_CLIENT")

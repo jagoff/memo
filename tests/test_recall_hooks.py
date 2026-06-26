@@ -472,3 +472,59 @@ def test_compact_format_is_much_smaller_than_full() -> None:
         f"compact ({len(compact_block)} chars) should be ≤30% of full ({len(full_block)} chars), "
         f"got {ratio:.0%}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Trivial prompt gate (MEMO_RECALL_TRIVIAL_BAIL)
+# ---------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+from click.testing import CliRunner  # noqa: E402
+
+
+def _trivial_env(tmp_path: Path) -> dict[str, str]:
+    """Env that bypasses the char-length gate and enables debug bail output."""
+    return {
+        "MEMO_CONFIG_FILE": str(tmp_path / "memo-config.toml"),
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_RECALL_DEBUG": "1",
+        "MEMO_RECALL_MIN_PROMPT_CHARS": "1",
+    }
+
+
+def _invoke_hook(prompt: str, env: dict) -> "CliRunner":  # type: ignore[type-arg]
+    from memo.cli import cli
+
+    runner = CliRunner()
+    payload = json.dumps({"prompt": prompt})
+    return runner.invoke(cli, ["recall-hook"], input=payload, env=env)
+
+
+def test_trivial_bail_fires_on_si(tmp_path: Path) -> None:
+    result = _invoke_hook("sí", _trivial_env(tmp_path))
+    assert result.exit_code == 0
+    assert "trivial prompt" in result.output
+
+
+def test_trivial_bail_fires_on_yes_please(tmp_path: Path) -> None:
+    result = _invoke_hook("yes please", _trivial_env(tmp_path))
+    assert "trivial prompt" in result.output
+
+
+def test_trivial_bail_skips_longer_prompt(tmp_path: Path) -> None:
+    """A prompt >3 words is not trivial even when it starts with 'yes'."""
+    result = _invoke_hook("yes, please implement the auth module", _trivial_env(tmp_path))
+    assert "trivial prompt" not in result.output
+
+
+def test_trivial_bail_fires_on_ok(tmp_path: Path) -> None:
+    result = _invoke_hook("ok", _trivial_env(tmp_path))
+    assert "trivial prompt" in result.output
+
+
+def test_trivial_bail_disabled(tmp_path: Path) -> None:
+    """MEMO_RECALL_TRIVIAL_BAIL=0 → 'ok' does not bail as trivial."""
+    env = {**_trivial_env(tmp_path), "MEMO_RECALL_TRIVIAL_BAIL": "0"}
+    result = _invoke_hook("ok", env)
+    assert "trivial prompt" not in result.output

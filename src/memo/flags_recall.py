@@ -240,4 +240,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "recall",
         "Recall block format: 'full' (default, rich markdown) or 'compact' (one line per hit, ~65% fewer tokens).",
     ),
+    _spec(
+        "MEMO_RECALL_TRIVIAL_BAIL",
+        "bool",
+        True,
+        "recall",
+        "Skip recall when the prompt is ≤3 words and any word matches the built-in trivial set "
+        "(yes, no, ok, sure, sí, dale, gracias, …). Saves the embed+search round-trip for "
+        "pure confirmation turns. Opt-out with MEMO_RECALL_TRIVIAL_BAIL=0.",
+        opt_out=True,
+    ),
 )
