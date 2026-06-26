@@ -20,15 +20,16 @@ def _package_content_hash(pkg_dir: Path) -> str | None:
     the file vanishes between the ``rglob`` scan and the ``read_bytes`` call).
     """
     h = hashlib.sha256()
-    for path in sorted(pkg_dir.rglob("*.py")):
-        try:
+    try:
+        paths = sorted(pkg_dir.rglob("*.py"))
+        for path in paths:
             rel = path.relative_to(pkg_dir).as_posix()
             h.update(rel.encode("utf-8"))
             h.update(b"\0")
             h.update(path.read_bytes())
             h.update(b"\0")
-        except OSError:
-            return None
+    except OSError:
+        return None
     return h.hexdigest()
 
 
