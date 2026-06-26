@@ -13,15 +13,22 @@ import tomllib
 from pathlib import Path
 
 
-def _package_content_hash(pkg_dir: Path) -> str:
-    """Stable sha256 over every ``*.py`` under ``pkg_dir`` (sorted relpath + bytes)."""
+def _package_content_hash(pkg_dir: Path) -> str | None:
+    """Stable sha256 over every ``*.py`` under ``pkg_dir`` (sorted relpath + bytes).
+
+    Returns ``None`` when any file cannot be read (e.g. ``PermissionError`` or
+    the file vanishes between the ``rglob`` scan and the ``read_bytes`` call).
+    """
     h = hashlib.sha256()
     for path in sorted(pkg_dir.rglob("*.py")):
-        rel = path.relative_to(pkg_dir).as_posix()
-        h.update(rel.encode("utf-8"))
-        h.update(b"\0")
-        h.update(path.read_bytes())
-        h.update(b"\0")
+        try:
+            rel = path.relative_to(pkg_dir).as_posix()
+            h.update(rel.encode("utf-8"))
+            h.update(b"\0")
+            h.update(path.read_bytes())
+            h.update(b"\0")
+        except OSError:
+            return None
     return h.hexdigest()
 
 
@@ -29,7 +36,10 @@ def _read_pyproject_version(repo_root: Path) -> str | None:
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.exists():
         return None
-    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
     version = data.get("project", {}).get("version")
     return version if isinstance(version, str) else None
 
@@ -71,7 +81,11 @@ def check_install_freshness(
     repo_pkg = repo_root / "src" / "memo"
     if installed_pkg_dir is None or not installed_pkg_dir.exists() or not repo_pkg.exists():
         return {"status": "skipped", "message": "package dir not locatable"}
-    if _package_content_hash(installed_pkg_dir) == _package_content_hash(repo_pkg):
+    installed_hash = _package_content_hash(installed_pkg_dir)
+    repo_hash = _package_content_hash(repo_pkg)
+    if installed_hash is None or repo_hash is None:
+        return {"status": "skipped", "message": "I/O error reading package"}
+    if installed_hash == repo_hash:
         return {"status": "fresh", "message": f"installed matches repo at {installed_version}"}
     return {
         "status": "stale",

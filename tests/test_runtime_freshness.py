@@ -64,3 +64,17 @@ def test_skipped_when_no_repo(tmp_path: Path) -> None:
         installed_version="1.2.3", installed_pkg_dir=None, repo_root=None
     )
     assert out["status"] == "skipped"
+
+
+def test_skipped_on_malformed_pyproject(tmp_path: Path) -> None:
+    """Guard: invalid TOML in pyproject.toml must not raise; must return skipped."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text("this is not [ valid toml !!!\n", encoding="utf-8")
+
+    out = check_install_freshness(
+        installed_version="1.2.3",
+        installed_pkg_dir=None,
+        repo_root=repo,
+    )
+    assert out["status"] == "skipped"

@@ -422,6 +422,17 @@ def _doctor_report(
     do_gc: bool,
     fix: bool,
 ) -> dict[str, Any]:
+    from memo import __version__ as _installed_version
+    from memo.flags import flag_str
+    from memo.runtime.freshness import check_install_freshness, installed_package_dir
+
+    _dev_repo = flag_str("MEMO_DEV_REPO")
+    _freshness = check_install_freshness(
+        installed_version=_installed_version,
+        installed_pkg_dir=installed_package_dir(),
+        repo_root=Path(_dev_repo).expanduser() if _dev_repo else None,
+    )
+
     def check_sqlite_vec() -> None:
         # Probe that the extension loads AND supports the PARTITION KEY /
         # metadata-column kNN filtering the store now relies on (alpha vec0
@@ -469,17 +480,6 @@ def _doctor_report(
             conn.execute("DROP TABLE probe")
         finally:
             conn.close()
-
-    from memo import __version__ as _installed_version
-    from memo.flags import flag_str
-    from memo.runtime.freshness import check_install_freshness, installed_package_dir
-
-    _dev_repo = flag_str("MEMO_DEV_REPO")
-    _freshness = check_install_freshness(
-        installed_version=_installed_version,
-        installed_pkg_dir=installed_package_dir(),
-        repo_root=Path(_dev_repo).expanduser() if _dev_repo else None,
-    )
 
     from memo.cli_runtime import _runtime_install_report
 
