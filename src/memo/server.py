@@ -265,7 +265,7 @@ def main() -> None:
     from memo.runtime.autoupdate import maybe_auto_update, notify_if_newer
 
     threading.Thread(target=notify_if_newer, daemon=True).start()
-    maybe_auto_update()
+    threading.Thread(target=maybe_auto_update, daemon=True).start()
 
     transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):

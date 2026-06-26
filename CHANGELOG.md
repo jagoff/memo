@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.10] - 2026-06-26
+
+### Fixed
+
+- `maybe_auto_update()` now runs in a background thread at MCP server startup instead of blocking synchronously. The GitHub network call it makes was delaying MCP connection handshake past client timeouts (Devin Desktop shows MCP as unavailable). (`server.py`)
+
 ## [1.1.9] - 2026-06-26
 
 ### Fixed
