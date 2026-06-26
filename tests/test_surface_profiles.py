@@ -133,3 +133,32 @@ def test_agent_tools_definition_is_nine_and_excludes_idle_from_removal(monkeypat
     ):
         assert name in AGENT_MCP_TOOLS
         assert name not in removed
+
+
+def test_token_cost_recognizes_agent() -> None:
+    from memo.surface import mcp_profile_token_cost
+
+    count, cost, reduced = mcp_profile_token_cost("agent")
+    assert count == "~9"
+    assert cost == "~2.4k"
+    assert reduced is True
+
+
+def test_token_cost_full_is_not_reduced() -> None:
+    from memo.surface import mcp_profile_token_cost
+
+    for profile in ("full", "default"):
+        count, cost, reduced = mcp_profile_token_cost(profile)
+        assert count == "~118"
+        assert cost == "~35k"
+        assert reduced is False
+
+
+def test_token_cost_active_default_resolves_to_agent(monkeypatch) -> None:
+    monkeypatch.delenv("MEMO_MCP_PROFILE", raising=False)
+    monkeypatch.delenv("MEMO_MCP_SLIM", raising=False)
+    from memo.surface import mcp_profile_token_cost
+
+    count, cost, reduced = mcp_profile_token_cost()
+    assert count == "~9"
+    assert reduced is True
