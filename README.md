@@ -26,6 +26,13 @@ memo is built to **spend fewer tokens, not more**. Two measured wins (real numbe
 
 On a ~200-memory corpus, memo's ROI meter estimates **~80k tokens of model work avoided** (≈62.6k from 179 grounded facts + ≈17.1k from 19 re-asks it prevented; ~259 tokens/response). The estimate is corpus-specific — `memo roi` shows yours.
 
+## Requirements
+
+- **macOS on Apple Silicon** (M1–M4) — MLX is the load-bearing piece. memo does **not** run on Linux / Windows / Intel Macs.
+- **Python ≥ 3.13**.
+- **~8 GB** free disk for the default model set (the installer downloads it).
+- *Optional:* an Obsidian vault. Without one, memo defaults to `~/Documents/memo/`.
+
 ## Install — one step
 
 ```bash
@@ -79,13 +86,6 @@ memo ask 'what changed in the embedder this month?'   # RAG — cites memories b
 - **Hybrid retrieval + reranker** — vec + BM25 (FTS5, diacritic-folding for Spanish) fused via RRF, then an optional MLX cross-encoder rerank.
 - **Markdown is the source of truth** — plain `.md` + frontmatter you can edit in Obsidian/vim; the sqlite index is rebuildable (`memo reindex`).
 - **Semantic map** — `memo map` renders an interactive 2D canvas (UMAP/PCA + Plotly) of the whole corpus.
-
-## Requirements
-
-- **macOS on Apple Silicon** (M1–M4) — MLX is the load-bearing piece. memo does **not** run on Linux / Windows / Intel Macs.
-- **Python ≥ 3.13**.
-- **~8 GB** free disk for the default model set (the installer downloads it).
-- *Optional:* an Obsidian vault. Without one, memo defaults to `~/Documents/memo/`.
 
 ## Documentation
 

@@ -196,7 +196,10 @@ Or hand-edit `~/.claude.json`:
       "type": "stdio",
       "command": "/path/to/memo-mcp",
       "args": [],
-      "env": { "MEMO_NONINTERACTIVE": "1" }
+      "env": {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_MCP_PROFILE": "agent"
+      }
     }
   }
 }
