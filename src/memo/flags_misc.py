@@ -451,6 +451,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "Seconds of no new prompt before the delayed session-idle reflect worker synthesizes the active session into durable memories.",
         min_val=0,
     ),
+    _spec(
+        "MEMO_AGENT_TTY",
+        "str",
+        "",
+        "session",
+        "Controlling TTY device path (e.g. /dev/ttys000) recorded by the shell "
+        "shims (`memo runtime` writes it into ~/.zshrc / ~/.bashrc) so a detached "
+        "worker can address the user's terminal. Set automatically per interactive "
+        "session, not user-configured; registered here so `memo config validate` "
+        "recognizes it instead of flagging it as an unknown MEMO_* var.",
+    ),
     # WhatsApp ingest
     _spec(
         "MEMO_WHATSAPP_DB",

@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Auto-save notification format.** Aligned the last `_write_capture_notification` docstring leftover to the standard `※ MEMO auto-saved` line (was `※ MEMO: auto save…`). Version bumped because the prior `1.0.12` build shipped the old `※ auto save (idle): …` strings — reusing the version number across content changes hid the stale install; a clean reinstall now matches source.
+- **Idle-capture notification path consolidated.** `session_idle_maintenance` now emits solely through `_write_capture_notification`; the duplicate inline TTY-writer (and its `_read_agent_tty_file` helper / `MEMO_AGENT_TTY` reader) were removed, so there is one notification code path instead of two.
+- **`MEMO_AGENT_TTY` registered in the flag registry** so `memo config validate` recognizes the shim-exported var instead of reporting it as an unknown `MEMO_*` typo.
+
+### Changed
+
+- **Enabled ruff flake8-bandit (`S`) security lints** with targeted `# noqa` suppressions for intentional internal cases (asserts in guards, trusted-arg subprocess calls, partial-path executables on the managed PATH) and exception chaining (`raise … from exc`) where a cause was being dropped.
 
 ## [1.0.12] - 2026-06-25
 
