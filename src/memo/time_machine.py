@@ -286,11 +286,20 @@ def reconstruct(memory: Any, *, as_of: str | datetime) -> CorpusSnapshot:
                     snap[rid].title = old_val or snap[rid].title
                 elif field_name == "type":
                     snap[rid].type = old_val or snap[rid].type
+                elif field_name == "updated":
+                    snap[rid].updated = old_val
                 elif field_name == "body":
                     # We don't load full bodies into the snapshot row by
                     # default (they live on disk). Mark that body is
                     # historical and reversible if needed.
                     pass
+            # For pre-fix events that lack "updated" in the delta, cap the
+            # field at the event's own ts — the record was last modified at
+            # or before this point in time, so this is a correct upper bound.
+            if "updated" not in delta:
+                ev_ts = ev.get("ts")
+                if ev_ts and snap[rid].updated and snap[rid].updated > ev_ts:
+                    snap[rid].updated = ev_ts
 
     return CorpusSnapshot(as_of=target, records=snap, _memory=memory)
 

@@ -130,6 +130,9 @@ class _UpdateOpsMixin(_MemoryBase):
             delta["tags"] = (r["tags"], new_tags)
         if body_changed:
             delta["body_hash"] = (r["body_hash"], new_body_hash)
+        # Always record updated so time-machine can restore the exact timestamp
+        # when replaying history in reverse (reconstruct() uses old_val).
+        delta["updated"] = (r.get("updated"), now_iso)
         # Track provenance churn so a re-route (e.g. Synapse re-issues a
         # different trace_id on the same memory) shows up in history.
         old_prov = _extract_provenance(r.get("extra") or {})

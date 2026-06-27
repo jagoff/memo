@@ -11,7 +11,8 @@ def test_history_logs_save_update_delete(mem_with_stub: Memory):
     ops = [e["op"] for e in events]
     assert ops == ["delete", "update", "save"]
     upd = next(e for e in events if e["op"] == "update")
-    assert upd["delta"] == {"title": ["A", "B"]}
+    assert upd["delta"]["title"] == ["A", "B"]
+    assert "updated" in upd["delta"]  # always recorded for time-machine rewind
 
 
 def test_history_filter_by_record_id(mem_with_stub: Memory):

@@ -69,7 +69,10 @@ def as_of_search(
         return
 
     if not hits:
-        console.print(f"[dim]no results in snapshot @ {snap.as_of.date().isoformat()}[/dim]")
+        console.print(
+            f"[dim]no results in snapshot @ {snap.as_of.date().isoformat()} "
+            f"· {len(snap)} memories existed[/dim]"
+        )
         return
     tbl = Table(
         show_lines=False,
