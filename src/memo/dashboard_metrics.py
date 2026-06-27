@@ -47,7 +47,6 @@ EXPECTED_CONSUMERS = (
     "synapse",
     "memflow",
     "codex",
-    "blackbox",
 )
 
 
