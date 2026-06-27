@@ -50,11 +50,12 @@ AGENT_MCP_TOOLS: frozenset[str] = frozenset(
         "memo_search",
         "memo_unified_briefing",
         # Session/notification plumbing registered by _srv_idle_capture outside
-        # the advanced gate and never removed — so the real agent surface is 9.
+        # the advanced gate and never removed.
         "memo_idle_capture",
         "memo_pop_notification",
         "memo_start_session",
         "memo_save_text",
+        "memo_version",
     }
 )
 
@@ -127,9 +128,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("~9", "~2.4k"),
-    "core": ("~25", "~6.7k"),
-    "slim": ("~25", "~6.7k"),
+    "agent": ("~10", "~2.4k"),
+    "core": ("~30", "~7.2k"),
+    "slim": ("~30", "~7.2k"),
 }
 
 

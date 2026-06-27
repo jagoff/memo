@@ -161,9 +161,12 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         from memo.mcp_tools import register_all as _register_mcp_tools
 
         _register_mcp_tools(server, memory)
-    from memo.mcp_tools import register_version as _register_version_tool
+    else:
+        # register_all already includes memo_version; only register it here for
+        # the non-full profiles (agent / core / slim) that skip the advanced gate.
+        from memo.mcp_tools import register_version as _register_version_tool
 
-    _register_version_tool(server, memory)
+        _register_version_tool(server, memory)
     _srv_core_records.register(server, memory)
     _srv_core_search.register(server, memory)
     _srv_core_history.register(server, memory)

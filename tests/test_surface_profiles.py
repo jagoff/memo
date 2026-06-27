@@ -124,7 +124,7 @@ def test_agent_tools_definition_is_nine_and_excludes_idle_from_removal(monkeypat
     from memo.surface import AGENT_MCP_TOOLS, mcp_tools_to_remove
 
     removed = mcp_tools_to_remove()
-    assert len(AGENT_MCP_TOOLS) == 9
+    assert len(AGENT_MCP_TOOLS) == 10
     for name in (
         "memo_idle_capture",
         "memo_pop_notification",
@@ -139,7 +139,7 @@ def test_token_cost_recognizes_agent() -> None:
     from memo.surface import mcp_profile_token_cost
 
     count, cost, reduced = mcp_profile_token_cost("agent")
-    assert count == "~9"
+    assert count == "~10"
     assert cost == "~2.4k"
     assert reduced is True
 
@@ -149,8 +149,8 @@ def test_token_cost_core_and_slim_are_reduced() -> None:
 
     for profile in ("core", "slim"):
         count, cost, reduced = mcp_profile_token_cost(profile)
-        assert count == "~25"
-        assert cost == "~2.4k"
+        assert count == "~30"
+        assert cost == "~7.2k"
         assert reduced is True
 
 
@@ -170,6 +170,6 @@ def test_token_cost_active_default_resolves_to_agent(monkeypatch) -> None:
     from memo.surface import mcp_profile_token_cost
 
     count, cost, reduced = mcp_profile_token_cost()
-    assert count == "~9"
+    assert count == "~10"
     assert cost == "~2.4k"
     assert reduced is True

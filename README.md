@@ -34,7 +34,7 @@
 
 memo is built to **spend fewer tokens, not more**.
 
-- **96.4% smaller MCP surface.** The default `agent` profile exposes **5 tools / ~589 schema tokens**, versus **109 tools / ~16k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **91% smaller MCP surface.** The default `agent` profile exposes **10 tools / ~2.4k schema tokens**, versus **122 tools / ~28k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -231,9 +231,9 @@ memo runs four background daemons:
 
 | Profile | Tools | Schema tokens | Use when |
 |---|---|---|---|
-| `agent` (default) | 5 | ~589 | Standard agent work — max token economy |
-| `core` | ~25 | ~2.4k | Constrained clients (Codex, OpenCode) |
-| `full` | 109 | ~16k | Power users, debugging |
+| `agent` (default) | 10 | ~2.4k | Standard agent work — max token economy |
+| `core` | ~30 | ~7.2k | Constrained clients (Codex, OpenCode) |
+| `full` | 122 | ~28k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
@@ -280,7 +280,7 @@ MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https:
 
 **Las novedades de 2.0:** máquina del tiempo (`memo as-of`), radar de contradicciones (`memo contradict`), pipeline de síntesis (`memo synthesize`), sync cross-Mac vía git, vault de Obsidian como fuente de verdad, knowledge graph, puntuación de salud (`memo health`), gates de regresión de retrieval (`memo eval --gate`), e ingesta multi-modal (imágenes + OCR de audio).
 
-**Por qué ahorra tokens:** la superficie MCP por defecto son 5 tools (~589 tokens) contra 109 (~16k) → **96,4% menos** contexto por sesión; y el recall **inyecta la respuesta** en vez de que el agente la vuelva a deducir. En un corpus de ~200 memories, `memo roi` estima **~80k tokens de trabajo del modelo evitados** por sesión.
+**Por qué ahorra tokens:** la superficie MCP por defecto son 10 tools (~2.4k tokens) contra 122 (~28k) → **~91% menos** contexto por sesión; y el recall **inyecta la respuesta** en vez de que el agente la vuelva a deducir. En un corpus de ~200 memories, `memo roi` estima **~80k tokens de trabajo del modelo evitados** por sesión.
 
 **Instalación:**
 
