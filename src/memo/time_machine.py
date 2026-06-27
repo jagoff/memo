@@ -45,9 +45,12 @@ when the body changed).
 from __future__ import annotations
 
 import builtins
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # reconstruct()/diff() pull the full corpus + audit log into RAM. This bound is
 # effectively "all rows" for a personal vault; it exists only as a backstop.
@@ -187,6 +190,7 @@ class CorpusSnapshot:
             )
             answer = ((out.get("message") or {}).get("content") or "").strip()
         except Exception as exc:
+            _log.warning("as-of ask: model query failed", exc_info=True)
             answer = f"(error querying the model: {type(exc).__name__})"
 
         return {
@@ -298,8 +302,13 @@ def reconstruct(memory: Any, *, as_of: str | datetime) -> CorpusSnapshot:
             # or before this point in time, so this is a correct upper bound.
             if "updated" not in delta:
                 ev_ts = ev.get("ts")
-                if ev_ts and snap[rid].updated and snap[rid].updated > ev_ts:
-                    snap[rid].updated = ev_ts
+                cur_updated = snap[rid].updated
+                if ev_ts and cur_updated:
+                    try:
+                        if _parse_ts(cur_updated) > _parse_ts(ev_ts):
+                            snap[rid].updated = ev_ts
+                    except (ValueError, TypeError):
+                        pass
 
     return CorpusSnapshot(as_of=target, records=snap, _memory=memory)
 

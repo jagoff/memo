@@ -384,6 +384,8 @@ class Memory(
         """Build and memoize an optional subsystem by registry name."""
         if name not in OPTIONAL_CAPABILITIES:
             raise KeyError(f"unknown Memory capability: {name}")
+        if self._closed:
+            raise RuntimeError(f"Memory is closed — cannot access capability '{name}'")
         if name not in self._capabilities:
             self._capabilities[name] = OPTIONAL_CAPABILITIES[name](self)
         return self._capabilities[name]
