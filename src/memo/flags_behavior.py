@@ -86,6 +86,26 @@ SPECS: tuple[FlagSpec, ...] = (
         "capture",
         "Minutes between captures (0 = no cooldown).",
     ),
+    _spec(
+        "MEMO_CAPTURE_TOOL_EVIDENCE",
+        "bool",
+        True,
+        "capture",
+        "Project the exchange's tool stream (files edited, commands+exit, test "
+        "results) into a compact 'TOOL ACTIVITY' line fed to the capture "
+        "extractor. Turns impressionistic prose ('I fixed it') into grounded, "
+        "high-retrievability memories with real file/symbol/command tokens. "
+        "Set 0 to extract from prose only.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_CAPTURE_TOOL_EVIDENCE_CHARS",
+        "int",
+        300,
+        "capture",
+        "Hard cap on the TOOL ACTIVITY projection per message (keeps verbose "
+        "command output from swamping the extractor context).",
+    ),
     # corpus maintenance (memo maintain)
     _spec(
         "MEMO_MAINTAIN_DISABLE",

@@ -34,18 +34,32 @@ def test_extract_text_handles_string_content():
     assert _extract_text("hello world") == "hello world"
 
 
-def test_extract_text_concatenates_text_blocks_skips_tools():
+def test_extract_text_keeps_prose_clean_and_appends_tool_activity():
     blocks = [
         {"type": "text", "text": "Decidí migrar a MLX."},
-        {"type": "tool_use", "name": "Read", "input": {}},
+        {"type": "tool_use", "name": "Edit", "input": {"file_path": "src/memo/embedder.py"}},
         {"type": "text", "text": "Razón: latency 30% menor."},
         {"type": "tool_result", "content": "..."},
     ]
     out = _extract_text(blocks)
+    # Prose is concatenated and never polluted by raw tool block structure.
     assert "Decidí migrar a MLX." in out
     assert "latency 30% menor" in out
     assert "tool_use" not in out
-    assert "Read" not in out
+    # Default-on: a compact TOOL ACTIVITY projection grounds the extraction.
+    assert "TOOL ACTIVITY:" in out
+    assert "Edit(src/memo/embedder.py)" in out
+
+
+def test_extract_text_tool_evidence_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("MEMO_CAPTURE_TOOL_EVIDENCE", "0")
+    blocks = [
+        {"type": "text", "text": "Decidí migrar a MLX."},
+        {"type": "tool_use", "name": "Read", "input": {}},
+    ]
+    out = _extract_text(blocks)
+    assert out == "Decidí migrar a MLX."
+    assert "TOOL ACTIVITY" not in out
 
 
 def test_read_last_exchange_picks_latest_pair(tmp_path: Path):

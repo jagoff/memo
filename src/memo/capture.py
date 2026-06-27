@@ -271,10 +271,48 @@ def _parse_exchanges(transcript_path: Path) -> list[tuple[str, str]]:
     return exchanges
 
 
+def _tool_activity(content: Any) -> str:
+    """Compact projection of a message's tool stream for capture grounding.
+
+    The durable evidence in a coding session lives in the tool calls — the
+    Edit that fixed the bug, the file touched, the command + exit code, the
+    test that went green — not in the narration. Feeding the extractor only
+    prose ('I fixed it', 'that works now') yields vague memories; this surfaces
+    the file/symbol/command tokens that both match queries and make a recalled
+    memory actionable. Returns '' when there is no tool activity.
+    """
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "tool_use":
+            name = str(block.get("name") or "tool")
+            inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+            arg = (
+                inp.get("file_path")
+                or inp.get("path")
+                or inp.get("command")
+                or inp.get("pattern")
+                or inp.get("query")
+                or ""
+            )
+            arg = str(arg).replace("\n", " ").strip()
+            parts.append(f"{name}({arg[:60]})" if arg else name)
+        elif btype == "tool_result":
+            is_err = bool(block.get("is_error"))
+            parts.append("→ error" if is_err else "→ ok")
+    return "; ".join(parts).strip()
+
+
 def _extract_text(content: Any) -> str:
-    """Pull the plain text out of a Claude Code message content. Skips
-    tool_use blocks, tool_result blocks, image blocks. Concatenates all
-    text/markdown content with newlines.
+    """Pull the plain text out of a Claude Code message content. Concatenates
+    text/markdown blocks, and (when MEMO_CAPTURE_TOOL_EVIDENCE is on) appends a
+    compact 'TOOL ACTIVITY' projection of any tool_use/tool_result blocks so
+    capture extraction is grounded in what was actually done, not just narrated.
+    Image/thinking blocks are skipped.
     """
     if content is None:
         return ""
@@ -285,15 +323,19 @@ def _extract_text(content: Any) -> str:
         for block in content:
             if not isinstance(block, dict):
                 continue
-            btype = block.get("type")
-            if btype == "text":
+            if block.get("type") == "text":
                 t = block.get("text", "")
                 if t:
                     out.append(t.strip())
-            # Skip tool_use, tool_result, image, thinking — not useful
-            # for insight extraction. The text blocks carry the
-            # assistant's prose explanations and the user's prompts.
-        return "\n\n".join(out).strip()
+        text = "\n\n".join(out).strip()
+        from memo.flags import flag_bool, flag_int
+
+        if flag_bool("MEMO_CAPTURE_TOOL_EVIDENCE"):
+            activity = _tool_activity(content)
+            if activity:
+                cap = flag_int("MEMO_CAPTURE_TOOL_EVIDENCE_CHARS") or 300
+                text = (text + f"\n\nTOOL ACTIVITY: {activity[:cap]}").strip()
+        return text
     return ""
 
 
