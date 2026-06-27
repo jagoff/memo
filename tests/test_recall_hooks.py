@@ -407,7 +407,7 @@ def test_compact_format_one_line_per_hit_no_headers_tags_scores() -> None:
     inner_lines = block.split("\n")[1:-1]
     assert len(inner_lines) == 3
 
-    for hit, line in zip(hits, inner_lines):
+    for hit, line in zip(hits, inner_lines, strict=True):
         assert line.startswith(f"[{hit.id[:8]}]"), f"line {line!r} should start with id8"
         assert "score" not in line.lower()
         assert "tag1" not in line
@@ -440,7 +440,7 @@ def test_compact_format_respects_token_budget() -> None:
 
 def test_compact_format_full_unchanged_regression(monkeypatch, tmp_path) -> None:
     """render_recall_context (full format) still emits ## Memory header and directive."""
-    from memo.recall_logic import render_recall_context, RECALL_DIRECTIVE, RECALL_HEADER
+    from memo.recall_logic import RECALL_DIRECTIVE, RECALL_HEADER, render_recall_context
 
     hits = [_rich_rec("reg00001aabbccdd", "Regression fact", 0.85)]
     monkeypatch.setenv("MEMO_RECALL_FEEDBACK_HINT", "0")
@@ -479,6 +479,7 @@ def test_compact_format_is_much_smaller_than_full() -> None:
 # ---------------------------------------------------------------------------
 
 from pathlib import Path  # noqa: E402
+
 from click.testing import CliRunner  # noqa: E402
 
 
@@ -493,7 +494,7 @@ def _trivial_env(tmp_path: Path) -> dict[str, str]:
     }
 
 
-def _invoke_hook(prompt: str, env: dict) -> "CliRunner":  # type: ignore[type-arg]
+def _invoke_hook(prompt: str, env: dict) -> CliRunner:  # type: ignore[type-arg]
     from memo.cli import cli
 
     runner = CliRunner()

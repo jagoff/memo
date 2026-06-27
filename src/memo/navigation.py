@@ -215,11 +215,11 @@ class GraphNavigator:
                         graphify_neighbors.add(src if src != entity else tgt)
                 if graphify_neighbors:
                     neighbors_list = list(graphify_neighbors)[:max_neighbors]
-                    neighbor_mems = {n: ["(from graphify code graph)"] for n in neighbors_list}
+                    neighbor_mems_fallback = {n: ["(from graphify code graph)"] for n in neighbors_list}
                     return EntityNeighbors(
                         entity=entity,
                         direct_neighbors=neighbors_list,
-                        neighbor_memorias=neighbor_mems,
+                        neighbor_memorias=neighbor_mems_fallback,
                         degree=len(graphify_neighbors),
                     )
             except (FileNotFoundError, Exception) as e:

@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import os
-import uuid
 from pathlib import Path
 
 import pytest
 
 from memo.config import Config
-from memo.server_engram_patterns import register, _project_from_cwd, _session_directory, _normalize_hash
+from memo.server_engram_patterns import (
+    _normalize_hash,
+    _project_from_cwd,
+    _session_directory,
+    register,
+)
 
 
 @pytest.fixture
