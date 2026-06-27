@@ -467,7 +467,13 @@ def ingest(
                 try:
                     fm = frontmatter.loads(raw)
                 except Exception as _fm_exc:
-                    _log.debug("ingest: frontmatter parse error in %s, skipping: %s", path.name, _fm_exc)
+                    # Malformed YAML frontmatter often means a corrupt/partial
+                    # file; skip it rather than indexing the raw `---` block as
+                    # the document body (which pollutes recall with YAML syntax).
+                    console.print(
+                        f"[yellow]skip (frontmatter parse error):[/yellow] "
+                        f"{path.name} — {_fm_exc}"
+                    )
                     skipped_empty += 1
                     continue
 

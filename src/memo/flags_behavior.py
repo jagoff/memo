@@ -106,6 +106,29 @@ SPECS: tuple[FlagSpec, ...] = (
         "Hard cap on the TOOL ACTIVITY projection per message (keeps verbose "
         "command output from swamping the extractor context).",
     ),
+    _spec(
+        "MEMO_CAPTURE_DUP_THRESHOLD",
+        "float",
+        0.85,
+        "capture",
+        "Cosine similarity at/above which a capture candidate is considered "
+        "'near' an existing memory (same topic).",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_CAPTURE_DUP_DROP_THRESHOLD",
+        "float",
+        0.97,
+        "capture",
+        "At/above this similarity a candidate is a near-identical paraphrase "
+        "(no new info) and is dropped. Between DUP_THRESHOLD and this, the "
+        "candidate is ADMITTED as new — a same-topic decision evolving — so the "
+        "nightly contradiction/evolution pass can supersede the older side "
+        "instead of the new fact being silently lost.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
     # corpus maintenance (memo maintain)
     _spec(
         "MEMO_MAINTAIN_DISABLE",

@@ -256,6 +256,39 @@ def test_is_near_duplicate_lets_distinct_through(mem_with_stub):
     assert not is_near_duplicate(mem_with_stub, candidate, threshold=0.9)
 
 
+def test_extract_and_save_drops_near_identical_paraphrase(mem_with_stub, monkeypatch):
+    import memo.capture as capture_mod
+
+    cand = {"title": "t", "body": "b" * 80, "type": "note", "tags": []}
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *a, **kw: [cand])
+    monkeypatch.setattr(capture_mod, "_passes_quality", lambda *a, **kw: True)
+    # >= drop threshold (0.97) → a paraphrase with no new info → drop.
+    monkeypatch.setattr(
+        capture_mod, "find_near_duplicate", lambda *a, **kw: {"id": "x" * 32, "score": 0.99, "title": "t"}
+    )
+    out = capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "u", "a")
+    assert out["skipped_dup"] == 1
+    assert out["reconciled"] == 0
+    assert out["saved"] == []
+
+
+def test_extract_and_save_admits_same_topic_evolution(mem_with_stub, monkeypatch):
+    import memo.capture as capture_mod
+
+    cand = {"title": "t", "body": "b" * 80, "type": "decision", "tags": []}
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *a, **kw: [cand])
+    monkeypatch.setattr(capture_mod, "_passes_quality", lambda *a, **kw: True)
+    # In the 0.85–0.97 band → same topic evolving → ADMIT as new so the
+    # supersede pass can run (the old behaviour silently dropped it).
+    monkeypatch.setattr(
+        capture_mod, "find_near_duplicate", lambda *a, **kw: {"id": "x" * 32, "score": 0.90, "title": "t"}
+    )
+    out = capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "u", "a")
+    assert out["reconciled"] == 1
+    assert out["skipped_dup"] == 0
+    assert len(out["saved"]) == 1
+
+
 def test_hash_assistant_idempotent():
     a = "hola mundo"
     assert _hash_assistant(a) == _hash_assistant(a)

@@ -364,15 +364,18 @@ class _MaintainOpsMixin(_MemoryBase):
                     continue
                 if had_embed_pending:
                     try:
-                        import contextlib
                         _post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
-                        _post_extra = dict(_post.metadata.get("extra") or {})
+                        _raw_extra = _post.metadata.get("extra")
+                        _post_extra = dict(_raw_extra) if isinstance(_raw_extra, dict) else {}
                         _post_extra.pop("_memo_embed_pending", None)
-                        _post.metadata["extra"] = _post_extra or {}
-                        with contextlib.suppress(Exception):
-                            md_path.write_text(frontmatter.dumps(_post), encoding="utf-8")
-                    except Exception:
-                        pass
+                        _post.metadata["extra"] = _post_extra
+                        md_path.write_text(frontmatter.dumps(_post), encoding="utf-8")
+                    except Exception as _pend_exc:
+                        _log.debug(
+                            "reindex: could not clear _memo_embed_pending from %s: %s",
+                            md_path.name,
+                            _pend_exc,
+                        )
                 reindexed += 1
                 if chunk_ingest:
                     reindexed += self._reindex_emit_chunks(

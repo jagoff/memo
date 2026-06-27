@@ -244,10 +244,9 @@ def test_mcp_unified_briefing_surfaces_memo_corpus_without_synapse(tmp_cfg, monk
     get memo's own durable corpus, not an empty briefing."""
     import asyncio
 
+    from memo.config import Config
     from memo.memory import Memory
     from memo.server import build_server
-
-    from memo.config import Config
 
     def _stub_embed(self, inputs):
         return [[1.0, 0.0, 0.0, 0.0] for _ in inputs]

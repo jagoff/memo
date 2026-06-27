@@ -290,7 +290,9 @@ def _tool_activity(content: Any) -> str:
         btype = block.get("type")
         if btype == "tool_use":
             name = str(block.get("name") or "tool")
-            inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+            inp = block.get("input")
+            if not isinstance(inp, dict):
+                inp = {}
             arg = (
                 inp.get("file_path")
                 or inp.get("path")
@@ -452,28 +454,37 @@ def extract_insights(
     return out
 
 
-def is_near_duplicate(
+def find_near_duplicate(
     memory: Any,
     candidate: dict[str, Any],
     threshold: float = 0.85,
-) -> bool:
-    """Return True if the candidate is semantically near a record
-    already in the corpus. Uses pure vec search (not hybrid+rerank) —
-    the dedup decision is about embedding similarity, not the
+) -> dict[str, Any] | None:
+    """Return the top corpus record semantically near `candidate` (>= threshold),
+    as ``{"id", "score", "title"}``, else None. Pure vec search (not
+    hybrid+rerank) — the dedup decision is about embedding similarity, not the
     reranker's joint judgement."""
     composed = f"{candidate['title']}\n\n{candidate['body']}"
     try:
         emb = memory.embedder.embed_query(composed)
         rows = memory.store.search(emb, limit=1)
     except Exception as exc:
-        # Best-effort dedup: on failure treat as non-duplicate (save proceeds),
-        # but leave a breadcrumb so an embedder/store crash isn't silent.
         _log.debug("capture: near-duplicate check failed, treating as new: %s", exc)
-        return False
+        return None
     if not rows:
-        return False
+        return None
     top_score = rows[0].get("score")
-    return top_score is not None and top_score >= threshold
+    if top_score is None or top_score < threshold:
+        return None
+    return {"id": rows[0].get("id"), "score": top_score, "title": rows[0].get("title")}
+
+
+def is_near_duplicate(
+    memory: Any,
+    candidate: dict[str, Any],
+    threshold: float = 0.85,
+) -> bool:
+    """Back-compat bool wrapper around :func:`find_near_duplicate`."""
+    return find_near_duplicate(memory, candidate, threshold) is not None
 
 
 def _extract_and_save(
@@ -499,9 +510,24 @@ def _extract_and_save(
     if debug:
         print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
 
+    # Dedup → reconcile band. The corpus's highest-value memories are evolving
+    # decisions on hot topics — exactly the candidates MOST similar (0.85–0.97)
+    # to a prior memory on the same topic. Silently dropping those (the old
+    # behaviour) fossilized the first thing ever said about a topic: an old
+    # "use Qwen3-0.6B" decision blocked today's "switched to 4B, +12%" from ever
+    # entering, so the contradiction/supersede machinery never ran. Now only
+    # near-IDENTICAL paraphrases (>= drop_threshold) are dropped; a same-topic
+    # candidate below that is ADMITTED as new so the nightly contradiction/
+    # evolution pass (which demotes the superseded side) can do its job.
+    from memo.flags import flag_float
+
+    near_threshold = flag_float("MEMO_CAPTURE_DUP_THRESHOLD") or 0.85
+    drop_threshold = flag_float("MEMO_CAPTURE_DUP_DROP_THRESHOLD") or 0.97
+
     saved: list[str] = []
     saved_titles: list[str] = []
     skipped_dup = 0
+    reconciled = 0
     skipped_quality = 0
     for cand in insights:
         # Quality gate: skip low-specificity memories before hitting the
@@ -515,11 +541,27 @@ def _extract_and_save(
                     file=sys.stderr,
                 )
             continue
-        if is_near_duplicate(mem, cand):
+        match = find_near_duplicate(mem, cand, threshold=near_threshold)
+        if match is not None and (match.get("score") or 0.0) >= drop_threshold:
+            # Near-identical paraphrase — no new information; drop.
             skipped_dup += 1
             if debug:
-                print(f"# memo capture: skip dup '{cand['title']}'", file=sys.stderr)
+                print(
+                    f"# memo capture: drop paraphrase '{cand['title']}' "
+                    f"(sim={match.get('score'):.2f} of {(match.get('id') or '')[:8]})",
+                    file=sys.stderr,
+                )
             continue
+        if match is not None:
+            # Same topic, evolved — admit as new (don't fossilize the topic).
+            reconciled += 1
+            if debug:
+                print(
+                    f"# memo capture: reconcile '{cand['title']}' "
+                    f"(sim={match.get('score'):.2f} of {(match.get('id') or '')[:8]}) — "
+                    "admitting so supersede pass can run",
+                    file=sys.stderr,
+                )
         try:
             rec = mem.save(
                 content=cand["body"],
@@ -540,6 +582,7 @@ def _extract_and_save(
         "saved": saved,
         "saved_titles": saved_titles,
         "skipped_dup": skipped_dup,
+        "reconciled": reconciled,
         "skipped_quality": skipped_quality,
     }
 
