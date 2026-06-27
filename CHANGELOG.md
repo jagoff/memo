@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-06-27
+
+### Added
+
+- **memo resume picker preview (Phase 2).** Highlighting a session (Ctrl+T) now shows what changed in its cwd since you last worked there — commits since the session + current uncommitted files — plus the session's open loops (recent prompts). Computed lazily and cached, best-effort (non-git cwd degrades to nothing).
+
 ## [2.3.0] - 2026-06-27
 
 ### Added

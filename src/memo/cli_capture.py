@@ -348,11 +348,15 @@ def _resume_federated(
         # history (self-degrades to substring when the embedder is cold / disabled).
         from memo.config import Config
         from memo.resume._index import semantic_search
+        from memo.resume._preview import session_preview
 
         cfg = Config.from_env()
 
         def _semantic(q: str) -> list:
             return semantic_search(cfg, q)
+
+        def _preview(c: ResumeCandidate) -> list[str]:
+            return session_preview(cfg, c)
 
         candidate = pick_resume_candidate_interactive(
             candidates,
@@ -360,6 +364,7 @@ def _resume_federated(
             start_filter=start_filter,
             notice=notice,
             semantic_fn=_semantic,
+            preview_fn=_preview,
         )
         if candidate is None:
             return

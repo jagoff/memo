@@ -363,3 +363,70 @@ def test_mcp_episodes_search_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         assert out["results"][0]["resume_command"] == ["claude", "--resume", "ep1"]
     finally:
         mem.close()
+
+
+# ── Phase 2: repo-delta + open-loops preview ─────────────────────────────────
+
+
+def test_session_preview_repo_delta_and_open_loops(tmp_path: Path) -> None:
+    import subprocess
+
+    from memo.config import Config
+    from memo.resume._preview import session_preview
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git(
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "--allow-empty",
+        "-q",
+        "-m",
+        "first work",
+    )
+    (repo / "dirty.txt").write_text("wip", encoding="utf-8")  # uncommitted
+
+    state_dir = tmp_path / "state"
+    (state_dir / "sessions").mkdir(parents=True)
+    # get_session needs an id ≥4 chars to resolve the snapshot.
+    (state_dir / "sessions" / "sess-0001.json").write_text(
+        json.dumps(
+            {"session_id": "sess-0001", "cwd": str(repo), "prompt_trail": ["fix the bug", "add tests"]}
+        ),
+        encoding="utf-8",
+    )
+    cfg = Config.from_env(state_dir=state_dir, data_dir=tmp_path / "data", embedder_dims=_DIMS)
+    cand = ResumeCandidate(
+        agent="claude",
+        provider="memo",
+        uri="memo://session/sess-0001",
+        session_id="sess-0001",
+        title="work",
+        updated_at="2020-01-01T00:00:00Z",  # before the commit → it shows under "since"
+        cwd=str(repo),
+        summary="work",
+        resume_command=["claude", "--resume", "sess-0001"],
+    )
+    text = "\n".join(session_preview(cfg, cand))
+    assert "commit(s) here since" in text and "first work" in text
+    assert "uncommitted file" in text
+    assert "Open loops" in text and "fix the bug" in text
+
+
+def test_session_preview_non_git_cwd_is_empty(tmp_path: Path) -> None:
+    from memo.config import Config
+    from memo.resume._preview import session_preview
+
+    cfg = Config.from_env(
+        state_dir=tmp_path / "state", data_dir=tmp_path / "data", embedder_dims=_DIMS
+    )
+    cand = _cand("s1", cwd=str(tmp_path / "not-a-repo"))
+    assert session_preview(cfg, cand) == []

@@ -296,6 +296,8 @@ class _ResumeTuiState:
     # by meaning instead of recency/substring.
     semantic_query: str = ""
     semantic_order: dict[str, int] = field(default_factory=dict)
+    # Lazy repo-delta + open-loops preview, computed once per session on Ctrl+T.
+    preview_cache: dict[str, list[str]] = field(default_factory=dict)
 
 
 def _resume_tui_clamp(index: int, total: int) -> int:
@@ -577,7 +579,7 @@ def _resume_tui_transcript_body(
 ) -> list[str]:
     if not visible:
         return [_dim_text("  No session selected.")]
-    candidate = visible[state.index]
+    candidate = visible[min(state.index, len(visible) - 1)]
     lines: list[str] = [
         f"  Agent:   {candidate.agent}",
         f"  Session: {candidate.session_id}",
@@ -590,6 +592,10 @@ def _resume_tui_transcript_body(
     lines.append("")
     summary = candidate.summary or candidate.title or "(no transcript captured)"
     lines.extend(f"  {chunk}" for chunk in _wrap_text(summary, width - 4))
+    preview = state.preview_cache.get(candidate.session_id)
+    if preview:
+        lines.append("")
+        lines.extend(f"  {ln}" for ln in preview)
     slice_ = lines[state.transcript_offset : state.transcript_offset + height]
     return slice_ or [""]
 
@@ -671,6 +677,7 @@ def pick_resume_candidate_interactive(
     start_filter: str = "cwd",
     notice: str = "",
     semantic_fn: Callable[[str], Sequence[ResumeCandidate]] | None = None,
+    preview_fn: Callable[[ResumeCandidate], list[str]] | None = None,
     debounce_s: float = 0.3,
 ) -> ResumeCandidate | None:
     if not candidates:
@@ -700,6 +707,15 @@ def pick_resume_candidate_interactive(
         while True:
             visible = _resume_tui_visible(state)
             state.index = _resume_tui_clamp(state.index, len(visible) + 1)
+            # Lazily compute the repo-delta + open-loops preview for the focused
+            # session when its detail view opens (once per session, cached).
+            if state.view == "transcript" and preview_fn is not None and visible:
+                sel = visible[min(state.index, len(visible) - 1)]
+                if sel.session_id not in state.preview_cache:
+                    try:
+                        state.preview_cache[sel.session_id] = preview_fn(sel)
+                    except Exception:
+                        state.preview_cache[sel.session_id] = []
             _resume_tui_render(state, visible)
             # Debounced semantic re-rank: when the query has settled (no keypress
             # for `debounce_s`) and changed since the last search, ask the episode
