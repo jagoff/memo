@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import struct
 import sys
 import time
 from collections.abc import Callable
@@ -266,8 +267,43 @@ def _recall_logic(
             if debug:
                 _logger.warning("recall-daemon: main embedder cold, falling back to BM25")
 
+    # Hybrid-mode min_sim gate (#6). In hybrid mode `h.score` is RRF-fused —
+    # on a scale incomparable to `min_sim`, which is cosine-calibrated (0.5).
+    # A naive vec→hybrid flip would gate every hit out and return nothing. So
+    # in hybrid mode we gate on the TRUE vec cosine (query · doc, both L2-norm)
+    # while keeping the hybrid RANK order. vec/bm25 modes keep `h.score`.
+    # Default mode is vec → none of this runs (zero overhead, no behaviour
+    # change). Computed lazily + cached; an uncomputable cosine never drops a
+    # hit (surface-on-doubt beats silent loss in the recall path).
+    _qvec_holder: dict[str, list[float] | None] = {}
+    _vec_cos_cache: dict[str, float | None] = {}
+
+    def _vec_cosine(h: Any) -> float | None:
+        if h.id in _vec_cos_cache:
+            return _vec_cos_cache[h.id]
+        if "q" not in _qvec_holder:
+            try:
+                _qvec_holder["q"] = list(mem.embedder.embed_query(prompt))
+            except Exception as exc:
+                _logger.debug("recall hybrid gate: query embed failed: %s", exc)
+                _qvec_holder["q"] = None
+        q = _qvec_holder["q"]
+        cos: float | None = None
+        if q is not None:
+            try:
+                blob = mem.store.get_embedding_blob(h.id)
+                if blob:
+                    doc = struct.unpack(f"<{len(blob) // 4}f", blob)
+                    if len(doc) == len(q):
+                        cos = sum(x * y for x, y in zip(q, doc, strict=True))
+            except Exception as exc:
+                _logger.debug("recall hybrid gate: cosine for %s failed: %s", h.id[:8], exc)
+        _vec_cos_cache[h.id] = cos
+        return cos
+
     def _passes(h: Any) -> bool:
-        if h.score is not None and h.score < min_sim:
+        gate = _vec_cosine(h) if mode == "hybrid" else h.score
+        if gate is not None and gate < min_sim:
             return False
         return not (min_body_chars > 0 and len((h.body or "").strip()) < min_body_chars)
 
