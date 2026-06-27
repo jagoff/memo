@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-06-26
+
+### Added
+
+- **Time-machine** — rewind the entire corpus to any past date: `memo as-of ask/search/list --date YYYY-MM-DD`. `memo diff --from … --to …` shows what changed between two snapshots. No other agent-memory system offers this.
+- **Contradiction radar** — `memo contradict scan` detects conflicting facts across the corpus with LLM classification. `memo contradict triage` resolves them interactively (fuse / newer-wins / older-wins / evolved / dismiss).
+- **Synthesis pipeline** — `memo synthesize` generates LLM-inferred insights from cross-cluster patterns; `memo dream` runs the nightly pipeline (signal gather → date-normalize → prune-floor → orient). Opt-in via `MEMO_SYNTHESIS_ENABLED=1`.
+- **Cross-Mac git sync** — `memo sync bootstrap <url>` wires a shared corpus via a private git remote. Pull-rebase-before-push + `flock`-based single-owner per machine; async debounced hooks keep it current across sessions.
+- **Obsidian vault as source-of-truth** — `MEMO_MEMORIES_IN_VAULT=1` stores memories under `<vault>/AI/memory`; human edits in Obsidian win on the next `memo reindex`. Non-destructive migration: `memo migrate --into-vault`.
+- **Knowledge graph** — entity extraction, `memo graph neighbors/path/centrality/communities`, backlinks/outlinks (`memo links`), Graphify fallback for code graphs.
+- **Health scoring & eval gates** — `memo health` reports per-consumer grounded rate, ROI estimation, and usefulness verdict. `memo eval recall --gate / --update-baseline` gates retrieval quality in CI or pre-commit.
+- **Multi-modal ingestion** — `memo multimodal add-image/audio`, `memo ocr-image` (macOS Vision framework), search over images and audio transcripts.
+- **Session continuity** — `memo continuity` surfaces open loops and session state within memo itself; `memo resume` reconstructs the last session.
+- **Engram patterns** (experimental) — session-aware topic keys with conflict detection (`server_engram_patterns`).
+- **Daemons: recall, idle-capture, ingest, maint** — `memo recall-daemon start` keeps the MLX embedder warm (<200 ms recall); idle-daemon auto-captures for MCP-only clients (Devin, OpenCode, Codex) that have no hook access.
+- **95 CLI commands** across 11 domains (core, recall/hooks, session, maintenance, analysis, graph, search, import/export/sync, visualization, setup, daemons).
+- **109 MCP tools** across 30 server modules, with three surface profiles: `slim` (~25 tools, ~2.4k tokens), `agent` (5 tools, ~589 tokens, default), `full` (109 tools).
+- **`install.sh` uv-first installer** — detects uv and uses `uv tool install` directly (no pipx, no system Python ≥ 3.13 required on PATH); falls back to pipx when uv is absent. Auto-registers into Claude Code, Devin, Codex, Windsurf, OpenCode.
+- **`memo doctor --strict-runtime`** — comprehensive install verification (embedder loadable, sqlite-vec, vault path, daemon health, MCP config path audit).
+- **Collaborative & feedback tools** — `memo_collaborative_share_insight/connections/recommend`, `memo feedback record/list`.
+
+### Changed
+
+- **MEMO_AUTO_UPDATE defaults to on** — `memo-mcp` self-updates on start via git tags; set `MEMO_AUTO_UPDATE=0` to opt out.
+- **MCP surface profiles** — `agent` (5 tools) is the new default for most clients; `MEMO_MCP_PROFILE=full` enables all 109 tools.
+- **`memo update`** now detects uv vs pipx install method and uses the appropriate upgrade path.
+
+### Removed
+
+- **Experimental surfaces purged** — encryption (`memo encrypt`, `memo_encrypt_*`), sharing (`memo share`, `memo_share_*`), and federation surfaces removed. These were never part of the stable contract. Full MCP surface is 109 tools (was ~118 including stubs).
+- **GLiNER entity backend** — dropped optional/never-installed gliner code path; regex extractor unchanged.
+
 ## [1.1.11] - 2026-06-26
 
 ### Fixed

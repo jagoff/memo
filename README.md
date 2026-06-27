@@ -1,8 +1,8 @@
 <div align="center">
 
-# memo
+# memo 2.0
 
-**Persistent semantic memory for AI agents — 100% local, MLX-native, Apple Silicon.**
+**Local-first semantic memory for AI agents — with time-travel, contradiction radar, and automatic synthesis.**
 
 [![PyPI](https://img.shields.io/pypi/v/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
 [![Python](https://img.shields.io/pypi/pyversions/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
@@ -13,99 +13,258 @@
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
-`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your Mac**. Each memory is a plain Markdown file in an Obsidian-friendly folder; embeddings live in a single sqlite file; the LLM, embedder, and reranker run **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
+`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your Mac**. Each memory is a plain Markdown file; embeddings live in a single sqlite file; the LLM, embedder, and reranker run **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
 
-![How memo works](docs/how-memo-works.svg)
+## What makes 2.0 different
+
+| Capability | memo 2.0 | mem0 | letta | cognee |
+|---|:---:|:---:|:---:|:---:|
+| 100% local (no cloud API) | ✅ | ❌ | ⚠️ | ⚠️ |
+| **Time-machine** (rewind corpus to any date) | ✅ | ❌ | ❌ | ❌ |
+| **Contradiction radar** (detect + resolve conflicts) | ✅ | ❌ | ❌ | ⚠️ |
+| **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ❌ | ❌ |
+| **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ❌ | ❌ |
+| Obsidian as source-of-truth | ✅ | ❌ | ❌ | ❌ |
+| Knowledge graph + entity extraction | ✅ | ⚠️ | ⚠️ | ✅ |
+| Eval regression gate (pre-commit wireable) | ✅ | ❌ | ❌ | ❌ |
+| Multi-modal (images, audio OCR) | ✅ | ⚠️ | ❌ | ❌ |
+| MCP surface profiles (token economy) | ✅ | ❌ | ❌ | ❌ |
 
 ## Why it pays for itself — in tokens
 
-memo is built to **spend fewer tokens, not more**. Two measured wins (real numbers from the shipped build, commits `ee78f05` + `1ad7bdf`):
+memo is built to **spend fewer tokens, not more**.
 
-- **96.4% smaller MCP surface.** The default `agent` tool profile exposes **5 tools / ~589 schema tokens**, versus **118 tools / ~16,157 tokens** for a full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing. (`core` profile = 25 tools, ~2.4k vs ~35k tokens.)
-- **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**, with the directive sent only on the first turn. The agent stops re-explaining what it already figured out last week.
+- **96.4% smaller MCP surface.** The default `agent` profile exposes **5 tools / ~589 schema tokens**, versus **109 tools / ~16k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
-On a ~200-memory corpus, memo's ROI meter estimates **~80k tokens of model work avoided** (≈62.6k from 179 grounded facts + ≈17.1k from 19 re-asks it prevented; ~259 tokens/response). The estimate is corpus-specific — `memo roi` shows yours.
+On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
+
+| Technique | How to enable | Typical saving |
+|---|---|---|
+| Compact recall format | `export MEMO_RECALL_FORMAT=compact` | ~65% per injection |
+| Trivial prompt gate | On by default | ~25% fewer injections |
+| Context file compression | `memo compress-context CLAUDE.md` | 30–40% smaller context |
 
 ## Requirements
 
 - **macOS on Apple Silicon** (M1–M4) — MLX is the load-bearing piece. memo does **not** run on Linux / Windows / Intel Macs.
-- **Python ≥ 3.13**.
 - **~8 GB** free disk for the default model set (the installer downloads it).
 - *Optional:* an Obsidian vault. Without one, memo defaults to `~/Documents/memo/`.
+
+> Python ≥ 3.13 is required if you install without uv. The `curl | bash` installer handles this automatically — it detects `uv` and uses its managed Python if no system Python ≥ 3.13 is on PATH.
 
 ## Install — one step
 
 ```bash
-# One-line installer: pipx under the hood, installs GitHub master,
-# downloads MLX models, and wires up Claude Code / Codex / OpenCode / Windsurf.
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
 ```
 
-Prefer a published release? Any of these work and expose the same two binaries — `memo` (CLI) and `memo-mcp` (MCP server):
+The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, OpenCode, Windsurf).
+
+Prefer a manual install? Any of these expose the same two binaries — `memo` (CLI) and `memo-mcp` (MCP server):
 
 ```bash
+uv tool install mlx-memo          # recommended
 pipx install mlx-memo
-uv tool install mlx-memo
 brew tap jagoff/memo && brew install mlx-memo
 ```
 
-> Keep memo **isolated as its own tool** (pipx / uv tool / Homebrew). Don't vendor it inside another project's `.venv` — its MLX runtime, model cache, sqlite state, and `memo-mcp` should move together as one subsystem. `memo doctor --strict-runtime` verifies the install.
+> Keep memo **isolated as its own tool** (uv tool / pipx / Homebrew). Don't vendor it inside another project's `.venv`. `memo doctor --strict-runtime` verifies the install.
 
-First install downloads ~7 GB of MLX models (5–15 min); later installs hit the HuggingFace cache. Full installer knobs, model list, and "move to a new Mac" steps live in **[docs/reference.md](docs/reference.md#install-detail)**.
+First install downloads ~8 GB of MLX models (5–15 min); later installs hit the HuggingFace cache. Full installer knobs and "move to a new Mac" steps: **[docs/reference.md › Install](docs/reference.md#install-detail)**.
 
-## Hand it to your agent
-
-memo is designed so you can give the repo (or just the install line) to an AI coding agent and it installs itself. The whole setup is three commands:
+**Migrating from another Mac?** Install first, then restore your corpus:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
-memo doctor --strict-runtime          # verify the runtime is healthy
-memo install-slash                    # register MCP + /memo for every client found
+memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 ```
 
-`memo install-slash` configures **Claude Code, Codex, Devin, Windsurf, and OpenCode** where each supports it — it writes the MCP server entry (pinned to the absolute `memo-mcp` path) and the `/memo` skill, forwarding your `MEMO_*` env so GUI clients inherit the right model profile. Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md](docs/reference.md#mcp-setup)**.
+## Hand it to your agent
 
-After install, tools surface inside the agent as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_ask`, `memo_get`, `memo_unified_briefing`).
+memo installs itself if you hand the repo (or just the install line) to an AI agent:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+memo doctor --strict-runtime     # verify runtime is healthy
+```
+
+After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_ask`, `memo_get`, `memo_unified_briefing`). Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md › MCP setup](docs/reference.md#mcp-setup)**.
 
 ## Quick start
 
 ```bash
-memo doctor                                  # self-check: models, vault path, sqlite-vec
+memo doctor                                            # self-check: models, vault, sqlite-vec
 memo save 'MLX prefill ~30% faster than Ollama on M3 Max' --title 'MLX bench' -t mlx -t bench
-memo search 'how fast was the MLX benchmark'  # search by meaning, not just keywords
-memo list --limit 5                          # most recent
+memo search 'how fast was the MLX benchmark'           # search by meaning, not just keywords
+memo list --limit 5                                    # most recent
 memo ask 'what changed in the embedder this month?'   # RAG — cites memories by id
 ```
 
-## What you get
+## Core features
 
-- **Ambient recall** — with the Claude Code plugin, every prompt silently consults memory and injects the top memories as context, with a warm **recall daemon** (<200 ms). No `/remember` calls.
-- **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate and saves them. The corpus grows on its own.
-- **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery for the last session.
-- **Resilient daemon communication** — Socket clients use exponential backoff (3 retries) on connection failures to the recall daemon, preventing transient blips from degrading recall.
-- **Operational safety toggles** — `MEMO_TANTIVY_ENABLED=0` disables Tantivy dual-write; `MEMO_SOFT_DELETE=0` bypasses soft-delete (permanent row removal); `MEMO_DEDUP_EXACT=0` disables exact-content deduplication; `MEMO_CONTRADICTION_TIMEOUT` controls LLM timeout for contradiction detection.
-- **Vacuum cleanup** — `memo maintain --vacuum --vacuum-days 90` permanently purges soft-deleted records older than the threshold, keeping the store lean. WhatsApp ingest flags (`WHATSAPP_BOT_JID`, `WA_LISTENER_NOTES_CHAT_JID`) are configurable via `MEMO_*` env or `memo config flags`.
-- **🕰️ Time-machine** — rewind the corpus to any past date: `memo as-of ask "..." --date 2026-02-01`, `memo diff --from … --to …`. No other agent-memory store offers this.
-- **Hybrid retrieval + reranker** — vec + BM25 (FTS5, Tantivy optional, diacritic-folding for Spanish) fused via RRF, then an optional MLX cross-encoder rerank. Tantivy dual-write can be disabled with `MEMO_TANTIVY_ENABLED=0` for operational safety.
-- **Markdown is the source of truth** — plain `.md` + frontmatter you can edit in Obsidian/vim; the sqlite index is rebuildable (`memo reindex`).
-- **Semantic map** — `memo map` renders an interactive 2D canvas (UMAP/PCA + Plotly) of the whole corpus.
-- **Contradiction tracking** — `memo temporal contradictions <entity>` detects conflicting facts over time. LLM timeout configurable via `MEMO_CONTRADICTION_TIMEOUT` (default 30s).
+- **Ambient recall** — every prompt silently consults memory and injects top hits as context. Warm recall daemon keeps it under **<200 ms**. No `/remember` calls.
+- **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate. The corpus grows on its own.
+- **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery.
+
+## What's new in 2.0
+
+### 🕰️ Time-machine
+
+Rewind the corpus to any past date and query it as it was then:
+
+```bash
+memo as-of ask "what was the deployment strategy?" --date 2026-02-01
+memo as-of search "redis config" --date 2026-01-15
+memo diff --from 2026-01-01 --to 2026-03-01    # what changed
+```
+
+No other agent-memory system offers this. Full historical reconstruction via reverse-replay of `history.db`.
+
+### ⚡ Contradiction radar
+
+```bash
+memo contradict scan                  # detect conflicting facts corpus-wide
+memo contradict triage                # resolve interactively: fuse / newer-wins / dismiss
+```
+
+The LLM classifies each candidate pair. Results persist in `contradictions.db`; resolved conflicts inform future saves.
+
+### 🔮 Synthesis pipeline
+
+```bash
+memo synthesize                       # generate cross-cluster insights (LLM)
+memo dream                            # nightly: signal gather → prune → orient
+```
+
+`MEMO_SYNTHESIS_ENABLED=1` runs synthesis automatically during `memo maintain`.
+
+### 🌐 Cross-Mac git sync
+
+```bash
+memo sync bootstrap git@github.com:yourname/memo-sync.git   # wire a shared corpus
+memo sync once                                                # push/pull now
+```
+
+Pull-rebase-before-push. `flock`-based single owner per machine. Async debounced hooks keep the corpus current without blocking.
+
+### 📚 Obsidian vault as source-of-truth
+
+```bash
+MEMO_MEMORIES_IN_VAULT=1 memo init                # store memories inside your vault
+memo migrate --into-vault                          # non-destructive migration
+```
+
+Human edits in Obsidian win on the next `memo reindex`. The sqlite index is always rebuildable from the `.md` files.
+
+### 🕸️ Knowledge graph
+
+```bash
+memo graph neighbors "MLX"             # what's related
+memo graph path "embedder" "reranker"  # how two concepts connect
+memo entities                          # list extracted entities
+memo links --id abc123                 # backlinks + outlinks
+```
+
+Entity extraction uses a dependency-free regex backend; Graphify integration provides fallback for code graphs.
+
+### 🏥 Health scoring & eval gates
+
+```bash
+memo health                                         # grounded rate, ROI, usefulness verdict
+memo eval recall --labels eval/regression_labels.json --k 5
+memo eval recall --gate                             # exit non-zero if precision drops
+memo eval recall --update-baseline                  # snapshot current best
+```
+
+Wire `--gate` into a pre-commit hook to catch retrieval regressions before they ship.
+
+### 🖼️ Multi-modal ingestion
+
+```bash
+memo ocr-image screenshot.png               # macOS Vision OCR
+memo multimodal add-image photo.jpg --title "whiteboard"
+memo search "whiteboard diagram"            # finds it
+```
+
+### Daemons
+
+memo runs four background daemons:
+
+| Daemon | Command | Purpose |
+|---|---|---|
+| recall-daemon | `memo recall-daemon start` | Warm MLX embedder over socket (<200 ms recall) |
+| idle-daemon | auto-started by `memo-mcp` | Auto-capture for MCP-only clients (Devin, OpenCode) |
+| ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
+| maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
+
+### All 95 CLI commands
+
+<details>
+<summary>Click to expand</summary>
+
+**Core:** `save` `search` `ask` `get` `edit` `delete` `list`
+
+**Recall & Hooks:** `recall` `recall-hook` `briefing` `continuity` `prewarm` `capture-tick` `capture-stop`
+
+**Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history`
+
+**Maintenance:** `reindex` `maintain` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `temporal`
+
+**Analysis & Quality:** `health` `stats` `doctor` `lint` `analytics` `eval` `roi` `token-savings` `usefulness` `gaps` `outcome` `profile`
+
+**Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version`
+
+**Advanced Search:** `embed` `rerank` `contextual` `chat` `chat-ask` `multimodal` `repo`
+
+**Import / Export / Sync:** `import` `export` `backup` `restore` `sync` `ingest`
+
+**Visualization:** `tui` `dashboard` `map` `logs` `hook-log`
+
+**Setup & Config:** `init` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `watch` `mcp-command`
+
+**Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon`
+
+</details>
+
+### MCP surface profiles
+
+| Profile | Tools | Schema tokens | Use when |
+|---|---|---|---|
+| `agent` (default) | 5 | ~589 | Standard agent work — max token economy |
+| `core` | ~25 | ~2.4k | Constrained clients (Codex, OpenCode) |
+| `full` | 109 | ~16k | Power users, debugging |
+
+Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
+
+## Retrieval architecture
+
+**Hybrid search:** vec leg (MLX embedding) + BM25 leg (FTS5/Tantivy, diacritic-folding for Spanish) fused via Reciprocal Rank Fusion → optional MLX cross-encoder rerank.
+
+**Markdown is the source of truth.** The `.md` files are canonical; sqlite is a rebuildable index. A hand-edit in Obsidian wins on the next `memo reindex`. `delete()` removes the index first, then the file — no silent data loss.
+
+**Embedding models:**
+
+| Model | Dims | Disk | Use |
+|---|---|---|---|
+| `Qwen3-Embedding-0.6B-4bit` | 1024 | ~0.4 GB | Default (fast, good) |
+| `Qwen3-Embedding-4B-4bit` | 2560 | ~2.5 GB | Higher recall quality |
+| `Qwen3-Embedding-8B-4bit` | 4096 | ~5 GB | Maximum quality |
+
+Switch with `MEMO_EMBEDDER_MODEL` + `MEMO_EMBEDDER_DIMS` (requires `memo reindex --rebuild`).
 
 ## Documentation
-
-The README is the front door; the full manual lives in `docs/`.
 
 | Topic | Where |
 |---|---|
 | Full install detail, installer knobs, new-Mac migration | [docs/reference.md › Install](docs/reference.md#install-detail) |
 | Per-client MCP setup + the `/memo` slash command | [docs/reference.md › MCP setup](docs/reference.md#mcp-setup) |
-| Tools exposed over MCP | [docs/reference.md › MCP tools](docs/reference.md#mcp-tools) |
+| All MCP tools reference | [docs/reference.md › MCP tools](docs/reference.md#mcp-tools) |
 | Ambient memory, recall daemon, capture & recall tuning | [docs/reference.md › Ambient memory](docs/reference.md#ambient-memory) |
-| Session briefing, semantic map, time-machine | [docs/reference.md › Surfaces](docs/reference.md#surfaces) |
+| Time-machine, session briefing, semantic map | [docs/reference.md › Surfaces](docs/reference.md#surfaces) |
 | Full CLI reference + live dashboard (`memo tui`) | [docs/reference.md › CLI](docs/reference.md#cli-reference) |
-| All `MEMO_*` configuration, model profiles, upgrading the embedder | [docs/reference.md › Configuration](docs/reference.md#configuration) |
-| Design notes & how memo compares to mem0 / letta / cognee / … | [docs/reference.md › Design & comparison](docs/reference.md#design-and-comparison) |
-| Architecture / install / ambient-loop / time-machine diagrams | [docs/architecture.svg](docs/architecture.svg) · [install-flow](docs/install-flow.svg) · [ambient-loop](docs/ambient-loop.svg) · [time-machine](docs/time-machine.svg) |
+| All `MEMO_*` flags, model profiles, upgrading the embedder | [docs/reference.md › Configuration](docs/reference.md#configuration) |
+| Architecture, sync tiers, design notes | [docs/reference.md › Design & comparison](docs/reference.md#design-and-comparison) |
 
 Contributors: `git clone https://github.com/jagoff/memo && cd memo && uv pip install -e '.[dev]'`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -117,26 +276,24 @@ MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https:
 
 ## Español
 
-**memo** es memory semántica persistente para agentes de IA: **100% local**, sobre Apple Silicon con MLX. Cada memory es un archivo Markdown; los embeddings viven en un único sqlite; el LLM, el embedder y el reranker corren **en proceso vía MLX** — sin Ollama, sin nube, sin API keys. Tus prompts y memories **nunca salen de la Mac**.
+**memo 2.0** es memory semántica persistente para agentes de IA: **100% local**, sobre Apple Silicon con MLX. Cada memory es un archivo Markdown; los embeddings viven en un único sqlite; el LLM, el embedder y el reranker corren **en proceso vía MLX** — sin Ollama, sin nube, sin API keys. Tus prompts y memories **nunca salen de la Mac**.
 
-**Por qué ahorra tokens:** la superficie MCP por defecto son 5 tools (~589 tokens) contra 118 (~16.157) → **96,4% menos** contexto por sesión; y el recall **inyecta la respuesta** (presupuesto ~160 tokens) en vez de que el agente la vuelva a deducir. En un corpus de ~200 memories, `memo roi` estima **~80k tokens de trabajo del modelo evitados**.
+**Las novedades de 2.0:** máquina del tiempo (`memo as-of`), radar de contradicciones (`memo contradict`), pipeline de síntesis (`memo synthesize`), sync cross-Mac vía git, vault de Obsidian como fuente de verdad, knowledge graph, puntuación de salud (`memo health`), gates de regresión de retrieval (`memo eval --gate`), e ingesta multi-modal (imágenes + OCR de audio).
 
-**Token economy — techniques that reduce session cost:**
+**Por qué ahorra tokens:** la superficie MCP por defecto son 5 tools (~589 tokens) contra 109 (~16k) → **96,4% menos** contexto por sesión; y el recall **inyecta la respuesta** en vez de que el agente la vuelva a deducir. En un corpus de ~200 memories, `memo roi` estima **~80k tokens de trabajo del modelo evitados** por sesión.
 
-| Technique | How to enable | Typical saving |
-|---|---|---|
-| Compact recall format | `export MEMO_RECALL_FORMAT=compact` | ~65% per injection |
-| Trivial prompt gate | On by default | ~25% fewer injections |
-| Context file compression | `memo compress-context CLAUDE.md` | 30–40% smaller context |
-
-Run `memo token-savings` to see your session's recall injection stats.
-
-**Instalación en un paso:**
+**Instalación:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
 memo doctor --strict-runtime    # verifica el runtime
-memo install-slash              # registra el MCP + /memo en Claude Code, Codex, Devin, Windsurf, OpenCode
 ```
 
-Requisitos: **macOS en Apple Silicon** (M1–M4), **Python ≥ 3.13**, ~8 GB de disco para los modelos. La documentación completa está en inglés en **[docs/reference.md](docs/reference.md)**.
+Requisitos: **macOS en Apple Silicon** (M1–M4), ~8 GB de disco para los modelos. La documentación completa está en **[docs/reference.md](docs/reference.md)**.
+
+**Migrar desde otra Mac:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+memo sync bootstrap git@github.com:tuusuario/memo-sync.git
+```
