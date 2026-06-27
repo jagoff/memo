@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-06-27
+
+### Removed
+
+- **Cross-machine version-file auto-update (added in 2.2.0).** Reverted: it was
+  redundant with the existing tag-based auto-update (`memo-mcp` checks the latest
+  git tag on every start and self-updates), and it shipped broken — a `v999.0.0`
+  test value was committed to `memo-version.json` (tracked, not ignored), so the
+  sync-pull check saw a permanently-"newer" version and fired a spurious
+  `memo update` on every pull, while the file churned the working tree on every
+  write. It also coupled the software version to the memories/sync repo. Removed
+  `runtime/version_file.py`, the `update.py` write hooks, and the `cli_sync.py`
+  sync-pull check; `memo-version.json` is deleted and git-ignored. The
+  catch-up-a-stale-machine goal is already met by the tag-based path; if a
+  sync-triggered check is wanted, call `maybe_auto_update()` from `sync auto`
+  (no new file, no data-repo coupling).
+
 ## [2.3.1] - 2026-06-27
 
 ### Added
