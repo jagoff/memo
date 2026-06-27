@@ -208,6 +208,31 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_EVOLUTION_PENALTY",
+        "float",
+        0.7,
+        "search",
+        "Score multiplier for the older (superseded) side of an EVOLUTION pair "
+        "— a later note that supersedes an earlier one. Softer than the "
+        "contradiction penalty (the older fact may still hold context). Applied "
+        "to pairs the temporal engine resolved as 'evolved' so known-stale "
+        "memories stop ranking at full score.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_EVOLUTION_CONFIDENCE",
+        "float",
+        0.6,
+        "search",
+        "Absolute memory_health.confidence stamped on the older (superseded) "
+        "side when an evolution pair is resolved. Below 1.0 so the health-score "
+        "multiplier demotes it on every consumer path (default-on), not only "
+        "where the contradiction-penalty pass runs. 1.0 disables this write.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
         "MEMO_SEARCH_VEC_WEIGHT",
         "float",
         0.5,

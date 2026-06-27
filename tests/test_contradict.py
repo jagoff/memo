@@ -431,6 +431,70 @@ def test_memory_delete_cleans_orphan_pairs(mem_with_stub_embed):
     assert mem.contradict_store.list_open() == []
 
 
+def _rec(rid: str, updated: str, score: float):
+    from memo.memory.record import MemoryRecord
+
+    return MemoryRecord(
+        id=rid,
+        path=f"{rid}.md",
+        title=rid,
+        type="decision",
+        tags=[],
+        created=updated,
+        updated=updated,
+        body="",
+        score=score,
+    )
+
+
+def _evolution_pair(older_id: str, newer_id: str) -> PairRecord:
+    return PairRecord(
+        pair_id=1,
+        memoria_id_a=older_id,
+        memoria_id_b=newer_id,
+        relationship="evolution",
+        confidence=0.95,
+        rationale="later note supersedes earlier",
+        status="evolved",
+        detected_at="2026-01-01T00:00:00+00:00",
+        resolved_at="2026-02-01T00:00:00+00:00",
+        resolution_note="evolved",
+    )
+
+
+def test_evolution_penalty_demotes_older_when_both_present(mem_with_stub_embed, monkeypatch):
+    mem = mem_with_stub_embed
+    older = _rec("a" * 32, "2026-01-01T00:00:00+00:00", 1.0)
+    newer = _rec("b" * 32, "2026-02-01T00:00:00+00:00", 0.9)
+    pair = _evolution_pair(older.id, newer.id)
+
+    def _fake_pairs(ids, *, status="open"):
+        return [pair] if status == "evolved" else []
+
+    monkeypatch.setattr(mem.contradict_store, "pairs_for_ids", _fake_pairs)
+
+    out = {r.id: r for r in mem._apply_contradict_penalty([older, newer])}
+    # Older (superseded) side demoted by MEMO_EVOLUTION_PENALTY (0.7); newer untouched.
+    assert out[older.id].score == pytest.approx(1.0 * 0.7)
+    assert out[newer.id].score == pytest.approx(0.9)
+
+
+def test_evolution_penalty_skips_when_newer_absent(mem_with_stub_embed, monkeypatch):
+    mem = mem_with_stub_embed
+    older = _rec("a" * 32, "2026-01-01T00:00:00+00:00", 1.0)
+    newer = _rec("b" * 32, "2026-02-01T00:00:00+00:00", 0.9)
+    pair = _evolution_pair(older.id, newer.id)
+
+    def _fake_pairs(ids, *, status="open"):
+        return [pair] if status == "evolved" else []
+
+    monkeypatch.setattr(mem.contradict_store, "pairs_for_ids", _fake_pairs)
+
+    # Only the older side surfaced — it's the best available answer, do NOT penalise.
+    out = mem._apply_contradict_penalty([older])
+    assert out[0].score == pytest.approx(1.0)
+
+
 def test_pair_record_dataclass():
     rec = PairRecord(
         pair_id=1,

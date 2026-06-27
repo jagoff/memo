@@ -237,8 +237,25 @@ class _SearchOpsMixin(_MemoryBase):
                 input_k=input_k,
             )
         out: list[MemoryRecord] = []
+        # In hybrid mode the candidate pool can grow large (up to _POOL_CAP) and
+        # the reranker trims it to `limit`. Loading every candidate body from
+        # disk (open + frontmatter parse per hit) before that trim wastes up to
+        # ~200 filesystem round-trips per search. Feed the pool's body text from
+        # the FTS index in ONE batched query instead; the canonical .md body is
+        # re-resolved from disk only for the surviving `limit` records right
+        # before return (see `_resolve_disk_bodies` below). The reranker only
+        # needs text, so this is a pure latency win with no ranking change.
+        _bodies_from_fts = load_bodies and mode == "hybrid"
+        _fts_bodies: dict[str, str] = (
+            self.store.get_fts_bodies([r["id"] for r in rows]) if _bodies_from_fts else {}
+        )
         for r in rows:
-            body = self._read_body(r["path"]) if load_bodies else ""
+            if not load_bodies:
+                body = ""
+            elif _bodies_from_fts:
+                body = _fts_bodies.get(r["id"], "")
+            else:
+                body = self._read_body(r["path"])
             out.append(
                 MemoryRecord(
                     id=r["id"],
@@ -411,6 +428,19 @@ class _SearchOpsMixin(_MemoryBase):
                 self.graph.record_co_recall([r.id for r in out])
             except Exception as _co_exc:
                 _log.debug("co_recall record failed: %s", _co_exc)
+        # Re-resolve canonical .md bodies for the survivors. The pool was fed
+        # FTS body text (cheap, for rerank); consumers must get the canonical
+        # file content — which can differ from the FTS-indexed text (e.g. once
+        # contextual-retrieval prepends a situating sentence to the indexed
+        # body). Only `len(out)` (≤ limit) disk reads here, not the whole pool.
+        if _bodies_from_fts and out:
+            import dataclasses
+
+            resolved: list[MemoryRecord] = []
+            for r in out:
+                disk = self._read_body(r.path)
+                resolved.append(dataclasses.replace(r, body=disk) if disk else r)
+            out = resolved
         _add_trace("final", output_count=len(out), limit=limit)
         return out
 

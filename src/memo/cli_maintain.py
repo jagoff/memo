@@ -225,12 +225,29 @@ def maintain_cmd(
                 max_pairs=max_pairs,
                 max_seconds=max_scan_seconds,
             )
+            from memo.flags import flag_float as _flag_float
+
+            _evo_conf = _flag_float("MEMO_EVOLUTION_CONFIDENCE")
+            _evo_conf = 0.6 if _evo_conf is None else _evo_conf
             for pair in mem.contradict_store.list_open(min_confidence=min_confidence):
                 rel = (pair.relationship or "").lower()
                 if "evolu" in rel:
                     if not dry_run:
+                        # Demote the superseded (older) side via its confidence
+                        # so the evolution verdict steers ranking (health-score
+                        # multiplier, default-on) instead of changing nothing.
+                        older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
+                        if _evo_conf < 1.0:
+                            try:
+                                mem.store.set_confidence_batch([(older, _evo_conf)])
+                            except Exception as _exc:
+                                receipt["errors"].append(
+                                    f"evolution_confidence: {type(_exc).__name__}: {_exc}"
+                                )
                         mem.contradict_store.resolve(
-                            pair.pair_id, "evolved", note="auto: evolution, both kept"
+                            pair.pair_id,
+                            "evolved",
+                            note=f"auto: evolution, demoted older {older[:8]}",
                         )
                     receipt["evolved"].append(pair.pair_id)
                     continue

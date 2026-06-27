@@ -286,14 +286,18 @@ class Config(BaseModel):
         ),
     )
     rerank_input_k: int = Field(
-        default=5,
+        default=30,
         ge=1,
         le=200,
         description=(
-            "How many hybrid-fusion candidates to feed the reranker. "
-            "Larger = better recall but linearly more inference time. "
-            "5 keeps cold CLI search responsive with the 4B reranker while "
-            "preserving enough candidates for the top-3 interactive path."
+            "How many hybrid-fusion candidates to feed the reranker. A "
+            "cross-encoder can only PROMOTE what it is handed — at 5 a correct "
+            "memory buried at fusion rank 6+ is never seen. 30 lets the warm "
+            "0.6B reranker (~20ms/pair, ~0.6s for 30) rescue buried hits while "
+            "staying well inside the 5s recall budget; the adaptive pool "
+            "(MEMO_RERANK_ADAPTIVE_POOL) widens further on diffuse queries. "
+            "Override with MEMO_RERANK_INPUT_K; lower it for cold one-shot CLI "
+            "on the heavier 4B reranker."
         ),
     )
     rerank_fusion_alpha: float = Field(

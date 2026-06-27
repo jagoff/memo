@@ -120,12 +120,13 @@ def dream_run(
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
     console.print(f"{tag}[bold cyan]memo dream[/bold cyan] — starting pipeline...")
 
-    from memo.flags import flag_int
+    from memo.flags import flag_bool, flag_int
 
     _evict_max = flag_int("MEMO_DREAM_EVICT_MAX_COUNT") or 0
     _compress_threshold = flag_int("MEMO_DREAM_COMPRESS_THRESHOLD") or 0
     _prewarm_n = flag_int("MEMO_DREAM_PREWARM_QUERIES") or 0
     _presynthesis_n = flag_int("MEMO_DREAM_PRESYNTHESIS_QUERIES") or 0
+    _outcome_on = flag_bool("MEMO_OUTCOME_RANKING_ENABLED")
 
     receipt: dict[str, Any] = {
         "dry_run": dry_run,
@@ -137,6 +138,8 @@ def dream_run(
         "archived_stale": [],
         "synthesized": [],
         "entities_extracted": 0,
+        "roi_reconciled": 0,
+        "dead_archived": [],
         "roi_decayed": 0,
         "confidence_penalized": 0,
         "pruned_floor": [],
@@ -147,11 +150,12 @@ def dream_run(
         "errors": [],
     }
 
-    total_steps = 12
+    total_steps = 13
     skipped = (
         (1 if skip_signal_gather or dry_run else 0)
         + (4 if skip_maintain else 0)
         + (1 if skip_entities or dry_run else 0)
+        + (1 if not _outcome_on or dry_run else 0)
         + (1 if skip_decay or dry_run else 0)
         + (1 if skip_prune_floor or dry_run else 0)
         + (1 if skip_evict or _evict_max == 0 else 0)
@@ -246,13 +250,33 @@ def dream_run(
                     progress=_contradict_progress,
                     persist=not dry_run,
                 )
+                from memo.flags import flag_float as _flag_float
+
+                _evo_conf = _flag_float("MEMO_EVOLUTION_CONFIDENCE")
+                _evo_conf = 0.6 if _evo_conf is None else _evo_conf
                 contradicted_ids: list[str] = []
                 for pair in mem.contradict_store.list_open(min_confidence=0.9):
                     rel = (pair.relationship or "").lower()
                     if "evolu" in rel:
                         if not dry_run:
+                            # Demote the superseded (older) side so the temporal
+                            # verdict actually steers ranking: lower its
+                            # confidence (health-score multiplier, default-on)
+                            # instead of marking "both kept" and changing nothing.
+                            older, _newer = _older_id(
+                                mem, pair.memoria_id_a, pair.memoria_id_b
+                            )
+                            if _evo_conf < 1.0:
+                                try:
+                                    mem.store.set_confidence_batch([(older, _evo_conf)])
+                                except Exception as _exc:
+                                    receipt["errors"].append(
+                                        f"evolution_confidence: {type(_exc).__name__}: {_exc}"
+                                    )
                             mem.contradict_store.resolve(
-                                pair.pair_id, "evolved", note="dream: evolution, both kept"
+                                pair.pair_id,
+                                "evolved",
+                                note=f"dream: evolution, demoted older {older[:8]}",
                             )
                         receipt["evolved"].append(pair.pair_id)
                         continue
@@ -392,21 +416,58 @@ def dream_run(
         else:
             progress.update(step, description="[5/6] entities [dim]skip[/dim]")
 
-        # 6. ROI decay -------------------------------------------------------
+        # 6a. ROI reconcile (outcome loop) — MUST run before decay so the
+        # scores that decay are the outcome-derived ones, not a flat 1.0.
+        # This is what actually closes the grounding→utility→roi→ranking loop;
+        # without it nothing schedules reconcile_roi and every roi_score sits
+        # at 1.0 monotonically decaying. Gated by MEMO_OUTCOME_RANKING_ENABLED.
+        if _outcome_on and not dry_run:
+            progress.update(
+                step,
+                description="[6/7] ROI reconcile — deriving scores from grounding...",
+                total=None,
+                completed=0,
+            )
+            try:
+                from memo.outcome import dead_weight, reconcile_roi
+
+                receipt["roi_reconciled"] = reconcile_roi(mem).get("updated", 0)
+                min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 0
+                for d in dead_weight(mem, min_surfaced=min_surfaced):
+                    if mem.forget(
+                        d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
+                    ) is not None:
+                        receipt["dead_archived"].append(d["id"])
+                progress.update(
+                    step,
+                    description=(
+                        f"[6/7] ROI reconcile [green]✓[/green]  "
+                        f"{receipt['roi_reconciled']} rescored, "
+                        f"{len(receipt['dead_archived'])} archived"
+                    ),
+                )
+            except Exception as exc:
+                progress.update(step, description="[6/7] ROI reconcile [yellow]warn[/yellow]")
+                receipt["errors"].append(f"roi_reconcile: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+        else:
+            progress.update(step, description="[6/7] ROI reconcile [dim]skip[/dim]")
+
+        # 6b. ROI decay ------------------------------------------------------
         if not skip_decay and not dry_run:
             progress.update(
-                step, description="[6/6] ROI decay — adjusting scores...", total=None, completed=0
+                step, description="[7/7] ROI decay — adjusting scores...", total=None, completed=0
             )
             try:
                 n = mem.store.decay_roi(factor=0.98, older_than_days=30)
                 receipt["roi_decayed"] = n
-                progress.update(step, description=(f"[6/6] ROI decay [green]✓[/green]  {n} rows"))
+                progress.update(step, description=(f"[7/7] ROI decay [green]✓[/green]  {n} rows"))
             except Exception as exc:
-                progress.update(step, description="[6/6] ROI decay [yellow]warn[/yellow]")
+                progress.update(step, description="[7/7] ROI decay [yellow]warn[/yellow]")
                 receipt["errors"].append(f"roi_decay: {type(exc).__name__}: {exc}")
             progress.advance(overall)
         else:
-            progress.update(step, description="[6/6] ROI decay [dim]skip[/dim]")
+            progress.update(step, description="[7/7] ROI decay [dim]skip[/dim]")
 
         # 7. Quality-floor prune ---------------------------------------------
         if not skip_prune_floor and not dry_run:
@@ -559,6 +620,10 @@ def dream_run(
             f"  emergent syntheses:        {saved} saved, {len(receipt['synthesized'])} proposed"
         )
     console.print(f"  entities extracted:        {receipt['entities_extracted']}")
+    console.print(
+        f"  roi reconciled (grounding):{receipt['roi_reconciled']} rescored, "
+        f"{len(receipt['dead_archived'])} dead-archived"
+    )
     console.print(f"  roi rows decayed:          {receipt['roi_decayed']}")
     console.print(f"  quality-floor pruned:      {len(receipt['pruned_floor'])}")
     if receipt.get("evicted"):

@@ -259,6 +259,21 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         row = self._conn.execute("SELECT body FROM fts WHERE id = ?", (id_,)).fetchone()
         return str(row["body"]) if row else ""
 
+    def get_fts_bodies(self, ids: list[str]) -> dict[str, str]:
+        """Batch-fetch FTS body text for many ids in one query.
+
+        Used to feed the rerank candidate pool without one disk-read +
+        frontmatter parse per hit. Returns {id: body} for ids present in fts.
+        """
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._conn.execute(
+            f"SELECT id, body FROM fts WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return {r["id"]: str(r["body"]) for r in rows}
+
     def update_meta(
         self,
         *,

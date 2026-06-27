@@ -400,3 +400,95 @@ def fingerprint_corpus(mem: Any) -> str:
     except Exception:
         mtime = 0
     return f"{count}:{mtime}"
+
+
+# --- Auto-harvest labels from the grounding log ------------------------------
+
+
+def harvest_labels(
+    state_dir: Path,
+    *,
+    strong: float = 0.5,
+    specific_margin: float = 0.0,
+    max_labels: int = 200,
+    sim_threshold: float = 0.6,
+) -> list[dict[str, Any]]:
+    """Mine ground-truth recall labels from ``grounding.log``.
+
+    A grounding row records that a recalled memory was actually USED in an
+    answer (``used_score = max(lexical, embed_cosine)``) — ground truth BY
+    CONSTRUCTION, no hand-labeling. Rows at/above ``strong`` (and, when a
+    ``specific_score`` is present, above ``specific_margin``) are joined to
+    their prompt via ``recall_hook.log`` and emitted as
+    ``{text, relevant: True, expect_ids:[<8-hex recall id>]}``. Re-asks of the
+    same question collapse by prompt token-Jaccard, unioning their grounded
+    ids, so the set grows from what actually mattered instead of by hand.
+    """
+    from memo.dashboard import read_grounding_log
+    from memo.dashboard_metrics import _jaccard, _reask_tokens
+    from memo.grounding import _prompt_for_turn
+
+    rows = read_grounding_log(state_dir, limit=4000)
+    clusters: list[dict[str, Any]] = []
+    for r in rows:
+        try:
+            used = float(r.get("used_score") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if used < strong:
+            continue
+        spec = r.get("specific_score")
+        if isinstance(spec, (int, float)) and spec <= specific_margin:
+            continue
+        sid = r.get("session_id")
+        turn = r.get("turn")
+        rid = str(r.get("recall_id") or "")
+        if not sid or turn is None or len(rid) < 8:
+            continue
+        prompt = _prompt_for_turn(state_dir, str(sid), int(turn))
+        if not prompt or len(prompt.strip()) < 8:
+            continue
+        tok = _reask_tokens(prompt)
+        ts = r.get("ts") or ""
+        for c in clusters:
+            if _jaccard(tok, c["tokens"]) >= sim_threshold:
+                c["expect_ids"].add(rid)
+                if ts > c["ts"]:
+                    c["ts"] = ts
+                    c["text"] = prompt
+                break
+        else:
+            clusters.append({"tokens": tok, "text": prompt, "expect_ids": {rid}, "ts": ts})
+    clusters.sort(key=lambda c: c["ts"], reverse=True)
+    return [
+        {"text": c["text"], "relevant": True, "expect_ids": sorted(c["expect_ids"])}
+        for c in clusters[:max_labels]
+    ]
+
+
+def merge_label_prompts(
+    existing: list[dict[str, Any]],
+    harvested: list[dict[str, Any]],
+    *,
+    sim_threshold: float = 0.6,
+) -> list[dict[str, Any]]:
+    """Merge harvested labels into an existing prompt list. A harvested label
+    Jaccard-similar to an existing one unions its ``expect_ids`` into that
+    entry instead of adding a duplicate; otherwise it is appended."""
+    from memo.dashboard_metrics import _jaccard, _reask_tokens
+
+    merged = [dict(p) for p in existing]
+    toks = [_reask_tokens(str(p.get("text") or "")) for p in merged]
+    for h in harvested:
+        h_tok = _reask_tokens(h["text"])
+        for i, p in enumerate(merged):
+            if _jaccard(h_tok, toks[i]) >= sim_threshold:
+                ids = {str(x) for x in (p.get("expect_ids") or [])} | set(h["expect_ids"])
+                p["expect_ids"] = sorted(ids)
+                if h["expect_ids"]:
+                    p["relevant"] = True
+                break
+        else:
+            merged.append(h)
+            toks.append(h_tok)
+    return merged

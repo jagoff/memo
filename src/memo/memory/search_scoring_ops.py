@@ -169,35 +169,54 @@ class _SearchScoringMixin(_MemoryBase):
         self,
         results: list[MemoryRecord],
     ) -> list[MemoryRecord]:
-        """Apply score penalty to the older side of open contradiction pairs."""
-        penalty = max(0.0, min(1.0, flag_float("MEMO_CONTRADICT_PENALTY") or 0.4))
+        """Demote the older side of contradiction AND evolution pairs.
+
+        Contradiction: the older side is likely WRONG — penalise it even when
+        only one side surfaced (the strong, default 0.4 penalty).
+        Evolution: the older side is merely SUPERSEDED — penalise it (softer,
+        default 0.7) ONLY when the newer side also surfaced, so a superseded
+        memory still answers when nothing fresher was retrieved. This routes
+        the temporal engine's already-detected 'evolved' verdicts into ranking
+        instead of letting known-stale facts compete at full score.
+        """
+        contradict_penalty = max(0.0, min(1.0, flag_float("MEMO_CONTRADICT_PENALTY") or 0.4))
+        evolution_penalty = max(0.0, min(1.0, flag_float("MEMO_EVOLUTION_PENALTY") or 0.7))
         ids = [r.id for r in results]
         try:
             pairs = self.contradict_store.pairs_for_ids(ids)
+            pairs += self.contradict_store.pairs_for_ids(ids, status="evolved")
         except Exception as exc:
             _log.debug("contradict_penalty pairs_for_ids failed: %s", exc)
             return results
         if not pairs:
             return results
-        # Build a set of IDs to penalise (older side of each contradiction pair).
-        penalise: set[str] = set()
+        present = {r.id for r in results}
         id_to_updated: dict[str, str] = {r.id: r.updated for r in results}
+        # id -> multiplier; keep the strongest (lowest) penalty if an id is in
+        # multiple pairs.
+        mult: dict[str, float] = {}
+
+        def _demote(mid: str, pen: float) -> None:
+            mult[mid] = min(mult.get(mid, 1.0), pen)
+
         for pair in pairs:
-            if pair.relationship != "contradiction":
-                continue
-            a_ts = id_to_updated.get(pair.memoria_id_a, "")
-            b_ts = id_to_updated.get(pair.memoria_id_b, "")
-            if a_ts and b_ts:
-                # Both sides in results: penalise the older one.
-                penalise.add(pair.memoria_id_a if a_ts < b_ts else pair.memoria_id_b)
-            elif a_ts:
-                penalise.add(pair.memoria_id_a)
-            elif b_ts:
-                penalise.add(pair.memoria_id_b)
-        if not penalise:
+            rel = (pair.relationship or "").lower()
+            a, b = pair.memoria_id_a, pair.memoria_id_b
+            a_ts, b_ts = id_to_updated.get(a, ""), id_to_updated.get(b, "")
+            if "contrad" in rel:
+                if a_ts and b_ts:
+                    _demote(a if a_ts < b_ts else b, contradict_penalty)
+                elif a_ts:
+                    _demote(a, contradict_penalty)
+                elif b_ts:
+                    _demote(b, contradict_penalty)
+            elif "evolu" in rel and a in present and b in present and a_ts and b_ts:
+                # Only when BOTH sides surfaced can we safely demote the older.
+                _demote(a if a_ts < b_ts else b, evolution_penalty)
+        if not mult:
             return results
         penalised = [
-            replace(r, score=(r.score or 0.0) * penalty) if r.id in penalise else r for r in results
+            replace(r, score=(r.score or 0.0) * mult[r.id]) if r.id in mult else r for r in results
         ]
         # Re-sort by score descending so penalised entries sink naturally.
         penalised.sort(

@@ -207,6 +207,80 @@ def eval_recall_cmd(
                     console.print(f"      {h['score']:>5}  {flag:<5}  {h['title']}")
 
 
+@eval_group.command(name="harvest")
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("eval/auto_labels.json"),
+    show_default=True,
+    help="Where to write the harvested label set.",
+)
+@click.option("--strong", type=float, default=0.5, show_default=True,
+              help="Minimum used_score for a grounding row to become ground truth.")
+@click.option("--margin", type=float, default=0.0, show_default=True,
+              help="Minimum specific_score (when present) to keep a row.")
+@click.option("--max", "max_labels", type=int, default=200, show_default=True,
+              help="Cap on harvested labels (most recent first).")
+@click.option("--merge/--overwrite", default=True, show_default=True,
+              help="Merge into an existing label file (union expect_ids) or replace it.")
+@click.option("--as-json", is_flag=True, help="Emit the resulting label set as JSON.")
+def harvest_cmd(
+    out_path: Path,
+    strong: float,
+    margin: float,
+    max_labels: int,
+    merge: bool,
+    as_json: bool,
+) -> None:
+    """Grow the eval label set from grounding.log (ground truth by construction).
+
+    Every recalled memory the answer demonstrably USED becomes a labeled
+    prompt with its grounded id as expect_ids — no hand-labeling. Feed the
+    result to the gate alongside the curated set:
+
+      memo eval harvest --out eval/auto_labels.json
+      memo eval recall --labels eval/auto_labels.json --k 5 --update-baseline
+    """
+    cfg = Config.from_env()
+    harvested = eval_recall.harvest_labels(
+        cfg.state_dir, strong=strong, specific_margin=margin, max_labels=max_labels
+    )
+
+    existing: list[dict] = []
+    if merge and out_path.exists():
+        try:
+            prior = json.loads(out_path.read_text(encoding="utf-8"))
+            if isinstance(prior, dict) and isinstance(prior.get("prompts"), list):
+                existing = [p for p in prior["prompts"] if isinstance(p, dict)]
+        except (OSError, json.JSONDecodeError):
+            existing = []
+
+    prompts = eval_recall.merge_label_prompts(existing, harvested) if existing else harvested
+    label_set = {
+        "schema": "memo.eval_recall.labels.v1",
+        "_doc": (
+            "AUTO-HARVESTED from grounding.log by `memo eval harvest`. Each prompt "
+            "is a question whose answer demonstrably USED the memory in expect_ids "
+            "(ground truth by construction). Safe to regenerate; merge keeps prior "
+            "entries and unions expect_ids."
+        ),
+        "prompts": prompts,
+    }
+
+    if as_json:
+        click.echo(json.dumps(label_set, ensure_ascii=False, indent=2))
+        return
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(label_set, ensure_ascii=False, indent=2), encoding="utf-8")
+    answerable = sum(1 for p in prompts if p.get("expect_ids"))
+    console.print(
+        f"[green]✓[/green] harvested {len(harvested)} grounded label(s); "
+        f"{len(prompts)} total ({answerable} with expect_ids) → {out_path}"
+    )
+
+
 @eval_group.command(name="grounding")
 @click.option(
     "--labels",

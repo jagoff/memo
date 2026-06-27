@@ -243,3 +243,57 @@ def test_cli_eval_recall_rejects_malformed_labels(tmp_path: Path):
         cli, ["eval", "recall", "--labels", str(bad)], env=_env(tmp_path))
     assert result.exit_code != 0
     assert "bad.json" in result.output
+
+
+# --- harvest labels from grounding.log --------------------------------------
+
+
+def test_harvest_labels_joins_grounding_to_prompt(tmp_path: Path):
+    from memo.dashboard import append_grounding_log, append_recall_log
+
+    sd = tmp_path / "state"
+    sd.mkdir(parents=True, exist_ok=True)
+    # The prompt for (session, turn) lives in recall_hook.log (written when
+    # append_recall_log gets a session_id).
+    append_recall_log(
+        sd,
+        prompt="cómo configuro el daemon de recall warm",
+        hits=[{"id": "deadbeef" + "0" * 24, "score": 0.9, "title": "T"}],
+        session_id="s1",
+        turn=3,
+    )
+    # A strongly-grounded row → becomes ground truth.
+    append_grounding_log(
+        sd, session_id="s1", turn=3, recall_id="deadbeef", used_score=0.88, method="both"
+    )
+    # A weakly-used row → filtered out (below --strong).
+    append_grounding_log(
+        sd, session_id="s1", turn=3, recall_id="cafe1234", used_score=0.10, method="lexical"
+    )
+
+    labels = eval_recall.harvest_labels(sd, strong=0.5)
+    assert len(labels) == 1
+    assert labels[0]["text"] == "cómo configuro el daemon de recall warm"
+    assert labels[0]["relevant"] is True
+    assert labels[0]["expect_ids"] == ["deadbeef"]
+
+
+def test_harvest_labels_skips_rows_without_prompt(tmp_path: Path):
+    from memo.dashboard import append_grounding_log
+
+    sd = tmp_path / "state"
+    sd.mkdir(parents=True, exist_ok=True)
+    # Grounding row with no matching recall_hook.log prompt → skipped.
+    append_grounding_log(
+        sd, session_id="orphan", turn=1, recall_id="aaaa1111", used_score=0.9, method="both"
+    )
+    assert eval_recall.harvest_labels(sd, strong=0.5) == []
+
+
+def test_merge_label_prompts_unions_expect_ids(tmp_path: Path):
+    existing = [{"text": "cómo configuro el daemon de recall", "relevant": True, "expect_ids": ["aaaa1111"]}]
+    harvested = [{"text": "cómo configuro el daemon de recall warm", "relevant": True, "expect_ids": ["bbbb2222"]}]
+    merged = eval_recall.merge_label_prompts(existing, harvested)
+    # Jaccard-similar → single entry with unioned ids, not a duplicate.
+    assert len(merged) == 1
+    assert set(merged[0]["expect_ids"]) == {"aaaa1111", "bbbb2222"}
