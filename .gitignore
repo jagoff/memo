@@ -71,3 +71,6 @@ memorias/
 .memo-state/*.db
 .memo-state/*.db-shm
 .memo-state/*.db-wal
+
+# Auto-harvested eval labels (per-machine, regenerate with `memo eval harvest`)
+eval/auto_labels.json
