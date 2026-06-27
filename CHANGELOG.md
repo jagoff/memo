@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-06-27
+
+### Added
+
+- **`memo resume` cross-agent picker (Forma B).** Bare `memo resume` in a TTY
+  opens an interactive picker (arrow keys to move, type to filter, Tab toggles
+  cwd/all + sort, Enter execs the native `claude --resume` / `codex resume` / …
+  and replaces the process) — parity with `synapse resume` without coupling to
+  memflow. Piped / `--json` still emits the candidate list (the synapse /
+  shell-wrapper contract). New `src/memo/resume/` package (incl. `_tui.py`).
+
+### Fixed
+
+- **`memo update` from an editable/dev install no longer silently no-ops.** When
+  run from a project `.venv` (editable install), `_detect_install_method` found
+  the sibling isolated uv-tool and installed a tag over *that*, leaving the
+  running checkout on its stale version ("memo update doesn't update 1.1.x").
+  The updater now detects an editable install (via `direct_url.json`
+  `dir_info.editable`) and refuses with clear guidance (`git pull && uv pip
+  install -e .`) instead of targeting the wrong runtime. Isolated pipx/uv
+  installs are unaffected.
+
 ## [2.1.0] - 2026-06-27
 
 ### Added
