@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-06-27
+
+### Added
+
+- **Episodic memory queryable beyond the picker (Phase 2).** `memo episodes search <query>` (CLI) and the `memo_episodes_search` MCP tool find past work sessions by meaning — the same derived episode index, two new surfaces. Explicit searches accept a cold MLX load (allow_cold) where the picker degrades to substring.
+
 ## [2.2.0] - 2026-06-27
 
 ### Added

@@ -612,3 +612,44 @@ def episodes_index(agent: str, rebuild: bool, as_json: bool) -> None:
         f"[green]episodes indexed[/green] {result['indexed']} · "
         f"skipped {result['skipped']} · total in index {result['total']}"
     )
+
+
+@episodes_group.command(name="search")
+@click.argument("query", nargs=-1, required=True)
+@click.option("--limit", default=10, type=int, show_default=True, help="Max results.")
+@click.option("--json", "as_json", is_flag=True)
+def episodes_search(query: tuple[str, ...], limit: int, as_json: bool) -> None:
+    """Find past sessions by MEANING — `memo episodes search vec0 timeout bug`.
+
+    Queries the episodic index (cold-loads MLX if the recall daemon is down).
+    Each hit is a resumable session: copy its `resume` command to continue it.
+    """
+    from memo.config import Config
+    from memo.resume._index import semantic_search
+
+    q = " ".join(query).strip()
+    hits = semantic_search(Config.from_env(), q, k=limit, allow_cold=True)
+    if as_json:
+        click.echo(json.dumps([h.to_dict() for h in hits], ensure_ascii=False, indent=2))
+        return
+    if not hits:
+        console.print(
+            "[dim]no episode matches — run `memo episodes index` to populate the index, "
+            "or check the recall daemon[/dim]"
+        )
+        return
+    tbl = Table(show_lines=False, expand=True)
+    tbl.add_column("score", width=6, justify="right")
+    tbl.add_column("agent", width=9)
+    tbl.add_column("summary", overflow="fold")
+    tbl.add_column("resume", overflow="fold")
+    for h in hits:
+        score = h.metadata.get("score")
+        resume_cmd = " ".join(h.resume_command) if h.resume_command else "(context)"
+        tbl.add_row(
+            f"{float(score):.3f}" if isinstance(score, (int, float)) else "—",
+            h.agent,
+            (h.summary or h.title or "—")[:120],
+            resume_cmd,
+        )
+    console.print(tbl)

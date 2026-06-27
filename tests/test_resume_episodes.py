@@ -293,3 +293,73 @@ def test_cli_episodes_index_backfills(tmp_path: Path, monkeypatch: pytest.Monkey
     assert payload["enabled"] is True
     assert payload["indexed"] == 1
     assert payload["total"] == 1
+
+
+# ── Phase 2: episodes queryable (CLI search + MCP tool) ──────────────────────
+
+
+def test_cli_episodes_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import memo.embedder_client as ec
+    from memo.cli import cli
+    from memo.store.episode_store import EpisodeStore
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    store = EpisodeStore(state_dir / "episodes.db", _DIMS)
+    for i, sid in enumerate(("alpha", "beta")):
+        store.upsert(
+            agent="claude",
+            session_id=sid,
+            content_hash=f"h{i}",
+            embedding=_unit(i),
+            cwd="/repo",
+            updated_at="2026-05-23T10:00:00Z",
+            summary=f"work {sid}",
+            resume_command=["claude", "--resume", sid],
+            turn_count=1,
+        )
+    # allow_cold path skips ping; query embeds to the "beta" one-hot.
+    monkeypatch.setattr(ec, "embed_query", lambda _q, **_kw: _unit(1))
+    env = {
+        "MEMO_STATE_DIR": str(state_dir),
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_EMBEDDER_DIMS": str(_DIMS),
+        "MEMO_NONINTERACTIVE": "1",
+    }
+    result = CliRunner().invoke(cli, ["episodes", "search", "beta", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    hits = json.loads(result.output)
+    assert hits[0]["session_id"] == "beta"
+    assert hits[0]["provider"] == "episode"
+
+
+def test_mcp_episodes_search_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    import memo.resume._index as idx
+    from memo.config import Config
+    from memo.memory import Memory
+    from memo.server import build_server
+
+    cfg = Config.from_env(
+        state_dir=tmp_path / "state", data_dir=tmp_path / "data", embedder_dims=_DIMS
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed", lambda self, inputs: [_unit(0) for _ in inputs]
+    )
+    mem = Memory(cfg)
+    try:
+        hit = _cand("ep1", summary="worked on episodic memory")
+        hit.metadata["score"] = 0.9
+        # Tool delegates to semantic_search; stub it so the MCP surface is tested
+        # without a live index/embedder.
+        monkeypatch.setattr(idx, "semantic_search", lambda *_a, **_k: [hit])
+        server = build_server(memory=mem)
+        tool = asyncio.run(server.get_tool("memo_episodes_search")).fn
+        out = tool(query="episodic memory", limit=5)
+        assert out["query"] == "episodic memory"
+        assert out["results"][0]["session_id"] == "ep1"
+        assert out["results"][0]["score"] == 0.9
+        assert out["results"][0]["resume_command"] == ["claude", "--resume", "ep1"]
+    finally:
+        mem.close()

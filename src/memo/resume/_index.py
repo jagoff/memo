@@ -132,16 +132,23 @@ def _row_to_candidate(row: dict[str, Any]) -> ResumeCandidate:
     )
 
 
-def semantic_search(cfg: Config, query: str, *, k: int | None = None) -> list[ResumeCandidate]:
-    """Top-k sessions by meaning. Returns ``[]`` (degrade to substring) when the
-    recall daemon is cold, the index is empty, or episodic memory is disabled —
-    never cold-loads MLX on the picker's hot path."""
+def semantic_search(
+    cfg: Config, query: str, *, k: int | None = None, allow_cold: bool = False
+) -> list[ResumeCandidate]:
+    """Top-k sessions by meaning.
+
+    Returns ``[]`` when the index is empty or episodic memory is disabled. By
+    default (``allow_cold=False``) it also returns ``[]`` when the recall daemon
+    is cold — the picker's hot path must never cold-load MLX on a keystroke. An
+    explicit search (CLI / MCP) passes ``allow_cold=True`` to accept the ~2 s
+    cold load and answer anyway.
+    """
     q = (query or "").strip()
     if not q:
         return []
     from memo.embedder_client import embed_query, ping
 
-    if ping(state_dir=cfg.state_dir) is None:
+    if not allow_cold and ping(state_dir=cfg.state_dir) is None:
         return []  # cold embedder → caller stays on substring
     store = open_store(cfg)
     if store is None or store.count() == 0:
