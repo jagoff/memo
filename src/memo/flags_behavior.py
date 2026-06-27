@@ -74,6 +74,31 @@ SPECS: tuple[FlagSpec, ...] = (
         "(newest-first by mtime). Bounds picker latency on machines with many "
         "sessions; older sessions beyond the cap are not surfaced.",
     ),
+    _spec(
+        "MEMO_EPISODIC_ENABLED",
+        "bool",
+        True,
+        "session",
+        "Episodic memory: index work sessions into a semantic index so "
+        "`memo resume` searches the full history by meaning (not just recency). "
+        "Off ⇒ picker is recency+substring only, no session indexing.",
+    ),
+    _spec(
+        "MEMO_RESUME_SEMANTIC_K",
+        "int",
+        50,
+        "session",
+        "Top-k sessions the `memo resume` picker pulls from the episodic index "
+        "per semantic query.",
+    ),
+    _spec(
+        "MEMO_RESUME_INDEX_BATCH",
+        "int",
+        500,
+        "session",
+        "Max sessions embedded per `memo episodes index` backfill run "
+        "(newest-first). The full history is covered over successive runs.",
+    ),
     # turn capture
     _spec("MEMO_CAPTURE_DISABLE", "bool", False, "capture", "Disable Stop-hook turn capture."),
     _spec(

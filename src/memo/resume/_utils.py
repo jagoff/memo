@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,8 +34,18 @@ _DEFAULT_ACTIVE_WINDOW_SECONDS = 120
 _RECENT_WINDOW_SECONDS = 3600
 _DEFAULT_SCAN_CAP = 150
 
+# Lets the episode backfill lift the per-provider parse cap (it must enumerate the
+# WHOLE history, unlike the picker) without mutating the MEMO_RESUME_SCAN_CAP env —
+# memo's architecture forbids reading/writing MEMO_* flags through os.environ.
+_scan_cap_override: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_scan_cap_override", default=None
+)
+
 
 def _scan_cap() -> int:
+    override = _scan_cap_override.get()
+    if override is not None:
+        return max(1, override)
     from memo.flags import flag_int
 
     return max(1, flag_int("MEMO_RESUME_SCAN_CAP") or _DEFAULT_SCAN_CAP)

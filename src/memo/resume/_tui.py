@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 
 from ._formatting import (
     _ansi_color,
@@ -291,6 +291,11 @@ class _ResumeTuiState:
     view: str = "list"
     transcript_offset: int = 0
     notice: str = ""  # one-line warning (e.g. provider errors) shown under the header
+    # Semantic search state (episodic memory). `semantic_order` maps session_id →
+    # rank (0 = best match) for `semantic_query`; non-empty ⇒ the list is ordered
+    # by meaning instead of recency/substring.
+    semantic_query: str = ""
+    semantic_order: dict[str, int] = field(default_factory=dict)
 
 
 def _resume_tui_clamp(index: int, total: int) -> int:
@@ -299,7 +304,23 @@ def _resume_tui_clamp(index: int, total: int) -> int:
     return max(0, min(index, total - 1))
 
 
+def _semantic_active(state: _ResumeTuiState) -> bool:
+    """True when a meaning-ranked result set is current for the typed query."""
+    return bool(state.query) and state.semantic_query == state.query and bool(state.semantic_order)
+
+
 def _resume_tui_visible(state: _ResumeTuiState) -> list[ResumeCandidate]:
+    if _semantic_active(state):
+        # Meaning mode: show the ranked episode hits (not a substring match), still
+        # honouring the Cwd/All filter. Old sessions surface here even though the
+        # substring needle wouldn't match them.
+        from ._utils import _same_cwd
+
+        items = [c for c in state.candidates if c.session_id in state.semantic_order]
+        if state.filter_mode == "cwd" and state.current_cwd:
+            items = [c for c in items if _same_cwd(c.cwd, state.current_cwd)]
+        items.sort(key=lambda c: state.semantic_order.get(c.session_id, 1_000_000))
+        return items
     items = _filter_resume_candidates(
         state.candidates,
         query=state.query,
@@ -307,6 +328,23 @@ def _resume_tui_visible(state: _ResumeTuiState) -> list[ResumeCandidate]:
         current_cwd=state.current_cwd,
     )
     return _sort_resume_candidates(items, sort_mode=state.sort_mode)
+
+
+def _apply_semantic(
+    state: _ResumeTuiState, query: str, hits: Sequence[ResumeCandidate]
+) -> None:
+    """Merge semantic hits into the candidate pool + record their ranking.
+
+    Episode-only hits (sessions beyond the loaded recency set) are appended so the
+    picker can display them; the ranking drives `_resume_tui_visible` ordering.
+    """
+    state.semantic_query = query
+    state.semantic_order = {c.session_id: i for i, c in enumerate(hits)}
+    seen = {c.session_id for c in state.candidates}
+    for hit in hits:
+        if hit.session_id not in seen:
+            state.candidates.append(hit)
+            seen.add(hit.session_id)
 
 
 def _resume_tui_dispatch(
@@ -632,9 +670,12 @@ def pick_resume_candidate_interactive(
     current_cwd: str | None = None,
     start_filter: str = "cwd",
     notice: str = "",
+    semantic_fn: Callable[[str], Sequence[ResumeCandidate]] | None = None,
+    debounce_s: float = 0.3,
 ) -> ResumeCandidate | None:
     if not candidates:
         return None
+    import select
     import termios
     import tty
 
@@ -660,6 +701,22 @@ def pick_resume_candidate_interactive(
             visible = _resume_tui_visible(state)
             state.index = _resume_tui_clamp(state.index, len(visible) + 1)
             _resume_tui_render(state, visible)
+            # Debounced semantic re-rank: when the query has settled (no keypress
+            # for `debounce_s`) and changed since the last search, ask the episode
+            # index. Best-effort — a cold embedder returns [] and we stay on
+            # substring. No threads: the warm-socket embed is ~50 ms.
+            if (
+                semantic_fn is not None
+                and state.query
+                and state.query != state.semantic_query
+                and not select.select([stdin_fd], [], [], debounce_s)[0]
+            ):
+                try:
+                    hits = semantic_fn(state.query)
+                except Exception:
+                    hits = []
+                _apply_semantic(state, state.query, list(hits))
+                continue
             try:
                 key = _read_rich_key_from_fd(stdin_fd)
             except KeyboardInterrupt:

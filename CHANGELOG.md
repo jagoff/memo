@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-27
+
+### Added
+
+- **Semantic Resume / episodic memory (Phase 1).** `memo resume` now searches the full session history by meaning — a derived episode index (sqlite-vec) over session prompt-arcs, incremental on the Stop hook + `memo episodes index` backfill, seamless debounced semantic re-rank in the interactive picker (degrades to substring when the embedder is cold). New flags `MEMO_EPISODIC_ENABLED` / `MEMO_RESUME_SEMANTIC_K` / `MEMO_RESUME_INDEX_BATCH`.
+- **Cross-machine auto-update via sync.** `memo sync pull` can now trigger an automatic update check (`MEMO_AUTO_UPDATE_ON_SYNC`); a version file is written after each successful update so remote machines can detect and pull the new release without manual intervention. Auto-update check also runs on `sync pull` to keep fleet members current.
+
 ## [2.1.1] - 2026-06-27
 
 ### Added

@@ -264,7 +264,11 @@ def _memo_snapshot_candidate(snap: dict[str, object]) -> ResumeCandidate | None:
         resume_mode="native_resume" if agent == "claude" else "context_resume",
         resume_command=["claude", "--resume", session_id] if agent == "claude" else [],
         provenance=[uri],
-        metadata={"project": str(snap.get("project") or ""), "turn_count": snap.get("turn_count")},
+        metadata={
+            "project": str(snap.get("project") or ""),
+            "turn_count": snap.get("turn_count"),
+            "path": str(snap.get("transcript_path") or ""),
+        },
     )
 
 

@@ -425,6 +425,12 @@ class Config(BaseModel):
         Collapses onto `db_path` when `single_db` is set."""
         return self.db_path if self.single_db else self.state_dir / "contradictions.db"
 
+    @property
+    def episode_db(self) -> Path:
+        """Derived semantic index over work sessions (episodic memory).
+        Rebuildable from transcripts; collapses onto `db_path` under `single_db`."""
+        return self.db_path if self.single_db else self.state_dir / "episodes.db"
+
     # ── Construction ─────────────────────────────────────────────────────
 
     @classmethod

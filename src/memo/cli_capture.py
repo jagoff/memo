@@ -116,6 +116,19 @@ def capture_stop() -> None:
         if debug:
             print(f"# memo grounding failed: {exc}", file=_sys.stderr)
 
+    # Episodic memory: index this session's prompt-arc so `memo resume` can find
+    # it by meaning. Content-hash-skip makes most Stops a no-op; never fails the hook.
+    try:
+        from memo.config import Config
+        from memo.resume._index import index_memo_session
+
+        sid = payload.get("session_id") or ""
+        if sid:
+            index_memo_session(Config.from_env(), sid, payload.get("transcript_path"))
+    except Exception as exc:
+        if debug:
+            print(f"# memo episode index failed: {exc}", file=_sys.stderr)
+
     print("{}")
     _sys.exit(0)
 
@@ -331,8 +344,22 @@ def _resume_federated(
         start_filter = "all" if all_cwd else "cwd"
         if start_filter == "cwd" and not any(_same_cwd(c.cwd, cwd) for c in candidates):
             start_filter = "all"
+        # Episodic memory: type-to-search re-ranks by meaning over the full
+        # history (self-degrades to substring when the embedder is cold / disabled).
+        from memo.config import Config
+        from memo.resume._index import semantic_search
+
+        cfg = Config.from_env()
+
+        def _semantic(q: str) -> list:
+            return semantic_search(cfg, q)
+
         candidate = pick_resume_candidate_interactive(
-            candidates, current_cwd=cwd, start_filter=start_filter, notice=notice
+            candidates,
+            current_cwd=cwd,
+            start_filter=start_filter,
+            notice=notice,
+            semantic_fn=_semantic,
         )
         if candidate is None:
             return
@@ -545,4 +572,43 @@ def resume(
     console.print(
         "[dim]Detail: `memo resume <id|prefix>`  ·  "
         "Resume: `claude --resume <session_id>` (copy from the table).[/dim]",
+    )
+
+
+@click.group(name="episodes")
+def episodes_group() -> None:
+    """Episodic memory — the semantic index behind `memo resume` search.
+
+    One embedding per work session (its prompt-arc) so the picker finds a
+    session by *meaning* across the full history, not just recency. The index is
+    derived from transcripts and rebuildable; it never enters the recall hook.
+    """
+
+
+@episodes_group.command(name="index")
+@click.option(
+    "--agent",
+    type=click.Choice(["all", "claude", "codex", "devin", "gemini", "opencode"]),
+    default="all",
+    show_default=True,
+    help="Limit the backfill to one agent's sessions.",
+)
+@click.option("--rebuild", is_flag=True, help="Drop and re-embed the whole index.")
+@click.option("--json", "as_json", is_flag=True)
+def episodes_index(agent: str, rebuild: bool, as_json: bool) -> None:
+    """Backfill the episode index (newest-first, bounded per run by
+    MEMO_RESUME_INDEX_BATCH). Run by `memo-nightly`; safe to run manually."""
+    from memo.config import Config
+    from memo.resume._index import backfill
+
+    result = backfill(Config.from_env(), agent=agent, rebuild=rebuild)
+    if as_json:
+        click.echo(json.dumps(result))
+        return
+    if not result.get("enabled"):
+        console.print("[dim]episodic memory disabled (MEMO_EPISODIC_ENABLED=0)[/dim]")
+        return
+    console.print(
+        f"[green]episodes indexed[/green] {result['indexed']} · "
+        f"skipped {result['skipped']} · total in index {result['total']}"
     )
