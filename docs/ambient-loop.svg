@@ -85,7 +85,7 @@
   <rect x="220" y="220" width="220" height="52" rx="8" class="box-cmd" filter="url(#sh)"/>
   <text x="330" y="242" class="step">memo recall-hook</text>
   <text x="330" y="258" class="detail">embed prompt  ·  check warm signal</text>
-  <text x="330" y="272" class="note">warm → vec · cold → bm25 fallback  ·  8 s budget</text>
+  <text x="330" y="272" class="note">warm → vec · cold → bm25 fallback  ·  5 s budget</text>
   <line class="line-p" x1="200" y1="245" x2="218" y2="245"/>
 
   <!-- search arrow -->

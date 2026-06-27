@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 560" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
@@ -26,71 +26,79 @@
     .box-ok  { fill: #f0fdf4; stroke: #22c55e; stroke-width: 1.5; }
     .box-warn{ fill: #fffbeb; stroke: #f59e0b; stroke-width: 1.5; }
     .box-blue{ fill: #eff6ff; stroke: #3b82f6; stroke-width: 1.5; }
+    .box-alt { fill: #fdf4ff; stroke: #a855f7; stroke-width: 1.5; }
     .line    { stroke: #475569; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
     .line-ok { stroke: #22c55e; stroke-width: 1.5; fill: none; marker-end: url(#arr-ok); }
     .line-w  { stroke: #f59e0b; stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; marker-end: url(#arr-warn); }
   </style>
 
   <text x="40" y="38" class="title">memo install flow</text>
-  <text x="40" y="56" class="sub">From curl | bash to a working ambient-memory system</text>
+  <text x="40" y="56" class="sub">From curl | bash to a working ambient-memory system — uv preferred, pipx fallback</text>
 
-  <!-- Step boxes — vertical chain, centered at x=420 -->
-
-  <!-- Step 1 -->
+  <!-- Step 1: curl | bash -->
   <rect x="260" y="80" width="300" height="58" rx="8" class="box box-blue" filter="url(#sh)"/>
   <text x="410" y="104" class="step">1 · curl -fsSL … | bash</text>
   <text x="410" y="121" class="cmd">install.sh</text>
-  <text x="410" y="136" class="detail">platform check · Python ≥3.13 · pipx bootstrap</text>
+  <text x="410" y="136" class="detail">platform check (macOS arm64) · detect uv or pipx</text>
 
-  <line class="line" x1="410" y1="138" x2="410" y2="165"/>
+  <line class="line" x1="410" y1="138" x2="410" y2="162"/>
 
-  <!-- Step 2 -->
-  <rect x="260" y="165" width="300" height="58" rx="8" class="box" filter="url(#sh)"/>
-  <text x="410" y="189" class="step">2 · pipx install mlx-memo</text>
-  <text x="410" y="206" class="detail">isolated venv · memo + memo-mcp binaries</text>
-  <text x="410" y="220" class="detail">11 deps · no Ollama · no Qdrant</text>
+  <!-- Step 2: uv detect + branch -->
+  <rect x="220" y="162" width="380" height="54" rx="8" class="box" filter="url(#sh)"/>
+  <text x="410" y="184" class="step">2 · installer backend detection</text>
+  <text x="410" y="200" class="detail">uv found? → uv tool install (preferred, manages its own Python)</text>
+  <text x="410" y="214" class="detail">no uv? → pipx install (requires Python ≥3.13 on PATH)</text>
 
-  <line class="line" x1="410" y1="223" x2="410" y2="250"/>
+  <!-- branch arrows -->
+  <line class="line-ok" x1="340" y1="216" x2="210" y2="254"/>
+  <line class="line-w"  x1="480" y1="216" x2="610" y2="254"/>
 
-  <!-- Step 3 — NEW model download -->
-  <rect x="220" y="250" width="380" height="70" rx="8" class="box box-ok" filter="url(#sh)"/>
-  <text x="410" y="274" class="step">3 · memo prewarm --download-all</text>
-  <text x="410" y="291" class="detail">embedder  (Qwen3-0.6B · ~600 MB)</text>
-  <text x="410" y="307" class="detail">reranker  (Qwen3-Reranker-0.6B · ~600 MB)  ·  chat (Qwen2.5 7B + 3B · ~6.3 GB)</text>
+  <!-- branch: uv -->
+  <rect x="90" y="254" width="240" height="50" rx="8" class="box box-ok"/>
+  <text x="210" y="275" class="ok">✓ uv tool install mlx-memo</text>
+  <text x="210" y="291" class="detail">uv manages Python · isolated venv</text>
 
-  <!-- success / fallback branches -->
-  <line class="line-ok" x1="340" y1="320" x2="230" y2="358"/>
-  <line class="line-w"  x1="480" y1="320" x2="590" y2="358"/>
+  <!-- branch: pipx -->
+  <rect x="490" y="254" width="240" height="50" rx="8" class="box box-warn"/>
+  <text x="610" y="275" class="warn">pipx install mlx-memo</text>
+  <text x="610" y="291" class="detail">needs Python ≥3.13 on PATH</text>
 
-  <!-- branch: success -->
-  <rect x="110" y="358" width="240" height="50" rx="8" class="box box-ok"/>
-  <text x="230" y="379" class="ok">✓ models cached</text>
-  <text x="230" y="395" class="detail">~/.cache/huggingface/hub/</text>
+  <!-- rejoin -->
+  <line class="line-ok" x1="210" y1="304" x2="365" y2="342"/>
+  <line class="line-w"  x1="610" y1="304" x2="455" y2="342"/>
 
-  <!-- branch: warn -->
-  <rect x="510" y="358" width="240" height="50" rx="8" class="box box-warn"/>
-  <text x="630" y="379" class="warn">⚠ network failure</text>
-  <text x="630" y="395" class="detail">models download on first use</text>
+  <!-- Step 3: model download -->
+  <rect x="220" y="342" width="380" height="70" rx="8" class="box box-ok" filter="url(#sh)"/>
+  <text x="410" y="366" class="step">3 · memo prewarm --download-all</text>
+  <text x="410" y="383" class="detail">embedder  (Qwen3-0.6B · ~0.4 GB)</text>
+  <text x="410" y="399" class="detail">reranker  (Qwen3-Reranker-0.6B · ~0.6 GB)  ·  chat (Qwen2.5-7B + 4B · ~6 GB in background)</text>
 
-  <!-- rejoin arrows to step 4 -->
-  <line class="line-ok" x1="230" y1="408" x2="365" y2="442"/>
-  <line class="line-w"  x1="630" y1="408" x2="455" y2="442"/>
+  <!-- success / failure branches -->
+  <line class="line-ok" x1="340" y1="412" x2="230" y2="448"/>
+  <line class="line-w"  x1="480" y1="412" x2="590" y2="448"/>
 
-  <!-- Step 4 -->
-  <rect x="260" y="442" width="300" height="58" rx="8" class="box" filter="url(#sh)"/>
-  <text x="410" y="466" class="step">4 · memo doctor --strict-runtime</text>
-  <text x="410" y="483" class="detail">vault · sqlite-vec · mlx · model cache</text>
-  <text x="410" y="498" class="ok">all green when models were downloaded in step 3</text>
+  <!-- success -->
+  <rect x="110" y="448" width="240" height="50" rx="8" class="box box-ok"/>
+  <text x="230" y="469" class="ok">✓ models cached</text>
+  <text x="230" y="485" class="detail">~/.cache/huggingface/hub/</text>
 
-  <line class="line" x1="410" y1="500" x2="410" y2="527"/>
+  <!-- network fail -->
+  <rect x="510" y="448" width="240" height="50" rx="8" class="box box-warn"/>
+  <text x="630" y="469" class="warn">⚠ network failure</text>
+  <text x="630" y="485" class="detail">models download on first use</text>
 
-  <!-- Step 5 -->
-  <rect x="260" y="527" width="300" height="24" rx="6" class="box box-blue"/>
-  <text x="410" y="543" class="step">5 · memo mcp-command  →  register with agent client</text>
+  <!-- rejoin to step 4 -->
+  <line class="line-ok" x1="230" y1="498" x2="365" y2="530"/>
+  <line class="line-w"  x1="630" y1="498" x2="455" y2="530"/>
+
+  <!-- Step 4: doctor + agent clients -->
+  <rect x="220" y="530" width="380" height="50" rx="8" class="box" filter="url(#sh)"/>
+  <text x="410" y="552" class="step">4 · memo doctor --strict-runtime</text>
+  <text x="410" y="568" class="ok">MCP auto-wired into Claude Code, Devin, Codex, Windsurf, OpenCode</text>
 
   <!-- Size annotation -->
-  <text x="40" y="290" class="label" style="text-anchor:start">first install</text>
-  <text x="40" y="304" class="label" style="text-anchor:start">~7 GB · 5–15 min</text>
-  <text x="40" y="318" class="label" style="text-anchor:start">subsequent installs</text>
-  <text x="40" y="332" class="label" style="text-anchor:start">cached · ~10 s</text>
+  <text x="40" y="380" class="label" style="text-anchor:start">first install</text>
+  <text x="40" y="394" class="label" style="text-anchor:start">~8 GB · 5–15 min</text>
+  <text x="40" y="412" class="label" style="text-anchor:start">subsequent installs</text>
+  <text x="40" y="426" class="label" style="text-anchor:start">cached · ~10 s</text>
 </svg>
