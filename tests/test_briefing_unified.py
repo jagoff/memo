@@ -219,7 +219,8 @@ def test_mcp_unified_briefing_returns_payload(tmp_cfg, monkeypatch):
     assert "Open conflicts" in out["markdown"]
     assert isinstance(out["lines"], list)
     assert len(out["lines"]) > 0
-    assert len(out["markdown"]) <= 480
+    # Cap raised to 900 so memo-native sections + synapse borrow both fit.
+    assert len(out["markdown"]) <= 900
 
 
 def test_mcp_unified_briefing_empty_when_synapse_missing(tmp_cfg, monkeypatch):
@@ -234,7 +235,43 @@ def test_mcp_unified_briefing_empty_when_synapse_missing(tmp_cfg, monkeypatch):
     server = build_server(memory=mem)
     fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
     out = fn()
+    # Empty corpus AND no synapse → nothing to surface.
     assert out == {"available": False, "markdown": "", "lines": [], "notification": ""}
+
+
+def test_mcp_unified_briefing_surfaces_memo_corpus_without_synapse(tmp_cfg, monkeypatch):
+    """#8: an MCP-only agent on a single Mac (synapse unreachable) must still
+    get memo's own durable corpus, not an empty briefing."""
+    import asyncio
+
+    from memo.memory import Memory
+    from memo.server import build_server
+
+    from memo.config import Config
+
+    def _stub_embed(self, inputs):
+        return [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
+    monkeypatch.setattr(synapse_client, "is_available", lambda: False)
+
+    cfg = Config(
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+    )
+    mem = Memory(cfg)
+    mem.save(content="decidí usar el reranker 0.6B por latencia", title="Reranker pick", type_="decision")
+
+    server = build_server(memory=mem)
+    fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
+    out = fn()
+    # Synapse absent, but the corpus has a memory → briefing is non-empty and
+    # surfaces memo's own section (open loops), not synapse content.
+    assert out["available"] is True
+    assert "Open loops" in out["markdown"]
+    assert "Synapse" not in out["markdown"]
 
 
 def test_cli_briefing_emits_active_memory_block(tmp_cfg, monkeypatch, tmp_path):

@@ -22,6 +22,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "Extract entities from queries and boost results whose extra['entities'] overlap. Prerequisite for graph expansion.",
     ),
     _spec(
+        "MEMO_ENTITY_EXTRACT_ON_SAVE",
+        "bool",
+        True,
+        "entity",
+        "Write regex-extracted entities into extra['entities'] on EVERY save "
+        "(dependency-free, no MLX). Default-on so the entity-overlap signal "
+        "exists corpus-wide and entity retrieval works the moment it's enabled, "
+        "without a backfill. Set 0 to skip the on-save write.",
+    ),
+    _spec(
         "MEMO_GRAPH_RETRIEVAL_ENABLED",
         "bool",
         False,

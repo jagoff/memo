@@ -361,23 +361,19 @@ class _WriteOpsMixin(_MemoryBase):
         extra_for_store = dict(extra or {})
         if defer_embed:
             extra_for_store["_memo_embed_pending"] = True
-        # Entity extraction for entity-aware retrieval (opt-in).
-        # Stores entity mentions in extra_for_store["entities"] so the search
-        # pipeline can boost scores for entity-matching results.
-        # Gated by MEMO_ENTITY_RETRIEVAL_ENABLED to avoid overhead on ingest
-        # when the feature is not in use.
-        if not extra_for_store.get("entities"):
+        # Entity extraction (regex, dependency-free, no MLX). Written on EVERY
+        # save by default (MEMO_ENTITY_EXTRACT_ON_SAVE) — NOT gated on the
+        # retrieval flag — so extra['entities'] exists corpus-wide and
+        # _apply_entity_boost / graph expansion work the moment they're enabled,
+        # with no backfill. Best-effort: a broken extractor never fails the save.
+        if not extra_for_store.get("entities") and flag_bool("MEMO_ENTITY_EXTRACT_ON_SAVE"):
             try:
-                from memo.entity_extractor import entity_retrieval_enabled, extract_entities
+                from memo.entity_extractor import extract_entities
 
-                if entity_retrieval_enabled():
-                    ents = extract_entities(f"{title} {content}"[:3000])
-                    if ents:
-                        extra_for_store["entities"] = ents
+                ents = extract_entities(f"{title} {content}"[:3000])
+                if ents:
+                    extra_for_store["entities"] = ents[:20]
             except Exception as exc:
-                # Entities are opt-in best-effort — a broken extractor/model
-                # must not fail the save, but log so silent install breakage
-                # is visible.
                 _log.debug("entity extraction failed during save: %s", exc)
 
         post = frontmatter.Post(

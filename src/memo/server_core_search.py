@@ -81,11 +81,25 @@ def register(server: Any, memory: Memory) -> None:
 
     @server.tool()
     def memo_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
-        from memo.briefing import compact_text, synapse_briefing_lines
+        from memo.briefing import (
+            compact_text,
+            memo_native_briefing_lines,
+            synapse_briefing_lines,
+        )
+        from memo.flags import flag_int
 
         t0 = now_ms()
-        raw_lines = synapse_briefing_lines(cwd)
-        markdown = compact_text("\n".join(raw_lines), max_chars=480)
+        # memo's OWN durable corpus FIRST — so an MCP-only agent gets grounded
+        # even on a single Mac where synapse is unreachable (previously this
+        # tool returned nothing but synapse's borrow → empty briefing offline).
+        loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
+        loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
+        raw_lines: list[str] = memo_native_briefing_lines(
+            memory, loops_n=loops_n, loops_days=loops_days
+        )
+        # Synapse unified state is additive/optional.
+        raw_lines.extend(synapse_briefing_lines(cwd))
+        markdown = compact_text("\n".join(raw_lines), max_chars=900)
         lines = markdown.splitlines() if markdown else []
         log_consult(
             memory,
