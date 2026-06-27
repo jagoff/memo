@@ -83,7 +83,8 @@ memo ask 'what changed in the embedder this month?'   # RAG — cites memories b
 - **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate and saves them. The corpus grows on its own.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery for the last session.
 - **Resilient daemon communication** — Socket clients use exponential backoff (3 retries) on connection failures to the recall daemon, preventing transient blips from degrading recall.
-- **Operational safety toggles** — `MEMO_TANTIVY_ENABLED=0` disables Tantivy dual-write; `MEMO_CONTRADICTION_TIMEOUT` controls LLM timeout for contradiction detection.
+- **Operational safety toggles** — `MEMO_TANTIVY_ENABLED=0` disables Tantivy dual-write; `MEMO_SOFT_DELETE=0` bypasses soft-delete (permanent row removal); `MEMO_DEDUP_EXACT=0` disables exact-content deduplication; `MEMO_CONTRADICTION_TIMEOUT` controls LLM timeout for contradiction detection.
+- **Vacuum cleanup** — `memo maintain --vacuum --vacuum-days 90` permanently purges soft-deleted records older than the threshold, keeping the store lean. WhatsApp ingest flags (`WHATSAPP_BOT_JID`, `WA_LISTENER_NOTES_CHAT_JID`) are configurable via `MEMO_*` env or `memo config flags`.
 - **🕰️ Time-machine** — rewind the corpus to any past date: `memo as-of ask "..." --date 2026-02-01`, `memo diff --from … --to …`. No other agent-memory store offers this.
 - **Hybrid retrieval + reranker** — vec + BM25 (FTS5, Tantivy optional, diacritic-folding for Spanish) fused via RRF, then an optional MLX cross-encoder rerank. Tantivy dual-write can be disabled with `MEMO_TANTIVY_ENABLED=0` for operational safety.
 - **Markdown is the source of truth** — plain `.md` + frontmatter you can edit in Obsidian/vim; the sqlite index is rebuildable (`memo reindex`).
