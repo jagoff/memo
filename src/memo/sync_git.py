@@ -376,6 +376,10 @@ def _merge_remote_signal_from_git(root: Path, store: VecStore, ref: str) -> None
             payload[table] = []
             continue
         if doc.get("schema") != SIGNAL_SCHEMA:
+            import logging
+            logging.getLogger(__name__).warning(
+                "sync: skipping %s signal (schema %r != %r)", table, doc.get("schema"), SIGNAL_SCHEMA
+            )
             payload[table] = []
             continue
         payload[table] = doc.get("rows") or []
@@ -406,6 +410,13 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
         conflicts = _git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
         non_signal = [c for c in conflicts if not c.startswith("signal/")]
         if non_signal or not conflicts:
+            # Empty commit after resolving all signal conflicts: git rebase --continue
+            # exits non-zero with 'nothing to stage' / '--skip'. Handle it before aborting.
+            if not non_signal and not conflicts and (
+                "--skip" in rebase.stderr or "nothing to stage" in rebase.stderr or "nothing to commit" in rebase.stderr
+            ):
+                rebase = _git(root, "rebase", "--skip", check=False)
+                continue
             # a real memoria conflict, or a failure with nothing to resolve
             # (don't loop forever): abort and surface for manual handling.
             _git(root, "rebase", "--abort", check=False)
@@ -431,13 +442,7 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
         pruned = mem.gc(fix=True).get("orphan_store", [])
     except Exception as exc:  # never let GC break the pull
         import logging
-
-        from memo.errors import MemoError
-
-        _log = logging.getLogger(__name__)
-        if not isinstance(exc, MemoError):
-            raise
-        _log.warning("sync_pull: GC failed (orphan rows may remain): %s", exc)
+        logging.getLogger(__name__).warning("sync_pull: GC failed (orphan rows may remain): %s", exc)
 
     # 4) re-export the merged signal so the next push carries the union
     export_signal(store, signal_dir_for(cfg))

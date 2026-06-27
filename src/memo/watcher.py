@@ -47,6 +47,7 @@ class _DebouncedReindex:
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
         self._pending = False
+        self._running = False
 
     def schedule(self, path: Path) -> None:
         with self._lock:
@@ -61,15 +62,21 @@ class _DebouncedReindex:
 
     def _run(self) -> None:
         with self._lock:
-            if not self._pending:
+            if not self._pending or self._running:
                 return
             self._pending = False
+            self._running = True
         t0 = time.perf_counter()
+        res = None
         try:
             res = self.memory.reindex()
         except Exception as exc:
             if self.debug:
                 print(f"# memo watch: reindex failed: {exc}", file=sys.stderr)
+        finally:
+            with self._lock:
+                self._running = False
+        if res is None:
             return
         dt = time.perf_counter() - t0
         if self.debug or res.get("reindexed", 0) or res.get("added", 0):

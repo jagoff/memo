@@ -313,7 +313,7 @@ Body: {(r2.body or "")[:1000]}
     def detect_stale_memorias(
         self,
         days_threshold: int = 180,
-        min_access_count: int = 0,
+        min_access_count: int = 1,
     ) -> list[dict[str, Any]]:
         """Find memories that may be stale based on age and lack of access.
 

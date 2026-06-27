@@ -560,7 +560,7 @@ def _enough_days_apart(a: str, b: str, min_days: int) -> bool:
         db = datetime.fromisoformat(b.replace("Z", "+00:00"))
     except (ValueError, TypeError, AttributeError):
         return True
-    return abs((da - db).days) >= min_days
+    return abs((da - db).total_seconds()) / 86400 >= min_days
 
 
 def _is_open(store: ContradictionStore, a: str, b: str) -> bool:

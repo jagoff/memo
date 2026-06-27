@@ -89,7 +89,8 @@ class MultiModalStore:
                         metadata=cdata["metadata"],
                         created_at=cdata["created_at"],
                     )
-            except Exception:
+            except Exception as exc:
+                _log.error("multimodal: failed to load content store, starting empty: %s", exc)
                 self._contents = {}
 
     def _save(self) -> None:

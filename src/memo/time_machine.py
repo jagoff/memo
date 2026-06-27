@@ -356,14 +356,16 @@ def diff(memory: Any, *, from_ts: str | datetime, to_ts: str | datetime) -> Corp
             diffs.append("type")
         if sorted(fr.tags) != sorted(tr.tags):
             diffs.append("tags")
+        if fr.updated != tr.updated:
+            diffs.append("updated")
         if diffs:
             updated.append(
                 {
                     "id": i,
                     "title": tr.title,
                     "changed_fields": diffs,
-                    "before": {"title": fr.title, "type": fr.type, "tags": fr.tags},
-                    "after": {"title": tr.title, "type": tr.type, "tags": tr.tags},
+                    "before": {"title": fr.title, "type": fr.type, "tags": fr.tags, "updated": fr.updated},
+                    "after": {"title": tr.title, "type": tr.type, "tags": tr.tags, "updated": tr.updated},
                 }
             )
 

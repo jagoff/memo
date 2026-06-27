@@ -621,16 +621,24 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             import datetime
             now = datetime.datetime.now(datetime.UTC).isoformat()
             with self._tx() as cx:
-                # Update meta
-                cx.execute(
+                cur = cx.execute(
                     "UPDATE meta SET deleted_at = ? WHERE id = ?",
                     (now, id_),
                 )
-                # Remove from vec index (so it doesn't show in similarity search)
+                existed = cur.rowcount > 0
                 cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
-                # Remove from FTS index (so it doesn't show in text search)
                 cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
-            return True
+            if existed:
+                with self._tantivy_write_lock:
+                    tantivy = self._get_tantivy()
+                    if tantivy is not None:
+                        try:
+                            tantivy.delete_document(id_)
+                            tantivy.commit()
+                        except Exception as exc:
+                            _log.warning("tantivy soft-delete failed: %s", exc)
+                            self._mark_tantivy_unhealthy()
+            return existed
 
         # Hard delete fallback (for old DBs without deleted_at)
         with self._tx() as cx:

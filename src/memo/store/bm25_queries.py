@@ -100,7 +100,7 @@ class _BM25QueriesMixin(_StoreBase):
         placeholders = ",".join("?" for _ in id_score)
         sql = (
             "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "  # noqa: S608
-            f"FROM meta WHERE id IN ({placeholders})"
+            f"FROM meta WHERE id IN ({placeholders}) AND (deleted_at IS NULL OR deleted_at = '')"
         )
         params: list[Any] = list(id_score.keys())
         if type_:
@@ -250,7 +250,7 @@ class _BM25QueriesMixin(_StoreBase):
         placeholders = ",".join("?" for _ in id_score)
         sql = (
             "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "  # noqa: S608
-            f"FROM meta WHERE id IN ({placeholders})"
+            f"FROM meta WHERE id IN ({placeholders}) AND (deleted_at IS NULL OR deleted_at = '')"
         )
         params: list[Any] = list(id_score.keys())
         if type_:

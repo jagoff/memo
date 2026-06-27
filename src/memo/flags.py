@@ -80,8 +80,8 @@ def flag(name: str, *, env: dict[str, str] | None = None) -> Any:
     src = os.environ if env is None else env
     raw = src.get(name)
     if raw is None or raw == "":
-        # empty string counts as unset except for str flags whose default is ""
-        if raw == "" and spec.kind == "str":
+        # empty string counts as unset except for str flags whose default is also ""
+        if raw == "" and spec.kind == "str" and spec.default == "":
             return ""
         return spec.default
     try:

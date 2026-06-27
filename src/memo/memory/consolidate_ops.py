@@ -261,12 +261,12 @@ class _ConsolidateOpsMixin(_MemoryBase):
             clusters: builtins.list[builtins.list[int]] = []
             for i in range(len(items)):
                 joined = False
+                norm_i = sum(x * x for x in items[i]["emb"]) ** 0.5 or 1.0
                 for cluster in clusters:
                     rep_item = items[cluster[0]]
-                    if (
-                        sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=True))
-                        >= threshold
-                    ):
+                    norm_r = sum(x * x for x in rep_item["emb"]) ** 0.5 or 1.0
+                    cosine = sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=True)) / (norm_i * norm_r)
+                    if cosine >= threshold:
                         cluster.append(i)
                         joined = True
                         break

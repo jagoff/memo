@@ -217,6 +217,8 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
     # -- internal -----------------------------------------------------------
 
     def _ensure_loaded(self) -> None:
+        if self._model is not None:
+            return
         # Timeout after 30s to avoid indefinite hang if load stalls
         if not self._load_lock.acquire(timeout=30.0):
             raise RuntimeError("Embedder model load timed out after 30s")
@@ -330,7 +332,8 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
                     continue
                 row = hidden[i : i + 1, eos_idx[i], :]  # (1, H)
                 norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
-                emb = row / norm
+                safe_norm = mx.where(norm < 1e-9, mx.ones_like(norm), norm)
+                emb = row / safe_norm
                 out.append([float(x) for x in emb[0].tolist()])
         return out
 
@@ -351,16 +354,17 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         # the same value for both, else "foo " and "foo" share a key but embed
         # different strings.
         q = (query or "").strip()
+        cache_key = f"{self.model_path}:{self.expected_dims}:{q}"
 
         if self._query_cache is not None:
-            cached = self._query_cache.get(q)
+            cached = self._query_cache.get(cache_key)
             if cached is not None:
                 return cached
 
         result = self.embed([_QUERY_INSTRUCTION_PREFIX + q])[0]
 
         if self._query_cache is not None:
-            self._query_cache.put(q, result)
+            self._query_cache.put(cache_key, result)
 
         return result
 

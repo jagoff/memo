@@ -217,8 +217,7 @@ def test_corrupt_watermark_handled(tmp_path: Path, monkeypatch):
     assert _watermark(state, sid)["exchange_count"] == 1
 
 
-@pytest.mark.parametrize("bad_count", [999, -5])
-def test_out_of_range_watermark_clamped(tmp_path: Path, monkeypatch, bad_count: int):
+def test_negative_watermark_resets_to_zero(tmp_path: Path, monkeypatch):
     state = _setup_env(tmp_path, monkeypatch)
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -226,18 +225,39 @@ def test_out_of_range_watermark_clamped(tmp_path: Path, monkeypatch, bad_count: 
         lambda *a: calls.append((a[2], a[3])) or [],
     )
 
-    sid = "sess-oob"
+    sid = "sess-oob-neg"
     wm_file = state / ".capture_watermark" / f"{sid}.json"
     wm_file.parent.mkdir(parents=True, exist_ok=True)
-    wm_file.write_text(json.dumps({"exchange_count": bad_count}), encoding="utf-8")
+    wm_file.write_text(json.dumps({"exchange_count": -5}), encoding="utf-8")
 
     transcript = tmp_path / "t.jsonl"
     _write_transcript(transcript, _exchange("pregunta", "ALPHAMARK"))
 
     out = run_capture_incremental(transcript, sid)
     assert out["status"] == "ok"
-    assert len(calls) == 1  # clamped to 0 → reprocesses the whole transcript
+    assert len(calls) == 1  # negative → reset to 0, reprocesses whole transcript
     assert _watermark(state, sid)["exchange_count"] == 1
+
+
+def test_stale_watermark_ahead_of_transcript_returns_no_new(tmp_path: Path, monkeypatch):
+    state = _setup_env(tmp_path, monkeypatch)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "memo.capture.extract_insights",
+        lambda *a: calls.append((a[2], a[3])) or [],
+    )
+
+    sid = "sess-oob-stale"
+    wm_file = state / ".capture_watermark" / f"{sid}.json"
+    wm_file.parent.mkdir(parents=True, exist_ok=True)
+    wm_file.write_text(json.dumps({"exchange_count": 999}), encoding="utf-8")
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(transcript, _exchange("pregunta", "ALPHAMARK"))
+
+    out = run_capture_incremental(transcript, sid)
+    assert out["status"] == "no_new"  # watermark > total → nothing new, no re-pass
+    assert len(calls) == 0  # should NOT reprocess already-captured turns
 
 
 def test_empty_transcript_is_no_pair(tmp_path: Path, monkeypatch):

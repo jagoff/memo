@@ -330,7 +330,8 @@ def _passes_quality(text: str, min_words: int | None = None) -> bool:
     if min_words is None:
         from memo.flags import flag_int
 
-        min_words = max(0, flag_int("MEMO_CAPTURE_MIN_WORDS") or 15)
+        _raw = flag_int("MEMO_CAPTURE_MIN_WORDS")
+        min_words = 15 if _raw is None else max(0, _raw)
     t = text.strip()
     # Too short
     if min_words > 0 and len(t.split()) < min_words:
@@ -695,11 +696,12 @@ def run_capture_incremental(
         start = int(wm.get("exchange_count", 0) or 0)
     except (TypeError, ValueError):
         start = 0
-    # A corrupt / stale watermark must never skip the tail or go negative:
-    # clamp out-of-range values to a full re-pass rather than silently
-    # dropping turns.
-    if start < 0 or start > total:
+    # A negative watermark is invalid — reset to beginning.
+    # A watermark ahead of the transcript means nothing new; clamp to total.
+    if start < 0:
         start = 0
+    elif start > total:
+        start = total
 
     def _stamp() -> None:
         _save_watermark(

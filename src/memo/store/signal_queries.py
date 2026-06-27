@@ -284,8 +284,10 @@ class _SignalQueriesMixin(_StoreBase):
             cur = cx.execute(
                 "UPDATE memory_health SET roi_score = max(0.1, roi_score * ?), "
                 "updated_at = datetime('now') "
-                "WHERE updated_at < datetime('now', ? || ' days') "
-                "OR updated_at IS NULL",
+                "WHERE ("
+                "  SELECT COALESCE(MAX(a.last_accessed), '1970-01-01') "
+                "  FROM access a WHERE a.id = memory_health.id"
+                ") < datetime('now', ? || ' days')",
                 (factor, f"-{older_than_days}"),
             )
             return cur.rowcount

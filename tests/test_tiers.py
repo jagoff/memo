@@ -155,8 +155,8 @@ def test_recall_health_summarises_log(tmp_path):
     assert h["fired"] == 2
     assert h["bailed"] == 1
     assert h["hit_rate"] == 1.0          # both fired recalls had a hit
-    assert h["median_top_score"] == 0.9
-    assert h["p50_latency_ms"] in (120, 140)
+    assert h["median_top_score"] == 0.85  # true median of [0.8, 0.9]
+    assert h["p50_latency_ms"] == 130.0  # true median of [120, 140]
 
 
 def test_recall_health_empty_is_safe(tmp_path):

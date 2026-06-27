@@ -101,7 +101,7 @@ _COMMAND_WRAPPER_PREFIXES = (
     "<system-reminder>",
 )
 _COMMAND_WRAPPER_TAG_RE = re.compile(
-    r"<(command-[a-z]+|local-command-[a-z]+|bash-std[a-z]+|user-prompt-submit-hook)>"
+    r"<(command-[a-z]+|local-command-[a-z]+|bash-std[a-z]+|user-prompt-submit-hook|task-notification|task-output|system-reminder)>"
     r".*?</\1>",
     re.DOTALL,
 )

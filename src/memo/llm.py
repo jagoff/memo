@@ -153,6 +153,7 @@ class MLXChat:
     def _ensure_model(self, model: str) -> tuple[Any, Any]:
         suppress_swig_deprecation_warnings()
         if model in self._loaded:
+            self._loaded.move_to_end(model)
             return self._loaded[model]
         # Timeout after 30s to avoid indefinite hang if load stalls
         if not self._load_lock.acquire(timeout=30.0):
@@ -228,9 +229,9 @@ class MLXChat:
         # versions — determinism comes from `temperature=0` (greedy).
         # We keep the kwarg for API symmetry with Ollama callers.
         max_tokens = int(opts.get("num_predict") or opts.get("max_tokens") or 512)
-        # `thinking` — pass False to disable chain-of-thought on Qwen3 models.
+        # `thinking` — pass True to enable chain-of-thought on Qwen3 models.
         # Ignored gracefully on tokenizers that don't support enable_thinking.
-        thinking: bool = bool(opts.get("thinking", True))
+        thinking: bool = bool(opts.get("thinking", False))
 
         m, tok = self._ensure_model(model)
         sampler = make_sampler(temp=temperature, top_p=top_p)

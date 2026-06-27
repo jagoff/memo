@@ -329,12 +329,15 @@ class _WriteOpsMixin(_MemoryBase):
         if topic_key:
             try:
                 existing = self.store._conn.execute(
-                    "SELECT id, path FROM meta WHERE topic_key = ? AND deleted_at IS NULL LIMIT 1",
+                    "SELECT id, path, created FROM meta WHERE topic_key = ? AND deleted_at IS NULL LIMIT 1",
                     (topic_key,),
                 ).fetchone()
                 if existing is not None and existing["id"]:
                     use_existing_id = existing["id"]
                     existing_path = existing["path"]
+                    # Preserve original creation date when caller didn't supply one
+                    if not created and existing["created"]:
+                        created_iso = existing["created"]
                     _log.info("topic_key upsert: updating existing %s (path=%s)", use_existing_id[:8], existing_path)
             except Exception as exc:
                 _log.debug("topic_key lookup failed: %s", exc)

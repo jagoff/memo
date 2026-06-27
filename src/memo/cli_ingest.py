@@ -466,8 +466,10 @@ def ingest(
 
                 try:
                     fm = frontmatter.loads(raw)
-                except Exception:
-                    fm = frontmatter.Post(raw)
+                except Exception as _fm_exc:
+                    _log.debug("ingest: frontmatter parse error in %s, skipping: %s", path.name, _fm_exc)
+                    skipped_empty += 1
+                    continue
 
                 # Skip curated memories (have explicit id).
                 if fm.metadata.get("id"):

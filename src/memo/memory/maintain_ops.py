@@ -337,9 +337,10 @@ class _MaintainOpsMixin(_MemoryBase):
                 continue
             missing_vector = not self.store.has_vector(md_id)
             if force or existing["body_hash"] != new_hash or missing_vector:
+                had_embed_pending = False
                 if isinstance(extra, dict):
                     extra = dict(extra)
-                    extra.pop("_memo_embed_pending", None)
+                    had_embed_pending = extra.pop("_memo_embed_pending", None) is not None
                 try:
                     emb = self._embed_cached(
                         self._compose_for_embed(title, body), ctx=f"reindex update {md_id[:8]}"
@@ -351,7 +352,7 @@ class _MaintainOpsMixin(_MemoryBase):
                         type_=type_,
                         tags=tags,
                         created=existing["created"],
-                        updated=_now_iso(),
+                        updated=_now_iso() if existing["body_hash"] != new_hash else updated,
                         body_hash=new_hash,
                         embedding=emb,
                         extra=extra if extra else None,
@@ -361,6 +362,17 @@ class _MaintainOpsMixin(_MemoryBase):
                     _log.warning("reindex: skipping %s (re-embed failed): %s", md_path.name, exc)
                     skipped += 1
                     continue
+                if had_embed_pending:
+                    try:
+                        import contextlib
+                        _post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+                        _post_extra = dict(_post.metadata.get("extra") or {})
+                        _post_extra.pop("_memo_embed_pending", None)
+                        _post.metadata["extra"] = _post_extra or {}
+                        with contextlib.suppress(Exception):
+                            md_path.write_text(frontmatter.dumps(_post), encoding="utf-8")
+                    except Exception:
+                        pass
                 reindexed += 1
                 if chunk_ingest:
                     reindexed += self._reindex_emit_chunks(

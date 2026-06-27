@@ -27,7 +27,8 @@ def register(server: Any, memory: Memory) -> None:
             "title": r.title if r else None,
             "type": r.type if r else None,
             "events": events,
-            "total_events": len(events),
+            "returned_events": len(events),
+            "has_more": len(events) >= limit,
         }
 
     @server.tool()

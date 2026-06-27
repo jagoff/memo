@@ -66,7 +66,10 @@ def _version_ge(a: str, b: str) -> bool:
 
         return Version(a) >= Version(b)
     except Exception:
-        return a >= b
+        try:
+            return tuple(int(x) for x in a.split(".")) >= tuple(int(x) for x in b.split("."))
+        except (ValueError, TypeError):
+            return a >= b
 
 
 def _detect_install_method() -> str | None:

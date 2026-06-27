@@ -105,7 +105,7 @@ def dedup_double_fire(rows: list[dict[str, Any]], *, window_s: float = 15.0) -> 
             idx = prev[0]
             if _row_quality(r) > _row_quality(kept[idx]):
                 kept[idx] = r
-            anchor[prompt] = (idx, ts)
+                anchor[prompt] = (idx, ts)
             continue
         kept.append(r)
         anchor[prompt] = (len(kept) - 1, ts)
@@ -334,7 +334,10 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
     lats = sorted(int(r["latency_ms"]) for r in fired if isinstance(r.get("latency_ms"), (int, float)))
 
     def _median(xs: list[Any]) -> Any:
-        return xs[len(xs) // 2] if xs else None
+        if not xs:
+            return None
+        n = len(xs)
+        return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
 
     ref = referenced_rate(state_dir, rows)
     grounded = grounded_rate(state_dir)

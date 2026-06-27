@@ -89,6 +89,8 @@ def register(server: FastMCP, memory: Memory) -> None:
             pairs = memory.contradict_store.list_all(status=status, limit=limit)
             if relationship:
                 pairs = [p for p in pairs if p.relationship == relationship]
+            if min_confidence > 0.0:
+                pairs = [p for p in pairs if p.confidence >= min_confidence]
         return [p.__dict__ for p in pairs]
 
     @server.tool()

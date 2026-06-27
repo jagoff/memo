@@ -93,7 +93,7 @@ class AnalyticsEngine:
         if total_memorias > 1:
             first_date = datetime.fromisoformat(memories[-1].updated.replace("Z", "+00:00"))
             last_date = datetime.fromisoformat(memories[0].updated.replace("Z", "+00:00"))
-            days = max(1, (last_date - first_date).days)
+            days = max(1.0, (last_date - first_date).total_seconds() / 86400)
             growth_rate = total_memorias / days
         else:
             growth_rate = 0.0
