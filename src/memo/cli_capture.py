@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 from rich.panel import Panel
@@ -17,6 +18,9 @@ from rich.table import Table
 
 from memo.cli_common import console
 from memo.config import Config
+
+if TYPE_CHECKING:
+    from memo.resume import ResumeCandidate
 
 
 def _write_capture_notification(state_dir: Path, titles: list[str], *, idle: bool = False) -> None:
@@ -212,6 +216,155 @@ def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
     _sys.exit(0)
 
 
+def _print_candidate_detail(candidate: ResumeCandidate) -> None:
+    """Render one federated candidate without executing it (scripted / piped)."""
+    from memo.resume._utils import _format_relative_time
+
+    rel = _format_relative_time(candidate.updated_at) or "—"
+    resume_cmd = " ".join(candidate.resume_command) or "(context resume)"
+    console.print(
+        Panel.fit(
+            f"[bold]{candidate.summary or candidate.title or candidate.session_id}[/bold]\n"
+            f"[dim]agent:[/dim]   {candidate.agent}\n"
+            f"[dim]session:[/dim] {candidate.session_id}\n"
+            f"[dim]cwd:[/dim]     {candidate.cwd or '—'}\n"
+            f"[dim]updated:[/dim] {candidate.updated_at}  ({rel})\n"
+            f"[dim]resume:[/dim]  [cyan]{resume_cmd}[/cyan]",
+            title="session",
+            border_style="cyan",
+        )
+    )
+
+
+def _resume_federated(
+    *,
+    session_id: str | None,
+    agent: str,
+    limit: int,
+    cwd_filter: str | None,
+    project: str | None,
+    all_cwd: bool,
+    as_json: bool,
+) -> None:
+    """Cross-agent federated resume — parity with `synapse resume`.
+
+    Discovers recent/active sessions across codex/claude/devin/gemini/opencode
+    native stores (plus memo's own snapshots), merges by (agent, session_id).
+    On a TTY it opens the interactive arrow-key picker (↑/↓ browse, type to
+    search, Tab toggles cwd/all + sort, Enter resumes — execs the native
+    `claude --resume`/`codex resume`/… and replaces this process). Piped or
+    `--json`, it prints a static table / report / candidate instead.
+    """
+    import os
+    from pathlib import Path as _Path
+
+    from memo.resume import (
+        discover_resume_candidates,
+        execute_resume_candidate,
+        pick_resume_candidate_interactive,
+        resolve_resume_candidate,
+    )
+    from memo.resume._utils import _format_relative_time, _same_cwd
+
+    cwd = cwd_filter or os.getcwd()
+    interactive = (
+        not session_id and not as_json and sys.stdin.isatty() and sys.stdout.isatty()
+    )
+    if interactive:
+        # Load everything so the picker can page/filter across all sessions; the
+        # cwd filter is applied live inside the TUI (Tab → Filter: Cwd/All).
+        report = discover_resume_candidates(
+            agent=agent, cwd=cwd, include_all_cwd=True, limit=max(limit, 100000)
+        )
+    else:
+        report = discover_resume_candidates(
+            agent=agent, cwd=cwd, include_all_cwd=all_cwd, limit=limit
+        )
+
+    candidates = report.candidates
+    if project:
+        candidates = [c for c in candidates if _Path(c.cwd or "").name == project]
+
+    if as_json:
+        if session_id:
+            cand = resolve_resume_candidate(candidates, session_id)
+            click.echo(json.dumps(cand.to_dict() if cand else None, ensure_ascii=False, indent=2))
+            return
+        payload = report.to_dict()
+        payload["candidates"] = [c.to_dict() for c in candidates]
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    # Resume one candidate by id/prefix.
+    if session_id:
+        candidate = resolve_resume_candidate(candidates, session_id)
+        if candidate is None:
+            console.print(f"[red]resume candidate not found:[/red] {session_id}")
+            sys.exit(1)
+        if not sys.stdout.isatty():
+            # Scripted / piped: show detail, never exec into another process.
+            _print_candidate_detail(candidate)
+            return
+        console.print(
+            f"[green]Resuming[/green] [bold]{candidate.agent}[/bold] "
+            f"{candidate.session_id[:12]} · [dim]{candidate.cwd or '?'}[/dim]"
+        )
+        # Execs the native resume command (replaces this process) or prints
+        # context-resume guidance when no native resume exists.
+        sys.exit(execute_resume_candidate(candidate))
+
+    notice = ""
+    if report.provider_errors:
+        joined = " · ".join(f"{e.provider}: {e.detail}" for e in report.provider_errors)
+        notice = f"⚠ {joined}"[:200]
+
+    if not candidates:
+        console.print("[dim]no sessions found[/dim]")
+        if notice:
+            console.print(f"[dim]{notice}[/dim]")
+        return
+
+    # Interactive TTY: the selectable arrow-key picker — what `synapse resume` is.
+    if interactive:
+        # Default to the cwd filter, but if nothing matches the current dir fall
+        # back to All so the picker never opens empty while sessions exist.
+        start_filter = "all" if all_cwd else "cwd"
+        if start_filter == "cwd" and not any(_same_cwd(c.cwd, cwd) for c in candidates):
+            start_filter = "all"
+        candidate = pick_resume_candidate_interactive(
+            candidates, current_cwd=cwd, start_filter=start_filter, notice=notice
+        )
+        if candidate is None:
+            return
+        sys.exit(execute_resume_candidate(candidate))
+
+    # Non-TTY (piped / captured): static table.
+    tbl = Table(show_lines=False, expand=True)
+    tbl.add_column("when", width=10)
+    tbl.add_column("agent", width=9)
+    tbl.add_column("status", width=7)
+    tbl.add_column("session", width=12, overflow="fold")
+    tbl.add_column("summary", overflow="fold")
+    tbl.add_column("resume", overflow="fold")
+    for c in candidates:
+        resume_cmd = " ".join(c.resume_command) if c.resume_command else "(context)"
+        tbl.add_row(
+            _format_relative_time(c.updated_at) or "—",
+            c.agent,
+            c.status or "—",
+            c.session_id[:10],
+            (c.summary or c.title or "—")[:100],
+            resume_cmd,
+        )
+    console.print(tbl)
+    console.print(
+        "[dim]Resume: `memo resume <session> --agent all` "
+        "(or copy a `resume` command above).[/dim]"
+    )
+    if notice:
+        console.print(f"[dim]{notice}[/dim]")
+
+
 @click.command(name="resume")
 @click.argument("session_id", required=False)
 @click.option(
@@ -230,24 +383,61 @@ def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
     "Used by the shell wrapper to ask 'what was open here?' "
     "without manual path comparison.",
 )
+@click.option(
+    "--agent",
+    type=click.Choice(["memo", "all", "claude", "codex", "devin", "gemini", "opencode"]),
+    default=None,
+    help="`all` (or a specific agent) runs the cross-agent federated picker — "
+    "parity with `synapse resume`, scanning codex/claude/devin/gemini/opencode "
+    "native stores. `memo` forces memo's own snapshots only. Unset: the human "
+    "picker federates (`all`); `--json` stays memo-only for the shell wrapper.",
+)
+@click.option(
+    "--all-cwd",
+    "all_cwd",
+    is_flag=True,
+    help="Federated mode only: do not filter candidates to the current cwd.",
+)
 @click.option("--json", "as_json", is_flag=True)
 def resume(
     session_id: str | None,
     limit: int,
     project: str | None,
     cwd_filter: str | None,
+    agent: str | None,
+    all_cwd: bool,
     as_json: bool,
 ) -> None:
     """Recent sessions to resume — picker for the SessionStart flow.
 
-    With no argument, prints a table of the most recent sessions
-    (cwd / branch / summary / id). Pass SESSION_ID (full or unique
-    prefix ≥4 chars) to inspect one session in detail.
+    Bare `memo resume` federates across agents (parity with `synapse resume`):
+    it discovers and natively resumes codex/claude/devin/gemini/opencode
+    sessions for the current cwd, with memo's own snapshots merged in as a
+    first-class provider. `--all-cwd` widens beyond the current directory.
 
-    Storage is sidecar JSON under `~/.local/share/memo/sessions/`,
-    auto-written by the Stop hook (`memo session checkpoint`) and
-    LRU-capped at 50.
+    `--agent memo` forces memo's own sidecar snapshots under
+    `~/.local/share/memo/sessions/` (auto-written by the Stop hook, LRU-capped),
+    shown as the rich project/branch/turns table — pass SESSION_ID (full or
+    unique prefix ≥4 chars) to inspect one. The machine `--json` path defaults
+    to this memo-only list so the shell wrapper / synapse keep their contract.
     """
+    # `--agent` unset: the human picker federates (what you want when you type
+    # `memo resume`); the `--json` path stays memo-only so the SessionStart shell
+    # wrapper and synapse's MemoResumeProvider keep their list contract.
+    if agent is None:
+        agent = "memo" if as_json else "all"
+    if agent != "memo":
+        _resume_federated(
+            session_id=session_id,
+            agent=agent,
+            limit=limit,
+            cwd_filter=cwd_filter,
+            project=project,
+            all_cwd=all_cwd,
+            as_json=as_json,
+        )
+        return
+
     from memo.session import format_relative, get_session, list_sessions
 
     cfg = Config.from_env()

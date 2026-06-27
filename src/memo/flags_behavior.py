@@ -57,6 +57,23 @@ SPECS: tuple[FlagSpec, ...] = (
         "session",
         "Max session checkpoint files retained (shared across all agents/projects).",
     ),
+    _spec(
+        "MEMO_RESUME_ACTIVE_WINDOW_S",
+        "int",
+        120,
+        "session",
+        "Seconds a session's transcript can be idle and still count as `active` "
+        "in the cross-agent federated `memo resume --agent all` picker.",
+    ),
+    _spec(
+        "MEMO_RESUME_SCAN_CAP",
+        "int",
+        150,
+        "session",
+        "Max transcripts a `memo resume` provider fully-parses per agent "
+        "(newest-first by mtime). Bounds picker latency on machines with many "
+        "sessions; older sessions beyond the cap are not surfaced.",
+    ),
     # turn capture
     _spec("MEMO_CAPTURE_DISABLE", "bool", False, "capture", "Disable Stop-hook turn capture."),
     _spec(
