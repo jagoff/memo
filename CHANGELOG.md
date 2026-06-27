@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-27
+
+### Added
+
+- **`memo eval harvest`** — auto-mines ground-truth recall labels from `grounding.log` (queries whose answer demonstrably used a memory) into a versioned label set, deduped by prompt Jaccard. Grows the retrieval-regression gate from hand-authored prompts to real grounded outcomes with zero manual labeling.
+- **Outcome loop now closes nightly** — `memo dream run` runs `reconcile_roi` + dead-weight before ROI decay, so ranking actually learns from real grounding outcomes instead of every `roi_score` decaying from a flat 1.0.
+- **Query-conditional outcome learning** (opt-in `MEMO_OUTCOME_SOURCE_FEEDBACK`) — reconcile mines implicit per-query `source_feedback` (`click` positives, optional `ignore` negatives) from grounding, never overriding a manual vote.
+- **Briefing surfaces memo's own corpus** — `memo_unified_briefing` MCP tool now composes open-loops + memory-of-the-day from the durable corpus (shared with the CLI SessionStart briefing) before the optional synapse borrow, so MCP-only agents get grounded even when synapse is unreachable.
+- **Continuous entity extraction** — regex entities (dependency-free, no MLX) written into `extra['entities']` on every save (`MEMO_ENTITY_EXTRACT_ON_SAVE`, default on) so entity retrieval works the moment it's enabled, no backfill.
+- **Tool-call evidence in capture** — `MEMO_CAPTURE_TOOL_EVIDENCE` (default on) feeds a compact `TOOL ACTIVITY` projection (files edited, commands+exit, tests) to the capture extractor, producing grounded memories with real file/symbol/command tokens.
+- **Supersession routed into ranking** — evolution pairs the temporal engine resolves now demote the superseded (older) side: a softer `MEMO_EVOLUTION_PENALTY` at read time plus a lowered `memory_health.confidence` (`MEMO_EVOLUTION_CONFIDENCE`).
+
+### Changed
+
+- **`rerank_input_k` default 5 → 30** — the cross-encoder now sees enough candidates to rescue a correct memory buried below fusion rank 5 (validated: hybrid precision@5 0.786→0.834). Warm 0.6B reranker stays within the recall budget; override via `MEMO_RERANK_INPUT_K`.
+- **Rerank candidate bodies served from the FTS index** — hybrid search no longer reads + frontmatter-parses up to ~200 candidate `.md` files per query; the canonical file is resolved only for the returned results.
+- **Capture dedup reconciles instead of discarding** — same-topic candidates in the 0.85–0.97 similarity band are admitted as new (so the contradiction/evolution pass can supersede the stale side) instead of being silently dropped; only near-identical paraphrases (≥ `MEMO_CAPTURE_DUP_DROP_THRESHOLD`) are dropped.
+
+### Fixed
+
+- **Hybrid recall mode is now usable** — its `min_sim` gate compares the true vec cosine (not the incomparable RRF score), so `MEMO_RECALL_MODE=hybrid` no longer silently returns nothing. Default mode stays `vec`.
+- 34 correctness bugs across store, memory ops, sync, embedder, capture, temporal, and analytics layers — including: `topic_key` upsert overwriting the original `created` timestamp; soft-delete leaving ghost docs in BM25 and always reporting success; reindex stamping `updated`/re-writing `_memo_embed_pending` on unchanged content; LLM LRU evicting the most-recently-used model; `sync_pull` GC exceptions crashing daemons; `decay_roi` filtering on health-update time instead of last-accessed; watcher concurrent-reindex race; embedder zero-norm NaN guard + query-cache model/dims namespacing; contradiction/analytics fractional-day math; flags empty-string handling; version-compare lexicographic fallback.
+
 ## [2.0.0] - 2026-06-26
 
 ### Added
