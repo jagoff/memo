@@ -82,10 +82,13 @@ memo ask 'what changed in the embedder this month?'   # RAG — cites memories b
 - **Ambient recall** — with the Claude Code plugin, every prompt silently consults memory and injects the top memories as context, with a warm **recall daemon** (<200 ms). No `/remember` calls.
 - **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate and saves them. The corpus grows on its own.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery for the last session.
+- **Resilient daemon communication** — Socket clients use exponential backoff (3 retries) on connection failures to the recall daemon, preventing transient blips from degrading recall.
+- **Operational safety toggles** — `MEMO_TANTIVY_ENABLED=0` disables Tantivy dual-write; `MEMO_CONTRADICTION_TIMEOUT` controls LLM timeout for contradiction detection.
 - **🕰️ Time-machine** — rewind the corpus to any past date: `memo as-of ask "..." --date 2026-02-01`, `memo diff --from … --to …`. No other agent-memory store offers this.
-- **Hybrid retrieval + reranker** — vec + BM25 (FTS5, diacritic-folding for Spanish) fused via RRF, then an optional MLX cross-encoder rerank.
+- **Hybrid retrieval + reranker** — vec + BM25 (FTS5, Tantivy optional, diacritic-folding for Spanish) fused via RRF, then an optional MLX cross-encoder rerank. Tantivy dual-write can be disabled with `MEMO_TANTIVY_ENABLED=0` for operational safety.
 - **Markdown is the source of truth** — plain `.md` + frontmatter you can edit in Obsidian/vim; the sqlite index is rebuildable (`memo reindex`).
 - **Semantic map** — `memo map` renders an interactive 2D canvas (UMAP/PCA + Plotly) of the whole corpus.
+- **Contradiction tracking** — `memo temporal contradictions <entity>` detects conflicting facts over time. LLM timeout configurable via `MEMO_CONTRADICTION_TIMEOUT` (default 30s).
 
 ## Documentation
 

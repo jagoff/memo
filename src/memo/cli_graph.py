@@ -30,10 +30,17 @@ def graph_group() -> None:
     "--max-length", type=int, default=5, help="Maximum path length to search (default: 5)"
 )
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def graph_path(source: str, target: str, max_length: int, as_json: bool) -> None:
+@click.option(
+    "--graphify/--no-graphify",
+    default=None,
+    help="Force graphify code graph fallback (auto-enabled if memo graph empty)",
+)
+def graph_path(source: str, target: str, max_length: int, as_json: bool, graphify: bool | None) -> None:
     """Find shortest path between two entities.
 
-    Example: memo graph path memo obsidian-rag
+    Falls back to graphify code graph if no path in memo memories.
+
+    Example: memo graph path capture session
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)

@@ -304,19 +304,7 @@ class _SchemaMixin(_StoreBase):
         if not self._schema_ready():
             with self._tx() as cx:
                 cx.executescript(_SCHEMA_DDL)
-                # `vec0` virtual tables are created out of the static DDL string
-                # because their dimensionality is dynamic (see
-                # `_create_vec_tables`). `IF NOT EXISTS` means an existing vec
-                # table keeps its old DDL — `_validate_vec_schema` (below)
-                # migrates it.
                 self._create_vec_tables(self._conn)
-                # FTS5 over title + tags + body for the BM25 side of hybrid
-                # search. `unindexed=id` keeps the row id queryable but not
-                # tokenised. `tokenize='unicode61 remove_diacritics 2'`
-                # handles Spanish accents (so a search for "decision" matches
-                # "decisión") and lowercases. Body is stored externally — we
-                # write it on upsert via the `Memory` layer (the store sees
-                # the body string via `body_text` arg in `upsert_text`).
                 self._conn.execute(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5("
                     "id UNINDEXED, title, tags, body, "
@@ -341,12 +329,51 @@ class _SchemaMixin(_StoreBase):
         self._validate_vec_dims()
         self._validate_vec_schema()
         self._ensure_secondary_indices()
-        # Ensure schema_meta exists (older DBs predate it) then stamp/verify
-        # the embedder model + dims so a model swap is caught at open time
-        # rather than producing a confusing dim-mismatch error at query time.
         self._ensure_schema_meta_table()
         self._check_embedder_version()
+        # Always run migrations (not gated by _schema_ready)
         self._run_migrations()
+        # Inline v2→v3 migration: add engram columns to existing meta table
+        cols = {row["name"] for row in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
+        new_cols = {
+            "topic_key": "ALTER TABLE meta ADD COLUMN topic_key TEXT",
+            "normalized_hash": "ALTER TABLE meta ADD COLUMN normalized_hash TEXT",
+            "session_id": "ALTER TABLE meta ADD COLUMN session_id TEXT",
+            "revision_count": "ALTER TABLE meta ADD COLUMN revision_count INTEGER DEFAULT 1",
+            "duplicate_count": "ALTER TABLE meta ADD COLUMN duplicate_count INTEGER DEFAULT 0",
+            "last_seen_at": "ALTER TABLE meta ADD COLUMN last_seen_at TEXT",
+            "deleted_at": "ALTER TABLE meta ADD COLUMN deleted_at TEXT",
+            "review_after": "ALTER TABLE meta ADD COLUMN review_after TEXT",
+        }
+        added = False
+        for col, ddl in new_cols.items():
+            if col not in cols:
+                try:
+                    self._conn.execute(ddl)
+                    added = True
+                except Exception as e:
+                    _log.debug("schema migration col %r failed: %s", col, e)
+        if added:
+            self.set_user_version(3)
+        
+        # Ensure sessions table exists (engram pattern)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions ("
+            "id TEXT PRIMARY KEY, project TEXT NOT NULL, directory TEXT, "
+            "started_at TEXT NOT NULL, ended_at TEXT, summary TEXT, status TEXT DEFAULT 'active')"
+        )
+        
+        # Ensure memory_relations table exists (engram pattern)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_relations ("
+            "id TEXT PRIMARY KEY, sync_id TEXT, source_id TEXT NOT NULL, target_id TEXT NOT NULL, "
+            "relation TEXT, judgment_status TEXT DEFAULT 'pending', reason TEXT, "
+            "confidence REAL, session_id TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        # Ensure indexes for relations
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_source ON memory_relations(source_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_target ON memory_relations(target_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_status ON memory_relations(judgment_status)")
 
     # Secondary B-tree indices on `meta` that older DBs predate. Kept out of
     # the `_schema_ready()`-gated DDL block (which only runs on fresh DBs) so a

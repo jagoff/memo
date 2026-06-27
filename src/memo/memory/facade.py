@@ -374,6 +374,12 @@ class Memory(
         """Lazy accessor for CollaborativeManager."""
         return self.capability("collaborative")
 
+    @property
+    def project(self) -> str:
+        """Detect project from cwd (engram 5-case algorithm)."""
+        from memo.server_engram_patterns import _project_from_cwd
+        return _project_from_cwd()
+
     def capability(self, name: str) -> Any:
         """Build and memoize an optional subsystem by registry name."""
         if name not in OPTIONAL_CAPABILITIES:

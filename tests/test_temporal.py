@@ -31,7 +31,7 @@ def test_classify_pair_timeout_does_not_wait_for_worker(mock_memory, monkeypatch
             time.sleep(0.3)
             return {"message": {"content": '{"relationship":"unrelated"}'}}
 
-    monkeypatch.setattr("memo.temporal._PAIR_CLASSIFY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("memo.temporal._pair_classify_timeout", lambda: 0.05)
     analyzer = TemporalAnalyzer(mock_memory, chat=SlowChat())
     rec_a = SimpleNamespace(
         id="a",

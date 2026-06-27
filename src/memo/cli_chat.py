@@ -38,6 +38,13 @@ def chat_group() -> None:
 )
 @click.option("--type", "type_", default=None, help="Restrict retrieval to one record type.")
 @click.option(
+    "--snippet-chars",
+    default=800,
+    type=int,
+    show_default=True,
+    help="Preview length for retrieved memory snippets.",
+)
+@click.option(
     "--history-json",
     type=click.File("r"),
     default=None,
@@ -63,6 +70,7 @@ def chat_ask(
     question: str,
     k: int,
     type_: str | None,
+    snippet_chars: int,
     history_json,
     context_json,
     as_json: bool,
@@ -105,6 +113,7 @@ def chat_ask(
             type_=type_,
             history=history,
             context=context,
+            snippet_chars=snippet_chars,
         ):
             sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
             sys.stdout.flush()
@@ -116,6 +125,7 @@ def chat_ask(
         type_=type_,
         history=history,
         context=context,
+        snippet_chars=snippet_chars,
     )
     if as_json:
         click.echo(json.dumps(envelope, ensure_ascii=False, indent=2))

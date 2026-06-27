@@ -3,6 +3,16 @@ from __future__ import annotations
 from memo.flags_base import FlagSpec, _spec
 
 SPECS: tuple[FlagSpec, ...] = (
+    # temporal / contradiction detection
+    _spec(
+        "MEMO_CONTRADICTION_TIMEOUT",
+        "float",
+        30.0,
+        "temporal",
+        "Timeout (seconds) for LLM pair-classification in contradiction detection. "
+        "Set higher for slow models, lower to stay within hook budgets.",
+        min_val=1.0,
+    ),
     # entity-aware retrieval + knowledge-graph expansion
     _spec(
         "MEMO_ENTITY_RETRIEVAL_ENABLED",

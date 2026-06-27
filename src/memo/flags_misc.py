@@ -501,6 +501,46 @@ SPECS: tuple[FlagSpec, ...] = (
         "whatsapp",
         "Override output dir for ingested WhatsApp notes (default <SYSTEM_DIR>/Whatsapp).",
     ),
+    _spec(
+        "WHATSAPP_BOT_JID",
+        "str",
+        "",
+        "whatsapp",
+        "WhatsApp bot JID to filter from ingest (e.g., 54911xxx@s.whatsapp.net).",
+    ),
+    _spec(
+        "WA_LISTENER_NOTES_CHAT_JID",
+        "str",
+        "",
+        "whatsapp",
+        "WhatsApp chat JID for the notes destination chat.",
+    ),
+    # tantivy dual-write toggle
+    _spec(
+        "MEMO_TANTIVY_ENABLED",
+        "bool",
+        True,
+        "store",
+        "Enable dual-write to Tantivy FTS index on upsert/delete. Set =0 to disable "
+        "(falls back to FTS5-only for text search). Useful for operational safety.",
+    ),
+    _spec(
+        "MEMO_DEDUP_EXACT",
+        "bool",
+        True,
+        "store",
+        "Enable exact deduplication via normalized hash (engram pattern). "
+        "When on, save auto-generates a normalized_hash from (title, type, project) "
+        "and skips duplicate entries with identical content.",
+    ),
+    _spec(
+        "MEMO_SOFT_DELETE",
+        "bool",
+        True,
+        "store",
+        "Enable soft-delete (deleted_at column) instead of hard row removal. "
+        "Set =0 to hard-delete rows immediately. Requires DB migration to v3.",
+    ),
     # dream pipeline
     _spec(
         "MEMO_DREAM_PRUNE_FLOOR",

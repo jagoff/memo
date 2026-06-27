@@ -269,4 +269,7 @@ class _BM25QueriesMixin(_StoreBase):
         return out[:limit]
 
     def count(self) -> int:
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
+        if "deleted_at" in cols:
+            return self._conn.execute("SELECT COUNT(*) FROM meta WHERE deleted_at IS NULL").fetchone()[0]
         return self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()[0]

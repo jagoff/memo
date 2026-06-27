@@ -143,6 +143,17 @@ def send_request_line(
     The raw-string form preserves the recall path's contract, whose response
     is injected verbatim and must not be re-serialized.
     """
+    return _send_request_line_impl(sock_path, payload, timeout=timeout, max_bytes=max_bytes)
+
+
+def _send_request_line_impl(
+    sock_path: Path,
+    payload: dict[str, Any],
+    *,
+    timeout: float = DEFAULT_TIMEOUT_S,
+    max_bytes: int = MAX_LINE_BYTES,
+) -> str | None:
+    """Internal impl — one single attempt, no retry."""
     if not sock_path.exists():
         return None
     try:
@@ -162,6 +173,41 @@ def send_request_line(
         return None
     line = buf.decode("utf-8", errors="replace").strip()
     return line if line else None
+
+
+def send_request_with_retry(
+    sock_path: Path,
+    payload: dict[str, Any],
+    *,
+    timeout: float = DEFAULT_TIMEOUT_S,
+    max_bytes: int = MAX_LINE_BYTES,
+    max_retries: int = 3,
+    base_delay: float = 0.1,
+) -> str | None:
+    """Send with exponential backoff retry.
+
+    Retries on transient failures (ConnectionRefused, TimeoutError, OSError).
+    Stops on success or when max_retries exhausted.
+    """
+    import logging
+    import time
+
+    _log = logging.getLogger(__name__)
+    for attempt in range(max_retries + 1):
+        result = _send_request_line_impl(sock_path, payload, timeout=timeout, max_bytes=max_bytes)
+        if result is not None:
+            return result
+        # Probe connection health before retry
+        try:
+            with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.1)
+                sock.connect(str(sock_path))
+        except Exception as e:
+            _log.debug("retry probe failed: %s", e)  # transient — will retry
+        if attempt < max_retries:
+            delay = base_delay * (2**attempt)
+            time.sleep(delay)
+    return None
 
 
 def send_request(
@@ -202,4 +248,5 @@ __all__ = [
     "encode_request",
     "send_request",
     "send_request_line",
+    "send_request_with_retry",
 ]

@@ -26,6 +26,7 @@ class _ChatAskOpsMixin(_MemoryBase):
         type_: str | None = None,
         history: list[dict[str, Any]] | None = None,
         context: dict[str, Any] | None = None,
+        snippet_chars: int | None = None,
     ) -> dict[str, Any]:
         """Chat-shaped RAG envelope owned by Memo.
 
@@ -35,6 +36,11 @@ class _ChatAskOpsMixin(_MemoryBase):
         started = time.perf_counter()
         clean_history = self._normalize_chat_history(history or [])
         clean_context = context or {}
+        resolved_snippet_chars = 800 if snippet_chars is None else snippet_chars
+        if resolved_snippet_chars == 800:
+            from memo.flags import flag_int
+
+            resolved_snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
         retrieval_question = self._chat_retrieval_question(
             question,
             history=clean_history,
@@ -48,6 +54,7 @@ class _ChatAskOpsMixin(_MemoryBase):
             retrieval_question,
             k=k,
             type_=type_,
+            snippet_chars=resolved_snippet_chars,
             intent_text=question,
             session_id=session_id if isinstance(session_id, str) else None,
         )
@@ -102,6 +109,7 @@ class _ChatAskOpsMixin(_MemoryBase):
         type_: str | None = None,
         history: list[dict[str, Any]] | None = None,
         context: dict[str, Any] | None = None,
+        snippet_chars: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Streaming chat-shaped RAG envelope.
 
@@ -119,6 +127,11 @@ class _ChatAskOpsMixin(_MemoryBase):
         started = time.perf_counter()
         clean_history = self._normalize_chat_history(history or [])
         clean_context = context or {}
+        resolved_snippet_chars = 800 if snippet_chars is None else snippet_chars
+        if resolved_snippet_chars == 800:
+            from memo.flags import flag_int
+
+            resolved_snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
         retrieval_question = self._chat_retrieval_question(
             question,
             history=clean_history,
@@ -159,7 +172,13 @@ class _ChatAskOpsMixin(_MemoryBase):
             }
             return
 
-        for ev in self.ask_stream(retrieval_question, k=k, type_=type_, intent_text=question):
+        for ev in self.ask_stream(
+            retrieval_question,
+            k=k,
+            type_=type_,
+            snippet_chars=resolved_snippet_chars,
+            intent_text=question,
+        ):
             kind = ev.get("event")
             if kind == "sources":
                 sources = list(ev.get("sources") or [])

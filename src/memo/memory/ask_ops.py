@@ -363,7 +363,7 @@ class _AskOpsMixin(_MemoryBase):
         *,
         k: int = 5,
         type_: str | None = None,
-        snippet_chars: int = 2000,
+        snippet_chars: int = 800,
         include_repos: bool = True,
         intent_text: str | None = None,
         session_id: str | None = None,
@@ -388,6 +388,10 @@ class _AskOpsMixin(_MemoryBase):
         """
         if not question or not question.strip():
             return {"question": question, "answer": "", "sources": []}
+        from memo.flags import flag_int
+
+        if snippet_chars == 800:
+            snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
         norm_question, sources, user_msg, hits = self._build_ask_context(
             question,
             k=k,
@@ -446,7 +450,7 @@ class _AskOpsMixin(_MemoryBase):
         *,
         k: int = 5,
         type_: str | None = None,
-        snippet_chars: int = 2000,
+        snippet_chars: int = 800,
         include_repos: bool = True,
         intent_text: str | None = None,
         session_id: str | None = None,
@@ -465,6 +469,10 @@ class _AskOpsMixin(_MemoryBase):
         if not question or not question.strip():
             yield {"event": "done", "answer": "", "sources": []}
             return
+        from memo.flags import flag_int
+
+        if snippet_chars == 800:
+            snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
         _, sources, user_msg, hits = self._build_ask_context(
             question,
             k=k,

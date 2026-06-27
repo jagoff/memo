@@ -37,11 +37,11 @@ from memo.cli_capture import capture_stop, capture_tick, resume
 from memo.cli_chat import chat_group
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
+from memo.cli_compress_context import compress_context_cmd
 from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
-from memo.cli_compress_context import compress_context_cmd
 from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_dashboard import dashboard_cmd
 from memo.cli_dedupe import dedupe_cmd
@@ -89,7 +89,6 @@ from memo.cli_release import release_group
 from memo.cli_repo import repo_group
 from memo.cli_retier import retier_cmd
 from memo.cli_roi import roi as roi_cmd
-from memo.cli_token_savings import token_savings_cmd
 from memo.cli_runtime import (
     init_cmd,
     install_shell_wrapper,
@@ -110,6 +109,7 @@ from memo.cli_statusline import install_statusline
 from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
+from memo.cli_token_savings import token_savings_cmd
 from memo.cli_transcripts import mine_history, reflect
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd

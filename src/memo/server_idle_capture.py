@@ -200,7 +200,7 @@ def run_idle_capture_loop() -> None:
     import time
     from pathlib import Path
 
-    from memo.capture import run_capture_incremental
+    from memo.capture import list_sessions_without_watermark, run_capture_incremental
     from memo.config import Config
     from memo.flags import flag_int
     from memo.session import list_sessions
@@ -233,10 +233,15 @@ def run_idle_capture_loop() -> None:
         except Exception:  # noqa: S110
             pass
 
+    # Track when we last scanned pending sessions (not just the current one).
+    # Scan pending sessions once per minute to avoid redundant work.
+    _last_pending_scan = 0.0
+    _PENDING_SCAN_INTERVAL = 60.0
+
     while True:
         try:
-            # Get most recent session
-            sessions = list_sessions(cfg.state_dir, limit=1)
+            # Get most recent sessions (increase limit to check for pending)
+            sessions = list_sessions(cfg.state_dir, limit=5)
             if not sessions:
                 _log.debug("idle daemon: no sessions")
                 time.sleep(delay_secs)
@@ -249,10 +254,28 @@ def run_idle_capture_loop() -> None:
                 time.sleep(delay_secs)
                 continue
 
-            # Run capture
+            # Run capture on current session
             result = run_capture_incremental(Path(transcript), sid, debug=False)
             titles = result.get("saved_titles") or []
             n = len(titles)
+
+            # After processing current session, check for pending sessions once per minute
+            now = time.time()
+            if now - _last_pending_scan >= _PENDING_SCAN_INTERVAL:
+                _last_pending_scan = now
+                pending = list_sessions_without_watermark(cfg.state_dir, sessions, limit=5)
+                for pending_sess in pending:
+                    pend_sid = pending_sess.get("session_id")
+                    pend_transcript = pending_sess.get("transcript_path")
+                    if not pend_sid or not pend_transcript:
+                        continue
+                    # Skip if it's the same as current session (already processed above)
+                    if pend_sid == sid:
+                        continue
+                    pend_result = run_capture_incremental(Path(pend_transcript), pend_sid, debug=False)
+                    pend_titles = pend_result.get("saved_titles") or []
+                    if pend_titles:
+                        _log.info("idle daemon: captured %d insights from pending session %s", len(pend_titles), pend_sid[:8])
 
             # Log result — only write when something was actually captured.
             # Logging every 10s for 0-capture scans is the dominant source of

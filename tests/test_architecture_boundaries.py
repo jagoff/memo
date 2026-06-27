@@ -220,8 +220,13 @@ def test_behavior_flags_are_not_read_directly_from_environ() -> None:
         SRC / "embedder.py": {"MEMO_QUERY_CACHE_SIZE"},
         SRC / "mlx_gpu.py": {"MEMO_GPU_LOCK_PATH", "MEMO_GPU_XPROC_LOCK"},
         SRC / "store" / "schema.py": {"MEMO_SKIP_MODEL_VERSION_CHECK"},
+        # store/queries.py is a foundation module that cannot import memo.flags.
+        # These flags gate dual-write and soft-delete behavior at the storage layer.
+        SRC / "store" / "queries.py": {"MEMO_TANTIVY_ENABLED", "MEMO_SOFT_DELETE"},
         # MEMO_AGENT_TTY is set by the shim, not user-configurable; read here for IPC.
         SRC / "cli_session.py": {"MEMO_AGENT_TTY"},
+        # autoupdate reads directly for the setdefault pattern (env check before flag default)
+        SRC / "runtime" / "autoupdate.py": {"MEMO_AUTO_UPDATE"},
         # Three-way check (explicit 1 / explicit 0 / auto-detect) cannot use flag_bool
         # because it collapses unset → False; raw env read is the only way to distinguish
         # "not set" from "explicitly off".

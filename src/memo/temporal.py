@@ -41,7 +41,13 @@ _log = logging.getLogger(__name__)
 # Cap on rows pulled into memory for whole-corpus temporal analysis. A corpus
 # larger than this is silently truncated — we log a warning when the cap bites.
 _ANALYSIS_ROW_CAP = 10_000
-_PAIR_CLASSIFY_TIMEOUT_SECONDS = 30.0
+def _pair_classify_timeout() -> float:
+    """Get timeout from flag, with hard fallback for early boot."""
+    try:
+        from memo.flags import flag_float
+        return flag_float("MEMO_CONTRADICTION_TIMEOUT") or 30.0
+    except Exception:
+        return 30.0
 
 _CONTRADICTION_SYSTEM_PROMPT = """You analyze two memory notes from a personal archive to detect temporal contradictions.
 
@@ -204,7 +210,7 @@ Body: {(r2.body or "")[:1000]}
 
             out = chat_with_timeout(
                 chat,
-                timeout=_PAIR_CLASSIFY_TIMEOUT_SECONDS,
+                timeout=_pair_classify_timeout(),
                 model=self.memory.cfg.helper_model,
                 messages=[
                     {"role": "system", "content": _CONTRADICTION_SYSTEM_PROMPT},

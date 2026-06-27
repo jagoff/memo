@@ -27,9 +27,14 @@ for consumption by web visualization libraries (D3.js, Cytoscape.js).
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any
+
+from memo import graphify_loader
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -113,6 +118,16 @@ class GraphNavigator:
         adj = self._build_adjacency_list()
 
         if source not in adj or target not in adj:
+            # Fallback: try graphify code graph if memo graph has no data
+            graphify_path = graphify_loader.find_path(source, target, max_hops=max_length)
+            if graphify_path:
+                return EntityPath(
+                    source=source,
+                    target=target,
+                    path=graphify_path,
+                    length=len(graphify_path) - 1,
+                    intermediate_memorias=["(from graphify code graph)"],
+                )
             return None
 
         # BFS
@@ -190,6 +205,25 @@ class GraphNavigator:
         adj = self._build_adjacency_list()
 
         if entity not in adj:
+            # Fallback: try graphify code graph
+            try:
+                _, edge_weights = graphify_loader.load()
+                graphify_neighbors = set()
+                # Find neighbors in graphify
+                for (src, tgt), _weight in edge_weights.items():
+                    if entity in src or entity in tgt:
+                        graphify_neighbors.add(src if src != entity else tgt)
+                if graphify_neighbors:
+                    neighbors_list = list(graphify_neighbors)[:max_neighbors]
+                    neighbor_mems = {n: ["(from graphify code graph)"] for n in neighbors_list}
+                    return EntityNeighbors(
+                        entity=entity,
+                        direct_neighbors=neighbors_list,
+                        neighbor_memorias=neighbor_mems,
+                        degree=len(graphify_neighbors),
+                    )
+            except (FileNotFoundError, Exception) as e:
+                _log.debug("graphify fallback failed: %s", e)
             return EntityNeighbors(
                 entity=entity,
                 direct_neighbors=[],

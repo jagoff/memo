@@ -178,9 +178,12 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately hardcode throwaway paths/credentials and swallow errors in
 # best-effort cleanup — the flake8-bandit security rules are noise here, not in src.
+"src/memo/store/queries.py" = [
+    "S608",  # safe: deleted_filter is hardcoded, push_clauses built by trusted caller code
+]
 "tests/**" = [
     "S105",  # hardcoded "password"-looking test fixtures (fake tokens)
     "S108",  # hardcoded /tmp paths in fixtures (never real temp-file handling)
     "S110",  # try/except/pass in test cleanup
-    "SIM117",  # nested `with patch(...)` reads clearer than one combined with
+    "SIM117",  # nested `with patch(...)` reads cleaner than one combined with
 ]

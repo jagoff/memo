@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
@@ -31,6 +32,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         embedding: list[float],
         extra: dict[str, Any] | None = None,
         body_text: str = "",
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
     ) -> None:
         if len(embedding) != self.dims:
             raise ValueError(
@@ -55,30 +58,54 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 id_[:8],
             )
         with self._tx() as cx:
-            cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(id) DO UPDATE SET "
-                "path=excluded.path, title=excluded.title, type=excluded.type, "
-                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                "extra_json=excluded.extra_json",
-                (
-                    id_,
-                    path,
-                    title,
-                    type_,
-                    json.dumps(tags),
-                    created,
-                    updated,
-                    body_hash,
-                    # `default=str` coerces date/datetime/Path objects that
-                    # frontmatter parsers leave as native Python types — common
-                    # in mem-vault-style files where YAML auto-coerced dates.
-                    # Without this, json.dumps raises TypeError on the first
-                    # such object inside `extra`.
-                    json.dumps(extra, default=str) if extra is not None else None,
-                ),
-            )
+            # Check if engram columns exist
+            cols = {row["name"] for row in cx.execute("PRAGMA table_info(meta)").fetchall()}
+            has_topic_key = "topic_key" in cols
+            has_norm_hash = "normalized_hash" in cols
+
+            # Build query dynamically based on available columns
+            if has_topic_key and has_norm_hash:
+                cx.execute(
+                    "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "path=excluded.path, title=excluded.title, type=excluded.type, "
+                    "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                    "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash",
+                    (
+                        id_,
+                        path,
+                        title,
+                        type_,
+                        json.dumps(tags),
+                        created,
+                        updated,
+                        body_hash,
+                        json.dumps(extra, default=str) if extra is not None else None,
+                        topic_key,
+                        normalized_hash,
+                    ),
+                )
+            else:
+                cx.execute(
+                    "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "path=excluded.path, title=excluded.title, type=excluded.type, "
+                    "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                    "deleted_at=NULL, extra_json=excluded.extra_json",
+                    (
+                        id_,
+                        path,
+                        title,
+                        type_,
+                        json.dumps(tags),
+                        created,
+                        updated,
+                        body_hash,
+                        json.dumps(extra, default=str) if extra is not None else None,
+                    ),
+                )
             # `vec0` doesn't support `ON CONFLICT` syntax — we delete
             # then insert. Within the same transaction this is atomic.
             cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
@@ -127,6 +154,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_hash: str,
         extra: dict[str, Any] | None = None,
         body_text: str = "",
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
     ) -> None:
         """Write metadata + FTS row without a vector embedding.
 
@@ -134,25 +163,51 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         models are downloading. A later `memo reindex` fills the missing vector.
         """
         with self._tx() as cx:
-            cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(id) DO UPDATE SET "
-                "path=excluded.path, title=excluded.title, type=excluded.type, "
-                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                "extra_json=excluded.extra_json",
-                (
-                    id_,
-                    path,
-                    title,
-                    type_,
-                    json.dumps(tags),
-                    created,
-                    updated,
-                    body_hash,
-                    json.dumps(extra, default=str) if extra is not None else None,
-                ),
-            )
+            cols = {row["name"] for row in cx.execute("PRAGMA table_info(meta)").fetchall()}
+            has_topic_key = "topic_key" in cols
+            has_norm_hash = "normalized_hash" in cols
+            if has_topic_key and has_norm_hash:
+                cx.execute(
+                    "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "path=excluded.path, title=excluded.title, type=excluded.type, "
+                    "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                    "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash",
+                    (
+                        id_,
+                        path,
+                        title,
+                        type_,
+                        json.dumps(tags),
+                        created,
+                        updated,
+                        body_hash,
+                        json.dumps(extra, default=str) if extra is not None else None,
+                        topic_key,
+                        normalized_hash,
+                    ),
+                )
+            else:
+                cx.execute(
+                    "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "path=excluded.path, title=excluded.title, type=excluded.type, "
+                    "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                    "deleted_at=NULL, extra_json=excluded.extra_json",
+                    (
+                        id_,
+                        path,
+                        title,
+                        type_,
+                        json.dumps(tags),
+                        created,
+                        updated,
+                        body_hash,
+                        json.dumps(extra, default=str) if extra is not None else None,
+                    ),
+                )
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
             cx.execute(
                 "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
@@ -265,11 +320,20 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return was_updated
 
     def get(self, id_: str) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-            "FROM meta WHERE id = ?",
-            (id_,),
-        ).fetchone()
+        # Check for soft delete column
+        try:
+            row = self._conn.execute(
+                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                "FROM meta WHERE id = ? AND deleted_at IS NULL",
+                (id_,),
+            ).fetchone()
+        except Exception:
+            # Fallback for old DBs without deleted_at column
+            row = self._conn.execute(
+                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                "FROM meta WHERE id = ?",
+                (id_,),
+            ).fetchone()
         return _row_to_dict(row) if row else None
 
     def get_batch(self, ids: list[str]) -> list[dict[str, Any]]:
@@ -277,11 +341,20 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
-        rows = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "  # noqa: S608
-            f"FROM meta WHERE id IN ({placeholders})",
-            ids,
-        ).fetchall()
+        # Check for soft delete column
+        try:
+            rows = self._conn.execute(
+                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                f"FROM meta WHERE id IN ({placeholders}) AND deleted_at IS NULL",
+                ids,
+            ).fetchall()
+        except Exception:
+            # Fallback for old DBs
+            rows = self._conn.execute(
+                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                f"FROM meta WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
     def find_by_prefix(self, prefix: str, limit: int = 10) -> list[str]:
@@ -399,11 +472,15 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         exclude_types: set[str] | None = None,
         updated_since: str | None = None,
     ) -> list[dict[str, Any]]:
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
+        has_deleted = "deleted_at" in cols
         sql = (
             "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json FROM meta "
         )
         clauses: list[str] = []
         params: list[Any] = []
+        if has_deleted:
+            clauses.append("deleted_at IS NULL")
         if type_:
             clauses.append("type = ?")
             params.append(type_)
@@ -456,13 +533,18 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             for ex_type in sorted(exclude_types):
                 push_clauses.append("vec.type != ?")
                 push_params.append(ex_type)
+# Check for deleted_at column and build filter
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
+        has_deleted = "deleted_at" in cols
+        
+        deleted_filter = "meta.deleted_at IS NULL" if has_deleted else "1=1"
+        
         sql = (
             "SELECT vec.id AS id, vec.distance AS distance, "
             "       meta.path, meta.title, meta.type, meta.tags, "
             "       meta.created, meta.updated, meta.body_hash, meta.extra_json "
-            "FROM vec "
-            "JOIN meta ON meta.id = vec.id "
-            "WHERE embedding MATCH ? AND k = ? "
+            f"FROM vec JOIN meta ON vec.id = meta.id AND {deleted_filter} "
+            "WHERE vec.embedding MATCH ? AND vec.k = ? "
         )
         params: list[Any] = [serialize_float32(embedding), limit]
         for clause in push_clauses:
@@ -518,6 +600,34 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return int(n)
 
     def delete(self, id_: str) -> bool:
+        # Check if soft delete column exists (engram pattern)
+        _use_soft = os.environ.get("MEMO_SOFT_DELETE", "1").lower() not in ("0", "false", "no")
+        has_soft_delete = False
+        if _use_soft:
+            try:
+                col_check = self._conn.execute("PRAGMA table_info(meta)").fetchall()
+                columns = {row["name"] for row in col_check}
+                has_soft_delete = "deleted_at" in columns
+            except Exception:
+                _log.debug("soft-delete column check failed")
+
+        if has_soft_delete and _use_soft:
+            # Soft delete pattern (engram): mark deleted_at + remove from vec/fts indexes
+            import datetime
+            now = datetime.datetime.now(datetime.UTC).isoformat()
+            with self._tx() as cx:
+                # Update meta
+                cx.execute(
+                    "UPDATE meta SET deleted_at = ? WHERE id = ?",
+                    (now, id_),
+                )
+                # Remove from vec index (so it doesn't show in similarity search)
+                cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                # Remove from FTS index (so it doesn't show in text search)
+                cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+            return True
+
+        # Hard delete fallback (for old DBs without deleted_at)
         with self._tx() as cx:
             cur = cx.execute("DELETE FROM meta WHERE id = ?", (id_,))
             existed = cur.rowcount > 0
@@ -525,7 +635,6 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
             cx.execute("DELETE FROM access WHERE id = ?", (id_,))
             cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
-            # Cascade feedback rows for this source id
             cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
             cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
         if existed:
@@ -539,6 +648,39 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                         _log.warning("tantivy delete failed: %s", exc)
                         self._mark_tantivy_unhealthy()
         return existed
+
+    def hard_delete(self, id_: str) -> bool:
+        """Permanently delete a memory bypassing soft-delete (vacuum path)."""
+        with self._tx() as cx:
+            cur = cx.execute("DELETE FROM meta WHERE id = ?", (id_,))
+            existed = cur.rowcount > 0
+            cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+            cx.execute("DELETE FROM access WHERE id = ?", (id_,))
+            cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
+            cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
+            cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
+        if existed:
+            with self._tantivy_write_lock:
+                tantivy = self._get_tantivy()
+                if tantivy is not None:
+                    try:
+                        tantivy.delete_document(id_)
+                        tantivy.commit()
+                    except Exception as exc:
+                        _log.warning("tantivy hard_delete failed: %s", exc)
+                        self._mark_tantivy_unhealthy()
+        return existed
+
+    def list_soft_deleted(self, before: str | None = None) -> list[str]:
+        """List IDs of soft-deleted records, optionally filtered by age."""
+        query = "SELECT id FROM meta WHERE deleted_at IS NOT NULL"
+        params: list[Any] = []
+        if before is not None:
+            query += " AND deleted_at < ?"
+            params.append(before)
+        rows = self._conn.execute(query, params).fetchall()
+        return [r["id"] for r in rows]
 
     def bulk_update_type(self, ids: list[str], new_type: str) -> int:
         """Reclassify the `type` of many memories in one transaction.
@@ -560,7 +702,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             vec_rows = {
                 r["id"]: r["embedding"]
                 for r in cx.execute(
-                    f"SELECT id, embedding FROM vec WHERE id IN ({placeholders})", ids  # noqa: S608
+                    f"SELECT id, embedding FROM vec WHERE id IN ({placeholders})", ids
                 ).fetchall()
             }
             to_update = [(id_,) for id_ in ids if id_ in vec_rows]

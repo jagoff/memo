@@ -18,7 +18,6 @@ Fixed exclusions: `status@broadcast`, bot JID (`WHATSAPP_BOT_JID`), notes-inbox
 
 from __future__ import annotations
 
-import os
 import re
 import sqlite3
 import time
@@ -48,8 +47,16 @@ DEFAULT_RETENTION_DAYS = 180
 
 # Your own bot/listener group JIDs to exclude from ingest. No personal
 # identifiers are baked into source — set these env vars to your own JIDs.
-_BOT_JID = os.environ.get("WHATSAPP_BOT_JID", "")
-_LISTENER_NOTES_CHAT_JID = os.environ.get("WA_LISTENER_NOTES_CHAT_JID", "")
+def _get_whatsapp_jids() -> tuple[str, str]:
+    try:
+        from memo.flags import flag_str
+
+        return flag_str("WHATSAPP_BOT_JID") or "", flag_str("WA_LISTENER_NOTES_CHAT_JID") or ""
+    except Exception:
+        return "", ""
+
+
+_BOT_JID, _LISTENER_NOTES_CHAT_JID = _get_whatsapp_jids()
 HARDCODED_EXCLUDE_JIDS = frozenset(
     jid for jid in {"status@broadcast", _BOT_JID, _LISTENER_NOTES_CHAT_JID} if jid
 )

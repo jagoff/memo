@@ -114,7 +114,8 @@ class HistoryStore:
             try:
                 yield self._conn
                 self._conn.commit()
-            except Exception:
+            except Exception as e:
+                _log.debug("history tx failed: %s", e)
                 self._conn.rollback()
                 raise
 

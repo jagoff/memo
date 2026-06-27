@@ -190,6 +190,7 @@ def register(server: Any, memory: Memory) -> None:
         type: str | None = None,
         snippet_chars: int = 800,
         include_repos: bool = True,
+        session_id: str | None = None,
         source: str = "",
     ) -> dict[str, Any]:
         t0 = now_ms()
@@ -199,6 +200,7 @@ def register(server: Any, memory: Memory) -> None:
             type_=type,
             snippet_chars=snippet_chars,
             include_repos=include_repos,
+            session_id=session_id,
         )
         out = res if isinstance(res, dict) else {"answer": str(res)}
         cites = out.get("citations") or out.get("sources") or []
@@ -220,15 +222,21 @@ def register(server: Any, memory: Memory) -> None:
         type: str | None = None,
         history: list[dict[str, Any]] | None = None,
         context: dict[str, Any] | None = None,
+        snippet_chars: int = 800,
+        session_id: str | None = None,
         source: str = "",
     ) -> dict[str, Any]:
         t0 = now_ms()
+        merged_context = dict(context or {})
+        if session_id and "session_id" not in merged_context:
+            merged_context["session_id"] = session_id
         res = memory.chat_ask(
             question,
             k=k,
             type_=type,
             history=history,
-            context=context,
+            context=merged_context or None,
+            snippet_chars=snippet_chars,
         )
         out = res if isinstance(res, dict) else {"answer": str(res)}
         cites = out.get("citations") or out.get("sources") or []

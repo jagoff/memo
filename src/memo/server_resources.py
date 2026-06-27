@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from memo.flags import flag_int
 from memo.memory import AmbiguousIdError, Memory
 
 
@@ -31,6 +32,12 @@ def register(server: Any, memory: Memory) -> None:
         if rec is None:
             return f"# Not found\n\nNo memory for id `{id}`.\n"
         tags = ", ".join(rec.tags) if rec.tags else "—"
+        body_chars = flag_int("MEMO_RESOURCE_BODY_CHARS") or 1200
+        body = rec.body or ""
+        truncated = False
+        if body_chars >= 0 and len(body) > body_chars:
+            body = body[:body_chars].rstrip() + "…"
+            truncated = True
         return (
             f"# {rec.title}\n\n"
             f"- **id:** `{rec.id}`\n"
@@ -38,5 +45,6 @@ def register(server: Any, memory: Memory) -> None:
             f"- **tags:** {tags}\n"
             f"- **created:** {rec.created}\n"
             f"- **updated:** {rec.updated}\n\n"
-            f"---\n\n{rec.body or ''}"
+            f"---\n\n{body}"
+            + ("\n\n_(preview only; use `memo get <id>` for the full body.)_" if truncated else "")
         )

@@ -129,12 +129,17 @@ class GraphStore:
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
+        import logging
+
+        _log = logging.getLogger(__name__)
+
         with self._tx_lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 yield self._conn
                 self._conn.commit()
-            except Exception:
+            except Exception as e:
+                _log.debug("graph tx failed: %s", e)
                 self._conn.rollback()
                 raise
 

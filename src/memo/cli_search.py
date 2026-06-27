@@ -35,6 +35,25 @@ def _sources_as_hits(out: dict) -> list[dict]:
     return hits
 
 
+def _compact_hit_dicts(hits: list[dict], body_chars: int) -> list[dict]:
+    compact: list[dict] = []
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        if body_chars < 0:
+            compact.append(hit)
+            continue
+        body = str(hit.get("body") or "")
+        if len(body) > body_chars:
+            trimmed = dict(hit)
+            trimmed["body"] = body[:body_chars].rstrip() + "…"
+            trimmed["body_truncated"] = True
+            compact.append(trimmed)
+            continue
+        compact.append(hit)
+    return compact
+
+
 @click.command()
 @click.argument("query")
 @click.option("--limit", default=10, type=int, show_default=True)
@@ -55,6 +74,13 @@ def _sources_as_hits(out: dict) -> list[dict]:
     "for this invocation, overriding MEMO_RERANKER_ENABLED. Only meaningful with "
     "--mode hybrid.",
 )
+@click.option(
+    "--body-chars",
+    default=280,
+    type=int,
+    show_default=True,
+    help="Preview length for JSON bodies (use -1 for full bodies).",
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--source",
@@ -68,6 +94,7 @@ def search(
     type_: str | None,
     mode: str,
     use_rerank: bool | None,
+    body_chars: int,
     as_json: bool,
     source: str | None,
 ) -> None:
@@ -79,7 +106,7 @@ def search(
     disable_reranker = use_rerank is False
     t0 = int(time.time() * 1000)
     hits = mem.search(query, limit=limit, type_=type_, mode=mode, disable_reranker=disable_reranker)
-    hit_dicts = [h.to_dict() for h in hits]
+    hit_dicts = _compact_hit_dicts([h.to_dict() for h in hits], body_chars)
     log_cli_consult(cfg, verb="search", query=query, hits=hit_dicts, t0_ms=t0, source=source)
     if as_json:
         click.echo(json.dumps(hit_dicts, ensure_ascii=False, indent=2))
@@ -108,6 +135,13 @@ def search(
     "--k", default=5, type=int, show_default=True, help="Top-K memories to feed the LLM as context."
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
+@click.option(
+    "--snippet-chars",
+    default=800,
+    type=int,
+    show_default=True,
+    help="Preview length for retrieved memory snippets.",
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--source",
@@ -115,7 +149,14 @@ def search(
     help="Identify the calling layer so the consult is attributed in "
     "`memo usefulness` (falls back to MEMO_SOURCE).",
 )
-def ask(question: str, k: int, type_: str | None, as_json: bool, source: str | None) -> None:
+def ask(
+    question: str,
+    k: int,
+    type_: str | None,
+    snippet_chars: int,
+    as_json: bool,
+    source: str | None,
+) -> None:
     """RAG over the memory archive — synthesises a prose answer with
     inline `[id]` citations using MLXChat 7B over the top-K hybrid hits.
     """
@@ -124,7 +165,7 @@ def ask(question: str, k: int, type_: str | None, as_json: bool, source: str | N
     cfg = Config.from_env()
     mem = _get_memory(cfg)
     t0 = int(time.time() * 1000)
-    out = mem.ask(question, k=k, type_=type_)
+    out = mem.ask(question, k=k, type_=type_, snippet_chars=snippet_chars)
     log_cli_consult(
         cfg, verb="ask", query=question, hits=_sources_as_hits(out), t0_ms=t0, source=source
     )
@@ -206,6 +247,13 @@ def embed_cmd(text: str | None, batch_json) -> None:
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option(
+    "--snippet-chars",
+    default=800,
+    type=int,
+    show_default=True,
+    help="Preview length for retrieved memory snippets.",
+)
+@click.option(
     "--history-json",
     type=click.File("r"),
     default=None,
@@ -237,6 +285,7 @@ def chat_ask(
     question: str,
     k: int,
     type_: str | None,
+    snippet_chars: int,
     history_json,
     context_json,
     as_json: bool,
@@ -279,6 +328,7 @@ def chat_ask(
             type_=type_,
             history=history,
             context=context,
+            snippet_chars=snippet_chars,
         ):
             if isinstance(event, dict) and event.get("sources") and not stream_hits:
                 stream_hits = _sources_as_hits(event)
@@ -295,6 +345,7 @@ def chat_ask(
         type_=type_,
         history=history,
         context=context,
+        snippet_chars=snippet_chars,
     )
     log_cli_consult(
         cfg,
@@ -329,12 +380,26 @@ def chat_ask(
 @click.option("--type", "type_", default=None, help="Filter by record type.")
 @click.option("--json", "as_json", is_flag=True, help='Emit {"results": [...]} for callers.')
 @click.option(
+    "--body-chars",
+    default=280,
+    type=int,
+    show_default=True,
+    help="Preview length for JSON bodies (use -1 for full bodies).",
+)
+@click.option(
     "--source",
     default=None,
     help="Identify the calling layer so the consult is attributed in "
     "`memo usefulness` (falls back to MEMO_SOURCE).",
 )
-def recall(query: str, limit: int, type_: str | None, as_json: bool, source: str | None) -> None:
+def recall(
+    query: str,
+    limit: int,
+    type_: str | None,
+    as_json: bool,
+    body_chars: int,
+    source: str | None,
+) -> None:
     """Hybrid recall for programmatic callers (synapse / memflow bridge).
 
     Same retrieval as ``memo search`` but emits ``{"results": [...]}`` — the
@@ -352,6 +417,7 @@ def recall(query: str, limit: int, type_: str | None, as_json: bool, source: str
         d = h.to_dict()
         d["kind"] = d.get("type")  # memflow reads `kind`; memo stores `type`
         results.append(d)
+    results = _compact_hit_dicts(results, body_chars)
     log_cli_consult(cfg, verb="recall", query=query, hits=results, t0_ms=t0, source=source)
     if as_json:
         click.echo(json.dumps({"results": results}, ensure_ascii=False))

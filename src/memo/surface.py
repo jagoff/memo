@@ -128,8 +128,8 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
     "agent": ("~9", "~2.4k"),
-    "core": ("~25", "~2.4k"),
-    "slim": ("~25", "~2.4k"),
+    "core": ("~25", "~6.7k"),
+    "slim": ("~25", "~6.7k"),
 }
 
 

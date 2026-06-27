@@ -588,6 +588,36 @@ def run_capture(
 # the turns added since the last pass and old turns are never reprocessed.
 
 
+def list_sessions_without_watermark(
+    state_dir: Path,
+    sessions: list[dict[str, Any]],
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return sessions that have no watermark (never captured).
+
+    Filters a list of session dicts from list_sessions() against the
+    watermark directory. Returns up to `limit` sessions that have never
+    been captured, sorted by most recent first.
+    """
+    wm_dir = state_dir / ".capture_watermark"
+    if not wm_dir.is_dir():
+        return sessions[:limit]
+
+    pending: list[dict[str, Any]] = []
+
+    for sess in sessions:
+        sid = sess.get("session_id")
+        if not sid:
+            continue
+        wm_file = wm_dir / f"{sid}.json"
+        if not wm_file.is_file():
+            pending.append(sess)
+            if len(pending) >= limit:
+                break
+
+    return pending
+
+
 def _watermark_file(state_dir: Path, session_id: str) -> Path:
     # session_id is a Claude Code UUID — filename-safe, matching how
     # session.py keys its per-session JSON files.

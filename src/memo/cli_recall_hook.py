@@ -116,7 +116,8 @@ def recall_hook() -> None:
                 prior = [p.strip() for p in prior if p.strip() and p.strip() != prompt]
                 if prior:
                     expanded = "\n".join([*prior, prompt]).strip()
-            except Exception:
+            except Exception as e:
+                _log.debug("recent_prompts failed: %s", e)
                 expanded = ""
         if len(expanded) >= min_chars:
             prompt = expanded
@@ -139,7 +140,8 @@ def recall_hook() -> None:
 
             _turn = _session_mod.next_turn(cfg.state_dir, _sid)
             _session_mod.stamp_recall_turn(cfg.state_dir, _sid, _turn)
-        except Exception:
+        except Exception as e:
+            _log.debug("next_turn failed: %s", e)
             _turn = None
 
     _t0 = time.time()
@@ -290,7 +292,8 @@ def recall_hook() -> None:
         from memo.recall_logic import _deduplicate_synthesis as _ds
 
         relevant = _ds(_search_filter(prompt))
-    except Exception:
+    except Exception as e:
+        _log.debug("deduplicate synthesis failed: %s", e)
         relevant = _search_filter(prompt)
 
     if not relevant and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
@@ -360,7 +363,8 @@ def recall_hook() -> None:
             from memo import session as _session_mod
 
             _prev_recalled = _session_mod.get_recalled_ids(cfg.state_dir, _sid)
-        except Exception:
+        except Exception as e:
+            _log.debug("get_recalled_ids failed: %s", e)
             _prev_recalled = {}
     if _prev_recalled:
         relevant = [h for h in relevant if h.id not in _prev_recalled]
@@ -414,7 +418,7 @@ def recall_hook() -> None:
 
             new_ids = {h.id: _turn for h in relevant if h.id not in _prev_recalled}
             _session_mod.mark_ids_recalled(cfg.state_dir, _sid, new_ids)
-        except Exception:
-            _log.debug("recall hook: mark_ids_recalled failed for session %s", _sid[:8], exc_info=True)
+        except Exception as e:
+            _log.debug("mark_ids_recalled failed: %s", e)
 
     sys.exit(0)

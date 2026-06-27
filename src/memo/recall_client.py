@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from memo import embed_protocol
+
+_log = logging.getLogger(__name__)
 
 
 def _send_request(state_dir: Path, payload: dict, timeout: float) -> str | None:
     from memo.recall_socket import _socket_path
 
-    return embed_protocol.send_request_line(_socket_path(state_dir), payload, timeout=timeout)
+    return embed_protocol.send_request_with_retry(
+        _socket_path(state_dir),
+        payload,
+        timeout=timeout,
+        max_retries=3,
+        base_delay=0.1,
+    )
 
 
 def connect_and_recall(

@@ -153,6 +153,8 @@ class _WriteOpsMixin(_MemoryBase):
         defer_embed: bool = False,
         respect_synapse_freeze: bool | None = None,
         skip_memflow_receipt: bool = False,
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
     ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
@@ -320,8 +322,38 @@ class _WriteOpsMixin(_MemoryBase):
             except Exception as _exc:
                 _log.debug("save: dedup check skipped: %s", _exc)
 
-        record_id = uuid.uuid4().hex
+        # Topic key upsert (engram pattern)
+        # If topic_key provided, check for existing record with same topic_key and update instead of create.
+        use_existing_id: str | None = None
+        existing_path: str | None = None
+        if topic_key:
+            try:
+                existing = self.store._conn.execute(
+                    "SELECT id, path FROM meta WHERE topic_key = ? AND deleted_at IS NULL LIMIT 1",
+                    (topic_key,),
+                ).fetchone()
+                if existing is not None and existing["id"]:
+                    use_existing_id = existing["id"]
+                    existing_path = existing["path"]
+                    _log.info("topic_key upsert: updating existing %s (path=%s)", use_existing_id[:8], existing_path)
+            except Exception as exc:
+                _log.debug("topic_key lookup failed: %s", exc)
+
+        record_id = use_existing_id or uuid.uuid4().hex
+
         body_hash = _sha256_short(content)
+
+        # Generate normalized_hash for exact deduplication (engram pattern)
+        # Use user-provided if given, otherwise auto-generate
+        if normalized_hash is None:
+            from memo.flags import flag_bool as _flag_bool
+
+            if _flag_bool("MEMO_DEDUP_EXACT"):
+                try:
+                    from memo.server_engram_patterns import _normalize_hash as _engram_hash
+                    normalized_hash = _engram_hash(title or "", type_, "project")
+                except Exception:
+                    _log.debug("engram hash generation failed")
 
         extra_for_store = dict(extra or {})
         if defer_embed:
@@ -364,7 +396,8 @@ class _WriteOpsMixin(_MemoryBase):
         # Write `.md` first — if anything fails after this, the user can recover
         # by re-indexing; writing the index first would point it at a missing file.
         with self._save_path_lock:
-            rel_path = self._build_rel_path(title, now_iso)
+            # For topic key upserts, reuse the existing path instead of creating a new one
+            rel_path = existing_path if existing_path else self._build_rel_path(title, now_iso)
             abs_path = self.cfg.memory_dir / rel_path
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
@@ -381,6 +414,8 @@ class _WriteOpsMixin(_MemoryBase):
                 body_hash=body_hash,
                 extra=extra_for_store,
                 body_text=content,
+                topic_key=topic_key,
+                normalized_hash=normalized_hash,
             )
             self.history.log_save(
                 ts=now_iso,
@@ -442,6 +477,8 @@ class _WriteOpsMixin(_MemoryBase):
                 embedding=embedding,
                 extra=extra_for_store,
                 body_text=content,
+                topic_key=topic_key,
+                normalized_hash=normalized_hash,
             )
         except ValueError:
             # A dims/norm validation failure signals a misconfigured embedder
@@ -468,6 +505,8 @@ class _WriteOpsMixin(_MemoryBase):
                 content=content,
                 extra_for_store=extra_for_store,
                 skip_memflow_receipt=skip_memflow_receipt,
+                topic_key=topic_key,
+                normalized_hash=normalized_hash,
             )
 
         self.history.log_save(
@@ -519,6 +558,8 @@ class _WriteOpsMixin(_MemoryBase):
         content: str,
         extra_for_store: dict[str, Any],
         skip_memflow_receipt: bool,
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
     ) -> MemoryRecord:
         """Recovery path when indexing fails AFTER the canonical `.md` is on disk.
 
@@ -564,6 +605,8 @@ class _WriteOpsMixin(_MemoryBase):
                 body_hash=body_hash,
                 extra=extra_for_store,
                 body_text=content,
+                topic_key=topic_key,
+                normalized_hash=normalized_hash,
             )
         with contextlib.suppress(Exception):
             self.history.log_save(

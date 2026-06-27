@@ -119,6 +119,8 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
 @click.option("--skip-contradict", is_flag=True, help="Skip the contradiction pass.")
 @click.option("--skip-consolidate", is_flag=True, help="Skip the duplicate-merge pass.")
 @click.option("--skip-stale", is_flag=True, help="Skip the staleness pass.")
+@click.option("--vacuum", is_flag=True, help="Permanently delete soft-deleted records older than --vacuum-days.")
+@click.option("--vacuum-days", default=90, type=int, help="Age threshold for vacuum cleanup.")
 @click.option(
     "--skip-synthesize",
     is_flag=True,
@@ -144,6 +146,8 @@ def maintain_cmd(
     skip_consolidate: bool,
     skip_stale: bool,
     skip_synthesize: bool,
+    vacuum: bool,
+    vacuum_days: int,
     as_json: bool,
     if_due: bool,
 ) -> None:
@@ -287,7 +291,21 @@ def maintain_cmd(
         except Exception as exc:
             receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
 
-    # 4. Emergent synthesis (opt-out: MEMO_SYNTHESIS_ENABLED=0 to disable) -----
+    # 4. Vacuum: permanently delete soft-deleted records older than --vacuum-days ---
+    if vacuum:
+        try:
+            cutoff = (datetime.now(UTC) - timedelta(days=vacuum_days)).isoformat()
+            ids = mem.store.list_soft_deleted(before=cutoff)
+            if ids:
+                receipt["vacuumed"] = len(ids)
+                if not dry_run:
+                    for vid in ids:
+                        mem.store.hard_delete(vid)
+                _log.info("vacuum: %d soft-deleted records purged", len(ids))
+        except Exception as exc:
+            receipt["errors"].append(f"vacuum: {type(exc).__name__}: {exc}")
+
+    # 5. Emergent synthesis (opt-out: MEMO_SYNTHESIS_ENABLED=0 to disable) -----
     if not skip_synthesize and flag_bool("MEMO_SYNTHESIS_ENABLED"):
         try:
             results = mem.synthesize_cross_cluster(dry_run=dry_run)
@@ -380,6 +398,8 @@ def maintain_cmd(
     console.print(f"  duplicate clusters merged: {len(receipt['merged'])}")
     console.print(f"  forget_after TTLs applied: {len(receipt['forgotten'])}")
     console.print(f"  stale memories archived: {len(receipt['archived_stale'])}")
+    if receipt.get("vacuumed"):
+        console.print(f"  soft-deleted records vacuumed: {receipt['vacuumed']}")
     if receipt["synthesized"]:
         saved = sum(1 for s in receipt["synthesized"] if s.get("saved"))
         console.print(

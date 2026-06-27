@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from ._base import _StoreBase
@@ -64,4 +65,26 @@ class _MigrationsMixin(_StoreBase):
                     "SELECT id, 1.0, 1.0, datetime('now') FROM meta"
                 )
                 self.set_user_version(2)
+                current = 2
             _log.info("backfilled signal rows for v2: access + memory_health")
+
+        # v2 → v3: add engram pattern columns (topic_key, normalized_hash, etc.)
+        if current < 3:
+            with self._tx() as cx:
+                cols = {row["name"] for row in cx.execute("PRAGMA table_info(meta)").fetchall()}
+                new_cols = {
+                    "topic_key": "ALTER TABLE meta ADD COLUMN topic_key TEXT",
+                    "normalized_hash": "ALTER TABLE meta ADD COLUMN normalized_hash TEXT",
+                    "session_id": "ALTER TABLE meta ADD COLUMN session_id TEXT",
+                    "revision_count": "ALTER TABLE meta ADD COLUMN revision_count INTEGER DEFAULT 1",
+                    "duplicate_count": "ALTER TABLE meta ADD COLUMN duplicate_count INTEGER DEFAULT 0",
+                    "last_seen_at": "ALTER TABLE meta ADD COLUMN last_seen_at TEXT",
+                    "deleted_at": "ALTER TABLE meta ADD COLUMN deleted_at TEXT",
+                    "review_after": "ALTER TABLE meta ADD COLUMN review_after TEXT",
+                }
+                for col, ddl in new_cols.items():
+                    if col not in cols:
+                        with contextlib.suppress(Exception):
+                            cx.execute(ddl)
+                self.set_user_version(3)
+            _log.info("migrated to v3: engram pattern columns")
