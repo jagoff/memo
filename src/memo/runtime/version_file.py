@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-
 
 VERSION_FILE = "memo-version.json"
 
@@ -35,7 +34,7 @@ def write_version_file(sync_root: Path, version: str | None = None) -> dict:
 
     content = {
         "version": version,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now().isoformat(),
     }
 
     version_file = sync_root / VERSION_FILE
