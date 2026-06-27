@@ -12,7 +12,11 @@ Two tiers (see CLAUDE.md):
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import click
@@ -20,6 +24,16 @@ import click
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.flags import flag_bool
+
+
+def _version_gt(a: str, b: str) -> bool:
+    """Return True if version a > b."""
+    try:
+        from packaging.version import Version
+        return Version(a) > Version(b)
+    except Exception:
+        return a > b
 
 
 def _resolve_remote_history_db(remote: str | None) -> Path | None:
@@ -178,6 +192,28 @@ def sync_pull(remote: str | None, as_json: bool, quiet: bool) -> None:
         return
     console.print(f"[bold green]Pulled[/bold green] {out['branch']}")
     console.print(f"Reindexed: {out['reindexed']}")
+
+    # Check for software update after pull
+    check_update = flag_bool("MEMO_AUTO_UPDATE_CHECK")
+    if check_update is None:
+        check_update = True
+    if out.get("pulled") and check_update:
+        try:
+            from memo.runtime.version_file import read_version_file
+            from memo.sync_git import git_root_for
+
+            remote_ver = read_version_file(git_root_for(cfg))
+            if remote_ver:
+                remote_version = remote_ver.get("version")
+                if remote_version and _version_gt(remote_version, importlib.metadata.version("mlx-memo")):
+                    local_version = importlib.metadata.version("mlx-memo")
+                    console.print(f"[dim]Auto-updating memo: {local_version} → {remote_version}[/dim]")
+                    subprocess.run(
+                        [shutil.which("memo") or sys.executable, "update"],
+                        check=False,
+                    )
+        except Exception:
+            pass  # Don't fail sync if version check fails
 
 
 @sync_group.command(name="clone")
