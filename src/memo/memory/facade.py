@@ -457,6 +457,19 @@ class Memory(
         if "crossref" in self._capabilities:
             with contextlib.suppress(Exception):
                 self._capabilities["crossref"].close()
+        with contextlib.suppress(Exception):
+            if hasattr(self.embedder, "unload"):
+                self.embedder.unload()
+        with contextlib.suppress(Exception):
+            if self._chat is not None and hasattr(self._chat, "close"):
+                self._chat.close()
+        with contextlib.suppress(Exception):
+            if self._reranker is not None and hasattr(self._reranker, "close"):
+                self._reranker.close()
+        with contextlib.suppress(Exception):
+            if self._temporal is not None and hasattr(self._temporal, "close"):
+                self._temporal.close()
+        self._capabilities.clear()
 
     def _mark_dirty(self, id_: str) -> None:
         """Flag a memory as written-locally-but-not-yet-on-backing-store

@@ -766,7 +766,7 @@ class _WriteOpsMixin(_MemoryBase):
             try:
                 text = abs_path.read_text(encoding="utf-8")
                 post = frontmatter.loads(text)
-                return post.content
+                return str(post.content)
             except (OSError, UnicodeDecodeError) as exc:
                 _log.debug("_read_body: disk read failed for %s: %s", rel_path, exc)
         # Fallback: vault-ingest rows (e.g. `notes/01-Projects/Foo.md`,

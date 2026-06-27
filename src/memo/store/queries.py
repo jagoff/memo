@@ -44,6 +44,11 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 f"Run 'memo reindex --rebuild' after restoring the correct model/dims.",
             )
         norm = sum(x * x for x in embedding) ** 0.5
+        if norm != norm or norm == float("inf") or norm == float("-inf"):
+            raise ValueError(
+                f"Embedding contains NaN or Inf (norm={norm}). "
+                f"The embedder produced corrupt output — re-embed or check MLX model."
+            )
         if not (0.5 < norm < 1.5):
             raise ValueError(
                 f"Embedding norm {norm:.4f} out of L2-normalised range (expected ≈ 1.0) "
