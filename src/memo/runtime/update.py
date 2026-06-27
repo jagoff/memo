@@ -59,6 +59,53 @@ def _read_pipx_venv_metadata() -> dict | None:
         return None
 
 
+def _read_direct_url() -> str | None:
+    """Raw ``direct_url.json`` for the installed mlx-memo, or None.
+
+    pip/uv record install provenance here: an editable dev install has
+    ``{"dir_info": {"editable": true}}``; an isolated git/PyPI install has
+    ``vcs_info``/no ``dir_info``. Indirected through this helper so tests can
+    stub it without faking importlib.metadata.
+    """
+    try:
+        return importlib.metadata.distribution("mlx-memo").read_text("direct_url.json")
+    except Exception:
+        return None
+
+
+def _running_install_is_editable() -> bool:
+    """True if the running mlx-memo is an editable/dev install (project ``.venv``)
+    rather than the isolated pipx/uv runtime.
+
+    ``memo update`` can't meaningfully update an editable checkout:
+    ``_detect_install_method`` would find the SIBLING isolated tool (``uv tool
+    list`` shows mlx-memo) and install a tag over THAT, leaving the running
+    editable install on its stale version — the "memo update doesn't update"
+    symptom. Detect it and refuse instead.
+    """
+    raw = _read_direct_url()
+    if not raw:
+        return False
+    try:
+        return bool(json.loads(raw).get("dir_info", {}).get("editable"))
+    except (json.JSONDecodeError, AttributeError):
+        return False
+
+
+def _editable_source_path() -> str:
+    """Filesystem path of the editable checkout (from ``direct_url.json`` url)."""
+    raw = _read_direct_url()
+    if not raw:
+        return "this checkout"
+    try:
+        url = json.loads(raw).get("url", "")
+    except (json.JSONDecodeError, AttributeError):
+        return "this checkout"
+    if url.startswith("file://"):
+        return url[len("file://") :]
+    return url or "this checkout"
+
+
 def _version_ge(a: str, b: str) -> bool:
     """Return True if version a >= b, using packaging if available, else string compare."""
     try:
@@ -98,7 +145,9 @@ def _detect_install_method() -> str | None:
     pipx = _find_pipx()
     if pipx:
         try:
-            res = subprocess.run([pipx, "list", "--short"], capture_output=True, text=True, timeout=10)
+            res = subprocess.run(
+                [pipx, "list", "--short"], capture_output=True, text=True, timeout=10
+            )
             if "mlx-memo" in res.stdout:
                 return "pipx"
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -151,6 +200,20 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         raise click.ClickException(f"did you mean `memo edit {stray}`?")
     current_version = importlib.metadata.version("mlx-memo")
     console.print(f"[dim]current version:[/dim] {current_version}")
+
+    # An editable/dev install (project .venv) can't be updated by this command —
+    # it would install a tag over the SIBLING isolated tool and leave this
+    # checkout unchanged. Refuse and point at the right tool (git + editable reinstall).
+    if _running_install_is_editable():
+        src = _editable_source_path()
+        console.print(f"[yellow]memo is running from an editable/dev install[/yellow] ({src}).")
+        console.print(
+            "[dim]`memo update` only manages the isolated pipx/uv runtime, so it "
+            "can't update an editable checkout — it would target a sibling tool "
+            "and leave this install unchanged. Update the checkout with:[/dim]"
+        )
+        console.print(f"  git -C {src} pull && uv pip install -e .")
+        return
 
     if check and not to_tag:
         from memo.config import Config
