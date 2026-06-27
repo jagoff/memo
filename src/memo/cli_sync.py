@@ -212,8 +212,8 @@ def sync_pull(remote: str | None, as_json: bool, quiet: bool) -> None:
                         [shutil.which("memo") or sys.executable, "update"],
                         check=False,
                     )
-        except Exception:
-            pass  # Don't fail sync if version check fails
+        except Exception:  # noqa: S110 — never fail sync on a best-effort version check
+            pass
 
 
 @sync_group.command(name="clone")
