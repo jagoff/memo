@@ -12,7 +12,6 @@ from pathlib import Path
 import click
 
 from memo.cli_common import console
-from memo.runtime.version_file import write_version_file
 
 _PIPX_CANDIDATES = [
     Path.home() / ".local/bin/pipx",
@@ -255,16 +254,6 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         if proc.returncode != 0:
             raise click.ClickException(f"git-tag install of {to_tag} failed.")
         _clear_update_notify()
-        # Write version file to sync repo if configured
-        try:
-            from memo.config import Config
-            from memo.sync_git import git_root_for
-
-            cfg = Config.from_env()
-            sync_root = git_root_for(cfg)
-            write_version_file(sync_root, to_tag)
-        except Exception:  # noqa: S110
-            pass  # Don't fail update if sync repo not configured
         console.print(f"[green]✓[/green] updated to {to_tag}. Pre-warming MLX models…")
         _prewarm_after_update()
         return
@@ -298,16 +287,6 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         if proc.returncode != 0:
             raise click.ClickException(f"git-tag install of {latest_tag} failed.")
         _clear_update_notify()
-        # Write version file to sync repo if configured
-        try:
-            from memo.config import Config
-            from memo.sync_git import git_root_for
-
-            cfg = Config.from_env()
-            sync_root = git_root_for(cfg)
-            write_version_file(sync_root, latest_tag)
-        except Exception:  # noqa: S110
-            pass  # Don't fail update if sync repo not configured
         console.print(f"[green]✓[/green] updated to {latest_tag}. Pre-warming MLX models…")
         _prewarm_after_update()
         return
@@ -355,15 +334,5 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         return
 
     _clear_update_notify()
-    # Write version file to sync repo if configured
-    try:
-        from memo.config import Config
-        from memo.sync_git import git_root_for
-
-        cfg = Config.from_env()
-        sync_root = git_root_for(cfg)
-        write_version_file(sync_root, latest_version)
-    except Exception:  # noqa: S110
-        pass  # Don't fail update if sync repo not configured
     console.print("[green]✓[/green] upgrade complete. Pre-warming MLX models…")
     _prewarm_after_update()

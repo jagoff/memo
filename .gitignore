@@ -74,3 +74,4 @@ memorias/
 
 # Auto-harvested eval labels (per-machine, regenerate with `memo eval harvest`)
 eval/auto_labels.json
+memo-version.json
