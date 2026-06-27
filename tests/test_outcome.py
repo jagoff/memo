@@ -144,3 +144,43 @@ def test_detect_gaps_drops_injected_system_noise(tmp_path: Path) -> None:
     _recall(tmp_path, "s", 2, "system-reminder: the following context may be relevant to your task here",
             "x", via="bail", reason="no hits above min_sim", hit=False)
     assert outcome.detect_gaps(tmp_path) == []
+
+
+# ---------------- reconcile_source_feedback (#11 query-conditional) ----------------
+
+def test_reconcile_source_feedback_writes_click_for_grounded(mock_memory) -> None:
+    mem = mock_memory
+    sd = mem.cfg.state_dir
+    rec = mem.save(content="el reranker 0.6B gana en latencia warm", title="Reranker", type_="decision")
+    pid = rec.id[:8]
+    # Surfaced for a query and the answer used it → grounded.
+    _recall(sd, "s1", 1, "qué reranker conviene por latencia", pid)
+    _grounded(sd, "s1", 1, pid, score=0.9)
+
+    out = outcome.reconcile_source_feedback(mem, include_negatives=False)
+    assert out["positives"] == 1
+    fb = mem.feedback_list(source_id=rec.id)
+    assert len(fb) == 1
+    import json as _j
+    extra = _j.loads(fb[0].get("extra_json") or "{}")
+    assert extra.get("signal") == "click"
+
+
+def test_reconcile_source_feedback_never_overrides_manual(mock_memory) -> None:
+    mem = mock_memory
+    sd = mem.cfg.state_dir
+    rec = mem.save(content="usar MLX por privacidad", title="MLX", type_="decision")
+    pid = rec.id[:8]
+    prompt = "qué runtime de embeddings uso"
+    # Manual thumbs_down on this exact (source, query).
+    mem.feedback_record(source_id=rec.id, query_text=prompt, rating="down")
+    _recall(sd, "s1", 1, prompt, pid)
+    _grounded(sd, "s1", 1, pid, score=0.95)
+
+    outcome.reconcile_source_feedback(mem, include_negatives=False)
+    fb = mem.feedback_list(source_id=rec.id)
+    # Still exactly the manual rejection — auto-feedback did not clobber it.
+    assert len(fb) == 1
+    import json as _j
+    extra = _j.loads(fb[0].get("extra_json") or "{}")
+    assert extra.get("signal") == "thumbs_down"

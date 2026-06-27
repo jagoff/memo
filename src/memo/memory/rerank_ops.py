@@ -51,6 +51,7 @@ class _RerankOpsMixin(_MemoryBase):
         *,
         query_text: str,
         rating: str,
+        only_if_absent: bool = False,
     ) -> dict[str, Any]:
         """Public wrapper around store.record_source_feedback.
 
@@ -64,6 +65,10 @@ class _RerankOpsMixin(_MemoryBase):
           "thumbs_up"  — explicit positive; stronger boost.
           "ignore"     — implicit negative (user skipped); soft score penalty.
           "thumbs_down"— explicit rejection; hard exclude from future results.
+
+        `only_if_absent=True` (used by the outcome loop) skips the write if any
+        feedback already exists for this (source, query) — never overrides a
+        manual vote.
         """
         rating_norm, signal = self._normalize_rating(rating)
         resolved = self._resolve_source_id(source_id)
@@ -76,6 +81,7 @@ class _RerankOpsMixin(_MemoryBase):
             query_emb=list(emb),
             rating=rating_norm,
             extra={"signal": signal},
+            only_if_absent=only_if_absent,
         )
         return {
             "feedback_id": fid,

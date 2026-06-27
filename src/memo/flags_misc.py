@@ -435,6 +435,25 @@ SPECS: tuple[FlagSpec, ...] = (
         "session converge on another Mac's pushes without a restart.",
         min_val=0,
     ),
+    _spec(
+        "MEMO_OUTCOME_SOURCE_FEEDBACK",
+        "bool",
+        False,
+        "outcome",
+        "Auto-mine per-query source_feedback from grounding outcomes during "
+        "reconcile (implicit 'click' positives; 'ignore' negatives only when "
+        "MEMO_OUTCOME_SOURCE_FEEDBACK_NEG=1). Off by default — it changes "
+        "ranking from automated signal, so validate on your corpus before "
+        "enabling. Never overrides a manual vote.",
+    ),
+    _spec(
+        "MEMO_OUTCOME_SOURCE_FEEDBACK_NEG",
+        "bool",
+        False,
+        "outcome",
+        "Also write implicit-negative ('ignore') feedback for surfaced-but-"
+        "unused (memory, query) pairs. Noisier than positives; default off.",
+    ),
     # Durable incremental capture (memo capture-tick)
     _spec(
         "MEMO_CAPTURE_INTERVAL_S",

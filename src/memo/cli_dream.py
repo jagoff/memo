@@ -429,9 +429,26 @@ def dream_run(
                 completed=0,
             )
             try:
-                from memo.outcome import dead_weight, reconcile_roi
+                from memo.outcome import (
+                    dead_weight,
+                    reconcile_roi,
+                    reconcile_source_feedback,
+                )
 
                 receipt["roi_reconciled"] = reconcile_roi(mem).get("updated", 0)
+                # Per-query learning: mine implicit feedback from grounding so
+                # ranking sharpens for the queries actually asked (opt-in).
+                if flag_bool("MEMO_OUTCOME_SOURCE_FEEDBACK"):
+                    try:
+                        fb = reconcile_source_feedback(
+                            mem,
+                            include_negatives=flag_bool("MEMO_OUTCOME_SOURCE_FEEDBACK_NEG"),
+                        )
+                        receipt["source_feedback_mined"] = fb
+                    except Exception as _exc:
+                        receipt["errors"].append(
+                            f"source_feedback: {type(_exc).__name__}: {_exc}"
+                        )
                 min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 0
                 for d in dead_weight(mem, min_surfaced=min_surfaced):
                     if mem.forget(

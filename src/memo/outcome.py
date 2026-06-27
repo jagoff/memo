@@ -21,10 +21,12 @@ Pure reads over recall.log + grounding.log, plus a single roi write on reconcile
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+_log = logging.getLogger(__name__)
 _DEFAULT_PRIOR_N = 3.0
 _DEFAULT_ROI_FLOOR = 0.6
 _DEFAULT_ROI_CAP = 1.5
@@ -132,6 +134,99 @@ def reconcile_roi(
         "floor": floor,
         "cap": cap,
     }
+
+
+def reconcile_source_feedback(
+    memory: Any,
+    *,
+    max_pairs: int = 500,
+    include_negatives: bool = False,
+    recall_limit: int = 2000,
+    grounding_limit: int = 4000,
+) -> dict[str, int]:
+    """Mine per-QUERY feedback from grounding outcomes (auto hard-positive
+    mining). ``roi_score`` is a single global scalar per memory, so a memory
+    that grounds query-cluster A but is noise for B self-cancels. The
+    source_feedback table already learns PER QUERY (it stores the query
+    embedding and is consulted via kNN in search) but is fed only by manual
+    👍/👎. This writes the signal already captured for free:
+
+      grounded (memory, turn)            → implicit positive ("click", +0.08)
+      surfaced-but-unused (memory, turn) → implicit negative ("ignore", ×0.7)
+                                           — only when include_negatives.
+
+    Keyed on the turn's query embedding, deduped by (memory, prompt), capped
+    at ``max_pairs`` to bound embedding cost. ``only_if_absent`` guarantees a
+    manual vote is never overwritten. Returns counts.
+    """
+    from memo.dashboard import grounding_used, read_grounding_log, read_recall_log
+    from memo.grounding import _prompt_for_turn
+
+    p2id = _prefix_to_id(memory)
+    state_dir = memory.cfg.state_dir
+
+    # grounded (prefix, session, turn) — the answer demonstrably used it.
+    grounded: set[tuple[str, str, int]] = set()
+    for g in read_grounding_log(state_dir, limit=grounding_limit):
+        sid, turn = g.get("session_id"), g.get("turn")
+        pid = (g.get("recall_id") or "")[:8]
+        if sid and isinstance(turn, int) and pid and grounding_used(g):
+            grounded.add((pid, str(sid), turn))
+
+    # surfaced (prefix, session, turn) — shown, for the negative complement.
+    surfaced: set[tuple[str, str, int]] = set()
+    if include_negatives:
+        for r in read_recall_log(state_dir, limit=recall_limit):
+            sid, turn = r.get("session_id"), r.get("turn")
+            if not (sid and isinstance(turn, int)):
+                continue
+            for h in r.get("hits") or []:
+                pid = (h.get("id") or "")[:8]
+                if pid:
+                    surfaced.add((pid, str(sid), turn))
+
+    prompt_cache: dict[tuple[str, int], str] = {}
+
+    def _prompt(sid: str, turn: int) -> str:
+        key = (sid, turn)
+        if key not in prompt_cache:
+            prompt_cache[key] = _prompt_for_turn(state_dir, sid, turn)
+        return prompt_cache[key]
+
+    written_pos = written_neg = 0
+    seen: set[tuple[str, str]] = set()  # (full_id, prompt) — dedup embeds
+
+    def _emit(triples: set[tuple[str, str, int]], rating: str) -> int:
+        nonlocal seen
+        n = 0
+        for pid, sid, turn in triples:
+            if written_pos + written_neg + n >= max_pairs:
+                break
+            fid = p2id.get(pid)
+            if not fid:
+                continue
+            prompt = _prompt(sid, turn)
+            if not prompt or len(prompt.strip()) < 8:
+                continue
+            key = (fid, prompt)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                memory.feedback_record(
+                    source_id=fid, query_text=prompt, rating=rating, only_if_absent=True
+                )
+                n += 1
+            except Exception as exc:
+                _log.debug("reconcile_source_feedback: skip %s: %s", fid[:8], exc)
+                continue
+        return n
+
+    written_pos = _emit(grounded, "click")
+    if include_negatives:
+        # Only turns where the memory was surfaced but NOT grounded.
+        written_neg = _emit(surfaced - grounded, "ignore")
+    return {"positives": written_pos, "negatives": written_neg}
 
 
 def dead_weight(

@@ -23,6 +23,7 @@ class _FeedbackMixin(_StoreBase):
         rating: int,
         feedback_id: str | None = None,
         extra: dict[str, Any] | None = None,
+        only_if_absent: bool = False,
     ) -> str:
         """Persist a 👍/👎 vote on `source_id` for `query_text`.
 
@@ -30,6 +31,10 @@ class _FeedbackMixin(_StoreBase):
         same vote returns the existing feedback id. Changing rating for
         the same (source, query) replaces the old row (cancel-and-replace
         so the unique constraint stays clean).
+
+        `only_if_absent=True` makes this a no-op when ANY row already exists
+        for `(source_id, query_text)` — used by automated (outcome-loop)
+        feedback so it never clobbers a manual 👍/👎 on the same pair.
         """
         if rating not in (-1, 1):
             raise ValueError(f"rating must be -1 or 1, got {rating!r}")
@@ -45,7 +50,7 @@ class _FeedbackMixin(_StoreBase):
                 "SELECT id, rating FROM source_feedback WHERE source_id = ? AND query_text = ?",
                 (source_id, query_text),
             ).fetchone()
-            if existing and int(existing["rating"]) == rating:
+            if existing and (only_if_absent or int(existing["rating"]) == rating):
                 return str(existing["id"])
             if existing:
                 # Replacing rating — drop old vec + row first.
