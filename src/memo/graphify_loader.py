@@ -222,7 +222,7 @@ def refresh(force: bool = False) -> bool:
     repo_root = GRAPHIFY_OUT.parent
     try:
         result = subprocess.run(
-            ["graphify", "watch", str(repo_root), "--force"],
+            ["graphify", "update", str(repo_root), "--force"],
             capture_output=True,
             text=True,
             timeout=300,
