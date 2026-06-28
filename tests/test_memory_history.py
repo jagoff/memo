@@ -25,6 +25,7 @@ def test_history_filter_by_record_id(mem_with_stub: Memory):
 
 
 def test_extract_entities_writes_graph(mem_with_stub: Memory, monkeypatch):
+    monkeypatch.setenv("MEMO_ENTITY_EXTRACT_ON_SAVE", "0")
     rec = mem_with_stub.save(
         content="Decidí migrar obsidian-rag a MLX con Qwen3-Embedding.",
         title="MLX migration",

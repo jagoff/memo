@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from memo.config import Config
@@ -16,6 +18,59 @@ def test_save_writes_md_and_indexes(mem_with_stub: Memory):
     assert "title: Test 1" in text
     assert "primer memo del test" in text
     assert mem_with_stub.store.count() == 1
+
+
+def test_save_indexes_entities_in_graph_db(mem_with_stub: Memory):
+    rec = mem_with_stub.save(
+        content="MLX and MCP share retrieval context.",
+        title="MLX MCP Graph",
+        type_="fact",
+    )
+
+    entity_names = {ent["name"] for ent in mem_with_stub.graph.memoria_entities(rec.id)}
+    assert {"mlx", "mcp"} <= entity_names
+
+    neighbors = mem_with_stub.navigator.get_neighbors("mlx")
+    assert "mcp" in neighbors.direct_neighbors
+    assert rec.id in neighbors.neighbor_memorias["mcp"]
+
+
+def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
+    rec = mem_with_stub.save(
+        content="MLX references [[target-memory]] and MCP.",
+        title="Storage Smoke",
+        type_="fact",
+    )
+    mem_with_stub.crossref.index_wikilinks(rec.id, "See [[target-memory]] for details")
+    assert mem_with_stub.contradict_store.stats() == {}
+
+    cfg = mem_with_stub.cfg
+    expected_files = [
+        cfg.db_path,
+        cfg.history_db,
+        cfg.graph_db,
+        cfg.contradictions_db,
+        cfg.crossref_db,
+    ]
+    assert all(path.is_file() for path in expected_files)
+
+    checks = {
+        cfg.db_path: ("meta", "id = ?", (rec.id,)),
+        cfg.history_db: ("events", "record_id = ? AND op = 'save'", (rec.id,)),
+        cfg.graph_db: ("entity_memoria", "memoria_id = ?", (rec.id,)),
+        cfg.contradictions_db: ("pairs", "1 = 1", ()),
+        cfg.crossref_db: ("backlinks", "source_id = ?", (rec.id,)),
+    }
+    for db_path, (table, where, params) in checks.items():
+        with sqlite3.connect(db_path) as conn:
+            count = conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {where}",  # noqa: S608
+                params,
+            ).fetchone()[0]
+        if table == "pairs":
+            assert count == 0
+        else:
+            assert count > 0
 
 
 def test_save_rejects_invalid_type(mem_with_stub: Memory):

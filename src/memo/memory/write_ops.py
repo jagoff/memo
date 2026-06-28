@@ -83,8 +83,56 @@ def _infer_type_from_content(content: str) -> str | None:
     return None
 
 
+def _graph_entities_from_extra(extra: dict[str, Any]) -> list[dict[str, str]]:
+    """Normalize saved ``extra['entities']`` into GraphStore rows."""
+    raw = extra.get("entities") or []
+    if not isinstance(raw, list):
+        return []
+
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw:
+        name = ""
+        type_ = "concept"
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            item_type = str(item.get("type") or "").strip().lower()
+            if item_type in {"person", "project", "technology", "file", "org", "concept"}:
+                type_ = item_type
+        if not name:
+            continue
+        key = f"{name.lower()}:{type_}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "type": type_})
+    return out
+
+
 class _WriteOpsMixin(_MemoryBase):
     # -- save ---------------------------------------------------------------
+
+    def _record_graph_entities_from_extra(
+        self,
+        *,
+        record_id: str,
+        created_iso: str,
+        extra: dict[str, Any],
+    ) -> None:
+        entities = _graph_entities_from_extra(extra)
+        if not entities:
+            return
+        try:
+            self.graph.record_extraction(
+                memoria_id=record_id,
+                memoria_date=created_iso[:10],
+                entities=entities,
+                extracted_at=_now_iso(),
+            )
+        except Exception as exc:
+            _log.debug("graph entity write skipped for %s: %s", record_id[:8], exc)
 
     def _derive_metadata(self, content: str) -> dict[str, Any]:
         """Use the helper LLM (Qwen2.5-3B-Instruct-4bit) to derive
@@ -424,6 +472,11 @@ class _WriteOpsMixin(_MemoryBase):
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
             )
+            self._record_graph_entities_from_extra(
+                record_id=record_id,
+                created_iso=created_iso,
+                extra=extra_for_store,
+            )
             self.history.log_save(
                 ts=now_iso,
                 record_id=record_id,
@@ -486,6 +539,11 @@ class _WriteOpsMixin(_MemoryBase):
                 body_text=content,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
+            )
+            self._record_graph_entities_from_extra(
+                record_id=record_id,
+                created_iso=created_iso,
+                extra=extra_for_store,
             )
         except ValueError:
             # A dims/norm validation failure signals a misconfigured embedder
@@ -614,6 +672,11 @@ class _WriteOpsMixin(_MemoryBase):
                 body_text=content,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
+            )
+            self._record_graph_entities_from_extra(
+                record_id=record_id,
+                created_iso=created_iso,
+                extra=extra_for_store,
             )
         with contextlib.suppress(Exception):
             self.history.log_save(
