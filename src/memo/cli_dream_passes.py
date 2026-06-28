@@ -281,7 +281,9 @@ def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[
                 hits = mem.search(query, limit=20, disable_reranker=True)
                 if len(hits) < 3:
                     continue
-                # Synthesize across the hit cluster
+                # NOTE: synthesize_cross_cluster takes no source_ids/cluster param —
+                # synthesis runs GLOBALLY over all clusters, not scoped to these hits.
+                # source_ids is kept only for the receipt below.
                 source_ids = [h.id for h in hits]
                 result = mem.synthesize_cross_cluster(
                     dry_run=dry_run, min_cluster_size=3, max_clusters=1

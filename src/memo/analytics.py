@@ -90,13 +90,15 @@ class AnalyticsEngine:
         total_entities = self.memory.graph.count_entities()
 
         # Growth rate (memories per day)
+        growth_rate = 0.0
         if total_memorias > 1:
-            first_date = datetime.fromisoformat(memories[-1].updated.replace("Z", "+00:00"))
-            last_date = datetime.fromisoformat(memories[0].updated.replace("Z", "+00:00"))
-            days = max(1.0, (last_date - first_date).total_seconds() / 86400)
-            growth_rate = total_memorias / days
-        else:
-            growth_rate = 0.0
+            first_raw = memories[-1].updated
+            last_raw = memories[0].updated
+            if first_raw and last_raw:
+                first_date = datetime.fromisoformat(first_raw.replace("Z", "+00:00"))
+                last_date = datetime.fromisoformat(last_raw.replace("Z", "+00:00"))
+                days = max(1.0, (last_date - first_date).total_seconds() / 86400)
+                growth_rate = total_memorias / days
 
         # Average access count
         total_access = sum(self.memory.lifecycle.get_access_count(m.id) for m in memories)

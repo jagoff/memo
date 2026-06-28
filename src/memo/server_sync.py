@@ -7,6 +7,7 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,4 @@ def register(server: FastMCP, memory: Memory) -> None:
         if remote_db is None:
             return {"error": "remote is required (path to remote memo state dir)"}
         diff = memory.sync.sync_from_remote(remote_db)
-        return diff.__dict__
-
-
+        return dataclasses.asdict(diff)

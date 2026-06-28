@@ -267,13 +267,16 @@ class _MaintainOpsMixin(_MemoryBase):
                     "reindex: invalid type %r in %s, coercing to 'note'", type_, md_path.name
                 )
                 type_ = "note"
-            tags = _normalise_tags(list(meta.get("tags") or []))
+            raw_tags = meta.get("tags") or []
+            # A scalar YAML string (`tags: python`) must not be char-split by
+            # list() — treat it as a single (optionally comma-separated) value.
+            if isinstance(raw_tags, str):
+                raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+            tags = _normalise_tags(list(raw_tags))
             # YAML frontmatter may store tags as a comma-separated string
             # instead of a list (hand-edited files). Normalize to list.
             if tags and isinstance(tags[0], str) and "," in tags[0]:
-                tags = _normalise_tags(
-                    [t.strip() for t in tags[0].split(",") if t.strip()]
-                )
+                tags = _normalise_tags([t.strip() for t in tags[0].split(",") if t.strip()])
             created = meta.get("created") or _now_iso()
             updated = meta.get("updated") or created
             extra = meta.get("extra") or {}
@@ -475,7 +478,9 @@ class _MaintainOpsMixin(_MemoryBase):
                 # Unchanged since last reindex — skip.
                 continue
 
-            chunk_title = f"{title} § {heading}" if heading else f"{title} (§{seq + 1}/{len(chunks)})"
+            chunk_title = (
+                f"{title} § {heading}" if heading else f"{title} (§{seq + 1}/{len(chunks)})"
+            )
             chunk_extra: dict[str, Any] = {
                 "parent_id": parent_id,
                 "chunk_index": seq,

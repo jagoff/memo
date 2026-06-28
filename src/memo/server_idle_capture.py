@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -72,12 +75,12 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         if titles:
             import contextlib as _contextlib
+
             with _contextlib.suppress(OSError):
                 (cfg.state_dir / "pending_idle_notification.txt").write_text(
                     notification + "\n", encoding="utf-8"
                 )
-            import sys as _sys
-            print(notification, file=_sys.stderr)
+            _log.info("memo_idle_capture: %s", notification)
 
         return {
             "status": result.get("status"),
@@ -129,6 +132,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             session_id = str(uuid.uuid4())
         if not cwd:
             import os
+
             cwd = os.getcwd()
 
         cfg = memory.cfg
@@ -197,6 +201,8 @@ def run_idle_capture_loop() -> None:
     Runs capture every MEMO_SESSION_IDLE_CAPTURE_SECS (default 10s).
     """
     import logging
+    import signal
+    import threading
     import time
     from pathlib import Path
 
@@ -216,6 +222,17 @@ def run_idle_capture_loop() -> None:
     delay_secs = flag_int("MEMO_SESSION_IDLE_CAPTURE_SECS") or 10
 
     _log.info("idle daemon: starting (delay=%ds)", delay_secs)
+
+    # launchd stops the daemon with SIGTERM. Set an Event from the handler and
+    # wait on it (instead of bare time.sleep) so a stop interrupts the sleep and
+    # exits the loop cleanly between iterations — never mid-write.
+    shutdown_event = threading.Event()
+
+    def _sigterm(signum: int, frame: Any) -> None:
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, _sigterm)
+    signal.signal(signal.SIGINT, _sigterm)
 
     log_file = Path(cfg.state_dir / "idle_capture.log")
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -238,20 +255,20 @@ def run_idle_capture_loop() -> None:
     _last_pending_scan = 0.0
     _PENDING_SCAN_INTERVAL = 60.0
 
-    while True:
+    while not shutdown_event.is_set():
         try:
             # Get most recent sessions (increase limit to check for pending)
             sessions = list_sessions(cfg.state_dir, limit=5)
             if not sessions:
                 _log.debug("idle daemon: no sessions")
-                time.sleep(delay_secs)
+                shutdown_event.wait(timeout=delay_secs)
                 continue
 
             sid = sessions[0].get("session_id")
             transcript = sessions[0].get("transcript_path")
             if not sid or not transcript:
                 _log.debug("idle daemon: no sid/transcript")
-                time.sleep(delay_secs)
+                shutdown_event.wait(timeout=delay_secs)
                 continue
 
             # Run capture on current session
@@ -272,10 +289,16 @@ def run_idle_capture_loop() -> None:
                     # Skip if it's the same as current session (already processed above)
                     if pend_sid == sid:
                         continue
-                    pend_result = run_capture_incremental(Path(pend_transcript), pend_sid, debug=False)
+                    pend_result = run_capture_incremental(
+                        Path(pend_transcript), pend_sid, debug=False
+                    )
                     pend_titles = pend_result.get("saved_titles") or []
                     if pend_titles:
-                        _log.info("idle daemon: captured %d insights from pending session %s", len(pend_titles), pend_sid[:8])
+                        _log.info(
+                            "idle daemon: captured %d insights from pending session %s",
+                            len(pend_titles),
+                            pend_sid[:8],
+                        )
 
             # Log result — only write when something was actually captured.
             # Logging every 10s for 0-capture scans is the dominant source of
@@ -298,4 +321,6 @@ def run_idle_capture_loop() -> None:
         except Exception as exc:
             _log.error("idle daemon: error: %s", exc)
 
-        time.sleep(delay_secs)
+        shutdown_event.wait(timeout=delay_secs)
+
+    _log.info("idle daemon: stopping (SIGTERM)")

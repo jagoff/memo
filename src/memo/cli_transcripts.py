@@ -262,16 +262,28 @@ def _reflect_session(
 
     # LLM call — use the configured llm_model (7B default).
     try:
-        from memo.memory.record import _REFLECT_SYSTEM_PROMPT, strip_llm_output
+        from memo.memory.record import (
+            _REFLECT_SYSTEM_PROMPT,
+            chat_with_timeout,
+            strip_llm_output,
+        )
 
-        result = mem._ensure_chat().chat(
-            cfg.llm_model,
-            [
+        result = chat_with_timeout(
+            mem._ensure_chat(),
+            timeout=60,
+            model=cfg.llm_model,
+            messages=[
                 {"role": "system", "content": _REFLECT_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             options={"temperature": 0.0, "num_predict": 1024},
         )
+        if result is None:
+            return {
+                "status": "llm_error",
+                "session_id": session_id,
+                "error": "LLM timed out after 60s",
+            }
         raw_json = (result.get("message") or {}).get("content") or ""
     except Exception as exc:
         if debug:
@@ -431,89 +443,91 @@ def reflect(
     _lock_path.parent.mkdir(parents=True, exist_ok=True)
     _lock_fd = open(_lock_path, "w")  # noqa: SIM115
     try:
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+        try:
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            if quiet:
+                click.echo(json.dumps({"status": "skipped_concurrent"}))
+            return
+
+        # Resolve which session to reflect on.
+        target_id: str | None = session_id
+        if not target_id:
+            sessions = list_sessions(cfg.state_dir, limit=2)
+            if not sessions:
+                result = {"status": "no_sessions"}
+                if quiet:
+                    click.echo(json.dumps(result))
+                else:
+                    console.print("[yellow]No sessions found.[/yellow]")
+                return
+            # `--last` or no arg: use the most recent session.
+            # If session is still "active" (no reflected_at, recent), use it anyway.
+            target_id = sessions[0].get("session_id") or ""
+
+        if not target_id:
+            result = {"status": "no_session_id"}
+            click.echo(json.dumps(result) if quiet else "")
+            return
+
+        # Idempotence guard.
+        if if_due:
+            snap = get_session(cfg.state_dir, target_id)
+            if snap and snap.get("reflected_at"):
+                result = {
+                    "status": "already_reflected",
+                    "session_id": target_id,
+                    "reflected_at": snap["reflected_at"],
+                }
+                if quiet:
+                    click.echo(json.dumps(result))
+                else:
+                    console.print(f"[dim]already reflected: {target_id[:8]}[/dim]")
+                return
+
+        # Load Memory with LLM warmed.
+        from memo.memory import Memory
+
+        # `_reflect_session` lazily warms the chat model via `mem._ensure_chat()`.
+        mem = Memory(cfg)
+        result = _reflect_session(target_id, mem, cfg, dry_run=dry_run, debug=debug)
+
         if quiet:
-            click.echo(json.dumps({"status": "skipped_concurrent"}))
-        _lock_fd.close()
-        return
-
-    # Resolve which session to reflect on.
-    target_id: str | None = session_id
-    if not target_id:
-        sessions = list_sessions(cfg.state_dir, limit=2)
-        if not sessions:
-            result = {"status": "no_sessions"}
-            if quiet:
-                click.echo(json.dumps(result))
-            else:
-                console.print("[yellow]No sessions found.[/yellow]")
-            return
-        # `--last` or no arg: use the most recent session.
-        # If session is still "active" (no reflected_at, recent), use it anyway.
-        target_id = sessions[0].get("session_id") or ""
-
-    if not target_id:
-        result = {"status": "no_session_id"}
-        click.echo(json.dumps(result) if quiet else "")
-        return
-
-    # Idempotence guard.
-    if if_due:
-        snap = get_session(cfg.state_dir, target_id)
-        if snap and snap.get("reflected_at"):
-            result = {
-                "status": "already_reflected",
-                "session_id": target_id,
-                "reflected_at": snap["reflected_at"],
-            }
-            if quiet:
-                click.echo(json.dumps(result))
-            else:
-                console.print(f"[dim]already reflected: {target_id[:8]}[/dim]")
+            click.echo(json.dumps(result, ensure_ascii=False))
             return
 
-    # Load Memory with LLM warmed.
-    from memo.memory import Memory
+        status = result.get("status")
+        if status == "not_found":
+            console.print(f"[red]session not found:[/red] {target_id}")
+            sys.exit(1)
+        if status == "no_transcript":
+            console.print(f"[yellow]no transcript for session:[/yellow] {target_id[:8]}")
+            return
+        if status == "too_short":
+            console.print(
+                f"[dim]session too short ({result.get('user_turns')} user turns) — skipping[/dim]",
+            )
+            return
+        if status == "llm_error":
+            console.print(f"[red]LLM error:[/red] {result.get('error')}")
+            sys.exit(1)
+        if status == "already_reflected":
+            console.print(f"[dim]already reflected: {target_id[:8]}[/dim]")
+            return
 
-    # `_reflect_session` lazily warms the chat model via `mem._ensure_chat()`.
-    mem = Memory(cfg)
-    result = _reflect_session(target_id, mem, cfg, dry_run=dry_run, debug=debug)
+        saved = list(result.get("saved") or [])
+        skipped = result.get("skipped_dup") or 0
+        arc_id = result.get("arc_id")
+        dry_label = " [yellow](dry-run)[/yellow]" if dry_run else ""
+        title = result.get("session_title") or target_id[:8]
 
-    if quiet:
-        click.echo(json.dumps(result, ensure_ascii=False))
-        return
-
-    status = result.get("status")
-    if status == "not_found":
-        console.print(f"[red]session not found:[/red] {target_id}")
-        sys.exit(1)
-    if status == "no_transcript":
-        console.print(f"[yellow]no transcript for session:[/yellow] {target_id[:8]}")
-        return
-    if status == "too_short":
-        console.print(
-            f"[dim]session too short ({result.get('user_turns')} user turns) — skipping[/dim]",
+        body = (
+            f"[dim]session:[/dim] {target_id[:8]}\n"
+            f"[dim]title:[/dim]   {title}\n"
+            f"[bold green]saved:[/bold green]   {len(saved)}{dry_label}\n"
+            f"[dim]dup skip:[/dim] {skipped}\n"
+            f"[dim]arc:[/dim]     {arc_id[:8] if arc_id else '—'}"
         )
-        return
-    if status == "llm_error":
-        console.print(f"[red]LLM error:[/red] {result.get('error')}")
-        sys.exit(1)
-    if status == "already_reflected":
-        console.print(f"[dim]already reflected: {target_id[:8]}[/dim]")
-        return
-
-    saved = list(result.get("saved") or [])
-    skipped = result.get("skipped_dup") or 0
-    arc_id = result.get("arc_id")
-    dry_label = " [yellow](dry-run)[/yellow]" if dry_run else ""
-    title = result.get("session_title") or target_id[:8]
-
-    body = (
-        f"[dim]session:[/dim] {target_id[:8]}\n"
-        f"[dim]title:[/dim]   {title}\n"
-        f"[bold green]saved:[/bold green]   {len(saved)}{dry_label}\n"
-        f"[dim]dup skip:[/dim] {skipped}\n"
-        f"[dim]arc:[/dim]     {arc_id[:8] if arc_id else '—'}"
-    )
-    console.print(Panel.fit(body, title="✓ reflect", border_style="green"))
+        console.print(Panel.fit(body, title="✓ reflect", border_style="green"))
+    finally:
+        _lock_fd.close()

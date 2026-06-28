@@ -178,7 +178,7 @@ def mine_transcripts(
         try:
             text = f.read_text(encoding="utf-8")
             line_count = text.count("\n") + 1 if text else 0
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             text = ""
             line_count = 0
         if line_count <= prev_count:

@@ -6,6 +6,7 @@ tasks when the system is not in use.
 
 from __future__ import annotations
 
+import logging
 import signal
 import sys
 import threading
@@ -15,6 +16,8 @@ from pathlib import Path
 from memo.config import Config
 from memo.flags import flag_bool, flag_int
 from memo.memory import Memory
+
+_log = logging.getLogger(__name__)
 
 
 def run_sleep_cycle(debug: bool = False) -> None:
@@ -71,8 +74,9 @@ def run_sleep_cycle(debug: bool = False) -> None:
                 if debug:
                     print("# Sleep cycle: maintenance pass complete", file=sys.stderr)
             except Exception as exc:
-                if debug:
-                    print(f"# Sleep cycle: maintenance failed: {exc}", file=sys.stderr)
+                # Keep the daemon alive across a failed pass, but always surface
+                # the failure (a debug-gated print silently lost it before).
+                _log.warning("Sleep cycle: maintenance failed: %s", exc)
         else:
             if debug:
                 print(
@@ -80,7 +84,9 @@ def run_sleep_cycle(debug: bool = False) -> None:
                     file=sys.stderr,
                 )
 
-        time.sleep(interval)
+        # stop.wait() returns immediately on SIGTERM/SIGINT (PEP 475 makes a
+        # bare time.sleep swallow the signal until the full interval elapses).
+        stop.wait(timeout=interval)
     mem.close()
 
 
@@ -112,7 +118,10 @@ def _ingest_memflow_sessions(mem: Memory, cfg: Config, debug: bool = False) -> N
         if debug:
             status = res.get("status")
             saved = len(res.get("saved") or [])
-            print(f"# Sleep cycle: session {sid[:8]} reflect status={status} saved={saved}", file=sys.stderr)
+            print(
+                f"# Sleep cycle: session {sid[:8]} reflect status={status} saved={saved}",
+                file=sys.stderr,
+            )
 
 
 def _get_last_activity(mem: Memory, cfg: Config) -> float:
@@ -132,6 +141,7 @@ def _get_last_activity(mem: Memory, cfg: Config) -> float:
         recent = mem.store.list_recent(limit=1)
         if recent:
             from datetime import datetime
+
             dt = datetime.fromisoformat(recent[0]["updated"].replace("Z", "+00:00"))
             last_activity = max(last_activity, dt.timestamp())
     except Exception:  # noqa: S110

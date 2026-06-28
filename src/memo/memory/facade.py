@@ -131,7 +131,9 @@ class Memory(
                 expected_dims=cfg.embedder_dims,
                 cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"),
             )
-        self.store = VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
+        self.store = VecStore(
+            cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model
+        )
         # History store — cheap to open (just sqlite); creating eagerly.
         # Audit failures never propagate to the caller — HistoryStore
         # swallows its own exceptions internally.
@@ -324,9 +326,11 @@ class Memory(
         across save/search calls within one Memory instance.
         """
         if self._cache is None:
-            from memo.cache import CacheManager
+            with self._chat_lock:
+                if self._cache is None:
+                    from memo.cache import CacheManager
 
-            self._cache = CacheManager(self)
+                    self._cache = CacheManager(self)
         return self._cache
 
     @property
@@ -378,6 +382,7 @@ class Memory(
     def project(self) -> str:
         """Detect project from cwd (engram 5-case algorithm)."""
         from memo.server_engram_patterns import _project_from_cwd
+
         return _project_from_cwd()
 
     def capability(self, name: str) -> Any:

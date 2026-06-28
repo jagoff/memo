@@ -12,6 +12,15 @@ from memo.config import Config
 from memo.setup import run_picker, write_config_file
 
 
+def _q(name: str) -> str:
+    """Quote a SQL identifier defensively.
+
+    Table names here come from a hardcoded allow-list so this is belt-and-braces,
+    but quoting keeps the interpolation safe if that list ever grows.
+    """
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _consolidate_sidecar_dbs() -> None:
     from memo.contradict import ContradictionStore
     from memo.crossref import CrossReferenceIndex
@@ -53,13 +62,17 @@ def _consolidate_sidecar_dbs() -> None:
                 for tbl in tables:
                     if tbl not in present:
                         continue
-                    conn.execute(f"INSERT OR IGNORE INTO main.{tbl} SELECT * FROM legacy.{tbl}")  # noqa: S608
+                    conn.execute(
+                        f"INSERT OR IGNORE INTO main.{_q(tbl)} SELECT * FROM legacy.{_q(tbl)}"  # noqa: S608
+                    )
                 conn.commit()
             finally:
                 conn.execute("DETACH DATABASE legacy")
             bak = legacy.with_suffix(legacy.suffix + ".bak")
             legacy.replace(bak)
-            console.print(f"[green]✓[/green] merged {legacy.name} → memvec.db, renamed → {bak.name}")
+            console.print(
+                f"[green]✓[/green] merged {legacy.name} → memvec.db, renamed → {bak.name}"
+            )
             merged_any = True
     finally:
         conn.close()
@@ -79,10 +92,28 @@ def _consolidate_sidecar_dbs() -> None:
 
 @click.command(name="migrate-vault")
 @click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
-@click.option("--from", "from_dir", default=None, type=click.Path(exists=True, file_okay=False, resolve_path=True), help="Source memory_dir. Defaults to current cfg.memory_dir.")
-@click.option("--into-vault", is_flag=True, help="Move memories INTO the Obsidian vault (<vault>/<SYSTEM_DIR>/AI/memory) and set memories_in_vault=1 so the vault becomes the source of truth.")
-@click.option("--rollback", is_flag=True, help="Restore the config snapshot taken by the last migration and exit. Copied files are left in place (migration never deletes anything).")
-@click.option("--consolidate-db", is_flag=True, help="Merge the sidecar DBs (history/graph/contradictions/crossref) into the main memvec.db, set MEMO_SINGLE_DB=1 in config, and rename the legacy files to *.db.bak (reversible). Idempotent. Does not move any .md files.")
+@click.option(
+    "--from",
+    "from_dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    help="Source memory_dir. Defaults to current cfg.memory_dir.",
+)
+@click.option(
+    "--into-vault",
+    is_flag=True,
+    help="Move memories INTO the Obsidian vault (<vault>/<SYSTEM_DIR>/AI/memory) and set memories_in_vault=1 so the vault becomes the source of truth.",
+)
+@click.option(
+    "--rollback",
+    is_flag=True,
+    help="Restore the config snapshot taken by the last migration and exit. Copied files are left in place (migration never deletes anything).",
+)
+@click.option(
+    "--consolidate-db",
+    is_flag=True,
+    help="Merge the sidecar DBs (history/graph/contradictions/crossref) into the main memvec.db, set MEMO_SINGLE_DB=1 in config, and rename the legacy files to *.db.bak (reversible). Idempotent. Does not move any .md files.",
+)
 @click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def migrate_vault(
@@ -176,7 +207,9 @@ def migrate_vault(
         shutil.copy2(existing_cfg, snapshot)
         console.print(f"[green]✓[/green] config snapshot → {snapshot} (use --rollback to restore)")
     if into_vault:
-        cfg_path = write_config_file(data_dir=cfg.data_dir, vault_path=chosen_vault, memories_in_vault=True)
+        cfg_path = write_config_file(
+            data_dir=cfg.data_dir, vault_path=chosen_vault, memories_in_vault=True
+        )
     else:
         cfg_path = write_config_file(data_dir=dst, vault_path=chosen_vault)
     console.print(f"[green]✓[/green] config: {cfg_path}")

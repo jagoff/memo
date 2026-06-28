@@ -55,6 +55,7 @@ def idle_daemon_start() -> None:
             [sys.executable, "-m", "memo.cli", "idle-daemon", "_serve"],
             stdout=log_fh,
             stderr=_subprocess.STDOUT,
+            stdin=_subprocess.DEVNULL,  # don't inherit hook stdin pipe
             env=env,
             start_new_session=True,
         )

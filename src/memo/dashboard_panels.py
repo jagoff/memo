@@ -21,7 +21,13 @@ from memo.dashboard_logs import (
     read_recall_log,
     read_usage_log,
 )
-from memo.dashboard_metrics import consult_breakdown, reask_stats, recall_health, verdict
+from memo.dashboard_metrics import (
+    consult_breakdown,
+    grounding_used,
+    reask_stats,
+    recall_health,
+    verdict,
+)
 from memo.watcher import _PLIST_LABEL as _WATCH_LABEL
 
 _log = logging.getLogger(__name__)
@@ -136,7 +142,12 @@ def _dir_size(p: Path) -> int:
 def _watcher_status() -> tuple[bool, str]:
     uid = os.getuid()
     target = f"gui/{uid}/{_WATCH_LABEL}"
-    res = subprocess.run(["launchctl", "print", target], capture_output=True, text=True)
+    try:
+        res = subprocess.run(
+            ["launchctl", "print", target], capture_output=True, text=True, timeout=5
+        )
+    except subprocess.TimeoutExpired:
+        return False, "not installed (memo install-watcher)"
     if res.returncode != 0:
         return False, "not installed (memo install-watcher)"
     out = res.stdout
@@ -154,8 +165,8 @@ def _panel_corpus(memory: Any) -> Panel:
     projects: set[str] = set()
     rows = _get_corpus_rows(memory)
     for r in rows:
-        types_counter[r["type"]] += 1
-        for t in r["tags"] or []:
+        types_counter[r.get("type", "unknown")] += 1
+        for t in r.get("tags") or []:
             if t.startswith("project:"):
                 projects.add(t)
     total = sum(types_counter.values())
@@ -165,7 +176,9 @@ def _panel_corpus(memory: Any) -> Panel:
         f"[bold cyan]{total}[/bold cyan] memories  ·  "
         f"[bold cyan]{len(projects)}[/bold cyan] proj  ·  {types_line}"
     )
-    return Panel(body, title="[bold magenta]corpus[/bold magenta]", border_style="magenta", padding=(0, 1))
+    return Panel(
+        body, title="[bold magenta]corpus[/bold magenta]", border_style="magenta", padding=(0, 1)
+    )
 
 
 def _panel_runtime(memory: Any) -> Panel:
@@ -186,9 +199,17 @@ def _panel_runtime(memory: Any) -> Panel:
     def _dot(ok: bool, label: str) -> str:
         return f"[bold green]●[/bold green] {label}" if ok else f"[dim]○ {label}[/dim]"
 
-    mlx_line = "  ".join([_dot(embedder_warm, "emb"), _dot(rerank_warm, "rrk"), _dot(chat_warm, "chat")])
-    watcher_line = f"[green]✓ {watcher_state}[/green]" if watcher_loaded else f"[yellow]{watcher_state}[/yellow]"
-    body = Text.from_markup(f"{mlx_line}  ·  [cyan]{_human_bytes(vault_size)}[/cyan]  ·  {watcher_line}")
+    mlx_line = "  ".join(
+        [_dot(embedder_warm, "emb"), _dot(rerank_warm, "rrk"), _dot(chat_warm, "chat")]
+    )
+    watcher_line = (
+        f"[green]✓ {watcher_state}[/green]"
+        if watcher_loaded
+        else f"[yellow]{watcher_state}[/yellow]"
+    )
+    body = Text.from_markup(
+        f"{mlx_line}  ·  [cyan]{_human_bytes(vault_size)}[/cyan]  ·  {watcher_line}"
+    )
     return Panel(body, title="[bold blue]runtime[/bold blue]", border_style="blue", padding=(0, 1))
 
 
@@ -202,7 +223,12 @@ def _panel_recent_saves(memory: Any, limit: int = 10) -> Panel:
     if not events:
         tbl.add_row("—", "—", Text("(no saves yet)", style="dim italic"), "—")
     for ev in events:
-        tbl.add_row(_human_age(ev.get("ts")), "[" + (ev.get("record_id") or "")[:8] + "]", (ev.get("title") or "")[:60], ev.get("type") or "")
+        tbl.add_row(
+            _human_age(ev.get("ts")),
+            "[" + (ev.get("record_id") or "")[:8] + "]",
+            (ev.get("title") or "")[:60],
+            ev.get("type") or "",
+        )
     return Panel(tbl, title="[bold yellow]recent saves[/bold yellow]", border_style="yellow")
 
 
@@ -217,7 +243,9 @@ def _daemon_status(state_dir: Path) -> str:
 
     try:
         warm_signal = state_dir / ".prewarm_ts"
-        warm = warm_signal.exists() and (time.time() - float(warm_signal.read_text().strip())) < 3600
+        warm = (
+            warm_signal.exists() and (time.time() - float(warm_signal.read_text().strip())) < 3600
+        )
     except (OSError, ValueError):
         warm = False
 
@@ -240,7 +268,13 @@ def _panel_recent_recalls(state_dir: Path, limit: int = 8) -> Panel:
         mode_val = e.get("mode") or "—"
         scores = ", ".join(f"{h.get('score', 0):.2f}" for h in hits if h.get("score") is not None)
         if scores:
-            line = Text.assemble((f'"{prompt}"', "white"), ("  → ", "dim"), (f"{len(hits)} hits", "bold cyan"), ("  @ ", "dim"), (scores, "magenta"))
+            line = Text.assemble(
+                (f'"{prompt}"', "white"),
+                ("  → ", "dim"),
+                (f"{len(hits)} hits", "bold cyan"),
+                ("  @ ", "dim"),
+                (scores, "magenta"),
+            )
         else:
             line = Text.assemble((f'"{prompt}"', "white"), ("  → no hits", "dim"))
         tbl.add_row(_human_age(e.get("ts")), mode_val, line)
@@ -253,7 +287,7 @@ def _panel_top_tags(memory: Any, limit: int = 8) -> Panel:
     rows = _get_corpus_rows(memory)
     counter: Counter[str] = Counter()
     for r in rows:
-        for t in r["tags"] or []:
+        for t in r.get("tags") or []:
             counter[t] += 1
     tbl = Table.grid(padding=(0, 1))
     tbl.add_column(style="cyan")
@@ -299,8 +333,16 @@ def _panel_activity(memory: Any, state_dir: Path) -> Panel:
     body.add_column(style="dim", width=14)
     body.add_column(style="bold", width=18)
     body.add_column(justify="right", style="cyan", width=10)
-    body.add_row(f"saves/day ({days}d)", Text(sparkline(saves_series, width=14), style="yellow"), f"Σ {sum(saves_series)}")
-    body.add_row(f"recalls/day ({days}d)", Text(sparkline(recalls_series, width=14), style="green"), f"Σ {sum(recalls_series)}")
+    body.add_row(
+        f"saves/day ({days}d)",
+        Text(sparkline(saves_series, width=14), style="yellow"),
+        f"Σ {sum(saves_series)}",
+    )
+    body.add_row(
+        f"recalls/day ({days}d)",
+        Text(sparkline(recalls_series, width=14), style="green"),
+        f"Σ {sum(recalls_series)}",
+    )
     return Panel(body, title="[bold]activity[/bold]", border_style="bright_black")
 
 
@@ -330,11 +372,22 @@ def _panel_recall_quality(state_dir: Path) -> Panel:
     tbl = Table.grid(padding=(0, 2))
     tbl.add_column(style="dim", width=18)
     tbl.add_column(style="bold")
-    tbl.add_row("grounded", f"[bold green]{_pct(health.get('grounded_rate'))}[/bold green]  [dim](primary)[/dim]")
-    tbl.add_row("hit / strong", f"{_pct(health.get('hit_rate'))}  /  {_pct(health.get('strong_hit_rate'))}")
-    tbl.add_row("median score", f"{_val(health.get('median_top_score'), '{:.2f}')}  [dim]p50 lat[/dim] {_val(health.get('p50_latency_ms'), '{}ms')}")
+    tbl.add_row(
+        "grounded",
+        f"[bold green]{_pct(health.get('grounded_rate'))}[/bold green]  [dim](primary)[/dim]",
+    )
+    tbl.add_row(
+        "hit / strong", f"{_pct(health.get('hit_rate'))}  /  {_pct(health.get('strong_hit_rate'))}"
+    )
+    tbl.add_row(
+        "median score",
+        f"{_val(health.get('median_top_score'), '{:.2f}')}  [dim]p50 lat[/dim] {_val(health.get('p50_latency_ms'), '{}ms')}",
+    )
     tbl.add_row("sampled/fired", f"{_val(health.get('sampled'))} / {_val(health.get('fired'))}")
-    tbl.add_row("reask avoided", f"{_val(reask.get('reask_avoided'))} [dim]of[/dim] {_val(reask.get('considered'))}  [dim]reask%[/dim] {_pct(reask.get('reask_rate'))}")
+    tbl.add_row(
+        "reask avoided",
+        f"{_val(reask.get('reask_avoided'))} [dim]of[/dim] {_val(reask.get('considered'))}  [dim]reask%[/dim] {_pct(reask.get('reask_rate'))}",
+    )
     return Panel(tbl, title="[bold green]recall quality[/bold green]", border_style="green")
 
 
@@ -422,7 +475,9 @@ def _panel_memflow(_state_dir: Path) -> Panel:
     data = _fetch_memflow_utility()
     if not data:
         body = Text("memflow unavailable", style="dim italic")
-        return Panel(body, title="[bold]memflow[/bold]", border_style="bright_black", padding=(0, 1))
+        return Panel(
+            body, title="[bold]memflow[/bold]", border_style="bright_black", padding=(0, 1)
+        )
 
     cons = data.get("consumption") or {}
     out = data.get("outcome") or {}
@@ -519,10 +574,9 @@ def _panel_utility(state_dir: Path) -> Panel:
 
         try:
             for entry in read_grounding_log(state_dir, limit=2000):
-                g = entry.get("grounded")
-                if g is True:
+                if grounding_used(entry):
                     grounding_yes += 1
-                elif g is False:
+                else:
                     grounding_no += 1
         except Exception as exc:
             _log.debug("dashboard: grounding fetch failed: %s", exc)
@@ -539,7 +593,11 @@ def _panel_utility(state_dir: Path) -> Panel:
         tokens_saved = total_tokens
         cost_usd = tokens_saved * 0.00001
         strong_rate_pct = (strong / fired * 100) if fired else 0
-        grounding_rate_pct = (grounding_yes / (grounding_yes + grounding_no) * 100) if (grounding_yes + grounding_no) else 0
+        grounding_rate_pct = (
+            (grounding_yes / (grounding_yes + grounding_no) * 100)
+            if (grounding_yes + grounding_no)
+            else 0
+        )
         unique_mems = len(usage_ids)
 
         def _n(v: Any) -> str:

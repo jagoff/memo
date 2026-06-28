@@ -13,6 +13,7 @@ Chain: ~/.memo/bin/codex → ~/.memflow/bin/codex → real codex
 Safety: shims always exec the real binary; idempotent; no-clobber for
         non-memo files (marker line `# memo-shim` used to detect ours).
 """
+
 from __future__ import annotations
 
 import stat
@@ -63,9 +64,9 @@ _TTY_MARKER = "# memo-agent-tty"
 # shell env) can still find the active terminal via _read_agent_tty_file().
 _TTY_SNIPPET = (
     "\n{m}\n"
-    "[ -t 1 ] && export MEMO_AGENT_TTY=\"$(tty 2>/dev/null || true)\""
+    '[ -t 1 ] && export MEMO_AGENT_TTY="$(tty 2>/dev/null || true)"'
     " && printf '%s' \"$MEMO_AGENT_TTY\""
-    " > \"${{XDG_DATA_HOME:-$HOME/.local/share}}/memo/agent_tty\" 2>/dev/null || true"
+    ' > "${{XDG_DATA_HOME:-$HOME/.local/share}}/memo/agent_tty" 2>/dev/null || true'
     "  {m}\n"
 )
 _TTY_SNIPPET_V1 = "[ -t 1 ] && export MEMO_AGENT_TTY="  # old snippet without file write
@@ -101,13 +102,16 @@ def install_path_snippet(
     try:
         if tty_needs_upgrade:
             import re
+
             new_content = re.sub(
                 rf"{re.escape(_TTY_MARKER)}.*?{re.escape(_TTY_MARKER)}",
                 tty_snippet.strip("\n"),
                 existing,
                 flags=re.DOTALL,
             )
-            rc_path.write_text(new_content, encoding="utf-8")
+            tmp = rc_path.with_suffix(rc_path.suffix + ".tmp")
+            tmp.write_text(new_content, encoding="utf-8")
+            os.replace(tmp, rc_path)
             return f"upgraded:{rc_path}"
         with rc_path.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
@@ -210,5 +214,5 @@ def install_shims_cmd(agents: str, bin_dir: str, dry_run: bool) -> None:
     else:
         console.print(
             f"\n[bold]Add to your shell rc (before other agent dirs):[/bold]\n"
-            f"  [cyan]export PATH=\"{bin_path}:$PATH\"[/cyan]"
+            f'  [cyan]export PATH="{bin_path}:$PATH"[/cyan]'
         )

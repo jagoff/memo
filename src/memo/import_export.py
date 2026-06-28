@@ -56,7 +56,11 @@ class Importer:
             ImportResult with statistics.
         """
         data = json.loads(input_path.read_text(encoding="utf-8"))
-        memorias = data if isinstance(data, list) else data.get("memorias", [])
+        memorias = (
+            data
+            if isinstance(data, list)
+            else (data.get("memorias", []) if isinstance(data, dict) else [])
+        )
 
         imported = 0
         skipped = 0

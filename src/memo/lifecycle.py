@@ -298,26 +298,26 @@ class LifecycleManager:
         if not source_path.is_file():
             return False
 
-        # Step 1: Remove from searchable store FIRST. If this fails, we abort.
-        # The file persists in its original location until step 2 succeeds.
-        # Use delete (not forget) so get() returns None - matches test expectations.
-        deleted = self.memory.delete(memoria_id)
-        if not deleted:
-            return False
-
-        # Step 2: Move to inactive. If this fails, we have an orphan (file not
-        # readable but still exists) — recoverable via reindex.
         import shutil
 
+        # Step 1: Move the canonical .md to inactive/ FIRST. Until the move
+        # succeeds nothing is touched, so a failure loses nothing — the file
+        # stays in place and we abort. (Dropping the index first would let
+        # Memory.delete() unlink the canonical .md; if the move then failed the
+        # memory would be permanently destroyed instead of archived.)
         target_path = inactive_dir / source_path.name
         try:
             shutil.move(str(source_path), str(target_path))
         except OSError as exc:
-            import logging
+            _log.warning("archive_memoria: move failed for %s: %s", memoria_id, exc)
+            return False
 
-            logging.getLogger(__name__).warning(
-                f"archive_memoria: move failed for {memoria_id}: {exc}"
-            )
+        # Step 2: Drop the searchable index rows only (meta/vec/fts) via the
+        # store, NOT the .md — which now lives in inactive/. After this get()
+        # returns None (matches test expectations); the file is recoverable via
+        # reindex. Going through Memory.delete() here would unlink the moved
+        # file's original path (harmlessly) but is also heavier than needed.
+        self.memory.store.delete(memoria_id)
 
         # Log action
         self._actions_log.append(

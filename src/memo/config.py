@@ -62,6 +62,17 @@ CONTACTS_SUBDIR = f"{SYSTEM_DIR}/Contacts"
 # users don't accidentally back it up alongside their notes.
 _DEFAULT_STATE_DIR = Path.home() / ".local" / "share" / "memo"
 
+# TOML values may be hand-edited as strings ("false"), and bool("false") is True.
+# Coerce truthy/falsey spellings the way the flags registry does.
+_FALSEY_STRINGS = {"0", "false", "no", "off", ""}
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in _FALSEY_STRINGS
+
+
 MODEL_PROFILES: dict[str, dict[str, object]] = {
     # Lowest operational footprint: semantic search still works, but hybrid
     # search skips the cross-encoder so recall-hook latency stays predictable.
@@ -135,8 +146,7 @@ def _index_embedder_profile(db_path: Path) -> tuple[str, int] | None:
             # Fallback: read dimensionality straight off the vec0 table DDL.
             try:
                 row = conn.execute(
-                    "SELECT sql FROM sqlite_master "
-                    "WHERE type = 'table' AND name = 'vec'"
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vec'"
                 ).fetchone()
             except sqlite3.Error:
                 row = None
@@ -359,8 +369,9 @@ class Config(BaseModel):
                 return id_path.read_text(encoding="utf-8").strip()
             except Exception as exc:
                 _log.debug("config: failed to read device_id from %s: %s", id_path, exc)
-        
+
         import uuid
+
         new_id = str(uuid.uuid4()).replace("-", "")[:12]
         try:
             self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -393,7 +404,11 @@ class Config(BaseModel):
         placed here are never re-ingested as reference-tier rows.
         """
         if self.memories_in_vault and self.vault_path is not None:
-            return self.vault_path / AI_SUBDIR / "memory"
+            # Read MEMO_VAULT_SYSTEM_DIR at call time (not the frozen module-level
+            # AI_SUBDIR) so a flag set after import is honored. Same default as
+            # the module constant.
+            system_dir = flag_str("MEMO_VAULT_SYSTEM_DIR") or "Obsidian"
+            return self.vault_path / system_dir / "AI" / "memory"
         return self.data_dir
 
     @property
@@ -457,9 +472,9 @@ class Config(BaseModel):
             if storage.get(fkey):
                 kwargs[fkey] = storage[fkey]
         if storage.get("memories_in_vault") is not None:
-            kwargs["memories_in_vault"] = bool(storage["memories_in_vault"])
+            kwargs["memories_in_vault"] = _coerce_bool(storage["memories_in_vault"])
         if storage.get("single_db") is not None:
-            kwargs["single_db"] = bool(storage["single_db"])
+            kwargs["single_db"] = _coerce_bool(storage["single_db"])
 
         # Step 2: model profile defaults. Individual env vars below
         # intentionally override profile choices.
@@ -570,9 +585,7 @@ class Config(BaseModel):
                         cfg.embedder_model,
                         cfg.embedder_dims,
                     )
-                    cfg = cfg.model_copy(
-                        update={"embedder_model": model, "embedder_dims": dims}
-                    )
+                    cfg = cfg.model_copy(update={"embedder_model": model, "embedder_dims": dims})
         else:
             # When embedder is explicitly pinned, validate against existing index
             # and warn if dimensions changed (requires reindex)

@@ -78,14 +78,23 @@ def _memflow_query(
             i += 1
             continue
         # Pattern: "<score> <kind> <path>"
-        m = re.match(r"^([0-9.]+)\s+(\S+)\s+(.+)$", line)
+        record_re = r"^([0-9.]+)\s+(\S+)\s+(.+)$"
+        m = re.match(record_re, line)
         if m:
             score = float(m.group(1))
             kind = m.group(2)
             path = m.group(3)
-            snippet = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            # The following line is a snippet only if it isn't itself a record
+            # line; otherwise this record has no snippet — advance by one so the
+            # next record isn't silently swallowed.
+            nxt = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            if nxt and not re.match(record_re, nxt):
+                snippet = nxt
+                i += 2
+            else:
+                snippet = ""
+                i += 1
             results.append({"score": score, "kind": kind, "path": path, "snippet": snippet[:120]})
-            i += 2
         else:
             i += 1
     return results

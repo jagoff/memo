@@ -54,6 +54,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memo_synthesize_list(
         confidence: str | None = None,
+        limit: int = 100,
     ) -> list[dict[str, Any]]:
         """List all existing synthesis memories with their provenance.
 
@@ -64,15 +65,20 @@ def register(server: FastMCP, memory: Memory) -> None:
             confidence: Optional filter by confidence level: "low", "medium",
                 or "high". When None (default), all synthesis memories are
                 returned regardless of confidence.
+            limit: Maximum number of synthesis memories to read from the index
+                (most recent first). Caps the per-file disk reads.
         """
         _valid_conf = {"low", "medium", "high"}
         if confidence is not None and confidence not in _valid_conf:
-            raise ValueError(f"confidence must be one of {sorted(_valid_conf)} or None, got {confidence!r}")
+            raise ValueError(
+                f"confidence must be one of {sorted(_valid_conf)} or None, got {confidence!r}"
+            )
 
         store_conn = memory.store.connection
         rows = store_conn.execute(
             "SELECT meta.id, meta.title, meta.path, meta.created, meta.updated "
-            "FROM meta WHERE meta.type = 'synthesis' ORDER BY meta.updated DESC",
+            "FROM meta WHERE meta.type = 'synthesis' ORDER BY meta.updated DESC LIMIT ?",
+            (limit,),
         ).fetchall()
 
         results: list[dict[str, Any]] = []

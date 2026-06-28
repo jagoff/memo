@@ -7,6 +7,7 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from fastmcp import FastMCP
@@ -37,7 +38,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             limit=limit,
             mode=mode,
         )
-        return [r.__dict__ for r in results]
+        return [dataclasses.asdict(r) for r in results]
 
     @server.tool()
     def memo_contextual_record_search(
@@ -81,7 +82,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         system has learned about the user's preferences.
         """
         prefs = memory.contextual.context.get_preferences()
-        return prefs.__dict__
+        return dataclasses.asdict(prefs)
 
     @server.tool()
     def memo_contextual_history(
@@ -96,4 +97,4 @@ def register(server: FastMCP, memory: Memory) -> None:
             limit: Number of recent prompts to return.
         """
         history = memory.contextual.context.get_recent_context(n=limit)
-        return [c.__dict__ for c in history]
+        return [dataclasses.asdict(c) for c in history]

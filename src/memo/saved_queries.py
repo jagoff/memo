@@ -166,9 +166,18 @@ class QueryComposer:
             type_=query.type_filter,  # pushed to SQL
         )
 
-        # Pre-parse date bounds once (not per-hit).
-        from_dt = datetime.fromisoformat(query.date_from) if query.date_from else None
-        to_dt = datetime.fromisoformat(query.date_to) if query.date_to else None
+        # Pre-parse date bounds once (not per-hit). A malformed saved date
+        # skips that bound instead of crashing execute_query.
+        try:
+            from_dt = datetime.fromisoformat(query.date_from) if query.date_from else None
+        except ValueError:
+            _log.debug("saved_queries: unparseable date_from %r, skipping bound", query.date_from)
+            from_dt = None
+        try:
+            to_dt = datetime.fromisoformat(query.date_to) if query.date_to else None
+        except ValueError:
+            _log.debug("saved_queries: unparseable date_to %r, skipping bound", query.date_to)
+            to_dt = None
 
         # Apply remaining post-filters (tags, date range).
         filtered = []

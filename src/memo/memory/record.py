@@ -472,9 +472,7 @@ def _rrf_confident_top(
         return RRFConfidenceDecision(skip=True, top_id=top_id, ratio=float("inf"), gap=top_score)
 
     second = rows[1]
-    second_score = float(
-        (second.get("score") if isinstance(second, dict) else second.score) or 0.0
-    )
+    second_score = float((second.get("score") if isinstance(second, dict) else second.score) or 0.0)
     gap = top_score - second_score
     ratio = float("inf") if second_score <= 0 else top_score / second_score
     skip = top_score > 0 and gap >= min_gap and ratio >= min_ratio
@@ -570,10 +568,6 @@ def _halflife_for_type(memory_type: str | None, global_halflife: float) -> float
     if not memory_type:
         return global_halflife
     flag_name = _PER_TYPE_HALFLIFE_FLAGS.get(memory_type)
-    if flag_name is None and memory_type in _PER_TYPE_HALFLIFE_FLAGS:
-        # Type is registered but flag_name entry itself is None — reserved for
-        # future extension; treat as no-decay.
-        return 0.0
     if flag_name is None:
         # Type not in per-type registry; use global halflife.
         return global_halflife

@@ -10,6 +10,7 @@ This module implements patterns from https://github.com/Gentleman-Programming/en
 These patterns enhance memo's core storage with session lifecycle,
 conflict detection during save, andupsert semantics via topic_key.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -22,6 +23,15 @@ from typing import Any
 from memo.identity import _session_id
 
 _log = logging.getLogger(__name__)
+
+_VALID_RELATIONS = {
+    "related",
+    "compatible",
+    "scoped",
+    "conflicts_with",
+    "supersedes",
+    "not_conflict",
+}
 
 
 def _normalize_hash(title: str, type_: str, scope: str = "project") -> str:
@@ -122,7 +132,18 @@ def _find_git_child(cwd: str) -> Any | None:
 
     start = time.time()
     children = []
-    skip = {".git", "node_modules", "vendor", ".venv", "__pycache__", "target", "dist", "build", ".idea", ".vscode"}
+    skip = {
+        ".git",
+        "node_modules",
+        "vendor",
+        ".venv",
+        "__pycache__",
+        "target",
+        "dist",
+        "build",
+        ".idea",
+        ".vscode",
+    }
 
     try:
         for entry in path.iterdir():
@@ -233,8 +254,7 @@ def register(server: Any, memory: Any) -> None:
 
         with memory.store._tx() as cx:
             cx.execute(
-                "UPDATE sessions SET ended_at = ?, summary = ?, status = 'completed' "
-                "WHERE id = ?",
+                "UPDATE sessions SET ended_at = ?, summary = ?, status = 'completed' WHERE id = ?",
                 (now, summary, session_id),
             )
 
@@ -380,17 +400,9 @@ def register(server: Any, memory: Any) -> None:
         Returns the judged relation.
         """
         now = datetime.datetime.now(datetime.UTC).isoformat()
-        valid_relations = {
-            "related",
-            "compatible",
-            "scoped",
-            "conflicts_with",
-            "supersedes",
-            "not_conflict",
-        }
 
-        if relation not in valid_relations:
-            return {"error": f"invalid relation, must be one of {valid_relations}"}
+        if relation not in _VALID_RELATIONS:
+            return {"error": f"invalid relation, must be one of {_VALID_RELATIONS}"}
 
         _ensure_session_table(memory)
 
@@ -430,6 +442,9 @@ def register(server: Any, memory: Any) -> None:
         """
         import uuid
 
+        if relation not in _VALID_RELATIONS:
+            return {"error": f"invalid relation, must be one of {_VALID_RELATIONS}"}
+
         if relation == "not_conflict":
             return {"sync_id": "", "status": "no-op"}
 
@@ -446,7 +461,16 @@ def register(server: Any, memory: Any) -> None:
                 (sync_id, source_id, target_id, relation, judgment_status, reason, confidence, session_id, created_at)
                 VALUES (?, ?, ?, ?, 'judged', ?, ?, ?, ?)
                 """,
-                (sync_id, memory_id_a, memory_id_b, relation, reasoning, confidence, session_id, now),
+                (
+                    sync_id,
+                    memory_id_a,
+                    memory_id_b,
+                    relation,
+                    reasoning,
+                    confidence,
+                    session_id,
+                    now,
+                ),
             )
 
         return {"sync_id": sync_id, "status": "created"}
@@ -483,13 +507,7 @@ def register(server: Any, memory: Any) -> None:
         # Generate description from title
         if title:
             # kebab-case the description
-            desc = (
-                title.lower()
-                .strip()
-                .replace(" ", "-")
-                .replace("_", "-")
-                .replace("/", "-")
-            )
+            desc = title.lower().strip().replace(" ", "-").replace("_", "-").replace("/", "-")
             # Strip common prefixes
             for prefix in ["fixed-", "added-", "updated-", "implemented-"]:
                 if desc.startswith(prefix):
@@ -590,12 +608,10 @@ def register(server: Any, memory: Any) -> None:
 
         # Check FTS sync
         try:
-            fts_count = memory.store._conn.execute(
-                "SELECT COUNT(*) as c FROM fts"
-            ).fetchone()["c"]
-            meta_count = memory.store._conn.execute(
-                "SELECT COUNT(*) as c FROM meta"
-            ).fetchone()["c"]
+            fts_count = memory.store._conn.execute("SELECT COUNT(*) as c FROM fts").fetchone()["c"]
+            meta_count = memory.store._conn.execute("SELECT COUNT(*) as c FROM meta").fetchone()[
+                "c"
+            ]
 
             if abs(fts_count - meta_count) > 10:
                 store_issues.append("fts desync detected")

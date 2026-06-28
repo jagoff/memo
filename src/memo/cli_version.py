@@ -122,3 +122,4 @@ def version_rollback(memoria_id: str, version_id: int, reason: str | None) -> No
         console.print(f"[green]Rolled back {memoria_id[:8]} to version {version_id}[/green]")
     else:
         console.print("[red]Failed to rollback[/red]")
+        raise SystemExit(1)

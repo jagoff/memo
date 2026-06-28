@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import click
 
@@ -24,7 +24,7 @@ def stats() -> None:
     mem = Memory(Config.from_env())
     state_dir = mem.cfg.state_dir
 
-    console.print(f"\n[bold cyan]memo stats — {datetime.now().strftime('%H:%M:%S')}[/bold cyan]")
+    console.print(f"\n[bold cyan]memo stats — {datetime.now(UTC).strftime('%H:%M:%S')}[/bold cyan]")
 
     console.print("\n[bold]📚 Corpus[/bold]")
     console.print(f"  total       {mem.store.count():,}")
@@ -46,6 +46,7 @@ def stats() -> None:
     usage_ids: set[str] = set()
     try:
         from memo.dashboard import read_usage_log
+
         for e in read_usage_log(state_dir, limit=2000):
             if e.get("id"):
                 usage_ids.add(e["id"])
@@ -74,8 +75,8 @@ def stats() -> None:
     try:
         h = recall_health(state_dir)
         if h.get("fired"):
-            hit_pct = (h.get("hit_rate", 0) * 100)
-            strong_pct = (h.get("strong_hit_rate", 0) * 100)
+            hit_pct = h.get("hit_rate", 0) * 100
+            strong_pct = h.get("strong_hit_rate", 0) * 100
             console.print(f"  recall hooks   {h['fired']} fired")
             console.print(f"  hit rate      {hit_pct:.0f}%")
             console.print(f"  strong hits   {strong_pct:.0f}% (score >0.7)")
@@ -94,7 +95,7 @@ def stats() -> None:
                 name = c.get("consumer", "?")[:15]
                 consults = c.get("consults", 0)
                 hit = c.get("hit_rate")
-                hit_s = f"{hit*100:.0f}%" if hit else "—"
+                hit_s = f"{hit * 100:.0f}%" if hit else "—"
                 console.print(f"  {name:<15} {consults:>4} consults {hit_s:>5} hit")
         else:
             console.print("  [dim](no data)[/dim]")

@@ -77,27 +77,45 @@ def install_watcher(memo_bin: str | None, no_load: bool) -> None:
     target = f"{domain}/{_PLIST_LABEL}"
 
     # Unload first if already present, to pick up plist changes.
-    subprocess.run(
-        ["launchctl", "bootout", target],
-        check=False,
-        capture_output=True,
-    )
-    res = subprocess.run(
-        ["launchctl", "bootstrap", domain, str(plist_path)],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        subprocess.run(
+            ["launchctl", "bootout", target],
+            check=False,
+            capture_output=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException(
+            f"launchctl bootout timed out (15s) for {target}.",
+        ) from exc
+    try:
+        res = subprocess.run(
+            ["launchctl", "bootstrap", domain, str(plist_path)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException(
+            f"launchctl bootstrap timed out (15s) for {target}.",
+        ) from exc
     if res.returncode != 0:
         raise click.ClickException(
             f"launchctl bootstrap failed: {res.stderr.strip() or res.stdout.strip()}",
         )
 
     # Verify.
-    verify = subprocess.run(
-        ["launchctl", "print", target],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        verify = subprocess.run(
+            ["launchctl", "print", target],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException(
+            f"launchctl print timed out (15s) for {target}.",
+        ) from exc
     if verify.returncode != 0:
         raise click.ClickException(
             "Plist loaded but `launchctl print` could not find it. "
@@ -125,11 +143,17 @@ def uninstall_watcher_cmd() -> None:
 
     uid = os.getuid()
     target = f"gui/{uid}/{_PLIST_LABEL}"
-    subprocess.run(
-        ["launchctl", "bootout", target],
-        check=False,
-        capture_output=True,
-    )
+    try:
+        subprocess.run(
+            ["launchctl", "bootout", target],
+            check=False,
+            capture_output=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException(
+            f"launchctl bootout timed out (15s) for {target}.",
+        ) from exc
     existed = uninstall_plist()
     if existed:
         console.print("[green]✓ watcher uninstalled.[/green]")

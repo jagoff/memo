@@ -116,7 +116,7 @@ def hook_log(limit: int, follow: bool) -> None:
                                 console.print(_fmt_entry(e))
                             except json.JSONDecodeError:
                                 pass
-                    last_pos = new_size
+                        last_pos = f.tell()
             time.sleep(0.5)
     except KeyboardInterrupt:
         pass

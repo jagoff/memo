@@ -29,7 +29,8 @@ from .dashboard import (
 def _secs(env: str, default: int) -> int:
     from memo.flags import flag_int
 
-    return flag_int(env) or default
+    _v = flag_int(env)
+    return default if _v is None else _v
 
 
 # Rough chars→tokens ratio for English/Spanish prose (OpenAI/Anthropic ~4).

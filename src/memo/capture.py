@@ -45,8 +45,10 @@ user explicitly sets `MEMO_CAPTURE_DEBUG=1`, errors print to stderr.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
+import os
 import re as _re
 import sys
 from pathlib import Path
@@ -147,8 +149,14 @@ def _load_state(state_dir: Path) -> dict[str, Any]:
 
 
 def _save_state(state_dir: Path, state: dict[str, Any]) -> None:
+    # Atomic write: this file is shared by every session on the machine, so a
+    # torn/partial write would clobber a sibling session's last-capture state.
+    # Write to a .tmp then os.replace (mirrors session.py `_write`).
     state_dir.mkdir(parents=True, exist_ok=True)
-    _state_file(state_dir).write_text(json.dumps(state), encoding="utf-8")
+    dest = _state_file(state_dir)
+    tmp = dest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state), encoding="utf-8")
+    os.replace(tmp, dest)
 
 
 def _parse_transcript(transcript_path: Path) -> list[tuple[str, str]]:
@@ -723,10 +731,17 @@ def _load_watermark(state_dir: Path, session_id: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _capture_lock_file(state_dir: Path, session_id: str) -> Path:
+    return state_dir / ".capture_watermark" / f"{session_id}.capture.lock"
+
+
 def _save_watermark(state_dir: Path, session_id: str, watermark: dict[str, Any]) -> None:
     f = _watermark_file(state_dir, session_id)
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(watermark), encoding="utf-8")
+    # Atomic write (see _save_state): never leave a torn watermark behind.
+    tmp = f.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(watermark), encoding="utf-8")
+    os.replace(tmp, f)
 
 
 def incremental_tick_due(state_dir: Path, session_id: str, interval_s: int) -> bool:
@@ -771,47 +786,62 @@ def run_capture_incremental(
     from memo.memory import Memory
 
     cfg = Config.from_env()
-    exchanges = _parse_exchanges(transcript_path)
-    if not exchanges:
-        return {"status": "no_pair"}
 
-    total = len(exchanges)
-    wm = _load_watermark(cfg.state_dir, session_id)
-    try:
-        start = int(wm.get("exchange_count", 0) or 0)
-    except (TypeError, ValueError):
-        start = 0
-    # A negative watermark is invalid — reset to beginning.
-    # A watermark ahead of the transcript means nothing new; clamp to total.
-    if start < 0:
-        start = 0
-    elif start > total:
-        start = total
+    # Cross-process lock: the idle-capture daemon and the MCP server's
+    # _auto_capture can both run this for the same session concurrently. Without
+    # a lock they race the load-watermark→process→stamp cycle and double-save.
+    # Hold an exclusive, non-blocking flock for the whole cycle; if another
+    # process already holds it, skip this run cleanly — it advances the
+    # watermark, and the next due tick picks up anything newer.
+    lock_path = _capture_lock_file(cfg.state_dir, session_id)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w", encoding="utf-8") as lock_fh:
+        try:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return {"status": "locked"}
 
-    def _stamp() -> None:
-        _save_watermark(
-            cfg.state_dir,
-            session_id,
-            {"session_id": session_id, "exchange_count": total, "updated": time.time()},
-        )
+        exchanges = _parse_exchanges(transcript_path)
+        if not exchanges:
+            return {"status": "no_pair"}
 
-    new = exchanges[start:]
-    if not new:
-        _stamp()  # refresh `updated` so the throttle clock advances
-        return {"status": "no_new", "exchange_count": total}
+        total = len(exchanges)
+        wm = _load_watermark(cfg.state_dir, session_id)
+        try:
+            start = int(wm.get("exchange_count", 0) or 0)
+        except (TypeError, ValueError):
+            start = 0
+        # A negative watermark is invalid — reset to beginning.
+        # A watermark ahead of the transcript means nothing new; clamp to total.
+        if start < 0:
+            start = 0
+        elif start > total:
+            start = total
 
-    combined_user = "\n\n---\n\n".join(u for u, _ in new)
-    combined_assistant = "\n\n---\n\n".join(a for _, a in new)
+        def _stamp() -> None:
+            _save_watermark(
+                cfg.state_dir,
+                session_id,
+                {"session_id": session_id, "exchange_count": total, "updated": time.time()},
+            )
 
-    if not _passes_prefilter(combined_assistant):
-        # Advance past these triggerless turns so we don't re-scan them.
+        new = exchanges[start:]
+        if not new:
+            _stamp()  # refresh `updated` so the throttle clock advances
+            return {"status": "no_new", "exchange_count": total}
+
+        combined_user = "\n\n---\n\n".join(u for u, _ in new)
+        combined_assistant = "\n\n---\n\n".join(a for _, a in new)
+
+        if not _passes_prefilter(combined_assistant):
+            # Advance past these triggerless turns so we don't re-scan them.
+            _stamp()
+            return {"status": "no_trigger", "exchange_count": total}
+
+        mem = Memory(cfg)
+        try:
+            result = _extract_and_save(mem, cfg, combined_user, combined_assistant, debug=debug)
+        finally:
+            mem.close()
         _stamp()
-        return {"status": "no_trigger", "exchange_count": total}
-
-    mem = Memory(cfg)
-    try:
-        result = _extract_and_save(mem, cfg, combined_user, combined_assistant, debug=debug)
-    finally:
-        mem.close()
-    _stamp()
-    return {"status": "ok", "processed_turns": len(new), "exchange_count": total, **result}
+        return {"status": "ok", "processed_turns": len(new), "exchange_count": total, **result}

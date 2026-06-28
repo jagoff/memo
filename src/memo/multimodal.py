@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -107,7 +108,9 @@ class MultiModalStore:
                     "metadata": content.metadata,
                     "created_at": content.created_at,
                 }
-            self.content_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            tmp = self.content_file.with_suffix(self.content_file.suffix + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(tmp, self.content_file)
         except (OSError, TypeError, ValueError) as exc:
             _log.error("multimodal: failed to persist content store: %s", exc)
 
@@ -199,6 +202,8 @@ class MultiModalStore:
         """Compute cosine similarity between two embeddings."""
         import math
 
+        if len(a) != len(b):
+            return 0.0
         dot = sum(x * y for x, y in zip(a, b, strict=False))
         mag_a = math.sqrt(sum(x * x for x in a))
         mag_b = math.sqrt(sum(y * y for y in b))

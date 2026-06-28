@@ -322,27 +322,11 @@ class _WriteOpsMixin(_MemoryBase):
             except Exception as _exc:
                 _log.debug("save: dedup check skipped: %s", _exc)
 
-        # Topic key upsert (engram pattern)
-        # If topic_key provided, check for existing record with same topic_key and update instead of create.
+        # Topic key upsert (engram pattern): the lookup runs INSIDE
+        # _save_path_lock (below), alongside the path reuse it feeds — see the
+        # comment on the lock for why holding it across the SELECT matters.
         use_existing_id: str | None = None
         existing_path: str | None = None
-        if topic_key:
-            try:
-                existing = self.store._conn.execute(
-                    "SELECT id, path, created FROM meta WHERE topic_key = ? AND deleted_at IS NULL LIMIT 1",
-                    (topic_key,),
-                ).fetchone()
-                if existing is not None and existing["id"]:
-                    use_existing_id = existing["id"]
-                    existing_path = existing["path"]
-                    # Preserve original creation date when caller didn't supply one
-                    if not created and existing["created"]:
-                        created_iso = existing["created"]
-                    _log.info("topic_key upsert: updating existing %s (path=%s)", use_existing_id[:8], existing_path)
-            except Exception as exc:
-                _log.debug("topic_key lookup failed: %s", exc)
-
-        record_id = use_existing_id or uuid.uuid4().hex
 
         body_hash = _sha256_short(content)
 
@@ -354,6 +338,7 @@ class _WriteOpsMixin(_MemoryBase):
             if _flag_bool("MEMO_DEDUP_EXACT"):
                 try:
                     from memo.server_engram_patterns import _normalize_hash as _engram_hash
+
                     normalized_hash = _engram_hash(title or "", type_, "project")
                 except Exception:
                     _log.debug("engram hash generation failed")
@@ -376,17 +361,6 @@ class _WriteOpsMixin(_MemoryBase):
             except Exception as exc:
                 _log.debug("entity extraction failed during save: %s", exc)
 
-        post = frontmatter.Post(
-            content,
-            id=record_id,
-            title=title,
-            type=type_,
-            tags=norm_tags,
-            created=created_iso,
-            updated=now_iso,
-        )
-        post["extra"] = extra_for_store or {}
-
         # Allocate a unique path and create the .md atomically under a lock:
         # `meta.path` is UNIQUE, so two concurrent same-title+date saves probing
         # the same free path would have the loser overwrite the winner's file
@@ -394,7 +368,45 @@ class _WriteOpsMixin(_MemoryBase):
         # loser's content. The slow embed runs AFTER this block.
         # Write `.md` first — if anything fails after this, the user can recover
         # by re-indexing; writing the index first would point it at a missing file.
+        # The topic_key lookup runs under the SAME lock: its result (existing
+        # id/path) is consumed by the file write below, so holding the lock
+        # across the SELECT closes the TOCTOU vs a concurrent delete.
         with self._save_path_lock:
+            # If topic_key provided, check for an existing record with the same
+            # topic_key and reuse its id/path (update instead of create).
+            if topic_key:
+                try:
+                    existing = self.store._conn.execute(
+                        "SELECT id, path, created FROM meta WHERE topic_key = ? AND deleted_at IS NULL LIMIT 1",
+                        (topic_key,),
+                    ).fetchone()
+                    if existing is not None and existing["id"]:
+                        use_existing_id = existing["id"]
+                        existing_path = existing["path"]
+                        # Preserve original creation date when caller didn't supply one
+                        if not created and existing["created"]:
+                            created_iso = existing["created"]
+                        _log.info(
+                            "topic_key upsert: updating existing %s (path=%s)",
+                            use_existing_id[:8],
+                            existing_path,
+                        )
+                except Exception as exc:
+                    _log.debug("topic_key lookup failed: %s", exc)
+
+            record_id = use_existing_id or uuid.uuid4().hex
+
+            post = frontmatter.Post(
+                content,
+                id=record_id,
+                title=title,
+                type=type_,
+                tags=norm_tags,
+                created=created_iso,
+                updated=now_iso,
+            )
+            post["extra"] = extra_for_store or {}
+
             # For topic key upserts, reuse the existing path instead of creating a new one
             rel_path = existing_path if existing_path else self._build_rel_path(title, now_iso)
             abs_path = self.cfg.memory_dir / rel_path

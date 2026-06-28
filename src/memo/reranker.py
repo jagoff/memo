@@ -249,17 +249,24 @@ class MLXReranker:
         pattern from ``MLXEmbedder.unload()`` so the ``memo-mcp``
         daemon can cycle models without restarting.
         """
-        self._model = None
-        self._tokenizer = None
-        self._yes_id = None
-        self._no_id = None
-        self._loaded_at = None
         from contextlib import suppress
 
-        with suppress(ImportError, AttributeError):
-            import mlx.core as mx
+        # Take _load_lock before zeroing any field so we don't race
+        # _ensure_loaded() into a half-loaded state (spurious RuntimeError).
+        with self._load_lock:
+            self._model = None
+            self._tokenizer = None
+            self._yes_id = None
+            self._no_id = None
+            self._loaded_at = None
+            with suppress(ImportError, AttributeError):
+                import mlx.core as mx
 
-            mx.clear_cache()
+                # Serialize the cache flush against concurrent mx.eval /
+                # float(scalar) in other threads; clear_cache() racing a live
+                # Metal command buffer aborts the interpreter (memo.mlx_gpu).
+                with gpu_guard():
+                    mx.clear_cache()
 
     def warmup(self) -> None:
         """Force-load + run one tiny scoring pass so the first real

@@ -66,6 +66,10 @@ def maint_daemon_start() -> None:
         if sock_path.exists():
             break
 
+    if not sock_path.exists():
+        click.echo("maint daemon failed to start — check logs", err=True)
+        sys.exit(1)
+
     click.echo(f"maint daemon started (pid={proc.pid})", err=True)
 
 

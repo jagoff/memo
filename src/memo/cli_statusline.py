@@ -126,7 +126,9 @@ def wire_statusline(claude_dir: Path | None = None, *, force: bool = False) -> d
     new_value, action = _compute_statusline(settings.get("statusLine"), dest, force=force)
     if new_value is not None:
         settings["statusLine"] = new_value
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        tmp = settings_path.with_suffix(settings_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, settings_path)
     return {"action": action, "dest": str(dest)}
 
 

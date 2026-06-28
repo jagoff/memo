@@ -78,6 +78,7 @@ class _SearchOpsMixin(_MemoryBase):
                 (see `memo.tiers`) so bulk vault material stays searchable on
                 demand but never drowns durable knowledge in the prompt.
         """
+
         def _add_trace(stage: str, **data: Any) -> None:
             if _trace is not None:
                 _trace.append({"stage": stage, **data})
@@ -93,7 +94,9 @@ class _SearchOpsMixin(_MemoryBase):
             rows = self.store.search_bm25(
                 query, limit=limit, type_=type_, exclude_types=exclude_types
             )
-            _add_trace("candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows))
+            _add_trace(
+                "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
+            )
         elif mode == "exact":
             # Precise keyword lookup: strict AND (no OR loosening) with an
             # elevated tag/title field boost so a term in curated metadata
@@ -105,12 +108,16 @@ class _SearchOpsMixin(_MemoryBase):
                 exclude_types=exclude_types,
                 field_boost="exact",
             )
-            _add_trace("candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows))
+            _add_trace(
+                "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
+            )
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
                 query, limit=limit, type_=type_, exclude_types=exclude_types
             )
-            _add_trace("candidate_generation", mode=mode, fuzzy_count=len(rows), output_count=len(rows))
+            _add_trace(
+                "candidate_generation", mode=mode, fuzzy_count=len(rows), output_count=len(rows)
+            )
         elif mode == "vec":
             # Asymmetric retrieval: queries are embedded WITH the
             # instruction prefix; documents are embedded RAW (in
@@ -118,7 +125,9 @@ class _SearchOpsMixin(_MemoryBase):
             # in `embedder.py` for the why.
             emb = self.embedder.embed_query(query)
             rows = self.store.search(emb, limit=limit, type_=type_, exclude_types=exclude_types)
-            _add_trace("candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows))
+            _add_trace(
+                "candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows)
+            )
         else:
             emb = None  # set below in hybrid's vec branch; used by feedback boost
             # hybrid — fetch a wider candidate set from each side and
@@ -133,8 +142,12 @@ class _SearchOpsMixin(_MemoryBase):
                 vec_hits = self.store.search(
                     emb, limit=k_each, type_=type_, exclude_types=exclude_types
                 )
-            except Exception:
-                _log.warning("embedder unavailable, vec leg disabled in hybrid mode")
+            except Exception as exc:
+                _log.warning(
+                    "embedder unavailable, vec leg disabled in hybrid mode: %s",
+                    exc,
+                    exc_info=True,
+                )
                 vec_hits = []
             # Adaptive rerank pool: resize input_k based on the score spread of
             # vec candidates.  High variance → results are diverse, widen the pool
@@ -143,13 +156,9 @@ class _SearchOpsMixin(_MemoryBase):
             # Thresholds and multiplier are intentionally hardcoded (not flags) to
             # avoid flag proliferation; the outer MEMO_RERANK_ADAPTIVE_POOL gate
             # keeps the eval baseline stable when disabled.
-            if (
-                self.cfg.reranker_enabled
-                and flag_bool("MEMO_RERANK_ADAPTIVE_POOL")
-                and vec_hits
-            ):
+            if self.cfg.reranker_enabled and flag_bool("MEMO_RERANK_ADAPTIVE_POOL") and vec_hits:
                 _STDDEV_HIGH = 0.15  # above this → high diversity
-                _STDDEV_LOW = 0.05   # below this → tight cluster
+                _STDDEV_LOW = 0.05  # below this → tight cluster
                 _POOL_MULT = 1.5
                 _POOL_CAP = 200
                 scores = [h.get("score") or 0.0 for h in vec_hits]
@@ -213,8 +222,7 @@ class _SearchOpsMixin(_MemoryBase):
                 _weight_sum = w_vec + w_bm25
                 if abs(_weight_sum - 1.0) > 0.05:
                     _log.warning(
-                        "MEMO_SEARCH_VEC_WEIGHT + MEMO_SEARCH_BM25_WEIGHT = %.2f "
-                        "(expected 1.0)",
+                        "MEMO_SEARCH_VEC_WEIGHT + MEMO_SEARCH_BM25_WEIGHT = %.2f (expected 1.0)",
                         _weight_sum,
                     )
             # Build weight list aligned with the lists passed to _rrf_fuse:
@@ -222,8 +230,13 @@ class _SearchOpsMixin(_MemoryBase):
             rrf_weights = [w_vec, w_bm25, w_bm25, 1.0]
 
             rows = _rrf_fuse(
-                vec_hits, bm_hits, exact_hits, graph_hits,
-                limit=input_k, k=rrf_k, weights=rrf_weights,
+                vec_hits,
+                bm_hits,
+                exact_hits,
+                graph_hits,
+                limit=input_k,
+                k=rrf_k,
+                weights=rrf_weights,
             )
             _add_trace(
                 "candidate_generation",
@@ -270,7 +283,9 @@ class _SearchOpsMixin(_MemoryBase):
                     score=r.get("score"),
                 ),
             )
-        _add_trace("materialize", input_count=len(rows), output_count=len(out), load_bodies=load_bodies)
+        _add_trace(
+            "materialize", input_count=len(rows), output_count=len(out), load_bodies=load_bodies
+        )
         # Drop soft-forgotten memories (forget_after TTL elapsed, see
         # lifecycle.py) before feedback/rerank so they never reach the
         # consumer — recall, ask, chat all route through here. Reversible

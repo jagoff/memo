@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import threading
+import weakref
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,7 @@ class EpisodeStore(_ConnectionMixin):
         self.db_path = Path(db_path)
         self.dims = dims
         self._local = threading.local()
-        self._conn_holders: set[Any] = set()
+        self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
         self._conn_holders_lock = threading.Lock()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()

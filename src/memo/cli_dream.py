@@ -263,9 +263,7 @@ def dream_run(
                             # verdict actually steers ranking: lower its
                             # confidence (health-score multiplier, default-on)
                             # instead of marking "both kept" and changing nothing.
-                            older, _newer = _older_id(
-                                mem, pair.memoria_id_a, pair.memoria_id_b
-                            )
+                            older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
                             if _evo_conf < 1.0:
                                 try:
                                     mem.store.set_confidence_batch([(older, _evo_conf)])
@@ -446,14 +444,15 @@ def dream_run(
                         )
                         receipt["source_feedback_mined"] = fb
                     except Exception as _exc:
-                        receipt["errors"].append(
-                            f"source_feedback: {type(_exc).__name__}: {_exc}"
-                        )
+                        receipt["errors"].append(f"source_feedback: {type(_exc).__name__}: {_exc}")
                 min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 0
                 for d in dead_weight(mem, min_surfaced=min_surfaced):
-                    if mem.forget(
-                        d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
-                    ) is not None:
+                    if (
+                        mem.forget(
+                            d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
+                        )
+                        is not None
+                    ):
                         receipt["dead_archived"].append(d["id"])
                 progress.update(
                     step,
@@ -717,5 +716,5 @@ def dream_if_due() -> None:
             start_new_session=True,
             env={**_os.environ, "MEMO_NONINTERACTIVE": "1"},
         )
-    except Exception:  # noqa: S110
-        pass
+    except Exception as exc:
+        _log.warning("dream --if-due: failed to spawn background dream: %s", exc)

@@ -180,7 +180,10 @@ def _prewarm_after_update() -> None:
         if memo_bin.endswith("memo")
         else [memo_bin, "-m", "memo.cli", "prewarm", "--download-all"]
     )
-    subprocess.run(cmd, check=False)
+    try:
+        subprocess.run(cmd, check=False, timeout=300)
+    except subprocess.TimeoutExpired:
+        console.print("[yellow]prewarm timed out (300s); skipping model warmup.[/yellow]")
 
 
 @click.command(name="update")
@@ -240,13 +243,25 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         if method == "uv":
             uv = _find_uv() or "uv"
             console.print(f"[dim]Installing {to_tag} via uv tool…[/dim]")
-            proc = subprocess.run(
-                [uv, "tool", "install", spec, "--force", "--reinstall"], check=False
-            )
+            try:
+                proc = subprocess.run(
+                    [uv, "tool", "install", spec, "--force", "--reinstall"],
+                    check=False,
+                    timeout=600,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise click.ClickException(
+                    f"git-tag install of {to_tag} timed out (600s)."
+                ) from exc
         elif method == "pipx":
             pipx = _find_pipx() or "pipx"
             console.print(f"[dim]Installing {to_tag} via pipx…[/dim]")
-            proc = subprocess.run([pipx, "install", "--force", spec], check=False)
+            try:
+                proc = subprocess.run([pipx, "install", "--force", spec], check=False, timeout=600)
+            except subprocess.TimeoutExpired as exc:
+                raise click.ClickException(
+                    f"git-tag install of {to_tag} timed out (600s)."
+                ) from exc
         else:
             raise click.ClickException(
                 "Could not detect install method (pipx/uv) for git-tag update."
@@ -275,13 +290,25 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
         if method == "uv":
             uv = _find_uv() or "uv"
             console.print(f"[dim]Installing {latest_tag} via uv tool…[/dim]")
-            proc = subprocess.run(
-                [uv, "tool", "install", spec, "--force", "--reinstall"], check=False
-            )
+            try:
+                proc = subprocess.run(
+                    [uv, "tool", "install", spec, "--force", "--reinstall"],
+                    check=False,
+                    timeout=600,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise click.ClickException(
+                    f"git-tag install of {latest_tag} timed out (600s)."
+                ) from exc
         elif method == "pipx":
             pipx = _find_pipx() or "pipx"
             console.print(f"[dim]Installing {latest_tag} via pipx…[/dim]")
-            proc = subprocess.run([pipx, "install", "--force", spec], check=False)
+            try:
+                proc = subprocess.run([pipx, "install", "--force", spec], check=False, timeout=600)
+            except subprocess.TimeoutExpired as exc:
+                raise click.ClickException(
+                    f"git-tag install of {latest_tag} timed out (600s)."
+                ) from exc
         else:
             raise click.ClickException("Could not detect install method (pipx/uv).")
         if proc.returncode != 0:
@@ -313,13 +340,19 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     if installed_via == "pipx":
         pipx = _find_pipx() or "pipx"
         console.print("[dim]Upgrading via pipx…[/dim]")
-        result = subprocess.run([pipx, "upgrade", "mlx-memo"], check=False)
+        try:
+            result = subprocess.run([pipx, "upgrade", "mlx-memo"], check=False, timeout=600)
+        except subprocess.TimeoutExpired as exc:
+            raise click.ClickException("pipx upgrade timed out (600s).") from exc
         if result.returncode != 0:
             raise click.ClickException("pipx upgrade failed.")
     elif installed_via == "uv":
         uv = _find_uv() or "uv"
         console.print("[dim]Upgrading via uv tool…[/dim]")
-        result = subprocess.run([uv, "tool", "upgrade", "mlx-memo"], check=False)
+        try:
+            result = subprocess.run([uv, "tool", "upgrade", "mlx-memo"], check=False, timeout=600)
+        except subprocess.TimeoutExpired as exc:
+            raise click.ClickException("uv tool upgrade timed out (600s).") from exc
         if result.returncode != 0:
             raise click.ClickException("uv tool upgrade failed.")
     else:

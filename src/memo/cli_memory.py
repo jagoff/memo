@@ -508,12 +508,16 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
             if info.filename.startswith("memory/"):
                 rel = info.filename[len("memory/") :]
                 dest = cfg.data_dir / rel
+                if not dest.resolve().is_relative_to(cfg.data_dir.resolve()):
+                    continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
                 n_md += 1
             elif info.filename.startswith("state/"):
                 rel = info.filename[len("state/") :]
                 dest = cfg.state_dir / rel
+                if not dest.resolve().is_relative_to(cfg.state_dir.resolve()):
+                    continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
                 n_db += 1

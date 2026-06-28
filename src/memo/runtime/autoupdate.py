@@ -9,7 +9,9 @@ effect on the NEXT memo-mcp start.
 Design choices (2026-06-22):
 - Trigger is a git **tag** (``vX.Y.Z``), not any commit, so an un-tagged push
   (work in progress / a broken commit) never propagates to the fleet.
-- Default OFF (memo is public); enabled per-machine via the flag / install-mcp.
+- Default ON: ``maybe_auto_update`` treats an unset ``MEMO_AUTO_UPDATE`` as
+  enabled (pipx/uv installs self-update so the fleet follows tagged releases);
+  set ``MEMO_AUTO_UPDATE=0`` to opt out.
 - Network + git failures are swallowed: auto-update must never break or delay a
   memo-mcp startup.
 """
@@ -108,7 +110,7 @@ def latest_pypi_version(*, timeout: int = 10) -> str | None:
 
 def _should_check(cfg: Config, interval_s: int, now: float, force: bool = False) -> bool:
     """Throttle: True if no check stamp or it's older than ``interval_s``.
-    
+
     If force=True, bypass the throttle (for explicit update --check).
     """
     if force:
@@ -207,16 +209,15 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
     """
     try:
         cfg = cfg or Config.from_env()
-        
+
         # Default to ON if not explicitly disabled. Check MEMO_AUTO_UPDATE env
         # first; if not set, default to True (pipx/uv installs auto-update).
         auto_update_enabled = (
-            True if os.environ.get("MEMO_AUTO_UPDATE") is None
-            else flag_bool("MEMO_AUTO_UPDATE")
+            True if os.environ.get("MEMO_AUTO_UPDATE") is None else flag_bool("MEMO_AUTO_UPDATE")
         )
         if not auto_update_enabled:
             return False
-        
+
         # Ensure state_dir exists for stamps
         with contextlib.suppress(OSError):
             cfg.state_dir.mkdir(parents=True, exist_ok=True)

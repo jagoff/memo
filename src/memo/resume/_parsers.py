@@ -25,8 +25,6 @@ def _content_text(content: Any) -> str:
             if not isinstance(block, dict):
                 continue
             text = block.get("text")
-            if text is None and block.get("type") in {"input_text", "output_text"}:
-                text = block.get("text")
             if isinstance(text, str) and text.strip():
                 chunks.append(text.strip())
         return "\n\n".join(chunks).strip()
@@ -469,4 +467,3 @@ def _gemini_candidate(path: Path) -> ResumeCandidate | None:
             "kind": str(header.get("kind") or ""),
         },
     )
-

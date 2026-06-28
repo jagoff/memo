@@ -221,7 +221,7 @@ class HistoryStore:
         if record_id:
             clauses.append("record_id = ?")
             params.append(record_id)
-        if after_lsn:
+        if after_lsn is not None:
             clauses.append("id > ?")
             params.append(after_lsn)
         if device_id:

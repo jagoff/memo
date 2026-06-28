@@ -302,27 +302,31 @@ class _SchemaMixin(_StoreBase):
 
     def _init_schema_locked(self) -> None:
         if not self._schema_ready():
-            with self._tx() as cx:
-                cx.executescript(_SCHEMA_DDL)
-                self._create_vec_tables(self._conn)
-                self._conn.execute(
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5("
-                    "id UNINDEXED, title, tags, body, "
-                    "tokenize='unicode61 remove_diacritics 2'"
-                    ")"
-                )
-                self._conn.execute(
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS repo_chunk_fts USING fts5("
-                    "id UNINDEXED, repo_name, path, body, "
-                    "tokenize='unicode61 remove_diacritics 2'"
-                    ")"
-                )
-                self._conn.execute(
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS repo_line_fts USING fts5("
-                    "id UNINDEXED, repo_name, path, line_no UNINDEXED, body, "
-                    "tokenize='unicode61 remove_diacritics 2'"
-                    ")"
-                )
+            # Run schema DDL OUTSIDE a transaction. `executescript` issues an
+            # implicit COMMIT (which would void a wrapping BEGIN IMMEDIATE), and
+            # the vec0/fts5 virtual-table CREATEs aren't transactional anyway.
+            # Every statement is idempotent (CREATE ... IF NOT EXISTS) and
+            # individually atomic in the connection's autocommit mode.
+            self._conn.executescript(_SCHEMA_DDL)
+            self._create_vec_tables(self._conn)
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5("
+                "id UNINDEXED, title, tags, body, "
+                "tokenize='unicode61 remove_diacritics 2'"
+                ")"
+            )
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS repo_chunk_fts USING fts5("
+                "id UNINDEXED, repo_name, path, body, "
+                "tokenize='unicode61 remove_diacritics 2'"
+                ")"
+            )
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS repo_line_fts USING fts5("
+                "id UNINDEXED, repo_name, path, line_no UNINDEXED, body, "
+                "tokenize='unicode61 remove_diacritics 2'"
+                ")"
+            )
         # Always run dims validation + the in-place partition/metadata migration,
         # whether the DB was just created or already existed — a binary upgraded
         # over an old DB hits the second path. Both are cheap no-ops once current.
@@ -350,19 +354,24 @@ class _SchemaMixin(_StoreBase):
             if col not in cols:
                 try:
                     self._conn.execute(ddl)
+                    cols.add(col)
                     added = True
                 except Exception as e:
                     _log.debug("schema migration col %r failed: %s", col, e)
         if added:
             self.set_user_version(3)
-        
+        # Cache engram-column presence so upsert/upsert_text_only skip a
+        # per-write PRAGMA table_info(meta). `cols` reflects the post-migration
+        # column set (updated as the ALTERs above succeed).
+        self._has_engram_cols = "topic_key" in cols and "normalized_hash" in cols
+
         # Ensure sessions table exists (engram pattern)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions ("
             "id TEXT PRIMARY KEY, project TEXT NOT NULL, directory TEXT, "
             "started_at TEXT NOT NULL, ended_at TEXT, summary TEXT, status TEXT DEFAULT 'active')"
         )
-        
+
         # Ensure memory_relations table exists (engram pattern)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_relations ("
@@ -371,9 +380,15 @@ class _SchemaMixin(_StoreBase):
             "confidence REAL, session_id TEXT, created_at TEXT, updated_at TEXT)"
         )
         # Ensure indexes for relations
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_source ON memory_relations(source_id)")
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_target ON memory_relations(target_id)")
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_rel_status ON memory_relations(judgment_status)")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_source ON memory_relations(source_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_target ON memory_relations(target_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rel_status ON memory_relations(judgment_status)"
+        )
 
     # Secondary B-tree indices on `meta` that older DBs predate. Kept out of
     # the `_schema_ready()`-gated DDL block (which only runs on fresh DBs) so a
@@ -544,9 +559,7 @@ class _SchemaMixin(_StoreBase):
                 f"SELECT v.{pk_col} AS pk, v.{vec_col} AS emb, s.{src_col} AS newval "  # noqa: S608
                 f"FROM {table} v LEFT JOIN {src_table} s ON s.{src_key} = v.{pk_col}"
             ).fetchall()
-            payload = [
-                (r["pk"], r["newval"], r["emb"]) for r in rows if r["emb"] is not None
-            ]
+            payload = [(r["pk"], r["newval"], r["emb"]) for r in rows if r["emb"] is not None]
             with self._tx() as cx:
                 cx.execute(f"DROP TABLE {table}")
                 self._create_vec_tables(cx)

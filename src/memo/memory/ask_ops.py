@@ -78,9 +78,7 @@ class _AskOpsMixin(_MemoryBase):
                 )
             )
             cache = self._get_rag_cache()
-            hit = cache.get(
-                cache_key, corpus_version=self._corpus_version(), now=time.time()
-            )
+            hit = cache.get(cache_key, corpus_version=self._corpus_version(), now=time.time())
             if hit is not None:
                 norm_q, cached_sources, user_msg, cached_hits = hit
                 # Return copies of the list containers so a caller mutating its
@@ -232,6 +230,7 @@ class _AskOpsMixin(_MemoryBase):
             )
             seen_paths.update(_vault_dedup_keys(h))
         seen_repo_keys: set[tuple[str, str]] = set()
+        appended_repo = 0
         for h in repo_hits:
             norm = _norm_dedup_path(h.path)
             base = norm.rsplit("/", 1)[-1] if norm else ""
@@ -252,6 +251,7 @@ class _AskOpsMixin(_MemoryBase):
                 f"lines: {h.line_start}-{h.line_end}  |  match: {h.match_type}\n"
                 f"{snippet}\n"
             )
+            appended_repo += 1
             sources.append(
                 {
                     "source": "repo",
@@ -271,7 +271,7 @@ class _AskOpsMixin(_MemoryBase):
 
         user_msg = (
             f"User question:\n{question}\n\n"
-            f"Relevant context ({len(hits)} memories, {len(repo_hits)} repo snippets):\n\n"
+            f"Relevant context ({len(hits)} memories, {appended_repo} repo snippets):\n\n"
             + "\n---\n".join(snippet_lines)
         )
         if cache_key is not None and sources:

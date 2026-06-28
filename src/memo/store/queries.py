@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
@@ -63,13 +64,10 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 id_[:8],
             )
         with self._tx() as cx:
-            # Check if engram columns exist
-            cols = {row["name"] for row in cx.execute("PRAGMA table_info(meta)").fetchall()}
-            has_topic_key = "topic_key" in cols
-            has_norm_hash = "normalized_hash" in cols
-
-            # Build query dynamically based on available columns
-            if has_topic_key and has_norm_hash:
+            # Build query dynamically based on available columns. Engram-column
+            # presence is cached at schema init (`_has_engram_cols`) so writes
+            # skip a per-upsert PRAGMA table_info(meta).
+            if self._has_engram_cols:
                 cx.execute(
                     "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -168,10 +166,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         models are downloading. A later `memo reindex` fills the missing vector.
         """
         with self._tx() as cx:
-            cols = {row["name"] for row in cx.execute("PRAGMA table_info(meta)").fetchall()}
-            has_topic_key = "topic_key" in cols
-            has_norm_hash = "normalized_hash" in cols
-            if has_topic_key and has_norm_hash:
+            if self._has_engram_cols:
                 cx.execute(
                     "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -315,9 +310,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 (id_, title, " ".join(tags), body_text),
             )
             # Sync vec.type — vec0 has no UPDATE, so delete + reinsert
-            existing_emb = cx.execute(
-                "SELECT embedding FROM vec WHERE id = ?", (id_,)
-            ).fetchone()
+            existing_emb = cx.execute("SELECT embedding FROM vec WHERE id = ?", (id_,)).fetchone()
             if existing_emb is not None:
                 cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
                 cx.execute(
@@ -347,7 +340,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 "FROM meta WHERE id = ? AND deleted_at IS NULL",
                 (id_,),
             ).fetchone()
-        except Exception:
+        except sqlite3.OperationalError as e:
+            if "no such column" not in str(e):
+                raise
             # Fallback for old DBs without deleted_at column
             row = self._conn.execute(
                 "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
@@ -368,7 +363,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 f"FROM meta WHERE id IN ({placeholders}) AND deleted_at IS NULL",
                 ids,
             ).fetchall()
-        except Exception:
+        except sqlite3.OperationalError as e:
+            if "no such column" not in str(e):
+                raise
             # Fallback for old DBs
             rows = self._conn.execute(
                 "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
@@ -553,12 +550,12 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             for ex_type in sorted(exclude_types):
                 push_clauses.append("vec.type != ?")
                 push_params.append(ex_type)
-# Check for deleted_at column and build filter
+        # Check for deleted_at column and build filter
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
         has_deleted = "deleted_at" in cols
-        
+
         deleted_filter = "meta.deleted_at IS NULL" if has_deleted else "1=1"
-        
+
         sql = (
             "SELECT vec.id AS id, vec.distance AS distance, "
             "       meta.path, meta.title, meta.type, meta.tags, "
@@ -603,8 +600,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             tantivy = self._get_tantivy()
             if tantivy is not None:
                 try:
-                    tantivy._writer.delete_all_documents()
-                    tantivy.commit()
+                    # rebuild([]) clears the index while holding tantivy._lock
+                    # for the whole delete+commit (direct _writer access didn't).
+                    tantivy.rebuild([])
                 except Exception as exc:
                     _log.warning("tantivy clear failed during rebuild: %s", exc)
                     self._mark_tantivy_unhealthy()
@@ -613,6 +611,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 # so _maybe_rebuild_tantivy will do a full rebuild when tantivy
                 # becomes available again, rather than serving ghost documents.
                 import shutil
+
                 try:
                     shutil.rmtree(self.tantivy_index_dir)
                 except Exception as exc:
@@ -634,6 +633,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         if has_soft_delete and _use_soft:
             # Soft delete pattern (engram): mark deleted_at + remove from vec/fts indexes
             import datetime
+
             now = datetime.datetime.now(datetime.UTC).isoformat()
             with self._tx() as cx:
                 cur = cx.execute(
@@ -738,6 +738,6 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 cx.executemany("DELETE FROM vec WHERE id = ?", to_update)
                 cx.executemany(
                     "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
-                    [(id_, vec_rows[id_], new_type) for id_, in to_update],
+                    [(id_, vec_rows[id_], new_type) for (id_,) in to_update],
                 )
         return len(ids)

@@ -35,6 +35,20 @@ _IMG_EMBED_RE = re.compile(
 )
 
 
+def _is_safe_embed_name(filename: str) -> bool:
+    """Reject embed names that would escape the vault.
+
+    Obsidian resolves embeds by basename, so a legitimate embed is a bare
+    filename. A name that is absolute, contains a path separator, or has a
+    ``..`` component (e.g. ``![[../../etc/passwd.png]]``) would let an embed
+    point outside the vault and get read by OCR — reject it.
+    """
+    if not filename or "/" in filename or "\\" in filename:
+        return False
+    p = Path(filename)
+    return not p.is_absolute() and ".." not in p.parts
+
+
 def find_image_embeds(body: str) -> list[str]:
     """Returns the list of image filenames from `![[image.png]]` embeds.
 
@@ -96,6 +110,9 @@ def resolve_image_path(
     raises.
     """
     if not filename:
+        return None
+    if not _is_safe_embed_name(filename):
+        _log.debug("Rejecting unsafe embed name (path traversal): %r", filename)
         return None
     try:
         attach = resolve_attachment_folder(vault_root)

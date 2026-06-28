@@ -37,6 +37,7 @@ class _SearchScoringMixin(_MemoryBase):
         """
         try:
             from memo.entity_extractor import extract_entities
+
             query_entities = extract_entities(query)
             if not query_entities:
                 return []
@@ -52,7 +53,9 @@ class _SearchScoringMixin(_MemoryBase):
                 return []
 
             # Sort by count desc, then by updated desc (tie-breaker)
-            sorted_mids = sorted(memoria_counts.keys(), key=lambda x: memoria_counts[x], reverse=True)
+            sorted_mids = sorted(
+                memoria_counts.keys(), key=lambda x: memoria_counts[x], reverse=True
+            )
 
             # Fetch batch from store
             rows = self.store.get_batch(sorted_mids[: limit * 3])
@@ -204,12 +207,10 @@ class _SearchScoringMixin(_MemoryBase):
             a, b = pair.memoria_id_a, pair.memoria_id_b
             a_ts, b_ts = id_to_updated.get(a, ""), id_to_updated.get(b, "")
             if "contrad" in rel:
+                # Only demote when BOTH sides carry a timestamp — otherwise we
+                # can't tell which is older and would risk sinking the newer one.
                 if a_ts and b_ts:
                     _demote(a if a_ts < b_ts else b, contradict_penalty)
-                elif a_ts:
-                    _demote(a, contradict_penalty)
-                elif b_ts:
-                    _demote(b, contradict_penalty)
             elif "evolu" in rel and a in present and b in present and a_ts and b_ts:
                 # Only when BOTH sides surfaced can we safely demote the older.
                 _demote(a if a_ts < b_ts else b, evolution_penalty)
@@ -302,6 +303,7 @@ class _SearchScoringMixin(_MemoryBase):
         """
         try:
             from memo.retrieval_boost import boost_for
+
             health = self.store.get_health_batch([r.id for r in results])
             changed = False
             out: list[MemoryRecord] = []

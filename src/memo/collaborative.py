@@ -92,7 +92,13 @@ class CollaborativeGraph:
                 # Load users
                 for uid, udata in data.get("users", {}).items():
                     self._users[uid] = UserProfile(**udata)
-            except Exception:
+            except Exception as exc:
+                _log.warning(
+                    "collaborative: failed to load graph from %s: %s",
+                    self.graph_file,
+                    exc,
+                    exc_info=True,
+                )
                 self._connections = {}
                 self._insights = {}
                 self._users = {}

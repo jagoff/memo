@@ -45,6 +45,7 @@ DEFAULT_BRIDGE_DB = _resolve_bridge_db()
 
 DEFAULT_RETENTION_DAYS = 180
 
+
 # Your own bot/listener group JIDs to exclude from ingest. No personal
 # identifiers are baked into source — set these env vars to your own JIDs.
 def _get_whatsapp_jids() -> tuple[str, str]:
@@ -137,8 +138,9 @@ def read_messages(
             " m.is_from_me, m.media_type, COALESCE(c.name, '') AS chat_name "
             "FROM messages m LEFT JOIN chats c ON c.jid = m.chat_jid "
             "WHERE m.content IS NOT NULL AND m.content != '' "
+            "AND m.timestamp >= ? "
         )
-        params: list[Any] = []
+        params: list[Any] = [since_ts]
         if chat_jid:
             q += " AND m.chat_jid = ? "
             params.append(chat_jid)

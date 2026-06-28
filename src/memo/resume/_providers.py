@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -31,7 +32,9 @@ class DevinNativeProvider:
         self.devin_home = (
             Path(devin_home).expanduser()
             if devin_home is not None
-            else Path(os.environ.get("DEVIN_HOME") or Path.home() / ".local/share/devin/cli").expanduser()
+            else Path(
+                os.environ.get("DEVIN_HOME") or Path.home() / ".local/share/devin/cli"
+            ).expanduser()
         )
 
     def discover(
@@ -179,7 +182,9 @@ class OpencodeNativeProvider:
         self.db_path = (
             Path(db_path).expanduser()
             if db_path is not None
-            else Path(os.environ.get("OPENCODE_DATA") or Path.home() / ".local/share/opencode").expanduser()
+            else Path(
+                os.environ.get("OPENCODE_DATA") or Path.home() / ".local/share/opencode"
+            ).expanduser()
             / "opencode.db"
         )
 
@@ -199,12 +204,12 @@ class OpencodeNativeProvider:
             import sqlite3
 
             con = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-            con.row_factory = sqlite3.Row
-            rows = con.execute(
-                "SELECT id, directory, title, time_updated FROM session"
-                " ORDER BY time_updated DESC LIMIT 200"
-            ).fetchall()
-            con.close()
+            with contextlib.closing(con):
+                con.row_factory = sqlite3.Row
+                rows = con.execute(
+                    "SELECT id, directory, title, time_updated FROM session"
+                    " ORDER BY time_updated DESC LIMIT 200"
+                ).fetchall()
         except Exception:
             return []
         results: list[ResumeCandidate] = []
@@ -243,10 +248,7 @@ def _memo_snapshot_candidate(snap: dict[str, object]) -> ResumeCandidate | None:
     if not session_id:
         return None
     summary = str(
-        snap.get("running_summary")
-        or snap.get("summary")
-        or snap.get("last_user_msg")
-        or ""
+        snap.get("running_summary") or snap.get("summary") or snap.get("last_user_msg") or ""
     )
     # memo only snapshots Claude Code today, but read an explicit `agent` if a
     # future writer stores one rather than hardcoding the resume command.

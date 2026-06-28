@@ -25,10 +25,7 @@ def token_savings_cmd() -> None:
 
     cutoff = datetime.now(UTC) - timedelta(days=7)
     recall_entries = [
-        e
-        for e in cost_log
-        if e.get("kind") == "recall"
-        and _parse_ts(e.get("ts", "")) >= cutoff
+        e for e in cost_log if e.get("kind") == "recall" and _parse_ts(e.get("ts", "")) >= cutoff
     ]
     trivial_bails = sum(
         1
@@ -40,8 +37,7 @@ def token_savings_cmd() -> None:
 
     if not recall_entries:
         click.echo(
-            "No recall injections logged yet."
-            " Run memo doctor to verify the recall hook is active."
+            "No recall injections logged yet. Run memo doctor to verify the recall hook is active."
         )
         return
 
@@ -75,7 +71,9 @@ def token_savings_cmd() -> None:
         )
     click.echo(f"  Trivial bails:      {trivial_bails}  (prompts skipped)")
     click.echo("")
-    click.echo(f"  Estimated total:    ~{total_tokens_saved:,} tokens saved vs. model rederiving context")
+    click.echo(
+        f"  Estimated total:    ~{total_tokens_saved:,} tokens saved vs. model rederiving context"
+    )
     click.echo("")
     if not is_compact:
         click.echo("  Enable compact: export MEMO_RECALL_FORMAT=compact")
@@ -85,6 +83,9 @@ def token_savings_cmd() -> None:
 def _parse_ts(ts: str) -> datetime:
     """Parse an ISO timestamp string; return epoch on failure."""
     try:
-        return datetime.fromisoformat(ts).replace(tzinfo=UTC) if ts else datetime(1970, 1, 1, tzinfo=UTC)
+        if not ts:
+            return datetime(1970, 1, 1, tzinfo=UTC)
+        dt = datetime.fromisoformat(ts)
+        return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
     except ValueError:
         return datetime(1970, 1, 1, tzinfo=UTC)

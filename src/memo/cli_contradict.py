@@ -31,7 +31,7 @@ def contradict_group() -> None:
 
 
 def _fmt_pair_header(rec_a, rec_b, pair) -> str:
-    rel = pair.relationship
+    rel = pair.relationship or "unknown"
     color = "red" if rel == "contradiction" else "yellow"
     return (
         f"[bold {color}]{rel.upper()}[/bold {color}] "

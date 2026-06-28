@@ -410,3 +410,5 @@ def repo_delete_cmd(repo: str, yes: bool, keep_clone: bool) -> None:
         click.confirm(f"Delete indexed repo {repo!r}?", abort=True)
     ok = mem.repo_delete(repo, remove_clone=not keep_clone)
     console.print(f"[{'green' if ok else 'red'}]{'deleted' if ok else 'not found'}[/]: {repo}")
+    if not ok:
+        sys.exit(1)

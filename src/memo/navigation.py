@@ -139,9 +139,6 @@ class GraphNavigator:
         while queue:
             current, path, memoria_ids = queue.popleft()
 
-            if len(path) > max_length:
-                continue
-
             if current == target:
                 return EntityPath(
                     source=source,
@@ -150,6 +147,9 @@ class GraphNavigator:
                     length=len(path) - 1,
                     intermediate_memorias=memoria_ids,
                 )
+
+            if len(path) > max_length:
+                continue
 
             for neighbor, mem_id in adj[current]:
                 if neighbor not in visited:
@@ -215,7 +215,9 @@ class GraphNavigator:
                         graphify_neighbors.add(src if src != entity else tgt)
                 if graphify_neighbors:
                     neighbors_list = list(graphify_neighbors)[:max_neighbors]
-                    neighbor_mems_fallback = {n: ["(from graphify code graph)"] for n in neighbors_list}
+                    neighbor_mems_fallback = {
+                        n: ["(from graphify code graph)"] for n in neighbors_list
+                    }
                     return EntityNeighbors(
                         entity=entity,
                         direct_neighbors=neighbors_list,

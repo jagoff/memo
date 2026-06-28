@@ -23,7 +23,9 @@ GRAPHIFY_JSON = GRAPHIFY_OUT / "graph.json"
 REFRESH_DAYS = 7
 
 
-def _build_light_index(graph_data: dict[str, Any]) -> tuple[dict[str, set[str]], dict[tuple[str, str], float]]:
+def _build_light_index(
+    graph_data: dict[str, Any],
+) -> tuple[dict[str, set[str]], dict[tuple[str, str], float]]:
     """Build lightweight adjacency index from full graph.json.
 
     Returns: (adjacency: node -> set of neighbors, edge_weights)
@@ -53,13 +55,13 @@ def _build_light_index(graph_data: dict[str, Any]) -> tuple[dict[str, set[str]],
         weight = e.get("weight", 1.0)
         if src and tgt:
             edge_weights[(src, tgt)] = weight
-            
+
             # Bidirectional edges for undirected search
             if src in adjacency:
                 adjacency[src].add(tgt)
             else:
                 adjacency[src] = {tgt}
-                
+
             if tgt in adjacency:
                 adjacency[tgt].add(src)
             else:
@@ -82,7 +84,7 @@ def load(force: bool = False) -> tuple[dict[str, set[str]], dict[tuple[str, str]
     if not GRAPHIFY_JSON.is_file():
         raise FileNotFoundError(f"graphify-out not found at {GRAPHIFY_JSON}")
 
-    with open(GRAPHIFY_JSON) as f:
+    with open(GRAPHIFY_JSON, encoding="utf-8") as f:
         data = json.load(f)
 
     _graph = _build_light_index(data)

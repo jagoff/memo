@@ -115,8 +115,6 @@ def mandate(*, client: str | None = None, do_write: bool = False, dry_run: bool 
         targets = list(_CLIENT_FILES)
     elif client:
         targets = [client]
-    else:
-        targets = []
     cwd = Path.cwd()
     seen: set[str] = set()
     for c in targets:

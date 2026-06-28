@@ -22,6 +22,7 @@ Flag specs are split across domain modules to keep each file under 800 lines:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -33,13 +34,11 @@ from memo.flags_misc import SPECS as _misc_specs
 from memo.flags_recall import SPECS as _recall_specs
 from memo.flags_search import SPECS as _search_specs
 
+_log = logging.getLogger(__name__)
+
 # ── Registry ────────────────────────────────────────────────────────────────
 _SPECS: tuple[FlagSpec, ...] = (
-    _recall_specs
-    + _search_specs
-    + _behavior_specs
-    + _ingest_specs
-    + _misc_specs
+    _recall_specs + _search_specs + _behavior_specs + _ingest_specs + _misc_specs
 )
 
 REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}
@@ -86,7 +85,14 @@ def flag(name: str, *, env: dict[str, str] | None = None) -> Any:
         return spec.default
     try:
         return _coerce(spec, raw)
-    except ValueError:
+    except ValueError as exc:
+        _log.warning(
+            "invalid value for %s: %r — using default %r (%s)",
+            name,
+            raw,
+            spec.default,
+            exc,
+        )
         return spec.default
 
 
@@ -157,6 +163,18 @@ def validate(env: dict[str, str] | None = None) -> list[dict[str, str]]:
             _coerce(spec, raw)
         except ValueError as exc:
             problems.append({"flag": name, "value": raw, "error": str(exc)})
+    # MEMO_MODEL_PROFILE is a plain str spec, so _coerce can't reject an invalid
+    # profile — but Config.from_env() raises on one. Check the choices here so
+    # `memo config validate` doesn't give a false green that later hard-crashes.
+    profile = src.get("MEMO_MODEL_PROFILE")
+    if profile and profile.strip().lower() not in {"light", "balanced", "quality"}:
+        problems.append(
+            {
+                "flag": "MEMO_MODEL_PROFILE",
+                "value": profile,
+                "error": "must be one of: light, balanced, quality (or empty)",
+            }
+        )
     for var in unknown_memo_vars(env):
         problems.append(
             {"flag": var, "value": src[var], "error": "unknown MEMO_* var (typo? not in registry)"}

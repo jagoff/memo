@@ -18,6 +18,7 @@ class _StoreBase:
     db_path: Path
     dims: int
     embedder_model: str
+    _has_engram_cols: bool
     _local: threading.local
     tantivy_index_dir: Path
     _tantivy_inst: TantivyFTSIndex | None

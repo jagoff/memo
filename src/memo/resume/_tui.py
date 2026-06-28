@@ -232,12 +232,11 @@ def _filter_resume_candidates(
     current_cwd: str,
 ) -> list[ResumeCandidate]:
     from ._utils import _same_cwd
+
     needle = query.strip().lower()
     visible: list[ResumeCandidate] = []
     for candidate in candidates:
-        if filter_mode == "cwd" and (
-            not current_cwd or not _same_cwd(candidate.cwd, current_cwd)
-        ):
+        if filter_mode == "cwd" and (not current_cwd or not _same_cwd(candidate.cwd, current_cwd)):
             continue
         if needle and needle not in _candidate_search_text(candidate):
             continue
@@ -332,9 +331,7 @@ def _resume_tui_visible(state: _ResumeTuiState) -> list[ResumeCandidate]:
     return _sort_resume_candidates(items, sort_mode=state.sort_mode)
 
 
-def _apply_semantic(
-    state: _ResumeTuiState, query: str, hits: Sequence[ResumeCandidate]
-) -> None:
+def _apply_semantic(state: _ResumeTuiState, query: str, hits: Sequence[ResumeCandidate]) -> None:
     """Merge semantic hits into the candidate pool + record their ranking.
 
     Episode-only hits (sessions beyond the loaded recency set) are appended so the
@@ -503,11 +500,14 @@ def _resume_tui_list_body(
         candidate = visible[absolute - 1]
         zebra = absolute % 2 == 0
         body.append(
-            _resume_tui_candidate_row(
-                candidate, selected=selected, width=width, zebra=zebra
-            )
+            _resume_tui_candidate_row(candidate, selected=selected, width=width, zebra=zebra)
         )
-        if state.expanded and selected and candidate.summary and candidate.summary != candidate.title:
+        if (
+            state.expanded
+            and selected
+            and candidate.summary
+            and candidate.summary != candidate.title
+        ):
             body.append(_resume_tui_detail_row(candidate, width=width))
         elif state.comfortable:
             body.append("")
@@ -534,6 +534,7 @@ def _resume_tui_candidate_row(
     zebra: bool = False,
 ) -> str:
     from ._utils import _format_relative_time
+
     time_text = _format_relative_time(candidate.updated_at) or "—"
     time_col = time_text.rjust(8)
     cursor = "▌" if selected else " "
@@ -556,7 +557,7 @@ def _resume_tui_candidate_row(
         clipped = raw
     else:
         # Need to clip, but preserve ANSI codes
-        clipped = raw[:len(raw) - len(raw_display) + line_width]
+        clipped = raw[: len(raw) - len(raw_display) + line_width]
 
     if selected:
         return f"{_RESUME_TUI_HIGHLIGHT_OPEN}{clipped}{_RESUME_TUI_HIGHLIGHT_CLOSE}"
@@ -579,7 +580,7 @@ def _resume_tui_transcript_body(
 ) -> list[str]:
     if not visible:
         return [_dim_text("  No session selected.")]
-    candidate = visible[min(state.index, len(visible) - 1)]
+    candidate = visible[max(0, min(state.index - 1, len(visible) - 1))]
     lines: list[str] = [
         f"  Agent:   {candidate.agent}",
         f"  Session: {candidate.session_id}",
@@ -710,7 +711,7 @@ def pick_resume_candidate_interactive(
             # Lazily compute the repo-delta + open-loops preview for the focused
             # session when its detail view opens (once per session, cached).
             if state.view == "transcript" and preview_fn is not None and visible:
-                sel = visible[min(state.index, len(visible) - 1)]
+                sel = visible[max(0, min(state.index - 1, len(visible) - 1))]
                 if sel.session_id not in state.preview_cache:
                     try:
                         state.preview_cache[sel.session_id] = preview_fn(sel)

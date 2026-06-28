@@ -31,9 +31,7 @@ def render_recall_context(
     token_budget: int,
 ) -> str:
     """Render recall context within a strict chars/4 token budget."""
-    include_directive = (
-        turn is None or turn <= 1 or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
-    )
+    include_directive = turn is None or turn <= 1 or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
     lines = [RECALL_HEADER]
     if include_directive:
         lines.extend([RECALL_DIRECTIVE, ""])
@@ -71,7 +69,7 @@ def render_recall_context(
         if max_chars is not None and len(_render([*prefix, ""])) > max_chars and tags_line:
             prefix = [title_line]
         empty_body_len = len(_render([*prefix, ""]))
-        available = (max_chars - empty_body_len - 3) if max_chars is not None else len(body)
+        available = (max_chars - empty_body_len - 4) if max_chars is not None else len(body)
         if body and available > 20:
             lines.extend([*prefix, f"> {body[:available].rstrip()}…", ""])
         elif max_chars is None or len(_render([*prefix, ""])) <= max_chars:
@@ -128,7 +126,9 @@ def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
     return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
 
 
-def _apply_project_boost(hits: list[Any], project_tag: str | None, project_boost: float) -> list[Any]:
+def _apply_project_boost(
+    hits: list[Any], project_tag: str | None, project_boost: float
+) -> list[Any]:
     if not project_tag:
         return list(hits)
     boosted: list[Any] = []
@@ -317,7 +317,9 @@ def _recall_logic(
 
     try:
         if use_fallback and micro_embedder:
-            candidates = mem.search(prompt, limit=top_k * 5, mode="bm25", recency=True, exclude_types=exclude_types)
+            candidates = mem.search(
+                prompt, limit=top_k * 5, mode="bm25", recency=True, exclude_types=exclude_types
+            )
             if not candidates:
                 qualifying = []
             else:
@@ -334,7 +336,9 @@ def _recall_logic(
                 # instead of raising ValueError (which empties recall via the outer
                 # except), gracefully fall back to the normal embedder path.
                 mem_cfg = getattr(mem, "cfg", None)
-                expected_dims = getattr(mem_cfg, "embedder_dims", 1024) if mem_cfg is not None else 1024
+                expected_dims = (
+                    getattr(mem_cfg, "embedder_dims", 1024) if mem_cfg is not None else 1024
+                )
                 _use_micro_scored = True
                 if expected_dims > 10:  # Skip validation for test stubs (e.g., 2-dim)
                     _dim_mismatch = (
@@ -356,11 +360,25 @@ def _recall_logic(
                     scored.sort(key=lambda x: x.score or 0.0, reverse=True)
                     qualifying = _deduplicate_synthesis(_rank(scored))
                 else:
-                    qualifying = _deduplicate_synthesis(_rank(
-                        mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
-                    ))
+                    qualifying = _deduplicate_synthesis(
+                        _rank(
+                            mem.search(
+                                prompt,
+                                limit=search_k,
+                                mode=mode,
+                                recency=True,
+                                exclude_types=exclude_types,
+                            )
+                        )
+                    )
         else:
-            qualifying = _deduplicate_synthesis(_rank(mem.search(prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)))
+            qualifying = _deduplicate_synthesis(
+                _rank(
+                    mem.search(
+                        prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
+                    )
+                )
+            )
     except Exception as exc:
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return "{}", None
@@ -369,19 +387,37 @@ def _recall_logic(
         ctx = _session_context(mem, exclude_types)
         if ctx:
             try:
-                expanded = mem.search(f"{ctx}\n{prompt}", limit=search_k, mode=mode, recency=True, exclude_types=exclude_types)
+                expanded = mem.search(
+                    f"{ctx}\n{prompt}",
+                    limit=search_k,
+                    mode=mode,
+                    recency=True,
+                    exclude_types=exclude_types,
+                )
                 qualifying = _deduplicate_synthesis(_rank(expanded))
                 if debug and qualifying:
-                    print(f"# recall-daemon: query expansion recovered {len(qualifying)} hits", file=sys.stderr)
+                    print(
+                        f"# recall-daemon: query expansion recovered {len(qualifying)} hits",
+                        file=sys.stderr,
+                    )
             except Exception as _exc:
-                print(f"# recall-daemon: context expansion failed: {type(_exc).__name__}: {_exc}", file=sys.stderr)
+                print(
+                    f"# recall-daemon: context expansion failed: {type(_exc).__name__}: {_exc}",
+                    file=sys.stderr,
+                )
 
     skip_below = _flag_float("MEMO_RECALL_SKIP_BELOW") or 0.0
     if skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below:
         return "{}", None
 
     gap_threshold = _flag_float("MEMO_RECALL_GAP_THRESHOLD") or 0.0
-    if gap_threshold > 0 and len(qualifying) > 1 and qualifying[0].score is not None and qualifying[1].score is not None and (qualifying[0].score - qualifying[1].score) > gap_threshold:
+    if (
+        gap_threshold > 0
+        and len(qualifying) > 1
+        and qualifying[0].score is not None
+        and qualifying[1].score is not None
+        and (qualifying[0].score - qualifying[1].score) > gap_threshold
+    ):
         qualifying = qualifying[:1]
 
     relevant = qualifying[:top_k]
@@ -401,7 +437,10 @@ def _recall_logic(
         token_budget=token_budget,
     )
 
-    hits_snapshot = [{"id": h.id, "score": h.score, "title": h.title, "snippet": (h.body or "")[:240]} for h in relevant]
+    hits_snapshot = [
+        {"id": h.id, "score": h.score, "title": h.title, "snippet": (h.body or "")[:240]}
+        for h in relevant
+    ]
 
     def _log() -> None:
         latency_ms: int | None = int((time.time() - t0) * 1000) if t0 is not None else None

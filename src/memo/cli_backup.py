@@ -34,6 +34,8 @@ def _portable_backup(out_path: str | None) -> None:
     cfg.ensure_dirs()
     out = out_path or f"memo-backup-{_dt.datetime.now(_dt.UTC).strftime('%Y%m%d-%H%M%S')}.zip"
     out_p = __import__("pathlib").Path(out).resolve()
+    if out_p.exists():
+        raise click.ClickException(f"backup file already exists: {out_p}")
 
     n_md = 0
     with zipfile.ZipFile(out_p, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -174,3 +176,4 @@ def backup_restore(backup_name: str, skip_memorias: bool, skip_dbs: bool) -> Non
         console.print(f"[green]Restored from '{backup_name}'[/green]")
     else:
         console.print("[red]Failed to restore[/red]")
+        raise SystemExit(1)

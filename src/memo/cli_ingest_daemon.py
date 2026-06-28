@@ -67,6 +67,10 @@ def ingest_daemon_start() -> None:
         if sock_path.exists():
             break
 
+    if not sock_path.exists():
+        click.echo("ingest daemon failed to start — check logs", err=True)
+        sys.exit(1)
+
     click.echo(f"ingest daemon started (pid={proc.pid})", err=True)
 
 

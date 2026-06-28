@@ -13,6 +13,7 @@ Label schema (`memo.eval_grounding.labels.v1`):
      "labels": [{"session_id": "...", "turn": 7, "recall_id": "ab12cd34",
                  "used": true, "note": "answer cited the decision"}]}
 """
+
 from __future__ import annotations
 
 import json
@@ -92,16 +93,18 @@ def evaluate(grounding_rows: list[dict[str, Any]], labels: list[Label]) -> dict[
 
     precision = tp / (tp + fp) if (tp + fp) else None
     recall = tp / (tp + fn) if (tp + fn) else None
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if precision and recall
-        else None
-    )
+    if precision is not None and recall is not None:
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    else:
+        f1 = None
     return {
         "labels": len(labels),
         "scored": len(labels) - missing,
         "missing": missing,
-        "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
         "precision": round(precision, 3) if precision is not None else None,
         "recall": round(recall, 3) if recall is not None else None,
         "f1": round(f1, 3) if f1 is not None else None,

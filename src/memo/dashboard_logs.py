@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 from datetime import UTC, datetime
@@ -126,13 +127,20 @@ def _update_daily_trend(
 ) -> None:
     path = state_dir / "daily_trend.json"
     try:
-        data: dict[str, dict[str, int]] = (
-            json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-        )
-        entry = data.setdefault(day, {"consultas": 0, "activado": 0})
-        entry["consultas"] += delta_consults
-        entry["activado"] += delta_activado
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        # Exclusive flock around the read-modify-write so concurrent sessions
+        # don't clobber each other's increments (lost-update). "a+" creates the
+        # file if missing; seek(0) reads it under the lock.
+        with path.open("a+", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.seek(0)
+            raw = f.read()
+            data: dict[str, dict[str, int]] = json.loads(raw) if raw.strip() else {}
+            entry = data.setdefault(day, {"consultas": 0, "activado": 0})
+            entry["consultas"] += delta_consults
+            entry["activado"] += delta_activado
+            f.seek(0)
+            f.truncate()
+            f.write(json.dumps(data, ensure_ascii=False))
     except OSError as exc:
         _log.debug("dashboard: daily_trend update failed: %s", exc)
 
@@ -150,10 +158,18 @@ def read_daily_trend(state_dir: Path) -> dict[str, dict[str, int]]:
 def _update_consumer_last_seen(state_dir: Path, consumer: str, ts: str) -> None:
     path = state_dir / "consumer_last_seen.json"
     try:
-        data: dict[str, str] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-        if ts > data.get(consumer, ""):
-            data[consumer] = ts
-            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        # Exclusive flock around the read-modify-write so concurrent sessions
+        # don't drop each other's last-seen updates (lost-update).
+        with path.open("a+", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.seek(0)
+            raw = f.read()
+            data: dict[str, str] = json.loads(raw) if raw.strip() else {}
+            if ts > data.get(consumer, ""):
+                data[consumer] = ts
+                f.seek(0)
+                f.truncate()
+                f.write(json.dumps(data, ensure_ascii=False))
     except OSError as exc:
         _log.debug("dashboard: consumer_last_seen update failed: %s", exc)
 

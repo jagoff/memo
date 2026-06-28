@@ -32,7 +32,10 @@ When saving a memory, suggests linking to existing memories based on:
 from __future__ import annotations
 
 import re
-from contextlib import suppress
+import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -80,30 +83,37 @@ class CrossReferenceIndex:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = None
+        self._tx_lock = threading.Lock()
+        # Open one shared connection eagerly (check_same_thread=False so it
+        # survives the FastMCP worker threadpool). Eager init + _tx_lock kills
+        # the lazy-init race where two threads each opened a connection, and
+        # serialises writes via BEGIN IMMEDIATE — matching GraphStore.
+        self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        with suppress(sqlite3.Error):
+            self._conn.execute("PRAGMA journal_mode=WAL")
         try:
             self._init_schema()
         except Exception:
             self.close()
             raise
 
-    def _get_conn(self):
-        import sqlite3
-
-        if self._conn is None:
-            # check_same_thread=False + WAL so the shared handle survives the
-            # FastMCP worker threadpool (default would raise on the 2nd thread).
-            self._conn = sqlite3.connect(
-                str(self.db_path),
-                timeout=10.0,
-                check_same_thread=False,
-            )
-            self._conn.row_factory = sqlite3.Row
-            from contextlib import suppress
-
-            with suppress(sqlite3.Error):
-                self._conn.execute("PRAGMA journal_mode=WAL")
+    def _get_conn(self) -> sqlite3.Connection:
         return self._conn
+
+    @contextmanager
+    def _tx(self) -> Iterator[sqlite3.Connection]:
+        # One shared connection across the FastMCP threadpool: two threads
+        # issuing BEGIN IMMEDIATE concurrently would raise "transaction within a
+        # transaction", so serialise writes on _tx_lock (GraphStore pattern).
+        with self._tx_lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def _init_schema(self) -> None:
         conn = self._get_conn()
@@ -152,19 +162,22 @@ class CrossReferenceIndex:
 
         # Store in index — one executemany in a single transaction (target is
         # stored as-is; it could be an ID or a title resolved later).
-        conn = self._get_conn()
-        conn.executemany(
-            """
-            INSERT OR REPLACE INTO backlinks
-            (source_id, target_id, link_type, context, created_at)
-            VALUES (?, ?, 'wikilink', ?, datetime('now'))
-            """,
-            [
-                (memoria_id, link.target, content[max(0, link.position - 50) : link.position + 50])
-                for link in wikilinks
-            ],
-        )
-        conn.commit()
+        with self._tx() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO backlinks
+                (source_id, target_id, link_type, context, created_at)
+                VALUES (?, ?, 'wikilink', ?, datetime('now'))
+                """,
+                [
+                    (
+                        memoria_id,
+                        link.target,
+                        content[max(0, link.position - 50) : link.position + 50],
+                    )
+                    for link in wikilinks
+                ],
+            )
 
         return wikilinks
 
@@ -230,10 +243,9 @@ class CrossReferenceIndex:
         Args:
             memoria_id: The memory ID to remove.
         """
-        conn = self._get_conn()
-        conn.execute("DELETE FROM backlinks WHERE source_id = ?", (memoria_id,))
-        conn.execute("DELETE FROM backlinks WHERE target_id = ?", (memoria_id,))
-        conn.commit()
+        with self._tx() as conn:
+            conn.execute("DELETE FROM backlinks WHERE source_id = ?", (memoria_id,))
+            conn.execute("DELETE FROM backlinks WHERE target_id = ?", (memoria_id,))
 
     def reset(self) -> None:
         """Clear the whole cross-reference index (all backlinks).
@@ -242,15 +254,13 @@ class CrossReferenceIndex:
         crossref tables share the main DB (`single_db`), where unlinking the
         file would destroy everything. Used by `memo links reindex`.
         """
-        conn = self._get_conn()
-        conn.execute("DELETE FROM backlinks")
-        conn.commit()
+        with self._tx() as conn:
+            conn.execute("DELETE FROM backlinks")
 
     def close(self) -> None:
         """Close the database connection."""
-        if self._conn:
+        with suppress(Exception):
             self._conn.close()
-            self._conn = None
 
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
         with suppress(Exception):

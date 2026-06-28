@@ -7,6 +7,7 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from fastmcp import FastMCP
@@ -23,7 +24,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         entity counts, growth rate, and type distribution.
         """
         metrics = memory.analytics.compute_corpus_metrics()
-        return metrics.__dict__
+        return dataclasses.asdict(metrics)
 
     @server.tool()
     def memo_analytics_growth(
@@ -38,4 +39,4 @@ def register(server: FastMCP, memory: Memory) -> None:
             days: Number of days to analyze.
         """
         growth = memory.analytics.compute_growth_data(days=days)
-        return growth.__dict__
+        return dataclasses.asdict(growth)

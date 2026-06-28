@@ -7,6 +7,7 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from fastmcp import FastMCP
@@ -28,7 +29,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             memoria_id: The memory ID to find backlinks for.
         """
         backlinks = memory.crossref.get_backlinks(memoria_id)
-        return [b.__dict__ for b in backlinks]
+        return [dataclasses.asdict(b) for b in backlinks]
 
     @server.tool()
     def memo_links_outlinks(
@@ -43,7 +44,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             memoria_id: The memory ID to find outlinks for.
         """
         outlinks = memory.crossref.get_outlinks(memoria_id)
-        return [o.__dict__ for o in outlinks]
+        return [dataclasses.asdict(o) for o in outlinks]
 
     @server.tool()
     def memo_links_suggest(
@@ -70,7 +71,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             tags=tags or [],
             limit=limit,
         )
-        return [s.__dict__ for s in suggestions]
+        return [dataclasses.asdict(s) for s in suggestions]
 
     @server.tool()
     def memo_links_format(

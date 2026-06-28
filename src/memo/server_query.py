@@ -86,7 +86,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "query_name": result.query_name,
             "count": result.count,
             "executed_at": result.executed_at,
-            "results": [r.__dict__ for r in result.results],
+            "results": [r.to_dict() for r in result.results],
         }
 
     @server.tool()

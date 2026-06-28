@@ -512,9 +512,9 @@ class ContradictionScanner:
                     continue
 
                 if persist:
-                    existed = self.store.already_resolved(*pair_key) or _is_open(
-                        self.store, *pair_key
-                    )
+                    # already_resolved pairs were `continue`d above, so only the
+                    # open-state check is meaningful here.
+                    existed = _is_open(self.store, *pair_key)
                     self.store.upsert_open(
                         memoria_id_a=contr.memoria_id_a,
                         memoria_id_b=contr.memoria_id_b,

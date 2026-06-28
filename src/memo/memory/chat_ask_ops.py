@@ -138,6 +138,10 @@ class _ChatAskOpsMixin(_MemoryBase):
             context=clean_context,
         )
         context_keys = sorted(str(key) for key in clean_context)
+        # Session-scoped RAG context caching: a session_id in the chat context
+        # lets repeated streaming asks in the same thread reuse retrieval
+        # (mirrors chat_ask / _build_ask_context).
+        session_id = clean_context.get("session_id") if isinstance(clean_context, dict) else None
 
         sources: list[dict[str, Any]] = []
         accum_parts: list[str] = []
@@ -178,6 +182,7 @@ class _ChatAskOpsMixin(_MemoryBase):
             type_=type_,
             snippet_chars=resolved_snippet_chars,
             intent_text=question,
+            session_id=session_id if isinstance(session_id, str) else None,
         ):
             kind = ev.get("event")
             if kind == "sources":

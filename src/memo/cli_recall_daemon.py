@@ -65,6 +65,10 @@ def recall_daemon_start() -> None:
         if sock_path.exists():
             break
 
+    if not sock_path.exists():
+        click.echo("recall daemon failed to start — check logs", err=True)
+        sys.exit(1)
+
     click.echo(f"recall daemon started (pid={proc.pid})", err=True)
 
 

@@ -89,12 +89,20 @@ def _spawn_background(port: int, interval: int, log_path: Path) -> int:
     log = open(log_path, "ab")  # noqa: SIM115 - handed to the child, closed on exit
     try:
         args = [
-            sys.argv[0], "dashboard",
-            "--no-open", "--foreground-only",
-            "--port", str(port), "--interval", str(interval),
+            sys.argv[0],
+            "dashboard",
+            "--no-open",
+            "--foreground-only",
+            "--port",
+            str(port),
+            "--interval",
+            str(interval),
         ]
         proc = subprocess.Popen(
-            args, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+            args,
+            stdout=log,
+            stderr=log,
+            stdin=subprocess.DEVNULL,
             start_new_session=True,  # detach from the controlling terminal
         )
     except Exception:
@@ -104,18 +112,39 @@ def _spawn_background(port: int, interval: int, log_path: Path) -> int:
 
 
 @click.command("dashboard")
-@click.option("--port", type=int, default=None, help="Bind port (default MEMO_DASHBOARD_PORT or 8787).")
-@click.option("--interval", type=int, default=5, show_default=True, help="Live-refresh interval (seconds).")
-@click.option("--open/--no-open", "open_browser", default=True, show_default=True, help="Open the dashboard in a browser.")
-@click.option("--background", "-b", is_flag=True, help="Run detached so it stays up after you close the terminal.")
-@click.option("--foreground-only", is_flag=True, hidden=True, help="Internal: serve without re-spawning (used by --background).")
+@click.option(
+    "--port", type=int, default=None, help="Bind port (default MEMO_DASHBOARD_PORT or 8787)."
+)
+@click.option(
+    "--interval", type=int, default=5, show_default=True, help="Live-refresh interval (seconds)."
+)
+@click.option(
+    "--open/--no-open",
+    "open_browser",
+    default=True,
+    show_default=True,
+    help="Open the dashboard in a browser.",
+)
+@click.option(
+    "--background",
+    "-b",
+    is_flag=True,
+    help="Run detached so it stays up after you close the terminal.",
+)
+@click.option(
+    "--foreground-only",
+    is_flag=True,
+    hidden=True,
+    help="Internal: serve without re-spawning (used by --background).",
+)
 def dashboard_cmd(
     port: int | None, interval: int, open_browser: bool, background: bool, foreground_only: bool
 ) -> None:
     """Serve the health dashboard on localhost with live auto-refresh."""
     builder = _load_builder()
     cfg = Config.from_env()
-    resolved_port = port if port is not None else (flag_int("MEMO_DASHBOARD_PORT") or 8787)
+    _flag_port = flag_int("MEMO_DASHBOARD_PORT")
+    resolved_port = port if port is not None else (8787 if _flag_port is None else _flag_port)
     interval = max(1, interval)
     url = f"http://127.0.0.1:{resolved_port}"
 

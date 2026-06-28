@@ -7,6 +7,7 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from fastmcp import FastMCP
@@ -30,7 +31,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             name: Optional backup name (defaults to timestamp).
         """
         metadata = memory.backup.create_backup(compress=compress, name=name)
-        return metadata.__dict__
+        return dataclasses.asdict(metadata)
 
     @server.tool()
     def memo_backup_list() -> list[dict[str, Any]]:
@@ -40,7 +41,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         including timestamp and size.
         """
         backups = memory.backup.list_backups()
-        return [b.__dict__ for b in backups]
+        return [dataclasses.asdict(b) for b in backups]
 
     @server.tool()
     def memo_backup_restore(

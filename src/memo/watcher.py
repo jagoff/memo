@@ -106,49 +106,58 @@ def run_watcher(*, delay: float = 2.0, debug: bool = False) -> None:
 
     cfg = Config.from_env()
     mem = Memory(cfg)
-    target = cfg.memory_dir
-    target.mkdir(parents=True, exist_ok=True)
-
-    deb = _DebouncedReindex(mem, delay=delay, debug=debug)
-
-    class _Handler(FileSystemEventHandler):
-        def _maybe(self, event: Any) -> None:
-            if event.is_directory:
-                return
-            src = getattr(event, "src_path", "") or ""
-            if not src.endswith(".md"):
-                return
-            deb.schedule(Path(src))
-
-        def on_modified(self, event: Any) -> None:
-            self._maybe(event)
-
-        def on_created(self, event: Any) -> None:
-            self._maybe(event)
-
-        def on_moved(self, event: Any) -> None:
-            self._maybe(event)
-
-    obs = Observer()
-    obs.schedule(_Handler(), str(target), recursive=True)
-    obs.start()
-    print(f"# memo watch: watching {target} (debounce {delay}s, Ctrl+C to stop)", file=sys.stderr)
-
-    stop = threading.Event()
-
-    def _sigterm(_signo: int, _frame: Any) -> None:
-        stop.set()
-
-    signal.signal(signal.SIGINT, _sigterm)
-    signal.signal(signal.SIGTERM, _sigterm)
-
+    # Own mem for the whole watcher lifetime: on SIGTERM the inner loop exits
+    # and we must still flush the WAL by closing the store, even if observer
+    # setup raised before the loop started.
     try:
-        while not stop.is_set():
-            time.sleep(0.5)
+        target = cfg.memory_dir
+        target.mkdir(parents=True, exist_ok=True)
+
+        deb = _DebouncedReindex(mem, delay=delay, debug=debug)
+
+        class _Handler(FileSystemEventHandler):
+            def _maybe(self, event: Any) -> None:
+                if event.is_directory:
+                    return
+                src = getattr(event, "src_path", "") or ""
+                if not src.endswith(".md"):
+                    return
+                deb.schedule(Path(src))
+
+            def on_modified(self, event: Any) -> None:
+                self._maybe(event)
+
+            def on_created(self, event: Any) -> None:
+                self._maybe(event)
+
+            def on_moved(self, event: Any) -> None:
+                self._maybe(event)
+
+        obs = Observer()
+        obs.schedule(_Handler(), str(target), recursive=True)
+        obs.start()
+        print(
+            f"# memo watch: watching {target} (debounce {delay}s, Ctrl+C to stop)",
+            file=sys.stderr,
+        )
+
+        stop = threading.Event()
+
+        def _sigterm(_signo: int, _frame: Any) -> None:
+            stop.set()
+
+        signal.signal(signal.SIGINT, _sigterm)
+        signal.signal(signal.SIGTERM, _sigterm)
+
+        try:
+            while not stop.is_set():
+                time.sleep(0.5)
+        finally:
+            obs.stop()
+            obs.join(timeout=3)
+            print("# memo watch: stopped", file=sys.stderr)
     finally:
-        obs.stop()
-        obs.join(timeout=3)
-        print("# memo watch: stopped", file=sys.stderr)
+        mem.close()
 
 
 # ----------------- launchd plist generation -----------------

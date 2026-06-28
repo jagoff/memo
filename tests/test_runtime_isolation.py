@@ -317,7 +317,7 @@ def _fake_run_factory(calls: list[list[str]], remove_stderr: str):
     """Subprocess stub: a `mcp remove` exits non-zero (no prior entry on a clean
     machine), everything else succeeds. Records every argv for assertions."""
 
-    def fake_run(args, check, capture_output, text):
+    def fake_run(args, check, capture_output, text, **kwargs):
         argv = [str(a) for a in args]
         calls.append(argv)
         if "remove" in argv:

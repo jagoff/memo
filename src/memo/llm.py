@@ -153,8 +153,15 @@ class MLXChat:
     def _ensure_model(self, model: str) -> tuple[Any, Any]:
         suppress_swig_deprecation_warnings()
         if model in self._loaded:
-            self._loaded.move_to_end(model)
-            return self._loaded[model]
+            # Lock-free hot path. A concurrent eviction (popitem under
+            # _load_lock) can drop `model` between the membership test and
+            # the reorder, so guard move_to_end and fall through to the
+            # locked slow path on KeyError rather than crashing the caller.
+            try:
+                self._loaded.move_to_end(model)
+                return self._loaded[model]
+            except KeyError:
+                pass
         # Timeout after 30s to avoid indefinite hang if load stalls
         if not self._load_lock.acquire(timeout=30.0):
             raise RuntimeError(f"LLM model load timed out after 30s for {model}")
@@ -181,7 +188,11 @@ class MLXChat:
                 try:
                     import mlx.core as mx
 
-                    mx.clear_cache()
+                    # Serialize against concurrent mx.eval in other threads;
+                    # clear_cache() racing a live Metal command buffer aborts
+                    # the interpreter (memo.mlx_gpu).
+                    with gpu_guard():
+                        mx.clear_cache()
                 except Exception as exc:
                     # Don't swallow: a failed cache flush means the evicted
                     # model's buffers may still be resident, which is exactly
@@ -351,7 +362,8 @@ class MLXChat:
         max_tokens = int(opts.get("num_predict") or opts.get("max_tokens") or 512)
         # `thinking` — pass False to disable chain-of-thought on Qwen3 models;
         # otherwise <think>…</think> leaks into the streamed deltas uncleaned.
-        thinking: bool = bool(opts.get("thinking", True))
+        # Default off to match `chat()` — the stream has no think-tag stripping.
+        thinking: bool = bool(opts.get("thinking", False))
 
         m, tok = self._ensure_model(model)
         sampler = make_sampler(temp=temperature, top_p=top_p)
@@ -463,7 +475,11 @@ class MLXChat:
             try:
                 import mlx.core as mx
 
-                mx.clear_cache()
+                # Serialize the cache flush against concurrent mx.eval in
+                # other threads; clear_cache() racing a live Metal command
+                # buffer aborts the interpreter (memo.mlx_gpu).
+                with gpu_guard():
+                    mx.clear_cache()
             except (ImportError, AttributeError):
                 # mlx not importable on non-Apple-Silicon → nothing to clear.
                 pass

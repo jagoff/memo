@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -139,9 +140,13 @@ def _write_mcp_json(path: Path, server: Any, *, json_key: str, include_type: boo
     servers = data.setdefault(json_key, {})
     if not isinstance(servers, dict):
         raise click.ClickException(f"`{json_key}` must be a JSON object in {path}")
-    servers[server.name] = _mcp_server_json(Path(server.command), server.env, include_type=include_type)
+    servers[server.name] = _mcp_server_json(
+        Path(server.command), server.env, include_type=include_type
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
     return action
 
 
@@ -242,8 +247,14 @@ def _report(result: dict[str, Any]) -> None:
     "Known: codex, claude-code, claude-desktop, windsurf, gemini, cursor, "
     "opencode, devin.",
 )
-@click.option("--config-path", default="", help="Generic: write into this JSON config path (under $HOME).")
-@click.option("--json-key", default="mcpServers", help="Generic: server-map key in the config (default mcpServers).")
+@click.option(
+    "--config-path", default="", help="Generic: write into this JSON config path (under $HOME)."
+)
+@click.option(
+    "--json-key",
+    default="mcpServers",
+    help="Generic: server-map key in the config (default mcpServers).",
+)
 @click.option("--write", is_flag=True, help="Apply changes (default: dry-run).")
 @click.option("--with-mandate", is_flag=True, help="Also write the 'consult memo first' mandate.")
 @click.option(
@@ -251,8 +262,8 @@ def _report(result: dict[str, Any]) -> None:
     default="",
     type=click.Choice(["", "core", "slim", "default"], case_sensitive=False),
     help="MCP surface profile. 'core'/'slim' expose ~25 tools (~6.7k tokens); "
-         "'default' exposes all 110 tools (~35k tokens). "
-         "Constrained clients (codex, opencode) default to 'core' automatically.",
+    "'default' exposes all 110 tools (~35k tokens). "
+    "Constrained clients (codex, opencode) default to 'core' automatically.",
 )
 def install_mcp(
     agents: tuple[str, ...],

@@ -38,16 +38,34 @@ from memo.llm import MLXChat
 
 _log = logging.getLogger(__name__)
 
+
+def _parse_ts(value: str) -> datetime:
+    """Parse an ISO timestamp into an aware (UTC-anchored) datetime.
+
+    Tolerates a trailing ``Z`` and naive timestamps (no offset): a naive value
+    is assumed UTC, so arithmetic against ``datetime.now(UTC)`` and ordering
+    comparisons never raise ``TypeError`` on mixed naive/aware operands.
+    """
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
+
 # Cap on rows pulled into memory for whole-corpus temporal analysis. A corpus
 # larger than this is silently truncated — we log a warning when the cap bites.
 _ANALYSIS_ROW_CAP = 10_000
+
+
 def _pair_classify_timeout() -> float:
     """Get timeout from flag, with hard fallback for early boot."""
     try:
         from memo.flags import flag_float
+
         return flag_float("MEMO_CONTRADICTION_TIMEOUT") or 30.0
     except Exception:
         return 30.0
+
 
 _CONTRADICTION_SYSTEM_PROMPT = """You analyze two memory notes from a personal archive to detect temporal contradictions.
 
@@ -292,9 +310,10 @@ Body: {(r2.body or "")[:1000]}
                 )
             )
 
-            if not first_seen or rec.updated < first_seen:
+            rec_dt = _parse_ts(rec.updated)
+            if first_seen is None or rec_dt < _parse_ts(first_seen):
                 first_seen = rec.updated
-            if not last_seen or rec.updated > last_seen:
+            if last_seen is None or rec_dt > _parse_ts(last_seen):
                 last_seen = rec.updated
 
         if not events:
@@ -359,10 +378,7 @@ Body: {(r2.body or "")[:1000]}
                             "title": rec.title,
                             "type": rec.type,
                             "updated": rec.updated,
-                            "days_since_update": (
-                                datetime.now(UTC)
-                                - datetime.fromisoformat(rec.updated.replace("Z", "+00:00"))
-                            ).days,
+                            "days_since_update": (datetime.now(UTC) - _parse_ts(rec.updated)).days,
                             "access_count": access_count,
                         }
                     )

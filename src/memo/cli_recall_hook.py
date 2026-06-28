@@ -17,9 +17,25 @@ _log = logging.getLogger("memo.cli_recall_hook")
 
 _TRIVIAL_WORDS: frozenset[str] = frozenset(
     {
-        "yes", "no", "ok", "sure", "yep", "nope", "continue", "go",
-        "ahead", "proceed", "sí", "si", "dale", "listo", "gracias",
-        "thanks", "k", "cool", "perfect",
+        "yes",
+        "no",
+        "ok",
+        "sure",
+        "yep",
+        "nope",
+        "continue",
+        "go",
+        "ahead",
+        "proceed",
+        "sí",
+        "si",
+        "dale",
+        "listo",
+        "gracias",
+        "thanks",
+        "k",
+        "cool",
+        "perfect",
     }
 )
 
@@ -86,12 +102,14 @@ def recall_hook() -> None:
 
     prompt = (payload.get("prompt") or "").strip()
     _sid = (payload.get("session_id") or "").strip() or None
-    min_chars = flag_int("MEMO_RECALL_MIN_PROMPT_CHARS") or 12
+    _mc = flag_int("MEMO_RECALL_MIN_PROMPT_CHARS")
+    min_chars = 12 if _mc is None else _mc
 
     if flag_bool("MEMO_RECALL_SKIP_SLASH") and prompt.startswith("/"):
         head, _, rest = prompt[1:].partition(" ")
         rest = rest.strip()
-        slash_min = flag_int("MEMO_RECALL_SLASH_MIN_ARG_CHARS") or 8
+        _sm = flag_int("MEMO_RECALL_SLASH_MIN_ARG_CHARS")
+        slash_min = 8 if _sm is None else _sm
         denylist = {
             c.strip().lower()
             for c in (flag_str("MEMO_RECALL_SLASH_DENYLIST") or "").split(",")
@@ -182,10 +200,12 @@ def recall_hook() -> None:
         except Exception as exc:
             _log.debug("daemon-error recall-log write failed: %s", exc)
 
-    top_k = flag_int("MEMO_RECALL_TOP_K") or 3
+    _tk = flag_int("MEMO_RECALL_TOP_K")
+    top_k = 3 if _tk is None else _tk
     _ms = flag_float("MEMO_RECALL_MIN_SIM")
     min_sim = 0.5 if _ms is None else _ms
-    body_chars = flag_int("MEMO_RECALL_BODY_CHARS") or 400
+    _bc = flag_int("MEMO_RECALL_BODY_CHARS")
+    body_chars = 400 if _bc is None else _bc
     token_budget = flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
     _pb = flag_float("MEMO_RECALL_PROJECT_BOOST")
     project_boost = 0.15 if _pb is None else _pb
@@ -281,7 +301,12 @@ def recall_hook() -> None:
                     if days > staleness_days and (h.score or 0.0) < stale_threshold:
                         continue
                 except Exception:
-                    _log.debug("recall hook: excluding hit %s due to date parse error", h.id[:8], exc_info=True)
+                    _log.debug(
+                        "recall hook: excluding hit %s due to date parse error",
+                        h.id[:8],
+                        exc_info=True,
+                    )
+                    continue
                 filtered.append(h)
             rel = filtered
         from memo.recall_server import dedup_hits

@@ -378,7 +378,11 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
             try:
                 import mlx.core as mx
 
-                mx.clear_cache()
+                # Serialize the cache flush against concurrent mx.eval /
+                # .tolist() in other threads; a clear_cache() racing a live
+                # Metal command buffer aborts the interpreter (memo.mlx_gpu).
+                with gpu_guard():
+                    mx.clear_cache()
             except (ImportError, AttributeError):
                 # mlx not importable on non-Apple-Silicon → nothing to clear.
                 pass

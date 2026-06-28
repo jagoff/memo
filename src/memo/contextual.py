@@ -72,7 +72,7 @@ class ContextualSearchResult:
 
     memoria_id: str
     title: str
-    original_score: float
+    original_score: float | None
     contextual_score: float
     boost_factors: dict[str, float]  # factor -> contribution
     snippet: str

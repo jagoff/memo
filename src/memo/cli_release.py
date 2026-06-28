@@ -140,7 +140,10 @@ def release_bump(level: str, dry_run: bool, date: str | None) -> None:
     old = _read_current_version(repo)
     new = bump_version(old, level)
     when = date or datetime.date.today().isoformat()
-    edits = plan_release_edits(repo, old, new, when)
+    try:
+        edits = plan_release_edits(repo, old, new, when)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     console.print(f"[bold]{old} → {new}[/bold] ({level})")
     if dry_run:
         for path in edits:

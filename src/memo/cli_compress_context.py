@@ -13,6 +13,7 @@ No LLM — fully deterministic.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -77,7 +78,7 @@ def compress(content: str) -> str:
         m_list = _LIST_ITEM.match(line)
         if m_list and len(line) > _LIST_TRUNCATE_AT:
             prefix = m_list.group(1)
-            body = line[len(prefix):]
+            body = line[len(prefix) :]
             truncated_body = _truncate_at_word(body, _LIST_TRUNCATE_AT - len(prefix))
             line = prefix + truncated_body
 
@@ -148,7 +149,9 @@ def compress_context_cmd(path: Path, dry_run: bool, backup: bool) -> None:
         backup_path = path.with_suffix(path.suffix + ".orig")
         backup_path.write_text(original, encoding="utf-8")
 
-    path.write_text(compressed, encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(compressed, encoding="utf-8")
+    os.replace(tmp, path)
     click.echo(
         f"Compressed {path}: {before} → {after} chars ({pct}% reduction)",
         file=sys.stderr,

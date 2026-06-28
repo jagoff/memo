@@ -7,11 +7,14 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+
+_log = logging.getLogger(__name__)
 
 
 def register(server: FastMCP, memory: Memory) -> None:
@@ -31,13 +34,17 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         archived = []
         for f in archival_dir.glob("*.md"):
-            post = frontmatter.loads(f.read_text(encoding="utf-8"))
-            archived.append(
-                {
-                    "id": f.stem,
-                    "title": post.get("title", ""),
-                    "archived_for": post.get("archived_for", ""),
-                    "archived_at": post.get("archived_at", ""),
-                }
-            )
+            try:
+                post = frontmatter.loads(f.read_text(encoding="utf-8"))
+                archived.append(
+                    {
+                        "id": f.stem,
+                        "title": post.get("title", ""),
+                        "archived_for": post.get("archived_for", ""),
+                        "archived_at": post.get("archived_at", ""),
+                    }
+                )
+            except Exception as exc:
+                _log.warning("skipping %s: %s", f, exc)
+                continue
         return archived

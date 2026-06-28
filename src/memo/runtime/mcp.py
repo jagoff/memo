@@ -102,7 +102,10 @@ def _mcp_server_env() -> dict[str, str]:
     }
     for key in _MCP_ENV_FORWARD_KEYS:
         val = os.environ.get(key)
-        if val:
+        # `is not None` (not truthiness): an explicit empty value — e.g.
+        # `MEMO_AUTO_UPDATE=` to opt out — must be forwarded so it overrides the
+        # hardcoded default above instead of being silently dropped.
+        if val is not None:
             env[key] = val
     # Derive embedder model/dims from the live index so the installed config
     # always matches existing vectors, overriding any env var set at install time.
@@ -183,11 +186,14 @@ def _run_agent_command(
             check=False,
             capture_output=True,
             text=True,
+            timeout=30,
         )
     except FileNotFoundError as exc:
         raise click.ClickException(
             f"`{args[0]}` not found on PATH; install that client first."
         ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException(f"Command timed out (30s): {_format_command(args)}") from exc
     combined = f"{proc.stdout}\n{proc.stderr}".lower()
     # best_effort: a non-zero exit is tolerated regardless of the message. This is
     # for the pre-`add` `mcp remove` cleanup, where a fresh machine has no prior
@@ -265,5 +271,7 @@ def _install_windsurf_mcp(memo_mcp: Path, env: dict[str, str], *, dry_run: bool)
     servers["memo"] = server_config
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
     console.print(f"[green]✓[/green] wrote Windsurf MCP config: {path}")

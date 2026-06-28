@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import difflib
 import json
-from contextlib import suppress
+import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,30 +58,37 @@ class VersionStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = None
+        self._tx_lock = threading.Lock()
+        # Open one shared connection eagerly (check_same_thread=False so it
+        # survives the FastMCP worker threadpool). Eager init + _tx_lock kills
+        # the lazy-init race where two threads each opened a connection, and
+        # serialises writes via BEGIN IMMEDIATE — matching GraphStore.
+        self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        with suppress(sqlite3.Error):
+            self._conn.execute("PRAGMA journal_mode=WAL")
         try:
             self._init_schema()
         except Exception:
             self.close()
             raise
 
-    def _get_conn(self):
-        import sqlite3
-
-        if self._conn is None:
-            # check_same_thread=False + WAL so the shared handle survives the
-            # FastMCP worker threadpool (default would raise on the 2nd thread).
-            self._conn = sqlite3.connect(
-                str(self.db_path),
-                timeout=10.0,
-                check_same_thread=False,
-            )
-            self._conn.row_factory = sqlite3.Row
-            from contextlib import suppress
-
-            with suppress(sqlite3.Error):
-                self._conn.execute("PRAGMA journal_mode=WAL")
+    def _get_conn(self) -> sqlite3.Connection:
         return self._conn
+
+    @contextmanager
+    def _tx(self) -> Iterator[sqlite3.Connection]:
+        # One shared connection across the FastMCP threadpool: two threads
+        # issuing BEGIN IMMEDIATE concurrently would raise "transaction within a
+        # transaction", so serialise writes on _tx_lock (GraphStore pattern).
+        with self._tx_lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def _init_schema(self) -> None:
         conn = self._get_conn()
@@ -108,25 +118,25 @@ class VersionStore:
         reason: str | None = None,
     ) -> int:
         """Save a new version of a memory."""
-        conn = self._get_conn()
-        cursor = conn.execute(
-            """
-            INSERT INTO versions
-            (memoria_id, timestamp, title, type, tags, body, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                memoria_id,
-                datetime.now(UTC).isoformat(),
-                title,
-                type,
-                json.dumps(tags),
-                body,
-                reason,
-            ),
-        )
-        conn.commit()
-        return cursor.lastrowid
+        with self._tx() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO versions
+                (memoria_id, timestamp, title, type, tags, body, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    memoria_id,
+                    datetime.now(UTC).isoformat(),
+                    title,
+                    type,
+                    json.dumps(tags),
+                    body,
+                    reason,
+                ),
+            )
+        # An INSERT always sets lastrowid; coerce the Optional for the typed API.
+        return cursor.lastrowid if cursor.lastrowid is not None else 0
 
     def get_versions(self, memoria_id: str, limit: int = 10) -> list[Version]:
         """Get all versions of a memory, most recent first."""
@@ -178,15 +188,13 @@ class VersionStore:
 
     def delete_versions(self, memoria_id: str) -> None:
         """Delete all versions for a memory."""
-        conn = self._get_conn()
-        conn.execute("DELETE FROM versions WHERE memoria_id = ?", (memoria_id,))
-        conn.commit()
+        with self._tx() as conn:
+            conn.execute("DELETE FROM versions WHERE memoria_id = ?", (memoria_id,))
 
     def close(self) -> None:
         """Close the backing SQLite connection."""
-        if self._conn is not None:
+        with suppress(Exception):
             self._conn.close()
-            self._conn = None
 
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
         with suppress(Exception):

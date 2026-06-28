@@ -82,6 +82,14 @@ def _row_quality(row: dict[str, Any]) -> tuple[int, float]:
     return (len(hits), float(top) if isinstance(top, (int, float)) else 0.0)
 
 
+def _median(xs: list[Any]) -> Any:
+    """Median of a PRE-SORTED list; averages the two middle values for even n."""
+    if not xs:
+        return None
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
 def grounding_used(row: dict[str, Any]) -> bool:
     """Single production decision for whether a grounding row means "used"."""
     score = row.get("used_score")
@@ -91,7 +99,9 @@ def grounding_used(row: dict[str, Any]) -> bool:
     return bool(strong or specific or row.get("downstream_action"))
 
 
-def dedup_double_fire(rows: list[dict[str, Any]], *, window_s: float = 15.0) -> list[dict[str, Any]]:
+def dedup_double_fire(
+    rows: list[dict[str, Any]], *, window_s: float = 15.0
+) -> list[dict[str, Any]]:
     kept: list[dict[str, Any]] = []
     anchor: dict[str, tuple[int, Any]] = {}
     for r in rows:
@@ -101,7 +111,12 @@ def dedup_double_fire(rows: list[dict[str, Any]], *, window_s: float = 15.0) -> 
             continue
         ts = _parse_ts(r.get("ts"))
         prev = anchor.get(prompt)
-        if prev is not None and ts is not None and prev[1] is not None and abs((ts - prev[1]).total_seconds()) <= window_s:
+        if (
+            prev is not None
+            and ts is not None
+            and prev[1] is not None
+            and abs((ts - prev[1]).total_seconds()) <= window_s
+        ):
             idx = prev[0]
             if _row_quality(r) > _row_quality(kept[idx]):
                 kept[idx] = r
@@ -144,17 +159,68 @@ def referenced_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 _INTERROGATIVE = (
-    "?", "¿", "qué", "que ", "cómo", "como ", "por qué", "porqué", "cuál", "cual",
-    "cuándo", "cuando", "quién", "quien", "dónde", "donde", "what", "how", "why",
-    "which", "when", "who", "where", "recordá", "recorda", "acordá", "sabés", "sabes",
-    "explica", "explicá", "explain", "decidimos", "prefer",
+    "?",
+    "¿",
+    "qué",
+    "que ",
+    "cómo",
+    "como ",
+    "por qué",
+    "porqué",
+    "cuál",
+    "cual",
+    "cuándo",
+    "cuando",
+    "quién",
+    "quien",
+    "dónde",
+    "donde",
+    "what",
+    "how",
+    "why",
+    "which",
+    "when",
+    "who",
+    "where",
+    "recordá",
+    "recorda",
+    "acordá",
+    "sabés",
+    "sabes",
+    "explica",
+    "explicá",
+    "explain",
+    "decidimos",
+    "prefer",
 )
 # Leading verbs that mark a mechanical/coding turn unlikely to draw on durable
 # memory (it draws on the codebase / current context instead).
 _MECHANICAL_LEAD = (
-    "arregla", "arreglá", "implementa", "implementá", "corré", "corre ", "ejecuta",
-    "edita", "editá", "agrega", "agregá", "fix", "add ", "run ", "build", "refactor",
-    "commit", "push", "test", "crea ", "creá", "borra", "borrá", "delete", "rename",
+    "arregla",
+    "arreglá",
+    "implementa",
+    "implementá",
+    "corré",
+    "corre ",
+    "ejecuta",
+    "edita",
+    "editá",
+    "agrega",
+    "agregá",
+    "fix",
+    "add ",
+    "run ",
+    "build",
+    "refactor",
+    "commit",
+    "push",
+    "test",
+    "crea ",
+    "creá",
+    "borra",
+    "borrá",
+    "delete",
+    "rename",
 )
 
 
@@ -246,11 +312,17 @@ def grounded_rate(state_dir) -> dict[str, Any]:
             grounding_age_hours = round((datetime.now(UTC) - dt).total_seconds() / 3600, 2)
     if not measured_surfaced:
         return {
-            "grounded_rate": None, "surfaced": 0, "grounded": 0,
-            "answer_rate": None, "answers_total": 0, "answers_grounded": 0,
-            "answer_rate_knowledge": None, "answers_knowledge_total": 0,
+            "grounded_rate": None,
+            "surfaced": 0,
+            "grounded": 0,
+            "answer_rate": None,
+            "answers_total": 0,
+            "answers_grounded": 0,
+            "answer_rate_knowledge": None,
+            "answers_knowledge_total": 0,
             "answers_knowledge_grounded": 0,
-            "surfaced_turns": surfaced_turns, "measured_turns": 0,
+            "surfaced_turns": surfaced_turns,
+            "measured_turns": 0,
             "measurement_coverage": measurement_coverage,
             "grounding_last_seen": grounding_last_seen,
             "grounding_age_hours": grounding_age_hours,
@@ -258,19 +330,25 @@ def grounded_rate(state_dir) -> dict[str, Any]:
         }
 
     grounded = sum(
-        1 for (sid, turn), ids in measured.items() for hid in ids
+        1
+        for (sid, turn), ids in measured.items()
+        for hid in ids
         if (sid, turn, hid) in grounded_keys
     )
     answers_grounded = sum(
-        1 for (sid, turn), ids in measured.items()
+        1
+        for (sid, turn), ids in measured.items()
         if any((sid, turn, hid) in grounded_keys for hid in ids)
     )
     # Segment: of answers that COULD plausibly use memo (knowledge-seeking, not
     # mechanical edits/commands), how many did? Mechanical turns dilute the
     # overall rate, so this is the truer "is memo being used when it matters".
-    knowledge = {k: ids for k, ids in measured.items() if _is_knowledge_prompt(prompt_by_turn.get(k, ""))}
+    knowledge = {
+        k: ids for k, ids in measured.items() if _is_knowledge_prompt(prompt_by_turn.get(k, ""))
+    }
     knowledge_grounded = sum(
-        1 for (sid, turn), ids in knowledge.items()
+        1
+        for (sid, turn), ids in knowledge.items()
         if any((sid, turn, hid) in grounded_keys for hid in ids)
     )
     return {
@@ -280,7 +358,9 @@ def grounded_rate(state_dir) -> dict[str, Any]:
         "answer_rate": round(answers_grounded / len(measured), 3),
         "answers_total": len(measured),
         "answers_grounded": answers_grounded,
-        "answer_rate_knowledge": round(knowledge_grounded / len(knowledge), 3) if knowledge else None,
+        "answer_rate_knowledge": round(knowledge_grounded / len(knowledge), 3)
+        if knowledge
+        else None,
         "answers_knowledge_total": len(knowledge),
         "answers_knowledge_grounded": knowledge_grounded,
         "surfaced_turns": surfaced_turns,
@@ -331,13 +411,9 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
             if float(score) > STRONG_SCORE:
                 strong += 1
     top_scores.sort()
-    lats = sorted(int(r["latency_ms"]) for r in fired if isinstance(r.get("latency_ms"), (int, float)))
-
-    def _median(xs: list[Any]) -> Any:
-        if not xs:
-            return None
-        n = len(xs)
-        return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+    lats = sorted(
+        int(r["latency_ms"]) for r in fired if isinstance(r.get("latency_ms"), (int, float))
+    )
 
     ref = referenced_rate(state_dir, rows)
     grounded = grounded_rate(state_dir)
@@ -461,7 +537,19 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
     by: dict[str, dict[str, Any]] = {}
     for r in rows:
         name = consumer_label(r)
-        agg = by.setdefault(name, {"consults": 0, "fired": 0, "with_hits": 0, "strong": 0, "top_scores": [], "last_seen": None, "surfaced": set(), "grounded": set()})
+        agg = by.setdefault(
+            name,
+            {
+                "consults": 0,
+                "fired": 0,
+                "with_hits": 0,
+                "strong": 0,
+                "top_scores": [],
+                "last_seen": None,
+                "surfaced": set(),
+                "grounded": set(),
+            },
+        )
         agg["consults"] += 1
         is_bail = (r.get("via") or "") == "bail"
         if not is_bail:
@@ -502,9 +590,11 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
                 "bailed": agg["consults"] - fired,
                 "hit_rate": round(agg["with_hits"] / fired, 3) if fired else None,
                 "strong_hit_rate": round(agg["strong"] / fired, 3) if fired else None,
-                "grounded_rate": round(len(agg["grounded"]) / n_surfaced, 3) if n_surfaced else None,
+                "grounded_rate": round(len(agg["grounded"]) / n_surfaced, 3)
+                if n_surfaced
+                else None,
                 "grounded_surfaced": n_surfaced,
-                "median_top_score": round(scores[len(scores) // 2], 3) if scores else None,
+                "median_top_score": round(_median(scores), 3) if scores else None,
                 "last_seen": agg["last_seen"],
             }
         )
@@ -565,9 +655,7 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
     for name in readers:
         if name not in per_consumer_names:
             per_consumer_names.append(name)
-    per_consumer = [
-        {"name": name, "reads": name in readers} for name in per_consumer_names
-    ]
+    per_consumer = [{"name": name, "reads": name in readers} for name in per_consumer_names]
     return {
         "status": status,
         "label": label,
@@ -591,7 +679,38 @@ def verdict(state_dir, *, limit: int = 500) -> dict[str, Any]:
 
 
 _REASK_TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
-_REASK_STOP = frozenset(["the", "and", "for", "that", "with", "this", "from", "have", "are", "was", "were", "has", "not", "but", "you", "your", "una", "los", "las", "del", "por", "con", "para", "como", "que", "esta", "este", "más"])
+_REASK_STOP = frozenset(
+    [
+        "the",
+        "and",
+        "for",
+        "that",
+        "with",
+        "this",
+        "from",
+        "have",
+        "are",
+        "was",
+        "were",
+        "has",
+        "not",
+        "but",
+        "you",
+        "your",
+        "una",
+        "los",
+        "las",
+        "del",
+        "por",
+        "con",
+        "para",
+        "como",
+        "que",
+        "esta",
+        "este",
+        "más",
+    ]
+)
 
 
 def _reask_tokens(text: str) -> set[str]:
@@ -619,7 +738,12 @@ def reask_stats(
         sid = g.get("session_id")
         turn = g.get("turn")
         score = g.get("used_score")
-        if sid and isinstance(turn, int) and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+        if (
+            sid
+            and isinstance(turn, int)
+            and isinstance(score, (int, float))
+            and float(score) >= GROUNDED_SCORE
+        ):
             grounded_turns.add((sid, turn))
 
     by_session: dict[str, list[tuple[int, str]]] = {}
@@ -641,7 +765,12 @@ def reask_stats(
             continue
         considered += 1
         this_tok = _reask_tokens(this)
-        recurred = any(t > turn and (t - turn) <= window_turns and _jaccard(this_tok, _reask_tokens(p)) >= sim_threshold for t, p in timeline)
+        recurred = any(
+            t > turn
+            and (t - turn) <= window_turns
+            and _jaccard(this_tok, _reask_tokens(p)) >= sim_threshold
+            for t, p in timeline
+        )
         if recurred:
             reask += 1
     reask_avoided = considered - reask

@@ -7,6 +7,7 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from fastmcp import FastMCP
@@ -31,7 +32,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             limit: Maximum versions to return.
         """
         versions = memory.versioning.get_version_history(memoria_id, limit=limit)
-        return [v.__dict__ for v in versions]
+        return [dataclasses.asdict(v) for v in versions]
 
     @server.tool()
     def memo_version_diff(
@@ -50,7 +51,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             version_b: Second version ID (or None for latest-1).
         """
         diff = memory.versioning.diff_versions(memoria_id, version_a, version_b)
-        return diff.__dict__ if diff else None
+        return dataclasses.asdict(diff) if diff else None
 
     @server.tool()
     def memo_version_rollback(

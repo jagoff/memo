@@ -9,6 +9,7 @@ one note-shaped Markdown file per record.
 from __future__ import annotations
 
 import hashlib
+import logging
 import shutil
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,8 @@ from memo.repo_index_search import (
 from memo.store import VecStore
 from memo.util import sha256_short as _short_hash
 
+_logger = logging.getLogger(__name__)
+
 
 class RepoCorpus:
     """Index and search Git repositories inside memo's sqlite-vec store."""
@@ -77,7 +80,9 @@ class RepoCorpus:
     ) -> None:
         self.cfg = cfg
         cfg.ensure_dirs()
-        self.store = store or VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
+        self.store = store or VecStore(
+            cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model
+        )
         self.embedder = embedder or MLXEmbedder(
             model_path=cfg.embedder_model,
             expected_dims=cfg.embedder_dims,
@@ -198,11 +203,10 @@ class RepoCorpus:
         exclude_globs = [*DEFAULT_EXCLUDE_GLOBS, *(exclude or [])]
 
         existing_files = self.store.repo_file_hashes(repo_id)
-        seen_paths: set[str] = set()
         # Track all paths that were part of the scan input, regardless of
         # processing success. Used for deletion detection below — without this
         # a transient read/OCR/stat error on a previously-indexed file would
-        # make it disappear from seen_paths and get falsely deleted.
+        # make it disappear from tracked_paths and get falsely deleted.
         tracked_paths: set[str] = set()
         # (dev, inode) of every file already indexed this run. On a
         # case-insensitive filesystem (APFS default) git can track the same
@@ -293,7 +297,6 @@ class RepoCorpus:
                     continue
                 text = raw.decode("utf-8", errors="replace")
                 sha = hashlib.sha256(raw).hexdigest()
-                seen_paths.add(rel_posix)
                 seen_inodes.add(inode_key)
 
                 # OCR enrichment for .md files with embedded images
@@ -343,6 +346,7 @@ class RepoCorpus:
                 if len(pending_files) >= flush_batch:
                     _flush()
             except Exception:
+                _logger.debug("file error for %s", rel_posix, exc_info=True)
                 errors += 1
                 _emit(progress, "file_error", path=rel_posix)
 
