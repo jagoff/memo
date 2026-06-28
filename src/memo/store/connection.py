@@ -25,11 +25,12 @@ class _ConnectionHolder:
     def close(self) -> None:
         conn, self.conn = self.conn, None
         if conn is not None:
-            with suppress(Exception):
+            with suppress(BaseException):
                 conn.close()
 
     def __del__(self) -> None:  # pragma: no cover - thread-exit cleanup
-        self.close()
+        with suppress(BaseException):
+            self.close()
 
 
 class _ConnectionMixin(_StoreBase):

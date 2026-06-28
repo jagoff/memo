@@ -37,7 +37,7 @@
   <rect x="0" y="0" width="960" height="820" fill="#ffffff"/>
 
   <!-- Title -->
-  <text x="40" y="40" class="title">memo 2.0 — how it fits in your stack</text>
+  <text x="40" y="40" class="title">memo — how it fits in your stack</text>
   <text x="40" y="60" class="sub">Local MCP memory · MLX-native · Apple Silicon · 95 CLI commands · 109 MCP tools across 30 server modules</text>
 
   <!-- ============== CLIENTS ROW ============== -->
@@ -168,8 +168,8 @@
   <line class="arrow" x1="283" y1="374" x2="224" y2="557"/>
   <line class="arrow" x1="283" y1="374" x2="224" y2="601"/>
 
-  <!-- ============== 2.0 SUBSYSTEMS ROW ============== -->
-  <text x="263" y="527" class="section">2.0 subsystems</text>
+  <!-- ============== SUBSYSTEMS ROW ============== -->
+  <text x="263" y="527" class="section">subsystems</text>
   <rect x="263" y="533" width="657" height="100" class="group-rect" rx="10"/>
 
   <rect x="278" y="542" width="118" height="82" class="box box-amber" rx="8" filter="url(#shadow)"/>

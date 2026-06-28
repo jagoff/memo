@@ -270,11 +270,11 @@ class HistoryStore:
         return self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
     def close(self) -> None:
-        with suppress(Exception):
+        with suppress(BaseException):
             self._conn.close()
 
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
-        with suppress(Exception):
+        with suppress(BaseException):
             self.close()
 
 

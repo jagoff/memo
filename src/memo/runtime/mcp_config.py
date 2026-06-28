@@ -14,9 +14,12 @@ from pathlib import Path
 # Configs that commonly launch memo-mcp as a stdio MCP server.
 KNOWN_MCP_CONFIGS: tuple[str, ...] = (
     "~/.claude.json",
+    "~/.codex/config.toml",
     "~/.config/devin/config.json",
     "~/.config/opencode/opencode.jsonc",
     "~/.config/mcp-gateway/gateway.yaml",
+    "~/.codeium/windsurf/mcp_config.json",
+    "~/Library/Application Support/Windsurf/User/mcp_config.json",
 )
 
 # Absolute path ending in /memo or /memo-mcp (the launched binary).

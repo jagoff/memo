@@ -144,6 +144,57 @@ def test_recommend_warns_when_winner_blows_hook_budget():
     assert "recall-hook budget" not in eval_recall.recommend(fast)
 
 
+def test_select_configs_accepts_short_names_and_exact_names():
+    rows = eval_recall.select_configs(["A", "D hyb/0.40/ctx"])
+
+    assert [c.name for c in rows] == ["A vec/0.60/keep", "D hyb/0.40/ctx"]
+
+
+def test_select_configs_quick_uses_one_fast_config():
+    rows = eval_recall.select_configs(quick=True)
+
+    assert [c.name for c in rows] == ["A vec/0.60/keep"]
+
+
+def test_select_configs_rejects_unknown_name():
+    with pytest.raises(ValueError, match="unknown recall eval config"):
+        eval_recall.select_configs(["Z"])
+
+
+def test_limit_label_set_keeps_metadata_and_slices_prompts():
+    labels = LabelSet(
+        prompts=[Prompt("a"), Prompt("b"), Prompt("c")],
+        relevant_terms={"memo"},
+        noise_tags={"old"},
+        noise_path_fragments=("/old/",),
+        session_context="ctx",
+    )
+
+    limited = eval_recall.limit_label_set(labels, 2)
+
+    assert [p.text for p in limited.prompts] == ["a", "b"]
+    assert limited.relevant_terms == labels.relevant_terms
+    assert limited.noise_tags == labels.noise_tags
+    assert limited.noise_path_fragments == labels.noise_path_fragments
+    assert limited.session_context == labels.session_context
+
+
+def test_run_config_reports_progress_per_prompt():
+    calls: list[tuple[str, int, int]] = []
+    labels = LabelSet(prompts=[Prompt("a"), Prompt("b")])
+    mem = SimpleNamespace(search=lambda *_args, **_kwargs: [])
+
+    eval_recall.run_config(
+        mem,
+        eval_recall.default_configs()[0],
+        1,
+        labels,
+        progress=lambda cfg, index, total: calls.append((cfg.name, index, total)),
+    )
+
+    assert calls == [("A vec/0.60/keep", 1, 2), ("A vec/0.60/keep", 2, 2)]
+
+
 # --- regression gate ---------------------------------------------------------
 
 
@@ -232,6 +283,10 @@ def test_cli_eval_recall_help_lists_options():
     assert result.exit_code == 0, result.output
     assert "--labels" in result.output
     assert "--force" in result.output
+    assert "--quick" in result.output
+    assert "--config" in result.output
+    assert "--max-prompts" in result.output
+    assert "--progress" in result.output
     assert "--gate" in result.output
     assert "--update-baseline" in result.output
 
@@ -243,6 +298,23 @@ def test_cli_eval_recall_rejects_malformed_labels(tmp_path: Path):
         cli, ["eval", "recall", "--labels", str(bad)], env=_env(tmp_path))
     assert result.exit_code != 0
     assert "bad.json" in result.output
+
+
+def test_cli_eval_recall_rejects_unknown_config(tmp_path: Path):
+    labels = tmp_path / "labels.json"
+    labels.write_text(
+        json.dumps({"prompts": [{"text": "where is memo", "relevant": True}]}),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["eval", "recall", "--labels", str(labels), "--config", "Z"],
+        env=_env(tmp_path),
+    )
+
+    assert result.exit_code != 0
+    assert "unknown recall eval config" in result.output
 
 
 # --- harvest labels from grounding.log --------------------------------------

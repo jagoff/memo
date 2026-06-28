@@ -259,11 +259,11 @@ class CrossReferenceIndex:
 
     def close(self) -> None:
         """Close the database connection."""
-        with suppress(Exception):
+        with suppress(BaseException):
             self._conn.close()
 
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
-        with suppress(Exception):
+        with suppress(BaseException):
             self.close()
 
 

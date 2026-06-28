@@ -115,6 +115,12 @@ class VecStoreBase:
     def has_vector(self, id_: str) -> bool:
         raise NotImplementedError
 
+    def find_by_topic_key(self, topic_key: str) -> dict[str, str] | None:
+        raise NotImplementedError
+
+    def get_fts_body_by_path(self, path: str) -> str:
+        raise NotImplementedError
+
     def rebuild_fts(self) -> None:
         """Rebuild the full-text search index. No-op if not supported."""
 

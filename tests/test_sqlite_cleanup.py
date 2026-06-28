@@ -50,6 +50,20 @@ def test_versioning_objects_do_not_emit_resourcewarnings(tmp_path: Path, mock_me
     assert not any(issubclass(w.category, ResourceWarning) for w in manager_warnings)
 
 
+@pytest.mark.parametrize(
+    "cls",
+    [VecStore, GraphStore, HistoryStore, CrossReferenceIndex, ContradictionStore, VersionStore],
+)
+def test_best_effort_destructors_suppress_shutdown_interrupts(cls) -> None:
+    obj = object.__new__(cls)
+
+    def raising_close() -> None:
+        raise KeyboardInterrupt()
+
+    obj.close = raising_close
+    cls.__del__(obj)
+
+
 def test_vec_store_closes_worker_thread_connections(tmp_path: Path) -> None:
     store = VecStore(tmp_path / "vec.db", dims=4)
 

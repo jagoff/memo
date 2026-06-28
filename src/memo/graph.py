@@ -365,11 +365,11 @@ class GraphStore:
         return [dict(r) for r in rows]
 
     def close(self) -> None:
-        with suppress(Exception):
+        with suppress(BaseException):
             self._conn.close()
 
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
-        with suppress(Exception):
+        with suppress(BaseException):
             self.close()
 
 

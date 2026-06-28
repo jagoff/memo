@@ -109,6 +109,13 @@ def test_store_never_imports_memory() -> None:
     assert "memory" not in _module_imports("store")
 
 
+def test_memory_write_ops_uses_store_public_api() -> None:
+    """The save path must not reach through VecStore's private connection."""
+    source = (SRC / "memory" / "write_ops.py").read_text(encoding="utf-8")
+
+    assert "store._conn" not in source
+
+
 def test_util_is_pure_stdlib_leaf() -> None:
     """memo.util is the bottom of the stack — it depends on nothing in memo."""
     assert _memo_imports(SRC / "util.py") == set()
@@ -220,9 +227,10 @@ def test_behavior_flags_are_not_read_directly_from_environ() -> None:
         SRC / "embedder.py": {"MEMO_QUERY_CACHE_SIZE"},
         SRC / "mlx_gpu.py": {"MEMO_GPU_LOCK_PATH", "MEMO_GPU_XPROC_LOCK"},
         SRC / "store" / "schema.py": {"MEMO_SKIP_MODEL_VERSION_CHECK"},
-        # store/queries.py is a foundation module that cannot import memo.flags.
-        # These flags gate dual-write and soft-delete behavior at the storage layer.
-        SRC / "store" / "queries.py": {"MEMO_TANTIVY_ENABLED", "MEMO_SOFT_DELETE"},
+        # store/queries.py is a foundation module. Tantivy is kept here as an
+        # operational storage switch; soft-delete is registered and read through
+        # memo.flags.
+        SRC / "store" / "queries.py": {"MEMO_TANTIVY_ENABLED"},
         # MEMO_AGENT_TTY is set by the shim, not user-configurable; read here for IPC.
         SRC / "cli_session.py": {"MEMO_AGENT_TTY"},
         # autoupdate reads directly for the setdefault pattern (env check before flag default)

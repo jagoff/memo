@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.5] - 2026-06-28
+
+### Fixed
+
+- **`contradict scan` same-day default corrected.** `min_days_apart` defaulted to 1, silently skipping contradictions recorded on the same day; changed to 0. Propagated into `maintain` and `dream` scan paths.
+- **`temporal stale` never flagged anything.** `--min-access` defaulted to 0, which matched every record; changed to 1 so only records with at least one access are considered stale candidates.
+- **`temporal contradictions` same-day gate dropped.** The intra-day filter was incorrectly excluding same-day contradictions from the temporal report.
+- **`links backlinks/outlinks` now resolve 12-char id prefix before crossref query.** Short-id references were passed directly to the exact-match crossref query and returned no results; they are now expanded to full ids first.
+- **`memo version history/diff/rollback` now have data.** `track_update` snapshots on every real edit (gated + best-effort), so version history is populated from first use. Fixed single-line diff collapse that rendered multi-line diffs as one line.
+- **`diff`/`as-of` 10-char date validation added.** Malformed date strings now produce a clear error instead of a traceback.
+- **`feedback record/clear` crash guards.** Missing-id and fabricated-id inputs now raise `MemoError` with an actionable message instead of a bare `KeyError`.
+- **`import json` non-dict element guard.** A non-dict element in a JSON import array no longer causes an `AttributeError`; it is now skipped with a warning.
+- **`eval recall --k 0` division-by-zero fixed.** Passing `--k 0` no longer raises `ZeroDivisionError` in the precision calculation.
+- **`eval grounding` malformed-labels guard.** Labels missing required fields are now skipped with a warning instead of crashing the run.
+- **`query run --json` not-found emits JSON + exits non-zero.** Previously a missing query name printed plain text and returned 0, breaking pipeline consumers.
+- **`query save` date validation.** An invalid date string in a saved query definition now raises a clear error at save time rather than at run time.
+- **`import markdown-bundle` preserves type and tags.** Bundle imports were dropping the `type` and `tags` frontmatter fields; they are now carried through to the indexed record.
+- **TUI Rich markup escape + `--once`/headless guard.** User-supplied text with Rich markup characters is now escaped before rendering. `--once` and headless invocations no longer attempt to draw the live TUI panel.
+- **Collaborative 0-byte graph file guard.** Opening a graph file that is empty (e.g. just created by another process) no longer raises a JSON parse error.
+- **Contextual record-click existence check.** Clicking a record in the contextual panel that was deleted mid-session no longer raises `KeyError`.
+- **Dream progress bar suppressed under `MEMO_NONINTERACTIVE`.** The Rich progress bar is now hidden in non-interactive environments (CI, daemon, hooks), preventing garbled output.
+- **`maintain` `synthesis_count` attribute error fixed.** The post-maintain summary no longer crashes when `synthesis_count` is absent from the result dict.
+
 ## [2.3.4] - 2026-06-28
 
 ### Fixed

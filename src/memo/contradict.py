@@ -179,11 +179,11 @@ class ContradictionStore:
                 raise
 
     def close(self) -> None:
-        with suppress(Exception):
+        with suppress(BaseException):
             self._conn.close()
 
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
-        with suppress(Exception):
+        with suppress(BaseException):
             self.close()
 
     def upsert_open(

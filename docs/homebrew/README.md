@@ -85,9 +85,10 @@ git commit -am "mlx-memo $NEW_VERSION"
 git push
 ```
 
-Do not bump this formula to a version until the matching sdist exists on PyPI.
-At the time this note was updated, PyPI's latest `mlx-memo` release was
-`0.6.0`, while the source tree was already preparing `0.7.0`.
+Do not bump this formula to a version until the matching sdist exists on PyPI
+and its `sha256` has been calculated. Between a source-tree version bump and a
+published sdist, `memo release check` reports formula drift as a warning; use
+`memo release check --strict-docs` after PyPI publish.
 
 ## Why a personal tap, not homebrew-core?
 

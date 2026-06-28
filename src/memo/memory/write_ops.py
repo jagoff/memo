@@ -12,7 +12,6 @@ import contextlib
 import json
 import os
 import re
-import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any
@@ -376,10 +375,7 @@ class _WriteOpsMixin(_MemoryBase):
             # topic_key and reuse its id/path (update instead of create).
             if topic_key:
                 try:
-                    existing = self.store._conn.execute(
-                        "SELECT id, path, created FROM meta WHERE topic_key = ? AND deleted_at IS NULL LIMIT 1",
-                        (topic_key,),
-                    ).fetchone()
+                    existing = self.store.find_by_topic_key(topic_key)
                     if existing is not None and existing["id"]:
                         use_existing_id = existing["id"]
                         existing_path = existing["path"]
@@ -786,12 +782,9 @@ class _WriteOpsMixin(_MemoryBase):
         # body was written into the FTS table at ingest time — read it
         # from there so retrieval surfaces real snippets instead of "".
         try:
-            row = self.store._conn.execute(
-                "SELECT body FROM fts WHERE id = (SELECT id FROM meta WHERE path = ?)",
-                (rel_path,),
-            ).fetchone()
-            if row and row["body"]:
-                return str(row["body"])
-        except sqlite3.Error:
+            body = str(self.store.get_fts_body_by_path(rel_path) or "")
+            if body:
+                return body
+        except Exception:
             _log.warning("read_body_fallback: DB error for %s", rel_path, exc_info=True)
         return ""

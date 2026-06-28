@@ -76,6 +76,24 @@ def eval_group() -> None:
 @click.option("--force", is_flag=True, help="Ignore cached results and re-run.")
 @click.option("--no-cache", is_flag=True, help="Neither read nor write the cache.")
 @click.option(
+    "--quick",
+    is_flag=True,
+    help="Fast smoke: run only config A and cap prompts unless --max-prompts is set.",
+)
+@click.option(
+    "--config",
+    "config_names",
+    multiple=True,
+    help="Config to run (A, B, C, D, or full name). Repeat for multiple configs.",
+)
+@click.option(
+    "--max-prompts",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Evaluate only the first N prompts from the label set.",
+)
+@click.option("--progress", is_flag=True, help="Print progress before each prompt search.")
+@click.option(
     "--gate",
     is_flag=True,
     help="Regression gate: exit non-zero if precision@K dropped or noise@K rose "
@@ -93,6 +111,10 @@ def eval_recall_cmd(
     detail: bool,
     force: bool,
     no_cache: bool,
+    quick: bool,
+    config_names: tuple[str, ...],
+    max_prompts: int | None,
+    progress: bool,
     gate: bool,
     update_baseline: bool,
 ) -> None:
@@ -121,10 +143,18 @@ def eval_recall_cmd(
                 "[dim]Using the built-in example label set; pass "
                 "--labels for your own corpus.[/dim]"
             )
+    if quick and max_prompts is None:
+        max_prompts = 12
+    labels = eval_recall.limit_label_set(labels, max_prompts)
+    try:
+        selected_configs = eval_recall.select_configs(list(config_names), quick=quick)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     mem = _get_memory(cfg)
     corpus_fp = eval_recall.fingerprint_corpus(mem)
-    cache_key = f"{corpus_fp}:{labels.fingerprint()}:{k}"
+    configs_fp = ",".join(c.name for c in selected_configs)
+    cache_key = f"{corpus_fp}:{labels.fingerprint()}:{configs_fp}:{k}"
 
     rows = None
     cached = False
@@ -135,7 +165,20 @@ def eval_recall_cmd(
             cached = True
 
     if rows is None:
-        rows = eval_recall.evaluate(mem, k=k, labels=labels)
+        if quick and not as_json:
+            progress = True
+
+        def _progress(cfg_: eval_recall.Cfg, index: int, total: int) -> None:
+            if progress and not as_json:
+                console.print(f"[dim]eval {cfg_.name}: prompt {index}/{total}[/dim]")
+
+        rows = eval_recall.evaluate(
+            mem,
+            k=k,
+            labels=labels,
+            configs=selected_configs,
+            progress=_progress if progress and not as_json else None,
+        )
         if not no_cache:
             cache = _load_cache(cfg)
             cache[cache_key] = {"ts": time.time(), "k": k, "rows": [r.__dict__ for r in rows]}
@@ -181,6 +224,7 @@ def eval_recall_cmd(
                     "cached": cached,
                     "corpus": corpus_fp,
                     "labels_fingerprint": labels.fingerprint(),
+                    "configs": [c.name for c in selected_configs],
                     "rows": [r.__dict__ for r in rows],
                     "recommendation": eval_recall.recommend(rows),
                 },

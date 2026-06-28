@@ -143,12 +143,12 @@ class VecStore(
         """Close sqlite connection and tantivy index."""
         tantivy = getattr(self, "_tantivy_inst", None)
         if tantivy is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(BaseException):
                 tantivy.close()
         super().close()
 
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(BaseException):
             self.close()
 
     def _get_tantivy(self) -> TantivyFTSIndex | None:

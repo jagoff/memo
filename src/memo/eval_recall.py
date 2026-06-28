@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -168,6 +169,53 @@ def default_configs() -> list[Cfg]:
     ]
 
 
+def select_configs(names: list[str] | tuple[str, ...] | None = None, *, quick: bool = False) -> list[Cfg]:
+    """Return the eval configs requested by CLI/user input.
+
+    Names accept either the short letter (``A``/``B``/``C``/``D``) or the full
+    display name. ``quick`` defaults to the single fast baseline config unless
+    explicit names were supplied.
+    """
+    configs = default_configs()
+    requested = list(names or [])
+    if quick and not requested:
+        requested = ["A"]
+    if not requested:
+        return configs
+
+    by_key: dict[str, Cfg] = {}
+    for cfg in configs:
+        short = cfg.name.split(" ", 1)[0].lower()
+        by_key[short] = cfg
+        by_key[cfg.name.lower()] = cfg
+
+    selected: list[Cfg] = []
+    seen: set[str] = set()
+    for raw in requested:
+        key = raw.strip().lower()
+        selected_cfg = by_key.get(key)
+        if selected_cfg is None:
+            valid = ", ".join(c.name.split(" ", 1)[0] for c in configs)
+            raise ValueError(f"unknown recall eval config {raw!r}; valid: {valid}")
+        if selected_cfg.name not in seen:
+            selected.append(selected_cfg)
+            seen.add(selected_cfg.name)
+    return selected
+
+
+def limit_label_set(labels: LabelSet, max_prompts: int | None) -> LabelSet:
+    """Return a label set capped to the first ``max_prompts`` prompts."""
+    if max_prompts is None or max_prompts >= len(labels.prompts):
+        return labels
+    return LabelSet(
+        prompts=labels.prompts[:max_prompts],
+        relevant_terms=set(labels.relevant_terms),
+        noise_tags=set(labels.noise_tags),
+        noise_path_fragments=tuple(labels.noise_path_fragments),
+        session_context=labels.session_context,
+    )
+
+
 # --- Classification ----------------------------------------------------------
 
 
@@ -224,14 +272,26 @@ def _scored_prompts(labels: LabelSet) -> int:
     return sum(1 for p in labels.prompts if p.relevant or p.expect_ids)
 
 
-def run_config(mem: Any, cfg: Cfg, k: int, labels: LabelSet) -> Row:
+ProgressCallback = Callable[[Cfg, int, int], None]
+
+
+def run_config(
+    mem: Any,
+    cfg: Cfg,
+    k: int,
+    labels: LabelSet,
+    *,
+    progress: ProgressCallback | None = None,
+) -> Row:
     lat: list[float] = []
     prec_hits = 0
     prec_total = 0
     noise_hits = 0
     detail: list[dict[str, Any]] = []
     n_prompts = len(labels.prompts) or 1
-    for prompt in labels.prompts:
+    for index, prompt in enumerate(labels.prompts, start=1):
+        if progress is not None:
+            progress(cfg, index, len(labels.prompts))
         scored = prompt.relevant or bool(prompt.expect_ids)
         query = (
             f"{labels.session_context}\n{prompt.text}"
@@ -275,11 +335,16 @@ def run_config(mem: Any, cfg: Cfg, k: int, labels: LabelSet) -> Row:
 
 
 def evaluate(
-    mem: Any, *, k: int = 3, labels: LabelSet | None = None, configs: list[Cfg] | None = None
+    mem: Any,
+    *,
+    k: int = 3,
+    labels: LabelSet | None = None,
+    configs: list[Cfg] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> list[Row]:
     labels = labels or DEFAULT_LABELS
     configs = configs or default_configs()
-    return [run_config(mem, cfg, k, labels) for cfg in configs]
+    return [run_config(mem, cfg, k, labels, progress=progress) for cfg in configs]
 
 
 # --- Reporting ---------------------------------------------------------------

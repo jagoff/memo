@@ -153,6 +153,49 @@ def test_delete_removes_from_both_tables(store: VecStore):
     assert store.search(_emb(1, 0, 0, 0), limit=10) == []
 
 
+def test_find_by_topic_key_returns_active_record(store: VecStore):
+    store.upsert(
+        id_="abc",
+        path="memory/x.md",
+        title="X",
+        type_="note",
+        tags=[],
+        created="2026-05-06T19:00:00-03:00",
+        updated="2026-05-06T19:00:00-03:00",
+        body_hash="h",
+        embedding=_emb(1, 0, 0, 0),
+        topic_key="project:x",
+    )
+
+    row = store.find_by_topic_key("project:x")
+
+    assert row == {
+        "id": "abc",
+        "path": "memory/x.md",
+        "created": "2026-05-06T19:00:00-03:00",
+    }
+    store.delete("abc")
+    assert store.find_by_topic_key("project:x") is None
+
+
+def test_get_fts_body_by_path(store: VecStore):
+    store.upsert(
+        id_="abc",
+        path="memory/x.md",
+        title="X",
+        type_="note",
+        tags=[],
+        created="t",
+        updated="t",
+        body_hash="h",
+        embedding=_emb(1, 0, 0, 0),
+        body_text="indexed body",
+    )
+
+    assert store.get_fts_body_by_path("memory/x.md") == "indexed body"
+    assert store.get_fts_body_by_path("memory/missing.md") == ""
+
+
 def test_dim_mismatch_raises(store: VecStore):
     with pytest.raises(ValueError, match="dimension mismatch"):
         store.upsert(

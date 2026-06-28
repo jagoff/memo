@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3
 from typing import Any
 
@@ -268,6 +267,43 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             ids,
         ).fetchall()
         return {r["id"]: str(r["body"]) for r in rows}
+
+    def find_by_topic_key(self, topic_key: str) -> dict[str, str] | None:
+        """Return the active row keyed by ``topic_key`` for save-path upserts."""
+        if not topic_key:
+            return None
+        try:
+            row = self._conn.execute(
+                "SELECT id, path, created FROM meta "
+                "WHERE topic_key = ? AND (deleted_at IS NULL OR deleted_at = '') "
+                "LIMIT 1",
+                (topic_key,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            # Older stores may not have engram columns yet.
+            if "no such column" not in str(exc):
+                raise
+            return None
+        return dict(row) if row else None
+
+    def get_fts_body_by_path(self, path: str) -> str:
+        """Return indexed FTS body text for a memory path, or an empty string."""
+        try:
+            row = self._conn.execute(
+                "SELECT fts.body AS body FROM fts JOIN meta ON meta.id = fts.id "
+                "WHERE meta.path = ? AND (meta.deleted_at IS NULL OR meta.deleted_at = '') "
+                "LIMIT 1",
+                (path,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such column" not in str(exc):
+                raise
+            row = self._conn.execute(
+                "SELECT fts.body AS body FROM fts JOIN meta ON meta.id = fts.id "
+                "WHERE meta.path = ? LIMIT 1",
+                (path,),
+            ).fetchone()
+        return str(row["body"]) if row and row["body"] else ""
 
     def update_meta(
         self,
@@ -620,7 +656,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
 
     def delete(self, id_: str) -> bool:
         # Check if soft delete column exists (engram pattern)
-        _use_soft = os.environ.get("MEMO_SOFT_DELETE", "1").lower() not in ("0", "false", "no")
+        from ..flags import flag_bool
+
+        _use_soft = flag_bool("MEMO_SOFT_DELETE")
         has_soft_delete = False
         if _use_soft:
             try:

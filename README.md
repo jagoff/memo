@@ -2,7 +2,7 @@
 
 <img src="docs/logo.png" alt="memo" width="128" height="128" />
 
-# memo 2.0
+# memo
 
 **Local-first semantic memory for AI agents — with time-travel, contradiction radar, and automatic synthesis.**
 
@@ -17,9 +17,9 @@
 
 `memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your Mac**. Each memory is a plain Markdown file; embeddings live in a single sqlite file; the LLM, embedder, and reranker run **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
 
-## What makes 2.0 different
+## What makes memo different
 
-| Capability | memo 2.0 | mem0 | letta | cognee |
+| Capability | memo | mem0 | letta | cognee |
 |---|:---:|:---:|:---:|:---:|
 | 100% local (no cloud API) | ✅ | ❌ | ⚠️ | ⚠️ |
 | **Time-machine** (rewind corpus to any date) | ✅ | ❌ | ❌ | ❌ |
@@ -120,7 +120,7 @@ memo ask 'what changed in the embedder this month?'   # RAG — cites memories b
 - **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate. The corpus grows on its own.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery.
 
-## What's new in 2.0
+## Key capabilities
 
 ### 🕰️ Time-machine
 
@@ -289,9 +289,9 @@ MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https:
 
 ## Español
 
-**memo 2.0** es memory semántica persistente para agentes de IA: **100% local**, sobre Apple Silicon con MLX. Cada memory es un archivo Markdown; los embeddings viven en un único sqlite; el LLM, el embedder y el reranker corren **en proceso vía MLX** — sin Ollama, sin nube, sin API keys. Tus prompts y memories **nunca salen de la Mac**.
+**memo** es memory semántica persistente para agentes de IA: **100% local**, sobre Apple Silicon con MLX. Cada memory es un archivo Markdown; los embeddings viven en un único sqlite; el LLM, el embedder y el reranker corren **en proceso vía MLX** — sin Ollama, sin nube, sin API keys. Tus prompts y memories **nunca salen de la Mac**.
 
-**Las novedades de 2.0:** máquina del tiempo (`memo as-of`), radar de contradicciones (`memo contradict`), pipeline de síntesis (`memo synthesize`), sync cross-Mac vía git, vault de Obsidian como fuente de verdad, knowledge graph, puntuación de salud (`memo health`), gates de regresión de retrieval (`memo eval --gate`), e ingesta multi-modal (imágenes + OCR de audio).
+**Capacidades principales:** máquina del tiempo (`memo as-of`), radar de contradicciones (`memo contradict`), pipeline de síntesis (`memo synthesize`), sync cross-Mac vía git, vault de Obsidian como fuente de verdad, knowledge graph, puntuación de salud (`memo health`), gates de regresión de retrieval (`memo eval --gate`), e ingesta multi-modal (imágenes + OCR de audio).
 
 **Por qué ahorra tokens:** la superficie MCP por defecto son 10 tools (~2.4k tokens) contra 122 (~28k) → **~91% menos** contexto por sesión; y el recall **inyecta la respuesta** en vez de que el agente la vuelva a deducir. En un corpus de ~200 memories, `memo roi` estima **~80k tokens de trabajo del modelo evitados** por sesión.
 

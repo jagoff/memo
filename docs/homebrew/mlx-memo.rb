@@ -3,6 +3,9 @@
 # Lives in this source tree as a reference copy. To activate it for
 # end users, mirror this file to a tap repo named `homebrew-memo`
 # under your GitHub user (see `docs/homebrew/README.md`).
+# This file tracks the latest published PyPI sdist, not necessarily the
+# in-flight source-tree version; update only after the sdist exists and
+# the sha256 has been calculated.
 #
 # Users then install with:
 #

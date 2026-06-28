@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from memo.runtime.mcp_config import (
+    KNOWN_MCP_CONFIGS,
     classify_command_path,
     extract_memo_command_paths,
     scan_mcp_configs,
@@ -54,3 +55,10 @@ def test_classify_uv_tools_internal() -> None:
 
 def test_scan_skips_missing_config(tmp_path: Path) -> None:
     assert scan_mcp_configs((str(tmp_path / "nope.json"),)) == []
+
+
+def test_known_configs_cover_codex_and_windsurf() -> None:
+    joined = "\n".join(KNOWN_MCP_CONFIGS)
+
+    assert "~/.codex/config.toml" in joined
+    assert "windsurf" in joined.lower()
