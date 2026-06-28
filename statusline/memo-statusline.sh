@@ -1,7 +1,13 @@
 #!/bin/bash
 # memo statusline for Claude Code.
-# Reads the Claude Code statusline JSON on stdin and prints a compact one-liner:
-#   <dir basename> · <git branch> · <model> · [MEMO <version>]
+#
+# Two modes:
+#   Standalone:  prints  <dir> · <branch> · <model> · [MEMO <version>]
+#   Wrap:        memo-statusline.sh --wrap '<inner command>'
+#                runs <inner command> with the SAME statusline JSON on stdin,
+#                captures its line, and PREPENDS  [MEMO <version>]  to it — so the
+#                badge coexists with any other statusline (caveman, memflow, a
+#                custom one) on any machine, without hand-merging scripts.
 #
 # Dependency-free beyond bash + standard tools (jq is used if present, with a
 # pure-shell fallback). The memo version comes from a filesystem glob over the
@@ -9,6 +15,40 @@
 # / upgrade updates the badge by itself.
 
 INPUT=$(cat)
+
+# ── Wrap target (optional): `--wrap '<cmd>'` delegates the rest of the line ────
+WRAP_CMD=""
+if [ "$1" = "--wrap" ] && [ -n "$2" ]; then WRAP_CMD="$2"; fi
+
+# ── Memo version badge (filesystem glob over the installed dist-info dir) ─────
+# Sanitized to [0-9A-Za-z.+-] so nothing can inject ANSI/OSC escapes.
+MEMO_VER=""
+for _b in "$HOME/.local/pipx/venvs/mlx-memo" "$HOME/.local/share/uv/tools/mlx-memo"; do
+  for _d in "$_b"/lib/python*/site-packages/mlx_memo-*.dist-info; do
+    [ -d "$_d" ] || continue
+    MEMO_VER="${_d##*/mlx_memo-}"; MEMO_VER="${MEMO_VER%.dist-info}"
+    break 2
+  done
+done
+if [ -z "$MEMO_VER" ]; then
+  MEMO_VER_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.memo-version"
+  [ -f "$MEMO_VER_FILE" ] && [ ! -L "$MEMO_VER_FILE" ] && \
+    MEMO_VER=$(head -c 16 "$MEMO_VER_FILE" 2>/dev/null)
+fi
+MEMO_VER=$(printf '%s' "$MEMO_VER" | tr -cd '0-9A-Za-z.+-')
+MEMO_BADGE=""
+[ -n "$MEMO_VER" ] && MEMO_BADGE="[MEMO $MEMO_VER]"
+
+# ── Wrap mode: prepend the badge to the inner statusline's output and exit ────
+if [ -n "$WRAP_CMD" ]; then
+  INNER=$(printf '%s' "$INPUT" | eval "$WRAP_CMD" 2>/dev/null)
+  if [ -n "$MEMO_BADGE" ] && [ -n "$INNER" ]; then
+    printf '%s %s' "$MEMO_BADGE" "$INNER"
+  else
+    printf '%s%s' "$MEMO_BADGE" "$INNER"
+  fi
+  exit 0
+fi
 
 # ── tiny JSON field reader (jq when available, else a crude grep fallback) ─────
 _json() {
@@ -37,25 +77,6 @@ fi
 
 # ── Model display name ────────────────────────────────────────────────────────
 MODEL=$(_json '.model.display_name' 'display_name')
-
-# ── Memo version badge (filesystem glob over the installed dist-info dir) ─────
-# Sanitized to [0-9A-Za-z.+-] so nothing can inject ANSI/OSC escapes.
-MEMO_VER=""
-for _b in "$HOME/.local/pipx/venvs/mlx-memo" "$HOME/.local/share/uv/tools/mlx-memo"; do
-  for _d in "$_b"/lib/python*/site-packages/mlx_memo-*.dist-info; do
-    [ -d "$_d" ] || continue
-    MEMO_VER="${_d##*/mlx_memo-}"; MEMO_VER="${MEMO_VER%.dist-info}"
-    break 2
-  done
-done
-if [ -z "$MEMO_VER" ]; then
-  MEMO_VER_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.memo-version"
-  [ -f "$MEMO_VER_FILE" ] && [ ! -L "$MEMO_VER_FILE" ] && \
-    MEMO_VER=$(head -c 16 "$MEMO_VER_FILE" 2>/dev/null)
-fi
-MEMO_VER=$(printf '%s' "$MEMO_VER" | tr -cd '0-9A-Za-z.+-')
-MEMO_BADGE=""
-[ -n "$MEMO_VER" ] && MEMO_BADGE="[MEMO $MEMO_VER]"
 
 # ── Compose: join non-empty parts with " · " ──────────────────────────────────
 OUT=""

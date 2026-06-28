@@ -276,6 +276,13 @@ def main() -> None:
     threading.Thread(target=notify_if_newer, daemon=True).start()
     threading.Thread(target=maybe_auto_update, daemon=True).start()
 
+    # Idempotently re-assert the [MEMO <ver>] statusLine wiring (wrapping any
+    # foreign statusline). No-op when already correct; self-repairs drift if
+    # another tool clobbered the key. Gated by MEMO_STATUSLINE_SELFHEAL.
+    from memo.cli_statusline import selfheal_statusline
+
+    threading.Thread(target=selfheal_statusline, daemon=True).start()
+
     transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
         # Long-lived daemon: enable the prompt cache + a larger query-embedding

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-06-27
+
+### Fixed
+
+- **statusline wrap instead of skip.** `memo install-statusline` was no-clobber:
+  if a foreign `statusLine` already existed (caveman, memflow, custom), it skipped
+  silently and the `[MEMO <version>]` badge never wired. It now **wraps** the
+  existing command instead: `memo-statusline.sh --wrap '<inner cmd>'` runs the
+  prior command and prepends the MEMO badge, so both coexist. Idempotent (no
+  memo-over-memo recursion). `--force` collapses to a memo-only line.
+
+### Added
+
+- **statusline self-heal on session start.** `memo-mcp` re-asserts the `statusLine`
+  wiring idempotently at startup (gated by new flag `MEMO_STATUSLINE_SELFHEAL`,
+  default on). If another tool clobbers the config key between sessions, it
+  self-repairs on the next session without user intervention.
+
 ## [2.3.2] - 2026-06-27
 
 ### Removed

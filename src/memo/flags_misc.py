@@ -60,6 +60,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "update",
         "Git repo URL to check tags / install from (empty → the memo default).",
     ),
+    _spec(
+        "MEMO_STATUSLINE_SELFHEAL",
+        "bool",
+        True,
+        "update",
+        "On memo-mcp start, idempotently re-assert the [MEMO <ver>] statusLine "
+        "wiring in ~/.claude/settings.json (wrapping any foreign statusline). "
+        "No-op when already correct. Default on; set =0 to opt out.",
+    ),
     # MCP transport
     _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
     _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),
