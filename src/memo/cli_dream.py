@@ -68,6 +68,14 @@ def dream_cmd() -> None:
 
 
 def _make_progress() -> Progress:
+    import sys
+
+    from memo.flags import flag_bool
+
+    # Non-interactive runs (launchd dream, piped output) still get the live-render
+    # ANSI control stream from Rich — ~2MB of escapes per run. Disable the bar
+    # there; the per-pass `console.print` summary at the end still emits.
+    disable = flag_bool("MEMO_NONINTERACTIVE") or not sys.stderr.isatty()
     return Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -76,6 +84,7 @@ def _make_progress() -> Progress:
         TimeElapsedColumn(),
         console=console,
         transient=False,
+        disable=disable,
     )
 
 

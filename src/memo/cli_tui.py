@@ -25,7 +25,15 @@ from memo.config import Config
     is_flag=True,
     help="Don't take over the terminal screen — render inline (handy for tmux/screen).",
 )
-def tui(refresh: float, no_clear: bool) -> None:
+@click.option(
+    "--once",
+    "--no-loop",
+    "once",
+    is_flag=True,
+    default=False,
+    help="Render a single frame and exit (no live loop) — for scripts/headless.",
+)
+def tui(refresh: float, no_clear: bool, once: bool) -> None:
     """Live terminal dashboard — token savings, utility metrics, consumers.
 
     Shows: tokens saved, cost $, recall hooks, strong hits, unique memories,
@@ -33,7 +41,7 @@ def tui(refresh: float, no_clear: bool) -> None:
     """
     from memo.dashboard import run_tui
 
-    run_tui(refresh=refresh, no_clear=no_clear)
+    run_tui(refresh=refresh, no_clear=no_clear, once=once)
 
 
 @click.command(name="hook-log")

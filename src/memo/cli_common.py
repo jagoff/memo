@@ -85,6 +85,12 @@ def _parse_as_of_date(s: str) -> str:
 
     s = s.strip()
     if len(s) == 10:  # YYYY-MM-DD
+        try:
+            _dt.strptime(s, "%Y-%m-%d")
+        except ValueError as exc:
+            raise click.ClickException(
+                f"Could not parse --date {s!r}. Use YYYY-MM-DD or ISO 8601.",
+            ) from exc
         return f"{s}T23:59:59+00:00"  # end-of-day to be inclusive
     try:
         dt = _dt.fromisoformat(s.rstrip("Z"))

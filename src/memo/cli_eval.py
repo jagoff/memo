@@ -216,14 +216,34 @@ def eval_recall_cmd(
     show_default=True,
     help="Where to write the harvested label set.",
 )
-@click.option("--strong", type=float, default=0.5, show_default=True,
-              help="Minimum used_score for a grounding row to become ground truth.")
-@click.option("--margin", type=float, default=0.0, show_default=True,
-              help="Minimum specific_score (when present) to keep a row.")
-@click.option("--max", "max_labels", type=int, default=200, show_default=True,
-              help="Cap on harvested labels (most recent first).")
-@click.option("--merge/--overwrite", default=True, show_default=True,
-              help="Merge into an existing label file (union expect_ids) or replace it.")
+@click.option(
+    "--strong",
+    type=float,
+    default=0.5,
+    show_default=True,
+    help="Minimum used_score for a grounding row to become ground truth.",
+)
+@click.option(
+    "--margin",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Minimum specific_score (when present) to keep a row.",
+)
+@click.option(
+    "--max",
+    "max_labels",
+    type=int,
+    default=200,
+    show_default=True,
+    help="Cap on harvested labels (most recent first).",
+)
+@click.option(
+    "--merge/--overwrite",
+    default=True,
+    show_default=True,
+    help="Merge into an existing label file (union expect_ids) or replace it.",
+)
 @click.option("--as-json", is_flag=True, help="Emit the resulting label set as JSON.")
 def harvest_cmd(
     out_path: Path,
@@ -295,7 +315,10 @@ def grounding_eval_cmd(labels: Path, as_json: bool) -> None:
     from memo.dashboard import read_grounding_log
 
     cfg = Config.from_env()
-    label_set = eval_grounding.load_labels(labels)
+    try:
+        label_set = eval_grounding.load_labels(labels)
+    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"could not load grounding labels {labels}: {exc}") from exc
     rows = read_grounding_log(cfg.state_dir, limit=4000)
     result = eval_grounding.evaluate(rows, label_set)
 
@@ -310,10 +333,12 @@ def grounding_eval_cmd(labels: Path, as_json: bool) -> None:
     console.print(
         f"  precision {result['precision']}  recall {result['recall']}  f1 {result['f1']}"
     )
-    console.print(
-        f"  tp={result['tp']} fp={result['fp']} fn={result['fn']} tn={result['tn']}"
-    )
+    console.print(f"  tp={result['tp']} fp={result['fp']} fn={result['fn']} tn={result['tn']}")
     if result["false_positives"]:
-        console.print(f"\n  [yellow]false positives (detector said used, label says no):[/yellow] {len(result['false_positives'])}")
+        console.print(
+            f"\n  [yellow]false positives (detector said used, label says no):[/yellow] {len(result['false_positives'])}"
+        )
     if result["false_negatives"]:
-        console.print(f"  [yellow]false negatives (detector missed a real use):[/yellow] {len(result['false_negatives'])}")
+        console.print(
+            f"  [yellow]false negatives (detector missed a real use):[/yellow] {len(result['false_negatives'])}"
+        )

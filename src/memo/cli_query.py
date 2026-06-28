@@ -7,6 +7,7 @@ root group in cli.py via `cli.add_command(query_group)`.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import click
 from rich.table import Table
@@ -57,6 +58,16 @@ def query_save(
 
     Example: memo query save "MLX decisions" "MLX" --type decision --execute
     """
+    # Validate dates at save time — a typo would otherwise silently broaden
+    # results on every later `query run` (execute_query skips an unparseable
+    # bound instead of erroring).
+    for label, value in (("--date-from", date_from), ("--date-to", date_to)):
+        if value is not None:
+            try:
+                datetime.fromisoformat(value)
+            except ValueError as exc:
+                raise click.ClickException(f"Invalid {label} {value!r}: {exc}") from exc
+
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
@@ -143,6 +154,11 @@ def query_run(name: str, as_json: bool) -> None:
 
     query = mem.query_composer.query_store.get_query(name)
     if not query:
+        if as_json:
+            click.echo(
+                json.dumps({"query_name": name, "count": 0, "results": [], "error": "not_found"})
+            )
+            raise SystemExit(1)
         console.print(f"[yellow]Query '{name}' not found[/yellow]")
         return
 

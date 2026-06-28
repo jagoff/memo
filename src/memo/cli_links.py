@@ -35,6 +35,14 @@ def links_backlinks(memoria_id: str, as_json: bool) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
+    # crossref stores full 32-char ids; resolve a user-supplied prefix
+    # (e.g. the 12-char id printed by `memo list`) before the exact-match query.
+    rec = mem.get(memoria_id)
+    if rec is None:
+        console.print(f"[red]not found: {memoria_id}[/red]")
+        raise SystemExit(1)
+    memoria_id = rec.id
+
     backlinks = mem.crossref.get_backlinks(memoria_id)
 
     if as_json:
@@ -72,6 +80,14 @@ def links_outlinks(memoria_id: str, as_json: bool) -> None:
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)
+
+    # crossref stores full 32-char ids; resolve a user-supplied prefix
+    # (e.g. the 12-char id printed by `memo list`) before the exact-match query.
+    rec = mem.get(memoria_id)
+    if rec is None:
+        console.print(f"[red]not found: {memoria_id}[/red]")
+        raise SystemExit(1)
+    memoria_id = rec.id
 
     outlinks = mem.crossref.get_outlinks(memoria_id)
 

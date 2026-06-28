@@ -7,6 +7,7 @@ Extracted from `_WriteOpsMixin` to keep each file under 800 lines.
 from __future__ import annotations
 
 import builtins
+import logging
 from typing import Any
 
 import frontmatter
@@ -20,6 +21,8 @@ from memo.memory.record import (
     _now_iso,
 )
 from memo.util import sha256_short as _sha256_short
+
+_log = logging.getLogger(__name__)
 
 
 class _UpdateOpsMixin(_MemoryBase):
@@ -68,6 +71,23 @@ class _UpdateOpsMixin(_MemoryBase):
         body_changed = new_body_hash != r["body_hash"]
         title_changed = new_title != r["title"]
 
+        # Snapshot the prior record BEFORE mutating so `memo version
+        # history/diff/rollback` have data. Gated on a real edit so pure
+        # extra/provenance bumps (e.g. the cache dirty-bit) don't spam version
+        # rows. Best-effort: a versioning failure must never break the update.
+        if body_changed or title_changed or new_type != r["type"] or new_tags != r["tags"]:
+            try:
+                self.versioning.track_update(
+                    id_,
+                    r["title"],
+                    r["type"],
+                    r["tags"],
+                    old_body,
+                    reason="pre-update snapshot",
+                )
+            except Exception as exc:
+                _log.debug("update(%s): version snapshot failed — %s", id_[:8], exc)
+
         abs_path = self._resolve_existing(r["path"])
         abs_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -112,13 +132,13 @@ class _UpdateOpsMixin(_MemoryBase):
                 )
             else:
                 self.store.update_meta(
-                id_=id_,
-                title=new_title,
-                type_=new_type,
-                tags=new_tags,
-                updated=now_iso,
-                extra=new_extra,
-            )
+                    id_=id_,
+                    title=new_title,
+                    type_=new_type,
+                    tags=new_tags,
+                    updated=now_iso,
+                    extra=new_extra,
+                )
 
         # Audit log: build a delta of just the fields that changed.
         delta: dict[str, tuple[Any, Any]] = {}

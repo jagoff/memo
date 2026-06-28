@@ -268,7 +268,7 @@ def run_config(mem: Any, cfg: Cfg, k: int, labels: LabelSet) -> Row:
     return Row(
         config=cfg.name,
         precision_at_k=round(prec_hits / prec_total, 3) if prec_total else 0.0,
-        noise_at_k=round(noise_hits / (n_prompts * k), 3),
+        noise_at_k=round(noise_hits / (n_prompts * k), 3) if (n_prompts * k) else 0.0,
         latency_ms_p50=round(lat[len(lat) // 2], 1) if lat else 0.0,
         detail=detail,
     )
@@ -359,9 +359,7 @@ def gate_metrics(rows: list[Row]) -> dict[str, float]:
     return {"precision_at_k": b.precision_at_k, "noise_at_k": b.noise_at_k}
 
 
-def check_gate(
-    rows: list[Row], baseline: dict[str, float], *, tol: float = 1e-9
-) -> GateResult:
+def check_gate(rows: list[Row], baseline: dict[str, float], *, tol: float = 1e-9) -> GateResult:
     """Compare the current best config against a saved baseline.
 
     The gate FAILS if precision@K dropped below, or noise@K rose above, the

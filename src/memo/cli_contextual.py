@@ -103,8 +103,13 @@ def contextual_record_click(memoria_id: str) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    mem.contextual.record_click(memoria_id)
-    console.print(f"[green]Recorded click for memory {memoria_id[:8]}[/green]")
+    rec = mem.get(memoria_id)
+    if rec is None:
+        console.print(f"[yellow]Memory '{memoria_id}' not found[/yellow]")
+        raise SystemExit(1)
+
+    mem.contextual.record_click(rec.id)
+    console.print(f"[green]Recorded click for memory {rec.id[:8]}[/green]")
 
 
 @contextual_group.command(name="preferences")

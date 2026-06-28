@@ -55,8 +55,8 @@ def _fmt_pair_header(rec_a, rec_b, pair) -> str:
 @click.option(
     "--min-days-apart",
     type=int,
-    default=1,
-    help="Skip pairs whose updates are within N days (default: 1)",
+    default=0,
+    help="Skip pairs whose updates are within N days (default: 0)",
 )
 @click.option(
     "--max-memories",

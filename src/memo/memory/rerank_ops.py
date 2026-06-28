@@ -130,8 +130,11 @@ class _RerankOpsMixin(_MemoryBase):
         sid = (source_id or "").strip()
         if not sid:
             raise ValueError("source_id is required")
-        # Already a full id (32 hex chars) — accept as-is.
+        # Already a full id (32 hex chars) — accept only if it exists, so a
+        # fabricated id can't write an orphan feedback row.
         if len(sid) >= 32:
+            if self.store.get(sid) is None:
+                raise ValueError(f"no memory matches source_id {sid!r}")
             return sid
         # Prefix lookup. Must match exactly one row.
         matches = self.store.find_by_prefix(sid, limit=2)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 import threading
 import time
 from datetime import datetime
@@ -77,7 +78,7 @@ def _spawn_key_reader(stop_event: threading.Event) -> None:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def run_tui(*, refresh: float = 1.0, no_clear: bool = False) -> None:
+def run_tui(*, refresh: float = 1.0, no_clear: bool = False, once: bool = False) -> None:
     os.environ.setdefault("MEMO_SUPPRESS_LEGACY_WARN", "1")
 
     from memo.config import Config
@@ -86,6 +87,13 @@ def run_tui(*, refresh: float = 1.0, no_clear: bool = False) -> None:
     cfg = Config.from_env()
     mem = Memory(cfg)
     console = Console()
+
+    # One-shot / headless: render a single frame and return. The rich.Live loop
+    # has no natural exit without a TTY (the key-reader thread bails when stdin
+    # isn't a tty), so it would otherwise hang forever in scripts/CI.
+    if once or not sys.stdout.isatty():
+        console.print(render(mem, cfg.state_dir))
+        return
 
     stop = threading.Event()
     reader = threading.Thread(target=_spawn_key_reader, args=(stop,), daemon=True)

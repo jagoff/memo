@@ -146,8 +146,8 @@ def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> No
     "--min-access",
     "min_access_count",
     type=int,
-    default=0,
-    help="Minimum access count to exclude (default: 0)",
+    default=1,
+    help="Minimum access count to exclude (default: 1)",
 )
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def temporal_stale(days: int, min_access_count: int, as_json: bool) -> None:

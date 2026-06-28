@@ -397,7 +397,7 @@ class ContradictionScanner:
         top_k: int = 5,
         sim_floor: float = 0.55,
         confidence_threshold: float = 0.7,
-        min_days_apart: int = 1,
+        min_days_apart: int = 0,
         max_memorias: int = 2000,
         max_pairs: int = 500,
         since: str | None = None,

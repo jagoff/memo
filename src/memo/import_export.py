@@ -67,6 +67,9 @@ class Importer:
         errors = []
 
         for item in memorias:
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
             try:
                 self.memory.save(
                     content=item.get("content") or item.get("body") or "",
@@ -130,6 +133,8 @@ class Importer:
         Returns:
             ImportResult with statistics.
         """
+        import frontmatter
+
         imported = 0
         skipped = 0
         errors = []
@@ -141,20 +146,26 @@ class Importer:
 
                 try:
                     content = zf.read(filename).decode("utf-8")
-                    title = Path(filename).stem
+                    post = frontmatter.loads(content)
+                    meta = post.metadata
+                    body = post.content.strip()
+                    title = str(meta.get("title") or Path(filename).stem)
 
-                    # Extract frontmatter if present
-                    if content.startswith("---"):
-                        parts = content.split("---", maxsplit=2)
-                        body = parts[2].strip() if len(parts) >= 3 else content
+                    # Export writes tags comma-joined, so YAML parses them as a
+                    # plain string; a hand-edited bundle may use a YAML list.
+                    raw_tags = meta.get("tags")
+                    if isinstance(raw_tags, list):
+                        tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+                    elif isinstance(raw_tags, str):
+                        tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
                     else:
-                        body = content
+                        tags = []
 
                     self.memory.save(
                         content=body,
                         title=title,
-                        tags=[],
-                        type_="note",
+                        tags=tags,
+                        type_=str(meta.get("type") or "note"),
                     )
                     imported += 1
                 except Exception as e:

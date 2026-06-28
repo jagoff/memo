@@ -77,31 +77,41 @@ class CollaborativeGraph:
 
     def _load(self) -> None:
         """Load the graph from disk."""
-        if self.graph_file.is_file():
-            try:
-                data = json.loads(self.graph_file.read_text(encoding="utf-8"))
+        if not self.graph_file.is_file():
+            return
 
-                # Load connections
-                for cid, cdata in data.get("connections", {}).items():
-                    self._connections[cid] = SharedConnection(**cdata)
+        # An interrupted write can leave a 0-byte file — a normal recovery
+        # state, not corruption. Treat it as missing: start empty, no warning.
+        try:
+            if self.graph_file.stat().st_size == 0:
+                return
+        except OSError:
+            return
 
-                # Load insights
-                for iid, idata in data.get("insights", {}).items():
-                    self._insights[iid] = CollectiveInsight(**idata)
+        try:
+            data = json.loads(self.graph_file.read_text(encoding="utf-8"))
 
-                # Load users
-                for uid, udata in data.get("users", {}).items():
-                    self._users[uid] = UserProfile(**udata)
-            except Exception as exc:
-                _log.warning(
-                    "collaborative: failed to load graph from %s: %s",
-                    self.graph_file,
-                    exc,
-                    exc_info=True,
-                )
-                self._connections = {}
-                self._insights = {}
-                self._users = {}
+            # Load connections
+            for cid, cdata in data.get("connections", {}).items():
+                self._connections[cid] = SharedConnection(**cdata)
+
+            # Load insights
+            for iid, idata in data.get("insights", {}).items():
+                self._insights[iid] = CollectiveInsight(**idata)
+
+            # Load users
+            for uid, udata in data.get("users", {}).items():
+                self._users[uid] = UserProfile(**udata)
+        except Exception as exc:
+            # Genuinely corrupt (non-empty) file — concise warning, no traceback.
+            _log.warning(
+                "collaborative: failed to load graph from %s: %s",
+                self.graph_file,
+                exc,
+            )
+            self._connections = {}
+            self._insights = {}
+            self._users = {}
 
     def _save(self) -> None:
         """Save the graph to disk."""

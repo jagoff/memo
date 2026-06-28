@@ -249,8 +249,8 @@ class VersionManager:
         if not v_a or not v_b:
             return None
 
-        body_a = v_a.body.splitlines(keepends=True)
-        body_b = v_b.body.splitlines(keepends=True)
+        body_a = v_a.body.splitlines()
+        body_b = v_b.body.splitlines()
 
         diff = difflib.unified_diff(
             body_a,
@@ -260,7 +260,7 @@ class VersionManager:
             lineterm="",
         )
 
-        unified_diff = "".join(diff)
+        unified_diff = "\n".join(diff)
         changes = [
             line
             for line in unified_diff.split("\n")

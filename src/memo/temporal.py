@@ -191,15 +191,8 @@ class TemporalAnalyzer:
                 pair_count += 1
 
                 r1, r2 = records[i], records[j]
-                # Only compare if they're temporally separated (same-day edits are likely revisions)
-                try:
-                    d1 = datetime.fromisoformat(r1.updated.replace("Z", "+00:00"))
-                    d2 = datetime.fromisoformat(r2.updated.replace("Z", "+00:00"))
-                    if abs((d2 - d1).days) < 1:
-                        continue
-                except (ValueError, TypeError, AttributeError):
-                    _log.debug("temporal: skip pair date parse error")
-
+                # Let the LLM classify every pair (same-day pairs included); it
+                # already distinguishes revisions/evolutions from contradictions.
                 contr = self._classify_pair(r1, r2)
                 if contr and contr.confidence >= confidence_threshold:
                     contradictions.append(contr)

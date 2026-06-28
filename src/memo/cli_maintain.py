@@ -336,6 +336,10 @@ def maintain_cmd(
                         "id": r.get("id"),
                     }
                 )
+            # Keep the counter honest: the emergent pass (default-on) is what
+            # actually saves syntheses, so derive the count from the array
+            # instead of leaving it at 0 for everyone without MEMO_MAINT_SYNTHESIZE.
+            receipt["synthesis_count"] = len([s for s in receipt["synthesized"] if s.get("saved")])
         except Exception as exc:
             receipt["errors"].append(f"synthesize: {type(exc).__name__}: {exc}")
 

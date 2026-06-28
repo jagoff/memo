@@ -40,7 +40,11 @@ def feedback_record_cmd(source_id: str, query_text: str, rating: str, as_json: b
 
     cfg = Config.from_env()
     mem = Memory(cfg)
-    rid = mem.feedback_record(source_id, query_text=query_text, rating=rating)
+    try:
+        rid = mem.feedback_record(source_id, query_text=query_text, rating=rating)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
     if as_json:
         click.echo(json.dumps(rid, ensure_ascii=False))
         return
@@ -86,5 +90,9 @@ def feedback_clear_cmd(source_id: str, yes: bool) -> None:
 
     cfg = Config.from_env()
     mem = Memory(cfg)
-    n = mem.feedback_clear(source_id)
+    try:
+        n = mem.feedback_clear(source_id)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
     console.print(f"[green]ok[/green] deleted {n} row(s)")

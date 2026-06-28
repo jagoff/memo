@@ -619,7 +619,10 @@ def _panel_utility(state_dir: Path) -> Panel:
         tbl.add_column(width=16)
         tbl.add_column()
         for label, value in rows:
-            tbl.add_row(Text(label, style="dim"), Text(value, style="bold"))
+            # `value` carries Rich console markup (e.g. "[yellow]…[/yellow]");
+            # Text(value) would render the tags literally, so parse the markup
+            # and keep bold as the base style.
+            tbl.add_row(Text(label, style="dim"), Text.from_markup(value, style="bold"))
         cached = tbl
         _utility_cache.set(cached, key)
 
