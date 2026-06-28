@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-06-28
+
+### Fixed
+
+- **CRITICAL: archive no longer permanently deletes memories.** `lifecycle.archive_memoria` now moves the `.md` file to an archive directory before dropping the index row, preventing data loss on archive operations.
+- **CRITICAL: zip-slip path traversal in `memo restore`.** Archive extraction now validates that each entry resolves inside the target directory, blocking `../`-escaped writes.
+- **CRITICAL: path traversal in Obsidian image embeds.** `../` sequences in vault-relative embed paths are now rejected before file resolution.
+- **Concurrency: crossref/versioning stores use per-store tx lock + eager conn init.** Eliminates races between concurrent writers sharing the same connection context.
+- **`store.get` / `store.get_batch` no longer returns soft-deleted rows on transient DB errors.** Deletion predicate is now applied unconditionally before returning results.
+- **MLX `unload()` called under `gpu_guard`.** Prevents Metal SIGABRT when unloading the model from a thread that did not initialize the Metal device.
+- **`episode_store` connection-holder leak fixed.** Connections are now released in `finally` blocks, preventing file-descriptor exhaustion on long-running sessions.
+- **Capture watermark uses `flock` for mutual exclusion.** Concurrent `capture-tick` invocations no longer race on the per-session watermark file.
+- **Subprocess timeouts added across runtime/update, MCP, daemon, dashboard, and transcript helpers.** Runaway child processes can no longer block the CLI or MCP server indefinitely.
+- **Idle-daemon shutdown: SIGTERM + `stdin=DEVNULL`.** The warm recall daemon now receives SIGTERM on idle shutdown and is spawned with stdin redirected to `/dev/null`, preventing accidental TTY attachment.
+- **Atomic writes for settings.json, MCP configs, `~/.zshrc`, multimodal store, PID file, and capture state.** All config/state writes now go through a temp-file + rename sequence, eliminating partial-write corruption on crash.
+- **`flag_int` zero-collapse fixed.** `flag_int` was treating `0` as falsy and falling back to the default, breaking `MEMO_RECALL_LIMIT=0`, `MEMO_ROI_*=0`, and dashboard zero-thresholds.
+- **Backup, version-check, and repo commands now propagate correct exit codes.** Previously these swallowed subprocess exit codes and always returned 0.
+- **Scalar YAML tags preserved on round-trip.** Single-value frontmatter fields with YAML tags (e.g. `!!str`) are no longer dropped when rewriting `.md` files.
+- **`chat_ask_stream` RAG cache key includes query.** Previously all streaming RAG calls shared one cache entry regardless of query, returning stale context for different questions.
+- **Dashboard grounding metric counts unique memory IDs, not raw citation tokens.** Fixes double-counting that inflated the grounding percentage.
+- **Navigation and resume off-by-ones corrected.** `memo resume` interactive picker and session-history navigation were fenced with `>= len` instead of `> len - 1`, skipping the last item.
+- **`server.__dict__` replaced with `dataclasses.asdict`.** MCP server config serialization was reading private dataclass internals; now uses the public API so all fields serialize correctly.
+- **Input-handling crash guards added throughout.** Numerous call sites that passed `None` or unexpected types to string/path operations now validate inputs and raise `MemoError` with actionable messages instead of bare `AttributeError` / `TypeError`.
+
 ## [2.3.3] - 2026-06-27
 
 ### Fixed
