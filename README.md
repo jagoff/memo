@@ -45,6 +45,17 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 | Trivial prompt gate | On by default | ~25% fewer injections |
 | Context file compression | `memo compress-context CLAUDE.md` | 30–40% smaller context |
 
+## Use cases
+
+- **Continuity across sessions.** Decide "we use Postgres, not Mongo" today; tomorrow, in a fresh session, the agent recalls it on its own — recall injects the decision *before* it answers, so you never re-explain it.
+- **Shared memory across agents.** Save something while working in Claude Code; Codex, Cursor, or Cline pick it up later. They all read the same local store over MCP.
+- **Memory that follows you across Macs.** Start on the laptop, continue on the desktop. The corpus travels over serverless git sync and the agent starts with the same context on both.
+- **Preferences and conventions that stick.** "Tests first", "commit messages in English", "don't touch the auth module" — say it once, the agent applies it every future session.
+- **Contradiction radar.** Change your mind on an old decision and memo flags the now-stale version — the agent won't reintroduce what you already discarded.
+- **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
+- **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is ~10 tools, not ~120.
+
 ## Requirements
 
 - **macOS on Apple Silicon** (M1–M4) — MLX is the load-bearing piece. memo does **not** run on Linux / Windows / Intel Macs.
