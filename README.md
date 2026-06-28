@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.png" alt="memo" width="128" height="128" />
+
 # memo 2.0
 
 **Local-first semantic memory for AI agents — with time-travel, contradiction radar, and automatic synthesis.**
