@@ -192,6 +192,16 @@ SPECS: tuple[FlagSpec, ...] = (
     ),
     # misc behavior
     _spec(
+        "MEMO_GRAPH_USE_CODEGRAPH",
+        "bool",
+        True,
+        "misc",
+        "Fold the codegraph code graph (.codegraph/codegraph.db) into memo's "
+        "graph navigation (path/neighbors/communities/centrality/export). "
+        "Default on; set =0 to use only the entity-memory graph.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True
     ),
     _spec(

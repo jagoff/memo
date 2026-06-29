@@ -59,9 +59,6 @@ memo-backup-*.zip
 # devswarm temp workspace
 .devswarm-temp/
 
-# graphify tool output (local analysis cache)
-graphify-out/
-
 # understand-anything tool output (local knowledge-graph cache)
 .understand-anything/
 

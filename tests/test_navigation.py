@@ -11,6 +11,19 @@ from memo.navigation import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_codegraph(monkeypatch, tmp_path):
+    """Hermetic isolation: navigation tests must not read the machine's real
+    .codegraph index. Point the loader at a nonexistent DB so the codegraph
+    merge degrades to a no-op unless a test explicitly seeds one."""
+    from memo import codegraph_loader
+
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / "no-codegraph.db")
+    codegraph_loader.reset()
+    yield
+    codegraph_loader.reset()
+
+
 @pytest.fixture
 def mock_graph_store(tmp_cfg):
     """Fixture providing a mock GraphStore instance."""
@@ -78,11 +91,11 @@ def test_find_shortest_path_with_data(navigator, mock_memory):
 def test_get_neighbors_no_entity(navigator):
     """Test getting neighbors for nonexistent entity.
 
-    Note: Returns results if graphify-out/graph.json exists with matching entities.
+    Note: Returns results if .codegraph/codegraph.db exists with matching entities.
     """
     neighbors = navigator.get_neighbors("nonexistent")
     assert neighbors.entity == "nonexistent"
-    # Degree may be >0 if graphify fallback has matching entities
+    # Degree may be >0 if codegraph fallback has matching entities
     assert isinstance(neighbors.degree, int)
     assert isinstance(neighbors.direct_neighbors, list)
 
@@ -247,3 +260,31 @@ def test_centrality_scores_dataclass():
     )
     assert scores.degree["a"] == 5
     assert scores.betweenness["a"] == 0.8
+
+
+def test_navigator_merges_codegraph(navigator, monkeypatch, tmp_path):
+    """Codegraph is folded into the navigator as a primary layer (gated on)."""
+    import sqlite3
+
+    from memo import codegraph_loader
+
+    db = tmp_path / ".codegraph" / "codegraph.db"
+    db.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE nodes(id TEXT PRIMARY KEY, kind TEXT, name TEXT);"
+        "CREATE TABLE edges(source TEXT, target TEXT, kind TEXT);"
+        "INSERT INTO nodes VALUES ('function:a','function','Alpha'),"
+        "('function:b','function','Beta');"
+        "INSERT INTO edges VALUES ('function:a','function:b','calls');"
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", db)
+    codegraph_loader.reset()
+
+    # The entity-memory graph is empty, so this path can only come from codegraph.
+    path = navigator.find_shortest_path("Alpha", "Beta")
+    assert path is not None
+    assert path.path == ["alpha", "beta"]
+    assert navigator.get_neighbors("alpha").degree == 1

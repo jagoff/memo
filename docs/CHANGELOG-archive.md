@@ -58,7 +58,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`MEMO_ASK_SNIPPET_CHARS` flag (default 800).** Default snippet length fed to the LLM in `ask` / `chat-ask` retrieval payloads.
 - **`memo search --body-chars` / `memo recall --body-chars`.** Per-invocation body truncation for JSON output (default 280, pass `-1` for full bodies), overriding `MEMO_SEARCH_JSON_BODY_CHARS`.
 - **`memo ask --snippet-chars` / `memo chat-ask --snippet-chars`.** Per-invocation snippet length (default 800), overriding `MEMO_ASK_SNIPPET_CHARS`.
-- **`GraphNavigator` fallback to graphify code graph.** When the memo knowledge graph has no path or neighbors for a given entity, `find_path` and `get_neighbors` now fall back to the graphify code graph (via `graphify_loader`), so graph navigation works even on sparse memo graphs.
+- **`GraphNavigator` fallback to a code graph.** When the memo knowledge graph has no path or neighbors for a given entity, `find_path` and `get_neighbors` now fall back to a code graph (via the code-graph loader), so graph navigation works even on sparse memo graphs.
 
 ### Changed
 
