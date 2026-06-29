@@ -46,7 +46,7 @@
 
 memo is built to **spend fewer tokens, not more**.
 
-- **91% smaller MCP surface.** The default `agent` profile exposes **10 tools / ~2.4k schema tokens**, versus **122 tools / ~28k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **92% smaller MCP surface.** The default `agent` profile exposes **10 tools / ~1.2k schema tokens**, versus **123 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -189,7 +189,7 @@ memo entities                          # list extracted entities
 memo links --id abc123                 # backlinks + outlinks
 ```
 
-Entity extraction uses a dependency-free regex backend; Graphify integration provides fallback for code graphs.
+Entity extraction uses a dependency-free regex backend; Codegraph integration provides fallback for code graphs.
 
 ### 🏥 Health scoring & eval gates
 
@@ -254,9 +254,9 @@ memo runs four background daemons:
 
 | Profile | Tools | Schema tokens | Use when |
 |---|---|---|---|
-| `agent` (default) | 10 | ~2.4k | Standard agent work — max token economy |
-| `core` | ~30 | ~7.2k | Constrained clients (Codex, OpenCode) |
-| `full` | 122 | ~28k | Power users, debugging |
+| `agent` (default) | 10 | ~1.2k | Standard agent work — max token economy |
+| `core` | 30 | ~2.8k | Constrained clients (Codex, OpenCode) |
+| `full` | 123 | ~15k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 

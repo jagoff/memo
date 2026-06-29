@@ -95,7 +95,7 @@ def test_mcp_agent_profile_is_default_and_exposes_core_tools(tmp_path, monkeypat
         # Definition must equal runtime — no silent drift either way.
         assert tool_names == set(AGENT_MCP_TOOLS)
         # Advanced tools the agent profile must NOT have
-        assert "memo_graph_nodes" not in tool_names
+        assert "memo_graph_path" not in tool_names
         assert "memo_contradict_scan" not in tool_names
     finally:
         mem.close()
@@ -140,7 +140,7 @@ def test_token_cost_recognizes_agent() -> None:
 
     count, cost, reduced = mcp_profile_token_cost("agent")
     assert count == "~10"
-    assert cost == "~2.4k"
+    assert cost == "~1.2k"
     assert reduced is True
 
 
@@ -150,7 +150,7 @@ def test_token_cost_core_and_slim_are_reduced() -> None:
     for profile in ("core", "slim"):
         count, cost, reduced = mcp_profile_token_cost(profile)
         assert count == "~30"
-        assert cost == "~7.2k"
+        assert cost == "~2.8k"
         assert reduced is True
 
 
@@ -159,8 +159,8 @@ def test_token_cost_full_is_not_reduced() -> None:
 
     for profile in ("full", "default"):
         count, cost, reduced = mcp_profile_token_cost(profile)
-        assert count == "~110"
-        assert cost == "~35k"
+        assert count == "~123"
+        assert cost == "~15k"
         assert reduced is False
 
 
@@ -171,5 +171,5 @@ def test_token_cost_active_default_resolves_to_agent(monkeypatch) -> None:
 
     count, cost, reduced = mcp_profile_token_cost()
     assert count == "~10"
-    assert cost == "~2.4k"
+    assert cost == "~1.2k"
     assert reduced is True
