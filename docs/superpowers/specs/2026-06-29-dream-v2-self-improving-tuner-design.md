@@ -1,7 +1,12 @@
 # Dream v2 — Substrate + Self-Improving Tuner (Phase 0 + Phase 1)
 
 - **Date:** 2026-06-29
-- **Status:** Approved design — ready for implementation plan
+- **Status:** SHIPPED on `feature/dream-v2-tuner`. Phase 0+1 (this spec) + Phase 2
+  (episodic→semantic cross-session consolidation, `dream_consolidate.py`) + Phase 3
+  (anticipatory gap-surfacing, `dream_anticipate.py`) all implemented, all OFF by
+  default, full suite green (1728 pass / 29 skip), live-smoked: tuner mined 162 labels
+  (noop), consolidate abstracted 30+ memo sessions into one cross-session synthesis
+  (dry-run), anticipate surfaced hot queries + prewarmed.
 - **Scope:** `memo dream` evolves from nightly janitor (clean/dedupe/synthesize/prune) into a
   measured self-improving system. This spec covers **Phase 0** (shared substrate) and
   **Phase 1** (the self-tuning retrieval optimizer). Phases 2 (episodic→semantic
