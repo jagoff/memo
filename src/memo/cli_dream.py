@@ -278,6 +278,30 @@ def dream_run(
                 receipt["errors"].append(f"anticipate: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[anticipate] [yellow]warn[/yellow]")
 
+        # Phase 2 — episodic→semantic: cross-session consolidation -----------
+        if flag_bool("MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED"):
+            progress.update(step, description="[consolidate] cross-session...")
+            try:
+                from memo import dream_consolidate
+
+                receipt["consolidated_episodes"] = dream_consolidate.run_consolidate_episodes(
+                    cfg,
+                    mem,
+                    min_sessions=flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS") or 2,
+                    dry_run=dry_run,
+                )
+                _ce = receipt["consolidated_episodes"]
+                progress.update(
+                    step,
+                    description=(
+                        f"[consolidate] [green]✓[/green]  "
+                        f"{_ce.get('status')} ({len(_ce.get('consolidated', []))})"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"consolidate_episodes: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[consolidate] [yellow]warn[/yellow]")
+
         # 0. Forget TTLs (always — explicit user intent) ---------------------
         progress.update(step, description="[dim]TTLs — enforce forget...[/dim]")
         try:
@@ -753,6 +777,10 @@ def dream_status() -> None:
         from memo.dream_anticipate import briefing_line
 
         console.print(f"  {briefing_line(data['anticipated'])}")
+    if data.get("consolidated_episodes"):
+        ce = data["consolidated_episodes"]
+        saved = sum(1 for d in ce.get("consolidated", []) if d.get("status") == "saved")
+        console.print(f"  consolidate: {ce.get('status')} — {saved} cross-session memo(s)")
     if data.get("errors"):
         for e in data["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")
@@ -778,6 +806,27 @@ def dream_anticipate_cmd(as_json: bool) -> None:
         console.print(f"  gap (x{g['count']}): {g['prompt']}")
     if frag.get("prewarmed"):
         console.print(f"  prewarmed {frag['prewarmed']} queries")
+
+
+@dream_cmd.command(name="consolidate-episodes")
+@click.option("--dry-run", is_flag=True, help="Cluster + synthesize, save nothing.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the consolidation fragment as JSON.")
+def dream_consolidate_cmd(dry_run: bool, as_json: bool) -> None:
+    """Episodic→semantic — abstract recurring cross-session work into durable memos."""
+    from memo import dream_consolidate
+    from memo.flags import flag_int
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    res = dream_consolidate.run_consolidate_episodes(
+        cfg, mem, min_sessions=flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS") or 2, dry_run=dry_run
+    )
+    if as_json:
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]consolidate-episodes:[/bold] {res.get('status')}")
+    for d in res.get("consolidated", []):
+        console.print(f"  [{d['status']}] {d.get('project')}: {d.get('title', '')}")
 
 
 @dream_cmd.command(name="tune")

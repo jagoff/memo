@@ -156,6 +156,18 @@ class EpisodeStore(_ConnectionMixin):
         row = self._conn.execute("SELECT COUNT(*) AS n FROM episode_meta").fetchone()
         return int(row["n"]) if row else 0
 
+    def recent(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Most-recently-updated episodes (metadata only), newest first.
+
+        Enumeration entry point for the dream cross-session consolidation pass
+        (the vec `search` path needs a query vector; this is a plain scan)."""
+        rows = self._conn.execute(
+            "SELECT agent, session_id, cwd, updated_at, summary, turn_count "
+            "FROM episode_meta ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def clear(self) -> None:
         """Drop every episode (for `--rebuild`)."""
         with self._tx() as cx:

@@ -731,4 +731,22 @@ SPECS: tuple[FlagSpec, ...] = (
         "misc",
         "Max recurring gaps surfaced per anticipatory pass.",
     ),
+    # dream v2 — episodic→semantic consolidation (Phase 2): cross-session themes
+    _spec(
+        "MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly cross-session consolidation pass in `memo dream run`. "
+        "OFF by default; abstracts recurring per-project work across >=N sessions into "
+        "one durable synthesis memory (provenance = session ids). No episodic decay.",
+    ),
+    _spec(
+        "MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS",
+        "int",
+        2,
+        "misc",
+        "Min distinct sessions on a project before it is consolidated cross-session.",
+        min_val=2,
+    ),
 )
