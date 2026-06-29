@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.8] - 2026-06-28
+
+### Added
+- Per-project memory storage (MEMO_STORE_BY_PROJECT, default on): new .md
+  files are written into memory_dir/<project>/ (or _global/) derived from
+  the project: tag. The sqlite index globs recursively so search stays
+  global. `memo migrate --bucket-by-project` re-buckets an existing flat
+  install (idempotent, non-destructive, then reindexes).
+- 3-tier soft recall relevance: current-project (MEMO_RECALL_PROJECT_BOOST,
+  raised to 0.25) > global/cross-cutting (MEMO_RECALL_GLOBAL_BOOST 0.10, for
+  no project tag or preference/feedback) > other projects. Additive/soft.
+
+### Fixed
+- legacy backup/restore (sync.py) globbed the flat root; now rglob +
+  preserves the per-project bucket layout.
+
 ## [2.3.7] - 2026-06-28
 
 ### Fixed
