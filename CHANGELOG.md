@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.10] - 2026-06-29
+
+### Changed
+- `memo doctor` now auto-repairs a stale MCP config path by default: a dead
+  pipx/uv-internal `memo-mcp` launch path (e.g. left by a pipx→uv-tool
+  migration) is repointed to the stable `~/.local/bin` shim, with a `.bak`
+  backup. Previously doctor only printed "use X". Skips (reports, never writes)
+  when the shim target is missing. `--check` keeps the run report-only; the
+  `--json` health report never mutates. Destructive repairs (`--gc --fix`
+  dropping orphan index rows) stay opt-in.
+
 ## [2.3.9] - 2026-06-29
 
 ### Changed
