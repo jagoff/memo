@@ -42,6 +42,11 @@ MEMO_BADGE=""
 # ── Wrap mode: prepend the badge to the inner statusline's output and exit ────
 if [ -n "$WRAP_CMD" ]; then
   INNER=$(printf '%s' "$INPUT" | eval "$WRAP_CMD" 2>/dev/null)
+  # Idempotent: if the inner statusline already renders a [MEMO ...] badge
+  # (its own, or from a previous wrap), don't prepend a second one.
+  case "$INNER" in
+    *"[MEMO "*) printf '%s' "$INNER"; exit 0 ;;
+  esac
   if [ -n "$MEMO_BADGE" ] && [ -n "$INNER" ]; then
     printf '%s %s' "$MEMO_BADGE" "$INNER"
   else
