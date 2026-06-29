@@ -31,13 +31,16 @@
 | **Time-machine** (rewind corpus to any date) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Contradiction radar** (detect + resolve conflicts) | ✅ | ❌ | ❌ | ⚠️ | ❌ |
 | **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Cloud sync (opt-in replication) | ❌ | ❌ | ✅ | ❌ | ✅ |
+| **TUI** (terminal UI) | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Obsidian as source-of-truth | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Knowledge graph + entity extraction | ✅ | ⚠️ | ⚠️ | ✅ | ❌ |
 | Eval regression gate (pre-commit wireable) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Multi-modal (images, audio OCR) | ✅ | ⚠️ | ❌ | ❌ | ❌ |
 | MCP surface profiles (token economy) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Passive capture** (auto-extract from transcripts) | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Session timeline (context before/after) | ✅ | ❌ | ❌ | ❌ | ✅ |
 
 ## Why it pays for itself — in tokens
 
