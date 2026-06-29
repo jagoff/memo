@@ -33,7 +33,7 @@
 | **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ❌ | ❌ | ✅ |
 | Cloud sync (opt-in replication) | ❌ | ❌ | ✅ | ❌ | ✅ |
-| **TUI** (terminal UI) | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **TUI** (terminal UI) | ✅ | ❌ | ❌ | ❌ | ✅ |
 | Obsidian as source-of-truth | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Knowledge graph + entity extraction | ✅ | ⚠️ | ⚠️ | ✅ | ❌ |
 | Eval regression gate (pre-commit wireable) | ✅ | ❌ | ❌ | ❌ | ❌ |
