@@ -714,4 +714,21 @@ SPECS: tuple[FlagSpec, ...] = (
         "misc",
         "Max labels mined from grounding.log per dream tuning pass.",
     ),
+    # dream v2 — anticipatory pass (Phase 3): surface unmet gaps + prewarm
+    _spec(
+        "MEMO_DREAM_ANTICIPATE_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly anticipatory pass in `memo dream run`. OFF by default; "
+        "surfaces recurring knowledge gaps (detect_gaps) + hot queries into the receipt "
+        "and pre-warms their embeddings. Never fabricates answers.",
+    ),
+    _spec(
+        "MEMO_DREAM_ANTICIPATE_TOP_GAPS",
+        "int",
+        5,
+        "misc",
+        "Max recurring gaps surfaced per anticipatory pass.",
+    ),
 )

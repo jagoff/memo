@@ -258,6 +258,26 @@ def dream_run(
                 receipt["errors"].append(f"tuner: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[tune] recall self-tuner [yellow]warn[/yellow]")
 
+        # Phase 3 — anticipatory: surface unmet gaps + prewarm (no fabrication)
+        if flag_bool("MEMO_DREAM_ANTICIPATE_ENABLED"):
+            progress.update(step, description="[anticipate] surfacing gaps...")
+            try:
+                from memo import dream_anticipate
+
+                receipt["anticipated"] = dream_anticipate.anticipate(
+                    cfg, mem, top_gaps=flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS") or 5
+                )
+                progress.update(
+                    step,
+                    description=(
+                        f"[anticipate] [green]✓[/green]  "
+                        f"{len(receipt['anticipated'].get('gaps', []))} gaps"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"anticipate: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[anticipate] [yellow]warn[/yellow]")
+
         # 0. Forget TTLs (always — explicit user intent) ---------------------
         progress.update(step, description="[dim]TTLs — enforce forget...[/dim]")
         try:
@@ -729,9 +749,35 @@ def dream_status() -> None:
             else ""
         )
         console.print(f"  tuner:      {t.get('status')}{extra}")
+    if data.get("anticipated"):
+        from memo.dream_anticipate import briefing_line
+
+        console.print(f"  {briefing_line(data['anticipated'])}")
     if data.get("errors"):
         for e in data["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")
+
+
+@dream_cmd.command(name="anticipate")
+@click.option("--json", "as_json", is_flag=True, help="Emit the anticipated-needs fragment as JSON.")
+def dream_anticipate_cmd(as_json: bool) -> None:
+    """Anticipatory pass — surface recurring unmet gaps + hot queries (no fabrication)."""
+    from memo import dream_anticipate
+    from memo.flags import flag_int
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    frag = dream_anticipate.anticipate(
+        cfg, mem, top_gaps=flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS") or 5
+    )
+    if as_json:
+        click.echo(json.dumps(frag, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]{dream_anticipate.briefing_line(frag)}[/bold]")
+    for g in frag.get("gaps", []):
+        console.print(f"  gap (x{g['count']}): {g['prompt']}")
+    if frag.get("prewarmed"):
+        console.print(f"  prewarmed {frag['prewarmed']} queries")
 
 
 @dream_cmd.command(name="tune")
