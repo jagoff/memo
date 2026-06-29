@@ -114,8 +114,7 @@ _ASK_SYSTEM_PROMPT = """You answer questions over the user's personal memory arc
 
 You receive a list of relevant memory snippets and repo snippets (each with a
 label like `[id-prefix]` or `[repo:name:path:start-end@commit]`) and a question.
-Respond in the same language as the question (Spanish rioplatense if the
-question is in Spanish). 
+Respond in the same language as the question.
 
 ### MEMORY-FIRST MANDATE
 - ALWAYS verify project-specific claims against the provided snippets.
