@@ -125,6 +125,14 @@ class GraphStore:
             self._conn.execute("PRAGMA journal_mode=WAL")
         self._tx_lock = threading.Lock()
         with self._conn:
+            # Migrate a pre-rename DB BEFORE the IF NOT EXISTS DDL: rename the
+            # legacy `entity_memoria` table -> `entity_memory` (else the DDL
+            # would create a fresh empty table and orphan the old data), then
+            # its `memoria_id` column -> `memory_id`.
+            from memo.util import rename_legacy_columns, rename_legacy_table
+
+            rename_legacy_table(self._conn, "entity_memoria", "entity_memory")
+            rename_legacy_columns(self._conn, "entity_memory", {"memoria_id": "memory_id"})
             self._conn.executescript(_SCHEMA_DDL)
 
     @contextmanager

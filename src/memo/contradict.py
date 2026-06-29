@@ -164,6 +164,14 @@ class ContradictionStore:
         # schema in rollback-journal mode.
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        # Migrate pre-rename DBs (memoria_id_a/b -> memory_id_a/b) BEFORE the
+        # IF NOT EXISTS DDL, which would otherwise skip the existing `pairs`
+        # table and leave the new code querying columns that don't exist.
+        from memo.util import rename_legacy_columns
+
+        rename_legacy_columns(
+            self._conn, "pairs", {"memoria_id_a": "memory_id_a", "memoria_id_b": "memory_id_b"}
+        )
         self._conn.executescript(_SCHEMA_DDL)
         self._tx_lock = threading.Lock()
 

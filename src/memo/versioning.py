@@ -92,6 +92,11 @@ class VersionStore:
 
     def _init_schema(self) -> None:
         conn = self._get_conn()
+        # Migrate a pre-rename DB (versions.memoria_id -> memory_id) BEFORE the
+        # IF NOT EXISTS DDL, which would otherwise skip the existing table.
+        from memo.util import rename_legacy_columns
+
+        rename_legacy_columns(conn, "versions", {"memoria_id": "memory_id"})
         conn.execute("""
             CREATE TABLE IF NOT EXISTS versions (
                 version_id INTEGER PRIMARY KEY AUTOINCREMENT,

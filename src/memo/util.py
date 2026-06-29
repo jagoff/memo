@@ -9,13 +9,54 @@ time-machine needs millisecond precision for within-second ordering.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
+import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import lru_cache, wraps
 from typing import Any
+
+
+def rename_legacy_table(conn: sqlite3.Connection, old: str, new: str) -> None:
+    """Idempotently rename a legacy table ``old`` -> ``new``.
+
+    No-op when ``old`` is absent or ``new`` already exists, so it is safe to
+    call before every ``CREATE TABLE IF NOT EXISTS new`` on a connection that
+    may hold a pre-rename schema. Must run BEFORE the CREATE so the rename
+    isn't blocked by a freshly-created empty ``new`` table.
+    """
+    try:
+        tables = {
+            r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    except sqlite3.Error:
+        return
+    if old in tables and new not in tables:
+        with contextlib.suppress(sqlite3.Error):
+            conn.execute(f"ALTER TABLE {old} RENAME TO {new}")
+
+
+def rename_legacy_columns(conn: sqlite3.Connection, table: str, renames: dict[str, str]) -> None:
+    """Idempotently rename legacy columns on ``table`` (old -> new).
+
+    No-op per column when the table/old-column is absent or the new column
+    already exists. SQLite >= 3.25 ``RENAME COLUMN`` updates dependent indexes
+    and constraints automatically. Call BEFORE ``CREATE TABLE IF NOT EXISTS``
+    so an existing pre-rename table is migrated rather than skipped.
+    """
+    try:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    except sqlite3.Error:
+        return
+    if not cols:
+        return
+    for old, new in renames.items():
+        if old in cols and new not in cols:
+            with contextlib.suppress(sqlite3.Error):
+                conn.execute(f'ALTER TABLE {table} RENAME COLUMN "{old}" TO "{new}"')
 
 
 def utc_now_iso() -> str:
