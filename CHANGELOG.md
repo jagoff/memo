@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.7] - 2026-06-28
+
+### Fixed
+- ask: surface snippet-vs-snippet contradictions (present both sides with
+  [ids]) instead of silently picking one.
+- ask/chat: respect `k` — clamp the candidate pool to `limit` when no
+  reranker runs (was returning the whole inflated pool).
+- search (Spanish): the curatorial retrieval boost now folds diacritics so
+  an accented query keeps the boost on the matching note (was a 4-10x score
+  collapse).
+- embed socket: raise the wire cap to 16MB (unified client/server) so a
+  full embed_batch on 4B/8B (2560/4096-dim) models no longer truncates;
+  skip retry backoff when the socket file is absent.
+- find_by_prefix excludes soft-deleted tombstones; `delete <missing>` exits
+  1; `reindex --rebuild` guard and `save ""` emit clean errors.
+
 ## [2.3.6] - 2026-06-28
 
 ### Fixed
