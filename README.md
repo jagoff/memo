@@ -32,7 +32,7 @@
 | **Contradiction radar** (detect + resolve conflicts) | ✅ | ❌ | ❌ | ⚠️ | ❌ |
 | **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Cloud sync (opt-in replication) | ❌ | ❌ | ✅ | ❌ | ✅ |
+| Cloud sync (opt-in replication) | ✅ | ❌ | ✅ | ❌ | ✅ |
 | **TUI** (terminal UI) | ✅ | ❌ | ❌ | ❌ | ✅ |
 | Obsidian as source-of-truth | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Knowledge graph + entity extraction | ✅ | ⚠️ | ⚠️ | ✅ | ❌ |
