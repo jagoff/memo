@@ -155,6 +155,10 @@ Rules:
 - Cite sources INLINE with `[id-prefix]` after each claim or block, e.g.
   "I decided to migrate to MLX [d61fe730] to reduce dependencies [4e0b2e6]".
   For repo evidence, cite the full repo label you received.
+- CONFLICTING SNIPPETS. If two or more snippets give CONFLICTING answers
+  to the question, present BOTH (or all) sides with their `[id-prefix]`
+  citations and explicitly note the conflict — never silently pick one
+  side or drop the dissenting snippet.
 - Use only information from the provided snippets. If the answer is not
   present, say "I couldn't find the answer in the saved memories"
   and stop.

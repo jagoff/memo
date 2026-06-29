@@ -69,11 +69,13 @@ FIELD_MODEL = "model"
 FIELD_OK = "ok"
 FIELD_ERROR = "error"
 
-# Cap a single request/response line. Batch embed responses (many 1024-dim
-# float vectors) can be large, so this is generous — far above any legitimate
-# line, but bounded so a peer that never sends a newline can't make us buffer
-# unboundedly.
-MAX_LINE_BYTES = 1 * 1024 * 1024
+# Cap a single request/response line. A full ``embed_batch`` response packs
+# many float vectors as JSON — at 4096 dims × 32-chunk that is ~2.6 MB — so this
+# is sized with headroom above the largest config (8B/4096), yet still bounded
+# so a peer that never sends a newline can't make us buffer unboundedly. The
+# server's readline cap (``recall_socket._MAX_LINE_BYTES``) imports this value
+# so both ends agree.
+MAX_LINE_BYTES = 16 * 1024 * 1024
 
 DEFAULT_TIMEOUT_S = 5.0
 PING_TIMEOUT_S = 0.5
@@ -189,6 +191,13 @@ def send_request_with_retry(
     Retries on transient failures (ConnectionRefused, TimeoutError, OSError).
     Stops on success or when max_retries exhausted.
     """
+    # A missing socket file can't appear mid-call, so backoff sleeps and probe
+    # connects would be pure waste — bail immediately and let the caller fall
+    # back. Retries only help when the socket exists but the request transiently
+    # failed.
+    if not sock_path.exists():
+        return None
+
     import logging
     import time
 

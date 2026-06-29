@@ -360,6 +360,14 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._rerank(query, out, top_n=limit)
             _add_trace("rerank", input_count=before, output_count=len(out))
+        else:
+            # No reranker ran (disabled per-call — e.g. ask/chat pass
+            # disable_reranker=True — or skip-confident already fired): the
+            # candidate pool was inflated to `input_k` for the reranker, so clamp
+            # it back to `limit` here. Otherwise ask/chat get the whole pool
+            # (the `k` contract is violated) and the downstream boosts + per-hit
+            # disk reads run over the full pool instead of ≤ limit.
+            out = out[:limit]
         # Recency decay: blend a freshness bonus into the score so older
         # memories don't crowd out recent ones. MEMO_SEARCH_DECAY_HALFLIFE
         # (days) sets the halflife explicitly; if unset, the consumer paths

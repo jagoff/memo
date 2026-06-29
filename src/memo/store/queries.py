@@ -416,10 +416,20 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         instead of pasting a 32-char UUID4."""
         if not prefix:
             return []
-        rows = self._conn.execute(
-            "SELECT id FROM meta WHERE id LIKE ? || '%' ORDER BY id LIMIT ?",
-            (prefix, limit),
-        ).fetchall()
+        try:
+            rows = self._conn.execute(
+                "SELECT id FROM meta WHERE id LIKE ? || '%' AND deleted_at IS NULL "
+                "ORDER BY id LIMIT ?",
+                (prefix, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as e:
+            if "no such column" not in str(e):
+                raise
+            # Fallback for old DBs without deleted_at column
+            rows = self._conn.execute(
+                "SELECT id FROM meta WHERE id LIKE ? || '%' ORDER BY id LIMIT ?",
+                (prefix, limit),
+            ).fetchall()
         return [r["id"] for r in rows]
 
     def get_by_path(self, path: str) -> dict[str, Any] | None:

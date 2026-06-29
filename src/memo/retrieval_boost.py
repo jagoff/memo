@@ -17,6 +17,7 @@ hits with body score 50× the top still surface.
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import PurePosixPath
 
 __all__ = ["boost_for", "query_terms"]
@@ -95,8 +96,20 @@ _STOPWORDS_ES_EN = frozenset(
 )
 
 
+def _fold_diacritics(s: str) -> str:
+    """Strip combining marks (NFKD), mirroring FTS5 unicode61 remove_diacritics=2."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
 def query_terms(query: str) -> list[str]:
-    """Lowercased content terms from ``query`` (stopwords + tokens <3 chars dropped).
+    """Lowercased, diacritic-folded content terms from ``query`` (stopwords +
+    tokens <3 chars dropped).
+
+    Folding mirrors FTS5's ``remove_diacritics=2`` tokenizer so the boost is
+    diacritic-insensitive on both sides — an accented Spanish query still earns
+    the filename/title boost on the note that answers it. Folding happens before
+    the stopword check, so accented and unaccented spellings of a stopword
+    (``cómo`` / ``como``) are both dropped.
 
     Order preserved, no dedup. Matches ``federator._query_significant_terms``
     behavior so Synapse and Memo agree on what's "significant".
@@ -105,7 +118,7 @@ def query_terms(query: str) -> list[str]:
         return []
     return [
         t
-        for t in (m.group(0).lower() for m in _TERM_RE.finditer(query))
+        for t in (_fold_diacritics(m.group(0).lower()) for m in _TERM_RE.finditer(query))
         if t not in _STOPWORDS_ES_EN and len(t) >= 3
     ]
 
@@ -139,7 +152,7 @@ def boost_for(
         return 1.0
     boost = 1.0
 
-    fname = PurePosixPath(filename or "").stem.lower()
+    fname = _fold_diacritics(PurePosixPath(filename or "").stem.lower())
     fname_hits = 0
     if fname:
         fname_hits = sum(1 for t in terms if t in fname)
@@ -151,7 +164,7 @@ def boost_for(
         elif ratio > 0:
             boost *= 1.3
 
-    t_lower = (title or "").lower().strip()
+    t_lower = _fold_diacritics((title or "").lower().strip())
     if t_lower and t_lower != fname:
         ratio = sum(1 for t in terms if t in t_lower) / len(terms)
         # Scale with overlap like the filename does — a near-exact frontmatter
@@ -166,7 +179,7 @@ def boost_for(
             boost *= 1.5
 
     for h in headings or []:
-        h_lower = (h or "").lower()
+        h_lower = _fold_diacritics((h or "").lower())
         if not h_lower:
             continue
         ratio = sum(1 for t in terms if t in h_lower) / len(terms)
@@ -178,7 +191,7 @@ def boost_for(
             break
 
     for tag in tags or []:
-        t_clean = (tag or "").lstrip("#").lower().strip()
+        t_clean = _fold_diacritics((tag or "").lstrip("#").lower().strip())
         if not t_clean:
             continue
         if t_clean in terms or any(t_clean in t or t in t_clean for t in terms):

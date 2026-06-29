@@ -40,7 +40,7 @@ def test_response_field_names_frozen() -> None:
 
 
 def test_limits_frozen() -> None:
-    assert ep.MAX_LINE_BYTES == 1 * 1024 * 1024
+    assert ep.MAX_LINE_BYTES == 16 * 1024 * 1024
     assert ep.DEFAULT_TIMEOUT_S == 5.0
     assert ep.PING_TIMEOUT_S == 0.5
 

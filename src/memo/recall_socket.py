@@ -14,11 +14,13 @@ from typing import Any
 
 from memo.daemon_common import cleanup, daemon_paths, is_pid_alive, read_pid
 from memo.daemon_common import serve_until_shutdown as _serve_until_shutdown
+from memo.embed_protocol import MAX_LINE_BYTES
 from memo.recall_logic import _recall_logic
 from memo.recall_stats import _STATS_DEFAULT_PERSIST_INTERVAL_S, _DaemonStats, _stats_persister
 
 _log = logging.getLogger(__name__)
-_MAX_LINE_BYTES = 1 << 20
+# Same cap on both ends of the wire — see ``embed_protocol.MAX_LINE_BYTES``.
+_MAX_LINE_BYTES = MAX_LINE_BYTES
 
 
 def _socket_path(state_dir: Path) -> Path:
@@ -271,12 +273,14 @@ class _RecallHandler(socketserver.StreamRequestHandler):
 # Never acquire a module lock while holding GPU lock; GPU lock is only
 # for MLX device serialization, not for general state protection.
 
+
 class PriorityLock:
     """Priority lock with high-priority preemption.
 
     High-priority requests (priority > 0) jump ahead of normal requests.
     Used by recall daemon to prioritize interactive requests over background work.
     """
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
@@ -311,6 +315,7 @@ class PriorityLock:
 
 class _SimpleLockWrapper:
     """Wrapper for threading.Lock that matches PriorityLock interface."""
+
     def __init__(self, lock: threading.Lock) -> None:
         self._lock = lock
 

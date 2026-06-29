@@ -22,6 +22,7 @@ from rich.table import Table
 from memo.cli_common import _resolved, console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.errors import StorageError
 
 
 @click.command()
@@ -97,16 +98,19 @@ def save(
                 )
             extra[key] = value
     mem = _get_memory(Config.from_env())
-    rec = mem.save(
-        content=content,
-        title=title,
-        type_=type_,
-        tags=list(tags),
-        auto_derive=auto_derive,
-        auto_project=not no_project_tag,
-        defer_embed=defer_embed,
-        extra=extra,
-    )
+    try:
+        rec = mem.save(
+            content=content,
+            title=title,
+            type_=type_,
+            tags=list(tags),
+            auto_derive=auto_derive,
+            auto_project=not no_project_tag,
+            defer_embed=defer_embed,
+            extra=extra,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return
@@ -267,7 +271,11 @@ def reindex(force: bool, rebuild: bool, as_json: bool) -> None:
     if rebuild:
         os.environ.setdefault("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
     mem = _get_memory(Config.from_env())
-    counts = mem.reindex(force=force, rebuild=rebuild)
+    try:
+        counts = mem.reindex(force=force, rebuild=rebuild)
+    except StorageError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise SystemExit(1) from exc
     if as_json:
         click.echo(json.dumps(counts, indent=2))
         return
@@ -292,6 +300,8 @@ def delete(id_: str, yes: bool) -> None:
         )
     ok = _resolved(lambda: mem.delete(id_))
     console.print(f"[{'green' if ok else 'red'}]{'✓ deleted' if ok else 'not found'}[/]: {id_}")
+    if not ok:
+        sys.exit(1)
 
 
 @click.command()
