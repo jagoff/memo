@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.12] - 2026-06-29
+
+### Fixed
+- Dream cross-session consolidation (`memo dream consolidate-episodes`) failed to save its synthesized memos: `mem.save()` is keyword-only and the body was passed positionally → `TypeError` → `save_failed`. Now calls `save(content=...)`; regression-tested with a keyword-only fake save. (The `--dry-run` path hid it; a real run surfaced it.)
+
 ## [2.3.11] - 2026-06-29
 
 ### Added
