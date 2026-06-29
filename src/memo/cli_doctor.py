@@ -15,7 +15,7 @@ from memo.cli_diag import (
 )
 from memo.cli_runtime import _print_runtime_install_report, _runtime_install_report
 from memo.config import Config
-from memo.runtime.mcp_config import scan_mcp_configs
+from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs
 
 
 @click.command()
@@ -33,9 +33,27 @@ from memo.runtime.mcp_config import scan_mcp_configs
     is_flag=True,
     help="Exit non-zero if memo/memo-mcp are not running from an isolated tool install.",
 )
+@click.option(
+    "--check",
+    "check_only",
+    is_flag=True,
+    help="Report only — skip the default auto-repair of MCP config paths.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit a stable JSON health report.")
-def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json: bool) -> None:
+def doctor(
+    do_gc: bool,
+    fix: bool,
+    check_db: bool,
+    strict_runtime: bool,
+    check_only: bool,
+    as_json: bool,
+) -> None:
     """Self-check: vault present, sqlite-vec loadable, MLX importable, models in cache.
+
+    Safe, mechanical drift is repaired by default: a stale MCP config path
+    (a dead pipx/uv-internal binary) is repointed to the stable `~/.local/bin`
+    shim, with a `.bak` backup. Pass `--check` to report without writing; the
+    `--json` health report never mutates.
 
     `--gc` reports orphans (store rows whose `.md` is gone, `.md` files
     whose `id` isn't in the store). `--gc --fix` removes orphan store
@@ -66,15 +84,26 @@ def doctor(do_gc: bool, fix: bool, check_db: bool, strict_runtime: bool, as_json
     elif _fresh["status"] in ("fresh", "repo-ahead"):
         console.print(f"[green]✓[/green] install freshness: {_fresh['message']}")
 
-    _mcp_issues = scan_mcp_configs()
-    if not _mcp_issues:
+    if not scan_mcp_configs():
         console.print("[green]✓[/green] mcp config paths: stable")
     else:
-        for _f in _mcp_issues:
-            console.print(
-                f"[yellow]![/yellow] mcp config: {_f['config']} → {_f['command']} "
-                f"({_f['issue']}); use {_f['suggestion']}"
-            )
+        for _r in repair_mcp_configs(apply=not check_only):
+            if _r["status"] == "repaired":
+                console.print(
+                    f"[green]✓[/green] mcp config repaired: {_r['config']} → "
+                    f"{_r['suggestion']} [dim](was {_r['issue']}; backup .bak)[/dim]"
+                )
+            elif _r["status"] == "would-repair":
+                console.print(
+                    f"[yellow]![/yellow] mcp config: {_r['config']} → {_r['command']} "
+                    f"({_r['issue']}); would repoint to {_r['suggestion']} "
+                    "[dim](drop --check to apply)[/dim]"
+                )
+            else:  # skipped-no-target: shim binary not installed
+                console.print(
+                    f"[yellow]![/yellow] mcp config: {_r['config']} → {_r['command']} "
+                    f"({_r['issue']}); shim {_r['suggestion']} missing — install runtime first"
+                )
 
     if cfg.data_dir.is_dir():
         console.print(f"[green]✓[/green] data_dir: {cfg.data_dir}")
