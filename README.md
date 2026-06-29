@@ -302,29 +302,3 @@ Contributors: `git clone https://github.com/jagoff/memo && cd memo && uv pip ins
 ## License & provenance
 
 MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https://github.com/jagoff/mem-vault) (storage layout + frontmatter schema); the MLX backend pieces are ported from [`obsidian-rag`](https://github.com/jagoff/rag-obsidian). memo is one of three sovereign systems in a wider stack ([Memflow](https://github.com/jagoff/memflow), Synapse) — the integration is opt-in everywhere; single-Mac users see zero behaviour change.
-
----
-
-## Español
-
-**memo** es memory semántica persistente para agentes de IA: **100% local**, sobre Apple Silicon con MLX. Cada memory es un archivo Markdown; los embeddings viven en un único sqlite; el LLM, el embedder y el reranker corren **en proceso vía MLX** — sin Ollama, sin nube, sin API keys. Tus prompts y memories **nunca salen de la Mac**.
-
-**Capacidades principales:** máquina del tiempo (`memo as-of`), radar de contradicciones (`memo contradict`), pipeline de síntesis (`memo synthesize`), sync cross-Mac vía git, vault de Obsidian como fuente de verdad, knowledge graph, puntuación de salud (`memo health`), gates de regresión de retrieval (`memo eval --gate`), e ingesta multi-modal (imágenes + OCR de audio).
-
-**Por qué ahorra tokens:** la superficie MCP por defecto son 10 tools (~2.4k tokens) contra 122 (~28k) → **~91% menos** contexto por sesión; y el recall **inyecta la respuesta** en vez de que el agente la vuelva a deducir. En un corpus de ~200 memories, `memo roi` estima **~80k tokens de trabajo del modelo evitados** por sesión.
-
-**Instalación:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
-memo doctor --strict-runtime    # verifica el runtime
-```
-
-Requisitos: **macOS en Apple Silicon** (M1–M4), ~8 GB de disco para los modelos. La documentación completa está en **[docs/reference.md](docs/reference.md)**.
-
-**Migrar desde otra Mac:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
-memo sync bootstrap git@github.com:tuusuario/memo-sync.git
-```
