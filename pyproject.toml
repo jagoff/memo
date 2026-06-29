@@ -30,15 +30,15 @@ dependencies = [
     # filtering the store relies on is alpha API — cap below 0.2 to avoid
     # silent breakage on an upstream change. Tested against 0.1.9.
     "sqlite-vec>=0.1.9,<0.2",
-    "fastmcp>=0.5",
+    "fastmcp>=0.5,<4",  # Cap at <4: 3.4.2 patches 9 CVEs
     "python-frontmatter>=1.1",
     # First-run interactive picker (pure Python; cross-platform).
     "questionary>=2.0",
     "tomli-w>=1.0",
     # File-watcher (FSEvents on macOS). Used by `memo watch`.
     "watchdog>=4.0",
-    # MLX runtime — Apple Silicon only.
-    "mlx>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # MLX runtime — Apple Silicon only. Cap at <1 to avoid silent breakage.
+    "mlx>=0.18,<1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
