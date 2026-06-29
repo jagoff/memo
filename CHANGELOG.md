@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.6] - 2026-06-28
+
+### Fixed
+- statusline: the `memo-statusline.sh --wrap` chain no longer duplicates the
+  `[MEMO <version>]` badge when the inner statusline already renders one
+  (idempotent guard — covers both the double-wrap case and an inner script
+  that emits its own badge).
+
 ## [2.3.5] - 2026-06-28
 
 ### Fixed
