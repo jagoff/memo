@@ -43,3 +43,11 @@ def test_build_nudge_returns_associated_titles(monkeypatch):
 def test_build_nudge_disabled_returns_empty(monkeypatch):
     monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "0")
     assert build_nudge(_Mem(), [_Rec("s1", "seed")]) == []
+
+
+def test_memo_related_returns_hits_with_via():
+    from memo.server_related import related_for
+
+    hits = related_for(_Mem(), "s1", hops=2, limit=5)
+    assert any(h["id"] == "a1" and h["via"] == "memory" for h in hits)
+    assert all({"id", "title", "via", "activation"} <= set(h) for h in hits)
