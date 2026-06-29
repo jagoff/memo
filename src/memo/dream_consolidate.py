@@ -173,7 +173,7 @@ def run_consolidate_episodes(
             if d.get("status") == "save":
                 try:
                     mem.save(
-                        f"{d['body']}\n\n[cross-session {d['provenance_hash']}]",
+                        content=f"{d['body']}\n\n[cross-session {d['provenance_hash']}]",
                         type="synthesis",
                         title=d["title"],
                         extra={

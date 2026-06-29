@@ -67,3 +67,36 @@ def test_consolidate_skips_when_synthesize_returns_none():
         clusters, synthesize_fn=lambda cl: None, exists_fn=lambda h: False, dry_run=False
     )
     assert decisions[0]["status"] == "skipped"
+
+
+def test_run_consolidate_saves_with_keyword_content(monkeypatch):
+    """Orchestrator must call mem.save(content=...) — the real save is keyword-only.
+    A positional body would TypeError (the v2.3.11 bug this regression-guards)."""
+    saved: list[dict] = []
+
+    class _Store:
+        def count(self):
+            return 2
+
+        def recent(self, limit=50):
+            return [_ep("s1", "/r/memo", "a"), _ep("s2", "/r/memo", "b")]
+
+    class _Mem:
+        def search(self, q, limit=1, disable_reranker=True):
+            return []
+
+        def save(self, *, content, type, title, extra):  # keyword-only, like the real facade
+            saved.append({"content": content, "type": type, "title": title})
+
+    class _Cfg:
+        state_dir = "/tmp/unused"
+
+    monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: _Store())
+    monkeypatch.setattr(dc, "_llm_synthesize", lambda mem, cl: {"title": "T", "body": "insight"})
+
+    res = dc.run_consolidate_episodes(_Cfg(), _Mem(), min_sessions=2, dry_run=False)
+    assert res["status"] == "done"
+    assert res["consolidated"][0]["status"] == "saved"
+    assert len(saved) == 1
+    assert saved[0]["type"] == "synthesis"
+    assert "insight" in saved[0]["content"]
