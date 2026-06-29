@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.11] - 2026-06-29
+
+### Added
+- Dream v2 — self-improving recall tuner (Phase 0+1): nightly `MEMO_RECALL_MIN_SIM` line-search from ground-truth-by-use labels (mined from `grounding.log`), gated by the curated regression set, auto-applied via a tuned-params overlay (env > overlay > default) and reverted on a later-night regression. CLI `memo dream tune`. OFF by default (`MEMO_DREAM_TUNE_ENABLED`).
+- Dream v2 — episodic→semantic cross-session consolidation (Phase 2): abstracts recurring per-project work across >=N sessions into one durable synthesis memory (provenance = session ids); distinct from per-turn `signal_gather` and cross-memory `synthesize`. CLI `memo dream consolidate-episodes`. OFF by default (`MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED`).
+- Dream v2 — anticipatory pass (Phase 3): surfaces recurring unmet knowledge gaps (`detect_gaps`) + hot queries into the dream receipt/briefing and pre-warms their embeddings; never fabricates. CLI `memo dream anticipate`. OFF by default (`MEMO_DREAM_ANTICIPATE_ENABLED`).
+
 ## [2.3.10] - 2026-06-29
 
 ### Changed
