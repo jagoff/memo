@@ -206,7 +206,19 @@ def recall_hook() -> None:
     min_sim = 0.5 if _ms is None else _ms
     _bc = flag_int("MEMO_RECALL_BODY_CHARS")
     body_chars = 400 if _bc is None else _bc
-    token_budget = flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
+    _tb = flag_int("MEMO_RECALL_TOKEN_BUDGET")
+    token_budget = _tb or 0
+
+    # Adaptive budget: scale by prompt length
+    if flag_bool("MEMO_RECALL_ADAPTIVE_BUDGET") and token_budget > 0 and prompt:
+        prompt_len = len(prompt)
+        # Short prompts (clarity) get more budget; long prompts leave room
+        if prompt_len < 50:
+            token_budget = int(min(token_budget * 1.5, 800))
+        elif prompt_len > 300:
+            token_budget = int(max(token_budget * 0.6, 200))
+        # Mid-range stays as-is
+
     _pb = flag_float("MEMO_RECALL_PROJECT_BOOST")
     project_boost = 0.15 if _pb is None else _pb
 
@@ -394,14 +406,28 @@ def recall_hook() -> None:
     if _prev_recalled:
         relevant = [h for h in relevant if h.id not in _prev_recalled]
 
-    from memo.recall_logic import render_recall_compact, render_recall_context
+    from memo.recall_logic import (
+        render_recall_balanced,
+        render_recall_compact,
+        render_recall_context,
+    )
 
     def _est_tokens(s: str) -> int:
         return max(1, len(s) // 4)
 
     _recall_format = flag_str("MEMO_RECALL_FORMAT")
+    # Auto mode: choose format based on budget and hit count
+    if _recall_format == "auto":
+        if (token_budget > 0 and token_budget <= 300) or len(relevant) >= 5:
+            _recall_format = "compact"
+        elif token_budget > 800:
+            _recall_format = "full"
+        else:
+            _recall_format = "balanced"
     if _recall_format == "compact":
         context = render_recall_compact(relevant, token_budget=token_budget)
+    elif _recall_format == "balanced":
+        context = render_recall_balanced(relevant, token_budget=token_budget)
     else:
         context = render_recall_context(
             relevant,

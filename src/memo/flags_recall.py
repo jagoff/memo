@@ -195,6 +195,20 @@ SPECS: tuple[FlagSpec, ...] = (
         "Append a feedback hint comment to the recall block so the AI layer can surface memo_feedback_record to the user. Off by default (saves ~20 tokens/recall).",
     ),
     _spec(
+        "MEMO_RECALL_FOOTER",
+        "str",
+        "full",
+        "recall",
+        "Footer style: 'full' (default, includes get command), 'short' (minimal), or 'none' (no footer). Short saves ~15 tokens.",
+    ),
+    _spec(
+        "MEMO_RECALL_FORMAT",
+        "str",
+        "auto",
+        "recall",
+        "Recall format: 'auto' (default, picks based on budget/hits), 'compact' (one-line per hit), 'balanced' (title + bullets), 'full' (prose). Compact saves ~65%, balanced ~40%.",
+    ),
+    _spec(
         "MEMO_RECALL_DIRECTIVE_ONCE",
         "bool",
         True,
@@ -236,9 +250,24 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_FORMAT",
         "str",
-        "full",
+        "auto",
         "recall",
-        "Recall block format: 'full' (default, rich markdown) or 'compact' (one line per hit, ~65% fewer tokens).",
+        "Recall block format: 'auto' (default, chooses full/compact per budget), 'full' (rich markdown) or 'compact' (~65% fewer tokens).",
+    ),
+    _spec(
+        "MEMO_RECALL_ADAPTIVE_BUDGET",
+        "bool",
+        True,
+        "recall",
+        "Scale token_budget by prompt length: longer prompts get smaller budgets (leave room). Shorter prompts get more context. Default on.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_RECALL_SUMMARIZE_BODY",
+        "bool",
+        False,
+        "recall",
+        "Use LLM to summarize hit bodies that exceed body_chars before rendering. Reduces tokens at cost of extra latency. Off by default (adds ~200ms per hit).",
     ),
     _spec(
         "MEMO_RECALL_TRIVIAL_BAIL",

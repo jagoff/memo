@@ -138,7 +138,19 @@ class _SearchOpsMixin(_MemoryBase):
             input_k = max(self.cfg.rerank_input_k, limit) if self.cfg.reranker_enabled else limit
             k_each = max(input_k * 2, 20)
             try:
-                emb = self.embedder.embed_query(query)
+                _query_for_embed = query
+                # HyDE: generate hypothetical answer doc, embed that instead of raw query
+                _hyde_enabled = flag_bool("MEMO_HYDE_ENABLED")
+                if _hyde_enabled:
+                    _log.debug("HyDE enabled, generating hypothetical doc")
+                    _hyde_doc = self._generate_hyde_document(query)
+                    if _hyde_doc:
+                        _query_for_embed = _hyde_doc
+                        _add_trace("hyde", original_query=query, hyde_doc=_hyde_doc[:100] + "…")
+                        _log.info("HyDE doc generated: %s", _hyde_doc[:100])
+                    else:
+                        _log.warning("HyDE returned empty doc, falling back to original query")
+                emb = self.embedder.embed_query(_query_for_embed)
                 vec_hits = self.store.search(
                     emb, limit=k_each, type_=type_, exclude_types=exclude_types
                 )
@@ -551,3 +563,27 @@ class _SearchOpsMixin(_MemoryBase):
             body=self._read_body(r["path"]),
             extra=r.get("extra") or {},
         )
+
+    def _generate_hyde_document(self, query: str) -> str | None:
+        """Generate a hypothetical answer document for HyDE query expansion."""
+        from memo.llm import MLXChat
+
+        max_tokens = flag_int("MEMO_HYDE_MAX_TOKENS") or 256
+        prompt = (
+            f"Given the user's question, write a hypothetical ideal answer as a concise "
+            f"informational document (like a knowledge-base entry). Focus on the most likely "
+            f"correct answer. Write in a factual, matter-of-fact style.\n\n"
+            f"Question: {query}\n\n"
+            f"Hypothetical Answer:"
+        )
+        try:
+            chat = MLXChat()
+            resp = chat.chat(
+                model=self.cfg.llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.0, "max_tokens": max_tokens},
+            )
+            return ((resp.get("message") or {}).get("content") or "").strip()
+        except Exception as exc:
+            _log.warning("HyDE generation failed: %s", exc, exc_info=True)
+            return None

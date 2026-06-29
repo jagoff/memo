@@ -258,4 +258,20 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    _spec(
+        "MEMO_HYDE_ENABLED",
+        "bool",
+        False,
+        "search",
+        "Enable HyDE (Hypothetical Document Embeddings): generate a hypothetical "
+        "answer doc from the query, embed it instead of the raw query. "
+        "Improves recall on complex/ambiguous queries at +1 LLM call per search.",
+    ),
+    _spec(
+        "MEMO_HYDE_MAX_TOKENS",
+        "int",
+        256,
+        "search",
+        "Max tokens for HyDE generation (LLM call to generate hypothetical doc).",
+    ),
 )

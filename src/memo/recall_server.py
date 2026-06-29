@@ -11,7 +11,8 @@ from memo.daemon_common import serve_until_shutdown as _serve_until_shutdown
 from memo.recall_client import _send_request, connect_and_recall, connect_and_send
 from memo.recall_logic import (
     RECALL_DIRECTIVE,
-    RECALL_FOOTER,
+    RECALL_FOOTER_FULL,
+    RECALL_FOOTER_SHORT,
     RECALL_HEADER,
     _apply_preference_boost,
     _apply_project_boost,
@@ -43,7 +44,8 @@ from memo.recall_stats import (
 
 __all__ = [
     "RECALL_DIRECTIVE",
-    "RECALL_FOOTER",
+    "RECALL_FOOTER_FULL",
+    "RECALL_FOOTER_SHORT",
     "RECALL_HEADER",
     "_MAX_LINE_BYTES",
     "_STATS_DEFAULT_PERSIST_INTERVAL_S",
