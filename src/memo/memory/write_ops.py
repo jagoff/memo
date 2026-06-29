@@ -369,7 +369,7 @@ class _WriteOpsMixin(_MemoryBase):
             except Exception as _exc:
                 _log.debug("save: dedup check skipped: %s", _exc)
 
-        # Topic key upsert (engram pattern): the lookup runs INSIDE
+        # Topic key upsert (session pattern): the lookup runs INSIDE
         # _save_path_lock (below), alongside the path reuse it feeds — see the
         # comment on the lock for why holding it across the SELECT matters.
         use_existing_id: str | None = None
@@ -377,18 +377,18 @@ class _WriteOpsMixin(_MemoryBase):
 
         body_hash = _sha256_short(content)
 
-        # Generate normalized_hash for exact deduplication (engram pattern)
+        # Generate normalized_hash for exact deduplication (session pattern)
         # Use user-provided if given, otherwise auto-generate
         if normalized_hash is None:
             from memo.flags import flag_bool as _flag_bool
 
             if _flag_bool("MEMO_DEDUP_EXACT"):
                 try:
-                    from memo.server_engram_patterns import _normalize_hash as _engram_hash
+                    from memo.server_session_patterns import _normalize_hash as _pattern_hash
 
-                    normalized_hash = _engram_hash(title or "", type_, "project")
+                    normalized_hash = _pattern_hash(title or "", type_, "project")
                 except Exception:
-                    _log.debug("engram hash generation failed")
+                    _log.debug("pattern hash generation failed")
 
         extra_for_store = dict(extra or {})
         if defer_embed:

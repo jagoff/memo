@@ -568,7 +568,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "store",
-        "Enable exact deduplication via normalized hash (engram pattern). "
+        "Enable exact deduplication via normalized hash (session pattern). "
         "When on, save auto-generates a normalized_hash from (title, type, project) "
         "and skips duplicate entries with identical content.",
     ),

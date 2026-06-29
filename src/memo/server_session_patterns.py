@@ -1,6 +1,6 @@
-"""Engram patterns: session management, conflict detection, topic keys.
+"""Session patterns: session management, conflict detection, topic keys.
 
-This module implements patterns from https://github.com/Gentleman-Programming/engram:
+Session-aware memory primitives layered on memo's core storage:
 - Session-aware storage with project+directory
 - Topic key upserts (no duplicate flood)
 - Exact deduplication with normalized hash
@@ -8,7 +8,7 @@ This module implements patterns from https://github.com/Gentleman-Programming/en
 - Soft delete with audit trail
 
 These patterns enhance memo's core storage with session lifecycle,
-conflict detection during save, andupsert semantics via topic_key.
+conflict detection during save, and upsert semantics via topic_key.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ _VALID_RELATIONS = {
 
 
 def _normalize_hash(title: str, type_: str, scope: str = "project") -> str:
-    """Compute normalized hash for exact deduplication (engram pattern)."""
+    """Compute normalized hash for exact deduplication (session pattern)."""
     data = f"{title.lower().strip()}:{type_.lower().strip()}:{scope.lower().strip()}".encode()
     return hashlib.sha256(data).hexdigest()[:16]
 
@@ -46,7 +46,7 @@ def _session_directory() -> str:
 
 
 def _project_from_cwd() -> str:
-    """Detect project from cwd (engram 5-case algorithm)."""
+    """Detect project from cwd (5-case algorithm)."""
     cwd = os.getcwd()
     # Case 1: .memo/config.json exists (nearest to git root)
     config_path = _find_memo_config(cwd)
@@ -161,7 +161,7 @@ def _find_git_child(cwd: str) -> Any | None:
     return children[0] if len(children) == 1 else None
 
 
-# -- Session Management (engram pattern) ----------------------------------------
+# -- Session Management (session pattern) ----------------------------------------
 
 
 def _ensure_session_table(memory: Any) -> None:
@@ -190,14 +190,14 @@ def _ensure_session_table(memory: Any) -> None:
 
 
 def register(server: Any, memory: Any) -> None:
-    """Register engram-pattern MCP tools."""
+    """Register session-pattern MCP tools."""
 
     @server.tool()
     def mem_session_start(
         directory: str | None = None,
         cwd: str | None = None,
     ) -> dict[str, Any]:
-        """Start a new session (engram pattern).
+        """Start a new session (session pattern).
 
         Registers session start for the current project. The session ID is used
         to track work across the session lifecycle, enabling:
@@ -237,7 +237,7 @@ def register(server: Any, memory: Any) -> None:
     def mem_session_end(
         summary: str | None = None,
     ) -> dict[str, Any]:
-        """End the current session (engram pattern).
+        """End the current session (session pattern).
 
         Saves a summary of what was accomplished, discovered, etc.
         The summary is used for context injection in future sessions.
@@ -271,7 +271,7 @@ def register(server: Any, memory: Any) -> None:
         scope: str = "project",
         limit: int = 5,
     ) -> dict[str, Any]:
-        """Get context from previous sessions (engram pattern).
+        """Get context from previous sessions (session pattern).
 
         Returns formatted context from recent sessions for the project.
         This enables "warm restarts" where the agent picks up
@@ -324,7 +324,7 @@ def register(server: Any, memory: Any) -> None:
         before: int = 5,
         after: int = 5,
     ) -> dict[str, Any]:
-        """Get chronological context around an observation (engram pattern).
+        """Get chronological context around an observation (session pattern).
 
         Returns observations from the same session before and after
         the specified observation, for temporal context.
@@ -386,7 +386,7 @@ def register(server: Any, memory: Any) -> None:
         reason: str | None = None,
         confidence: float = 1.0,
     ) -> dict[str, Any]:
-        """Resolve a memory conflict (engram pattern).
+        """Resolve a memory conflict (session pattern).
 
         Records a verdict for a pending memory relation that was
         surfaced during save or conflict scan.
@@ -426,7 +426,7 @@ def register(server: Any, memory: Any) -> None:
         reasoning: str | None = None,
         confidence: float = 1.0,
     ) -> dict[str, Any]:
-        """Persist semantic relation verdict between two memories (engram pattern).
+        """Persist semantic relation verdict between two memories (session pattern).
 
         This allows the agent to explicitly record how two memories
         relate (rather than conflict surfacing).
@@ -480,7 +480,7 @@ def register(server: Any, memory: Any) -> None:
         type: str = "note",
         title: str = "",
     ) -> dict[str, Any]:
-        """Suggest a topic key for upsert semantics (engram pattern).
+        """Suggest a topic key for upsert semantics (session pattern).
 
         Topic keys turn mem_save into upserts: same project+scope+topic_key
         updates the existing memory instead of creating new ones.
@@ -520,7 +520,7 @@ def register(server: Any, memory: Any) -> None:
 
     @server.tool()
     def mem_current_project() -> dict[str, Any]:
-        """Detect current project (engram 5-case algorithm).
+        """Detect current project (5-case algorithm).
 
         Returns project detection result with source and path.
         """
@@ -552,7 +552,7 @@ def register(server: Any, memory: Any) -> None:
         project: str | None = None,
         limit: int = 10,
     ) -> dict[str, Any]:
-        """List observations needing review (engram pattern).
+        """List observations needing review (session pattern).
 
         Returns observations where review_after date has passed.
         This enables periodic review cycles for memory hygiene.
@@ -590,7 +590,7 @@ def register(server: Any, memory: Any) -> None:
         project: str | None = None,
         check: str | None = None,
     ) -> dict[str, Any]:
-        """Run read-only diagnostics (engram pattern).
+        """Run read-only diagnostics (session pattern).
 
         Returns health checks for store, project detection,
         and sync state.
@@ -646,7 +646,7 @@ def register(server: Any, memory: Any) -> None:
 
     @server.tool()
     def mem_stats() -> dict[str, Any]:
-        """Memory system statistics (engram pattern).
+        """Memory system statistics (session pattern).
 
         Returns counts for observations, sessions, relations, etc.
         """

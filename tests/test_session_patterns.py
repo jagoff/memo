@@ -1,4 +1,4 @@
-"""Tests for engram-pattern implementations: project detection, memory relations, MCP tools."""
+"""Tests for session-pattern implementations: project detection, memory relations, MCP tools."""
 from __future__ import annotations
 
 import os
@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from memo.config import Config
-from memo.server_engram_patterns import (
+from memo.server_session_patterns import (
     _normalize_hash,
     _project_from_cwd,
     _session_directory,
@@ -16,7 +16,7 @@ from memo.server_engram_patterns import (
 
 
 @pytest.fixture
-def engram_mem(tmp_path: Path):
+def session_mem(tmp_path: Path):
     from memo.memory import Memory
 
     data = tmp_path / "data"
@@ -71,8 +71,8 @@ class TestProjectDetection:
         d = _session_directory()
         assert d == os.getcwd()
 
-    def test_memory_project_property(self, engram_mem):
-        p = engram_mem.project
+    def test_memory_project_property(self, session_mem):
+        p = session_mem.project
         assert isinstance(p, str)
         assert len(p) > 0
 
@@ -80,14 +80,14 @@ class TestProjectDetection:
 # ── 2. Tables exist in schema ────────────────────────────────────
 
 class TestTablesCreated:
-    def test_sessions_table(self, engram_mem):
-        r = engram_mem.store._conn.execute(
+    def test_sessions_table(self, session_mem):
+        r = session_mem.store._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
         ).fetchone()
         assert r is not None
 
-    def test_memory_relations_table(self, engram_mem):
-        r = engram_mem.store._conn.execute(
+    def test_memory_relations_table(self, session_mem):
+        r = session_mem.store._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='memory_relations'"
         ).fetchone()
         assert r is not None
@@ -96,11 +96,11 @@ class TestTablesCreated:
 # ── 3. memory_relations ──────────────────────────────────────────
 
 class TestMemoryRelations:
-    def test_insert_and_query_relation(self, engram_mem):
-        r1 = engram_mem.save(content="Use Postgres", title="DB choice", type_="decision")
-        r2 = engram_mem.save(content="Use SQLite", title="DB choice", type_="decision")
+    def test_insert_and_query_relation(self, session_mem):
+        r1 = session_mem.save(content="Use Postgres", title="DB choice", type_="decision")
+        r2 = session_mem.save(content="Use SQLite", title="DB choice", type_="decision")
 
-        cx = engram_mem.store._conn
+        cx = session_mem.store._conn
         cx.execute(
             "INSERT INTO memory_relations (id, source_id, target_id, relation, judgment_status, created_at) "
             "VALUES (?, ?, ?, ?, 'pending', datetime('now'))",
@@ -113,11 +113,11 @@ class TestMemoryRelations:
         assert row["source_id"] == r1.id
         assert row["target_id"] == r2.id
 
-    def test_judge_relation(self, engram_mem):
+    def test_judge_relation(self, session_mem):
         """Mark a pending relation as judged via direct SQL."""
-        r1 = engram_mem.save(content="A", title="A", type_="decision")
-        r2 = engram_mem.save(content="B", title="B", type_="decision")
-        cx = engram_mem.store._conn
+        r1 = session_mem.save(content="A", title="A", type_="decision")
+        r2 = session_mem.save(content="B", title="B", type_="decision")
+        cx = session_mem.store._conn
         cx.execute(
             "INSERT INTO memory_relations (id, source_id, target_id, relation, judgment_status, created_at) "
             "VALUES ('rel-judge-1', ?, ?, 'conflicts_with', 'pending', datetime('now'))",
@@ -133,7 +133,7 @@ class TestMemoryRelations:
 
 # ── 4. MCP tools ────────────────────────────────────────────────
 
-class TestMCPEngramTools:
+class TestMCPSessionTools:
     def test_all_tools_registered(self):
         mock = _MockServer()
         register(mock, None)  # none because tools don't inspect memory during registration
@@ -146,9 +146,9 @@ class TestMCPEngramTools:
         missing = expected - registered
         assert not missing, f"Missing tools: {missing}"
 
-    def test_mem_current_project_run(self, engram_mem):
+    def test_mem_current_project_run(self, session_mem):
         mock = _MockServer()
-        register(mock, engram_mem)
+        register(mock, session_mem)
         res = mock._tools["mem_current_project"]()
         assert "project" in res
         assert "project_source" in res

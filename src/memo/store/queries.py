@@ -63,10 +63,10 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 id_[:8],
             )
         with self._tx() as cx:
-            # Build query dynamically based on available columns. Engram-column
-            # presence is cached at schema init (`_has_engram_cols`) so writes
+            # Build query dynamically based on available columns. Pattern-column
+            # presence is cached at schema init (`_has_pattern_cols`) so writes
             # skip a per-upsert PRAGMA table_info(meta).
-            if self._has_engram_cols:
+            if self._has_pattern_cols:
                 cx.execute(
                     "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -165,7 +165,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         models are downloading. A later `memo reindex` fills the missing vector.
         """
         with self._tx() as cx:
-            if self._has_engram_cols:
+            if self._has_pattern_cols:
                 cx.execute(
                     "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -280,7 +280,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 (topic_key,),
             ).fetchone()
         except sqlite3.OperationalError as exc:
-            # Older stores may not have engram columns yet.
+            # Older stores may not have pattern columns yet.
             if "no such column" not in str(exc):
                 raise
             return None
@@ -665,7 +665,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return int(n)
 
     def delete(self, id_: str) -> bool:
-        # Check if soft delete column exists (engram pattern)
+        # Check if soft delete column exists (session pattern)
         from ..flags import flag_bool
 
         _use_soft = flag_bool("MEMO_SOFT_DELETE")
@@ -679,7 +679,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 _log.debug("soft-delete column check failed")
 
         if has_soft_delete and _use_soft:
-            # Soft delete pattern (engram): mark deleted_at + remove from vec/fts indexes
+            # Soft delete pattern: mark deleted_at + remove from vec/fts indexes
             import datetime
 
             now = datetime.datetime.now(datetime.UTC).isoformat()

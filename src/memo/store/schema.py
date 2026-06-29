@@ -337,7 +337,7 @@ class _SchemaMixin(_StoreBase):
         self._check_embedder_version()
         # Always run migrations (not gated by _schema_ready)
         self._run_migrations()
-        # Inline v2→v3 migration: add engram columns to existing meta table
+        # Inline v2→v3 migration: add pattern columns to existing meta table
         cols = {row["name"] for row in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
         new_cols = {
             "topic_key": "ALTER TABLE meta ADD COLUMN topic_key TEXT",
@@ -360,19 +360,19 @@ class _SchemaMixin(_StoreBase):
                     _log.debug("schema migration col %r failed: %s", col, e)
         if added:
             self.set_user_version(3)
-        # Cache engram-column presence so upsert/upsert_text_only skip a
+        # Cache pattern-column presence so upsert/upsert_text_only skip a
         # per-write PRAGMA table_info(meta). `cols` reflects the post-migration
         # column set (updated as the ALTERs above succeed).
-        self._has_engram_cols = "topic_key" in cols and "normalized_hash" in cols
+        self._has_pattern_cols = "topic_key" in cols and "normalized_hash" in cols
 
-        # Ensure sessions table exists (engram pattern)
+        # Ensure sessions table exists (session pattern)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions ("
             "id TEXT PRIMARY KEY, project TEXT NOT NULL, directory TEXT, "
             "started_at TEXT NOT NULL, ended_at TEXT, summary TEXT, status TEXT DEFAULT 'active')"
         )
 
-        # Ensure memory_relations table exists (engram pattern)
+        # Ensure memory_relations table exists (session pattern)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_relations ("
             "id TEXT PRIMARY KEY, sync_id TEXT, source_id TEXT NOT NULL, target_id TEXT NOT NULL, "

@@ -380,8 +380,8 @@ class Memory(
 
     @property
     def project(self) -> str:
-        """Detect project from cwd (engram 5-case algorithm)."""
-        from memo.server_engram_patterns import _project_from_cwd
+        """Detect project from cwd (5-case algorithm)."""
+        from memo.server_session_patterns import _project_from_cwd
 
         return _project_from_cwd()
 

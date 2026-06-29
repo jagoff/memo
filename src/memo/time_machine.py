@@ -2,7 +2,7 @@
 
 The single feature no other agent-memory product ships. Every other
 local-or-cloud memory store (mem0, letta, cognee, supermemory, mem-vault,
-milasd, doggybee, engram, …) serves *current* state only. memo's
+…) serves *current* state only. memo's
 `history.db` audit log records every save/update/delete with the
 field-level diff, so we can reconstruct an earlier state by replaying
 events in reverse from "now".

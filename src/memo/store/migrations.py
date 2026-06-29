@@ -68,7 +68,7 @@ class _MigrationsMixin(_StoreBase):
                 current = 2
             _log.info("backfilled signal rows for v2: access + memory_health")
 
-        # v2 → v3: add engram pattern columns (topic_key, normalized_hash, etc.)
+        # v2 → v3: add session pattern columns (topic_key, normalized_hash, etc.)
         if current < 3:
             with self._tx() as cx:
                 cols = {row["name"] for row in cx.execute("PRAGMA table_info(meta)").fetchall()}
@@ -87,4 +87,4 @@ class _MigrationsMixin(_StoreBase):
                         with contextlib.suppress(Exception):
                             cx.execute(ddl)
                 self.set_user_version(3)
-            _log.info("migrated to v3: engram pattern columns")
+            _log.info("migrated to v3: session pattern columns")

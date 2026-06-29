@@ -40,7 +40,6 @@ from memo import server_contradict as _srv_contradict
 from memo import server_core_history as _srv_core_history
 from memo import server_core_records as _srv_core_records
 from memo import server_core_search as _srv_core_search
-from memo import server_engram_patterns as _srv_engram_patterns
 from memo import server_entities as _srv_entities
 from memo import server_episodes as _srv_episodes
 from memo import server_feedback as _srv_feedback
@@ -54,6 +53,7 @@ from memo import server_query as _srv_query
 from memo import server_reflect as _srv_reflect
 from memo import server_repo as _srv_repo
 from memo import server_resources as _srv_resources
+from memo import server_session_patterns as _srv_session_patterns
 from memo import server_sync as _srv_sync
 from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
@@ -158,8 +158,8 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         _srv_asof.register(server, memory)
         # Episodic memory: search past sessions by meaning (Phase 2)
         _srv_episodes.register(server, memory)
-        # Engram patterns: session-aware, topic keys, conflict detection
-        _srv_engram_patterns.register(server, memory)
+        # Session patterns: session-aware, topic keys, conflict detection
+        _srv_session_patterns.register(server, memory)
         # ToolSpec-registry tools (new pattern — see mcp_tools.py)
         from memo.mcp_tools import register_all as _register_mcp_tools
 
