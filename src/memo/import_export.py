@@ -77,6 +77,7 @@ class Importer:
                     title=item.get("title", ""),
                     tags=item.get("tags", []),
                     type_=item.get("type", "note"),
+                    created=item.get("created"),
                 )
                 imported += 1
             except Exception as e:

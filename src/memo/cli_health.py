@@ -309,7 +309,7 @@ def health(probe: bool, as_json: bool, daemon_only: bool, watch: bool, interval:
 
     console.print("[bold]memo health[/bold]")
     console.print(
-        f"  corpus     : {corpus['memorias']} memories "
+        f"  corpus     : {corpus['memories']} memories "
         f"({corpus.get('archived') or 0} archived, {_fmt_bytes(corpus.get('db_size_bytes'))})"
     )
     dims_flag = "[green]ok[/green]" if index["dims_ok"] else "[red]MISMATCH[/red]"

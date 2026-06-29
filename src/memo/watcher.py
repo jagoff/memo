@@ -62,7 +62,14 @@ class _DebouncedReindex:
 
     def _run(self) -> None:
         with self._lock:
-            if not self._pending or self._running:
+            if not self._pending:
+                return
+            if self._running:
+                # A reindex is still in flight; re-arm so this burst isn't
+                # dropped (otherwise _pending stays set with no timer pending).
+                self._timer = threading.Timer(self.delay, self._run)
+                self._timer.daemon = True
+                self._timer.start()
                 return
             self._pending = False
             self._running = True

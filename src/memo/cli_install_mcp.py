@@ -261,8 +261,8 @@ def _report(result: dict[str, Any]) -> None:
     "--profile",
     default="",
     type=click.Choice(["", "core", "slim", "default"], case_sensitive=False),
-    help="MCP surface profile. 'core'/'slim' expose ~25 tools (~6.7k tokens); "
-    "'default' exposes all 110 tools (~35k tokens). "
+    help="MCP surface profile. 'core'/'slim' expose ~30 tools (~2.8k tokens); "
+    "'default' exposes all 123 tools (~15k tokens). "
     "Constrained clients (codex, opencode) default to 'core' automatically.",
 )
 def install_mcp(
@@ -292,7 +292,13 @@ def install_mcp(
 
     if config_path:
         preset = generic_preset(config_path=config_path, json_key=json_key)
-        _report(register_agent_mcp("generic", server, write=write, preset=preset))
+        if profile and profile != "default":
+            gen_env = dict(server.env)
+            gen_env["MEMO_MCP_PROFILE"] = profile
+            gen_server = dataclasses.replace(server, env=gen_env)
+        else:
+            gen_server = server
+        _report(register_agent_mcp("generic", gen_server, write=write, preset=preset))
     else:
         selected = list(agents) or ["all"]
         if "all" in selected:

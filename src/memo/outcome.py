@@ -109,8 +109,10 @@ def reconcile_roi(
     """
     from memo.flags import flag_float
 
-    prior_n = prior_n if prior_n is not None else (flag_float("MEMO_OUTCOME_PRIOR_N") or _DEFAULT_PRIOR_N)
-    floor = floor if floor is not None else (flag_float("MEMO_OUTCOME_ROI_FLOOR") or _DEFAULT_ROI_FLOOR)
+    _pn = flag_float("MEMO_OUTCOME_PRIOR_N")
+    prior_n = prior_n if prior_n is not None else (_pn if _pn is not None else _DEFAULT_PRIOR_N)
+    _fl = flag_float("MEMO_OUTCOME_ROI_FLOOR")
+    floor = floor if floor is not None else (_fl if _fl is not None else _DEFAULT_ROI_FLOOR)
     cap = cap if cap is not None else (flag_float("MEMO_OUTCOME_ROI_CAP") or _DEFAULT_ROI_CAP)
     span = max(0.0, cap - floor)
 
@@ -247,7 +249,8 @@ def dead_weight(
     coverage = grounded_rate(memory.cfg.state_dir).get("measurement_coverage")
     if (coverage or 0.0) <= 0.0:
         return []
-    prior_n = prior_n if prior_n is not None else (flag_float("MEMO_OUTCOME_PRIOR_N") or _DEFAULT_PRIOR_N)
+    _pn = flag_float("MEMO_OUTCOME_PRIOR_N")
+    prior_n = prior_n if prior_n is not None else (_pn if _pn is not None else _DEFAULT_PRIOR_N)
     u = compute_utilities(memory.cfg.state_dir, prior_n=prior_n)
     p2id = _prefix_to_id(memory)
     out: list[dict[str, Any]] = []

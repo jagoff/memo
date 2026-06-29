@@ -124,6 +124,8 @@ def _llm_synthesize(mem: Any, cluster: dict[str, Any]) -> dict[str, str] | None:
         obj = _json.loads(text)
     except (ValueError, TypeError):
         return None
+    if not isinstance(obj, dict):
+        return None
     title = obj.get("title")
     insight = obj.get("insight")
     if not title or not insight:

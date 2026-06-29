@@ -321,7 +321,17 @@ class _SearchOpsMixin(_MemoryBase):
         if out and emb is not None and not flag_bool("MEMO_FEEDBACK_DISABLED"):
             try:
                 before = len(out)
-                out = self._apply_source_feedback(out, emb)
+                # Feedback rows are keyed to the RAW user query embedding; under
+                # HyDE `emb` was replaced with a hypothetical-doc vector, which
+                # rarely clears the cosine threshold against query-text vectors,
+                # silently nullifying every boost AND the thumbs_down exclude.
+                # Re-embed the raw query so the match stays apples-to-apples.
+                _fb_emb = (
+                    self.embedder.embed_query(query)
+                    if (mode == "hybrid" and flag_bool("MEMO_HYDE_ENABLED"))
+                    else emb
+                )
+                out = self._apply_source_feedback(out, _fb_emb)
                 _add_trace("feedback", input_count=before, output_count=len(out))
             except Exception as exc:
                 _log.warning("source_feedback failed: %s", exc, exc_info=True)

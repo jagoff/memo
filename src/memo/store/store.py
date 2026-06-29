@@ -200,17 +200,14 @@ class VecStore(
     def _rebuild_tantivy_from_sqlite(self) -> None:
         """Bulk-rebuild the tantivy index from the current FTS5 table."""
         rows = self._conn.execute("SELECT id, title, tags, body FROM fts")
-        records: list[dict[str, str]] = []
-        batch_size = 5000
-        for row in rows:
-            records.append(
-                {"id": row["id"], "title": row["title"], "tags": row["tags"], "body": row["body"]}
-            )
-            if len(records) >= batch_size:
-                self._flush_tantivy_batch(records)
-                records.clear()
-        if records:
-            self._flush_tantivy_batch(records)
+        records: list[dict[str, str]] = [
+            {"id": row["id"], "title": row["title"], "tags": row["tags"], "body": row["body"]}
+            for row in rows
+        ]
+        # rebuild() calls delete_all_documents() first, so it MUST run exactly
+        # once — flushing per-batch wipes every previously committed batch and
+        # leaves only the last partial batch (<5000 docs) indexed.
+        self._flush_tantivy_batch(records)
 
     def _flush_tantivy_batch(self, records: list[dict[str, str]]) -> None:
         t = self._get_tantivy()

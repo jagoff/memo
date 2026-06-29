@@ -187,9 +187,13 @@ class QueryComposer:
             if from_dt is not None or to_dt is not None:
                 try:
                     hit_date = datetime.fromisoformat(hit.updated.replace("Z", "+00:00"))
-                    if from_dt is not None and hit_date < from_dt:
+                    if hit_date.tzinfo is None:
+                        hit_date = hit_date.replace(tzinfo=UTC)
+                    fdt = from_dt.replace(tzinfo=UTC) if from_dt is not None and from_dt.tzinfo is None else from_dt
+                    tdt = to_dt.replace(tzinfo=UTC) if to_dt is not None and to_dt.tzinfo is None else to_dt
+                    if fdt is not None and hit_date < fdt:
                         continue
-                    if to_dt is not None and hit_date > to_dt:
+                    if tdt is not None and hit_date > tdt:
                         continue
                 except (ValueError, AttributeError):
                     _log.debug("saved_queries: unparseable date for hit %s", hit.id[:8])

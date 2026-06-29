@@ -195,8 +195,11 @@ def _speaker_label(msg: WAMessage) -> str:
 
 
 def _safe_filename(chat_name: str, chat_jid: str) -> str:
+    import hashlib
+
     base = _FNAME_BAD.sub("-", chat_name).strip() or chat_jid.split("@", 1)[0]
-    return base[:120]
+    tag = hashlib.sha1(chat_jid.encode("utf-8"), usedforsecurity=False).hexdigest()[:6]
+    return f"{base[:120]}-{tag}"
 
 
 def render_chat_note(chat_jid: str, chat_name: str, msgs: list[WAMessage]) -> str:

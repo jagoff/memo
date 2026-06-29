@@ -108,7 +108,7 @@ def backup_create(compress: bool, name: str | None, as_json: bool) -> None:
     console.print("[bold]Backup Created[/bold]")
     console.print()
     console.print(f"Timestamp: {metadata.timestamp}")
-    console.print(f"Memories: {metadata.memoria_count}")
+    console.print(f"Memories: {metadata.memory_count}")
     console.print(f"Checksum: {metadata.checksum[:16]}...")
     console.print(f"Size: {metadata.compressed_size:,} bytes (compressed)")
     console.print(f"Original: {metadata.original_size:,} bytes")

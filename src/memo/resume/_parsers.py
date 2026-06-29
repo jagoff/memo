@@ -259,6 +259,8 @@ def _devin_candidate(path: Path) -> ResumeCandidate | None:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(data, dict):
+        return None
 
     # Extract info from transcript
     cwd = ""

@@ -51,7 +51,7 @@ def _project_from_cwd() -> str:
     # Case 1: .memo/config.json exists (nearest to git root)
     config_path = _find_memo_config(cwd)
     if config_path:
-        return config_path.stem.replace(".memo/", "").replace("/config", "")
+        return config_path.parent.parent.name
 
     # Case 2: git root with origin remote
     git_root = _find_git_root(cwd)
@@ -572,11 +572,11 @@ def register(server: Any, memory: Any) -> None:
             """
             SELECT id, title, type, review_after, created
             FROM meta
-            WHERE project = ? AND review_after IS NOT NULL AND review_after < ?
+            WHERE tags LIKE ? AND review_after IS NOT NULL AND review_after < ?
             ORDER BY review_after ASC
             LIMIT ?
             """,
-            (proj, now, limit),
+            (f'%"project:{proj}"%', now, limit),
         ).fetchall()
 
         return {

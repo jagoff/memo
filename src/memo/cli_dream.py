@@ -874,7 +874,10 @@ def dream_if_due() -> None:
     import subprocess as _sp
 
     cfg = Config.from_env()
-    ts_file = _state_path(cfg) / ".last_run_ts"
+    # Own debounce file — do NOT reuse .last_run_ts: dream run reads that to
+    # size its signal-gather lookback, and clobbering it here collapses the
+    # lookback to ~0. This file only guards against double-spawn within 24h.
+    ts_file = _state_path(cfg) / ".last_if_due_ts"
     try:
         last = float(ts_file.read_text().strip())
     except Exception:

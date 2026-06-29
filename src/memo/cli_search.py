@@ -102,6 +102,8 @@ def search(
     import time
 
     cfg = Config.from_env()
+    if use_rerank is True:
+        cfg = cfg.model_copy(update={"reranker_enabled": True})
     mem = _get_memory(cfg)
     disable_reranker = use_rerank is False
     t0 = int(time.time() * 1000)

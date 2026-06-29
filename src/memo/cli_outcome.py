@@ -100,7 +100,7 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
         return
     click.echo(
         f"outcome applied — roi_score updated for {res['updated']} memory(s) "
-        f"(baseline grounded={res['prior_mean']}, range [{res['floor']},{res['cap']}])."
+        f"(baseline grounded={res['prior_mean']}, range [{res.get('floor')},{res.get('cap')}])."
     )
     if archive_dead:
         click.echo(f"  dead weight archived (reversible with `memo unforget`): {len(archived)}")

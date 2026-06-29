@@ -134,7 +134,13 @@ def _update_daily_trend(
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             f.seek(0)
             raw = f.read()
-            data: dict[str, dict[str, int]] = json.loads(raw) if raw.strip() else {}
+            try:
+                data: dict[str, dict[str, int]] = json.loads(raw) if raw.strip() else {}
+            except json.JSONDecodeError:
+                # Corrupt file (partial write / tampering) — reset so the
+                # truncate+write below self-heals it instead of failing forever,
+                # matching read_daily_trend's tolerance of the same corruption.
+                data = {}
             entry = data.setdefault(day, {"consultas": 0, "activado": 0})
             entry["consultas"] += delta_consults
             entry["activado"] += delta_activado
@@ -170,7 +176,7 @@ def _update_consumer_last_seen(state_dir: Path, consumer: str, ts: str) -> None:
                 f.seek(0)
                 f.truncate()
                 f.write(json.dumps(data, ensure_ascii=False))
-    except OSError as exc:
+    except (OSError, json.JSONDecodeError) as exc:
         _log.debug("dashboard: consumer_last_seen update failed: %s", exc)
 
 

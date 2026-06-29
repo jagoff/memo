@@ -178,8 +178,8 @@ def list_conflicts(
         return []
     args: list[str] = ["conflicts"]
     if query:
-        args.append(query)
-    args.extend(["--k", str(max(1, int(k))), "--json"])
+        args.extend(["--query", query])
+    args.extend(["-k", str(max(1, int(k))), "--json"])
     try:
         payload = _probe_json(
             binary,

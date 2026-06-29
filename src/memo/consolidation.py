@@ -346,6 +346,11 @@ class AdvancedConsolidator:
         # Add archival metadata
         post["archived_for"] = replacement_id
         post["archived_at"] = datetime.now(UTC).isoformat()
+        # Drop the live `id` so `memo reindex`/gc (which rglob memory_dir,
+        # archived/ included) do NOT re-index this archived copy and
+        # resurrect the deleted memory. The id is preserved in the filename
+        # and in `archived_for`'s chain.
+        post.metadata.pop("id", None)
 
         # Write to archived location
         archived_path = self._archival_dir / f"{memory_id}.md"
