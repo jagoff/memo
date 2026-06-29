@@ -431,9 +431,11 @@ def recall_hook() -> None:
     elif _recall_format == "balanced":
         context = render_recall_balanced(relevant, token_budget=token_budget)
     else:
+        from memo.recall_assoc import build_nudge
+
         context = render_recall_context(
             relevant,
-            [],
+            build_nudge(mem, relevant),
             turn=_turn,
             body_chars=body_chars,
             token_budget=token_budget,

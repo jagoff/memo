@@ -108,7 +108,7 @@ def render_recall_context(
 
     if nudge:
         also = "; ".join(f"[{h.id[:8]}] {h.title}" for h in nudge)
-        candidate = f"_Also in your memory (related): {also}._"
+        candidate = f"_🔗 También conectado (vía grafo · no verificado): {also}._"
         if max_chars is None or len(_render([candidate])) <= max_chars:
             lines.append(candidate)
     if flag_bool("MEMO_RECALL_FEEDBACK_HINT"):
