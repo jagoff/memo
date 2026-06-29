@@ -26,6 +26,28 @@ uv run --no-sync memo <cmd>
 uv run --no-sync memo config validate
 ```
 
+## Working tree is shared (read before any git op)
+
+This repo is frequently worked on by **concurrent agent sessions sharing one
+working tree and HEAD**. Their commits land on whatever branch is checked out,
+master advances underneath you, and a `git checkout` in another session moves
+*your* HEAD too. So:
+
+- **Never `git add -A` / `git commit -a` / `ruff format src/`** — they sweep in
+  other sessions' in-flight files. Stage explicit paths only:
+  `git add src/memo/foo.py tests/test_foo.py`. Lint/format only your files.
+- **Check `git reflog` + `git status` before any `reset`/`checkout`** — you may
+  un-reference a concurrent commit or move a shared HEAD.
+- **Cut releases from an isolated worktree**, never `git checkout master` in the
+  shared tree: `git worktree add --detach /tmp/rel origin/master`, cherry-pick
+  your commit, bump versions + CHANGELOG, commit, `git push origin HEAD:master`,
+  tag, `git worktree remove --force`. Check `git ls-remote --tags origin vX.Y.Z`
+  first — a concurrent session may have taken your version number.
+- Nothing is lost on entanglement (commits live in `git reflog`, uncommitted
+  work stays in the tree). Rebuild a clean branch with
+  `git checkout <branch> -- <only your files>` (zsh does NOT word-split `$VAR` —
+  list paths explicitly).
+
 ## Architecture
 
 **`Memory` facade** (`src/memo/memory/facade.py`) multiply-inherits ten operation mixins — `_WriteOpsMixin`, `_UpdateOpsMixin`, `_DeleteOpsMixin`, `_SearchOpsMixin`, `_AskOpsMixin`, `_RerankOpsMixin`, `_RepoOpsMixin`, `_MaintainOpsMixin`, `_ConsolidateOpsMixin`, `_ReplayOpsMixin` — each in their own `src/memo/memory/<op>_ops.py` file. Module-level constants, prompts, and pure helpers are in `src/memo/memory/record.py`. Never import from a mixin directly; always go through `Memory`.
@@ -282,6 +304,49 @@ across the whole regression set — never per-question.
   crowding) gate here; synthesis-class regressions (fabrication, refusal,
   wrong format) gate in synapse `eval-chat` with `require_substrings` /
   `forbid_substrings` checks.
+
+## Dream — nightly self-maintenance + self-improvement
+
+`memo dream run` is the nightly pipeline (LaunchAgent `com.memo.dream` at 03:00;
+`memo dream if-due` for the >24h guard). It is **separate from `memo maintain`**.
+Wiring is `src/memo/cli_dream.py` (Click) + `src/memo/cli_dream_passes.py`
+(`_run_*` implementations); the receipt persists to `state_dir/dream/last.json`
+(`memo dream status`). Every pass records its result there and **failures land in
+`receipt["errors"]` — never silently swallowed**.
+
+- **Maintenance passes (default-on):** orientation inventory → signal-gather
+  (transcript mining → memories) → contradictions (supersede ≥0.9) → consolidate
+  duplicates → archive stale → `synthesize_cross_cluster` → entities → ROI decay
+  → prune-floor / LFU-evict → compress → prewarm.
+- **Dream v2 — self-improvement passes (all OFF by default, opt-in per flag):**
+  - **Tuner** (`dream_tune.py`, `MEMO_DREAM_TUNE_ENABLED`): mines
+    ground-truth-by-use labels from `grounding.log` (reuses
+    `eval_recall.harvest_labels`), line-searches `MEMO_RECALL_MIN_SIM` over the
+    live index, and **auto-applies** the winner — gated by the curated
+    `eval/regression_labels.json` (a change that helps mined labels but hurts the
+    curated set is rejected) and **auto-reverted** when a later night regresses
+    vs the saved baseline. CLI `memo dream tune`. Scope: it only moves `min_sim`
+    — the one knob the eval harness (`run_config` / `Cfg.floor`) measures
+    faithfully in vec mode; boosts/rerank-pool need a recall-faithful eval (a
+    pure `rank_hits()` extracted from `recall_logic._recall_logic`) and are
+    deliberately deferred.
+  - **Consolidate** (`dream_consolidate.py`,
+    `MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED`): groups recent episodes
+    (`EpisodeStore.recent`) by project and abstracts recurring cross-session work
+    into one durable `type=synthesis` memory (`synthesis_kind=cross_session`,
+    session ids as provenance, dedup by provenance hash). Distinct from per-turn
+    signal-gather and cross-memory synthesize; no destructive episodic decay.
+  - **Anticipate** (`dream_anticipate.py`, `MEMO_DREAM_ANTICIPATE_ENABLED`):
+    surfaces recurring unmet gaps (`outcome.detect_gaps`) + hot queries into the
+    receipt/briefing and pre-warms their embeddings. Never fabricates.
+
+**Tuned-params overlay** (`src/memo/tuned_overlay.py`) is the only place
+auto-tuning touches live behavior: the tuner writes `state_dir/tuned_params.json`
+and `flags.flag()` consults it, so flag resolution is **env var > overlay >
+built-in default** (an explicit `MEMO_*` env var is never overridden). Delete the
+file or `memo dream tune --rollback` to revert. The enable flags live in the
+nightly LaunchAgent's `EnvironmentVariables` (launchd does not inherit the shell)
+— see `~/repos/memo/launchd/com.memo.dream.plist`.
 
 ## Workflows (Claude Code dynamic workflows)
 
