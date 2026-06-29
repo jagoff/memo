@@ -7,9 +7,11 @@ from pathlib import Path
 import pytest
 
 from memo.project import (
+    GLOBAL_BUCKET,
     current_project_tag,
     has_project_tag,
     is_project_tag,
+    project_bucket,
     slugify_project,
 )
 
@@ -67,3 +69,19 @@ def test_default_cwd_used(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     (repo / ".git").mkdir()
     monkeypatch.chdir(repo)
     assert current_project_tag() == "project:default-cwd"
+
+
+def test_project_bucket_returns_slug_of_first_project_tag() -> None:
+    assert project_bucket(["note", "project:memo", "db"]) == "memo"
+
+
+def test_project_bucket_untagged_is_global() -> None:
+    assert project_bucket(["note", "db"]) == GLOBAL_BUCKET
+
+
+def test_project_bucket_empty_tags_is_global() -> None:
+    assert project_bucket([]) == "_global"
+
+
+def test_global_bucket_constant_value() -> None:
+    assert GLOBAL_BUCKET == "_global"

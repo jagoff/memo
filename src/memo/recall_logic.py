@@ -23,6 +23,7 @@ RECALL_FOOTER_FULL = "_Full: `/memo get <id>`._"
 RECALL_FOOTER_SHORT = "_: `/memo get <id>`._"
 # Short/no footer saves ~15 tokens
 
+
 def _render_footer() -> str:
     style = flag_str("MEMO_RECALL_FOOTER") or "full"
     if style == "none":
@@ -60,7 +61,7 @@ def render_recall_context(
         trunc = text[:max_len]
         last_punct = max(trunc.rfind(". "), trunc.rfind("! "), trunc.rfind("? "))
         if last_punct > max_len * 0.6:
-            return trunc[:last_punct + 1].rstrip() + "…"
+            return trunc[: last_punct + 1].rstrip() + "…"
         # Fallback: word boundary
         last_space = trunc.rfind(" ")
         if last_space > max_len * 0.7:
@@ -205,6 +206,48 @@ def _apply_project_boost(
     return boosted
 
 
+_GLOBAL_TIER_TYPES = {"preference", "feedback"}
+
+
+def _apply_project_tiers(
+    hits: list[Any],
+    project_tag: str | None,
+    project_boost: float,
+    global_boost: float,
+) -> list[Any]:
+    """3-tier soft project ranking, re-sorted by boosted score.
+
+    Per-hit precedence (a hit may match several tiers):
+      - tier-2 global/cross-cutting: no `project:` tag OR type in
+        {preference, feedback}                       -> +global_boost
+        (wins over tier-1 even with a project tag)
+      - tier-1 current project: `project_tag` in tags -> +project_boost
+      - tier-3 other projects: everything else        -> +0
+
+    Additive + soft: a much-more-similar global / other-project hit still wins,
+    so the search pool stays effectively "one folder" with relevance weighting.
+    """
+    from memo.project import has_project_tag
+
+    out: list[Any] = []
+    for h in hits:
+        if h.score is None:
+            out.append(h)
+            continue
+        tags = h.tags or []
+        is_global = (not has_project_tag(list(tags))) or (
+            getattr(h, "type", "") in _GLOBAL_TIER_TYPES
+        )
+        if is_global:
+            out.append(replace(h, score=h.score + global_boost))
+        elif project_tag and project_tag in tags:
+            out.append(replace(h, score=h.score + project_boost))
+        else:
+            out.append(h)
+    out.sort(key=lambda h: h.score or 0.0, reverse=True)
+    return out
+
+
 def _apply_preference_boost(hits: list[Any], prefs: Any) -> list[Any]:
     pref_types = getattr(prefs, "preferred_types", None) or {}
     if not pref_types:
@@ -293,7 +336,9 @@ def _recall_logic(
     body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
     token_budget = _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
     _pb = _flag_float("MEMO_RECALL_PROJECT_BOOST")
-    project_boost = 0.15 if _pb is None else _pb
+    project_boost = 0.25 if _pb is None else _pb
+    _gb = _flag_float("MEMO_RECALL_GLOBAL_BOOST")
+    global_boost = 0.10 if _gb is None else _gb
     mode = _flag_str("MEMO_RECALL_MODE") or "vec"
     _mbc = _flag_int("MEMO_RECALL_MIN_BODY_CHARS")
     min_body_chars = 40 if _mbc is None else _mbc
@@ -370,7 +415,7 @@ def _recall_logic(
 
     def _rank(raw: list[Any]) -> list[Any]:
         if project_tag:
-            raw = _apply_project_boost(raw, project_tag, project_boost)
+            raw = _apply_project_tiers(raw, project_tag, project_boost, global_boost)
         if contextual:
             with contextlib.suppress(Exception):
                 raw = _apply_preference_boost(raw, mem.contextual.context.get_preferences())

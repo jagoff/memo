@@ -452,7 +452,9 @@ class _WriteOpsMixin(_MemoryBase):
             post["extra"] = extra_for_store or {}
 
             # For topic key upserts, reuse the existing path instead of creating a new one
-            rel_path = existing_path if existing_path else self._build_rel_path(title, now_iso)
+            rel_path = (
+                existing_path if existing_path else self._build_rel_path(title, now_iso, norm_tags)
+            )
             abs_path = self.cfg.memory_dir / rel_path
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
@@ -789,16 +791,23 @@ class _WriteOpsMixin(_MemoryBase):
 
     # -- internals ----------------------------------------------------------
 
-    def _build_rel_path(self, title: str, now_iso: str) -> str:
+    def _build_rel_path(self, title: str, now_iso: str, tags: list[str] | None = None) -> str:
         date = now_iso.split("T", 1)[0]
         slug = _slugify(title)[:80] or "untitled"
+        # Per-project bucket folder, derived from the project: tag. The sqlite
+        # index globs recursively, so this is on-disk organization only — search
+        # stays global. Gated; flat and foldered layouts coexist.
+        prefix = ""
+        if flag_bool("MEMO_STORE_BY_PROJECT"):
+            from memo.project import project_bucket
+
+            prefix = f"{project_bucket(tags or [])}/"
         # POSIX path joins. Path is relative to `cfg.memory_dir`.
-        base = f"{date}-{slug}"
+        base = f"{prefix}{date}-{slug}"
         candidate = f"{base}.md"
         # `meta.path` is UNIQUE. Two saves with the same title on the same day
-        # (e.g. several WhatsApp chunks from one chat on one date) would collide.
-        # Append a numeric suffix until the path is free — checking both the
-        # index and the on-disk file so a deferred/unindexed write still counts.
+        # would collide. Append a numeric suffix until the path is free —
+        # checking both the index and the on-disk file (per-bucket).
         n = 2
         while (
             self.store.get_by_path(candidate) is not None

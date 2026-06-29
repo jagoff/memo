@@ -204,7 +204,7 @@ def test_sync_once_commits_local_deletion_before_pull(remote: Path, tmp_path: Pa
     try:
         rec = mem.save(content="to be deleted cross-mac", title="DeleteMe")
         sync_once(mem.cfg, mem.store, mem)  # push it to origin
-        md = next((clone / "memorias").glob("*.md"))
+        md = next((clone / "memorias").rglob("*.md"))
         # simulate `memo delete`'s file removal WITHOUT committing
         md.unlink()
         assert not md.exists()

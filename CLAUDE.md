@@ -164,6 +164,16 @@ The `.md` files are canonical; the sqlite index is **derived and replayable**:
   `memo migrate --consolidate-db` once to merge existing `*.db` files (renames
   them `*.db.bak`, idempotent). Default off keeps the historical multi-file
   layout. The `cfg.*_db` path properties collapse onto `db_path` when on.
+- **Per-project folders (default on).** `MEMO_STORE_BY_PROJECT=1` writes each new
+  memory's `.md` into a per-project bucket — `memory_dir/<project>/` (or `_global/`
+  when untagged) — derived from the `project:` tag (the tag stays the source of
+  truth; the folder is derived). The sqlite index globs recursively, so search
+  stays global — on-disk organization only. Recall then applies a 3-tier soft
+  boost: `MEMO_RECALL_PROJECT_BOOST` (0.25, current project) > `MEMO_RECALL_GLOBAL_BOOST`
+  (0.10, no project tag or `preference`/`feedback`) > other projects (+0).
+  `memo migrate --bucket-by-project` re-buckets an existing flat install
+  (non-destructive, idempotent, then reindexes). Backup/restore + git sync use
+  `rglob`, so they preserve the bucket layout.
 
 ## Test isolation (see `tests/conftest.py`)
 

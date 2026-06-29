@@ -88,9 +88,14 @@ class BackupManager:
 
         memoria_backup = backup_path / "memorias"
         memoria_backup.mkdir(exist_ok=True)
-        memoria_files = list(self.memory_dir.glob("*.md"))
+        memoria_files = list(self.memory_dir.rglob("*.md"))
         for f in memoria_files:
-            shutil.copy2(f, memoria_backup / f.name)
+            # Preserve the per-project bucket layout (memory_dir/<project>/...)
+            # so restore recreates it and same-named files in different buckets
+            # don't collide. rglob handles both flat and bucketed layouts.
+            dest = memoria_backup / f.relative_to(self.memory_dir)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest)
 
         db_backup = backup_path / "db"
         db_backup.mkdir(exist_ok=True)
@@ -225,8 +230,10 @@ class BackupManager:
         if restore_memorias:
             memoria_backup = backup_path / "memorias"
             if memoria_backup.is_dir():
-                for f in memoria_backup.glob("*.md"):
-                    shutil.copy2(f, self.memory_dir / f.name)
+                for f in memoria_backup.rglob("*.md"):
+                    dest = self.memory_dir / f.relative_to(memoria_backup)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(f, dest)
 
         if restore_dbs:
             db_backup = backup_path / "db"

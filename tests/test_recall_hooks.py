@@ -68,7 +68,8 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
     context = payload["hookSpecificOutput"]["additionalContext"]
 
     assert context.index("Project") < context.index("Global")
-    assert "score 0.75" in context
+    # 3-tier ranking: project hit 0.60+0.25 (tier-1), global hit 0.70+0.10 (tier-2)
+    assert "score 0.85" in context
 
 
 def test_dedup_hits_drops_duplicate_id_and_near_identical_content() -> None:

@@ -220,7 +220,9 @@ def recall_hook() -> None:
         # Mid-range stays as-is
 
     _pb = flag_float("MEMO_RECALL_PROJECT_BOOST")
-    project_boost = 0.15 if _pb is None else _pb
+    project_boost = 0.25 if _pb is None else _pb
+    _gb = flag_float("MEMO_RECALL_GLOBAL_BOOST")
+    global_boost = 0.10 if _gb is None else _gb
 
     _session_mode = os.environ.get("MEMFLOW_SESSION_MODE", "").strip().lower()
     if _session_mode == "focus":
@@ -289,10 +291,10 @@ def recall_hook() -> None:
             if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: search failed: {exc}", file=sys.stderr)
             return []
-        if project_tag:
-            from memo.recall_server import _apply_project_boost
+        if project_tag or global_boost > 0:
+            from memo.recall_server import _apply_project_tiers
 
-            hits = _apply_project_boost(hits, project_tag, project_boost)
+            hits = _apply_project_tiers(hits, project_tag, project_boost, global_boost)
         hits = hits[:top_k]
         rel = [h for h in hits if h.score is None or h.score >= min_sim]
         if min_body_chars > 0:

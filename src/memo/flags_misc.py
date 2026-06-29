@@ -320,6 +320,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "`memo migrate --consolidate-db` once to merge existing sidecar files. "
         "Default off keeps the historical multi-file layout.",
     ),
+    _spec(
+        "MEMO_STORE_BY_PROJECT",
+        "bool",
+        True,
+        "misc",
+        "Store new memory .md files in a per-project folder "
+        "(memory_dir/<project>/, or _global/ when untagged) derived from the "
+        "project: tag. The sqlite index globs recursively so search stays "
+        "global — this is on-disk organization only. Existing flat files are "
+        "untouched until `memo migrate --bucket-by-project`.",
+    ),
     # ROI accounting (memo roi)
     _spec(
         "MEMO_ROI_SECS_PER_GROUNDED",

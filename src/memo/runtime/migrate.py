@@ -4,6 +4,7 @@ import shutil
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -90,6 +91,39 @@ def _consolidate_sidecar_dbs() -> None:
     console.print("[green]✓[/green] set single_db=1 in config — memo now uses one DB file")
 
 
+def _bucket_by_project(cfg: Config) -> int:
+    """Move flat-root .md files into per-project bucket folders by their
+    `project:` tag (untagged -> `_global/`). Idempotent + non-destructive.
+    Returns the number of files moved.
+    """
+    import frontmatter
+
+    from memo.project import project_bucket
+
+    md_root = cfg.memory_dir
+    moved = 0
+    # Only the FLAT root level (already-bucketed files live one level deeper
+    # and are skipped, making this idempotent).
+    for md in sorted(md_root.glob("*.md")):
+        try:
+            post = frontmatter.loads(md.read_text(encoding="utf-8"))
+        except Exception:  # noqa: S112
+            continue
+        meta: dict[str, Any] = post.metadata
+        tags = list(meta.get("tags") or [])
+        bucket = project_bucket(tags)
+        dest_dir = md_root / bucket
+        dest = dest_dir / md.name
+        if dest.resolve() == md.resolve():
+            continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            continue  # name collision in bucket — leave the original in place
+        md.rename(dest)
+        moved += 1
+    return moved
+
+
 @click.command(name="migrate-vault")
 @click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
 @click.option(
@@ -114,6 +148,13 @@ def _consolidate_sidecar_dbs() -> None:
     is_flag=True,
     help="Merge the sidecar DBs (history/graph/contradictions/crossref) into the main memvec.db, set MEMO_SINGLE_DB=1 in config, and rename the legacy files to *.db.bak (reversible). Idempotent. Does not move any .md files.",
 )
+@click.option(
+    "--bucket-by-project",
+    is_flag=True,
+    help="Move existing flat .md files into per-project folders "
+    "(memory_dir/<project>/, _global/ when untagged) by their project: tag, "
+    "then reindex. Non-destructive (moves only), idempotent.",
+)
 @click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def migrate_vault(
@@ -122,6 +163,7 @@ def migrate_vault(
     into_vault: bool,
     rollback: bool,
     consolidate_db: bool,
+    bucket_by_project: bool,
     force: bool,
     yes: bool,
 ) -> None:
@@ -144,6 +186,18 @@ def migrate_vault(
 
     if consolidate_db:
         _consolidate_sidecar_dbs()
+        return
+
+    if bucket_by_project:
+        cfg = Config.from_env()
+        moved = _bucket_by_project(cfg)
+        console.print(f"[green]✓[/green] bucketed {moved} memory file(s) by project")
+        mem = Memory(cfg)
+        mem.reindex()
+        console.print(
+            "[dim]reindexed (paths updated). [[id]] wikilinks are unaffected; "
+            "Obsidian path-links to moved files would change.[/dim]"
+        )
         return
 
     cfg = Config.from_env()

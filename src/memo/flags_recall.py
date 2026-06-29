@@ -51,9 +51,21 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_PROJECT_BOOST",
         "float",
-        0.15,
+        0.25,
         "recall",
-        "Score boost for memories tagged to the cwd project.",
+        "Score boost for memories tagged to the cwd project. Tier-1 of the "
+        "3-tier soft project ranking (current > global > other-projects).",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_RECALL_GLOBAL_BOOST",
+        "float",
+        0.10,
+        "recall",
+        "Score boost for global / cross-cutting memories (no project: tag, or "
+        "type preference/feedback) so they stay afloat in any project. Tier-2 of "
+        "the 3-tier soft project ranking (current > global > other-projects).",
         min_val=0.0,
         max_val=1.0,
     ),
