@@ -17,6 +17,12 @@
 
 `memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your Mac**. Each memory is a plain Markdown file; embeddings live in a single sqlite file; the LLM, embedder, and reranker run **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
 
+<div align="center">
+
+<img src="docs/diagram-loop.svg" alt="Save a fact once and any later session recalls it automatically, all stored locally on your Mac." width="760" />
+
+</div>
+
 ## What makes memo different
 
 | Capability | memo | mem0 | letta | cognee |
@@ -254,7 +260,19 @@ Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
 **Hybrid search:** vec leg (MLX embedding) + BM25 leg (FTS5/Tantivy, diacritic-folding for Spanish) fused via Reciprocal Rank Fusion → optional MLX cross-encoder rerank.
 
+<div align="center">
+
+<img src="docs/diagram-recall.svg" alt="A prompt runs a vector search and a keyword search in parallel; results are fused, reranked, and the top memory is injected." width="820" />
+
+</div>
+
 **Markdown is the source of truth.** The `.md` files are canonical; sqlite is a rebuildable index. A hand-edit in Obsidian wins on the next `memo reindex`. `delete()` removes the index first, then the file — no silent data loss.
+
+<div align="center">
+
+<img src="docs/diagram-storage.svg" alt="Markdown files are canonical; the sqlite index is derived and can be rebuilt from them at any time." width="760" />
+
+</div>
 
 **Embedding models:**
 

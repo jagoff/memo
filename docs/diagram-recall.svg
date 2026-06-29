@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" role="img" aria-label="How recall works: a prompt runs two searches in parallel — vector for meaning and BM25 for keywords — which are fused, reranked, and the top memory injected.">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="a2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <filter id="s2" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+  <style>
+    .t   { font-size: 23px; font-weight: 700; fill: #0f172a; }
+    .sub { font-size: 13px; fill: #64748b; }
+    .lab { font-size: 14px; font-weight: 600; fill: #0f172a; text-anchor: middle; }
+    .meta{ font-size: 11px; fill: #64748b; text-anchor: middle; }
+  </style>
+
+  <rect x="0" y="0" width="960" height="360" fill="#ffffff"/>
+  <text x="40" y="46" class="t">How recall finds the right memory</text>
+  <text x="40" y="70" class="sub">Two searches run in parallel — one for meaning, one for keywords — then fuse and rerank.</text>
+
+  <!-- prompt -->
+  <rect x="30" y="158" width="150" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#s2)"/>
+  <text x="105" y="196" class="lab">Your prompt</text>
+  <text x="105" y="216" class="meta">a question</text>
+
+  <!-- vec leg -->
+  <rect x="220" y="96" width="200" height="78" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#s2)"/>
+  <text x="320" y="130" class="lab">Vector search</text>
+  <text x="320" y="151" class="meta">meaning · MLX embedding</text>
+
+  <!-- bm25 leg -->
+  <rect x="220" y="226" width="200" height="78" rx="12" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" filter="url(#s2)"/>
+  <text x="320" y="260" class="lab">Keyword search</text>
+  <text x="320" y="281" class="meta">BM25 · FTS5</text>
+
+  <!-- fuse -->
+  <rect x="462" y="158" width="150" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#s2)"/>
+  <text x="537" y="192" class="lab">Fuse</text>
+  <text x="537" y="213" class="meta">rank-merge (RRF)</text>
+
+  <!-- rerank -->
+  <rect x="654" y="158" width="150" height="84" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#s2)"/>
+  <text x="729" y="192" class="lab">Rerank</text>
+  <text x="729" y="213" class="meta">cross-encoder · opt</text>
+
+  <!-- inject -->
+  <rect x="816" y="158" width="120" height="84" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#s2)"/>
+  <text x="876" y="192" class="lab" fill="#2563eb">Inject</text>
+  <text x="876" y="213" class="meta">top memory</text>
+
+  <!-- prompt -> two legs -->
+  <path d="M180,188 C202,180 200,140 218,135" fill="none" stroke="#475569" stroke-width="1.7" marker-end="url(#a2)"/>
+  <path d="M180,212 C202,220 200,260 218,265" fill="none" stroke="#475569" stroke-width="1.7" marker-end="url(#a2)"/>
+
+  <!-- legs -> fuse -->
+  <path d="M420,135 C442,140 440,180 460,186" fill="none" stroke="#475569" stroke-width="1.7" marker-end="url(#a2)"/>
+  <path d="M420,265 C442,260 440,220 460,214" fill="none" stroke="#475569" stroke-width="1.7" marker-end="url(#a2)"/>
+
+  <!-- fuse -> rerank -> inject -->
+  <line x1="612" y1="200" x2="650" y2="200" stroke="#475569" stroke-width="1.8" marker-end="url(#a2)"/>
+  <line x1="804" y1="200" x2="812" y2="200" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a2b)"/>
+
+  <text x="480" y="334" class="meta" font-size="12.5">Warm recall daemon keeps the whole path under ~200 ms · output capped to a ~160-token budget</text>
+</svg>

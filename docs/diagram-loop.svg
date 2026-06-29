@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 330" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" role="img" aria-label="How memo works: you save a fact, it is stored locally on your Mac, and a later session recalls it automatically.">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="a1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <filter id="s1" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+  <style>
+    .t   { font-size: 23px; font-weight: 700; fill: #0f172a; }
+    .sub { font-size: 13px; fill: #64748b; }
+    .lab { font-size: 15px; font-weight: 600; fill: #0f172a; text-anchor: middle; }
+    .meta{ font-size: 11.5px; fill: #64748b; text-anchor: middle; }
+    .num { font-size: 13px; font-weight: 800; fill: #2563eb; text-anchor: middle; }
+  </style>
+
+  <rect x="0" y="0" width="900" height="330" fill="#ffffff"/>
+  <text x="40" y="46" class="t">Save once — recalled automatically, forever</text>
+  <text x="40" y="70" class="sub">No /remember calls. The agent saves a fact today and a future session gets it back on its own.</text>
+
+  <!-- loop-back arrow over the top -->
+  <path d="M760,150 C760,104 140,104 140,150" fill="none" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#a1b)"/>
+  <rect x="288" y="106" width="324" height="20" fill="#ffffff"/>
+  <text x="450" y="121" class="meta" fill="#2563eb" font-weight="600">next session · any agent · any Mac — automatic</text>
+
+  <!-- 1 -->
+  <rect x="40" y="150" width="220" height="100" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#s1)"/>
+  <text x="150" y="180" class="num">1</text>
+  <text x="150" y="205" class="lab">You save a fact</text>
+  <text x="150" y="228" class="meta">"we use Postgres, not Mongo"</text>
+
+  <!-- 2 -->
+  <rect x="340" y="150" width="220" height="100" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5" filter="url(#s1)"/>
+  <text x="450" y="180" class="num" fill="#16a34a">2</text>
+  <text x="450" y="205" class="lab">Stored on your Mac</text>
+  <text x="450" y="228" class="meta">Markdown + sqlite · no cloud</text>
+
+  <!-- 3 -->
+  <rect x="640" y="150" width="220" height="100" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#s1)"/>
+  <text x="750" y="180" class="num">3</text>
+  <text x="750" y="205" class="lab">Recalled for you</text>
+  <text x="750" y="228" class="meta">injected before it answers</text>
+
+  <line x1="260" y1="200" x2="336" y2="200" stroke="#475569" stroke-width="1.8" marker-end="url(#a1)"/>
+  <line x1="560" y1="200" x2="636" y2="200" stroke="#475569" stroke-width="1.8" marker-end="url(#a1)"/>
+
+  <text x="450" y="300" class="meta" font-size="12.5">100% local · runs in-process via Apple MLX · your prompts and memories never leave the machine</text>
+</svg>
