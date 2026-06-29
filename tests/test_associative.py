@@ -53,3 +53,13 @@ def test_associate_min_activation_gate_can_return_empty():
     hits = associate(["m1"], store=store, codegraph_adj=None,
                      exclude_ids=frozenset({"m1"}), min_activation=999.0)
     assert hits == []
+
+
+def test_associative_flags_registered_with_defaults():
+    from memo.flags import flag_bool, flag_float, flag_int
+
+    assert flag_bool("MEMO_RECALL_ASSOCIATIVE") is True
+    assert flag_int("MEMO_ASSOCIATIVE_HOPS") == 2
+    assert flag_int("MEMO_ASSOCIATIVE_LIMIT") == 2
+    assert flag_float("MEMO_ASSOCIATIVE_MIN_ACTIVATION") == 0.5
+    assert flag_int("MEMO_ASSOCIATIVE_BUDGET_MS") == 300

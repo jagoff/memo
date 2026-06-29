@@ -49,6 +49,23 @@ SPECS: tuple[FlagSpec, ...] = (
         "Token budget for injected context (0 = off).",
     ),
     _spec(
+        "MEMO_RECALL_ASSOCIATIVE",
+        "bool",
+        True,
+        "recall",
+        "Append a labeled 'related via graph' nudge to recall, found by "
+        "walking the entity+codegraph graph from the top-K seeds. Default on.",
+        opt_out=True,
+    ),
+    _spec("MEMO_ASSOCIATIVE_HOPS", "int", 2, "recall",
+          "Graph hops to expand from recall seeds.", min_val=1, max_val=3),
+    _spec("MEMO_ASSOCIATIVE_LIMIT", "int", 2, "recall",
+          "Max associative memories in the recall nudge.", min_val=1),
+    _spec("MEMO_ASSOCIATIVE_MIN_ACTIVATION", "float", 0.5, "recall",
+          "Activation floor below which an associative hit is dropped.", min_val=0.0),
+    _spec("MEMO_ASSOCIATIVE_BUDGET_MS", "int", 300, "recall",
+          "Time guard for associative expansion; skip the nudge if exceeded.", min_val=0),
+    _spec(
         "MEMO_RECALL_PROJECT_BOOST",
         "float",
         0.25,
