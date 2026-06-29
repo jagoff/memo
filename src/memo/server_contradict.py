@@ -21,7 +21,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         sim_floor: float = 0.55,
         confidence_threshold: float = 0.7,
         min_days_apart: int = 1,
-        max_memorias: int = 2000,
+        max_memories: int = 2000,
         max_pairs: int = 500,
         since: str | None = None,
         type: str | None = None,
@@ -39,7 +39,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             sim_floor: Cosine floor for candidate pairs.
             confidence_threshold: Min LLM confidence to persist.
             min_days_apart: Skip pairs whose `updated` are within N days.
-            max_memorias: Hard cap on memories visited.
+            max_memories: Hard cap on memories visited.
             max_pairs: Hard cap on pairs sent to the LLM.
             since: ISO date; only memories updated on/after are scanned.
             type: Optional memory type filter.
@@ -49,13 +49,13 @@ def register(server: FastMCP, memory: Memory) -> None:
             sim_floor=sim_floor,
             confidence_threshold=confidence_threshold,
             min_days_apart=min_days_apart,
-            max_memorias=max_memorias,
+            max_memories=max_memories,
             max_pairs=max_pairs,
             since=since,
             type_=type,
         )
         return {
-            "scanned_memorias": result.scanned_memorias,
+            "scanned_memories": result.scanned_memories,
             "pairs_examined": result.pairs_examined,
             "pairs_inserted": result.pairs_inserted,
             "pairs_refreshed": result.pairs_refreshed,

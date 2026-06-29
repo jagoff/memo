@@ -185,7 +185,7 @@ def contextual_history(limit: int, as_json: bool) -> None:
     for i, ctx in enumerate(history, 1):
         console.print(f"[cyan]{i}. {ctx.timestamp}[/cyan]")
         console.print(f"   Prompt: {ctx.prompt[:80]}")
-        console.print(f"   Recalled: {len(ctx.recalled_memorias)} memory(s)")
+        console.print(f"   Recalled: {len(ctx.recalled_memories)} memory(s)")
         console.print()
 
 

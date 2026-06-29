@@ -37,7 +37,7 @@ class ExportResult:
 
 
 class Importer:
-    """Imports memorias from various formats.
+    """Imports memories from various formats.
 
     Args:
         memory: The Memory instance to import into.
@@ -47,7 +47,7 @@ class Importer:
         self.memory = memory
 
     def import_json(self, input_path: Path) -> ImportResult:
-        """Import memorias from JSON.
+        """Import memories from JSON.
 
         Args:
             input_path: Path to JSON file.
@@ -56,17 +56,18 @@ class Importer:
             ImportResult with statistics.
         """
         data = json.loads(input_path.read_text(encoding="utf-8"))
-        memorias = (
+        raw_memories = (
             data
             if isinstance(data, list)
-            else (data.get("memorias", []) if isinstance(data, dict) else [])
+            else (data.get("memories", data.get("memorias", [])) if isinstance(data, dict) else [])
         )
+        memories: list[Any] = raw_memories if isinstance(raw_memories, list) else []
 
         imported = 0
         skipped = 0
         errors = []
 
-        for item in memorias:
+        for item in memories:
             if not isinstance(item, dict):
                 skipped += 1
                 continue
@@ -89,7 +90,7 @@ class Importer:
         )
 
     def import_csv(self, input_path: Path) -> ImportResult:
-        """Import memorias from CSV.
+        """Import memories from CSV.
 
         Args:
             input_path: Path to CSV file.
@@ -125,7 +126,7 @@ class Importer:
         )
 
     def import_markdown_bundle(self, input_path: Path) -> ImportResult:
-        """Import memorias from a Markdown bundle (zip).
+        """Import memories from a Markdown bundle (zip).
 
         Args:
             input_path: Path to zip file.
@@ -180,7 +181,7 @@ class Importer:
 
 
 class Exporter:
-    """Exports memorias to various formats.
+    """Exports memories to various formats.
 
     Args:
         memory: The Memory instance to export from.
@@ -190,7 +191,7 @@ class Exporter:
         self.memory = memory
 
     def export_json(self, output_path: Path) -> ExportResult:
-        """Export memorias to JSON.
+        """Export memories to JSON.
 
         Args:
             output_path: Path to write JSON file.
@@ -198,7 +199,7 @@ class Exporter:
         Returns:
             ExportResult with statistics.
         """
-        memorias = self.memory.list(limit=10000)
+        memories = self.memory.list(limit=10000)
 
         data = [
             {
@@ -210,19 +211,19 @@ class Exporter:
                 "created": m.created,
                 "updated": m.updated,
             }
-            for m in memorias
+            for m in memories
         ]
 
         output_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
         return ExportResult(
-            exported_count=len(memorias),
+            exported_count=len(memories),
             output_path=str(output_path),
             format="json",
         )
 
     def export_csv(self, output_path: Path) -> ExportResult:
-        """Export memorias to CSV.
+        """Export memories to CSV.
 
         Args:
             output_path: Path to write CSV file.
@@ -230,13 +231,13 @@ class Exporter:
         Returns:
             ExportResult with statistics.
         """
-        memorias = self.memory.list(limit=10000)
+        memories = self.memory.list(limit=10000)
 
         with open(output_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["id", "title", "body", "tags", "type", "created", "updated"])
 
-            for m in memorias:
+            for m in memories:
                 writer.writerow(
                     [
                         m.id,
@@ -250,13 +251,13 @@ class Exporter:
                 )
 
         return ExportResult(
-            exported_count=len(memorias),
+            exported_count=len(memories),
             output_path=str(output_path),
             format="csv",
         )
 
     def export_markdown_bundle(self, output_path: Path) -> ExportResult:
-        """Export memorias to a Markdown bundle (zip).
+        """Export memories to a Markdown bundle (zip).
 
         Args:
             output_path: Path to write zip file.
@@ -264,10 +265,10 @@ class Exporter:
         Returns:
             ExportResult with statistics.
         """
-        memorias = self.memory.list(limit=10000)
+        memories = self.memory.list(limit=10000)
 
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for m in memorias:
+            for m in memories:
                 # Create markdown content with frontmatter
                 frontmatter = f"""---
 title: {m.title}
@@ -284,7 +285,7 @@ updated: {m.updated}
                 zf.writestr(filename, frontmatter)
 
         return ExportResult(
-            exported_count=len(memorias),
+            exported_count=len(memories),
             output_path=str(output_path),
             format="markdown_bundle",
         )

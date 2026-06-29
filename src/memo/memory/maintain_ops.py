@@ -158,7 +158,7 @@ class _MaintainOpsMixin(_MemoryBase):
         Keyed on `(embedder_model, embedder_dims, sha256(text))` — identical
         content under the same model always maps to the same vector, so a hit
         is always correct. A model/dims swap changes the key, forcing a fresh
-        embed (the right behaviour). The cache survives `clear_memoria_index()`
+        embed (the right behaviour). The cache survives `clear_memory_index()`
         (it lives in `repo_embedding_cache`, untouched by the rebuild), so a
         full rebuild after the cache is warm issues zero embedder calls.
         """
@@ -236,7 +236,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     )
             # Wipe only the derivable tables; signal tables survive and re-join
             # on id. Every file then takes the `existing is None` add path.
-            cleared = self.store.clear_memoria_index()
+            cleared = self.store.clear_memory_index()
             _log.info("reindex(rebuild): cleared %d derivable rows, replaying from disk", cleared)
             force = True
 
@@ -610,7 +610,7 @@ class _MaintainOpsMixin(_MemoryBase):
 
         # Pre-filter already-indexed unless --force.
         if skip_already_indexed:
-            target = [tid for tid in target if not self.graph.memoria_entities(tid)]
+            target = [tid for tid in target if not self.graph.memory_entities(tid)]
 
         if max_batch is not None:
             target = target[:max_batch]
@@ -682,7 +682,7 @@ class _MaintainOpsMixin(_MemoryBase):
             ]
             n = self.graph.record_extraction(
                 memory_id=tid,
-                memoria_date=r["created"][:10] if r.get("created") else _now_iso()[:10],
+                memory_date=r["created"][:10] if r.get("created") else _now_iso()[:10],
                 entities=ents,
                 extracted_at=_now_iso(),
             )
@@ -752,7 +752,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     if self.store.get(sid) is None:
                         stale_synthesis.append(sr["id"])
                         if fix:
-                            self.lifecycle.archive_memoria(sr["id"])
+                            self.lifecycle.archive_memory(sr["id"])
                         break
             except Exception as exc:
                 _log.debug("gc: stale-synthesis check failed for %s: %s", sr["id"][:8], exc)

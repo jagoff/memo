@@ -46,7 +46,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memo_backup_restore(
         backup_name: str,
-        restore_memorias: bool = True,
+        restore_memories: bool = True,
         restore_dbs: bool = True,
     ) -> dict[str, Any]:
         """Restore from a backup.
@@ -55,12 +55,12 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Args:
             backup_name: Name of the backup to restore.
-            restore_memorias: Whether to restore memory files.
+            restore_memories: Whether to restore memory files.
             restore_dbs: Whether to restore databases.
         """
         success = memory.backup.restore_backup(
             backup_name,
-            restore_memorias=restore_memorias,
+            restore_memories=restore_memories,
             restore_dbs=restore_dbs,
         )
         return {"success": success, "backup_name": backup_name}

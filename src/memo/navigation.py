@@ -45,7 +45,7 @@ class EntityPath:
     target: str
     path: list[str]  # List of entity names including source and target
     length: int
-    intermediate_memorias: list[str]  # Memory IDs that connect each step
+    intermediate_memories: list[str]  # Memory IDs that connect each step
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,7 @@ class GraphNavigator:
                 target=target,
                 path=[source],
                 length=0,
-                intermediate_memorias=[],
+                intermediate_memories=[],
             )
 
         # Build adjacency list: entity -> set of (neighbor_entity, memory_id)
@@ -126,7 +126,7 @@ class GraphNavigator:
                     target=target,
                     path=graphify_path,
                     length=len(graphify_path) - 1,
-                    intermediate_memorias=["(from graphify code graph)"],
+                    intermediate_memories=["(from graphify code graph)"],
                 )
             return None
 
@@ -145,7 +145,7 @@ class GraphNavigator:
                     target=target,
                     path=path,
                     length=len(path) - 1,
-                    intermediate_memorias=memory_ids,
+                    intermediate_memories=memory_ids,
                 )
 
             if len(path) > max_length:
@@ -170,20 +170,20 @@ class GraphNavigator:
         # Acceptable for corpora with <10k memories
         all_entities = self.graph.top_entities(limit=10000)
 
-        entity_to_memorias: dict[str, list[str]] = defaultdict(list)
+        entity_to_memories: dict[str, list[str]] = defaultdict(list)
         for ent in all_entities:
             name = ent["name"].lower()
             memory_ids = self.graph.entity_memories(name)
             for mid in memory_ids:
-                entity_to_memorias[name].append(mid)
+                entity_to_memories[name].append(mid)
 
         # Connect entities that share memories
-        memoria_to_entities: dict[str, list[str]] = defaultdict(list)
-        for ent_name, mem_ids in entity_to_memorias.items():
+        memory_to_entities: dict[str, list[str]] = defaultdict(list)
+        for ent_name, mem_ids in entity_to_memories.items():
             for mid in mem_ids:
-                memoria_to_entities[mid].append(ent_name)
+                memory_to_entities[mid].append(ent_name)
 
-        for mid, entities in memoria_to_entities.items():
+        for mid, entities in memory_to_entities.items():
             for i, e1 in enumerate(entities):
                 for e2 in entities[i + 1 :]:
                     adj[e1].add((e2, mid))

@@ -17,19 +17,19 @@ def test_signal_gather_returns_summary_keys() -> None:
     with patch("memo.cli_dream_passes.mine_transcripts", return_value=fake_result):
         result = _run_signal_gather(since_days=7, file_limit=20)
     assert result["files_processed"] == 3
-    assert result["memorias_saved"] == 2
+    assert result["memories_saved"] == 2
     assert result["skipped_dup"] == 1
 
 
 def test_signal_gather_no_files_returns_zeros() -> None:
     with patch("memo.cli_dream_passes.mine_transcripts", return_value={"status": "no_files"}):
         result = _run_signal_gather(since_days=7, file_limit=20)
-    assert result["memorias_saved"] == 0
+    assert result["memories_saved"] == 0
     assert result["files_processed"] == 0
 
 
 def test_signal_gather_exception_returns_zeros() -> None:
     with patch("memo.cli_dream_passes.mine_transcripts", side_effect=Exception("boom")):
         result = _run_signal_gather(since_days=7, file_limit=20)
-    assert result["memorias_saved"] == 0
+    assert result["memories_saved"] == 0
     assert "error" in result

@@ -67,6 +67,7 @@ graphify-out/
 
 # Zero-config repo mode defaults (auto-created on first run)
 memorias/
+memories/
 .memo-state/
 .memo-state/*.db
 .memo-state/*.db-shm

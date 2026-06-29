@@ -1,5 +1,5 @@
 """contradict scan incremental: push `since` to the DB so incremental runs
-only fetch new/changed anchors, instead of fetching `max_memorias` rows and
+only fetch new/changed anchors, instead of fetching `max_memories` rows and
 filtering client-side (which silently drops fresh anchors past the limit).
 """
 
@@ -46,5 +46,5 @@ def test_scan_corpus_pushes_since_to_db(mock_memory, monkeypatch):
         return orig(**kwargs)
 
     monkeypatch.setattr(mock_memory, "list", spy)
-    mock_memory.contradict_scanner.scan_corpus(since="2020-01-01T00:00:00Z", max_memorias=10)
+    mock_memory.contradict_scanner.scan_corpus(since="2020-01-01T00:00:00Z", max_memories=10)
     assert captured.get("updated_since") == "2020-01-01T00:00:00Z"

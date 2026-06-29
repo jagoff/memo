@@ -99,11 +99,11 @@ def _run_signal_gather(since_days: int, file_limit: int = 20) -> dict:
         res = mine_transcripts(since_days=since_days, file_limit=file_limit)
         return {
             "files_processed": res.get("files_processed", 0),
-            "memorias_saved": len(res.get("saved") or []),
+            "memories_saved": len(res.get("saved") or []),
             "skipped_dup": res.get("skipped_dup", 0),
         }
     except Exception as exc:
-        return {"files_processed": 0, "memorias_saved": 0, "skipped_dup": 0, "error": str(exc)}
+        return {"files_processed": 0, "memories_saved": 0, "skipped_dup": 0, "error": str(exc)}
 
 
 def _run_prune_floor(
@@ -120,7 +120,7 @@ def _run_prune_floor(
     if not dry_run:
         for c in candidates:
             try:
-                mem.lifecycle.archive_memoria(c["id"])
+                mem.lifecycle.archive_memory(c["id"])
             except Exception as exc:
                 _log.warning("prune_floor: archive failed for %s: %s", c["id"], exc)
     return candidates
@@ -152,7 +152,7 @@ def _run_eviction(mem: Memory, max_count: int, dry_run: bool) -> list[dict]:
     if not dry_run:
         for c in candidates:
             try:
-                mem.lifecycle.archive_memoria(c["id"])
+                mem.lifecycle.archive_memory(c["id"])
             except Exception as exc:
                 _log.warning("eviction: archive failed for %s: %s", c["id"], exc)
     return [{"id": c["id"], "access_count": c.get("access_count", 0)} for c in candidates]

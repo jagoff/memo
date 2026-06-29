@@ -247,7 +247,7 @@ class TestDreamCli:
         mem = MagicMock()
         mem.lifecycle.enforce_forget_ttl.return_value = []
         mem.contradict_scanner.scan_corpus.return_value = ScanResult(
-            scanned_memorias=0,
+            scanned_memories=0,
             pairs_examined=0,
             pairs_inserted=0,
             pairs_refreshed=0,
@@ -257,7 +257,7 @@ class TestDreamCli:
         )
         mem.contradict_store.list_open.return_value = []
         mem.consolidator.consolidate_all.return_value = {"results": []}
-        mem.temporal.detect_stale_memorias.return_value = []
+        mem.temporal.detect_stale_memories.return_value = []
         mem.synthesize_cross_cluster.return_value = []
         monkeypatch.setattr("memo.cli_dream._get_memory", lambda _cfg: mem)
 

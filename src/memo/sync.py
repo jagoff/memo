@@ -36,7 +36,7 @@ class BackupMetadata:
     """Metadata for a backup archive."""
 
     timestamp: str
-    memoria_count: int
+    memory_count: int
     checksum: str
     compressed_size: int
     original_size: int
@@ -86,14 +86,14 @@ class BackupManager:
         backup_path = self.backup_dir / backup_name
         backup_path.mkdir(exist_ok=True)
 
-        memoria_backup = backup_path / "memorias"
-        memoria_backup.mkdir(exist_ok=True)
-        memoria_files = list(self.memory_dir.rglob("*.md"))
-        for f in memoria_files:
+        memory_backup = backup_path / "memories"
+        memory_backup.mkdir(exist_ok=True)
+        memory_files = list(self.memory_dir.rglob("*.md"))
+        for f in memory_files:
             # Preserve the per-project bucket layout (memory_dir/<project>/...)
             # so restore recreates it and same-named files in different buckets
             # don't collide. rglob handles both flat and bucketed layouts.
-            dest = memoria_backup / f.relative_to(self.memory_dir)
+            dest = memory_backup / f.relative_to(self.memory_dir)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, dest)
 
@@ -103,11 +103,11 @@ class BackupManager:
             shutil.copy2(db_file, db_backup / db_file.name)
 
         checksum = self._compute_checksum(backup_path)
-        memoria_count = len(memoria_files)
+        memory_count = len(memory_files)
         original_size = sum(f.stat().st_size for f in backup_path.rglob("*"))
         metadata = BackupMetadata(
             timestamp=timestamp,
-            memoria_count=memoria_count,
+            memory_count=memory_count,
             checksum=checksum,
             compressed_size=original_size,
             original_size=original_size,
@@ -174,10 +174,10 @@ class BackupManager:
     def restore_backup(
         self,
         backup_name: str,
-        restore_memorias: bool = True,
+        restore_memories: bool = True,
         restore_dbs: bool = True,
     ) -> bool:
-        """Restore memoria files and/or databases from a backup."""
+        """Restore memory files and/or databases from a backup."""
         archive_path = self.backup_dir / (
             backup_name if backup_name.endswith(".tar.gz") else f"{backup_name}.tar.gz"
         )
@@ -191,7 +191,7 @@ class BackupManager:
         if directory_path.is_dir():
             return self._restore_from_directory(
                 directory_path,
-                restore_memorias=restore_memorias,
+                restore_memories=restore_memories,
                 restore_dbs=restore_dbs,
             )
 
@@ -216,7 +216,7 @@ class BackupManager:
 
             return self._restore_from_directory(
                 extracted_path,
-                restore_memorias=restore_memorias,
+                restore_memories=restore_memories,
                 restore_dbs=restore_dbs,
             )
 
@@ -224,14 +224,16 @@ class BackupManager:
         self,
         backup_path: Path,
         *,
-        restore_memorias: bool,
+        restore_memories: bool,
         restore_dbs: bool,
     ) -> bool:
-        if restore_memorias:
-            memoria_backup = backup_path / "memorias"
-            if memoria_backup.is_dir():
-                for f in memoria_backup.rglob("*.md"):
-                    dest = self.memory_dir / f.relative_to(memoria_backup)
+        if restore_memories:
+            memory_backup = backup_path / "memories"
+            if not memory_backup.is_dir():
+                memory_backup = backup_path / "memorias"  # legacy backup layout
+            if memory_backup.is_dir():
+                for f in memory_backup.rglob("*.md"):
+                    dest = self.memory_dir / f.relative_to(memory_backup)
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(f, dest)
 

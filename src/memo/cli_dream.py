@@ -140,7 +140,7 @@ def dream_run(
     receipt: dict[str, Any] = {
         "dry_run": dry_run,
         "orientation": {},
-        "signal_gathered": {"files_processed": 0, "memorias_saved": 0, "skipped_dup": 0},
+        "signal_gathered": {"files_processed": 0, "memories_saved": 0, "skipped_dup": 0},
         "superseded": [],
         "evolved": [],
         "merged": [],
@@ -222,7 +222,7 @@ def dream_run(
                     step,
                     description=(
                         f"[0] signal gather [green]✓[/green]  "
-                        f"{sg['files_processed']} files, {sg['memorias_saved']} saved"
+                        f"{sg['files_processed']} files, {sg['memories_saved']} saved"
                     ),
                 )
             except Exception as exc:
@@ -362,7 +362,7 @@ def dream_run(
                     older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
                     contradicted_ids.extend([pair.memory_id_a, pair.memory_id_b])
                     if not dry_run:
-                        ok = mem.lifecycle.archive_memoria(older)
+                        ok = mem.lifecycle.archive_memory(older)
                         if ok:
                             mem.contradict_store.resolve(
                                 pair.pair_id, "kept_newer", note=f"dream: archived older {older}"
@@ -416,13 +416,13 @@ def dream_run(
                 step, description="[3/6] stale memories — detecting...", total=None, completed=0
             )
             try:
-                stale = mem.temporal.detect_stale_memorias(days_threshold=365, min_access_count=0)
+                stale = mem.temporal.detect_stale_memories(days_threshold=365, min_access_count=0)
                 for item in stale:
                     mid = item.get("id")
                     if not mid:
                         continue
                     if not dry_run:
-                        mem.lifecycle.archive_memoria(mid)
+                        mem.lifecycle.archive_memory(mid)
                     receipt["archived_stale"].append(
                         {"id": mid, "days": item.get("days_since_update")}
                     )
@@ -731,10 +731,10 @@ def dream_run(
     if receipt.get("presynthesis"):
         console.print(f"  pre-syntheses:             {len(receipt['presynthesis'])} clusters")
     sg = receipt.get("signal_gathered", {})
-    if sg.get("files_processed") or sg.get("memorias_saved"):
+    if sg.get("files_processed") or sg.get("memories_saved"):
         console.print(
             f"  signal gather:             {sg['files_processed']} files, "
-            f"{sg['memorias_saved']} saved, {sg.get('skipped_dup', 0)} dup skipped"
+            f"{sg['memories_saved']} saved, {sg.get('skipped_dup', 0)} dup skipped"
         )
     if receipt["errors"]:
         for e in receipt["errors"]:

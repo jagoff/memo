@@ -158,7 +158,7 @@ def temporal_stale(days: int, min_access_count: int, as_json: bool) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    stale = mem.temporal.detect_stale_memorias(
+    stale = mem.temporal.detect_stale_memories(
         days_threshold=days,
         min_access_count=min_access_count,
     )
@@ -215,7 +215,7 @@ def temporal_patterns(as_json: bool) -> None:
 
     # Memories per month
     console.print("[yellow]Memories per month:[/yellow]")
-    for month, count in list(patterns["memorias_per_month"].items())[-12:]:
+    for month, count in list(patterns["memories_per_month"].items())[-12:]:
         console.print(f"  {month}: {count}")
     console.print()
 

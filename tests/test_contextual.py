@@ -37,7 +37,7 @@ def test_context_store_add_prompt(context_store):
     history = context_store.get_recent_context(n=5)
     assert len(history) == 1
     assert history[0].prompt == "test query"
-    assert history[0].recalled_memorias == ["mem1", "mem2"]
+    assert history[0].recalled_memories == ["mem1", "mem2"]
 
 
 def test_context_store_max_length(context_store):
@@ -190,10 +190,10 @@ def test_prompt_context_dataclass():
     ctx = PromptContext(
         timestamp="2026-01-01T00:00:00Z",
         prompt="test query",
-        recalled_memorias=["mem1", "mem2"],
+        recalled_memories=["mem1", "mem2"],
     )
     assert ctx.prompt == "test query"
-    assert len(ctx.recalled_memorias) == 2
+    assert len(ctx.recalled_memories) == 2
 
 
 def test_user_preferences_dataclass():

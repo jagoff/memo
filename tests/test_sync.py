@@ -119,7 +119,7 @@ def test_backup_manager_create_backup(backup_manager, mock_memory):
 
     metadata = backup_manager.create_backup(compress=False)
 
-    assert metadata.memoria_count > 0
+    assert metadata.memory_count > 0
     assert metadata.checksum
     assert metadata.original_size > 0
 
@@ -182,12 +182,12 @@ def test_backup_metadata_dataclass():
     """Test BackupMetadata dataclass structure."""
     metadata = BackupMetadata(
         timestamp="2026-01-01T00:00:00Z",
-        memoria_count=10,
+        memory_count=10,
         checksum="abc123",
         compressed_size=1000,
         original_size=5000,
     )
-    assert metadata.memoria_count == 10
+    assert metadata.memory_count == 10
     assert metadata.checksum == "abc123"
     assert metadata.compressed_size == 1000
 

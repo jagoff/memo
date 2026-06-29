@@ -52,7 +52,7 @@ class PromptContext:
 
     timestamp: str
     prompt: str
-    recalled_memorias: list[str]  # IDs of memories recalled for this prompt
+    recalled_memories: list[str]  # IDs of memories recalled for this prompt
 
 
 @dataclass
@@ -145,13 +145,13 @@ class ContextStore:
         except Exception as exc:
             _log.debug("contextual preferences save failed: %s", exc)
 
-    def add_prompt(self, prompt: str, recalled_memorias: list[str]) -> None:
+    def add_prompt(self, prompt: str, recalled_memories: list[str]) -> None:
         """Add a prompt to the conversation history."""
         self._sync_context_maxlen()
         context = PromptContext(
             timestamp=datetime.now(UTC).isoformat(),
             prompt=prompt,
-            recalled_memorias=recalled_memorias,
+            recalled_memories=recalled_memories,
         )
         self._context.append(context)
         self._save()
@@ -161,7 +161,7 @@ class ContextStore:
         self._sync_context_maxlen()
         return list(self._context)[-n:]
 
-    def record_feedback(self, memory_id: str, memoria_type: str, entities: list[str]) -> None:
+    def record_feedback(self, memory_id: str, memory_type: str, entities: list[str]) -> None:
         """Record user feedback (e.g., they clicked/viewed a memory)."""
         # Don't let the bulk `reference` tier teach a type preference. It
         # dominates the corpus, so learning "prefer reference" would amplify
@@ -170,14 +170,14 @@ class ContextStore:
         # `memo.tiers`.
         from memo.tiers import REFERENCE_TYPES
 
-        if memoria_type not in REFERENCE_TYPES:
+        if memory_type not in REFERENCE_TYPES:
             # Boost the type
-            self._preferences.preferred_types[memoria_type] = (
-                self._preferences.preferred_types.get(memoria_type, 0.5) + 0.1
+            self._preferences.preferred_types[memory_type] = (
+                self._preferences.preferred_types.get(memory_type, 0.5) + 0.1
             )
             # Cap at 1.0
-            if self._preferences.preferred_types[memoria_type] > 1.0:
-                self._preferences.preferred_types[memoria_type] = 1.0
+            if self._preferences.preferred_types[memory_type] > 1.0:
+                self._preferences.preferred_types[memory_type] = 1.0
 
         # Boost the entities
         for entity in entities:
@@ -240,12 +240,12 @@ class ContextualRecall:
             boost_factors = {}
 
             # Entity overlap boost
-            memoria_entities = {
+            memory_entities = {
                 e["name"]
-                for e in self.memory.graph.memoria_entities(hit.id)
+                for e in self.memory.graph.memory_entities(hit.id)
                 if isinstance(e, dict) and e.get("name")
             }
-            entity_overlap = len(memoria_entities & context_entities)
+            entity_overlap = len(memory_entities & context_entities)
             if entity_overlap > 0:
                 entity_boost = 0.1 * entity_overlap
                 contextual_score += entity_boost
@@ -258,7 +258,7 @@ class ContextualRecall:
 
             # Entity preference boost
             entity_pref_boost = sum(
-                prefs.preferred_entities.get(e, 0.0) * 0.03 for e in memoria_entities
+                prefs.preferred_entities.get(e, 0.0) * 0.03 for e in memory_entities
             )
             contextual_score += entity_pref_boost
             boost_factors["entity_preference"] = entity_pref_boost
@@ -313,7 +313,7 @@ class ContextualRecall:
         if rec:
             entities = [
                 e["name"]
-                for e in self.memory.graph.memoria_entities(memory_id)
+                for e in self.memory.graph.memory_entities(memory_id)
                 if isinstance(e, dict) and e.get("name")
             ]
             self.context.record_feedback(memory_id, rec.type, entities)

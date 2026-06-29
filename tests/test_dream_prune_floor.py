@@ -97,14 +97,14 @@ def test_prune_floor_result_has_required_keys(tmp_path: Path) -> None:
 
 
 def test_prune_floor_in_dream_pipeline_archives_candidates(tmp_path: Path) -> None:
-    """Integration: dream pipeline calls archive_memoria for each candidate."""
+    """Integration: dream pipeline calls archive_memory for each candidate."""
     store = _make_store(tmp_path)
     _insert_memoria(store, "zzz", "note", days_old=100, roi_score=0.10, access_count=0)
 
     archived = []
     mem = MagicMock()
     mem.store = store
-    mem.lifecycle.archive_memoria.side_effect = lambda id_: archived.append(id_) or True
+    mem.lifecycle.archive_memory.side_effect = lambda id_: archived.append(id_) or True
 
     from memo.cli_dream import _run_prune_floor
 
@@ -124,4 +124,4 @@ def test_prune_floor_dry_run_does_not_archive(tmp_path: Path) -> None:
 
     result = _run_prune_floor(mem, roi_floor=0.15, min_age_days=90, dry_run=True)
     assert any(r["id"] == "yyy" for r in result)
-    mem.lifecycle.archive_memoria.assert_not_called()
+    mem.lifecycle.archive_memory.assert_not_called()

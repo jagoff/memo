@@ -280,7 +280,7 @@ class LifecycleManager:
             acted.append({"id": rec.id, "reason": reason})
         return acted
 
-    def archive_memoria(self, memory_id: str) -> bool:
+    def archive_memory(self, memory_id: str) -> bool:
         """Archive a memory by moving it to the inactive/ subdirectory.
 
         Returns True if successful.
@@ -309,7 +309,7 @@ class LifecycleManager:
         try:
             shutil.move(str(source_path), str(target_path))
         except OSError as exc:
-            _log.warning("archive_memoria: move failed for %s: %s", memory_id, exc)
+            _log.warning("archive_memory: move failed for %s: %s", memory_id, exc)
             return False
 
         # Step 2: Drop the searchable index rows only (meta/vec/fts) via the
@@ -375,7 +375,7 @@ class LifecycleManager:
                     actions["deleted"] += 1
                 else:
                     if not dry_run:
-                        self.archive_memoria(rec.id)
+                        self.archive_memory(rec.id)
                     actions["expired"] += 1
                 continue
 
@@ -383,7 +383,7 @@ class LifecycleManager:
             should_archive, _archive_reason = self.should_archive(rec.id)
             if should_archive:
                 if not dry_run:
-                    self.archive_memoria(rec.id)
+                    self.archive_memory(rec.id)
                 actions["archived"] += 1
                 continue
 

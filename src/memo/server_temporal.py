@@ -87,7 +87,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             min_access_count: Minimum access count to exclude (frequently-accessed
                 old memories may still be relevant).
         """
-        return memory.temporal.detect_stale_memorias(
+        return memory.temporal.detect_stale_memories(
             days_threshold=days_threshold,
             min_access_count=min_access_count,
         )
@@ -97,7 +97,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Analyze high-level temporal patterns across the entire corpus.
 
         Returns metrics including:
-        - memorias_per_month: histogram of creation activity
+        - memories_per_month: histogram of creation activity
         - type_distribution_over_time: how memory types change over time
         - most_active_entities: entities with most temporal churn
         """

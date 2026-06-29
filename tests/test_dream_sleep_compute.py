@@ -151,7 +151,7 @@ class TestDreamEviction:
         try:
             evicted = _run_eviction(mem, max_count=10, dry_run=False)
             assert evicted == []
-            mem.lifecycle.archive_memoria.assert_not_called()
+            mem.lifecycle.archive_memory.assert_not_called()
         finally:
             mem.store.close()
 
@@ -162,7 +162,7 @@ class TestDreamEviction:
         try:
             evicted = _run_eviction(mem, max_count=7, dry_run=False)
             assert len(evicted) == 3
-            assert mem.lifecycle.archive_memoria.call_count == 3
+            assert mem.lifecycle.archive_memory.call_count == 3
         finally:
             mem.store.close()
 
@@ -173,7 +173,7 @@ class TestDreamEviction:
         try:
             evicted = _run_eviction(mem, max_count=5, dry_run=True)
             assert len(evicted) == 5
-            mem.lifecycle.archive_memoria.assert_not_called()
+            mem.lifecycle.archive_memory.assert_not_called()
         finally:
             mem.store.close()
 

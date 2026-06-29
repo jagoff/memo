@@ -1,7 +1,7 @@
 """Git-backed cross-machine sync for memo (F4 of memo-sync).
 
-The memorias dir lives inside a git repo (e.g. ~/repos/memo-sync, with `.md`
-under `memorias/` and signal under `signal/`). Git is the single source of
+The memories dir lives inside a git repo (e.g. ~/repos/memo-sync, with `.md`
+under `memories/` and signal under `signal/`). Git is the single source of
 truth and transport between Macs; sync runs at session boundaries (pull on
 SessionStart, push on Stop), not second-by-second.
 
@@ -15,7 +15,7 @@ Design (decoupled from memflow — its git_sync is not importable here):
 
 The DB is the source of truth for signal; `signal/*.json` is a regenerable
 transport, so taking either git side and re-exporting the merged DB is safe.
-Real conflicts on a memoria `.md` (same memoria edited on two Macs) are rare;
+Real conflicts on a memory `.md` (same memory edited on two Macs) are rare;
 the rebase aborts and reports rather than guessing.
 """
 
@@ -44,12 +44,12 @@ class SyncGitError(MemoError):
 
 
 def git_root_for(cfg: Config) -> Path:
-    """The git repo root holding the memorias — parent of the memorias dir."""
+    """The git repo root holding the memories — parent of the memories dir."""
     root = cfg.memory_dir.parent
     if not (root / ".git").exists():
         raise SyncGitError(
             f"{root} is not a git repo (no .git). Run `memo sync clone <url>` or "
-            f"point MEMO_DATA_DIR at a memorias dir inside a git clone."
+            f"point MEMO_DATA_DIR at a memories dir inside a git clone."
         )
     return root
 
@@ -75,10 +75,24 @@ def _current_branch(root: Path) -> str:
     return _git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() or "main"
 
 
+def _corpus_subdir(root: Path) -> Path:
+    """The corpus dir inside a sync repo. New repos use ``memories/``; clones
+    created before the rename used ``memorias/`` — honor whichever already
+    exists so existing fleets keep working. Defaults to ``memories/`` when
+    neither is present (a fresh repo)."""
+    new = root / "memories"
+    if new.exists():
+        return new
+    legacy = root / "memorias"
+    if legacy.exists():
+        return legacy
+    return new
+
+
 def clone_bootstrap(url: str, dest: Path) -> dict:
     """Clone the memo-sync repo to `dest` for a new machine (F6).
 
-    Returns a summary plus the memorias path the caller should point
+    Returns a summary plus the corpus path the caller should point
     MEMO_DATA_DIR at. Does NOT mutate config or reindex — that is the caller's
     explicit next step (config touchpoints vary per machine).
     """
@@ -93,19 +107,21 @@ def clone_bootstrap(url: str, dest: Path) -> dict:
     )
     if cp.returncode != 0:
         raise SyncGitError(f"git clone failed: {cp.stderr.strip()}")
-    memorias = dest / "memorias"
-    if not memorias.exists():
-        raise SyncGitError(f"cloned repo has no memorias/ dir at {memorias}")
-    n_md = len(list(memorias.rglob("*.md")))
-    return {"cloned": str(dest), "memories_dir": str(memorias), "memories": n_md}
+    memories = _corpus_subdir(dest)
+    if not memories.exists():
+        raise SyncGitError(
+            f"cloned repo has no memories/ (or legacy memorias/) dir at {dest}"
+        )
+    n_md = len(list(memories.rglob("*.md")))
+    return {"cloned": str(dest), "memories_dir": str(memories), "memories": n_md}
 
 
 def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> dict:
     """One-step new-machine bootstrap: clone the memo-sync repo (or reuse an
     existing clone at `dest`) and point `config.toml`'s `data_dir` at its
-    `memorias/`.
+    `memories/`.
 
-    Idempotent: if `dest` is already a git clone with a `memorias/` dir, it is
+    Idempotent: if `dest` is already a git clone with a `memories/` dir, it is
     reused (no re-clone, no pull — ongoing sync is `memo sync pull`'s job).
     Existing `[storage]` keys (`vault_path`, `memories_in_vault`, `single_db`)
     are preserved; only `data_dir` is repointed.
@@ -115,13 +131,13 @@ def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> di
     """
     from memo.setup.config_io import load_config_file, write_config_file
 
-    memorias = dest / "memorias"
+    memories = _corpus_subdir(dest)
     git_ok = (dest / ".git").exists()
-    n_md = len(list(memorias.rglob("*.md"))) if memorias.exists() else 0
+    n_md = len(list(memories.rglob("*.md"))) if memories.exists() else 0
     if git_ok and n_md > 0:
         summary = {
             "cloned": str(dest),
-            "memories_dir": str(memorias),
+            "memories_dir": str(memories),
             "memories": n_md,
             "reused": True,
         }
@@ -130,7 +146,7 @@ def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> di
         # reusing it then `reindex --rebuild` (the CLI's next step) would truncate
         # the index against an empty disk and wipe it. Refuse with recovery steps.
         raise SyncGitError(
-            f"{dest} is a git clone but has no .md under memorias/ — refusing to "
+            f"{dest} is a git clone but has no .md under memories/ — refusing to "
             f"bootstrap (a rebuild would wipe the index). Restore tracked files with "
             f"`git -C {dest} restore .`, or `rm -rf {dest}` then re-run bootstrap."
         )
@@ -140,8 +156,11 @@ def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> di
 
     existing = (load_config_file(config_path) or {}).get("storage", {})
     vault_path = existing.get("vault_path")
+    # Re-read from the summary: on a fresh clone, `memories` was resolved before
+    # the clone existed (so it defaulted to memories/); the summary reflects the
+    # corpus dir that actually landed (memories/ or legacy memorias/).
     written = write_config_file(
-        data_dir=memorias,
+        data_dir=Path(str(summary["memories_dir"])),
         vault_path=Path(vault_path) if vault_path else None,
         memories_in_vault=bool(existing.get("memories_in_vault")),
         single_db=bool(existing.get("single_db")),
@@ -314,7 +333,7 @@ def _commit_local(cfg: Config, store: VecStore) -> tuple[Path, str, int]:
         from memo.identity import current as _identity
 
         who = _identity(cfg).label
-        _git(root, "commit", "-m", f"sync: memo signal + memorias ({n_files} files) [{who}]")
+        _git(root, "commit", "-m", f"sync: memo signal + memories ({n_files} files) [{who}]")
     return root, branch, n_files
 
 
@@ -417,7 +436,7 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
             ):
                 rebase = _git(root, "rebase", "--skip", check=False)
                 continue
-            # a real memoria conflict, or a failure with nothing to resolve
+            # a real memory conflict, or a failure with nothing to resolve
             # (don't loop forever): abort and surface for manual handling.
             _git(root, "rebase", "--abort", check=False)
             raise SyncGitError(
@@ -430,11 +449,11 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
             _git(root, "add", "--", c)
         rebase = _git(root, "rebase", "--continue", check=False)
 
-    # 3) load any new/changed memorias the pull brought in
+    # 3) load any new/changed memories the pull brought in
     reindexed = mem.reindex()
 
     # 3b) prune index rows whose `.md` the pull DELETED. reindex() only adds/
-    # updates from existing files — without this, a memoria deleted on another
+    # updates from existing files — without this, a memory deleted on another
     # Mac stays findable here (orphan row) until a full rebuild. gc(fix=True)
     # drops rows whose `.md` is gone, so a deletion propagates cross-machine.
     pruned: list[str] = []

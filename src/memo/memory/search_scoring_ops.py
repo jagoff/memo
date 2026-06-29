@@ -119,7 +119,7 @@ class _SearchScoringMixin(_MemoryBase):
             entity_names: list[str] = []
             seen_entity_keys: set[str] = set()
             for r in results[:3]:
-                for ent in self.graph.memoria_entities(r.id):
+                for ent in self.graph.memory_entities(r.id):
                     key = f"{ent['name']}:{ent['type']}"
                     if key not in seen_entity_keys:
                         seen_entity_keys.add(key)

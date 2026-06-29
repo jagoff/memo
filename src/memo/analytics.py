@@ -22,7 +22,7 @@ from typing import Any
 class CorpusMetrics:
     """Metrics about the memory corpus."""
 
-    total_memorias: int
+    total_memories: int
     total_entities: int
     type_distribution: dict[str, int]
     tag_frequency: dict[str, int]
@@ -66,7 +66,7 @@ class AnalyticsEngine:
         # Get all memories
         memories = self.memory.list(limit=10000)
 
-        total_memorias = len(memories)
+        total_memories = len(memories)
 
         # Type distribution
         type_counter = Counter(m.type for m in memories)
@@ -91,21 +91,21 @@ class AnalyticsEngine:
 
         # Growth rate (memories per day)
         growth_rate = 0.0
-        if total_memorias > 1:
+        if total_memories > 1:
             first_raw = memories[-1].updated
             last_raw = memories[0].updated
             if first_raw and last_raw:
                 first_date = datetime.fromisoformat(first_raw.replace("Z", "+00:00"))
                 last_date = datetime.fromisoformat(last_raw.replace("Z", "+00:00"))
                 days = max(1.0, (last_date - first_date).total_seconds() / 86400)
-                growth_rate = total_memorias / days
+                growth_rate = total_memories / days
 
         # Average access count
         total_access = sum(self.memory.lifecycle.get_access_count(m.id) for m in memories)
-        average_access_count = total_access / total_memorias if total_memorias > 0 else 0.0
+        average_access_count = total_access / total_memories if total_memories > 0 else 0.0
 
         return CorpusMetrics(
-            total_memorias=total_memorias,
+            total_memories=total_memories,
             total_entities=total_entities,
             type_distribution=type_distribution,
             tag_frequency=tag_frequency,
@@ -193,7 +193,7 @@ class AnalyticsEngine:
             writer = csv.writer(f)
             writer.writerow(["Metric", "Value"])
 
-            writer.writerow(["Total Memories", metrics.total_memorias])
+            writer.writerow(["Total Memories", metrics.total_memories])
             writer.writerow(["Total Entities", metrics.total_entities])
             writer.writerow(["Growth Rate", metrics.growth_rate])
             writer.writerow(["Average Access Count", metrics.average_access_count])
@@ -235,7 +235,7 @@ class Dashboard:
         lines = [
             "=== Memory Analytics Dashboard ===",
             "",
-            f"Total Memories: {metrics.total_memorias}",
+            f"Total Memories: {metrics.total_memories}",
             f"Total Entities: {metrics.total_entities}",
             f"Growth Rate: {metrics.growth_rate:.2f} memories/day",
             f"Average Access Count: {metrics.average_access_count:.2f}",
@@ -288,7 +288,7 @@ class Dashboard:
 
     <div class="section">
         <h2>Overview</h2>
-        <p>Total Memories: <span class="metric">{metrics.total_memorias}</span></p>
+        <p>Total Memories: <span class="metric">{metrics.total_memories}</span></p>
         <p>Total Entities: <span class="metric">{metrics.total_entities}</span></p>
         <p>Growth Rate: <span class="metric">{metrics.growth_rate:.2f}</span> memories/day</p>
         <p>Average Access Count: <span class="metric">{metrics.average_access_count:.2f}</span></p>

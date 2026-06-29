@@ -106,7 +106,7 @@ class EntityMention:
 class GraphStore:
     """Entity index. Append-only writes via `record_extraction`,
     read-only queries via `top_entities`, `entity_memories`,
-    `memoria_entities`.
+    `memory_entities`.
 
     All writes idempotent on (memory_id) — running extraction twice
     on the same memory refreshes the link set without duplicating.
@@ -147,7 +147,7 @@ class GraphStore:
         self,
         *,
         memory_id: str,
-        memoria_date: str,
+        memory_date: str,
         entities: list[dict[str, str]],
         extracted_at: str,
     ) -> int:
@@ -195,7 +195,7 @@ class GraphStore:
                 cx.execute(
                     "INSERT INTO entities (name, type, mention_count, first_seen, last_seen) "
                     "VALUES (?, ?, 0, ?, ?) ON CONFLICT(name, type) DO NOTHING",
-                    (name, etype, memoria_date, memoria_date),
+                    (name, etype, memory_date, memory_date),
                 )
                 eid = cx.execute(
                     "SELECT id, first_seen, last_seen FROM entities WHERE name = ? AND type = ?",
@@ -215,7 +215,7 @@ class GraphStore:
                     "  first_seen = MIN(first_seen, ?), "
                     "  last_seen  = MAX(last_seen, ?) "
                     "WHERE id = ?",
-                    (memoria_date, memoria_date, eid["id"]),
+                    (memory_date, memory_date, eid["id"]),
                 )
                 n += 1
         return n
@@ -279,7 +279,7 @@ class GraphStore:
             params = (name,)
         return [r["memory_id"] for r in self._conn.execute(sql, params).fetchall()]
 
-    def memoria_entities(self, memory_id: str) -> list[dict[str, Any]]:
+    def memory_entities(self, memory_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT e.name, e.type, e.mention_count "
             "FROM entity_memory em JOIN entities e ON e.id = em.entity_id "
@@ -297,7 +297,7 @@ class GraphStore:
                 type=row["type"],
                 mention_count=int(row["mention_count"]),
             )
-            for row in self.memoria_entities(memory_id)
+            for row in self.memory_entities(memory_id)
         ]
 
     def count_entities(self) -> int:

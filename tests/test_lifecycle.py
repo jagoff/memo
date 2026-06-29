@@ -158,7 +158,7 @@ def test_should_expire_regular_memoria(lifecycle_manager, mock_memory):
     assert should is False
 
 
-def test_archive_memoria(lifecycle_manager, mock_memory):
+def test_archive_memory(lifecycle_manager, mock_memory):
     """Test archiving a memoria."""
     rec = mock_memory.save(
         content="Test content to archive",
@@ -167,7 +167,7 @@ def test_archive_memoria(lifecycle_manager, mock_memory):
     )
 
     # Archive the memoria
-    success = lifecycle_manager.archive_memoria(rec.id)
+    success = lifecycle_manager.archive_memory(rec.id)
 
     assert success is True
     # Verify it's deleted from store

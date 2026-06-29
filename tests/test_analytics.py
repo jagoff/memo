@@ -44,7 +44,7 @@ def test_analytics_engine_compute_corpus_metrics(analytics_engine, mock_memory):
 
     metrics = analytics_engine.compute_corpus_metrics()
 
-    assert metrics.total_memorias >= 2
+    assert metrics.total_memories >= 2
     assert isinstance(metrics.type_distribution, dict)
     assert isinstance(metrics.tag_frequency, dict)
     assert isinstance(metrics.entity_frequency, dict)
@@ -134,7 +134,7 @@ def test_dashboard_generate_html_dashboard(tmp_path, dashboard):
 def test_corpus_metrics_dataclass():
     """Test CorpusMetrics dataclass structure."""
     metrics = CorpusMetrics(
-        total_memorias=100,
+        total_memories=100,
         total_entities=50,
         type_distribution={"note": 80, "decision": 20},
         tag_frequency={"test": 10},
@@ -142,7 +142,7 @@ def test_corpus_metrics_dataclass():
         growth_rate=1.5,
         average_access_count=3.0,
     )
-    assert metrics.total_memorias == 100
+    assert metrics.total_memories == 100
     assert metrics.growth_rate == 1.5
 
 

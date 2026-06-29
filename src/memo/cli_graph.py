@@ -60,7 +60,7 @@ def graph_path(source: str, target: str, max_length: int, as_json: bool, graphif
     console.print()
     console.print(" → ".join(path.path))
     console.print()
-    console.print(f"[dim]Via {len(path.intermediate_memorias)} memory(s)[/dim]")
+    console.print(f"[dim]Via {len(path.intermediate_memories)} memory(s)[/dim]")
 
 
 @graph_group.command(name="neighbors")

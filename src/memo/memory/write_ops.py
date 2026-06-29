@@ -127,7 +127,7 @@ class _WriteOpsMixin(_MemoryBase):
         try:
             self.graph.record_extraction(
                 memory_id=record_id,
-                memoria_date=created_iso[:10],
+                memory_date=created_iso[:10],
                 entities=entities,
                 extracted_at=_now_iso(),
             )

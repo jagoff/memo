@@ -153,12 +153,12 @@ def backup_list(as_json: bool) -> None:
 
 @backup_group.command(name="restore")
 @click.argument("backup_name")
-@click.option("--no-memories", "skip_memorias", is_flag=True, help="Skip memory files")
+@click.option("--no-memories", "skip_memories", is_flag=True, help="Skip memory files")
 @click.option("--no-dbs", "skip_dbs", is_flag=True, help="Skip databases")
 @click.confirmation_option(
     prompt="This will restore from backup. Current data may be overwritten. Continue?"
 )
-def backup_restore(backup_name: str, skip_memorias: bool, skip_dbs: bool) -> None:
+def backup_restore(backup_name: str, skip_memories: bool, skip_dbs: bool) -> None:
     """Restore from a backup.
 
     Example: memo backup restore backup_2026-01-01-12-00-00
@@ -168,7 +168,7 @@ def backup_restore(backup_name: str, skip_memorias: bool, skip_dbs: bool) -> Non
 
     success = mem.backup.restore_backup(
         backup_name,
-        restore_memorias=not skip_memorias,
+        restore_memories=not skip_memories,
         restore_dbs=not skip_dbs,
     )
 

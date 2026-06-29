@@ -351,7 +351,7 @@ class ContradictionStore:
 
 @dataclass(frozen=True)
 class ScanResult:
-    scanned_memorias: int
+    scanned_memories: int
     pairs_examined: int
     pairs_inserted: int
     pairs_refreshed: int
@@ -398,7 +398,7 @@ class ContradictionScanner:
         sim_floor: float = 0.55,
         confidence_threshold: float = 0.7,
         min_days_apart: int = 0,
-        max_memorias: int = 2000,
+        max_memories: int = 2000,
         max_pairs: int = 500,
         since: str | None = None,
         type_: str | None = None,
@@ -417,7 +417,7 @@ class ContradictionScanner:
             min_days_apart: Pairs whose `updated` timestamps are closer
                 than this are skipped (same-day edits are usually
                 revisions, not contradictions).
-            max_memorias: Hard cap on memories visited per run.
+            max_memories: Hard cap on memories visited per run.
             max_pairs: Hard cap on pairs sent to the LLM per run.
             since: ISO date string; only memories `updated >= since` are
                 used as scan anchors. Useful for incremental runs.
@@ -431,9 +431,9 @@ class ContradictionScanner:
             ScanResult with counters.
         """
         # Incremental: push `since` into the DB so the freshest anchors are
-        # returned within `max_memorias`, instead of paging older rows and
+        # returned within `max_memories`, instead of paging older rows and
         # filtering client-side (which dropped new anchors past the limit).
-        records = self.memory.list(limit=max_memorias, type_=type_, updated_since=since)
+        records = self.memory.list(limit=max_memories, type_=type_, updated_since=since)
 
         scanned = 0
         examined = 0
@@ -541,7 +541,7 @@ class ContradictionScanner:
                     evolutions += 1
 
         return ScanResult(
-            scanned_memorias=scanned,
+            scanned_memories=scanned,
             pairs_examined=examined,
             pairs_inserted=inserted,
             pairs_refreshed=refreshed,

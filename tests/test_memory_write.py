@@ -27,7 +27,7 @@ def test_save_indexes_entities_in_graph_db(mem_with_stub: Memory):
         type_="fact",
     )
 
-    entity_names = {ent["name"] for ent in mem_with_stub.graph.memoria_entities(rec.id)}
+    entity_names = {ent["name"] for ent in mem_with_stub.graph.memory_entities(rec.id)}
     assert {"mlx", "mcp"} <= entity_names
 
     neighbors = mem_with_stub.navigator.get_neighbors("mlx")

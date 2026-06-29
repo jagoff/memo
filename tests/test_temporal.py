@@ -148,16 +148,16 @@ def test_build_entity_timeline_with_memorias(temporal_analyzer, mock_memory):
     assert all(isinstance(e, TimelineEvent) for e in timeline.events)
 
 
-def test_detect_stale_memorias_empty_corpus(temporal_analyzer, mock_memory):
+def test_detect_stale_memories_empty_corpus(temporal_analyzer, mock_memory):
     """Test stale detection with empty corpus."""
-    stale = temporal_analyzer.detect_stale_memorias(
+    stale = temporal_analyzer.detect_stale_memories(
         days_threshold=180,
         min_access_count=0,
     )
     assert stale == []
 
 
-def test_detect_stale_memorias_with_recent(temporal_analyzer, mock_memory):
+def test_detect_stale_memories_with_recent(temporal_analyzer, mock_memory):
     """Test stale detection with recent memorias (should be empty)."""
     mock_memory.save(
         content="Recent memoria",
@@ -165,7 +165,7 @@ def test_detect_stale_memorias_with_recent(temporal_analyzer, mock_memory):
         tags=["test"],
     )
 
-    stale = temporal_analyzer.detect_stale_memorias(
+    stale = temporal_analyzer.detect_stale_memories(
         days_threshold=180,
         min_access_count=0,
     )
@@ -175,10 +175,10 @@ def test_detect_stale_memorias_with_recent(temporal_analyzer, mock_memory):
 def test_detect_temporal_patterns_empty(temporal_analyzer):
     """Test temporal patterns with empty corpus."""
     patterns = temporal_analyzer.detect_temporal_patterns()
-    assert "memorias_per_month" in patterns
+    assert "memories_per_month" in patterns
     assert "type_distribution_over_time" in patterns
     assert "most_active_entities" in patterns
-    assert patterns["memorias_per_month"] == {}
+    assert patterns["memories_per_month"] == {}
     assert patterns["most_active_entities"] == {}
 
 
@@ -196,8 +196,8 @@ def test_detect_temporal_patterns_with_data(temporal_analyzer, mock_memory):
     )
 
     patterns = temporal_analyzer.detect_temporal_patterns()
-    assert "memorias_per_month" in patterns
-    assert len(patterns["memorias_per_month"]) > 0
+    assert "memories_per_month" in patterns
+    assert len(patterns["memories_per_month"]) > 0
 
 
 def test_contradiction_dataclass():

@@ -623,7 +623,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             out.append(d)
         return out
 
-    def clear_memoria_index(self) -> int:
+    def clear_memory_index(self) -> int:
         """Truncate the markdown-DERIVABLE memory tables (`meta`, `vec`, `fts`)
         so they can be fully replayed from the `.md` source of truth.
 

@@ -256,7 +256,7 @@ def maintain_cmd(
                 older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
                 action = "delete" if hard_delete else "archive"
                 if not dry_run:
-                    ok = mem.delete(older) if hard_delete else mem.lifecycle.archive_memoria(older)
+                    ok = mem.delete(older) if hard_delete else mem.lifecycle.archive_memory(older)
                     if ok:
                         mem.contradict_store.resolve(
                             pair.pair_id, "kept_newer", note=f"auto: {action}d older {older}"
@@ -295,7 +295,7 @@ def maintain_cmd(
     # 3. Staleness -----------------------------------------------------------
     if not skip_stale:
         try:
-            stale = mem.temporal.detect_stale_memorias(
+            stale = mem.temporal.detect_stale_memories(
                 days_threshold=stale_days, min_access_count=0
             )
             for item in stale:
@@ -303,7 +303,7 @@ def maintain_cmd(
                 if not mid:
                     continue
                 if not dry_run:
-                    mem.lifecycle.archive_memoria(mid)
+                    mem.lifecycle.archive_memory(mid)
                 receipt["archived_stale"].append({"id": mid, "days": item.get("days_since_update")})
         except Exception as exc:
             receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")

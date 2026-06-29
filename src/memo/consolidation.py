@@ -261,7 +261,7 @@ class AdvancedConsolidator:
             try:
                 archived = []
                 for mid in proposal.archived_ids:
-                    if self._archive_memoria(mid, surviving_id):
+                    if self._archive_memory(mid, surviving_id):
                         archived.append(mid)
                 return ConsolidationResult(
                     merged_id=surviving_id,
@@ -304,7 +304,7 @@ class AdvancedConsolidator:
             # Archive the old memories
             archived = []
             for mid in proposal.archived_ids:
-                if self._archive_memoria(mid, merged_rec.id):
+                if self._archive_memory(mid, merged_rec.id):
                     archived.append(mid)
 
             return ConsolidationResult(
@@ -321,7 +321,7 @@ class AdvancedConsolidator:
                 summary=f"Merge failed: {e}",
             )
 
-    def _archive_memoria(self, memory_id: str, replacement_id: str) -> bool:
+    def _archive_memory(self, memory_id: str, replacement_id: str) -> bool:
         """Archive a memory by moving it to the archived/ subdirectory.
 
         Adds a frontmatter field `archived_for` pointing to the replacement.

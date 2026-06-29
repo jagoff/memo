@@ -205,12 +205,12 @@ def test_entity_path_dataclass():
         target="b",
         path=["a", "c", "b"],
         length=2,
-        intermediate_memorias=["mem1"],
+        intermediate_memories=["mem1"],
     )
     assert path.source == "a"
     assert path.target == "b"
     assert path.length == 2
-    assert len(path.intermediate_memorias) == 1
+    assert len(path.intermediate_memories) == 1
 
 
 def test_entity_neighbors_dataclass():

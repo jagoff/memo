@@ -112,7 +112,7 @@ def test_apply_merge_real(consolidator, mock_memory):
     assert rec1.id in result.archived_ids
 
 
-def test_archive_memoria(consolidator, mock_memory):
+def test_archive_memory(consolidator, mock_memory):
     """Test archival of a memoria."""
     rec = mock_memory.save(
         content="To be archived",
@@ -121,7 +121,7 @@ def test_archive_memoria(consolidator, mock_memory):
     )
 
     replacement_id = "new123"
-    success = consolidator._archive_memoria(rec.id, replacement_id)
+    success = consolidator._archive_memory(rec.id, replacement_id)
 
     assert success is True
     # Check that the original is deleted

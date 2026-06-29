@@ -322,7 +322,7 @@ Body: {(r2.body or "")[:1000]}
             last_seen=last_seen or "",
         )
 
-    def detect_stale_memorias(
+    def detect_stale_memories(
         self,
         days_threshold: int = 180,
         min_access_count: int = 1,
@@ -343,7 +343,7 @@ Body: {(r2.body or "")[:1000]}
         all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP)
         if len(all_records) >= _ANALYSIS_ROW_CAP:
             _log.warning(
-                "detect_stale_memorias: corpus hit the %d-row cap; older "
+                "detect_stale_memories: corpus hit the %d-row cap; older "
                 "memories were not scanned.",
                 _ANALYSIS_ROW_CAP,
             )
@@ -384,7 +384,7 @@ Body: {(r2.body or "")[:1000]}
 
         Returns:
             Dict with metrics like:
-            - memorias_per_month: histogram of creation activity
+            - memories_per_month: histogram of creation activity
             - type_distribution_over_time: how memory types change over time
             - most_active_entities: entities with most temporal churn
         """
@@ -425,7 +425,7 @@ Body: {(r2.body or "")[:1000]}
             entity_counts[ent["name"]] = ent.get("mention_count", 0)
 
         return {
-            "memorias_per_month": dict(sorted(monthly.items())),
+            "memories_per_month": dict(sorted(monthly.items())),
             "type_distribution_over_time": {k: dict(v) for k, v in sorted(type_over_time.items())},
             "most_active_entities": dict(
                 sorted(entity_counts.items(), key=lambda x: x[1], reverse=True)[:20]
