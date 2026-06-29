@@ -208,12 +208,12 @@ def test_backlink_dataclass():
 def test_link_suggestion_dataclass():
     """Test LinkSuggestion dataclass structure."""
     s = LinkSuggestion(
-        memoria_id="abc123",
+        memory_id="abc123",
         title="Test Title",
         similarity=0.85,
         reason="High semantic similarity",
     )
-    assert s.memoria_id == "abc123"
+    assert s.memory_id == "abc123"
     assert s.similarity == 0.85
     assert "similarity" in s.reason.lower()
 

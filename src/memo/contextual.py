@@ -70,7 +70,7 @@ class UserPreferences:
 class ContextualSearchResult:
     """A search result with contextual scoring."""
 
-    memoria_id: str
+    memory_id: str
     title: str
     original_score: float | None
     contextual_score: float
@@ -161,7 +161,7 @@ class ContextStore:
         self._sync_context_maxlen()
         return list(self._context)[-n:]
 
-    def record_feedback(self, memoria_id: str, memoria_type: str, entities: list[str]) -> None:
+    def record_feedback(self, memory_id: str, memoria_type: str, entities: list[str]) -> None:
         """Record user feedback (e.g., they clicked/viewed a memory)."""
         # Don't let the bulk `reference` tier teach a type preference. It
         # dominates the corpus, so learning "prefer reference" would amplify
@@ -280,7 +280,7 @@ class ContextualRecall:
 
             contextual_results.append(
                 ContextualSearchResult(
-                    memoria_id=hit.id,
+                    memory_id=hit.id,
                     title=hit.title,
                     original_score=hit.score,
                     contextual_score=contextual_score,
@@ -307,25 +307,25 @@ class ContextualRecall:
         """Record a search in the context history."""
         self.context.add_prompt(query, recalled_ids)
 
-    def record_click(self, memoria_id: str) -> None:
+    def record_click(self, memory_id: str) -> None:
         """Record that the user clicked/viewed a memory."""
-        rec = self.memory.get(memoria_id)
+        rec = self.memory.get(memory_id)
         if rec:
             entities = [
                 e["name"]
-                for e in self.memory.graph.memoria_entities(memoria_id)
+                for e in self.memory.graph.memoria_entities(memory_id)
                 if isinstance(e, dict) and e.get("name")
             ]
-            self.context.record_feedback(memoria_id, rec.type, entities)
+            self.context.record_feedback(memory_id, rec.type, entities)
             # Closed-loop "used" signal: a fetched memory is one acted on, not
             # just shown. Cross-referenced against recall.log by
             # `memo usefulness` → referenced_rate. Best-effort, off hot path.
             try:
                 from memo.dashboard import append_usage_log
 
-                append_usage_log(self.context.context_file.parent, memoria_id)
+                append_usage_log(self.context.context_file.parent, memory_id)
             except Exception as exc:
-                _log.debug("contextual: failed to append usage log for %s: %s", memoria_id, exc)
+                _log.debug("contextual: failed to append usage log for %s: %s", memory_id, exc)
 
 
 __all__ = [

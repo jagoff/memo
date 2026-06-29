@@ -96,7 +96,7 @@ def graph_neighbors(entity: str, max_neighbors: int, as_json: bool) -> None:
     table.add_column("Shared Memories", style="green")
 
     for neighbor in neighbors.direct_neighbors[:20]:
-        mem_count = len(neighbors.neighbor_memorias.get(neighbor, []))
+        mem_count = len(neighbors.neighbor_memories.get(neighbor, []))
         table.add_row(neighbor, str(mem_count))
 
     console.print(table)
@@ -199,7 +199,7 @@ def graph_export(format_type: str, output_path: str | None) -> None:
         if not output_path:
             click.echo(content)
     else:  # json
-        data = mem.navigator.export_json(include_memorias=True)
+        data = mem.navigator.export_json(include_memories=True)
         json_str = json.dumps(data, indent=2)
         if output_path:
             Path(output_path).write_text(json_str, encoding="utf-8")

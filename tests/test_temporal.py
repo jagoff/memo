@@ -203,8 +203,8 @@ def test_detect_temporal_patterns_with_data(temporal_analyzer, mock_memory):
 def test_contradiction_dataclass():
     """Test Contradiction dataclass structure."""
     c = Contradiction(
-        memoria_id_a="aaa",
-        memoria_id_b="bbb",
+        memory_id_a="aaa",
+        memory_id_b="bbb",
         title_a="Title A",
         title_b="Title B",
         date_a="2026-01-01",
@@ -213,7 +213,7 @@ def test_contradiction_dataclass():
         rationale="Test rationale",
         confidence=0.9,
     )
-    assert c.memoria_id_a == "aaa"
+    assert c.memory_id_a == "aaa"
     assert c.relationship == "contradiction"
     assert c.confidence == 0.9
 
@@ -221,13 +221,13 @@ def test_contradiction_dataclass():
 def test_timeline_event_dataclass():
     """Test TimelineEvent dataclass structure."""
     e = TimelineEvent(
-        memoria_id="abc",
+        memory_id="abc",
         title="Test",
         date="2026-01-01",
         type="note",
         snippet="Test snippet",
     )
-    assert e.memoria_id == "abc"
+    assert e.memory_id == "abc"
     assert e.type == "note"
 
 
@@ -235,7 +235,7 @@ def test_entity_timeline_dataclass():
     """Test EntityTimeline dataclass structure."""
     events = [
         TimelineEvent(
-            memoria_id="abc",
+            memory_id="abc",
             title="Test",
             date="2026-01-01",
             type="note",

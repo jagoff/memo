@@ -34,7 +34,7 @@ def test_version_store_init(version_store):
 def test_version_store_save_version(version_store):
     """Test saving a version."""
     version_id = version_store.save_version(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="Test Title",
         type="note",
         tags=["test"],
@@ -49,7 +49,7 @@ def test_version_store_get_versions(version_store):
     """Test getting versions for a memoria."""
     # Save multiple versions
     version_store.save_version(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="Title v1",
         type="note",
         tags=["test"],
@@ -57,7 +57,7 @@ def test_version_store_get_versions(version_store):
         reason="v1",
     )
     version_store.save_version(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="Title v2",
         type="note",
         tags=["test"],
@@ -75,7 +75,7 @@ def test_version_store_get_versions(version_store):
 def test_version_store_get_version(version_store):
     """Test getting a specific version."""
     version_id = version_store.save_version(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="Test Title",
         type="note",
         tags=["test"],
@@ -99,7 +99,7 @@ def test_version_store_get_version_not_found(version_store):
 def test_version_store_delete_versions(version_store):
     """Test deleting all versions for a memoria."""
     version_store.save_version(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="Test",
         type="note",
         tags=["test"],
@@ -124,7 +124,7 @@ def test_version_manager_init(version_manager):
 def test_version_manager_track_update(version_manager, mock_memory):
     """Test tracking an update."""
     version_id = version_manager.track_update(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="Updated Title",
         type="decision",
         tags=["decision"],
@@ -139,14 +139,14 @@ def test_version_manager_get_version_history(version_manager, mock_memory):
     """Test getting version history."""
     # Track multiple updates
     version_manager.track_update(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="v1",
         type="note",
         tags=["test"],
         body="Body v1",
     )
     version_manager.track_update(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="v2",
         type="note",
         tags=["test"],
@@ -163,14 +163,14 @@ def test_version_manager_get_version_history(version_manager, mock_memory):
 def test_version_manager_diff_versions(version_manager, mock_memory):
     """Test generating diff between versions."""
     version_manager.track_update(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="Original",
         type="note",
         tags=["test"],
         body="Line 1\nLine 2\nLine 3",
     )
     version_manager.track_update(
-        memoria_id="test-id",
+        memory_id="test-id",
         title="Modified",
         type="note",
         tags=["test"],
@@ -180,7 +180,7 @@ def test_version_manager_diff_versions(version_manager, mock_memory):
     diff = version_manager.diff_versions("test-id")
 
     assert diff is not None
-    assert diff.memoria_id == "test-id"
+    assert diff.memory_id == "test-id"
     assert "modified" in diff.unified_diff.lower()
 
 
@@ -201,14 +201,14 @@ def test_version_manager_rollback_to_version(version_manager, mock_memory):
 
     # Track versions
     version_manager.track_update(
-        memoria_id=rec.id,
+        memory_id=rec.id,
         title="Original",
         type="note",
         tags=["test"],
         body="Original content",
     )
     version_manager.track_update(
-        memoria_id=rec.id,
+        memory_id=rec.id,
         title="Modified",
         type="note",
         tags=["test"],
@@ -234,7 +234,7 @@ def test_version_dataclass():
     """Test Version dataclass structure."""
     v = Version(
         version_id=1,
-        memoria_id="test-id",
+        memory_id="test-id",
         timestamp="2026-01-01T00:00:00Z",
         title="Test Title",
         type="note",
@@ -243,20 +243,20 @@ def test_version_dataclass():
         reason="Test reason",
     )
     assert v.version_id == 1
-    assert v.memoria_id == "test-id"
+    assert v.memory_id == "test-id"
     assert len(v.tags) == 1
 
 
 def test_diff_result_dataclass():
     """Test DiffResult dataclass structure."""
     diff = DiffResult(
-        memoria_id="test-id",
+        memory_id="test-id",
         version_a=1,
         version_b=2,
         unified_diff="--- v1\n+++ v2\n- old\n+ new",
         changes=["- old", "+ new"],
     )
-    assert diff.memoria_id == "test-id"
+    assert diff.memory_id == "test-id"
     assert diff.version_a == 1
     assert diff.version_b == 2
     assert len(diff.changes) == 2

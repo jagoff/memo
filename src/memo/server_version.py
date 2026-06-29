@@ -18,7 +18,7 @@ from memo.memory import Memory
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memo_version_history(
-        memoria_id: str,
+        memory_id: str,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """Show version history for a memory.
@@ -28,15 +28,15 @@ def register(server: FastMCP, memory: Memory) -> None:
         body snapshot, and change reason.
 
         Args:
-            memoria_id: The memory ID to get history for.
+            memory_id: The memory ID to get history for.
             limit: Maximum versions to return.
         """
-        versions = memory.versioning.get_version_history(memoria_id, limit=limit)
+        versions = memory.versioning.get_version_history(memory_id, limit=limit)
         return [dataclasses.asdict(v) for v in versions]
 
     @server.tool()
     def memo_version_diff(
-        memoria_id: str,
+        memory_id: str,
         version_a: int | None = None,
         version_b: int | None = None,
     ) -> dict[str, Any] | None:
@@ -46,16 +46,16 @@ def register(server: FastMCP, memory: Memory) -> None:
         is None, uses the latest and latest-1 versions respectively.
 
         Args:
-            memoria_id: The memory ID to diff.
+            memory_id: The memory ID to diff.
             version_a: First version ID (or None for latest).
             version_b: Second version ID (or None for latest-1).
         """
-        diff = memory.versioning.diff_versions(memoria_id, version_a, version_b)
+        diff = memory.versioning.diff_versions(memory_id, version_a, version_b)
         return dataclasses.asdict(diff) if diff else None
 
     @server.tool()
     def memo_version_rollback(
-        memoria_id: str,
+        memory_id: str,
         version_id: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
@@ -65,9 +65,9 @@ def register(server: FastMCP, memory: Memory) -> None:
         content, title, type, and tags to match the version snapshot.
 
         Args:
-            memoria_id: The memory ID to rollback.
+            memory_id: The memory ID to rollback.
             version_id: The version ID to rollback to.
             reason: Optional reason for the rollback.
         """
-        success = memory.versioning.rollback_to_version(memoria_id, version_id, reason)
-        return {"success": success, "memoria_id": memoria_id, "version_id": version_id}
+        success = memory.versioning.rollback_to_version(memory_id, version_id, reason)
+        return {"success": success, "memory_id": memory_id, "version_id": version_id}

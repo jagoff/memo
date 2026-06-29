@@ -53,8 +53,8 @@ def test_bootstrap_clone_fresh(remote: Path, tmp_path: Path):
     out = bootstrap_clone(str(remote), dest, config_path=cfg_path)
 
     assert out["reused"] is False
-    assert out["memorias_dir"] == str(dest / "memorias")
-    assert out["memorias"] == 1
+    assert out["memories_dir"] == str(dest / "memorias")
+    assert out["memories"] == 1
     # config.toml now points data_dir at the cloned memorias
     storage = (load_config_file(cfg_path) or {})["storage"]
     assert storage["data_dir"] == str(dest / "memorias")
@@ -68,7 +68,7 @@ def test_bootstrap_clone_reuse_existing(remote: Path, tmp_path: Path):
     # second run: dest is already a valid clone → reuse, no error
     out = bootstrap_clone(str(remote), dest, config_path=cfg_path)
     assert out["reused"] is True
-    assert out["memorias_dir"] == str(dest / "memorias")
+    assert out["memories_dir"] == str(dest / "memorias")
     storage = (load_config_file(cfg_path) or {})["storage"]
     assert storage["data_dir"] == str(dest / "memorias")
 
@@ -151,7 +151,7 @@ def test_sync_bootstrap_cli_end_to_end(remote: Path, tmp_path: Path, monkeypatch
 
     out = _json.loads(result.output)
     assert out["reused"] is False
-    assert out["memorias_dir"] == str(dest / "memorias")
+    assert out["memories_dir"] == str(dest / "memorias")
     assert out["reindexed"]["added"] == 1  # the seeded memoria got indexed
     # config.toml repointed at the clone
     storage = (load_config_file(tmp_path / "config.toml") or {})["storage"]

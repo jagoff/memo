@@ -46,7 +46,7 @@ class TestMultiModalStore:
     def test_load_existing_content(self, temp_state_dir: Path) -> None:
         content_data = {
             "test-id": {
-                "memoria_id": "mem-123",
+                "memory_id": "mem-123",
                 "modality": "text",
                 "content": base64.b64encode(b"test content").decode("utf-8"),
                 "embedding": [0.1, 0.2, 0.3],
@@ -67,13 +67,13 @@ class TestMultiModalStore:
             content=b"test data",
             modality="text",
             embedding=[0.1, 0.2],
-            memoria_id="mem-1",
+            memory_id="mem-1",
             metadata={"key": "value"},
         )
         assert isinstance(mmc, MultiModalContent)
         assert mmc.id in store._contents
         assert mmc.modality == "text"
-        assert mmc.memoria_id == "mem-1"
+        assert mmc.memory_id == "mem-1"
 
     def test_search_empty_store(self, temp_state_dir: Path) -> None:
         store = MultiModalStore(temp_state_dir)
@@ -86,7 +86,7 @@ class TestMultiModalStore:
             content=b"test",
             modality="text",
             embedding=[0.1, 0.2],
-            memoria_id="mem-1",
+            memory_id="mem-1",
         )
 
         results = store.search_by_embedding([0.1, 0.2], limit=5)
@@ -99,7 +99,7 @@ class TestMultiModalStore:
             content=b"test",
             modality="text",
             embedding=[0.1, 0.2],
-            memoria_id="mem-1",
+            memory_id="mem-1",
         )
 
         retrieved = store.get_content(mmc.id)
@@ -116,7 +116,7 @@ class TestMultiModalStore:
             content=b"test",
             modality="text",
             embedding=[0.1, 0.2],
-            memoria_id="mem-1",
+            memory_id="mem-1",
         )
         assert mmc.id in store._contents
 

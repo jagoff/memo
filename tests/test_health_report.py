@@ -28,7 +28,7 @@ from memo.health_report import build_health_report
 
 def test_health_report_empty_corpus(mock_memory):
     report = build_health_report(mock_memory)
-    assert report["corpus"]["memorias"] == 0
+    assert report["corpus"]["memories"] == 0
     assert report["index"]["expected_dims"] == mock_memory.cfg.embedder_dims
     # An empty corpus should surface at least one warning.
     assert report["warnings"], "empty corpus should warn"
@@ -38,7 +38,7 @@ def test_health_report_counts_memorias(mock_memory):
     mock_memory.save(content="one", title="One", tags=["t"])
     mock_memory.save(content="two", title="Two", tags=["t"])
     report = build_health_report(mock_memory)
-    assert report["corpus"]["memorias"] == 2
+    assert report["corpus"]["memories"] == 2
 
 
 def test_health_report_tracks_saved_memory(mock_memory):
@@ -61,7 +61,7 @@ def test_server_health_summary_tool(mock_memory):
     server = build_server(memory=mock_memory)
     tool = asyncio.run(server.get_tool("memo_health_summary")).fn
     out = tool()
-    assert out["corpus"]["memorias"] == 1
+    assert out["corpus"]["memories"] == 1
 
 
 def test_cli_health_json(monkeypatch, mock_memory):
@@ -71,7 +71,7 @@ def test_cli_health_json(monkeypatch, mock_memory):
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert "corpus" in data
-    assert data["corpus"]["memorias"] == 0
+    assert data["corpus"]["memories"] == 0
 
 
 # ---------------------------------------------------------------------------

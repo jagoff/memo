@@ -66,7 +66,7 @@ def contextual_search(query: str, limit: int, mode: str, as_json: bool) -> None:
     for r in results[:20]:
         boosts = ", ".join(f"{k}={v:.2f}" for k, v in r.boost_factors.items())
         table.add_row(
-            r.memoria_id[:8],
+            r.memory_id[:8],
             r.title[:40],
             f"{r.original_score:.3f}",
             f"{r.contextual_score:.3f}",
@@ -80,8 +80,8 @@ def contextual_search(query: str, limit: int, mode: str, as_json: bool) -> None:
 
 @contextual_group.command(name="record-search")
 @click.argument("query")
-@click.argument("memoria_ids", nargs=-1, required=True)
-def contextual_record_search(query: str, memoria_ids: tuple[str, ...]) -> None:
+@click.argument("memory_ids", nargs=-1, required=True)
+def contextual_record_search(query: str, memory_ids: tuple[str, ...]) -> None:
     """Record a search in the conversation history for learning.
 
     Example: memo contextual record-search "MLX" abc123 def456
@@ -89,13 +89,13 @@ def contextual_record_search(query: str, memoria_ids: tuple[str, ...]) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    mem.contextual.record_search(query, list(memoria_ids))
-    console.print(f"[green]Recorded search with {len(memoria_ids)} recalled memories[/green]")
+    mem.contextual.record_search(query, list(memory_ids))
+    console.print(f"[green]Recorded search with {len(memory_ids)} recalled memories[/green]")
 
 
 @contextual_group.command(name="record-click")
-@click.argument("memoria_id")
-def contextual_record_click(memoria_id: str) -> None:
+@click.argument("memory_id")
+def contextual_record_click(memory_id: str) -> None:
     """Record that the user clicked/viewed a memory (for preference learning).
 
     Example: memo contextual record-click abc123
@@ -103,9 +103,9 @@ def contextual_record_click(memoria_id: str) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    rec = mem.get(memoria_id)
+    rec = mem.get(memory_id)
     if rec is None:
-        console.print(f"[yellow]Memory '{memoria_id}' not found[/yellow]")
+        console.print(f"[yellow]Memory '{memory_id}' not found[/yellow]")
         raise SystemExit(1)
 
     mem.contextual.record_click(rec.id)

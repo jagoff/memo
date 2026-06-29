@@ -25,10 +25,10 @@ def version_group() -> None:
 
 
 @version_group.command(name="history")
-@click.argument("memoria_id")
+@click.argument("memory_id")
 @click.option("--limit", type=int, default=10, help="Max versions to show (default: 10)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
+def version_history(memory_id: str, limit: int, as_json: bool) -> None:
     """Show version history for a memory.
 
     Example: memo version history abc123
@@ -36,17 +36,17 @@ def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    versions = mem.versioning.get_version_history(memoria_id, limit=limit)
+    versions = mem.versioning.get_version_history(memory_id, limit=limit)
 
     if as_json:
         click.echo(json.dumps([v.__dict__ for v in versions], indent=2))
         return
 
     if not versions:
-        console.print(f"[dim]No version history for memory {memoria_id[:8]}[/dim]")
+        console.print(f"[dim]No version history for memory {memory_id[:8]}[/dim]")
         return
 
-    console.print(f"[bold]Version History for {memoria_id[:8]}[/bold]")
+    console.print(f"[bold]Version History for {memory_id[:8]}[/bold]")
     console.print()
 
     table = Table()
@@ -71,12 +71,12 @@ def version_history(memoria_id: str, limit: int, as_json: bool) -> None:
 
 
 @version_group.command(name="diff")
-@click.argument("memoria_id")
+@click.argument("memory_id")
 @click.option("--version-a", type=int, help="First version ID (default: latest)")
 @click.option("--version-b", type=int, help="Second version ID (default: latest-1)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def version_diff(
-    memoria_id: str, version_a: int | None, version_b: int | None, as_json: bool
+    memory_id: str, version_a: int | None, version_b: int | None, as_json: bool
 ) -> None:
     """Show diff between two versions of a memory.
 
@@ -85,7 +85,7 @@ def version_diff(
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    diff = mem.versioning.diff_versions(memoria_id, version_a, version_b)
+    diff = mem.versioning.diff_versions(memory_id, version_a, version_b)
 
     if as_json:
         click.echo(json.dumps(diff.__dict__ if diff else None, indent=2))
@@ -95,20 +95,20 @@ def version_diff(
         console.print("[yellow]Could not generate diff[/yellow]")
         return
 
-    console.print(f"[bold]Diff for {memoria_id[:8]}[/bold]")
+    console.print(f"[bold]Diff for {memory_id[:8]}[/bold]")
     console.print(f"[dim]v{diff.version_a} → v{diff.version_b}[/dim]")
     console.print()
     console.print(diff.unified_diff)
 
 
 @version_group.command(name="rollback")
-@click.argument("memoria_id")
+@click.argument("memory_id")
 @click.argument("version_id", type=int)
 @click.option("--reason", help="Reason for the rollback")
 @click.confirmation_option(
     prompt="This will restore the memory to the specified version. Continue?"
 )
-def version_rollback(memoria_id: str, version_id: int, reason: str | None) -> None:
+def version_rollback(memory_id: str, version_id: int, reason: str | None) -> None:
     """Rollback a memory to a previous version.
 
     Example: memo version rollback abc123 1 --reason "Mistake in update"
@@ -116,10 +116,10 @@ def version_rollback(memoria_id: str, version_id: int, reason: str | None) -> No
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    success = mem.versioning.rollback_to_version(memoria_id, version_id, reason)
+    success = mem.versioning.rollback_to_version(memory_id, version_id, reason)
 
     if success:
-        console.print(f"[green]Rolled back {memoria_id[:8]} to version {version_id}[/green]")
+        console.print(f"[green]Rolled back {memory_id[:8]} to version {version_id}[/green]")
     else:
         console.print("[red]Failed to rollback[/red]")
         raise SystemExit(1)

@@ -44,7 +44,7 @@ def test_extract_entities_writes_graph(mem_with_stub: Memory, monkeypatch):
     names = {e["name"] for e in top}
     assert {"obsidian-rag", "mlx", "qwen3-embedding"}.issubset(names)
 
-    ids = mem_with_stub.graph.entity_memorias("mlx")
+    ids = mem_with_stub.graph.entity_memories("mlx")
     assert ids == [rec.id]
 
 
@@ -72,7 +72,7 @@ def test_delete_drops_graph_edges(mem_with_stub: Memory, monkeypatch):
 
     monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
     mem_with_stub.extract_entities(ids=[rec.id])
-    assert mem_with_stub.graph.entity_memorias("foo") == [rec.id]
+    assert mem_with_stub.graph.entity_memories("foo") == [rec.id]
 
     mem_with_stub.delete(rec.id)
-    assert mem_with_stub.graph.entity_memorias("foo") == []
+    assert mem_with_stub.graph.entity_memories("foo") == []

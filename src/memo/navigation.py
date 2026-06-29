@@ -54,7 +54,7 @@ class EntityNeighbors:
 
     entity: str
     direct_neighbors: list[str]  # Entities directly connected
-    neighbor_memorias: dict[str, list[str]]  # entity -> memory IDs that connect
+    neighbor_memories: dict[str, list[str]]  # entity -> memory IDs that connect
     degree: int
 
 
@@ -114,7 +114,7 @@ class GraphNavigator:
                 intermediate_memorias=[],
             )
 
-        # Build adjacency list: entity -> set of (neighbor_entity, memoria_id)
+        # Build adjacency list: entity -> set of (neighbor_entity, memory_id)
         adj = self._build_adjacency_list()
 
         if source not in adj or target not in adj:
@@ -133,11 +133,11 @@ class GraphNavigator:
         # BFS
         queue: deque[tuple[str, list[str], list[str]]] = deque(
             [(source, [source], [])],
-        )  # (current, path, memoria_ids)
+        )  # (current, path, memory_ids)
         visited = {source}
 
         while queue:
-            current, path, memoria_ids = queue.popleft()
+            current, path, memory_ids = queue.popleft()
 
             if current == target:
                 return EntityPath(
@@ -145,7 +145,7 @@ class GraphNavigator:
                     target=target,
                     path=path,
                     length=len(path) - 1,
-                    intermediate_memorias=memoria_ids,
+                    intermediate_memorias=memory_ids,
                 )
 
             if len(path) > max_length:
@@ -154,14 +154,14 @@ class GraphNavigator:
             for neighbor, mem_id in adj[current]:
                 if neighbor not in visited:
                     visited.add(neighbor)
-                    queue.append((neighbor, [*path, neighbor], [*memoria_ids, mem_id]))
+                    queue.append((neighbor, [*path, neighbor], [*memory_ids, mem_id]))
 
         return None
 
     def _build_adjacency_list(self) -> dict[str, set[tuple[str, str]]]:
         """Build adjacency list from entity-memory graph.
 
-        Returns: entity -> set of (neighbor_entity, memoria_id)
+        Returns: entity -> set of (neighbor_entity, memory_id)
         """
         adj: dict[str, set[tuple[str, str]]] = defaultdict(set)
 
@@ -173,8 +173,8 @@ class GraphNavigator:
         entity_to_memorias: dict[str, list[str]] = defaultdict(list)
         for ent in all_entities:
             name = ent["name"].lower()
-            memoria_ids = self.graph.entity_memorias(name)
-            for mid in memoria_ids:
+            memory_ids = self.graph.entity_memories(name)
+            for mid in memory_ids:
                 entity_to_memorias[name].append(mid)
 
         # Connect entities that share memories
@@ -221,7 +221,7 @@ class GraphNavigator:
                     return EntityNeighbors(
                         entity=entity,
                         direct_neighbors=neighbors_list,
-                        neighbor_memorias=neighbor_mems_fallback,
+                        neighbor_memories=neighbor_mems_fallback,
                         degree=len(graphify_neighbors),
                     )
             except (FileNotFoundError, Exception) as e:
@@ -229,7 +229,7 @@ class GraphNavigator:
             return EntityNeighbors(
                 entity=entity,
                 direct_neighbors=[],
-                neighbor_memorias={},
+                neighbor_memories={},
                 degree=0,
             )
 
@@ -248,7 +248,7 @@ class GraphNavigator:
         return EntityNeighbors(
             entity=entity,
             direct_neighbors=[n for n, _ in sorted_neighbors],
-            neighbor_memorias={n: mems for n, mems in sorted_neighbors},
+            neighbor_memories={n: mems for n, mems in sorted_neighbors},
             degree=len(adj[entity]),
         )
 
@@ -371,11 +371,11 @@ class GraphNavigator:
 
         return dot
 
-    def export_json(self, include_memorias: bool = False) -> dict[str, Any]:
+    def export_json(self, include_memories: bool = False) -> dict[str, Any]:
         """Export graph to JSON format for web visualization.
 
         Args:
-            include_memorias: If True, include memory IDs in edge data.
+            include_memories: If True, include memory IDs in edge data.
 
         Returns:
             Dict with nodes and edges suitable for D3.js/Cytoscape.js.
@@ -396,8 +396,8 @@ class GraphNavigator:
                 edge_key = tuple(sorted([entity, neighbor]))
                 if edge_key not in seen_edges:
                     edge_data = {"source": entity, "target": neighbor}
-                    if include_memorias:
-                        edge_data["memoria_id"] = mem_id
+                    if include_memories:
+                        edge_data["memory_id"] = mem_id
                     edges.append(edge_data)
                     seen_edges.add(edge_key)
 

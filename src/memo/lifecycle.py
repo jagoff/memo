@@ -95,7 +95,7 @@ class LifecyclePolicy:
 class LifecycleAction:
     """A lifecycle action taken on a memory."""
 
-    memoria_id: str
+    memory_id: str
     action: str  # archive, promote, demote, expire, delete
     reason: str
     timestamp: str
@@ -114,7 +114,7 @@ class LifecycleManager:
         self.policy = policy or LifecyclePolicy()
         self._actions_log: list[LifecycleAction] = []
 
-    def get_access_count(self, memoria_id: str) -> int:
+    def get_access_count(self, memory_id: str) -> int:
         """Get the number of times a memory has been read/hit.
 
         Reads the `access` table (populated by `store.touch()` on every
@@ -123,18 +123,18 @@ class LifecycleManager:
         """
         store = getattr(self.memory, "store", None)
         if store is not None and hasattr(store, "get_access"):
-            return int(store.get_access(memoria_id).get("access_count", 0))
-        events = self.memory.history.list_recent(record_id=memoria_id, limit=1000)
+            return int(store.get_access(memory_id).get("access_count", 0))
+        events = self.memory.history.list_recent(record_id=memory_id, limit=1000)
         return sum(1 for e in events if e.get("op") != "save")
 
-    def get_days_since_access(self, memoria_id: str) -> int | None:
+    def get_days_since_access(self, memory_id: str) -> int | None:
         """Get days since last read/hit, or None if never accessed."""
         last_ts_raw: str | None = None
         store = getattr(self.memory, "store", None)
         if store is not None and hasattr(store, "get_access"):
-            last_ts_raw = store.get_access(memoria_id).get("last_accessed")
+            last_ts_raw = store.get_access(memory_id).get("last_accessed")
         else:
-            events = self.memory.history.list_recent(record_id=memoria_id, limit=1000)
+            events = self.memory.history.list_recent(record_id=memory_id, limit=1000)
             access_events = [e for e in events if e.get("op") != "save"]
             if access_events:
                 last_ts_raw = access_events[0].get("ts")
@@ -144,12 +144,12 @@ class LifecycleManager:
             last_ts = datetime.fromisoformat(last_ts_raw.replace("Z", "+00:00"))
             return (datetime.now(UTC) - last_ts).days
         except (ValueError, AttributeError, TypeError) as exc:
-            _log.debug("lifecycle: bad access ts %r for %s: %s", last_ts_raw, memoria_id, exc)
+            _log.debug("lifecycle: bad access ts %r for %s: %s", last_ts_raw, memory_id, exc)
             return None
 
-    def get_days_since_update(self, memoria_id: str) -> int:
+    def get_days_since_update(self, memory_id: str) -> int:
         """Get days since last update (created/updated timestamp)."""
-        rec = self.memory.get(memoria_id)
+        rec = self.memory.get(memory_id)
         if not rec:
             return 0
 
@@ -160,20 +160,20 @@ class LifecycleManager:
         except (ValueError, AttributeError, TypeError) as exc:
             # Bad timestamp → treated as "0 days" (just-updated), which blocks
             # archival; log so the corrupt record is diagnosable.
-            _log.debug("lifecycle: bad updated ts for %s: %s", memoria_id, exc)
+            _log.debug("lifecycle: bad updated ts for %s: %s", memory_id, exc)
             return 0
 
-    def should_archive(self, memoria_id: str) -> tuple[bool, str]:
+    def should_archive(self, memory_id: str) -> tuple[bool, str]:
         """Determine if a memory should be archived.
 
         Returns:
             (should_archive, reason)
         """
-        days_since_access = self.get_days_since_access(memoria_id)
+        days_since_access = self.get_days_since_access(memory_id)
 
         # Never accessed: use update date
         if days_since_access is None:
-            days_since_update = self.get_days_since_update(memoria_id)
+            days_since_update = self.get_days_since_update(memory_id)
             if days_since_update > self.policy.archival_days:
                 return True, f"Never accessed, {days_since_update} days since update"
 
@@ -183,45 +183,45 @@ class LifecycleManager:
 
         return False, "Recently accessed"
 
-    def should_promote(self, memoria_id: str) -> tuple[bool, str]:
+    def should_promote(self, memory_id: str) -> tuple[bool, str]:
         """Determine if a memory should be promoted (high priority).
 
         Returns:
             (should_promote, reason)
         """
-        access_count = self.get_access_count(memoria_id)
+        access_count = self.get_access_count(memory_id)
 
         if access_count >= self.policy.promotion_threshold:
             return True, f"Accessed {access_count} times"
 
         return False, f"Accessed only {access_count} times"
 
-    def should_demote(self, memoria_id: str) -> tuple[bool, str]:
+    def should_demote(self, memory_id: str) -> tuple[bool, str]:
         """Determine if a memory should be demoted (low priority).
 
         Returns:
             (should_demote, reason)
         """
-        access_count = self.get_access_count(memoria_id)
+        access_count = self.get_access_count(memory_id)
 
         if access_count < self.policy.demotion_threshold:
             return True, f"Accessed only {access_count} times"
 
         return False, f"Accessed {access_count} times"
 
-    def should_expire(self, memoria_id: str) -> tuple[bool, str]:
+    def should_expire(self, memory_id: str) -> tuple[bool, str]:
         """Determine if a temporary memory should expire.
 
         Returns:
             (should_expire, reason)
         """
-        rec = self.memory.get(memoria_id)
+        rec = self.memory.get(memory_id)
         if not rec:
             return False, "Memory not found"
 
         # Check if it's a temporary type
         if rec.type == "temp":
-            days_since_update = self.get_days_since_update(memoria_id)
+            days_since_update = self.get_days_since_update(memory_id)
             if days_since_update > self.policy.temp_expiration_days:
                 return True, f"Temp memory, {days_since_update} days old"
 
@@ -230,7 +230,7 @@ class LifecycleManager:
             if tag.startswith("temp:"):
                 try:
                     days = int(tag.split(":")[1])
-                    days_since_update = self.get_days_since_update(memoria_id)
+                    days_since_update = self.get_days_since_update(memory_id)
                     if days_since_update > days:
                         return True, f"Temp tag {tag}, {days_since_update} days old"
                 except (ValueError, IndexError):
@@ -238,13 +238,13 @@ class LifecycleManager:
 
         return False, "Not a temporary memory"
 
-    def should_forget(self, memoria_id: str) -> tuple[bool, str]:
+    def should_forget(self, memory_id: str) -> tuple[bool, str]:
         """Determine if a memory's `forget_after` TTL has elapsed.
 
         Returns (should_forget, reason). False for memories already forgotten
         or without a parseable `forget_after`.
         """
-        rec = self.memory.get(memoria_id)
+        rec = self.memory.get(memory_id)
         if rec is None:
             return False, "Memory not found"
         extra = rec.extra or {}
@@ -280,12 +280,12 @@ class LifecycleManager:
             acted.append({"id": rec.id, "reason": reason})
         return acted
 
-    def archive_memoria(self, memoria_id: str) -> bool:
+    def archive_memoria(self, memory_id: str) -> bool:
         """Archive a memory by moving it to the inactive/ subdirectory.
 
         Returns True if successful.
         """
-        rec = self.memory.get(memoria_id)
+        rec = self.memory.get(memory_id)
         if not rec:
             return False
 
@@ -309,7 +309,7 @@ class LifecycleManager:
         try:
             shutil.move(str(source_path), str(target_path))
         except OSError as exc:
-            _log.warning("archive_memoria: move failed for %s: %s", memoria_id, exc)
+            _log.warning("archive_memoria: move failed for %s: %s", memory_id, exc)
             return False
 
         # Step 2: Drop the searchable index rows only (meta/vec/fts) via the
@@ -317,12 +317,12 @@ class LifecycleManager:
         # returns None (matches test expectations); the file is recoverable via
         # reindex. Going through Memory.delete() here would unlink the moved
         # file's original path (harmlessly) but is also heavier than needed.
-        self.memory.store.delete(memoria_id)
+        self.memory.store.delete(memory_id)
 
         # Log action
         self._actions_log.append(
             LifecycleAction(
-                memoria_id=memoria_id,
+                memory_id=memory_id,
                 action="archive",
                 reason="Inactive",
                 timestamp=datetime.now(UTC).isoformat(),

@@ -14,16 +14,16 @@ CREATE TABLE entities (
     UNIQUE(name, type)
 );
 
-CREATE TABLE entity_memoria (
+CREATE TABLE entity_memory (
     entity_id     INTEGER NOT NULL,
-    memoria_id    TEXT NOT NULL,
+    memory_id    TEXT NOT NULL,
     occurrences   INTEGER NOT NULL DEFAULT 1,  -- not really tracked; reserved
     extracted_at  TEXT NOT NULL,
-    UNIQUE(entity_id, memoria_id)
+    UNIQUE(entity_id, memory_id)
 );
 
-CREATE INDEX idx_em_memoria ON entity_memoria(memoria_id);
-CREATE INDEX idx_em_entity  ON entity_memoria(entity_id);
+CREATE INDEX idx_em_memory ON entity_memory(memory_id);
+CREATE INDEX idx_em_entity  ON entity_memory(entity_id);
 CREATE INDEX idx_e_type     ON entities(type);
 CREATE INDEX idx_e_mc       ON entities(mention_count);
 ```
@@ -57,16 +57,16 @@ CREATE TABLE IF NOT EXISTS entities (
     UNIQUE(name, type)
 );
 
-CREATE TABLE IF NOT EXISTS entity_memoria (
+CREATE TABLE IF NOT EXISTS entity_memory (
     entity_id     INTEGER NOT NULL,
-    memoria_id    TEXT NOT NULL,
+    memory_id    TEXT NOT NULL,
     occurrences   INTEGER NOT NULL DEFAULT 1,
     extracted_at  TEXT NOT NULL,
-    UNIQUE(entity_id, memoria_id)
+    UNIQUE(entity_id, memory_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_em_memoria ON entity_memoria(memoria_id);
-CREATE INDEX IF NOT EXISTS idx_em_entity  ON entity_memoria(entity_id);
+CREATE INDEX IF NOT EXISTS idx_em_memory ON entity_memory(memory_id);
+CREATE INDEX IF NOT EXISTS idx_em_entity  ON entity_memory(entity_id);
 CREATE INDEX IF NOT EXISTS idx_e_type     ON entities(type);
 CREATE INDEX IF NOT EXISTS idx_e_mc       ON entities(mention_count);
 
@@ -105,10 +105,10 @@ class EntityMention:
 
 class GraphStore:
     """Entity index. Append-only writes via `record_extraction`,
-    read-only queries via `top_entities`, `entity_memorias`,
+    read-only queries via `top_entities`, `entity_memories`,
     `memoria_entities`.
 
-    All writes idempotent on (memoria_id) — running extraction twice
+    All writes idempotent on (memory_id) — running extraction twice
     on the same memory refreshes the link set without duplicating.
     """
 
@@ -146,7 +146,7 @@ class GraphStore:
     def record_extraction(
         self,
         *,
-        memoria_id: str,
+        memory_id: str,
         memoria_date: str,
         entities: list[dict[str, str]],
         extracted_at: str,
@@ -154,10 +154,10 @@ class GraphStore:
         """Idempotently link a memory to its extracted entities.
 
         Steps under one tx:
-        1. Drop any existing entity_memoria links for this memory
+        1. Drop any existing entity_memory links for this memory
            (so re-extraction reflects current state).
         2. Upsert each (name, type) into `entities`.
-        3. Insert entity_memoria links for all current entities.
+        3. Insert entity_memory links for all current entities.
         4. Update mention_count + first_seen/last_seen for each
            touched entity.
 
@@ -170,13 +170,13 @@ class GraphStore:
             old_eids = [
                 r["entity_id"]
                 for r in cx.execute(
-                    "SELECT entity_id FROM entity_memoria WHERE memoria_id = ?",
-                    (memoria_id,),
+                    "SELECT entity_id FROM entity_memory WHERE memory_id = ?",
+                    (memory_id,),
                 ).fetchall()
             ]
             cx.execute(
-                "DELETE FROM entity_memoria WHERE memoria_id = ?",
-                (memoria_id,),
+                "DELETE FROM entity_memory WHERE memory_id = ?",
+                (memory_id,),
             )
             # Decrement mention_count for old entities (will be
             # re-incremented if they're still present).
@@ -204,10 +204,10 @@ class GraphStore:
                 if eid is None:
                     continue
                 cx.execute(
-                    "INSERT OR IGNORE INTO entity_memoria "
-                    "(entity_id, memoria_id, occurrences, extracted_at) "
+                    "INSERT OR IGNORE INTO entity_memory "
+                    "(entity_id, memory_id, occurrences, extracted_at) "
                     "VALUES (?, ?, 1, ?)",
-                    (eid["id"], memoria_id, extracted_at),
+                    (eid["id"], memory_id, extracted_at),
                 )
                 # Bump mention_count + adjust first/last_seen.
                 cx.execute(
@@ -220,21 +220,21 @@ class GraphStore:
                 n += 1
         return n
 
-    def drop_for_memoria(self, memoria_id: str) -> int:
-        """Called when a memory is deleted. Removes all entity_memoria
+    def drop_for_memoria(self, memory_id: str) -> int:
+        """Called when a memory is deleted. Removes all entity_memory
         edges for it and decrements mention_count on each touched
         entity. Returns the number of edges removed."""
         with self._tx() as cx:
             old = [
                 r["entity_id"]
                 for r in cx.execute(
-                    "SELECT entity_id FROM entity_memoria WHERE memoria_id = ?",
-                    (memoria_id,),
+                    "SELECT entity_id FROM entity_memory WHERE memory_id = ?",
+                    (memory_id,),
                 ).fetchall()
             ]
             cx.execute(
-                "DELETE FROM entity_memoria WHERE memoria_id = ?",
-                (memoria_id,),
+                "DELETE FROM entity_memory WHERE memory_id = ?",
+                (memory_id,),
             )
             for eid in old:
                 cx.execute(
@@ -258,38 +258,38 @@ class GraphStore:
         params.append(limit)
         return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
 
-    def entity_memorias(self, name: str, type_: str | None = None) -> list[str]:
+    def entity_memories(self, name: str, type_: str | None = None) -> list[str]:
         """Memory IDs that mention `name` (and optionally a specific type)."""
         name = name.strip().lower()
         params: tuple[str, ...]
         if type_:
             type_ = type_.strip().lower()
             sql = (
-                "SELECT em.memoria_id FROM entity_memoria em "
+                "SELECT em.memory_id FROM entity_memory em "
                 "JOIN entities e ON e.id = em.entity_id "
                 "WHERE e.name = ? AND e.type = ?"
             )
             params = (name, type_)
         else:
             sql = (
-                "SELECT em.memoria_id FROM entity_memoria em "
+                "SELECT em.memory_id FROM entity_memory em "
                 "JOIN entities e ON e.id = em.entity_id "
                 "WHERE e.name = ?"
             )
             params = (name,)
-        return [r["memoria_id"] for r in self._conn.execute(sql, params).fetchall()]
+        return [r["memory_id"] for r in self._conn.execute(sql, params).fetchall()]
 
-    def memoria_entities(self, memoria_id: str) -> list[dict[str, Any]]:
+    def memoria_entities(self, memory_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT e.name, e.type, e.mention_count "
-            "FROM entity_memoria em JOIN entities e ON e.id = em.entity_id "
-            "WHERE em.memoria_id = ? "
+            "FROM entity_memory em JOIN entities e ON e.id = em.entity_id "
+            "WHERE em.memory_id = ? "
             "ORDER BY e.mention_count DESC",
-            (memoria_id,),
+            (memory_id,),
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_entity_mentions(self, memoria_id: str) -> list[EntityMention]:
+    def get_entity_mentions(self, memory_id: str) -> list[EntityMention]:
         """Return entity mentions for compatibility with analytics callers."""
         return [
             EntityMention(
@@ -297,7 +297,7 @@ class GraphStore:
                 type=row["type"],
                 mention_count=int(row["mention_count"]),
             )
-            for row in self.memoria_entities(memoria_id)
+            for row in self.memoria_entities(memory_id)
         ]
 
     def count_entities(self) -> int:
@@ -306,7 +306,7 @@ class GraphStore:
 
     def stats(self) -> dict[str, int]:
         n_entities = self.count_entities()
-        n_links = self._conn.execute("SELECT COUNT(*) FROM entity_memoria").fetchone()[0]
+        n_links = self._conn.execute("SELECT COUNT(*) FROM entity_memory").fetchone()[0]
         return {"entities": n_entities, "links": n_links}
 
     def record_co_recall(self, ids: list[str]) -> int:

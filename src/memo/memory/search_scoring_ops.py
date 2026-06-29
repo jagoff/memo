@@ -46,7 +46,7 @@ class _SearchScoringMixin(_MemoryBase):
             # Score them by how many distinct query entities they match
             memoria_counts: dict[str, int] = {}
             for ent_name in query_entities:
-                for mid in self.graph.entity_memorias(ent_name):
+                for mid in self.graph.entity_memories(ent_name):
                     memoria_counts[mid] = memoria_counts.get(mid, 0) + 1
 
             if not memoria_counts:
@@ -131,7 +131,7 @@ class _SearchScoringMixin(_MemoryBase):
             candidate_ids: list[str] = []
             seen_candidates: set[str] = set(existing_ids)
             for entity_name in entity_names[:5]:
-                for mem_id in self.graph.entity_memorias(entity_name):
+                for mem_id in self.graph.entity_memories(entity_name):
                     if mem_id not in seen_candidates:
                         seen_candidates.add(mem_id)
                         candidate_ids.append(mem_id)
@@ -204,7 +204,7 @@ class _SearchScoringMixin(_MemoryBase):
 
         for pair in pairs:
             rel = (pair.relationship or "").lower()
-            a, b = pair.memoria_id_a, pair.memoria_id_b
+            a, b = pair.memory_id_a, pair.memory_id_b
             a_ts, b_ts = id_to_updated.get(a, ""), id_to_updated.get(b, "")
             if "contrad" in rel:
                 # Only demote when BOTH sides carry a timestamp — otherwise we

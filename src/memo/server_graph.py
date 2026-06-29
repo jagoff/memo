@@ -92,7 +92,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memo_graph_export(
         format: str = "dot",
-        include_memorias: bool = False,
+        include_memories: bool = False,
     ) -> dict[str, Any]:
         """Export the entity graph for visualization.
 
@@ -101,11 +101,11 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Args:
             format: Either "dot" for Graphviz DOT format or "json" for web UI.
-            include_memorias: If True and format is "json", include memory IDs in edge data.
+            include_memories: If True and format is "json", include memory IDs in edge data.
         """
         if format == "dot":
             dot = memory.navigator.export_graphviz()
             return {"format": "dot", "content": dot}
         else:
-            data = memory.navigator.export_json(include_memorias=include_memorias)
+            data = memory.navigator.export_json(include_memories=include_memories)
             return {"format": "json", "data": data}

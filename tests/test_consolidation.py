@@ -61,14 +61,14 @@ def test_propose_merge_evolution_cluster(consolidator, mock_memory):
     assert proposal is not None
     assert proposal.merge_strategy == "keep_latest"
     assert proposal.cluster_id == 1
-    assert len(proposal.memoria_ids) == 2
+    assert len(proposal.memory_ids) == 2
 
 
 def test_apply_merge_dry_run(consolidator):
     """Test merge application in dry-run mode."""
     proposal = MergeProposal(
         cluster_id=1,
-        memoria_ids=["a", "b"],
+        memory_ids=["a", "b"],
         merged_title="Merged",
         merged_body="Merged content",
         merge_strategy="synthesis",
@@ -98,7 +98,7 @@ def test_apply_merge_real(consolidator, mock_memory):
 
     proposal = MergeProposal(
         cluster_id=1,
-        memoria_ids=[rec1.id, rec2.id],
+        memory_ids=[rec1.id, rec2.id],
         merged_title="Merged Title",
         merged_body="Merged content",
         merge_strategy="synthesis",
@@ -175,7 +175,7 @@ def test_merge_proposal_dataclass():
     """Test MergeProposal dataclass structure."""
     p = MergeProposal(
         cluster_id=1,
-        memoria_ids=["a", "b"],
+        memory_ids=["a", "b"],
         merged_title="Merged",
         merged_body="Content",
         merge_strategy="synthesis",
@@ -184,7 +184,7 @@ def test_merge_proposal_dataclass():
     )
     assert p.cluster_id == 1
     assert p.merge_strategy == "synthesis"
-    assert len(p.memoria_ids) == 2
+    assert len(p.memory_ids) == 2
 
 
 def test_consolidation_result_dataclass():

@@ -67,7 +67,7 @@ class Backlink:
 class LinkSuggestion:
     """A suggestion to link to an existing memory."""
 
-    memoria_id: str
+    memory_id: str
     title: str
     similarity: float
     reason: str  # Why this link is suggested
@@ -132,11 +132,11 @@ class CrossReferenceIndex:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_id)")
         conn.commit()
 
-    def index_wikilinks(self, memoria_id: str, content: str) -> list[Wikilink]:
+    def index_wikilinks(self, memory_id: str, content: str) -> list[Wikilink]:
         """Detect and index wikilinks in memory content.
 
         Args:
-            memoria_id: The ID of the memory containing the links.
+            memory_id: The ID of the memory containing the links.
             content: The content to parse for wikilinks.
 
         Returns:
@@ -171,7 +171,7 @@ class CrossReferenceIndex:
                 """,
                 [
                     (
-                        memoria_id,
+                        memory_id,
                         link.target,
                         content[max(0, link.position - 50) : link.position + 50],
                     )
@@ -181,11 +181,11 @@ class CrossReferenceIndex:
 
         return wikilinks
 
-    def get_backlinks(self, memoria_id: str) -> list[Backlink]:
+    def get_backlinks(self, memory_id: str) -> list[Backlink]:
         """Get all memories that reference this one.
 
         Args:
-            memoria_id: The memory ID to find backlinks for.
+            memory_id: The memory ID to find backlinks for.
 
         Returns:
             List of Backlink objects.
@@ -193,7 +193,7 @@ class CrossReferenceIndex:
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT source_id, target_id, link_type, context FROM backlinks WHERE target_id = ?",
-            (memoria_id,),
+            (memory_id,),
         ).fetchall()
 
         backlinks = []
@@ -210,11 +210,11 @@ class CrossReferenceIndex:
 
         return backlinks
 
-    def get_outlinks(self, memoria_id: str) -> list[Wikilink]:
+    def get_outlinks(self, memory_id: str) -> list[Wikilink]:
         """Get all memories that this one references.
 
         Args:
-            memoria_id: The memory ID to find outlinks for.
+            memory_id: The memory ID to find outlinks for.
 
         Returns:
             List of Wikilink objects.
@@ -222,7 +222,7 @@ class CrossReferenceIndex:
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT target_id, link_type, context FROM backlinks WHERE source_id = ?",
-            (memoria_id,),
+            (memory_id,),
         ).fetchall()
 
         outlinks = []
@@ -237,15 +237,15 @@ class CrossReferenceIndex:
 
         return outlinks
 
-    def remove_memoria(self, memoria_id: str) -> None:
+    def remove_memoria(self, memory_id: str) -> None:
         """Remove all links for a memory (when deleted).
 
         Args:
-            memoria_id: The memory ID to remove.
+            memory_id: The memory ID to remove.
         """
         with self._tx() as conn:
-            conn.execute("DELETE FROM backlinks WHERE source_id = ?", (memoria_id,))
-            conn.execute("DELETE FROM backlinks WHERE target_id = ?", (memoria_id,))
+            conn.execute("DELETE FROM backlinks WHERE source_id = ?", (memory_id,))
+            conn.execute("DELETE FROM backlinks WHERE target_id = ?", (memory_id,))
 
     def reset(self) -> None:
         """Clear the whole cross-reference index (all backlinks).
@@ -305,7 +305,7 @@ class LinkSuggester:
             if hit.score > 0.7:  # Only suggest high similarity
                 suggestions.append(
                     LinkSuggestion(
-                        memoria_id=hit.id,
+                        memory_id=hit.id,
                         title=hit.title,
                         similarity=hit.score,
                         reason=f"High semantic similarity ({hit.score:.2f})",
@@ -316,29 +316,29 @@ class LinkSuggester:
         # Extract entities from content (would need LLM, placeholder for now)
         # For now, skip entity-based suggestions
 
-        # Deduplicate by memoria_id
+        # Deduplicate by memory_id
         seen = set()
         unique_suggestions = []
         for s in suggestions:
-            if s.memoria_id not in seen:
-                seen.add(s.memoria_id)
+            if s.memory_id not in seen:
+                seen.add(s.memory_id)
                 unique_suggestions.append(s)
 
         return unique_suggestions[:limit]
 
-    def format_wikilink(self, memoria_id: str, title: str | None = None) -> str:
+    def format_wikilink(self, memory_id: str, title: str | None = None) -> str:
         """Format a memory ID as a wikilink.
 
         Args:
-            memoria_id: The memory ID to link to.
-            title: Optional display title (defaults to memoria_id).
+            memory_id: The memory ID to link to.
+            title: Optional display title (defaults to memory_id).
 
         Returns:
             Wikilink string like [[memory-id]] or [[memory-id|Title]].
         """
-        if title and title != memoria_id:
-            return f"[[{memoria_id}|{title}]]"
-        return f"[[{memoria_id}]]"
+        if title and title != memory_id:
+            return f"[[{memory_id}|{title}]]"
+        return f"[[{memory_id}]]"
 
 
 __all__ = [

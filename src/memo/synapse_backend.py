@@ -273,7 +273,7 @@ class MemoSynapseBackend:
             evidence_paths=tuple(evidence_paths),
             metadata={
                 "memo_type": memo_type,
-                "memoria_id": rec.id,
+                "memory_id": rec.id,
                 "path": rec.path,
                 "tags": list(rec.tags),
                 "provenance": _extract_provenance(extra),

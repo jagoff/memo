@@ -51,33 +51,33 @@ def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memo_multimodal_add_image(
         image_path: str,
-        memoria_id: str | None = None,
+        memory_id: str | None = None,
     ) -> dict[str, str]:
         """Add image to multi-modal corpus.
 
         Args:
             image_path: Path to the image file.
-            memoria_id: Optional associated memory ID.
+            memory_id: Optional associated memory ID.
         """
         from pathlib import Path
 
-        content = memory.multimodal.add_image(Path(image_path), memoria_id)
+        content = memory.multimodal.add_image(Path(image_path), memory_id)
         return {"content_id": content.id, "modality": content.modality}
 
     @server.tool()
     def memo_multimodal_add_audio(
         audio_path: str,
-        memoria_id: str | None = None,
+        memory_id: str | None = None,
     ) -> dict[str, str]:
         """Add audio to multi-modal corpus.
 
         Args:
             audio_path: Path to the audio file.
-            memoria_id: Optional associated memory ID.
+            memory_id: Optional associated memory ID.
         """
         from pathlib import Path
 
-        content = memory.multimodal.add_audio(Path(audio_path), memoria_id)
+        content = memory.multimodal.add_audio(Path(audio_path), memory_id)
         return {"content_id": content.id, "modality": content.modality}
 
     @server.tool()

@@ -97,7 +97,7 @@ def clone_bootstrap(url: str, dest: Path) -> dict:
     if not memorias.exists():
         raise SyncGitError(f"cloned repo has no memorias/ dir at {memorias}")
     n_md = len(list(memorias.rglob("*.md")))
-    return {"cloned": str(dest), "memorias_dir": str(memorias), "memorias": n_md}
+    return {"cloned": str(dest), "memories_dir": str(memorias), "memories": n_md}
 
 
 def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> dict:
@@ -121,8 +121,8 @@ def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> di
     if git_ok and n_md > 0:
         summary = {
             "cloned": str(dest),
-            "memorias_dir": str(memorias),
-            "memorias": n_md,
+            "memories_dir": str(memorias),
+            "memories": n_md,
             "reused": True,
         }
     elif git_ok:

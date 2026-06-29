@@ -342,7 +342,7 @@ def dream_run(
                             # verdict actually steers ranking: lower its
                             # confidence (health-score multiplier, default-on)
                             # instead of marking "both kept" and changing nothing.
-                            older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
+                            older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
                             if _evo_conf < 1.0:
                                 try:
                                     mem.store.set_confidence_batch([(older, _evo_conf)])
@@ -359,8 +359,8 @@ def dream_run(
                         continue
                     if "contrad" not in rel:
                         continue
-                    older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
-                    contradicted_ids.extend([pair.memoria_id_a, pair.memoria_id_b])
+                    older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
+                    contradicted_ids.extend([pair.memory_id_a, pair.memory_id_b])
                     if not dry_run:
                         ok = mem.lifecycle.archive_memoria(older)
                         if ok:

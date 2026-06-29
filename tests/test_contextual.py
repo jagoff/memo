@@ -173,14 +173,14 @@ def test_contextual_recall_record_click(contextual_recall, mock_memory):
 def test_contextual_search_result_dataclass():
     """Test ContextualSearchResult dataclass structure."""
     result = ContextualSearchResult(
-        memoria_id="abc123",
+        memory_id="abc123",
         title="Test Title",
         original_score=0.8,
         contextual_score=0.9,
         boost_factors={"entity_overlap": 0.1},
         snippet="Test snippet",
     )
-    assert result.memoria_id == "abc123"
+    assert result.memory_id == "abc123"
     assert result.contextual_score > result.original_score
     assert "entity_overlap" in result.boost_factors
 

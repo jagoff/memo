@@ -122,7 +122,7 @@ def entity(name: str, type_: str | None, as_json: bool) -> None:
     """Memories that mention an entity."""
 
     mem = _get_memory(Config.from_env())
-    ids = mem.graph.entity_memorias(name, type_=type_)
+    ids = mem.graph.entity_memories(name, type_=type_)
     if as_json:
         click.echo(json.dumps(ids, indent=2))
         return

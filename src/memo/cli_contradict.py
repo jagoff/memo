@@ -190,8 +190,8 @@ def contradict_list(
             str(p.pair_id),
             p.relationship,
             f"{p.confidence:.2f}",
-            p.memoria_id_a[:8],
-            p.memoria_id_b[:8],
+            p.memory_id_a[:8],
+            p.memory_id_b[:8],
             _short(p.rationale, 70),
         )
     console.print(table)
@@ -276,8 +276,8 @@ def contradict_triage(
     console.print(f"[bold]Walking {len(pairs)} pair(s).[/bold] Type [cyan]?[/cyan] for help.")
 
     for pair in pairs:
-        rec_a = mem.get(pair.memoria_id_a)
-        rec_b = mem.get(pair.memoria_id_b)
+        rec_a = mem.get(pair.memory_id_a)
+        rec_b = mem.get(pair.memory_id_b)
         if rec_a is None or rec_b is None:
             mem.contradict_store.resolve(
                 pair.pair_id,

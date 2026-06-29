@@ -50,8 +50,8 @@ def test_upsert_open_inserts_and_returns_id(store):
     assert pid > 0
     rows = store.list_open()
     assert len(rows) == 1
-    assert rows[0].memoria_id_a == "aaa"
-    assert rows[0].memoria_id_b == "bbb"
+    assert rows[0].memory_id_a == "aaa"
+    assert rows[0].memory_id_b == "bbb"
     assert rows[0].relationship == "contradiction"
     assert rows[0].confidence == 0.9
     assert rows[0].status == "open"
@@ -205,8 +205,8 @@ def _stage_classify_pair(monkeypatch, verdict: Contradiction | None):
         # Update the verdict's IDs to the actual pair so the store
         # gets canonicalized identifiers (mirrors real classifier).
         return Contradiction(
-            memoria_id_a=r1.id,
-            memoria_id_b=r2.id,
+            memory_id_a=r1.id,
+            memory_id_b=r2.id,
             title_a=r1.title,
             title_b=r2.title,
             date_a=r1.updated,
@@ -226,8 +226,8 @@ def test_scan_persists_contradiction_pairs(mem_with_stub_embed, monkeypatch):
     mem.save(content="alpha actualizado — migré a MLX", title="Stack B", type_="decision")
 
     verdict = Contradiction(
-        memoria_id_a="x",
-        memoria_id_b="y",
+        memory_id_a="x",
+        memory_id_b="y",
         title_a="",
         title_b="",
         date_a="",
@@ -258,8 +258,8 @@ def test_scan_without_persistence_only_reports_matches(mem_with_stub_embed, monk
     mem.save(content="alpha updated", title="Stack B", type_="decision")
 
     verdict = Contradiction(
-        memoria_id_a="x",
-        memoria_id_b="y",
+        memory_id_a="x",
+        memory_id_b="y",
         title_a="",
         title_b="",
         date_a="",
@@ -295,8 +295,8 @@ def test_scan_emits_anomaly_for_new_contradiction(mem_with_stub_embed, monkeypat
     mem.save(content="alpha updated", title="Stack B", type_="decision")
 
     verdict = Contradiction(
-        memoria_id_a="x",
-        memoria_id_b="y",
+        memory_id_a="x",
+        memory_id_b="y",
         title_a="",
         title_b="",
         date_a="",
@@ -341,8 +341,8 @@ def test_scan_skips_pairs_already_resolved(mem_with_stub_embed, monkeypatch):
     mem.contradict_store.resolve(pid, "dismissed", note="seeded")
 
     verdict = Contradiction(
-        memoria_id_a="x",
-        memoria_id_b="y",
+        memory_id_a="x",
+        memory_id_b="y",
         title_a="",
         title_b="",
         date_a="",
@@ -372,8 +372,8 @@ def test_scan_respects_confidence_threshold(mem_with_stub_embed, monkeypatch):
     mem.save(content="alpha 2", title="B", type_="note")
 
     low_conf = Contradiction(
-        memoria_id_a="x",
-        memoria_id_b="y",
+        memory_id_a="x",
+        memory_id_b="y",
         title_a="",
         title_b="",
         date_a="",
@@ -450,8 +450,8 @@ def _rec(rid: str, updated: str, score: float):
 def _evolution_pair(older_id: str, newer_id: str) -> PairRecord:
     return PairRecord(
         pair_id=1,
-        memoria_id_a=older_id,
-        memoria_id_b=newer_id,
+        memory_id_a=older_id,
+        memory_id_b=newer_id,
         relationship="evolution",
         confidence=0.95,
         rationale="later note supersedes earlier",
@@ -498,8 +498,8 @@ def test_evolution_penalty_skips_when_newer_absent(mem_with_stub_embed, monkeypa
 def test_pair_record_dataclass():
     rec = PairRecord(
         pair_id=1,
-        memoria_id_a="aaa",
-        memoria_id_b="bbb",
+        memory_id_a="aaa",
+        memory_id_b="bbb",
         relationship="contradiction",
         confidence=0.9,
         rationale="why",

@@ -18,7 +18,7 @@ from memo.memory import Memory
 def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memo_links_backlinks(
-        memoria_id: str,
+        memory_id: str,
     ) -> list[dict[str, Any]]:
         """Show all memories that reference this one.
 
@@ -26,14 +26,14 @@ def register(server: FastMCP, memory: Memory) -> None:
         Useful for understanding how a memory is connected to others.
 
         Args:
-            memoria_id: The memory ID to find backlinks for.
+            memory_id: The memory ID to find backlinks for.
         """
-        backlinks = memory.crossref.get_backlinks(memoria_id)
+        backlinks = memory.crossref.get_backlinks(memory_id)
         return [dataclasses.asdict(b) for b in backlinks]
 
     @server.tool()
     def memo_links_outlinks(
-        memoria_id: str,
+        memory_id: str,
     ) -> list[dict[str, Any]]:
         """Show all memories that this one references.
 
@@ -41,9 +41,9 @@ def register(server: FastMCP, memory: Memory) -> None:
         Useful for understanding what a memory connects to.
 
         Args:
-            memoria_id: The memory ID to find outlinks for.
+            memory_id: The memory ID to find outlinks for.
         """
-        outlinks = memory.crossref.get_outlinks(memoria_id)
+        outlinks = memory.crossref.get_outlinks(memory_id)
         return [dataclasses.asdict(o) for o in outlinks]
 
     @server.tool()
@@ -75,7 +75,7 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @server.tool()
     def memo_links_format(
-        memoria_id: str,
+        memory_id: str,
         title: str | None = None,
     ) -> str:
         """Format a memory ID as a wikilink.
@@ -84,7 +84,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         Use this to insert links into memory content.
 
         Args:
-            memoria_id: The memory ID to format as a wikilink.
+            memory_id: The memory ID to format as a wikilink.
             title: Optional display title for the link.
         """
-        return memory.link_suggester.format_wikilink(memoria_id, title)
+        return memory.link_suggester.format_wikilink(memory_id, title)

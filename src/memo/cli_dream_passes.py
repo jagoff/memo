@@ -78,9 +78,9 @@ def _build_orientation(mem: Memory) -> dict:
             "SELECT COUNT(*) AS n FROM meta m "
             "WHERE m.type != 'reference' "
             "AND NOT EXISTS ("
-            "  SELECT 1 FROM entity_memoria em "
+            "  SELECT 1 FROM entity_memory em "
             "  JOIN entities e ON e.id = em.entity_id "
-            "  WHERE em.memoria_id = m.id"
+            "  WHERE em.memory_id = m.id"
             ")"
         ).fetchone()
         result["unindexed_entities"] = int(row["n"]) if row else 0

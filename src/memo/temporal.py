@@ -90,8 +90,8 @@ Output ONLY the JSON, no markdown fences, no commentary."""
 class Contradiction:
     """A detected contradiction between two memories."""
 
-    memoria_id_a: str
-    memoria_id_b: str
+    memory_id_a: str
+    memory_id_b: str
     title_a: str
     title_b: str
     date_a: str
@@ -105,7 +105,7 @@ class Contradiction:
 class TimelineEvent:
     """One event in an entity's temporal timeline."""
 
-    memoria_id: str
+    memory_id: str
     title: str
     date: str
     type: str
@@ -163,13 +163,13 @@ class TemporalAnalyzer:
             List of detected contradictions, sorted by confidence descending.
         """
         # Get memories mentioning this entity
-        memoria_ids = self.memory.graph.entity_memorias(entity_name, entity_type)
-        if len(memoria_ids) < 2:
+        memory_ids = self.memory.graph.entity_memories(entity_name, entity_type)
+        if len(memory_ids) < 2:
             return []
 
         # Fetch the actual records
         records = []
-        for mid in memoria_ids[:50]:  # Cap to avoid explosion
+        for mid in memory_ids[:50]:  # Cap to avoid explosion
             rec = self.memory.get(mid)
             if rec:
                 records.append(rec)
@@ -262,8 +262,8 @@ Body: {(r2.body or "")[:1000]}
             return None
 
         return Contradiction(
-            memoria_id_a=r1.id,
-            memoria_id_b=r2.id,
+            memory_id_a=r1.id,
+            memory_id_b=r2.id,
             title_a=r1.title,
             title_b=r2.title,
             date_a=r1.updated,
@@ -279,15 +279,15 @@ Body: {(r2.body or "")[:1000]}
         entity_type: str | None = None,
     ) -> EntityTimeline | None:
         """Build a chronological timeline of all memories mentioning an entity."""
-        memoria_ids = self.memory.graph.entity_memorias(entity_name, entity_type)
-        if not memoria_ids:
+        memory_ids = self.memory.graph.entity_memories(entity_name, entity_type)
+        if not memory_ids:
             return None
 
         events: list[TimelineEvent] = []
         first_seen = None
         last_seen = None
 
-        for mid in memoria_ids:
+        for mid in memory_ids:
             rec = self.memory.get(mid)
             if not rec:
                 continue
@@ -295,7 +295,7 @@ Body: {(r2.body or "")[:1000]}
             snippet = (rec.body or "")[:200]
             events.append(
                 TimelineEvent(
-                    memoria_id=rec.id,
+                    memory_id=rec.id,
                     title=rec.title,
                     date=rec.updated,
                     type=rec.type,

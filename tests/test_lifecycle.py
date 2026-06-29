@@ -235,12 +235,12 @@ def test_get_lifecycle_report(lifecycle_manager, mock_memory):
 def test_lifecycle_action_dataclass():
     """Test LifecycleAction dataclass structure."""
     action = LifecycleAction(
-        memoria_id="abc123",
+        memory_id="abc123",
         action="archive",
         reason="Inactive",
         timestamp="2026-01-01T00:00:00Z",
     )
-    assert action.memoria_id == "abc123"
+    assert action.memory_id == "abc123"
     assert action.action == "archive"
     assert action.reason == "Inactive"
 

@@ -72,8 +72,8 @@ def test_sync_clone_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     def _fake_clone(url: str, dest_path: Path) -> dict:
         return {
             "cloned": str(dest_path),
-            "memorias": 7,
-            "memorias_dir": str(dest_path / "memories"),
+            "memories": 7,
+            "memories_dir": str(dest_path / "memories"),
         }
 
     monkeypatch.setattr("memo.sync_git.clone_bootstrap", _fake_clone)

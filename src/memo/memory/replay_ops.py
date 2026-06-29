@@ -164,11 +164,11 @@ class _ReplayOpsMixin(_MemoryBase):
             repo_prefix = "memo://repo/"
 
             if uri.startswith(memoria_prefix):
-                memoria_id = uri[len(memoria_prefix) :].strip()
-                if not memoria_id:
+                memory_id = uri[len(memoria_prefix) :].strip()
+                if not memory_id:
                     return payload("missing", "memo://memoria URI did not include an id.")
                 try:
-                    rec = self.get(memoria_id)
+                    rec = self.get(memory_id)
                 except AmbiguousIdError as exc:
                     return payload(
                         "error",

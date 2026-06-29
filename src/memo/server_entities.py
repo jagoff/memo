@@ -59,4 +59,4 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_entity(name: str, type: str | None = None) -> list[str]:
         """Memory IDs that mention `name` (and optionally a specific
         entity type). Returns a list of full UUIDs."""
-        return memory.graph.entity_memorias(name, type_=type)
+        return memory.graph.entity_memories(name, type_=type)

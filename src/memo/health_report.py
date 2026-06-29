@@ -94,7 +94,7 @@ def build_health_report(memory: Memory, *, probe_embedder: bool = False) -> dict
     cfg = memory.cfg
     conn = memory.store._conn
 
-    memorias = _count(conn, "meta") or 0
+    memories = _count(conn, "meta") or 0
     expected_dims = int(getattr(cfg, "embedder_dims", 0) or 0)
     vec_dims = _vec_dims(memory)
     dims_ok = vec_dims is None or vec_dims == expected_dims
@@ -105,14 +105,14 @@ def build_health_report(memory: Memory, *, probe_embedder: bool = False) -> dict
     feedback = _count(conn, "source_feedback")
 
     warnings: list[str] = []
-    if memorias == 0:
-        warnings.append("Corpus is empty — nothing to retrieve. Save or ingest memorias.")
+    if memories == 0:
+        warnings.append("Corpus is empty — nothing to retrieve. Save or ingest memories.")
     if not dims_ok:
         warnings.append(
             f"Vector index dims ({vec_dims}) != embedder dims ({expected_dims}). "
             "Reindex with `memo reindex` after a model change."
         )
-    if memorias > 0 and tracked == 0:
+    if memories > 0 and tracked == 0:
         warnings.append(
             "Health scores not populated — confidence/ROI ranking is neutral. "
             "Run `memo dream run` or `memo contradict scan`."
@@ -120,7 +120,7 @@ def build_health_report(memory: Memory, *, probe_embedder: bool = False) -> dict
 
     report: dict[str, Any] = {
         "corpus": {
-            "memorias": memorias,
+            "memories": memories,
             "archived": _archived_count(memory),
             "db_size_bytes": _db_size_bytes(memory),
             "db_path": str(getattr(cfg, "db_path", "")),

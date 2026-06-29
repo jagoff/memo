@@ -232,10 +232,10 @@ def usage_log_path(state_dir: Path) -> Path:
     return state_dir / "usage.log"
 
 
-def append_usage_log(state_dir: Path, memoria_id: str, *, cap: int = 500) -> None:
+def append_usage_log(state_dir: Path, memory_id: str, *, cap: int = 500) -> None:
     entry = {
         "ts": datetime.now(UTC).isoformat(timespec="seconds"),
-        "id": (memoria_id or "")[:8],
+        "id": (memory_id or "")[:8],
     }
     _write_jsonl_entry(usage_log_path(state_dir), entry, cap=cap, size_limit=1024 * 100)
 

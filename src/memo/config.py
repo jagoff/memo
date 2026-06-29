@@ -424,7 +424,7 @@ class Config(BaseModel):
 
     @property
     def graph_db(self) -> Path:
-        """Knowledge-graph DB (entities + entity_memoria edges).
+        """Knowledge-graph DB (entities + entity_memory edges).
         Collapses onto `db_path` when `single_db` is set."""
         return self.db_path if self.single_db else self.state_dir / "graph.db"
 

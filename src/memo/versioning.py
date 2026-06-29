@@ -28,7 +28,7 @@ class Version:
     """A version of a memory."""
 
     version_id: int
-    memoria_id: str
+    memory_id: str
     timestamp: str
     title: str
     type: str
@@ -41,7 +41,7 @@ class Version:
 class DiffResult:
     """Result of comparing two versions."""
 
-    memoria_id: str
+    memory_id: str
     version_a: int
     version_b: int
     unified_diff: str
@@ -95,22 +95,22 @@ class VersionStore:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS versions (
                 version_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                memoria_id TEXT NOT NULL,
+                memory_id TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 title TEXT NOT NULL,
                 type TEXT NOT NULL,
                 tags TEXT NOT NULL,
                 body TEXT NOT NULL,
                 reason TEXT,
-                UNIQUE(version_id, memoria_id)
+                UNIQUE(version_id, memory_id)
             )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_versions_memoria ON versions(memoria_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_versions_memoria ON versions(memory_id)")
         conn.commit()
 
     def save_version(
         self,
-        memoria_id: str,
+        memory_id: str,
         title: str,
         type: str,
         tags: list[str],
@@ -122,11 +122,11 @@ class VersionStore:
             cursor = conn.execute(
                 """
                 INSERT INTO versions
-                (memoria_id, timestamp, title, type, tags, body, reason)
+                (memory_id, timestamp, title, type, tags, body, reason)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    memoria_id,
+                    memory_id,
                     datetime.now(UTC).isoformat(),
                     title,
                     type,
@@ -138,13 +138,13 @@ class VersionStore:
         # An INSERT always sets lastrowid; coerce the Optional for the typed API.
         return cursor.lastrowid if cursor.lastrowid is not None else 0
 
-    def get_versions(self, memoria_id: str, limit: int = 10) -> list[Version]:
+    def get_versions(self, memory_id: str, limit: int = 10) -> list[Version]:
         """Get all versions of a memory, most recent first."""
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT version_id, memoria_id, timestamp, title, type, tags, body, reason"
-            " FROM versions WHERE memoria_id = ? ORDER BY version_id DESC LIMIT ?",
-            (memoria_id, limit),
+            "SELECT version_id, memory_id, timestamp, title, type, tags, body, reason"
+            " FROM versions WHERE memory_id = ? ORDER BY version_id DESC LIMIT ?",
+            (memory_id, limit),
         ).fetchall()
 
         versions = []
@@ -152,7 +152,7 @@ class VersionStore:
             versions.append(
                 Version(
                     version_id=row["version_id"],
-                    memoria_id=row["memoria_id"],
+                    memory_id=row["memory_id"],
                     timestamp=row["timestamp"],
                     title=row["title"],
                     type=row["type"],
@@ -163,13 +163,13 @@ class VersionStore:
             )
         return versions
 
-    def get_version(self, memoria_id: str, version_id: int) -> Version | None:
+    def get_version(self, memory_id: str, version_id: int) -> Version | None:
         """Get a specific version of a memory."""
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT version_id, memoria_id, timestamp, title, type, tags, body, reason"
-            " FROM versions WHERE memoria_id = ? AND version_id = ?",
-            (memoria_id, version_id),
+            "SELECT version_id, memory_id, timestamp, title, type, tags, body, reason"
+            " FROM versions WHERE memory_id = ? AND version_id = ?",
+            (memory_id, version_id),
         ).fetchone()
 
         if not row:
@@ -177,7 +177,7 @@ class VersionStore:
 
         return Version(
             version_id=row["version_id"],
-            memoria_id=row["memoria_id"],
+            memory_id=row["memory_id"],
             timestamp=row["timestamp"],
             title=row["title"],
             type=row["type"],
@@ -186,10 +186,10 @@ class VersionStore:
             reason=row["reason"],
         )
 
-    def delete_versions(self, memoria_id: str) -> None:
+    def delete_versions(self, memory_id: str) -> None:
         """Delete all versions for a memory."""
         with self._tx() as conn:
-            conn.execute("DELETE FROM versions WHERE memoria_id = ?", (memoria_id,))
+            conn.execute("DELETE FROM versions WHERE memory_id = ?", (memory_id,))
 
     def close(self) -> None:
         """Close the backing SQLite connection."""
@@ -214,7 +214,7 @@ class VersionManager:
 
     def track_update(
         self,
-        memoria_id: str,
+        memory_id: str,
         title: str,
         type: str,
         tags: list[str],
@@ -222,16 +222,16 @@ class VersionManager:
         reason: str | None = None,
     ) -> int:
         """Track a memory update by saving a new version."""
-        return self.version_store.save_version(memoria_id, title, type, tags, body, reason)
+        return self.version_store.save_version(memory_id, title, type, tags, body, reason)
 
     def diff_versions(
         self,
-        memoria_id: str,
+        memory_id: str,
         version_a: int | None = None,
         version_b: int | None = None,
     ) -> DiffResult | None:
         """Generate a diff between two versions of a memory."""
-        versions = self.version_store.get_versions(memoria_id, limit=10)
+        versions = self.version_store.get_versions(memory_id, limit=10)
 
         if not versions:
             return None
@@ -268,7 +268,7 @@ class VersionManager:
         ]
 
         return DiffResult(
-            memoria_id=memoria_id,
+            memory_id=memory_id,
             version_a=v_a.version_id,
             version_b=v_b.version_id,
             unified_diff=unified_diff,
@@ -277,17 +277,17 @@ class VersionManager:
 
     def rollback_to_version(
         self,
-        memoria_id: str,
+        memory_id: str,
         version_id: int,
         reason: str | None = None,
     ) -> bool:
         """Rollback a memory to a previous version."""
-        version = self.version_store.get_version(memoria_id, version_id)
+        version = self.version_store.get_version(memory_id, version_id)
         if not version:
             return False
 
         self.memory.update(
-            memoria_id,
+            memory_id,
             title=version.title,
             content=version.body,
             type_=version.type,
@@ -296,9 +296,9 @@ class VersionManager:
 
         return True
 
-    def get_version_history(self, memoria_id: str, limit: int = 10) -> list[Version]:
+    def get_version_history(self, memory_id: str, limit: int = 10) -> list[Version]:
         """Get the version history for a memory."""
-        return self.version_store.get_versions(memoria_id, limit=limit)
+        return self.version_store.get_versions(memory_id, limit=limit)
 
     def close(self) -> None:
         """Close owned resources."""

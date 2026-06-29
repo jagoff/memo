@@ -41,7 +41,7 @@ class MultiModalContent:
     """Multi-modal content with embedding."""
 
     id: str
-    memoria_id: str | None  # If associated with a memory
+    memory_id: str | None  # If associated with a memory
     modality: str
     content: bytes  # Binary data (image, audio, video)
     embedding: list[float]  # Universal embedding
@@ -83,7 +83,7 @@ class MultiModalStore:
                     content_bytes = base64.b64decode(cdata["content"])
                     self._contents[cid] = MultiModalContent(
                         id=cid,
-                        memoria_id=cdata["memoria_id"],
+                        memory_id=cdata["memory_id"],
                         modality=cdata["modality"],
                         content=content_bytes,
                         embedding=cdata["embedding"],
@@ -101,7 +101,7 @@ class MultiModalStore:
             for cid, content in self._contents.items():
                 data[cid] = {
                     "id": content.id,
-                    "memoria_id": content.memoria_id,
+                    "memory_id": content.memory_id,
                     "modality": content.modality,
                     "content": base64.b64encode(content.content).decode("utf-8"),
                     "embedding": content.embedding,
@@ -119,7 +119,7 @@ class MultiModalStore:
         content: bytes,
         modality: str,
         embedding: list[float],
-        memoria_id: str | None = None,
+        memory_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MultiModalContent:
         """Add multi-modal content.
@@ -128,7 +128,7 @@ class MultiModalStore:
             content: Binary content data.
             modality: Modality type.
             embedding: Universal embedding.
-            memoria_id: Associated memory ID (optional).
+            memory_id: Associated memory ID (optional).
             metadata: Additional metadata.
 
         Returns:
@@ -139,7 +139,7 @@ class MultiModalStore:
         cid = str(uuid.uuid4())
         mmc = MultiModalContent(
             id=cid,
-            memoria_id=memoria_id,
+            memory_id=memory_id,
             modality=modality,
             content=content,
             embedding=embedding,
@@ -213,16 +213,16 @@ class MultiModalStore:
 
         return dot / (mag_a * mag_b)
 
-    def list_by_memoria(self, memoria_id: str) -> list[MultiModalContent]:
+    def list_by_memoria(self, memory_id: str) -> list[MultiModalContent]:
         """List all content associated with a memory.
 
         Args:
-            memoria_id: The memory ID.
+            memory_id: The memory ID.
 
         Returns:
             List of MultiModalContent.
         """
-        return [c for c in self._contents.values() if c.memoria_id == memoria_id]
+        return [c for c in self._contents.values() if c.memory_id == memory_id]
 
     def delete_content(self, content_id: str) -> bool:
         """Delete content.
@@ -435,14 +435,14 @@ class MultiModalManager:
     def add_image(
         self,
         image_path: Path,
-        memoria_id: str | None = None,
+        memory_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MultiModalContent:
         """Add an image to the multi-modal corpus.
 
         Args:
             image_path: Path to the image.
-            memoria_id: Associated memory ID.
+            memory_id: Associated memory ID.
             metadata: Additional metadata.
 
         Returns:
@@ -455,21 +455,21 @@ class MultiModalManager:
             content=image_bytes,
             modality=Modality.IMAGE.value,
             embedding=embedding,
-            memoria_id=memoria_id,
+            memory_id=memory_id,
             metadata=metadata or {"filename": image_path.name},
         )
 
     def add_audio(
         self,
         audio_path: Path,
-        memoria_id: str | None = None,
+        memory_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MultiModalContent:
         """Add audio to the multi-modal corpus.
 
         Args:
             audio_path: Path to the audio.
-            memoria_id: Associated memory ID.
+            memory_id: Associated memory ID.
             metadata: Additional metadata.
 
         Returns:
@@ -482,7 +482,7 @@ class MultiModalManager:
             content=audio_bytes,
             modality=Modality.AUDIO.value,
             embedding=embedding,
-            memoria_id=memoria_id,
+            memory_id=memory_id,
             metadata=metadata or {"filename": audio_path.name},
         )
 

@@ -43,7 +43,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     @server.tool()
     def memo_contextual_record_search(
         query: str,
-        memoria_ids: list[str],
+        memory_ids: list[str],
     ) -> dict[str, Any]:
         """Record a search in the conversation history for learning.
 
@@ -53,14 +53,14 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Args:
             query: The search query that was used.
-            memoria_ids: List of memory IDs that were recalled.
+            memory_ids: List of memory IDs that were recalled.
         """
-        memory.contextual.record_search(query, memoria_ids)
-        return {"status": "recorded", "count": len(memoria_ids)}
+        memory.contextual.record_search(query, memory_ids)
+        return {"status": "recorded", "count": len(memory_ids)}
 
     @server.tool()
     def memo_contextual_record_click(
-        memoria_id: str,
+        memory_id: str,
     ) -> dict[str, Any]:
         """Record that the user clicked/viewed a memory (for preference learning).
 
@@ -68,10 +68,10 @@ def register(server: FastMCP, memory: Memory) -> None:
         This teaches the system which memory types and entities the user prefers.
 
         Args:
-            memoria_id: The memory ID that was clicked/viewed.
+            memory_id: The memory ID that was clicked/viewed.
         """
-        memory.contextual.record_click(memoria_id)
-        return {"status": "recorded", "memoria_id": memoria_id}
+        memory.contextual.record_click(memory_id)
+        return {"status": "recorded", "memory_id": memory_id}
 
     @server.tool()
     def memo_contextual_preferences() -> dict[str, Any]:

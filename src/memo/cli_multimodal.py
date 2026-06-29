@@ -23,8 +23,8 @@ def multimodal_group() -> None:
 
 @multimodal_group.command(name="add-image")
 @click.argument("image_path", type=click.Path(exists=True))
-@click.option("--memory-id", "memoria_id", help="Associated memory ID")
-def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
+@click.option("--memory-id", "memory_id", help="Associated memory ID")
+def multimodal_add_image(image_path: str, memory_id: str | None) -> None:
     """Add an image to the multi-modal corpus.
 
     Example: memo multimodal add-image /path/to/image.png --memory-id abc123
@@ -34,7 +34,7 @@ def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
 
     from pathlib import Path
 
-    content = mem.multimodal.add_image(Path(image_path), memoria_id)
+    content = mem.multimodal.add_image(Path(image_path), memory_id)
 
     console.print("[green]Image added[/green]")
     console.print(f"Content ID: {content.id}")
@@ -43,8 +43,8 @@ def multimodal_add_image(image_path: str, memoria_id: str | None) -> None:
 
 @multimodal_group.command(name="add-audio")
 @click.argument("audio_path", type=click.Path(exists=True))
-@click.option("--memory-id", "memoria_id", help="Associated memory ID")
-def multimodal_add_audio(audio_path: str, memoria_id: str | None) -> None:
+@click.option("--memory-id", "memory_id", help="Associated memory ID")
+def multimodal_add_audio(audio_path: str, memory_id: str | None) -> None:
     """Add audio to the multi-modal corpus.
 
     Example: memo multimodal add-audio /path/to/audio.mp3 --memory-id abc123
@@ -54,7 +54,7 @@ def multimodal_add_audio(audio_path: str, memoria_id: str | None) -> None:
 
     from pathlib import Path
 
-    content = mem.multimodal.add_audio(Path(audio_path), memoria_id)
+    content = mem.multimodal.add_audio(Path(audio_path), memory_id)
 
     console.print("[green]Audio added[/green]")
     console.print(f"Content ID: {content.id}")

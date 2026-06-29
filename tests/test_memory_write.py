@@ -32,7 +32,7 @@ def test_save_indexes_entities_in_graph_db(mem_with_stub: Memory):
 
     neighbors = mem_with_stub.navigator.get_neighbors("mlx")
     assert "mcp" in neighbors.direct_neighbors
-    assert rec.id in neighbors.neighbor_memorias["mcp"]
+    assert rec.id in neighbors.neighbor_memories["mcp"]
 
 
 def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
@@ -57,7 +57,7 @@ def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
     checks = {
         cfg.db_path: ("meta", "id = ?", (rec.id,)),
         cfg.history_db: ("events", "record_id = ? AND op = 'save'", (rec.id,)),
-        cfg.graph_db: ("entity_memoria", "memoria_id = ?", (rec.id,)),
+        cfg.graph_db: ("entity_memory", "memory_id = ?", (rec.id,)),
         cfg.contradictions_db: ("pairs", "1 = 1", ()),
         cfg.crossref_db: ("backlinks", "source_id = ?", (rec.id,)),
     }

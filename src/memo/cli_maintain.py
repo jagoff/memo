@@ -236,7 +236,7 @@ def maintain_cmd(
                         # Demote the superseded (older) side via its confidence
                         # so the evolution verdict steers ranking (health-score
                         # multiplier, default-on) instead of changing nothing.
-                        older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
+                        older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
                         if _evo_conf < 1.0:
                             try:
                                 mem.store.set_confidence_batch([(older, _evo_conf)])
@@ -253,7 +253,7 @@ def maintain_cmd(
                     continue
                 if "contrad" not in rel:
                     continue  # consistent / unrelated — leave open
-                older, _newer = _older_id(mem, pair.memoria_id_a, pair.memoria_id_b)
+                older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
                 action = "delete" if hard_delete else "archive"
                 if not dry_run:
                     ok = mem.delete(older) if hard_delete else mem.lifecycle.archive_memoria(older)
@@ -287,7 +287,7 @@ def maintain_cmd(
             if not res.get("results") and res.get("proposals"):
                 # dry_run path: proposals exist but nothing applied
                 receipt["merged"] = [
-                    {"would_merge": p.get("memoria_ids")} for p in res.get("proposals", [])
+                    {"would_merge": p.get("memory_ids")} for p in res.get("proposals", [])
                 ]
         except Exception as exc:
             receipt["errors"].append(f"consolidate: {type(exc).__name__}: {exc}")

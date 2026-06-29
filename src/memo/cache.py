@@ -159,10 +159,10 @@ class CacheManager:
 
     # -- flush (write-back safety) -----------------------------------------
 
-    def _flush(self, memoria_id: str) -> bool:
+    def _flush(self, memory_id: str) -> bool:
         """Push a memory to the backing store before eviction. Returns True
         if the local copy is safe to drop (clean, or successfully flushed)."""
-        rec = self.memory.get(memoria_id)
+        rec = self.memory.get(memory_id)
         if rec is None:
             return True  # already gone
         extra = getattr(rec, "extra", None) or {}
@@ -173,13 +173,13 @@ class CacheManager:
             _log.warning(
                 "cache: memory %s is dirty but no backend configured; "
                 "skipping eviction to avoid data loss",
-                memoria_id[:8],
+                memory_id[:8],
             )
             return False
         try:
             return bool(self.backend.push(rec))
         except Exception as exc:
-            _log.warning("cache: flush of %s failed: %s", memoria_id[:8], exc)
+            _log.warning("cache: flush of %s failed: %s", memory_id[:8], exc)
             return False
 
     # -- eviction ----------------------------------------------------------

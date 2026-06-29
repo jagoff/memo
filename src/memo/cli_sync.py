@@ -200,9 +200,9 @@ def sync_clone(url: str, dest: str | None, as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(out, indent=2))
         return
-    console.print(f"[bold green]Cloned[/bold green] → {out['cloned']} ({out['memorias']} memories)")
+    console.print(f"[bold green]Cloned[/bold green] → {out['cloned']} ({out['memories']} memories)")
     console.print("\n[bold]Next steps on this machine:[/bold]")
-    console.print(f"  1. Set [cyan]MEMO_DATA_DIR={out['memorias_dir']}[/cyan] in your config / MCP env")
+    console.print(f"  1. Set [cyan]MEMO_DATA_DIR={out['memories_dir']}[/cyan] in your config / MCP env")
     console.print("  2. [cyan]memo reindex --rebuild[/cyan]   # build the index from the .md")
     console.print("  3. [cyan]memo sync import-signal[/cyan]  # restore access/health/feedback")
 
@@ -227,7 +227,7 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
     out = bootstrap_clone(url, dest_path)
 
     # Reindex + import signal against the freshly-pointed data_dir.
-    cfg = Config.from_env(data_dir=Path(out["memorias_dir"]))
+    cfg = Config.from_env(data_dir=Path(out["memories_dir"]))
     mem = _get_memory(cfg)
     out["reindexed"] = mem.reindex(rebuild=True)
     out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
@@ -237,8 +237,8 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
         click.echo(json.dumps(out, indent=2))
         return
     verb = "Reused" if out.get("reused") else "Cloned"
-    console.print(f"[bold green]{verb}[/bold green] → {out['cloned']} ({out['memorias']} memories)")
-    console.print(f"config → [cyan]{out['config']}[/cyan] (data_dir = {out['memorias_dir']})")
+    console.print(f"[bold green]{verb}[/bold green] → {out['cloned']} ({out['memories']} memories)")
+    console.print(f"config → [cyan]{out['config']}[/cyan] (data_dir = {out['memories_dir']})")
     console.print(f"reindexed: {out['reindexed']}")
     console.print(f"signal merged: {out['signal']}")
     console.print("[bold green]Ready.[/bold green] memo now reads the git-synced corpus.")
@@ -265,9 +265,9 @@ def sync_init(public: bool, as_json: bool) -> None:
     if as_json:
         click.echo(json.dumps(out, indent=2))
         return
-    console.print("[bold green]Listo![/bold green] Repo creado en GitHub")
+    console.print("[bold green]Done![/bold green] Repo created on GitHub")
     console.print(f"  URL: [cyan]{out['repo_url']}[/cyan]")
-    console.print("\n[bold]Para usar en otras Mac:[/bold]")
+    console.print("\n[bold]To use on other Macs:[/bold]")
     console.print(f"  [cyan]memo sync clone {out['repo_url']}[/cyan]")
 
 

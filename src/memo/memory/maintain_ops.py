@@ -593,7 +593,7 @@ class _MaintainOpsMixin(_MemoryBase):
         - `all_=True`: process every memory in the store.
 
         With `skip_already_indexed=True` (default), memories that
-        already have entries in `entity_memoria` are skipped — useful
+        already have entries in `entity_memory` are skipped — useful
         for incremental runs after adding new memories. Pass False to
         force re-extraction (e.g. after improving the prompt).
 
@@ -681,7 +681,7 @@ class _MaintainOpsMixin(_MemoryBase):
                 if isinstance(e, dict) and e.get("name") and e.get("type")
             ]
             n = self.graph.record_extraction(
-                memoria_id=tid,
+                memory_id=tid,
                 memoria_date=r["created"][:10] if r.get("created") else _now_iso()[:10],
                 entities=ents,
                 extracted_at=_now_iso(),

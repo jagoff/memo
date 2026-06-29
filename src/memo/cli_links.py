@@ -25,9 +25,9 @@ def links_group() -> None:
 
 
 @links_group.command(name="backlinks")
-@click.argument("memoria_id")
+@click.argument("memory_id")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def links_backlinks(memoria_id: str, as_json: bool) -> None:
+def links_backlinks(memory_id: str, as_json: bool) -> None:
     """Show all memories that reference this one.
 
     Example: memo links backlinks abc123
@@ -37,23 +37,23 @@ def links_backlinks(memoria_id: str, as_json: bool) -> None:
 
     # crossref stores full 32-char ids; resolve a user-supplied prefix
     # (e.g. the 12-char id printed by `memo list`) before the exact-match query.
-    rec = mem.get(memoria_id)
+    rec = mem.get(memory_id)
     if rec is None:
-        console.print(f"[red]not found: {memoria_id}[/red]")
+        console.print(f"[red]not found: {memory_id}[/red]")
         raise SystemExit(1)
-    memoria_id = rec.id
+    memory_id = rec.id
 
-    backlinks = mem.crossref.get_backlinks(memoria_id)
+    backlinks = mem.crossref.get_backlinks(memory_id)
 
     if as_json:
         click.echo(json.dumps([b.__dict__ for b in backlinks], indent=2))
         return
 
     if not backlinks:
-        console.print(f"[dim]No backlinks found for memory {memoria_id[:8]}[/dim]")
+        console.print(f"[dim]No backlinks found for memory {memory_id[:8]}[/dim]")
         return
 
-    table = Table(title=f"Backlinks to {memoria_id[:8]}")
+    table = Table(title=f"Backlinks to {memory_id[:8]}")
     table.add_column("Source ID", style="cyan")
     table.add_column("Link Type", style="yellow")
     table.add_column("Context", style="dim")
@@ -71,9 +71,9 @@ def links_backlinks(memoria_id: str, as_json: bool) -> None:
 
 
 @links_group.command(name="outlinks")
-@click.argument("memoria_id")
+@click.argument("memory_id")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def links_outlinks(memoria_id: str, as_json: bool) -> None:
+def links_outlinks(memory_id: str, as_json: bool) -> None:
     """Show all memories that this one references.
 
     Example: memo links outlinks abc123
@@ -83,23 +83,23 @@ def links_outlinks(memoria_id: str, as_json: bool) -> None:
 
     # crossref stores full 32-char ids; resolve a user-supplied prefix
     # (e.g. the 12-char id printed by `memo list`) before the exact-match query.
-    rec = mem.get(memoria_id)
+    rec = mem.get(memory_id)
     if rec is None:
-        console.print(f"[red]not found: {memoria_id}[/red]")
+        console.print(f"[red]not found: {memory_id}[/red]")
         raise SystemExit(1)
-    memoria_id = rec.id
+    memory_id = rec.id
 
-    outlinks = mem.crossref.get_outlinks(memoria_id)
+    outlinks = mem.crossref.get_outlinks(memory_id)
 
     if as_json:
         click.echo(json.dumps([o.__dict__ for o in outlinks], indent=2))
         return
 
     if not outlinks:
-        console.print(f"[dim]No outlinks found for memory {memoria_id[:8]}[/dim]")
+        console.print(f"[dim]No outlinks found for memory {memory_id[:8]}[/dim]")
         return
 
-    console.print(f"[bold]Outlinks from {memoria_id[:8]}[/bold]")
+    console.print(f"[bold]Outlinks from {memory_id[:8]}[/bold]")
     console.print()
 
     for ol in outlinks:
@@ -145,7 +145,7 @@ def links_suggest(
 
     for s in suggestions:
         table.add_row(
-            s.memoria_id[:8],
+            s.memory_id[:8],
             s.title[:40],
             f"{s.similarity:.3f}",
             s.reason,
@@ -155,9 +155,9 @@ def links_suggest(
 
 
 @links_group.command(name="format")
-@click.argument("memoria_id")
+@click.argument("memory_id")
 @click.option("--title", help="Display title for the link")
-def links_format(memoria_id: str, title: str | None) -> None:
+def links_format(memory_id: str, title: str | None) -> None:
     """Format a memory ID as a wikilink.
 
     Example: memo links format abc123 --title "My Memory"
@@ -165,7 +165,7 @@ def links_format(memoria_id: str, title: str | None) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    wikilink = mem.link_suggester.format_wikilink(memoria_id, title)
+    wikilink = mem.link_suggester.format_wikilink(memory_id, title)
     click.echo(wikilink)
 
 

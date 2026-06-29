@@ -73,7 +73,7 @@ def consolidate_propose(
         console.print(f"[cyan]{i}. Cluster {p['cluster_id']}[/cyan]")
         console.print(f"   Strategy: {p['merge_strategy']}")
         console.print(f"   Rationale: {p['rationale']}")
-        console.print(f"   Memories to merge: {len(p['memoria_ids'])}")
+        console.print(f"   Memories to merge: {len(p['memory_ids'])}")
         console.print()
 
     if len(proposals) > 10:

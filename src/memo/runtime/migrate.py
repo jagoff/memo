@@ -35,7 +35,7 @@ def _consolidate_sidecar_dbs() -> None:
 
     legacy_tables: dict[Path, list[str]] = {
         cfg.state_dir / "history.db": ["events", "sync_state"],
-        cfg.state_dir / "graph.db": ["entities", "entity_memoria"],
+        cfg.state_dir / "graph.db": ["entities", "entity_memory"],
         cfg.state_dir / "contradictions.db": ["pairs"],
         cfg.state_dir / "crossref.db": ["backlinks"],
     }

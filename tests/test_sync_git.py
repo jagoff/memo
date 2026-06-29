@@ -142,8 +142,8 @@ def test_clone_bootstrap(remote: Path, tmp_path: Path, monkeypatch):
 
     dest = tmp_path / "fresh"
     out = clone_bootstrap(str(remote), dest)
-    assert out["memorias"] == 1
-    assert Path(out["memorias_dir"]) == dest / "memorias"
+    assert out["memories"] == 1
+    assert Path(out["memories_dir"]) == dest / "memorias"
 
 
 def test_clone_refuses_nonempty_dest(remote: Path, tmp_path: Path):

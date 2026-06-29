@@ -180,7 +180,7 @@ def test_export_graphviz_to_file(tmp_path, navigator):
 
 def test_export_json(navigator):
     """Test JSON export."""
-    data = navigator.export_json(include_memorias=False)
+    data = navigator.export_json(include_memories=False)
     assert "nodes" in data
     assert "edges" in data
     assert isinstance(data["nodes"], list)
@@ -189,10 +189,10 @@ def test_export_json(navigator):
 
 def test_export_json_with_memorias(navigator):
     """Test JSON export with memoria IDs."""
-    data = navigator.export_json(include_memorias=True)
+    data = navigator.export_json(include_memories=True)
     assert "nodes" in data
     assert "edges" in data
-    # If there are edges, they should have memoria_id when include_memorias=True
+    # If there are edges, they should have memory_id when include_memories=True
     if data["edges"]:
         # This may be empty if no entities, but structure should be correct
         pass
@@ -218,7 +218,7 @@ def test_entity_neighbors_dataclass():
     neighbors = EntityNeighbors(
         entity="test",
         direct_neighbors=["a", "b"],
-        neighbor_memorias={"a": ["mem1"], "b": ["mem2"]},
+        neighbor_memories={"a": ["mem1"], "b": ["mem2"]},
         degree=2,
     )
     assert neighbors.entity == "test"

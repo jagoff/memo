@@ -164,9 +164,9 @@ def test_backend_remember_persists_with_provenance(mock_memory):
     assert receipt["kind"] == "decision"
     assert receipt["trace_id"] == prov["synapse_trace_id"]
     assert receipt["uri"].startswith("memo://memoria/")
-    memoria_id = receipt["metadata"]["memoria_id"]
+    memory_id = receipt["metadata"]["memory_id"]
 
-    fetched = mock_memory.get(memoria_id)
+    fetched = mock_memory.get(memory_id)
     assert fetched is not None
     assert fetched.title == "Embedder switch"
     assert fetched.type == "decision"
@@ -186,7 +186,7 @@ def test_backend_remember_coerces_unknown_kind(mock_memory):
         "metadata": {"synapse_trace_id": "t-task"},
     })
 
-    fetched = mock_memory.get(receipt["metadata"]["memoria_id"])
+    fetched = mock_memory.get(receipt["metadata"]["memory_id"])
     assert fetched is not None
     assert fetched.type == "note"
     assert "kind:task" in fetched.tags
@@ -208,7 +208,7 @@ def test_backend_remember_defaults_write_target(mock_memory):
         "text": "default-target body",
         "metadata": {"synapse_trace_id": "t-default"},
     })
-    fetched = mock_memory.get(receipt["metadata"]["memoria_id"])
+    fetched = mock_memory.get(receipt["metadata"]["memory_id"])
     assert fetched is not None
     assert fetched.extra["synapse_write_target"] == "memo"
 
@@ -221,7 +221,7 @@ def test_backend_remember_attaches_evidence_paths(mock_memory):
         "evidence_paths": ["memflow://event/abc", "memo://memoria/xyz"],
         "metadata": {"synapse_trace_id": "t-evidence"},
     })
-    fetched = mock_memory.get(receipt["metadata"]["memoria_id"])
+    fetched = mock_memory.get(receipt["metadata"]["memory_id"])
     assert fetched is not None
     assert fetched.extra["synapse_evidence_paths"] == [
         "memflow://event/abc",
@@ -280,17 +280,17 @@ def test_cli_save_meta_and_provenance(tmp_cfg, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     rec_dict = json.loads(result.output)
-    memoria_id = rec_dict["id"]
+    memory_id = rec_dict["id"]
     assert rec_dict["extra"]["synapse_trace_id"] == "cli-trace"
     assert rec_dict["extra"]["synapse_agent_id"] == "cli-agent"
 
     prov_result = runner.invoke(
-        cli, ["provenance", memoria_id, "--json"],
+        cli, ["provenance", memory_id, "--json"],
         env=env, catch_exceptions=False,
     )
     assert prov_result.exit_code == 0, prov_result.output
     payload = json.loads(prov_result.output)
-    assert payload["id"] == memoria_id
+    assert payload["id"] == memory_id
     assert payload["current"]["synapse_trace_id"] == "cli-trace"
     assert payload["events"][0]["provenance"]["synapse_agent_id"] == "cli-agent"
 
@@ -348,12 +348,12 @@ def test_mcp_save_and_provenance_tools(tmp_cfg):
     prov = _sample_provenance()
 
     rec = save_fn(content="mcp body", title="mcp-title", extra=prov)
-    memoria_id = rec["id"]
+    memory_id = rec["id"]
     assert rec["extra"]["synapse_trace_id"] == prov["synapse_trace_id"]
 
-    trail = prov_fn(id=memoria_id)
+    trail = prov_fn(id=memory_id)
     assert trail is not None
-    assert trail["id"] == memoria_id
+    assert trail["id"] == memory_id
     assert trail["current"] == prov
     assert trail["events"][0]["provenance"] == prov
 

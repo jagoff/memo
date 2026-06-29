@@ -78,8 +78,8 @@ def temporal_contradictions(
 
     for c in contradictions:
         table.add_row(
-            c.memoria_id_a[:8],
-            c.memoria_id_b[:8],
+            c.memory_id_a[:8],
+            c.memory_id_b[:8],
             c.title_a[:40],
             c.title_b[:40],
             c.relationship,
@@ -132,7 +132,7 @@ def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> No
     console.print()
 
     for event in timeline.events:
-        console.print(f"[cyan]{event.date}[/cyan] [dim][{event.memoria_id[:8]}][/dim]")
+        console.print(f"[cyan]{event.date}[/cyan] [dim][{event.memory_id[:8]}][/dim]")
         console.print(f"  [yellow]{event.title}[/yellow] ({event.type})")
         console.print(f"  {event.snippet}")
         console.print()

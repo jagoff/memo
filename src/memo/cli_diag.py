@@ -146,7 +146,7 @@ def _sqlite_db_health(label: str, path: Path, cfg: Config) -> dict[str, Any]:
                 report.update(
                     {
                         "entities": _sqlite_table_count(conn, "entities"),
-                        "links": _sqlite_table_count(conn, "entity_memoria"),
+                        "links": _sqlite_table_count(conn, "entity_memory"),
                         "latest_seen": _sqlite_max_text(conn, "entities", "last_seen"),
                     }
                 )

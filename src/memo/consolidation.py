@@ -64,7 +64,7 @@ class MergeProposal:
     """A proposal for merging a cluster of memories."""
 
     cluster_id: int
-    memoria_ids: list[str]
+    memory_ids: list[str]
     merged_title: str
     merged_body: str
     merge_strategy: str
@@ -129,7 +129,7 @@ class AdvancedConsolidator:
             latest = max(members, key=lambda m: m.get("updated", ""))
             return MergeProposal(
                 cluster_id=cluster.get("cluster_id", 0),
-                memoria_ids=[m["id"] for m in members],
+                memory_ids=[m["id"] for m in members],
                 merged_title=latest.get("title", ""),
                 merged_body=self._read_body(latest["id"]),
                 merge_strategy="keep_latest",
@@ -215,7 +215,7 @@ class AdvancedConsolidator:
 
         return MergeProposal(
             cluster_id=cluster.get("cluster_id", 0),
-            memoria_ids=[m["id"] for m in members],
+            memory_ids=[m["id"] for m in members],
             merged_title=data.get("merged_title", members[0]["title"] if members else ""),
             merged_body=data.get("merged_body", ""),
             merge_strategy=data.get("merge_strategy", "synthesis"),
@@ -223,9 +223,9 @@ class AdvancedConsolidator:
             archived_ids=[m["id"] for m in members],
         )
 
-    def _read_body(self, memoria_id: str) -> str:
+    def _read_body(self, memory_id: str) -> str:
         """Read the body of a memory by ID."""
-        rec = self.memory.get(memoria_id)
+        rec = self.memory.get(memory_id)
         return rec.body if rec else ""
 
     def apply_merge(
@@ -247,14 +247,14 @@ class AdvancedConsolidator:
             return ConsolidationResult(
                 merged_id=None,
                 archived_ids=[],
-                skipped_ids=proposal.memoria_ids,
-                summary=f"Dry run: would merge {len(proposal.memoria_ids)} memories",
+                skipped_ids=proposal.memory_ids,
+                summary=f"Dry run: would merge {len(proposal.memory_ids)} memories",
             )
 
         # keep_latest: the surviving ID already exists — just archive the older ones.
         # This avoids creating a redundant copy of the latest record.
         surviving_ids = [
-            mid for mid in proposal.memoria_ids if mid not in set(proposal.archived_ids)
+            mid for mid in proposal.memory_ids if mid not in set(proposal.archived_ids)
         ]
         if proposal.merge_strategy == "keep_latest" and surviving_ids:
             surviving_id = surviving_ids[0]
@@ -273,7 +273,7 @@ class AdvancedConsolidator:
                 return ConsolidationResult(
                     merged_id=None,
                     archived_ids=[],
-                    skipped_ids=proposal.memoria_ids,
+                    skipped_ids=proposal.memory_ids,
                     summary=f"keep_latest failed: {e}",
                 )
 
@@ -281,14 +281,14 @@ class AdvancedConsolidator:
         try:
             # Combine tags from all sources
             all_tags = set()
-            for mid in proposal.memoria_ids:
+            for mid in proposal.memory_ids:
                 rec = self.memory.get(mid)
                 if rec:
                     all_tags.update(rec.tags)
 
             # Determine type from the latest source
             latest_rec = max(
-                (self.memory.get(mid) for mid in proposal.memoria_ids if self.memory.get(mid)),
+                (self.memory.get(mid) for mid in proposal.memory_ids if self.memory.get(mid)),
                 key=lambda r: r.updated if r else "",
                 default=None,
             )
@@ -311,22 +311,22 @@ class AdvancedConsolidator:
                 merged_id=merged_rec.id,
                 archived_ids=archived,
                 skipped_ids=[],
-                summary=f"Merged {len(proposal.memoria_ids)} memories into {merged_rec.id[:8]}",
+                summary=f"Merged {len(proposal.memory_ids)} memories into {merged_rec.id[:8]}",
             )
         except Exception as e:
             return ConsolidationResult(
                 merged_id=None,
                 archived_ids=[],
-                skipped_ids=proposal.memoria_ids,
+                skipped_ids=proposal.memory_ids,
                 summary=f"Merge failed: {e}",
             )
 
-    def _archive_memoria(self, memoria_id: str, replacement_id: str) -> bool:
+    def _archive_memoria(self, memory_id: str, replacement_id: str) -> bool:
         """Archive a memory by moving it to the archived/ subdirectory.
 
         Adds a frontmatter field `archived_for` pointing to the replacement.
         """
-        rec = self.memory.get(memoria_id)
+        rec = self.memory.get(memory_id)
         if not rec:
             return False
 
@@ -348,11 +348,11 @@ class AdvancedConsolidator:
         post["archived_at"] = datetime.now(UTC).isoformat()
 
         # Write to archived location
-        archived_path = self._archival_dir / f"{memoria_id}.md"
+        archived_path = self._archival_dir / f"{memory_id}.md"
         archived_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
         # Delete from store and original location
-        self.memory.delete(memoria_id)
+        self.memory.delete(memory_id)
 
         return True
 
@@ -368,7 +368,7 @@ class AdvancedConsolidator:
         latest = max(members, key=lambda m: m.get("updated", ""))
         return MergeProposal(
             cluster_id=cluster.get("cluster_id", 0),
-            memoria_ids=[m["id"] for m in members],
+            memory_ids=[m["id"] for m in members],
             merged_title=latest.get("title", ""),
             merged_body=self._read_body(latest["id"]),
             merge_strategy="keep_latest",
@@ -429,7 +429,7 @@ class AdvancedConsolidator:
                 proposal = self._fast_lane_proposal(cluster)
                 if proposal:
                     all_proposals.append(proposal)
-                    already_merged.update(proposal.memoria_ids)
+                    already_merged.update(proposal.memory_ids)
                     if auto_apply:
                         all_results.append(self.apply_merge(proposal, dry_run=dry_run))
 

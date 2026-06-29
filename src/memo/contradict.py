@@ -86,8 +86,8 @@ VALID_STATUSES = {
 _SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS pairs (
     pair_id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    memoria_id_a   TEXT NOT NULL,
-    memoria_id_b   TEXT NOT NULL,
+    memory_id_a   TEXT NOT NULL,
+    memory_id_b   TEXT NOT NULL,
     relationship   TEXT NOT NULL,
     confidence     REAL NOT NULL,
     rationale      TEXT,
@@ -95,11 +95,11 @@ CREATE TABLE IF NOT EXISTS pairs (
     detected_at    TEXT NOT NULL,
     resolved_at    TEXT,
     resolution_note TEXT,
-    UNIQUE(memoria_id_a, memoria_id_b)
+    UNIQUE(memory_id_a, memory_id_b)
 );
 CREATE INDEX IF NOT EXISTS idx_pairs_status ON pairs(status);
-CREATE INDEX IF NOT EXISTS idx_pairs_a ON pairs(memoria_id_a);
-CREATE INDEX IF NOT EXISTS idx_pairs_b ON pairs(memoria_id_b);
+CREATE INDEX IF NOT EXISTS idx_pairs_a ON pairs(memory_id_a);
+CREATE INDEX IF NOT EXISTS idx_pairs_b ON pairs(memory_id_b);
 """
 
 
@@ -113,8 +113,8 @@ class PairRecord:
     """A persisted contradiction pair."""
 
     pair_id: int
-    memoria_id_a: str
-    memoria_id_b: str
+    memory_id_a: str
+    memory_id_b: str
     relationship: str
     confidence: float
     rationale: str
@@ -125,7 +125,7 @@ class PairRecord:
 
 
 _PAIR_COLS = (
-    "pair_id, memoria_id_a, memoria_id_b, relationship, confidence,"
+    "pair_id, memory_id_a, memory_id_b, relationship, confidence,"
     " rationale, status, detected_at, resolved_at, resolution_note"
 )
 
@@ -143,7 +143,7 @@ class ContradictionStore:
       3. `resolve(pair_id, status, note)` — triage walker writes the
          resolution. Status must be one of `VALID_STATUSES` (minus
          `open`).
-      4. `drop_for_memoria(memoria_id)` — called when a memory is
+      4. `drop_for_memoria(memory_id)` — called when a memory is
          deleted so dangling pairs vanish.
     """
 
@@ -188,8 +188,8 @@ class ContradictionStore:
 
     def upsert_open(
         self,
-        memoria_id_a: str,
-        memoria_id_b: str,
+        memory_id_a: str,
+        memory_id_b: str,
         relationship: str,
         confidence: float,
         rationale: str,
@@ -201,16 +201,16 @@ class ContradictionStore:
 
         Returns the pair_id.
         """
-        a, b = _canonical_pair(memoria_id_a, memoria_id_b)
+        a, b = _canonical_pair(memory_id_a, memory_id_b)
         now = datetime.now(UTC).isoformat()
         with self._tx() as cx:
             existing = cx.execute(
-                "SELECT pair_id, status FROM pairs WHERE memoria_id_a=? AND memoria_id_b=?",
+                "SELECT pair_id, status FROM pairs WHERE memory_id_a=? AND memory_id_b=?",
                 (a, b),
             ).fetchone()
             if existing is None:
                 cur = cx.execute(
-                    "INSERT INTO pairs (memoria_id_a, memoria_id_b, relationship, "
+                    "INSERT INTO pairs (memory_id_a, memory_id_b, relationship, "
                     "confidence, rationale, status, detected_at) "
                     "VALUES (?, ?, ?, ?, ?, 'open', ?)",
                     (a, b, relationship, confidence, rationale, now),
@@ -224,11 +224,11 @@ class ContradictionStore:
                 )
             return int(existing["pair_id"])
 
-    def already_resolved(self, memoria_id_a: str, memoria_id_b: str) -> bool:
+    def already_resolved(self, memory_id_a: str, memory_id_b: str) -> bool:
         """Did the user already give a verdict on this pair?"""
-        a, b = _canonical_pair(memoria_id_a, memoria_id_b)
+        a, b = _canonical_pair(memory_id_a, memory_id_b)
         row = self._conn.execute(
-            "SELECT status FROM pairs WHERE memoria_id_a=? AND memoria_id_b=?",
+            "SELECT status FROM pairs WHERE memory_id_a=? AND memory_id_b=?",
             (a, b),
         ).fetchone()
         return bool(row and row["status"] != "open")
@@ -297,12 +297,12 @@ class ContradictionStore:
             )
             return cur.rowcount > 0
 
-    def drop_for_memoria(self, memoria_id: str) -> int:
+    def drop_for_memoria(self, memory_id: str) -> int:
         """Delete all pairs touching this memory (called on memory delete)."""
         with self._tx() as cx:
             cur = cx.execute(
-                "DELETE FROM pairs WHERE memoria_id_a=? OR memoria_id_b=?",
-                (memoria_id, memoria_id),
+                "DELETE FROM pairs WHERE memory_id_a=? OR memory_id_b=?",
+                (memory_id, memory_id),
             )
             return int(cur.rowcount or 0)
 
@@ -322,7 +322,7 @@ class ContradictionStore:
         placeholders = ",".join("?" * len(ids))
         sql = (
             f"SELECT {_PAIR_COLS} FROM pairs WHERE status=? "  # noqa: S608
-            f"AND (memoria_id_a IN ({placeholders}) OR memoria_id_b IN ({placeholders}))"
+            f"AND (memory_id_a IN ({placeholders}) OR memory_id_b IN ({placeholders}))"
         )
         rows = self._conn.execute(sql, [status, *ids, *ids]).fetchall()
         return [self._row_to_record(r) for r in rows]
@@ -337,8 +337,8 @@ class ContradictionStore:
     def _row_to_record(row: sqlite3.Row) -> PairRecord:
         return PairRecord(
             pair_id=int(row["pair_id"]),
-            memoria_id_a=row["memoria_id_a"],
-            memoria_id_b=row["memoria_id_b"],
+            memory_id_a=row["memory_id_a"],
+            memory_id_b=row["memory_id_b"],
             relationship=row["relationship"],
             confidence=float(row["confidence"]),
             rationale=row["rationale"] or "",
@@ -516,8 +516,8 @@ class ContradictionScanner:
                     # open-state check is meaningful here.
                     existed = _is_open(self.store, *pair_key)
                     self.store.upsert_open(
-                        memoria_id_a=contr.memoria_id_a,
-                        memoria_id_b=contr.memoria_id_b,
+                        memory_id_a=contr.memory_id_a,
+                        memory_id_b=contr.memory_id_b,
                         relationship=contr.relationship,
                         confidence=contr.confidence,
                         rationale=contr.rationale,
@@ -531,8 +531,8 @@ class ContradictionScanner:
                     contradictions += 1
                     if persist:
                         emit_anomaly(
-                            contr.memoria_id_a,
-                            contr.memoria_id_b,
+                            contr.memory_id_a,
+                            contr.memory_id_b,
                             contr.relationship,
                             contr.confidence,
                             "open",
@@ -565,15 +565,15 @@ def _enough_days_apart(a: str, b: str, min_days: int) -> bool:
 
 def _is_open(store: ContradictionStore, a: str, b: str) -> bool:
     row = store._conn.execute(
-        "SELECT status FROM pairs WHERE memoria_id_a=? AND memoria_id_b=?",
+        "SELECT status FROM pairs WHERE memory_id_a=? AND memory_id_b=?",
         (a, b),
     ).fetchone()
     return bool(row and row["status"] == "open")
 
 
 def emit_anomaly(
-    memoria_id_a: str,
-    memoria_id_b: str,
+    memory_id_a: str,
+    memory_id_b: str,
     relationship: str,
     confidence: float,
     status: str,
@@ -587,8 +587,8 @@ def emit_anomaly(
     writable conflict channel.
 
     Args:
-        memoria_id_a: First memory in the contradiction pair.
-        memoria_id_b: Second memory in the contradiction pair.
+        memory_id_a: First memory in the contradiction pair.
+        memory_id_b: Second memory in the contradiction pair.
         relationship: Relationship type (contradiction, evolution, etc).
         confidence: Confidence score (0-1).
         status: Current status (open, fused, kept_newer, etc.).
@@ -601,7 +601,7 @@ def emit_anomaly(
 
     anomaly_id = generate_anomaly_id(
         "semantic_contradiction",
-        f"memo:{memoria_id_a}:{memoria_id_b}",
+        f"memo:{memory_id_a}:{memory_id_b}",
     )
     state: Literal["detected", "resolved"] = "detected" if status == "open" else "resolved"
     severity: Literal["low", "medium", "high"] = (
@@ -613,18 +613,18 @@ def emit_anomaly(
         kind="semantic_contradiction",
         state=state,
         summary=(
-            f"memo {relationship} between memories {memoria_id_a[:12]} and {memoria_id_b[:12]}"
+            f"memo {relationship} between memories {memory_id_a[:12]} and {memory_id_b[:12]}"
         ),
         detected_at=ts,
         source_backend="memo",
         evidence_uris=(
-            f"memo://memoria/{memoria_id_a}",
-            f"memo://memoria/{memoria_id_b}",
+            f"memo://memoria/{memory_id_a}",
+            f"memo://memoria/{memory_id_b}",
         ),
         severity=severity,
         metadata={
-            "memoria_id_a": memoria_id_a,
-            "memoria_id_b": memoria_id_b,
+            "memory_id_a": memory_id_a,
+            "memory_id_b": memory_id_b,
             "relationship": relationship,
             "confidence": confidence,
             "status": status,
