@@ -75,3 +75,12 @@ memorias/
 # Auto-harvested eval labels (per-machine, regenerate with `memo eval harvest`)
 eval/auto_labels.json
 memo-version.json
+
+# Internal dev-process artifacts (design plans/specs + maintainer-only release
+# docs) — not shipped in the wheel, not public-facing
+docs/superpowers/
+docs/distribution.md
+docs/registry-submission.md
+
+# Obsolete IDE client rules (product renamed: Windsurf retired → Devin Desktop)
+.windsurfrules
