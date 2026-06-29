@@ -82,6 +82,16 @@ def flag(name: str, *, env: dict[str, str] | None = None) -> Any:
         # empty string counts as unset except for str flags whose default is also ""
         if raw == "" and spec.kind == "str" and spec.default == "":
             return ""
+        # env unset → consult the auto-tuned overlay (env > overlay > default)
+        if raw is None:
+            from memo.tuned_overlay import overlay_values
+
+            ov = overlay_values(src)
+            if name in ov:
+                try:
+                    return _coerce(spec, ov[name])
+                except ValueError:
+                    pass
         return spec.default
     try:
         return _coerce(spec, raw)

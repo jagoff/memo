@@ -682,4 +682,36 @@ SPECS: tuple[FlagSpec, ...] = (
         "Strict mode: raise exceptions instead of silently falling back in contextual retrieval, "
         "embedder client, reranker, and other fallback paths. Use for debugging.",
     ),
+    # dream v2 — self-improving recall tuner (min_sim), gated + reversible
+    _spec(
+        "MEMO_DREAM_TUNE_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly recall self-tuner inside `memo dream run`. OFF by default; "
+        "tunes MEMO_RECALL_MIN_SIM against ground-truth-by-use labels, gated by the curated "
+        "regression set, reverted when a later night regresses.",
+    ),
+    _spec("MEMO_DREAM_TUNE_K", "int", 5, "misc", "K for precision@K/noise@K during dream tuning."),
+    _spec(
+        "MEMO_DREAM_TUNE_MAX_EVALS",
+        "int",
+        20,
+        "misc",
+        "Max eval iterations per dream tuning pass (cost ceiling).",
+    ),
+    _spec(
+        "MEMO_DREAM_MINE_MIN_USED_SCORE",
+        "float",
+        0.5,
+        "misc",
+        "Minimum grounding used_score for a turn to be mined as a tuning label.",
+    ),
+    _spec(
+        "MEMO_DREAM_MINE_LIMIT",
+        "int",
+        200,
+        "misc",
+        "Max labels mined from grounding.log per dream tuning pass.",
+    ),
 )

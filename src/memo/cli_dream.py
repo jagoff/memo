@@ -232,6 +232,32 @@ def dream_run(
         else:
             progress.update(step, description="[0] signal gather [dim]skip[/dim]")
 
+        # Phase 1 — recall self-tuner (min_sim), gated + reversible ----------
+        if flag_bool("MEMO_DREAM_TUNE_ENABLED"):
+            progress.update(step, description="[tune] recall self-tuner...")
+            try:
+                from memo import dream_tune
+                from memo.flags import flag_float
+
+                receipt["tuner"] = dream_tune.run_tuning_pass(
+                    cfg,
+                    mem,
+                    k=flag_int("MEMO_DREAM_TUNE_K") or 5,
+                    max_evals=flag_int("MEMO_DREAM_TUNE_MAX_EVALS") or 20,
+                    min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+                    dry_run=dry_run,
+                )
+                progress.update(
+                    step,
+                    description=(
+                        f"[tune] recall self-tuner [green]✓[/green]  "
+                        f"{receipt['tuner'].get('status')}"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"tuner: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[tune] recall self-tuner [yellow]warn[/yellow]")
+
         # 0. Forget TTLs (always — explicit user intent) ---------------------
         progress.update(step, description="[dim]TTLs — enforce forget...[/dim]")
         try:
@@ -695,9 +721,55 @@ def dream_status() -> None:
     console.print(f"  syntheses:  {len(data.get('synthesized', []))}")
     console.print(f"  entities:   {data.get('entities_extracted', 0)}")
     console.print(f"  roi decay:  {data.get('roi_decayed', 0)} rows")
+    if data.get("tuner"):
+        t = data["tuner"]
+        extra = (
+            f" (min_sim {t.get('floor_before')}→{t.get('floor_after')})"
+            if t.get("status") == "applied"
+            else ""
+        )
+        console.print(f"  tuner:      {t.get('status')}{extra}")
     if data.get("errors"):
         for e in data["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")
+
+
+@dream_cmd.command(name="tune")
+@click.option("--dry-run", is_flag=True, help="Measure + search, write nothing.")
+@click.option("--rollback", "do_rollback", is_flag=True, help="Restore the previous tuned params.")
+@click.option("--status", "show_status", is_flag=True, help="Show the overlay + baseline.")
+def dream_tune_cmd(dry_run: bool, do_rollback: bool, show_status: bool) -> None:
+    """Self-improving recall tuner (MEMO_RECALL_MIN_SIM) — gated, reversible."""
+    from memo import dream_tune, tuned_overlay
+    from memo.flags import flag_float, flag_int
+
+    cfg = Config.from_env()
+    if show_status:
+        click.echo(
+            json.dumps(
+                {
+                    "overlay": tuned_overlay.read_overlay(cfg.state_dir),
+                    "baseline": dream_tune.load_baseline(cfg.state_dir),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+    if do_rollback:
+        restored = tuned_overlay.rollback_overlay(cfg.state_dir)
+        click.echo(json.dumps({"rolled_back": restored}, ensure_ascii=False))
+        return
+    mem = _get_memory(cfg)
+    res = dream_tune.run_tuning_pass(
+        cfg,
+        mem,
+        k=flag_int("MEMO_DREAM_TUNE_K") or 5,
+        max_evals=flag_int("MEMO_DREAM_TUNE_MAX_EVALS") or 20,
+        min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+        dry_run=dry_run,
+    )
+    click.echo(json.dumps(res, indent=2, ensure_ascii=False))
 
 
 @dream_cmd.command(name="if-due")
