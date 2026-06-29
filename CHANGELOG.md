@@ -9,6 +9,17 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-06-29
+
+### Changed
+- **English-only codebase** for public release: Spanish identifiers renamed to English across the code (DB table `entity_memoria`→`entity_memory`, column `memoria_id`→`memory_id`, output/API keys), remaining UI strings translated, and the `engram` name removed (module → `session_patterns`). On-disk corpus dir default `memorias/`→`memories/`.
+
+### Fixed
+- **Existing-database migrations**: pre-rename SQLite DBs are auto-migrated in place (`pairs.memoria_id_a/b`, the `entity_memoria` table + `memoria_id` column, `versions.memoria_id`) so upgrades no longer crash with `no such column` (which surfaced as a warn in `memo dream`) or silently orphan graph data.
+- **Soft directory migration**: new installs use `memories/`; existing `memorias/` installs keep working — config, sync clone/bootstrap, backup/restore and import all read both names.
+- 24 bugs from an exhaustive line-by-line review: `memo backup`/`memo health` crashing on their non-JSON paths, consolidation resurrecting archived duplicates, the `mem_review` SQL query, the tantivy rebuild for >5000-memory corpora, the synapse `conflicts` CLI args, and more.
+- Dropped a personal locale default ("Spanish rioplatense") from the ask prompt; answers follow the question's language generically.
+
 ## [2.3.12] - 2026-06-29
 
 ### Fixed
