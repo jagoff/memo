@@ -25,18 +25,19 @@
 
 ## What makes memo different
 
-| Capability | memo | mem0 | letta | cognee |
-|---|:---:|:---:|:---:|:---:|
-| 100% local (no cloud API) | ✅ | ❌ | ⚠️ | ⚠️ |
-| **Time-machine** (rewind corpus to any date) | ✅ | ❌ | ❌ | ❌ |
-| **Contradiction radar** (detect + resolve conflicts) | ✅ | ❌ | ❌ | ⚠️ |
-| **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ❌ | ❌ |
-| **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ❌ | ❌ |
-| Obsidian as source-of-truth | ✅ | ❌ | ❌ | ❌ |
-| Knowledge graph + entity extraction | ✅ | ⚠️ | ⚠️ | ✅ |
-| Eval regression gate (pre-commit wireable) | ✅ | ❌ | ❌ | ❌ |
-| Multi-modal (images, audio OCR) | ✅ | ⚠️ | ❌ | ❌ |
-| MCP surface profiles (token economy) | ✅ | ❌ | ❌ | ❌ |
+| Capability | memo | mem0 | letta | cognee | engram |
+|---|:---:|:---:|:---:|:---:|:---:|
+| 100% local (no cloud API) | ✅ | ❌ | ⚠️ | ⚠️ | ✅ |
+| **Time-machine** (rewind corpus to any date) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Contradiction radar** (detect + resolve conflicts) | ✅ | ❌ | ❌ | ⚠️ | ❌ |
+| **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Obsidian as source-of-truth | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Knowledge graph + entity extraction | ✅ | ⚠️ | ⚠️ | ✅ | ❌ |
+| Eval regression gate (pre-commit wireable) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Multi-modal (images, audio OCR) | ✅ | ⚠️ | ❌ | ❌ | ❌ |
+| MCP surface profiles (token economy) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Passive capture** (auto-extract from transcripts) | ✅ | ❌ | ❌ | ❌ | ✅ |
 
 ## Why it pays for itself — in tokens
 
