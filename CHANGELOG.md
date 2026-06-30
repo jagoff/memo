@@ -9,7 +9,10 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.7] - 2026-06-30
+
 ### Added
+- `memo recall-daemon restart` subcommand (was only start/stop/status). Launchd-aware: SIGTERM via stop, then waits up to ~5s for a KeepAlive respawn — if a new live PID appears it defers to launchd instead of spawning a competing daemon; otherwise it starts a fresh one. Use after a runtime upgrade so the daemon reloads new code.
 - Successful memo updates notify Codex with `Plugin updated: memo · Run /reload_plugins to apply`.
 
 ### Changed
