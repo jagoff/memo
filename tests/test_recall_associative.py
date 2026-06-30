@@ -173,3 +173,39 @@ def test_cli_related_json(tmp_path):
     res = CliRunner().invoke(cli, ["related", "nonexistent-x", "--json"], env=env)
     assert res.exit_code == 0
     assert res.output.strip().startswith("[")  # JSON list (empty on no data)
+
+
+def test_build_nudge_skips_forgotten(monkeypatch):
+    from memo.lifecycle import IS_FORGOTTEN_KEY
+
+    import memo.recall_assoc as ra
+
+    monkeypatch.setattr(ra, "_codegraph_adj", lambda: None)
+    monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "1")
+
+    class _Store:
+        def memory_entities(self, mid):
+            return {"s1": [{"name": "memory"}], "a1": [{"name": "memory"}],
+                    "a2": [{"name": "memory"}]}.get(mid, [])
+
+        def entity_memories(self, name, type_=None):
+            return ["s1", "a1", "a2"] if name == "memory" else []
+
+        def co_recall_counts(self, anchor, cands):
+            return {}
+
+    class _Rec:
+        def __init__(self, id, forgotten=False):
+            self.id = id
+            self.title = f"t-{id}"
+            self.extra = {IS_FORGOTTEN_KEY: True} if forgotten else {}
+
+    class _Mem:
+        graph = _Store()
+
+        def get(self, mid):
+            return _Rec(mid, forgotten=(mid == "a1"))
+
+    ids = {h.id for h in ra.build_nudge(_Mem(), [_Rec("s1")])}
+    assert "a1" not in ids   # soft-forgotten hit dropped
+    assert "a2" in ids       # backfilled past the forgotten one

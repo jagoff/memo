@@ -29,24 +29,30 @@ def related_for(memory: Any, query_or_id: str, hops: int = 2, limit: int = 5) ->
         cg = None
     _min_act_v = flag_float("MEMO_ASSOCIATIVE_MIN_ACTIVATION")
     min_act: float = 0.5 if _min_act_v is None else _min_act_v
+    from memo.lifecycle import IS_FORGOTTEN_KEY
+
     hits = associate(
         seed_ids,
         store=memory.graph,
         codegraph_adj=cg,
         hops=hops,
-        limit=limit,
+        limit=limit + 5,  # buffer: backfill after dropping forgotten/missing
         exclude_ids=frozenset(seed_ids),
         min_activation=min_act,
     )
     out = []
     for h in hits:
         rec = memory.get(h.id)
+        if rec is None or (getattr(rec, "extra", None) or {}).get(IS_FORGOTTEN_KEY):
+            continue
         out.append({
             "id": h.id,
-            "title": getattr(rec, "title", h.id) if rec else h.id,
+            "title": getattr(rec, "title", h.id),
             "via": h.via,
             "activation": round(h.activation, 3),
         })
+        if len(out) >= limit:
+            break
     return out
 
 

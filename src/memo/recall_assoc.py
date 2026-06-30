@@ -38,6 +38,8 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
     budget_ms: int = 300 if budget_ms_v is None else budget_ms_v
     deadline = time.monotonic() + budget_ms / 1000.0
     try:
+        from memo.lifecycle import IS_FORGOTTEN_KEY
+
         seed_ids = [r.id for r in relevant]
         hops: int = flag_int("MEMO_ASSOCIATIVE_HOPS") or 2
         limit: int = flag_int("MEMO_ASSOCIATIVE_LIMIT") or 2
@@ -56,7 +58,7 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
             store=memory.graph,
             codegraph_adj=cg,
             hops=hops,
-            limit=limit,
+            limit=limit + 5,  # buffer: backfill after dropping forgotten/missing
             exclude_ids=frozenset(seed_ids),
             min_activation=min_act,
         )
@@ -65,8 +67,13 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
         out: list[Any] = []
         for h in hits:
             rec = memory.get(h.id)
-            if rec is not None:
-                out.append(NudgeItem(id=h.id, title=getattr(rec, "title", h.id), via=h.via))
+            # Skip records that vanished or were soft-forgotten — a stale hint is
+            # worse than none, and the recall block is meant to be trustworthy.
+            if rec is None or (getattr(rec, "extra", None) or {}).get(IS_FORGOTTEN_KEY):
+                continue
+            out.append(NudgeItem(id=h.id, title=getattr(rec, "title", h.id), via=h.via))
+            if len(out) >= limit:
+                break
         return out
     except Exception:
         return []
