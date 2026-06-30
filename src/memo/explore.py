@@ -17,6 +17,7 @@ def explore_entity(
     *,
     max_neighbors: int = 8,
     max_memories: int = 8,
+    use_codegraph: bool | None = None,
 ) -> dict[str, Any]:
     """Return a neighbourhood view of ``entity``.
 
@@ -30,7 +31,7 @@ def explore_entity(
     """
     entity = entity.lower().strip()
     nav = memory.navigator
-    nb = nav.get_neighbors(entity, max_neighbors=max_neighbors)
+    nb = nav.get_neighbors(entity, max_neighbors=max_neighbors, use_codegraph=use_codegraph)
 
     # "shared" = how many MEMORIES bridge this neighbour. Code-graph edges are
     # stored with a "(codegraph)" placeholder instead of a memory id; exclude it
