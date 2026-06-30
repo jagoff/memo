@@ -91,7 +91,12 @@ def flag(name: str, *, env: dict[str, str] | None = None) -> Any:
                 try:
                     return _coerce(spec, ov[name])
                 except ValueError:
-                    pass
+                    _log.warning(
+                        "invalid overlay value for %s: %r — using default %r",
+                        name,
+                        ov[name],
+                        spec.default,
+                    )
         return spec.default
     try:
         return _coerce(spec, raw)

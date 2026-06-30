@@ -21,7 +21,7 @@ def related(query_or_id: str, hops: int, limit: int, as_json: bool) -> None:
     mem = _get_memory(Config.from_env())
     hits = related_for(mem, query_or_id, hops=hops, limit=limit)
     if as_json:
-        click.echo(json.dumps(hits, indent=2))
+        click.echo(json.dumps(hits, indent=2, ensure_ascii=False))
         return
     if not hits:
         click.echo("No related memories found.")

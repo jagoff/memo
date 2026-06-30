@@ -470,13 +470,23 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
 
 
 def sync_init_home(cfg: Config, private: bool = True) -> dict:
-    """Initialize a new memo-sync repo: create GitHub repo + init local git + first push.
+    """Initialize a new memo-sync repo: create GitHub repo + ensure local git + first push.
 
-    Uses `gh repo create` to create the remote, initializes the local
-    memories dir as a git repo, and pushes. Returns the repo URL for cloning
-    on other machines.
+    Uses `gh repo create` to create the remote, ensures the local memories
+    dir is a git repo (running `git init` if needed), and pushes.
+    Returns the repo URL for cloning on other machines.
     """
     import subprocess
+
+    root_candidate = cfg.memory_dir.parent
+    if not (root_candidate / ".git").exists():
+        # First-time setup: initialize the local git repo so git_root_for() works
+        # and gh repo create --source can push.
+        subprocess.run(
+            ["git", "-C", str(root_candidate), "init"],
+            capture_output=True,
+            check=True,
+        )
 
     root = git_root_for(cfg)
 

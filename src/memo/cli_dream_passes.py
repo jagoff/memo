@@ -283,8 +283,6 @@ def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[
                     continue
                 # NOTE: synthesize_cross_cluster takes no source_ids/cluster param —
                 # synthesis runs GLOBALLY over all clusters, not scoped to these hits.
-                # source_ids is kept only for the receipt below.
-                source_ids = [h.id for h in hits]
                 result = mem.synthesize_cross_cluster(
                     dry_run=dry_run, min_cluster_size=3, max_clusters=1
                 )
@@ -292,7 +290,7 @@ def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[
                     all_results.append(
                         {
                             "query": query[:80],
-                            "hits": len(source_ids),
+                            "hits": len(hits),
                             "synthesized": len(result),
                         }
                     )

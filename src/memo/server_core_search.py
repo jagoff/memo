@@ -256,4 +256,11 @@ def register(server: Any, memory: Memory) -> None:
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(memory, tool="chat_ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
+
+        # Auto-capture: best-effort side effect on every chat_ask turn.
+        _auto_capture(memory)
+
+        # Read pending idle notification (best-effort, races with writer)
+        out["notification"] = _read_notification(memory)
+
         return out

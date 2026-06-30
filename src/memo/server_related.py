@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from memo.associative import associate
+from memo.errors import AmbiguousIdError
 from memo.flags import flag_float
 
 
@@ -14,7 +15,10 @@ def related_for(memory: Any, query_or_id: str, hops: int = 2, limit: int = 5) ->
     If `query_or_id` matches a memory id it is the single seed; otherwise it is
     treated as a search query whose top hits seed the expansion.
     """
-    seed = memory.get(query_or_id)
+    try:
+        seed = memory.get(query_or_id)
+    except AmbiguousIdError:
+        seed = None
     if seed is not None:
         seed_ids = [seed.id]
     else:

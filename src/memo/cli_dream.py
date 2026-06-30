@@ -272,6 +272,8 @@ def dream_run(
                     since_days = 7
                 sg = _run_signal_gather(since_days=since_days, file_limit=20)
                 receipt["signal_gathered"] = sg
+                if sg.get("error"):
+                    receipt["errors"].append(f"signal_gather: {sg['error']}")
                 progress.update(
                     step,
                     description=(
@@ -306,6 +308,13 @@ def dream_run(
                 "[dim]converged — corpus unchanged since last run; "
                 "skipping contradict / synthesize / consolidate.[/dim]"
             )
+            # Adjust the progress bar total so it doesn't stall: the maintain
+            # passes (4 advances) and presynthesis won't fire, so subtract them.
+            _convergence_skip = (4 if not skip_maintain else 0) + (
+                1 if not skip_presynthesis and _presynthesis_n > 0 else 0
+            )
+            active_steps -= _convergence_skip
+            progress.update(overall, total=active_steps)
 
         # Phase 1 — recall self-tuner (min_sim), gated + reversible ----------
         if flag_bool("MEMO_DREAM_TUNE_ENABLED"):

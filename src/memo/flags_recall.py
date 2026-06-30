@@ -277,13 +277,6 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0,
     ),
     _spec(
-        "MEMO_RECALL_FORMAT",
-        "str",
-        "auto",
-        "recall",
-        "Recall block format: 'auto' (default, chooses full/compact per budget), 'full' (rich markdown) or 'compact' (~65% fewer tokens).",
-    ),
-    _spec(
         "MEMO_RECALL_ADAPTIVE_BUDGET",
         "bool",
         True,

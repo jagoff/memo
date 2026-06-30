@@ -41,7 +41,7 @@ class AmbiguousIdError(MemoError, ValueError):
     def __init__(self, prefix: str, matches: list[str]) -> None:
         super().__init__(
             f"Ambiguous id prefix {prefix!r}: {len(matches)} matches "
-            f"({', '.join(m[:8] for m in matches[:5])}...)",
+            f"({', '.join(m[:8] for m in matches[:5])}{'...' if len(matches) > 5 else ''})",
         )
         self.prefix = prefix
         self.matches = matches

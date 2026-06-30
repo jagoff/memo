@@ -495,7 +495,7 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
     with zipfile.ZipFile(zip_path, "r") as zf:
         try:
             manifest = json.loads(zf.read("manifest.json"))
-        except KeyError:
+        except (KeyError, json.JSONDecodeError):
             manifest = None
         if manifest:
             console.print(

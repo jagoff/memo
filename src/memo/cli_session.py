@@ -115,7 +115,7 @@ def session_checkpoint(
             if _pfile.exists():
                 _fb = _json2.loads(_pfile.read_text(encoding="utf-8"))
                 sid = _fb.get("session_id")
-                cwd_resolved = cwd_resolved or _fb.get("cwd") or _os.getcwd()
+                cwd_resolved = cwd or _fb.get("cwd") or _os.getcwd()
                 transcript = transcript or _fb.get("transcript_path")
         except Exception:  # noqa: S110
             pass

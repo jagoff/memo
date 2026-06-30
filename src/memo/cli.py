@@ -45,7 +45,9 @@ from memo.cli_contradict import contradict_group
 from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_dashboard import dashboard_cmd
 from memo.cli_dedupe import dedupe_cmd
-from memo.cli_diag import _recall_daemon_health  # noqa: F401 — used in daemon lifecycle
+from memo.cli_diag import (
+    _recall_daemon_health,  # noqa: F401 — re-exported for test: tests/test_logs_and_doctor.py imports from memo.cli
+)
 from memo.cli_doctor import doctor
 from memo.cli_dream import dream_cmd
 from memo.cli_embed_daemon import embed_daemon_group
@@ -133,11 +135,11 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Session & History",
-        ["history", "as-of", "diff", "record-history", "session", "resume", "reflect", "mine-history"],
+        ["history", "as-of", "diff", "record-history", "session", "resume", "reflect", "mine-history", "episodes"],
     ),
     (
         "Maintenance",
-        ["reindex", "maintain", "dream", "consolidate", "synthesize", "dedupe", "cross-dedup", "retier", "contradict", "temporal"],
+        ["reindex", "maintain", "dream", "consolidate", "synthesize", "dedupe", "cross-dedup", "retier", "contradict", "temporal", "compress-context"],
     ),
     (
         "Analysis & Quality",
@@ -145,7 +147,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Knowledge Graph",
-        ["graph", "entities", "entity", "extract-entities", "links", "version"],
+        ["graph", "entities", "entity", "extract-entities", "links", "version", "related"],
     ),
     (
         "Advanced Search",
@@ -164,12 +166,12 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
         [
             "init", "config", "install-mcp", "install-watcher", "uninstall-watcher",
             "install-slash", "install-statusline", "install-shell-wrapper", "install-shims",
-            "startup-banner", "migrate", "migrate-vault", "update", "watch",
+            "startup-banner", "migrate", "migrate-vault", "update", "watch", "release",
         ],
     ),
     (
         "Daemons",
-        ["recall-daemon", "ingest-daemon", "maint-daemon", "embed-daemon"],
+        ["recall-daemon", "ingest-daemon", "maint-daemon", "embed-daemon", "idle-daemon"],
     ),
     (
         "Other",

@@ -19,7 +19,7 @@ from typing import Any
 import click
 
 from memo.cli_common import console
-from memo.config import AI_SUBDIR, Config
+from memo.config import Config
 
 
 def _resolve_ingest_row(store, path_str):
@@ -136,6 +136,7 @@ def ingest(
 
     from memo.chunker import chunk_markdown
     from memo.embedder import MLXEmbedder, assert_valid_embedding
+    from memo.flags import flag_str as _flag_str
     from memo.ingest_helpers import (
         IMAGE_EXTENSIONS,
         enrich_with_ocr,
@@ -166,7 +167,7 @@ def ingest(
         ".space",
         ".claude",
         ".devin",
-        AI_SUBDIR,
+        (_flag_str("MEMO_VAULT_SYSTEM_DIR") or "Obsidian") + "/AI",
         # Archived notes are not durable knowledge — they pollute recall. Kept
         # out by default (any depth, case-insensitive — see `_excluded`) so the
         # exclusion does not depend on a per-vault `.memoignore` surviving.

@@ -231,6 +231,8 @@ def embed_cmd(text: str | None, batch_json) -> None:
             raise click.UsageError(f"--batch-json: invalid JSON: {exc}") from exc
         if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
             raise click.UsageError("--batch-json: expected JSON list of strings")
+        if not texts:
+            raise click.UsageError("--batch-json: list must not be empty")
         vecs = mem.embedder.embed(texts)
         dim = len(vecs[0]) if vecs else 0
         out = {"vectors": vecs, "dim": dim, "model": mem.cfg.embedder_model}

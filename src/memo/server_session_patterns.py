@@ -53,7 +53,7 @@ def _project_from_cwd() -> str:
     if config_path:
         return config_path.parent.parent.name
 
-    # Case 2: git root with origin remote
+    # Case 2: git root with origin remote (or bare git root)
     git_root = _find_git_root(cwd)
     if git_root:
         remote = _get_git_remote(git_root)
@@ -61,9 +61,7 @@ def _project_from_cwd() -> str:
             return remote
         return git_root.name
 
-    # Case 3: inside git repo
-    if git_root:
-        return git_root.name
+    # Case 3 (formerly): inside git repo — already handled by Case 2 above.
 
     # Case 4: single git child
     child = _find_git_child(cwd)
@@ -163,9 +161,17 @@ def _find_git_child(cwd: str) -> Any | None:
 
 # -- Session Management (session pattern) ----------------------------------------
 
+# Cache of memory instance IDs whose session tables have already been created.
+# Avoids re-issuing 5 DDL statements on every tool call. Keyed on id(memory)
+# so each fresh Memory object (e.g. in tests) still runs CREATE TABLE IF NOT EXISTS.
+_session_schema_ensured_for: set[int] = set()
+
 
 def _ensure_session_table(memory: Any) -> None:
     """Ensure sessions table exists (migration for existing DBs)."""
+    mem_id = id(memory)
+    if mem_id in _session_schema_ensured_for:
+        return
     cx = memory.store._conn
     cx.execute(
         """
@@ -184,6 +190,7 @@ def _ensure_session_table(memory: Any) -> None:
     cx.execute("CREATE INDEX IF NOT EXISTS idx_meta_topic_key ON meta(topic_key)")
     cx.execute("CREATE INDEX IF NOT EXISTS idx_meta_hash ON meta(normalized_hash)")
     cx.execute("CREATE INDEX IF NOT EXISTS idx_meta_deleted ON meta(deleted_at)")
+    _session_schema_ensured_for.add(mem_id)
 
 
 # -- MCP Server Registration -------------------------------------------
@@ -530,14 +537,16 @@ def register(server: Any, memory: Any) -> None:
         # Determine source
         if _find_memo_config(directory):
             source = "config"
-        elif _get_git_remote(_find_git_root(directory) or ""):
-            source = "git_remote"
-        elif _find_git_root(directory):
-            source = "git_root"
-        elif _find_git_child(directory):
-            source = "git_child"
         else:
-            source = "dir_basename"
+            _git_root = _find_git_root(directory)
+            if _git_root and _get_git_remote(_git_root):
+                source = "git_remote"
+            elif _git_root:
+                source = "git_root"
+            elif _find_git_child(directory):
+                source = "git_child"
+            else:
+                source = "dir_basename"
 
         return {
             "project": project,

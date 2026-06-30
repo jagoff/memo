@@ -59,6 +59,8 @@ def doctor(
     whose `id` isn't in the store). `--gc --fix` removes orphan store
     rows; orphan `.md` files are listed but never deleted automatically.
     """
+    if fix and not do_gc:
+        raise click.UsageError("--fix requires --gc")
     cfg = Config.from_env()
     if as_json:
         report = _doctor_report(
