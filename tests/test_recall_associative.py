@@ -1,3 +1,5 @@
+from datetime import UTC
+
 from memo.recall_assoc import build_nudge
 
 
@@ -176,9 +178,8 @@ def test_cli_related_json(tmp_path):
 
 
 def test_build_nudge_skips_forgotten(monkeypatch):
-    from memo.lifecycle import IS_FORGOTTEN_KEY
-
     import memo.recall_assoc as ra
+    from memo.lifecycle import IS_FORGOTTEN_KEY
 
     monkeypatch.setattr(ra, "_codegraph_adj", lambda: None)
     monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "1")
@@ -209,3 +210,15 @@ def test_build_nudge_skips_forgotten(monkeypatch):
     ids = {h.id for h in ra.build_nudge(_Mem(), [_Rec("s1")])}
     assert "a1" not in ids   # soft-forgotten hit dropped
     assert "a2" in ids       # backfilled past the forgotten one
+
+
+def test_recency_weight_prefers_recent():
+    from datetime import datetime
+
+    from memo.recall_assoc import _recency_weight
+
+    today = datetime.now(UTC).isoformat()
+    old = datetime(2020, 1, 1, tzinfo=UTC).isoformat()
+    assert _recency_weight(today) > _recency_weight(old)
+    assert _recency_weight("") == 1.0       # unknown -> neutral
+    assert 0.0 < _recency_weight(old) <= 1.0

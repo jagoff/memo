@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import UTC
 from typing import Any
 
 from memo.associative import associate
@@ -64,19 +65,34 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
         )
         if time.monotonic() > deadline:
             return []
-        out: list[Any] = []
+        # Resolve records, drop forgotten/missing, then re-rank with a mild
+        # recency preference: among similarly-connected memories, a fresher one
+        # is the better hint. Recency only modulates; graph activation dominates.
+        scored: list[tuple[float, Any]] = []
         for h in hits:
             rec = memory.get(h.id)
-            # Skip records that vanished or were soft-forgotten — a stale hint is
-            # worse than none, and the recall block is meant to be trustworthy.
             if rec is None or (getattr(rec, "extra", None) or {}).get(IS_FORGOTTEN_KEY):
                 continue
-            out.append(NudgeItem(id=h.id, title=getattr(rec, "title", h.id), via=h.via))
-            if len(out) >= limit:
-                break
-        return out
+            adj = h.activation * _recency_weight(getattr(rec, "updated", "") or "")
+            scored.append((adj, NudgeItem(id=h.id, title=getattr(rec, "title", h.id), via=h.via)))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in scored[:limit]]
     except Exception:
         return []
+
+
+def _recency_weight(updated_iso: str) -> float:
+    """Mild recency factor: today ~1.0, ~18mo ~0.5, older trends to 0. Unknown -> 1.0."""
+    from datetime import datetime
+
+    try:
+        dt = datetime.fromisoformat(updated_iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        days = (datetime.now(UTC) - dt).days
+        return 1.0 / (1.0 + max(0, days) / 540.0)
+    except Exception:
+        return 1.0
 
 
 def render_associative_line(context: str, nudge: list[Any], *, token_budget: int) -> str:
