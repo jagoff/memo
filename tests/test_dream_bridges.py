@@ -45,6 +45,42 @@ def test_bridge_insights_maps_reps_and_source_memories():
     assert set(br["memory_ids"]) == {"m1", "m2", "m3"}
 
 
+def test_is_junk_anchor():
+    from memo.dream_bridges import _is_junk_anchor
+
+    assert _is_junk_anchor("2026-06-23")  # date
+    assert _is_junk_anchor("2026")        # bare year
+    assert _is_junk_anchor("12345")       # pure number
+    assert _is_junk_anchor("archivos")    # generic
+    assert _is_junk_anchor("files")
+    assert not _is_junk_anchor("synapse")
+    assert not _is_junk_anchor("recall hook")
+
+
+class _JunkGraph:
+    def all_weighted_edges(self):
+        d = "2026-06-23"  # the joining node is a date -> a junk anchor
+        return [
+            (d, "a1", 1.0), (d, "a2", 1.0), ("a1", "a2", 1.0),
+            (d, "b1", 1.0), (d, "b2", 1.0), ("b1", "b2", 1.0),
+        ]
+
+    def entity_memories(self, name, type_=None):
+        return []
+
+
+class _JunkMem:
+    graph = _JunkGraph()
+
+    def search(self, *a, **k):
+        return []
+
+
+def test_bridge_insights_filters_date_anchor():
+    # The only bridge is a date entity -> co-mention artifact, not a real link.
+    assert bridge_insights(_JunkMem(), min_side=2) == []
+
+
 def test_decide_bridges_dedup_dryrun_save_and_fail():
     bridges = [
         {

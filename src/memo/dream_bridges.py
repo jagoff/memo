@@ -14,12 +14,33 @@ single articulation entity instead of a whole community.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
 from memo.dream_communities import provenance_hash
 from memo.graph_bridges import find_bridges
+
+_DATE_RE = re.compile(r"^\d{4}([-/]\d{1,2}){0,2}$")
+# Generic co-mention tokens that are not meaningful link anchors.
+_GENERIC_ANCHORS = frozenset(
+    {
+        "files", "file", "archivos", "archivo", "print", "log", "logs", "note",
+        "notes", "data", "test", "tests", "todo", "string", "value", "none",
+        "true", "false", "null", "error", "errors",
+    }
+)
+
+
+def _is_junk_anchor(name: str) -> bool:
+    """A bridge/representative that carries no real semantic link: a date, a bare
+    number, or a generic co-mention token — these surfaced as noisy 'X via <date>'
+    insights, so they are filtered before synthesis."""
+    n = (name or "").strip().lower()
+    if not n or n.isdigit() or _DATE_RE.match(n):
+        return True
+    return n in _GENERIC_ANCHORS
 
 
 def _representative(side: list[str], adjacency: dict[str, dict[str, float]]) -> str:
@@ -51,10 +72,21 @@ def bridge_insights(
     )
 
     out: list[dict[str, Any]] = []
-    for br in bridges[:max_bridges]:
+    for br in bridges:
+        if len(out) >= max_bridges:
+            break
         left, right = list(br["left"]), list(br["right"])
         left_rep = _representative(left, adjacency)
         right_rep = _representative(right, adjacency)
+        # Drop junk-anchor links (dates, numbers, generic tokens) and tautologies
+        # where both sides share a representative — they read as near-noise.
+        if (
+            _is_junk_anchor(br["bridge"])
+            or _is_junk_anchor(left_rep)
+            or _is_junk_anchor(right_rep)
+            or left_rep == right_rep
+        ):
+            continue
         seen: set[str] = set()
         mem_ids: list[str] = []
         for ent in (br["bridge"], left_rep, right_rep):
