@@ -1,7 +1,7 @@
 """Tests for `memo install-statusline` chain-aware wiring + the bundled script.
 
 The systemic guarantee under test: installing the memo statusline makes the
-``[MEMO <ver>]`` badge appear on ANY machine, *coexisting* with whatever
+``[Memo <ver>]`` badge appear on ANY machine, *coexisting* with whatever
 statusline was already configured (caveman, memflow, a hand-rolled one) instead
 of silently skipping it. See ``src/memo/cli_statusline.py``.
 """
@@ -119,7 +119,7 @@ def test_install_preserves_other_settings_keys(tmp_path):
     assert "statusLine" in s
 
 
-# ── the bundled script: wrap mode prepends the MEMO badge to inner output ──────
+# ── the bundled script: wrap mode prepends the Memo badge to inner output ──────
 
 
 def _bundled_script() -> Path:
@@ -132,10 +132,12 @@ def test_script_wrap_prepends_memo_badge(tmp_path):
     script = _bundled_script()
     assert script.is_file()
     # Force a deterministic version via the .memo-version fallback file.
+    home = tmp_path / "home"
+    home.mkdir()
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     (cfg / ".memo-version").write_text("9.9.9")
-    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
+    env = {**os.environ, "HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
     proc = subprocess.run(
         ["bash", str(script), "--wrap", "echo INNER_LINE"],
         input='{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"}}',
@@ -145,17 +147,38 @@ def test_script_wrap_prepends_memo_badge(tmp_path):
     )
     out = proc.stdout
     assert "INNER_LINE" in out
-    assert "[MEMO" in out
+    assert "[Memo 9.9.9]" in out
+    assert "[MEMO " not in out
     # badge precedes the inner output
-    assert out.index("[MEMO") < out.index("INNER_LINE")
+    assert out.index("[Memo") < out.index("INNER_LINE")
+
+
+def test_script_wrap_does_not_duplicate_existing_legacy_memo_badge(tmp_path):
+    script = _bundled_script()
+    home = tmp_path / "home"
+    home.mkdir()
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / ".memo-version").write_text("9.9.9")
+    env = {**os.environ, "HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    proc = subprocess.run(
+        ["bash", str(script), "--wrap", "echo '[MEMO 1.2.3] INNER_LINE'"],
+        input='{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"}}',
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.stdout == "[MEMO 1.2.3] INNER_LINE"
 
 
 def test_script_standalone_still_emits_badge(tmp_path):
     script = _bundled_script()
+    home = tmp_path / "home"
+    home.mkdir()
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     (cfg / ".memo-version").write_text("9.9.9")
-    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(cfg)}
+    env = {**os.environ, "HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
     proc = subprocess.run(
         ["bash", str(script)],
         input='{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"}}',
@@ -163,5 +186,6 @@ def test_script_standalone_still_emits_badge(tmp_path):
         text=True,
         env=env,
     )
-    assert "[MEMO" in proc.stdout
+    assert "[Memo 9.9.9]" in proc.stdout
+    assert "[MEMO " not in proc.stdout
     assert "Opus" in proc.stdout

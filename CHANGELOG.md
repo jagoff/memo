@@ -9,6 +9,9 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Changed
+- Startup banner and statusline badges now render as `[Memo <version>]` instead of `[MEMO <version>]`.
+
 ## [2.6.6] - 2026-06-30
 
 ### Fixed
@@ -60,7 +63,6 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 ### Changed
 - `reranker_enabled` now defaults ON only on Apple Silicon (the cross-encoder is MLX-only); on other hosts hybrid search returns fusion-ranked results without the rerank pass.
 - LLM features (`ask`/`synthesize`/`dream`) raise a clear `MemoError` off Apple Silicon instead of an opaque import failure; search/recall/save are unaffected.
-
 ## [2.5.0] - 2026-06-30
 
 ### Added

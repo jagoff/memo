@@ -2,10 +2,10 @@
 # memo statusline for Claude Code.
 #
 # Two modes:
-#   Standalone:  prints  <dir> · <branch> · <model> · [MEMO <version>]
+#   Standalone:  prints  <dir> · <branch> · <model> · [Memo <version>]
 #   Wrap:        memo-statusline.sh --wrap '<inner command>'
 #                runs <inner command> with the SAME statusline JSON on stdin,
-#                captures its line, and PREPENDS  [MEMO <version>]  to it — so the
+#                captures its line, and PREPENDS  [Memo <version>]  to it — so the
 #                badge coexists with any other statusline (caveman, memflow, a
 #                custom one) on any machine, without hand-merging scripts.
 #
@@ -37,15 +37,15 @@ if [ -z "$MEMO_VER" ]; then
 fi
 MEMO_VER=$(printf '%s' "$MEMO_VER" | tr -cd '0-9A-Za-z.+-')
 MEMO_BADGE=""
-[ -n "$MEMO_VER" ] && MEMO_BADGE="[MEMO $MEMO_VER]"
+[ -n "$MEMO_VER" ] && MEMO_BADGE="[Memo $MEMO_VER]"
 
 # ── Wrap mode: prepend the badge to the inner statusline's output and exit ────
 if [ -n "$WRAP_CMD" ]; then
   INNER=$(printf '%s' "$INPUT" | eval "$WRAP_CMD" 2>/dev/null)
-  # Idempotent: if the inner statusline already renders a [MEMO ...] badge
+  # Idempotent: if the inner statusline already renders a [Memo ...] badge
   # (its own, or from a previous wrap), don't prepend a second one.
   case "$INNER" in
-    *"[MEMO "*) printf '%s' "$INNER"; exit 0 ;;
+    *"[Memo "*|*"[MEMO "*) printf '%s' "$INNER"; exit 0 ;;
   esac
   if [ -n "$MEMO_BADGE" ] && [ -n "$INNER" ]; then
     printf '%s %s' "$MEMO_BADGE" "$INNER"

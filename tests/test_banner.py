@@ -25,7 +25,8 @@ def test_startup_banner_contains_memo_version(tmp_cfg):
     result = CliRunner().invoke(
         cli, ["startup-banner", "--agent", "opencode"], env=_env(tmp_cfg)
     )
-    assert "[MEMO" in result.output
+    assert "[Memo " in result.output
+    assert "[MEMO " not in result.output
 
 
 def test_startup_banner_contains_agent_name(tmp_cfg):
