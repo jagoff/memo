@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import base64
 import importlib.metadata
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -14,7 +12,7 @@ from pathlib import Path
 import click
 
 from memo.cli_common import console
-from memo.flags import flag_str
+from memo.runtime.codex_notify import emit_codex_notify
 
 _CODEX_UPDATE_NOTIFY_TITLE = "Plugin updated: memo"
 _CODEX_UPDATE_NOTIFY_BODY = "Run /reload_plugins to apply"
@@ -179,34 +177,9 @@ def _clear_update_notify() -> None:
         pass
 
 
-def _agent_tty_path() -> Path | None:
-    raw = flag_str("MEMO_AGENT_TTY").strip()
-    if raw:
-        return Path(raw)
-
-    data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local/share"))
-    try:
-        raw = (data_home / "memo" / "agent_tty").read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    return Path(raw) if raw else None
-
-
 def _notify_codex_plugin_updated() -> bool:
     """Ask Codex/Supacode to show the same top-line notice used by plugin updates."""
-    tty = _agent_tty_path()
-    if tty is None:
-        return False
-
-    title = base64.b64encode(_CODEX_UPDATE_NOTIFY_TITLE.encode("utf-8")).decode("ascii")
-    body = base64.b64encode(_CODEX_UPDATE_NOTIFY_BODY.encode("utf-8")).decode("ascii")
-    payload = f"\033]3008;start=codex;kind=notify;title={title};body={body}\033\\"
-    try:
-        with open(tty, "ab", buffering=0) as fh:
-            fh.write(payload.encode("ascii"))
-        return True
-    except OSError:
-        return False
+    return emit_codex_notify(_CODEX_UPDATE_NOTIFY_TITLE, _CODEX_UPDATE_NOTIFY_BODY)
 
 
 def _finish_successful_update() -> None:

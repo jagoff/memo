@@ -1,6 +1,9 @@
 """Tests for memo startup-banner and install-shims commands."""
 from __future__ import annotations
 
+import base64
+import importlib.metadata
+
 from click.testing import CliRunner
 
 from memo.cli import cli
@@ -64,7 +67,30 @@ def test_install_shims_contains_memo_shim_marker(tmp_cfg, tmp_path):
     assert "grep -qF" not in content
     assert 'startup-banner --agent "$_AGENT"' in content
     assert 'startup-banner --agent "$_AGENT" 2>/dev/null' not in content
+    assert 'codex-badge --agent "$_AGENT"' in content
+    assert 'MEMO_CODEX_BADGE_DELAY:-1' in content
     assert "exec" in content
+
+
+def test_codex_badge_uses_memo_version_notify_protocol(tmp_cfg, tmp_path, monkeypatch):
+    tty = tmp_path / "tty"
+    tty.touch()
+    monkeypatch.setenv("MEMO_AGENT_TTY", str(tty))
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda name: "9.8.7" if name == "mlx-memo" else "0",
+    )
+
+    result = CliRunner().invoke(cli, ["codex-badge", "--agent", "codex"], env=_env(tmp_cfg))
+
+    assert result.exit_code == 0, result.output
+    raw = tty.read_bytes()
+    title = base64.b64encode(b"[Memo 9.8.7]").decode("ascii")
+    assert raw.startswith(b"\x1b]3008;start=codex;kind=notify;")
+    assert f"title={title}".encode("ascii") in raw
+    assert b"body=" in raw
+    assert raw.endswith(b"\x1b\\")
 
 
 def test_install_shims_skips_non_memo_file(tmp_cfg, tmp_path):
