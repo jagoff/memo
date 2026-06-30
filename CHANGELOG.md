@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-06-29
+
+### Fixed
+- **Split graph DB healing**: an install that ran an interim build (the table rename without a migration) ended up with both `entity_memoria` (legacy data) and an empty `entity_memory`, splitting the knowledge graph and losing historical entity links to recall. The migration now folds the legacy rows into `entity_memory` (deduped) and drops the legacy table when both are present, not only when the new table is absent.
+
 ## [2.4.0] - 2026-06-29
 
 ### Changed
