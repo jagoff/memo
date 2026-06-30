@@ -51,19 +51,14 @@ def test_rerank_orders_by_descending_score(monkeypatch):
 
     scores_by_title = {"alpha": 0.9, "beta": 0.3, "gamma": 0.6}
 
-    def _stub_score_many(self, query, docs):
-        # Match each composed `title\n\nbody` string by its title prefix.
-        out = []
-        for doc in docs:
-            s = 0.0
-            for title, val in scores_by_title.items():
-                if doc.startswith(title):
-                    s = val
-                    break
-            out.append(s)
-        return out
+    def _stub_score(self, query, doc):
+        # Match by title prefix in the composed `title\n\nbody` string.
+        for title, s in scores_by_title.items():
+            if doc.startswith(title):
+                return s
+        return 0.0
 
-    monkeypatch.setattr(MLXReranker, "score_many", _stub_score_many)
+    monkeypatch.setattr(MLXReranker, "score", _stub_score)
     monkeypatch.setattr(MLXReranker, "_ensure_loaded", lambda self: None)
 
     hits = [_rec("a", "alpha"), _rec("b", "beta"), _rec("g", "gamma")]
@@ -84,8 +79,8 @@ def test_rerank_top_n_truncates_after_sort(monkeypatch):
 
     scores = {"a": 0.9, "b": 0.5, "c": 0.1}
     monkeypatch.setattr(
-        MLXReranker, "score_many",
-        lambda self, q, docs: [scores.get(d.split("\n")[0], 0.0) for d in docs],
+        MLXReranker, "score",
+        lambda self, q, d: scores.get(d.split("\n")[0], 0.0),
     )
     monkeypatch.setattr(MLXReranker, "_ensure_loaded", lambda self: None)
 
@@ -117,11 +112,11 @@ def test_rerank_truncates_body_before_scoring(monkeypatch):
 
     seen_docs: list[str] = []
 
-    def _capture_score_many(self, query, docs):
-        seen_docs.extend(docs)
-        return [0.5 for _ in docs]
+    def _capture_score(self, query, doc):
+        seen_docs.append(doc)
+        return 0.5
 
-    monkeypatch.setattr(MLXReranker, "score_many", _capture_score_many)
+    monkeypatch.setattr(MLXReranker, "score", _capture_score)
     monkeypatch.setattr(MLXReranker, "_ensure_loaded", lambda self: None)
 
     huge_body = "x" * 50_000
@@ -146,36 +141,12 @@ def test_rerank_overwrites_score_on_returned_records(monkeypatch):
     rr.task = "t"
     rr.max_seq_len = 4096
 
-    monkeypatch.setattr(MLXReranker, "score_many", lambda self, q, docs: [0.42 for _ in docs])
+    monkeypatch.setattr(MLXReranker, "score", lambda self, q, d: 0.42)
     monkeypatch.setattr(MLXReranker, "_ensure_loaded", lambda self: None)
 
     pre = replace(_rec("1", "x"), score=0.001)  # stale RRF score
     out = rr.rerank("q", [pre])
     assert out[0].score == pytest.approx(0.42)
-
-
-def test_score_delegates_to_score_many(monkeypatch):
-    """`score` is a thin wrapper over `score_many` (a 1-element batch) so
-    single-pair callers and the batched path share one implementation."""
-    rr = MLXReranker.__new__(MLXReranker)
-    captured: dict[str, object] = {}
-
-    def _stub_score_many(self, query, docs):
-        captured["query"] = query
-        captured["docs"] = list(docs)
-        return [0.73 for _ in docs]
-
-    monkeypatch.setattr(MLXReranker, "score_many", _stub_score_many)
-    assert rr.score("q", "d") == pytest.approx(0.73)
-    assert captured == {"query": "q", "docs": ["d"]}
-
-
-def test_score_many_empty_returns_empty(monkeypatch):
-    """No docs → no forward pass, empty list (before touching MLX)."""
-    rr = MLXReranker.__new__(MLXReranker)
-    rr._model = object()
-    monkeypatch.setattr(MLXReranker, "_ensure_loaded", lambda self: None)
-    assert rr.score_many("q", []) == []
 
 
 def test_reranker_revision_downloads_pinned_snapshot(monkeypatch):
@@ -294,25 +265,30 @@ def test_score_real_model_separates_relevant_from_irrelevant():
 
 @pytest.mark.requires_mlx
 @pytest.mark.slow
-def test_score_many_preserves_topk_set_vs_per_pair():
-    """Batched `score_many` must return the same top-K *set* as per-pair `score`.
+def test_head_slice_matches_full_forward_ranking():
+    """`score` projects only the last token's hidden state through the LM
+    head (head-slice) instead of running the head over all T positions.
 
-    `score_many` right-pads varying-length pairs into one forward and reads
-    each row at its *last real token*. Under causal attention padding cannot
-    leak into that position — a doc scored alone vs alone+trailing-pad is
-    bit-identical (verified directly), and the head-slice projection is exact
-    (linear). What is NOT bit-exact is the transformer *body*: the quantized
-    GEMM is mildly batch-size dependent, so absolute P(yes) can drift ~0.03
-    near the 0.5 boundary versus the B=1 path. That can swap two near-tied
-    candidates *within* the result set, but it does not change which docs are
-    retrieved — the top-K set is preserved, which is rerank's actual contract.
-    This pins top-K set parity (what matters for retrieval) and bounds the
-    drift, so a real gather/index regression — which scrambles scores
-    wholesale — still trips."""
+    This must rank a doc set identically to the full-forward reference
+    (head applied to every position, then sliced). On fp/8-bit weights the
+    two are bit-identical; on a 4-bit model the quantized head matmul is
+    shape-sensitive, so P(yes) can differ at the ~1/64 quantization step —
+    which never changes the retrieved set. This pins ranking parity vs the
+    reference and bounds the drift, so a head-application bug (wrong head,
+    pre-norm hidden, transposed weights) — which scrambles scores wholesale
+    — still trips."""
+    import math as _math
+
+    import mlx.core as mx
+
+    from memo.mlx_gpu import gpu_guard
+
     rr = MLXReranker(
         model_path="vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
         revision="9655b27c01d2ff1c49f7e672a04b70d630161b46",
     )
+    rr._ensure_loaded()
+    model = rr._model
     query = "favourite TV series"
     docs = [
         "List of best TV series: Breaking Bad, The Office, Dexter.",
@@ -320,21 +296,26 @@ def test_score_many_preserves_topk_set_vs_per_pair():
         "My short notes on cooking pasta and a few Italian recipes I like.",
         "TV shows I love: True Detective, Better Call Saul, and The Wire.",
         "Grocery list: milk, eggs, bread, coffee, olive oil.",
-        "Top streaming dramas this year ranked by critics and viewers.",
-        "Sitcoms worth rewatching: Friends, Seinfeld, Parks and Rec.",
-        "Tax filing deadlines and deductions for freelancers.",
         "Best HBO shows of the decade according to fans.",
-        "Netflix originals I want to binge over the holidays.",
     ]
-    per_pair = [rr.score(query, d) for d in docs]  # each is a B=1 batch
-    batched = rr.score_many(query, docs)  # one padded multi-row forward
 
-    assert len(batched) == len(docs)
-    rank_pp = sorted(range(len(docs)), key=lambda i: per_pair[i], reverse=True)
-    rank_bt = sorted(range(len(docs)), key=lambda i: batched[i], reverse=True)
-    # Top-K retrieved set is identical (near-tied internal order may differ).
+    def full_forward(doc: str) -> float:
+        # Reference: LM head over ALL positions, then read the last one.
+        ids = rr._tokenizer.encode(rr._format(query, doc), add_special_tokens=False)
+        if len(ids) > rr.max_seq_len:
+            ids = ids[: rr.max_seq_len]
+        with gpu_guard():
+            last = model(mx.array([ids]))[:, -1, :]
+            y = float(last[0, rr._yes_id])
+            n = float(last[0, rr._no_id])
+        m = max(y, n)
+        return _math.exp(y - m) / (_math.exp(y - m) + _math.exp(n - m))
+
+    ref = [full_forward(d) for d in docs]
+    new = [rr.score(query, d) for d in docs]  # head-slice path
+
+    rank_ref = sorted(range(len(docs)), key=lambda i: ref[i], reverse=True)
+    rank_new = sorted(range(len(docs)), key=lambda i: new[i], reverse=True)
     for k in (3, 5):
-        assert set(rank_bt[:k]) == set(rank_pp[:k])
-    assert rank_bt[0] == rank_pp[0]  # the single best doc never moves
-    # Bounded drift: a real gather/index bug would scramble scores far past this.
-    assert max(abs(a - b) for a, b in zip(per_pair, batched, strict=True)) < 0.05
+        assert set(rank_new[:k]) == set(rank_ref[:k])
+    assert max(abs(a - b) for a, b in zip(ref, new, strict=True)) < 0.05
