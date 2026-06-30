@@ -8,7 +8,7 @@ from memo.navigation import EntityNeighbors
 
 def test_explore_entity_view():
     class _Nav:
-        def get_neighbors(self, entity, max_neighbors=50):
+        def get_neighbors(self, entity, max_neighbors=50, *, use_codegraph=None):
             return EntityNeighbors(
                 entity=entity,
                 direct_neighbors=["a", "b"],
@@ -43,7 +43,7 @@ def test_explore_entity_view():
 
 def test_explore_entity_empty():
     class _Nav:
-        def get_neighbors(self, entity, max_neighbors=50):
+        def get_neighbors(self, entity, max_neighbors=50, *, use_codegraph=None):
             return EntityNeighbors(
                 entity=entity, direct_neighbors=[], neighbor_memories={}, degree=0
             )
@@ -67,7 +67,7 @@ def test_explore_entity_empty():
 
 def test_explore_excludes_codegraph_placeholder_from_shared():
     class _Nav:
-        def get_neighbors(self, entity, max_neighbors=50):
+        def get_neighbors(self, entity, max_neighbors=50, *, use_codegraph=None):
             return EntityNeighbors(
                 entity=entity,
                 direct_neighbors=["codesym", "realnbr"],
