@@ -59,7 +59,9 @@ def test_install_shims_contains_memo_shim_marker(tmp_cfg, tmp_path):
     )
     content = (bin_dir / "codex").read_text()
     assert "memo-shim" in content
-    assert "MEMFLOW_STARTUP_BANNER" in content
+    assert "MEMFLOW_STARTUP_BANNER" not in content
+    assert "grep -qF" not in content
+    assert 'startup-banner --agent "$_AGENT"' in content
     assert "exec" in content
 
 

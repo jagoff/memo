@@ -4,11 +4,9 @@ Each shim is a small bash script placed in ~/.memo/bin/ (before other
 agent locations in PATH). When an agent starts:
 
   memo shim → detects next binary in PATH
-    if next is a memflow shim  → exec it (memflow shows combined banner)
-    if next is the real binary → show memo banner, then exec it
+    show memo banner, then exec the next binary
 
-Chain: ~/.memo/bin/codex → ~/.memflow/bin/codex → real codex
-       ~/.memo/bin/opencode → real opencode  (no memflow shim for opencode)
+Chain: ~/.memo/bin/codex → any downstream wrapper or real codex
 
 Safety: shims always exec the real binary; idempotent; no-clobber for
         non-memo files (marker line `# memo-shim` used to detect ours).
@@ -32,7 +30,7 @@ set -euo pipefail
 _MEMO_BIN_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 _AGENT="$(basename "$0")"
 # Capture the TTY before the agent changes it, so async hooks can write
-# idle-capture notifications directly to this terminal (same pattern as memflow).
+# idle-capture notifications directly to this terminal.
 if [ -z "${MEMO_AGENT_TTY:-}" ] && [ -t 2 ]; then
     MEMO_AGENT_TTY="$(tty 2>/dev/null || true)"
     export MEMO_AGENT_TTY
@@ -47,12 +45,9 @@ if [ -z "$_NEXT" ]; then
     printf 'memo: shim: %s: not found in PATH\\n' "$_AGENT" >&2
     exit 127
 fi
-# If next is a memflow shim, it already shows memo via its banner — skip ours.
-if ! grep -qF 'MEMFLOW_STARTUP_BANNER' "$_NEXT" 2>/dev/null; then
-    _MEMO="$(command -v memo 2>/dev/null || true)"
-    if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ -t 2 ]; then
-        "$_MEMO" startup-banner --agent "$_AGENT" 2>/dev/null || true
-    fi
+_MEMO="$(command -v memo 2>/dev/null || true)"
+if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ -t 2 ]; then
+    "$_MEMO" startup-banner --agent "$_AGENT" 2>/dev/null || true
 fi
 exec "$_NEXT" "$@"
 """
@@ -179,8 +174,8 @@ def install_shims_cmd(agents: str, bin_dir: str, dry_run: bool) -> None:
 
     \b
     Each shim wraps the next agent binary in PATH:
-      - If memflow is next → exec it (memflow shows a combined memo+memflow box)
-      - If the real binary is next → show memo's own banner, then exec it
+      - Show memo's own banner
+      - Exec the next downstream wrapper or real binary
 
     After running, add the shim directory to PATH (before other agent dirs):
 
