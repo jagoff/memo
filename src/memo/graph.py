@@ -425,6 +425,12 @@ class GraphStore:
                 out[nm["name"]] = float(r["weight"])
         return out
 
+    def entity_names(self) -> set[str]:
+        """All entity names (already lower-cased) — the graph's vocabulary, used
+        to match query tokens against known entities so the recall boost can fire
+        on natural lowercase prompts (one indexed scan, no MLX)."""
+        return {r["name"] for r in self._conn.execute("SELECT name FROM entities")}
+
     def top_entities(
         self,
         *,

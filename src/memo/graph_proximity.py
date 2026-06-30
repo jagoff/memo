@@ -11,11 +11,47 @@ embedding / MLX work — only cheap graph lookups — so it respects the recall-
 from __future__ import annotations
 
 import contextlib
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any
 
-__all__ = ["graph_boost_factory"]
+__all__ = ["extract_query_entities", "graph_boost_factory"]
+
+_TOKEN_RE = re.compile(r"[a-záéíóúüñ0-9]+", re.IGNORECASE)
+
+
+def extract_query_entities(prompt: str, graph: Any) -> list[str]:
+    """Query entities for the graph-proximity boost.
+
+    Union of (a) the proper-noun/acronym/quoted regex (``extract_entities``) and
+    (b) graph-vocabulary matches: lowercase unigrams + bigrams of the prompt that
+    are actual entity names in the graph. The vocabulary match lets the boost
+    fire on natural lowercase prompts the regex misses ("how does the recall hook
+    budget work") while admitting ONLY terms that exist in the graph — so no
+    stopword noise leaks in. Falls back to the regex alone if the graph yields no
+    vocabulary.
+    """
+    from memo.entity_extractor import extract_entities
+
+    out = list(extract_entities(prompt))
+    seen = {e.lower() for e in out}
+
+    names: set[str] = set()
+    with contextlib.suppress(Exception):
+        names = graph.entity_names()
+    if not names:
+        return out
+
+    toks = [t for t in _TOKEN_RE.findall(prompt.lower()) if len(t) >= 3]
+    cands = set(toks)
+    for i in range(len(toks) - 1):
+        cands.add(f"{toks[i]} {toks[i + 1]}")
+    for c in cands:
+        if c in names and c not in seen:
+            out.append(c)
+            seen.add(c)
+    return out
 
 
 def _identity(hits: list[Any]) -> list[Any]:

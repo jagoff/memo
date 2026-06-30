@@ -240,9 +240,8 @@ def measure_graph_weight(
     real recall path. ``eval_recall`` itself is not graph-boost aware, so this
     measure lives here rather than extending the shared harness.
     """
-    from memo.entity_extractor import extract_entities
     from memo.eval_recall import _is_noise, _is_relevant
-    from memo.graph_proximity import graph_boost_factory
+    from memo.graph_proximity import extract_query_entities, graph_boost_factory
     from memo.recall_logic import RankKnobs, rank_hits
 
     graph = getattr(mem, "graph", None)
@@ -253,7 +252,9 @@ def measure_graph_weight(
         hits = mem.search(prompt.text, limit=k * 4, mode="vec")
         graph_boost = None
         if weight > 0 and graph is not None:
-            graph_boost = graph_boost_factory(graph, extract_entities(prompt.text), weight=weight)
+            graph_boost = graph_boost_factory(
+                graph, extract_query_entities(prompt.text, graph), weight=weight
+            )
         ranked = rank_hits(hits, knobs, graph_boost=graph_boost)
         ranked = [h for h in ranked if not _is_noise(h, labels)]
         top = ranked[:k]

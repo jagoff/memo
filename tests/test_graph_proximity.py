@@ -164,3 +164,40 @@ def test_recall_flag_on_reorders_graph_proximal_up(tmp_path, monkeypatch):
     # Flag ON: A is 1 hop from the 'MLX' query entity -> boosted above B.
     assert context.index(a_id[:8]) < context.index(b_id[:8])
     mem.close()
+
+
+# --- extract_query_entities (fix #2: fire on natural lowercase prompts) -------
+
+
+class _VocabGraph:
+    def __init__(self, names: set[str]) -> None:
+        self._names = names
+
+    def entity_names(self) -> set[str]:
+        return self._names
+
+
+def test_extract_query_entities_matches_graph_vocabulary_lowercase() -> None:
+    from memo.graph_proximity import extract_query_entities
+
+    g = _VocabGraph({"recall hook", "synapse", "memflow", "budget"})
+    # Natural lowercase prompt: the proper-noun regex extracts nothing useful.
+    q = [e.lower() for e in extract_query_entities("how does the recall hook budget work", g)]
+    assert "recall hook" in q  # bigram matched from graph vocabulary
+    assert "budget" in q       # unigram matched from graph vocabulary
+
+
+def test_extract_query_entities_keeps_regex_proper_nouns() -> None:
+    from memo.graph_proximity import extract_query_entities
+
+    g = _VocabGraph(set())  # empty vocab -> only the regex contributes
+    q = {e.lower() for e in extract_query_entities("How does Synapse connect to MLX?", g)}
+    assert "mlx" in q or "synapse" in q
+
+
+def test_extract_query_entities_no_stopword_noise() -> None:
+    from memo.graph_proximity import extract_query_entities
+
+    g = _VocabGraph({"synapse"})  # 'synapse' not in the prompt
+    q = extract_query_entities("the quick brown fox jumps over", g)
+    assert q == []  # no real entity present -> nothing leaks in as noise
