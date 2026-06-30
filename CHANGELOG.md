@@ -9,6 +9,14 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.10] - 2026-06-30
+
+### Fixed
+- Dashboard historic tokens-saved now reads from the durable per-day ledger (`token_ledger`) instead of the capped `grounding.log`, so the gerencial headline keeps growing like `memo tokens` instead of plateauing once old grounded rows rotate out of the log.
+
+### Performance
+- Reranker: reverted the batched cross-encoder forward (it regressed the configured 4B model) while keeping the per-pair head-slice in `score()` — projecting only the last token through the LM head.
+
 ## [2.6.9] - 2026-06-30
 
 ### Added
