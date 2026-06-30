@@ -107,6 +107,41 @@ def test_gerencial_tokens_saved_kpi_is_daily_not_accumulated(tmp_cfg: Config, mo
     assert g["tokens_saved"] == 200
 
 
+def test_gerencial_historic_survives_grounding_log_rotation(tmp_cfg: Config, monkeypatch):
+    """The historic tokens-saved headline must come from the durable ledger, so
+    it does not shrink when old grounded rows scroll out of the capped
+    grounding.log. Seed a ledger with more history than the log holds."""
+    monkeypatch.setenv("MEMO_ROI_TOKENS_PER_GROUNDED", "100")
+    from memo import token_ledger
+
+    state_dir = tmp_cfg.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    # Durable ledger remembers 50 grounded across days no longer in the log.
+    token_ledger.write_ledger(
+        state_dir,
+        {
+            "schema": token_ledger.LEDGER_SCHEMA,
+            "days": {"2026-05-01": {"grounded": 30}, "2026-05-02": {"grounded": 20}},
+        },
+    )
+    # grounding.log only still holds 1 recent grounded row.
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    (state_dir / "grounding.log").write_text(
+        json.dumps(
+            {"ts": now, "session_id": "s", "turn": 1, "recall_id": "r0000001",
+             "used_score": 0.9, "method": "lexical"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    g = build.collect_data(tmp_cfg, include_projection=False)["gerencial"]
+
+    # Historic = durable 50 + the fresh 1 (rolled up), not just the 1 in the log.
+    assert g["token_detail"]["grounded"] == 51
+    assert g["tokens_saved"] == 51 * 100
+
+
 def test_gerencial_reports_context_cost_and_net_tokens(tmp_cfg: Config, monkeypatch):
     monkeypatch.setenv("MEMO_ROI_TOKENS_PER_GROUNDED", "100")
     state_dir = tmp_cfg.state_dir

@@ -615,6 +615,18 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
         )
 
     grounded_total = sum(by_day.values())
+    # Historic total must survive grounding.log rotation (capped, ~12 days):
+    # fold into the durable per-day ledger and take the all-time grounded count
+    # from it, so this headline grows like `memo tokens` instead of plateauing
+    # when old grounded rows scroll out of the log. Daily bars stay windowed.
+    try:
+        from memo import token_ledger
+
+        token_ledger.roll_up(state_dir)
+        durable = token_ledger.summarize(state_dir)["historic"]["grounded"]
+        grounded_total = max(grounded_total, durable)
+    except Exception:  # noqa: S110 - best-effort; fall back to the in-log total
+        pass
     try:
         reask = reask_stats(state_dir, limit=500)
     except Exception:
