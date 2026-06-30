@@ -25,22 +25,24 @@
 
 ## What makes memo different
 
-| Capability | memo | mem0 | letta | cognee | engram |
-|---|:---:|:---:|:---:|:---:|:---:|
-| 100% local (no cloud API) | ✅ | ❌ | ⚠️ | ⚠️ | ✅ |
-| **Time-machine** (rewind corpus to any date) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Contradiction radar** (detect + resolve conflicts) | ✅ | ❌ | ❌ | ⚠️ | ❌ |
-| **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Cloud sync (opt-in replication) | ✅ | ❌ | ✅ | ❌ | ✅ |
-| **TUI** (terminal UI) | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Obsidian as source-of-truth | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Knowledge graph + entity extraction | ✅ | ⚠️ | ⚠️ | ✅ | ❌ |
-| Eval regression gate (pre-commit wireable) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Multi-modal (images, audio OCR) | ✅ | ⚠️ | ❌ | ❌ | ❌ |
-| MCP surface profiles (token economy) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Passive capture** (auto-extract from transcripts) | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Session timeline (context before/after) | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Capability | memo | mem0 | letta | cognee | engram | basic-memory | cipher |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| 100% local (no cloud API) | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ |
+| **Time-machine** (rewind corpus to any date) | ✅ | ❌ | ⚠️ | ❌ | ❌ | ⚠️ | ⚠️ |
+| **Contradiction radar** (detect + resolve conflicts) | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ | ❌ |
+| **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ✅ | ⚠️ | ❌ | ❌ | ⚠️ |
+| **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ⚠️ | ❌ | ✅ | ✅ | ⚠️ |
+| Cloud sync (opt-in replication) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **TUI** (terminal UI) | ✅ | ❌ | ⚠️ | ❌ | ✅ | ❌ | ✅ |
+| Obsidian as source-of-truth | ✅ | ❌ | ⚠️ | ❌ | ❌ | ✅ | ❌ |
+| Knowledge graph + entity extraction | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ⚠️ |
+| Eval regression gate (pre-commit wireable) | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ | ❌ | ❌ |
+| Multi-modal (images, audio OCR) | ✅ | ⚠️ | ⚠️ | ✅ | ❌ | ❌ | ❌ |
+| MCP surface profiles (token economy) | ✅ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ❌ |
+| **Passive capture** (auto-extract from transcripts) | ✅ | ⚠️ | ✅ | ✅ | ✅ | ❌ | ⚠️ |
+| Session timeline (context before/after) | ✅ | ❌ | ❌ | ❌ | ✅ | ⚠️ | ⚠️ |
+
+<sub>✅ first-class · ⚠️ partial, config-gated, or add-on · ❌ absent. Verified mid-2026 against each project's docs/repo: [mem0](https://github.com/mem0ai/mem0), [letta](https://github.com/letta-ai/letta) (formerly MemGPT), [cognee](https://github.com/topoteretes/cognee), [engram](https://github.com/Gentleman-Programming/engram), [basic-memory](https://github.com/basicmachines-co/basic-memory), [cipher](https://github.com/campfirein/cipher). Closest comparators: **basic-memory** (local-first + Obsidian + MCP — memo's exact thesis) and **cipher** (memory layer for coding agents).</sub>
 
 ## Why it pays for itself — in tokens
 
