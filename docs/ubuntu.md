@@ -72,6 +72,25 @@ GPU: set `device="cuda"` is not wired to an env flag yet; the default is CPU.
 - The recorded `embedder_model` in the index metadata is the configured profile
   id; the vectors are produced by the ST model. Harmless for a standalone box.
 
+## Background maintenance (systemd)
+
+memo's nightly `dream` maintenance and the file-watcher ship as macOS launchd
+agents; `memo install-watcher` is macOS-only. On Linux use the **user** systemd
+units in [`systemd/`](../systemd/) instead (no root):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/memo-dream.service systemd/memo-dream.timer systemd/memo-watch.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now memo-dream.timer    # nightly maintenance @ 03:00
+systemctl --user enable --now memo-watch.service  # optional auto-reindex
+```
+
+See [`systemd/README.md`](../systemd/README.md) for details (lingering, logs,
+adjusting the `memo` path). On Linux the LLM-backed dream passes degrade with a
+clean error; the embedder/SQL passes still run.
+
 ## Verify
 
 ```bash

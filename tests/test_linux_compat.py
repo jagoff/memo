@@ -113,3 +113,26 @@ def test_repocorpus_uses_factory_not_hardcoded_mlx(tmp_cfg):
     cfg = tmp_cfg.model_copy(update={"embedder_backend": "st"})
     corpus = RepoCorpus(cfg)
     assert type(corpus.embedder).__name__ == "STEmbedder"
+
+
+# ── per-OS MCP-client config paths ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("platform", "fragment"),
+    [
+        ("darwin", "Library/Application Support/Claude"),
+        ("linux", ".config/Claude"),
+    ],
+)
+def test_claude_desktop_config_path_per_os(monkeypatch, platform, fragment):
+    monkeypatch.setattr(sys, "platform", platform)
+    from memo.cli_install_mcp import _claude_desktop_config_path
+
+    assert fragment in str(_claude_desktop_config_path())
+
+
+def test_windsurf_scan_includes_linux_path():
+    from memo.runtime.mcp_config import KNOWN_MCP_CONFIGS
+
+    assert "~/.config/Windsurf/User/mcp_config.json" in KNOWN_MCP_CONFIGS

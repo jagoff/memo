@@ -1,0 +1,12 @@
+# Nightly trigger for memo-dream.service at 03:00 (Linux user timer).
+# Mirrors the macOS launchd StartCalendarInterval (Hour 3, Minute 0).
+[Unit]
+Description=Run memo dream nightly at 03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Catch up if the machine was asleep/off at 03:00.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

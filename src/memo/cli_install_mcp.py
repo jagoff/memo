@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,25 @@ from memo.runtime.mcp import (
     _mcp_server_json,
     _run_agent_command,
 )
+
+
+def _claude_desktop_config_path() -> Path:
+    """Per-OS Claude Desktop MCP config path."""
+    if sys.platform == "darwin":
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "Claude" / "claude_desktop_config.json"
+    # Linux / other POSIX
+    return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+
 
 CONSTRAINED_CLIENTS: frozenset[str] = frozenset({"codex", "opencode"})
 _FALLBACK_SUPPORTED_AGENTS: tuple[str, ...] = (
@@ -188,14 +208,7 @@ def _fallback_register_agent_mcp(
             return {"ok": True, "agent": agent, "action": "installed", "strategy": "cli"}
 
         config_targets: dict[str, tuple[Path, bool]] = {
-            "claude-desktop": (
-                Path.home()
-                / "Library"
-                / "Application Support"
-                / "Claude"
-                / "claude_desktop_config.json",
-                False,
-            ),
+            "claude-desktop": (_claude_desktop_config_path(), False),
             "cursor": (Path.home() / ".cursor" / "mcp.json", True),
             "gemini": (Path.home() / ".gemini" / "settings.json", True),
             "windsurf": (Path.home() / ".codeium" / "windsurf" / "mcp_config.json", False),

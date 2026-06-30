@@ -1,0 +1,23 @@
+# memo nightly self-maintenance (dream) — systemd USER service (Linux).
+# The Linux counterpart of launchd/com.memo.dream.plist.
+#
+# Install (see systemd/README.md):
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/memo-dream.{service,timer} ~/.config/systemd/user/
+#   systemctl --user enable --now memo-dream.timer
+#
+# On Linux the LLM-backed dream passes (synthesize/contradictions/…) raise a
+# clean error and are recorded in the receipt; the embedder/SQL passes (ROI
+# decay, prune, prewarm, dedup) run normally. So nightly dream still does useful
+# maintenance without MLX.
+[Unit]
+Description=memo nightly self-maintenance (dream run)
+Documentation=https://github.com/jagoff/memo/blob/master/docs/ubuntu.md
+
+[Service]
+Type=oneshot
+Environment=MEMO_NONINTERACTIVE=1
+Environment=PYTHONUNBUFFERED=1
+# memo installed via pipx/uv lands in ~/.local/bin; adjust if yours differs
+# (`command -v memo`).
+ExecStart=%h/.local/bin/memo dream run

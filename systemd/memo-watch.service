@@ -1,0 +1,22 @@
+# memo file-watcher — systemd USER service (Linux).
+# The Linux counterpart of `memo install-watcher` (which installs a macOS
+# launchd job). Auto-reindexes the memory store on file changes via watchdog
+# (inotify on Linux).
+#
+# Install (see systemd/README.md):
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/memo-watch.service ~/.config/systemd/user/
+#   systemctl --user enable --now memo-watch.service
+[Unit]
+Description=memo file-watcher (auto-reindex on change)
+Documentation=https://github.com/jagoff/memo/blob/master/docs/ubuntu.md
+
+[Service]
+Environment=MEMO_NONINTERACTIVE=1
+# memo installed via pipx/uv lands in ~/.local/bin; adjust if yours differs.
+ExecStart=%h/.local/bin/memo watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
