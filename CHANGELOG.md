@@ -9,6 +9,12 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.9] - 2026-06-30
+
+### Added
+- `memo tokens` — TUI showing how many tokens memo saved today / this month / all-time, with big-number panels (HOY/MES/HISTÓRICO) plus daily and monthly bar charts and a month-over-month growth indicator (`--json` for machine output). Savings are attributable to memo alone: it counts *grounded* recalls — surfaced memories the answer actually used (re-derivations memo prevented) — times `MEMO_ROI_TOKENS_PER_GROUNDED`, so the total rises as memo accumulates more useful memories.
+- Durable token-savings ledger (`token_ledger.py`, `state_dir/token_savings_daily.json`). `grounding.log` is capped (~12 days) and rotates, so an all-time total read from it alone would plateau; the ledger folds grounded events into a monotonic per-day file before they evict, giving `memo tokens` a durable, ever-growing historic total. Rolled up on the Stop hook and on demand.
+
 ## [2.6.8] - 2026-06-30
 
 ### Added
