@@ -70,3 +70,15 @@ def test_two_memorias_share_entity(tmp_path: Path) -> None:
                             entities=[{"name": "Shared", "type": "concept"}],
                             extracted_at="2026-01-01T00:00:00Z")
     assert set(g.entity_memories("Shared")) == {"m1", "m2"}
+
+
+def test_schema_has_edge_and_alias_tables(tmp_path: Path) -> None:
+    g = _store(tmp_path)
+    tables = {
+        r[0]
+        for r in g._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert "entity_edges" in tables
+    assert "entity_aliases" in tables

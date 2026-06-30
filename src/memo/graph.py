@@ -79,6 +79,24 @@ CREATE TABLE IF NOT EXISTS co_recall (
 
 CREATE INDEX IF NOT EXISTS idx_cr_a ON co_recall(id_a);
 CREATE INDEX IF NOT EXISTS idx_cr_b ON co_recall(id_b);
+
+CREATE TABLE IF NOT EXISTS entity_edges (
+    a_id        INTEGER NOT NULL,
+    b_id        INTEGER NOT NULL,
+    weight      INTEGER NOT NULL DEFAULT 1,
+    first_seen  TEXT,
+    last_seen   TEXT,
+    PRIMARY KEY (a_id, b_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ee_a ON entity_edges(a_id);
+CREATE INDEX IF NOT EXISTS idx_ee_b ON entity_edges(b_id);
+
+CREATE TABLE IF NOT EXISTS entity_aliases (
+    alias_key    TEXT PRIMARY KEY,   -- fold_key|id of a merged-away spelling
+    canonical_id INTEGER NOT NULL,
+    alias_name   TEXT                -- original display spelling (provenance)
+);
 """
 
 
