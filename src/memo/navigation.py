@@ -90,6 +90,8 @@ class GraphNavigator:
         source: str,
         target: str,
         max_length: int = 5,
+        *,
+        use_codegraph: bool | None = None,
     ) -> EntityPath | None:
         """Find shortest path between two entities using BFS.
 
@@ -97,6 +99,8 @@ class GraphNavigator:
             source: Source entity name (lowercased).
             target: Target entity name (lowercased).
             max_length: Maximum path length to search.
+            use_codegraph: Override the codegraph-merge flag (None = read flag;
+                False = entity-only memory graph).
 
         Returns:
             EntityPath if a path exists, None otherwise.
@@ -106,7 +110,7 @@ class GraphNavigator:
 
         # Build the adjacency once, then BFS. compute_centrality reuses _bfs with
         # a pre-built adjacency so it does not rebuild the graph O(N^2) times.
-        adj = self._build_adjacency_list()
+        adj = self._build_adjacency_list(use_codegraph=use_codegraph)
         return self._bfs(adj, source, target, max_length)
 
     def _bfs(
@@ -209,18 +213,22 @@ class GraphNavigator:
 
         return adj
 
-    def get_neighbors(self, entity: str, max_neighbors: int = 50) -> EntityNeighbors:
+    def get_neighbors(
+        self, entity: str, max_neighbors: int = 50, *, use_codegraph: bool | None = None
+    ) -> EntityNeighbors:
         """Get direct neighbors of an entity.
 
         Args:
             entity: Entity name (lowercased).
             max_neighbors: Maximum neighbors to return.
+            use_codegraph: Override the codegraph-merge flag (None = read flag;
+                False = entity-only memory graph).
 
         Returns:
             EntityNeighbors with direct connections and shared memories.
         """
         entity = entity.lower().strip()
-        adj = self._build_adjacency_list()
+        adj = self._build_adjacency_list(use_codegraph=use_codegraph)
 
         if entity not in adj:
             return EntityNeighbors(
@@ -288,7 +296,7 @@ class GraphNavigator:
         return adj
 
     def weighted_path(
-        self, a: str, b: str, max_length: int = 5
+        self, a: str, b: str, max_length: int = 5, *, use_codegraph: bool | None = None
     ) -> dict[str, Any] | None:
         """Shortest path between two entities as evidence, with per-edge weights.
 
@@ -301,12 +309,12 @@ class GraphNavigator:
         """
         a = a.lower().strip()
         b = b.lower().strip()
+
+        adj = self._weighted_adjacency(use_codegraph=use_codegraph)
+        if a not in adj or b not in adj:
+            return None  # absent endpoint (incl. a self-query for a missing entity)
         if a == b:
             return {"path": [a], "edges": []}
-
-        adj = self._weighted_adjacency()
-        if a not in adj or b not in adj:
-            return None
 
         queue: deque[list[str]] = deque([[a]])
         visited = {a}

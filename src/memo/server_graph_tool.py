@@ -30,8 +30,9 @@ def register(server: FastMCP, memory: Memory) -> None:
         b: str | None = None,
         entity: str | None = None,
         limit: int = 8,
+        include_code: bool = False,
     ) -> dict[str, Any]:
-        """Navigate the entity/code knowledge graph (read-only).
+        """Navigate the entity knowledge graph (read-only).
 
         One consolidated explorer over memo's corpus graph. Pick a ``verb``:
 
@@ -44,34 +45,42 @@ def register(server: FastMCP, memory: Memory) -> None:
           degree, neighbours, and the memories that mention it.
         - ``"communities"``: clusters of related entities (``limit`` caps count).
 
+        By default this navigates the MEMORY graph only (entities linked through
+        shared memories). Set ``include_code=True`` to also fold in the codegraph
+        code-structure layer (call/extends/etc. edges between code symbols).
+
         Args:
             verb: One of path | neighbors | explore | communities | why.
             a: First entity (path/why source; fallback for entity).
             b: Second entity (path/why target).
             entity: Entity name for neighbors/explore.
             limit: Result cap (neighbours, mentioning memories, communities).
+            include_code: Fold in the codegraph code-structure layer (default off
+                → memory-only, so results are durable-memory navigation).
         """
         nav = memory.navigator
         v = (verb or "").strip().lower()
         focus = entity or a
+        # Memory navigator by default: entity-only graph unless code is requested.
+        uc = None if include_code else False
 
         if v == "path":
             if not a or not b:
                 return {"error": "path requires a and b"}
-            path = nav.find_shortest_path(a, b)
+            path = nav.find_shortest_path(a, b, use_codegraph=uc)
             return {"verb": "path", "result": path.__dict__ if path else None}
 
         if v == "why":
             if not a or not b:
                 return {"error": "why requires a and b"}
-            return {"verb": "why", "result": nav.weighted_path(a, b)}
+            return {"verb": "why", "result": nav.weighted_path(a, b, use_codegraph=uc)}
 
         if v == "neighbors":
             if not focus:
                 return {"error": "neighbors requires entity (or a)"}
             return {
                 "verb": "neighbors",
-                "result": nav.get_neighbors(focus, max_neighbors=limit).__dict__,
+                "result": nav.get_neighbors(focus, max_neighbors=limit, use_codegraph=uc).__dict__,
             }
 
         if v == "explore":
@@ -82,12 +91,12 @@ def register(server: FastMCP, memory: Memory) -> None:
             return {
                 "verb": "explore",
                 "result": explore_entity(
-                    memory, focus, max_neighbors=limit, max_memories=limit
+                    memory, focus, max_neighbors=limit, max_memories=limit, use_codegraph=uc
                 ),
             }
 
         if v == "communities":
-            communities = nav.detect_communities(min_size=2)
+            communities = nav.detect_communities(min_size=2, use_codegraph=uc)
             return {
                 "verb": "communities",
                 "result": [c.__dict__ for c in communities[:limit]],

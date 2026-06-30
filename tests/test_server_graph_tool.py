@@ -43,9 +43,12 @@ def _seed_chain(mem) -> None:
 
 
 def test_weighted_path_same_entity(mock_memory):
+    _seed_chain(mock_memory)  # 'alpha' exists in the graph
     nav = mock_memory.navigator
-    result = nav.weighted_path("alpha", "alpha")
-    assert result == {"path": ["alpha"], "edges": []}
+    # self-path for a PRESENT entity
+    assert nav.weighted_path("alpha", "alpha") == {"path": ["alpha"], "edges": []}
+    # self-query for an ABSENT entity is None, not a phantom self-path (fix #8)
+    assert nav.weighted_path("ghost", "ghost") is None
 
 
 def test_weighted_path_missing_entity(mock_memory):
