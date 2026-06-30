@@ -483,6 +483,21 @@ def _recall_logic(
         contextual=contextual,
     )
 
+    # Phase 2 graph-proximity boost (default OFF): nudge candidates whose entities
+    # neighbour the query's entities in the materialized entity graph. Pure graph
+    # lookups (no MLX/embedding) so the 5s hook budget is untouched. When the flag
+    # is off or the weight is 0 the seam stays None → ranking is identical.
+    _graph_boost: Callable[[list[Any]], list[Any]] | None = None
+    _gpw = _flag_float("MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT") or 0.0
+    if flag_bool("MEMO_RECALL_GRAPH_PROXIMITY") and _gpw > 0:
+        with contextlib.suppress(Exception):
+            from memo.entity_extractor import extract_entities
+            from memo.graph_proximity import graph_boost_factory
+
+            _graph_boost = graph_boost_factory(
+                mem.graph, extract_entities(prompt), weight=_gpw
+            )
+
     try:
         if use_fallback and micro_embedder:
             candidates = mem.search(
@@ -526,7 +541,13 @@ def _recall_logic(
                         for h, d_vec in zip(candidates, doc_vecs, strict=True)
                     ]
                     scored.sort(key=lambda x: x.score or 0.0, reverse=True)
-                    qualifying = rank_hits(scored, knobs, vec_cosine=_vec_cosine, preferences=_prefs)
+                    qualifying = rank_hits(
+                        scored,
+                        knobs,
+                        vec_cosine=_vec_cosine,
+                        preferences=_prefs,
+                        graph_boost=_graph_boost,
+                    )
                 else:
                     qualifying = rank_hits(
                         mem.search(
@@ -539,6 +560,7 @@ def _recall_logic(
                         knobs,
                         vec_cosine=_vec_cosine,
                         preferences=_prefs,
+                        graph_boost=_graph_boost,
                     )
         else:
             qualifying = rank_hits(
@@ -548,6 +570,7 @@ def _recall_logic(
                 knobs,
                 vec_cosine=_vec_cosine,
                 preferences=_prefs,
+                graph_boost=_graph_boost,
             )
     except Exception as exc:
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -564,7 +587,13 @@ def _recall_logic(
                     recency=True,
                     exclude_types=exclude_types,
                 )
-                qualifying = rank_hits(expanded, knobs, vec_cosine=_vec_cosine, preferences=_prefs)
+                qualifying = rank_hits(
+                    expanded,
+                    knobs,
+                    vec_cosine=_vec_cosine,
+                    preferences=_prefs,
+                    graph_boost=_graph_boost,
+                )
                 if debug and qualifying:
                     print(
                         f"# recall-daemon: query expansion recovered {len(qualifying)} hits",
