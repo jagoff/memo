@@ -459,53 +459,29 @@ def _recall_logic(
             if debug:
                 _logger.warning("recall-daemon: main embedder cold, falling back to BM25")
 
-    # Hybrid-mode min_sim gate (#6). In hybrid mode `h.score` is RRF-fused —
-    # on a scale incomparable to `min_sim`, which is cosine-calibrated (0.5).
-    # A naive vec→hybrid flip would gate every hit out and return nothing. So
-    # in hybrid mode we gate on the TRUE vec cosine (query · doc, both L2-norm)
-    # while keeping the hybrid RANK order. vec/bm25 modes keep `h.score`.
-    # Default mode is vec → none of this runs (zero overhead, no behaviour
-    # change). Computed lazily + cached; an uncomputable cosine never drops a
-    # hit (surface-on-doubt beats silent loss in the recall path).
-    _qvec_holder: dict[str, list[float] | None] = {}
-    _vec_cos_cache: dict[str, float | None] = {}
+    # Hybrid-mode min_sim gate (#6): in hybrid mode `h.score` is RRF-fused, on a
+    # scale incomparable to `min_sim` (cosine-calibrated 0.5). rank_hits gates on
+    # the TRUE vec cosine in hybrid mode (via make_vec_cosine) while keeping the
+    # hybrid RANK order; vec/bm25 keep `h.score`. Default vec mode → cosine never
+    # built. Ranking now lives in the shared rank_hits() so the eval harness
+    # ranks identically (the Phase 2 graph term plugs into its graph_boost seam).
+    _vec_cosine = make_vec_cosine(mem, prompt)
 
-    def _vec_cosine(h: Any) -> float | None:
-        if h.id in _vec_cos_cache:
-            return _vec_cos_cache[h.id]
-        if "q" not in _qvec_holder:
-            try:
-                _qvec_holder["q"] = list(mem.embedder.embed_query(prompt))
-            except Exception as exc:
-                _logger.debug("recall hybrid gate: query embed failed: %s", exc)
-                _qvec_holder["q"] = None
-        q = _qvec_holder["q"]
-        cos: float | None = None
-        if q is not None:
-            try:
-                blob = mem.store.get_embedding_blob(h.id)
-                if blob:
-                    doc = struct.unpack(f"<{len(blob) // 4}f", blob)
-                    if len(doc) == len(q):
-                        cos = sum(x * y for x, y in zip(q, doc, strict=True))
-            except Exception as exc:
-                _logger.debug("recall hybrid gate: cosine for %s failed: %s", h.id[:8], exc)
-        _vec_cos_cache[h.id] = cos
-        return cos
+    _prefs: Any | None = None
+    if contextual:
+        with contextlib.suppress(Exception):
+            _prefs = mem.contextual.context.get_preferences()
 
-    def _passes(h: Any) -> bool:
-        gate = _vec_cosine(h) if mode == "hybrid" else h.score
-        if gate is not None and gate < min_sim:
-            return False
-        return not (min_body_chars > 0 and len((h.body or "").strip()) < min_body_chars)
-
-    def _rank(raw: list[Any]) -> list[Any]:
-        if project_tag:
-            raw = _apply_project_tiers(raw, project_tag, project_boost, global_boost)
-        if contextual:
-            with contextlib.suppress(Exception):
-                raw = _apply_preference_boost(raw, mem.contextual.context.get_preferences())
-        return [h for h in dedup_hits(raw) if _passes(h)]
+    knobs = RankKnobs(
+        top_k=top_k,
+        min_sim=min_sim,
+        min_body_chars=min_body_chars,
+        mode=mode,
+        project_tag=project_tag,
+        project_boost=project_boost,
+        global_boost=global_boost,
+        contextual=contextual,
+    )
 
     try:
         if use_fallback and micro_embedder:
@@ -550,26 +526,28 @@ def _recall_logic(
                         for h, d_vec in zip(candidates, doc_vecs, strict=True)
                     ]
                     scored.sort(key=lambda x: x.score or 0.0, reverse=True)
-                    qualifying = _deduplicate_synthesis(_rank(scored))
+                    qualifying = rank_hits(scored, knobs, vec_cosine=_vec_cosine, preferences=_prefs)
                 else:
-                    qualifying = _deduplicate_synthesis(
-                        _rank(
-                            mem.search(
-                                prompt,
-                                limit=search_k,
-                                mode=mode,
-                                recency=True,
-                                exclude_types=exclude_types,
-                            )
-                        )
+                    qualifying = rank_hits(
+                        mem.search(
+                            prompt,
+                            limit=search_k,
+                            mode=mode,
+                            recency=True,
+                            exclude_types=exclude_types,
+                        ),
+                        knobs,
+                        vec_cosine=_vec_cosine,
+                        preferences=_prefs,
                     )
         else:
-            qualifying = _deduplicate_synthesis(
-                _rank(
-                    mem.search(
-                        prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
-                    )
-                )
+            qualifying = rank_hits(
+                mem.search(
+                    prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
+                ),
+                knobs,
+                vec_cosine=_vec_cosine,
+                preferences=_prefs,
             )
     except Exception as exc:
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -586,7 +564,7 @@ def _recall_logic(
                     recency=True,
                     exclude_types=exclude_types,
                 )
-                qualifying = _deduplicate_synthesis(_rank(expanded))
+                qualifying = rank_hits(expanded, knobs, vec_cosine=_vec_cosine, preferences=_prefs)
                 if debug and qualifying:
                     print(
                         f"# recall-daemon: query expansion recovered {len(qualifying)} hits",
