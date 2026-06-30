@@ -86,3 +86,7 @@ docs/registry-submission.md
 # Agent instruction files kept local, not versioned (CLAUDE.md stays tracked)
 /AGENTS.md
 /GEMINI.md
+
+# scratch/debug output
+*.log
+err_synth*.txt
