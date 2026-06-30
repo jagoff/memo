@@ -136,3 +136,30 @@ def test_windsurf_scan_includes_linux_path():
     from memo.runtime.mcp_config import KNOWN_MCP_CONFIGS
 
     assert "~/.config/Windsurf/User/mcp_config.json" in KNOWN_MCP_CONFIGS
+
+
+# ── reranker (MLX-only) forced off on non-Apple-Silicon ─────────────────────
+
+
+def test_reranker_forced_off_on_non_apple_silicon(monkeypatch, tmp_path):
+    # The default MODEL_PROFILES set reranker_enabled=True; on a non-Apple-Silicon
+    # host that must be overridden (the cross-encoder is MLX-only) so hybrid search
+    # never tries to load it.
+    monkeypatch.setattr("memo.config.is_apple_silicon", lambda: False)
+    monkeypatch.delenv("MEMO_RERANKER_ENABLED", raising=False)
+    monkeypatch.delenv("MEMO_MODEL_PROFILE", raising=False)
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
+    from memo.config import Config
+
+    assert Config.from_env().reranker_enabled is False
+
+
+def test_reranker_explicit_env_overrides_platform_gate(monkeypatch, tmp_path):
+    monkeypatch.setattr("memo.config.is_apple_silicon", lambda: False)
+    monkeypatch.setenv("MEMO_RERANKER_ENABLED", "1")
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
+    from memo.config import Config
+
+    assert Config.from_env().reranker_enabled is True

@@ -539,6 +539,13 @@ class Config(BaseModel):
                 continue
             kwargs[field] = val
 
+        # The cross-encoder reranker is MLX-only. The default MODEL_PROFILES set
+        # `reranker_enabled: True`, which would override the platform-aware field
+        # default on a non-Apple-Silicon host — so force it off there unless the
+        # operator explicitly opted in (env > platform gate > profile default).
+        if not is_apple_silicon() and "MEMO_RERANKER_ENABLED" not in os.environ:
+            kwargs["reranker_enabled"] = False
+
         # Behavioral toggle from the flags registry: parse through flag_bool so
         # truthy spellings (1/true/yes/on) match `memo config validate`. Env
         # overrides any TOML value set above.

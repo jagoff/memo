@@ -90,7 +90,15 @@ jobs:
       - name: end-to-end save -> search (real CPU embeddings, real model)
         run: |
           memo save "ubuntu ci smoke: the prod deploy key lives in the ops vault" --type note
-          memo search "deploy key" --json | tee out.json
+          memo search "deploy key" --json > out.json 2> search.err
+          cat search.err >&2
+          # The MLX cross-encoder reranker must NOT be attempted on Linux (it is
+          # forced off in Config.from_env); a "reranker failed" line means the gate
+          # regressed.
+          if grep -qi "reranker failed" search.err; then
+            echo "REGRESSION: reranker attempted on Linux" >&2
+            exit 1
+          fi
           python - <<'PY'
           import json
 
