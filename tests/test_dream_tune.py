@@ -139,3 +139,22 @@ def test_run_graph_weight_pass_preserves_existing_overlay_params(tmp_cfg, monkey
     overlay = dt.read_overlay(tmp_cfg.state_dir)
     assert overlay["MEMO_RECALL_MIN_SIM"] == 0.6  # preserved
     assert overlay["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1
+
+
+def test_run_tuning_pass_preserves_existing_overlay_params(tmp_cfg, monkeypatch):
+    # Symmetric to the graph-pass test: a prior graph-weight tune wrote the
+    # overlay; the min_sim pass must merge, not clobber it (else the next night
+    # silently disables the graph boost).
+    dt.write_overlay(
+        tmp_cfg.state_dir, {"MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT": 0.1}, {"set_by": "dream-graph"}
+    )
+    monkeypatch.setattr(
+        dt, "build_labels",
+        lambda *a, **k: (LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["aaaa1111"])]), True),
+    )
+    monkeypatch.setattr("memo.flags.flag_float", lambda name, **kw: 0.95)  # detuned -> applies
+    res = dt.run_tuning_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, dry_run=False)
+    assert res["status"] == "applied"
+    overlay = dt.read_overlay(tmp_cfg.state_dir)
+    assert overlay["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1  # preserved
+    assert overlay["MEMO_RECALL_MIN_SIM"] == res["floor_after"]
