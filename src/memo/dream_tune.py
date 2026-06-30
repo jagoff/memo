@@ -205,9 +205,13 @@ def run_tuning_pass(
             res["status"] = "would_apply"
             return res
 
+        # Merge, don't clobber: preserve a graph-weight a prior pass set (symmetric
+        # with run_graph_weight_pass) so the two tuners coexist in the overlay.
+        params = _overlay_params(cfg.state_dir)
+        params[_MIN_SIM] = best_floor
         write_overlay(
             cfg.state_dir,
-            {_MIN_SIM: best_floor},
+            params,
             {
                 "set_by": "dream",
                 "baseline_prec": after["precision_at_k"],
