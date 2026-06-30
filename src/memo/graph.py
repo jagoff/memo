@@ -125,14 +125,33 @@ class GraphStore:
             self._conn.execute("PRAGMA journal_mode=WAL")
         self._tx_lock = threading.Lock()
         with self._conn:
-            # Migrate a pre-rename DB BEFORE the IF NOT EXISTS DDL: rename the
-            # legacy `entity_memoria` table -> `entity_memory` (else the DDL
-            # would create a fresh empty table and orphan the old data), then
-            # its `memoria_id` column -> `memory_id`.
+            # Migrate a pre-rename DB BEFORE the IF NOT EXISTS DDL. Two cases:
+            #  1. only legacy `entity_memoria` exists -> rename it (+ its
+            #     `memoria_id` column) so the DDL doesn't create an empty table
+            #     and orphan the data.
+            #  2. BOTH `entity_memoria` and `entity_memory` exist -> an interim
+            #     build created an empty `entity_memory` alongside the legacy
+            #     table, splitting the graph. Fold the legacy rows in (dedup on
+            #     UNIQUE(entity_id, memory_id)) then drop the legacy table.
             from memo.util import rename_legacy_columns, rename_legacy_table
 
-            rename_legacy_table(self._conn, "entity_memoria", "entity_memory")
-            rename_legacy_columns(self._conn, "entity_memory", {"memoria_id": "memory_id"})
+            tables = {
+                r[0]
+                for r in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            if "entity_memoria" in tables and "entity_memory" in tables:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO entity_memory "
+                    "(entity_id, memory_id, occurrences, extracted_at) "
+                    "SELECT entity_id, memoria_id, occurrences, extracted_at "
+                    "FROM entity_memoria"
+                )
+                self._conn.execute("DROP TABLE entity_memoria")
+            else:
+                rename_legacy_table(self._conn, "entity_memoria", "entity_memory")
+                rename_legacy_columns(self._conn, "entity_memory", {"memoria_id": "memory_id"})
             self._conn.executescript(_SCHEMA_DDL)
 
     @contextmanager
