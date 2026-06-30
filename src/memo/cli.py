@@ -114,6 +114,7 @@ from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
 from memo.cli_token_savings import token_savings_cmd
+from memo.cli_tokens import tokens_cmd
 from memo.cli_transcripts import mine_history, reflect
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd
@@ -144,7 +145,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Analysis & Quality",
-        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "token-savings", "usefulness", "gaps", "outcome", "profile"],
+        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "tokens", "token-savings", "usefulness", "gaps", "outcome", "profile"],
     ),
     (
         "Knowledge Graph",
@@ -289,6 +290,7 @@ cli.add_command(briefing)
 cli.add_command(init_cmd)
 cli.add_command(stats)
 cli.add_command(token_savings_cmd)
+cli.add_command(tokens_cmd)
 cli.add_command(doctor)
 cli.add_command(migrate_vault)
 cli.add_command(migrate_vault, name="migrate")  # alias
