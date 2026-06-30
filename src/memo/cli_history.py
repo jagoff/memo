@@ -85,7 +85,7 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
 @click.argument("id_or_prefix")
 @click.option("--limit", default=50, type=int, show_default=True, help="Max events to show.")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
-def historia_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
+def history_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
     """Show the full edit history for one memory.
 
     Displays every save / update / delete event from the audit log,
