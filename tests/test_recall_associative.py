@@ -51,3 +51,22 @@ def test_memo_related_returns_hits_with_via():
     hits = related_for(_Mem(), "s1", hops=2, limit=5)
     assert any(h["id"] == "a1" and h["via"] == "memory" for h in hits)
     assert all({"id", "title", "via", "activation"} <= set(h) for h in hits)
+
+
+def test_cli_related_json(tmp_path):
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    env = {
+        "MEMO_DATA_DIR": str(tmp_path / "d"),
+        "MEMO_STATE_DIR": str(tmp_path / "s"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "TQDM_DISABLE": "1",
+    }
+    for p in ("d", "s"):
+        (tmp_path / p).mkdir()
+    res = CliRunner().invoke(cli, ["related", "nonexistent-x", "--json"], env=env)
+    assert res.exit_code == 0
+    assert res.output.strip().startswith("[")  # JSON list (empty on no data)
