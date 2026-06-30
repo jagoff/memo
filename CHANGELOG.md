@@ -9,6 +9,14 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.3] - 2026-06-30
+
+### Fixed
+- The MLX-only cross-encoder reranker is now correctly forced **off** on non-Apple-Silicon hosts. The default `MODEL_PROFILES` set `reranker_enabled: True`, which overrode the platform-aware field default — so on Linux every hybrid search tried to load the MLX reranker, failed (`No module named 'mlx_lm'`), and fell back. `Config.from_env()` now gates it: an explicit `MEMO_RERANKER_ENABLED` wins, otherwise it is off when MLX is unavailable. Found by the new `linux-cpu-smoke` CI job running a real Ubuntu `[cpu]` install.
+
+### Added
+- `linux-cpu-smoke` CI job (ubuntu-latest): real `pip install ".[cpu]"`, sqlite-vec/FTS5 load, the actual Qwen3-Embedding-0.6B model, `memo doctor`, a save→search roundtrip, and `memo-mcp` build — the end-to-end Linux validation the (stubbed) unit suite can't give.
+
 ## [2.6.2] - 2026-06-30
 
 ### Fixed
