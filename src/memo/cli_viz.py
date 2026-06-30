@@ -1,7 +1,7 @@
 """`memo map` — interactive 2D semantic map of the corpus.
 
 Extracted from cli.py (3a/2b god-module decomposition). Registered onto the
-root group in cli.py via `cli.add_command(mapa_cmd)`. Self-contained: reads
+root group in cli.py via `cli.add_command(map_cmd)`. Self-contained: reads
 embeddings straight from sqlite-vec (no MLX load) and renders a Plotly HTML.
 """
 
@@ -37,7 +37,7 @@ from memo.config import Config
     default=True,
     help="Include timeline animation slider.",
 )
-def mapa_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -> None:
+def map_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -> None:
     """Generate an interactive 2D semantic map of the memory corpus.
 
     Projects all memory embeddings (stored in memvec.db) to 2D space using

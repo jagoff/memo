@@ -52,7 +52,7 @@ def _save_state(state_dir: Path, state: dict[str, Any]) -> None:
 def find_transcripts(
     root: Path,
     *,
-    since_days: int | None = None,
+    since_days: float | None = None,
 ) -> list[Path]:
     """Return all `.jsonl` files under `root`, newest first.
 
@@ -127,7 +127,7 @@ def iter_exchanges(transcript_path: Path, text: str | None = None) -> Iterator[t
 def mine_transcripts(
     root: Path | None = None,
     *,
-    since_days: int | None = None,
+    since_days: float | None = None,
     file_limit: int | None = None,
     dry_run: bool = False,
     debug: bool = False,

@@ -55,7 +55,7 @@ from memo.cli_export import export_group
 from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
 from memo.cli_health import health as health_cmd
-from memo.cli_history import diff_cmd, historia_cmd
+from memo.cli_history import diff_cmd, history_cmd
 from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
@@ -115,7 +115,7 @@ from memo.cli_transcripts import mine_history, reflect
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_version import version_group
-from memo.cli_viz import mapa_cmd
+from memo.cli_viz import map_cmd
 from memo.runtime.shims import install_shims_cmd
 
 # Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
@@ -269,8 +269,7 @@ cli.add_command(roi_cmd)
 cli.add_command(gaps_cmd)
 cli.add_command(outcome_cmd)
 cli.add_command(mandate_cmd)
-cli.add_command(mapa_cmd)
-cli.add_command(mapa_cmd, name="mapa")  # back-compat alias for `memo map`
+cli.add_command(map_cmd)
 cli.add_command(tui)
 cli.add_command(hook_log)
 cli.add_command(logs)
@@ -282,8 +281,7 @@ cli.add_command(reflect)
 cli.add_command(resume)
 cli.add_command(episodes_group)
 cli.add_command(diff_cmd)
-cli.add_command(historia_cmd)
-cli.add_command(historia_cmd, name="historia")  # back-compat alias for `memo record-history`
+cli.add_command(history_cmd)
 cli.add_command(briefing)
 cli.add_command(init_cmd)
 cli.add_command(stats)

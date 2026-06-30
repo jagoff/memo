@@ -9,6 +9,28 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-06-29
+
+### Added
+- **Dream convergence guard**: `memo dream run` stamps a corpus fingerprint and, on a re-run where nothing changed (signal-gather found nothing new and the corpus is unchanged), skips the expensive contradict/synthesize/consolidate passes — a re-run on an idle corpus is now near-instant instead of redoing identical LLM work. `--force` runs every pass regardless.
+- **Dream single-owner lock**: a second `dream run` (manual, or the `com.memo.dream` LaunchAgent firing while one is in flight) now skips instead of racing on the shared sidecar DBs and clobbering the receipt.
+
+### Changed
+- Dream signal-gather now uses the exact last-run timestamp for its transcript lookback instead of a day-rounded window that re-mined ~1–2 days every run.
+
+## [2.4.2] - 2026-06-29
+
+### Changed
+- Removed the Spanish command aliases `memo historia` / `memo mapa` (use `memo record-history` / `memo map`); the CLI surface is now English-only.
+
+### Fixed
+- Silenced HuggingFace hub progress bars globally (set `HF_HUB_DISABLE_PROGRESS_BARS` at import). Model loads, prewarm, daemon startup and self-update no longer leak repeated "Fetching N files / Download complete 0.00B" noise for already-cached models.
+
+## [2.4.1] - 2026-06-29
+
+### Fixed
+- **Split graph DB healing**: an install that ran an interim build (the table rename without a migration) ended up with both `entity_memoria` (legacy data) and an empty `entity_memory`, splitting the knowledge graph and losing historical entity links to recall. The migration now folds the legacy rows into `entity_memory` (deduped) and drops the legacy table when both are present, not only when the new table is absent.
+
 ## [2.4.0] - 2026-06-29
 
 ### Changed

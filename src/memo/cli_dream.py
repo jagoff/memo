@@ -105,6 +105,11 @@ def _make_progress() -> Progress:
 @click.option(
     "--skip-presynthesis", is_flag=True, help="Skip the query-prediction pre-synthesis pass."
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Run every pass even if the corpus is unchanged (disable the convergence guard).",
+)
 def dream_run(
     dry_run: bool,
     as_json: bool,
@@ -118,6 +123,7 @@ def dream_run(
     skip_compress: bool,
     skip_prewarm: bool,
     skip_presynthesis: bool,
+    force: bool,
 ) -> None:
     """Run the full dream pipeline once.
 
@@ -128,6 +134,50 @@ def dream_run(
     cfg = Config.from_env()
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
     console.print(f"{tag}[bold cyan]memo dream[/bold cyan] — starting pipeline...")
+
+    # Single-owner lock: a second `dream run` (manual, or the com.memo.dream
+    # LaunchAgent firing while one is already in flight) would otherwise race on
+    # the shared sidecar DBs and clobber last.json. Hold an flock for the run;
+    # the OS releases it on process exit. (dry-run is read-only, no lock needed.)
+    _lock_fh = None
+    if not dry_run:
+        import fcntl as _fcntl
+
+        try:
+            cfg.state_dir.mkdir(parents=True, exist_ok=True)
+            _lock_fh = (cfg.state_dir / ".dream.lock").open("w")
+            _flags = _fcntl.fcntl(_lock_fh.fileno(), _fcntl.F_GETFD)
+            _fcntl.fcntl(_lock_fh.fileno(), _fcntl.F_SETFD, _flags | _fcntl.FD_CLOEXEC)
+            _fcntl.flock(_lock_fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        except OSError:
+            if _lock_fh is not None:
+                _lock_fh.close()
+            console.print("[yellow]another dream run is already active — skipping.[/yellow]")
+            return
+    # Convergence guard: read the previous run's corpus fingerprint. If nothing
+    # changed since then (and signal-gather adds nothing), the expensive LLM
+    # passes (contradict/synthesize/consolidate) are skipped — a re-run becomes
+    # near-instant instead of redoing the same work. `--force` overrides.
+    _prev_fp: str | None = None
+    try:
+        import json as _json
+
+        _prev_fp = _json.loads(
+            (cfg.state_dir / "dream" / "last.json").read_text(encoding="utf-8")
+        ).get("corpus_fp")
+    except Exception:
+        _prev_fp = None
+
+    def _corpus_fingerprint() -> str | None:
+        """A cheap change-signal: (row count, latest update timestamp) of the
+        canonical `meta` table. Any save/edit/delete moves at least one."""
+        try:
+            row = mem.store._conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(updated), '') FROM meta"
+            ).fetchone()
+            return f"{row[0]}:{row[1]}"
+        except Exception:
+            return None
 
     from memo.flags import flag_bool, flag_int
 
@@ -213,7 +263,11 @@ def dream_run(
                 ts_file = _state_path(cfg) / ".last_run_ts"
                 try:
                     last_ts = float(ts_file.read_text().strip())
-                    since_days = max(1, int((time.time() - last_ts) / 86400) + 1)
+                    # Exact fractional-day lookback from the last run (the miner
+                    # multiplies by 86400), plus a ~30-min overlap so a transcript
+                    # written around the last run's finish isn't missed. No more
+                    # day-rounding / +1 inflation that re-mined ~1-2 days each run.
+                    since_days = max(0.001, (time.time() - last_ts) / 86400 + 0.02)
                 except Exception:
                     since_days = 7
                 sg = _run_signal_gather(since_days=since_days, file_limit=20)
@@ -231,6 +285,27 @@ def dream_run(
             progress.advance(overall)
         else:
             progress.update(step, description="[0] signal gather [dim]skip[/dim]")
+
+        # Convergence guard — if signal-gather added nothing and the corpus
+        # fingerprint matches the last run, the heavy LLM passes (contradict /
+        # synthesize / consolidate) would redo identical work. Skip them; a
+        # re-run is then near-instant. `--force` overrides.
+        _cur_fp = _corpus_fingerprint()
+        _sg_saved = int(receipt["signal_gathered"].get("memories_saved", 0) or 0)
+        _converged = (
+            not force
+            and not dry_run
+            and _prev_fp is not None
+            and _cur_fp is not None
+            and _cur_fp == _prev_fp
+            and _sg_saved == 0
+        )
+        if _converged:
+            receipt["converged"] = True
+            console.print(
+                "[dim]converged — corpus unchanged since last run; "
+                "skipping contradict / synthesize / consolidate.[/dim]"
+            )
 
         # Phase 1 — recall self-tuner (min_sim), gated + reversible ----------
         if flag_bool("MEMO_DREAM_TUNE_ENABLED"):
@@ -310,7 +385,7 @@ def dream_run(
         except Exception as exc:
             receipt["errors"].append(f"forget_ttl: {type(exc).__name__}: {exc}")
 
-        if not skip_maintain:
+        if not skip_maintain and not _converged:
             # 1. Contradictions ----------------------------------------------
             progress.update(step, description="[1/6] contradictions — scanning corpus...")
             try:
@@ -659,7 +734,7 @@ def dream_run(
             progress.update(step, description="[10] prewarm [dim]skip[/dim]")
 
         # 11. Query-prediction pre-synthesis ---------------------------------
-        if not skip_presynthesis and _presynthesis_n > 0:
+        if not skip_presynthesis and _presynthesis_n > 0 and not _converged:
             progress.update(
                 step,
                 description=f"[11] pre-synthesis — top {_presynthesis_n} queries...",
@@ -688,6 +763,9 @@ def dream_run(
         try:
             d = _state_path(cfg)
             d.mkdir(parents=True, exist_ok=True)
+            # Stamp the post-mutation corpus fingerprint so the next run can
+            # detect "nothing changed" and converge (skip the heavy passes).
+            receipt["corpus_fp"] = _corpus_fingerprint()
             (d / "last.json").write_text(
                 json.dumps({"ts": time.time(), **receipt}, ensure_ascii=False, indent=2),
                 encoding="utf-8",
