@@ -1,7 +1,11 @@
-"""Obsidian vault auto-detection on macOS.
+"""Obsidian vault auto-detection.
 
-Obsidian writes its known-vault registry to
-`~/Library/Application Support/obsidian/obsidian.json` on macOS. Schema:
+Obsidian writes its known-vault registry to a per-OS location:
+- macOS:   `~/Library/Application Support/obsidian/obsidian.json`
+- Linux:   `~/.config/obsidian/obsidian.json`
+- Windows: `%APPDATA%/obsidian/obsidian.json`
+
+Schema:
 
 ```json
 {
@@ -19,10 +23,25 @@ most-recently-used vault appears first in the picker.
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-OBSIDIAN_REGISTRY = Path.home() / "Library" / "Application Support" / "obsidian" / "obsidian.json"
+
+def _default_obsidian_registry() -> Path:
+    """Obsidian's known-vault registry path for the current OS."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "obsidian" / "obsidian.json"
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "obsidian" / "obsidian.json"
+    # Linux / other POSIX
+    return Path.home() / ".config" / "obsidian" / "obsidian.json"
+
+
+OBSIDIAN_REGISTRY = _default_obsidian_registry()
 
 
 @dataclass(frozen=True)
@@ -37,7 +56,7 @@ class VaultInfo:
 def detect_obsidian_vaults(
     registry_path: Path | None = None,
 ) -> list[VaultInfo]:
-    """Return Obsidian vaults registered in the macOS registry.
+    """Return Obsidian vaults registered in the per-OS registry.
 
     Sorted by `last_opened_ms` desc. Skips entries whose path no longer
     exists on disk. Returns `[]` when the registry file is missing

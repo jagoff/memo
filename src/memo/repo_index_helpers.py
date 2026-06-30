@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from memo.config import Config
-from memo.embedder import MLXEmbedder
+from memo.embed_base import EmbedderBase
 
 # ---------------------------------------------------------------------------
 # Public constants (re-exported from repo_index for backward compat)
@@ -230,7 +230,7 @@ def _repo_flush_batch_size() -> int:
     return DEFAULT_FLUSH_BATCH if value is None else max(MIN_FLUSH_BATCH, value)
 
 
-def _embed_cache_model(embedder: MLXEmbedder, cfg: Config) -> str:
+def _embed_cache_model(embedder: EmbedderBase, cfg: Config) -> str:
     model = getattr(embedder, "model_path", None)
     return str(model or cfg.embedder_model)
 

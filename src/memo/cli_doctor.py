@@ -151,20 +151,39 @@ def doctor(
         )
         ok = False
 
-    try:
-        from memo.mlx_gpu import suppress_swig_deprecation_warnings
+    from memo.embedder_select import resolve_backend
 
-        suppress_swig_deprecation_warnings()
-        import mlx.core  # noqa: F401
-        import mlx_lm  # noqa: F401
+    backend = resolve_backend(cfg)
+    if backend == "mlx":
+        try:
+            from memo.mlx_gpu import suppress_swig_deprecation_warnings
 
-        console.print("[green]✓[/green] mlx + mlx_lm importable")
-    except Exception as exc:
-        console.print(f"[red]✗[/red] mlx: {exc}")
-        ok = False
+            suppress_swig_deprecation_warnings()
+            import mlx.core  # noqa: F401
+            import mlx_lm  # noqa: F401
+
+            console.print("[green]✓[/green] mlx + mlx_lm importable")
+        except Exception as exc:
+            console.print(f"[red]✗[/red] mlx: {exc}")
+            ok = False
+        models: tuple[str, ...] = (cfg.embedder_model, cfg.llm_model, cfg.helper_model)
+    else:
+        # CPU backend (Linux/Ubuntu, Intel mac): MLX is expected to be absent.
+        # The load-bearing dependency is sentence-transformers instead.
+        try:
+            import sentence_transformers  # noqa: F401
+
+            console.print("[green]✓[/green] sentence-transformers (CPU backend) importable")
+        except Exception as exc:
+            console.print(
+                f"[red]✗[/red] sentence-transformers: {exc}  "
+                "[dim](pip install 'mlx-memo[cpu]')[/dim]"
+            )
+            ok = False
+        models = (cfg.st_embedder_model,)
 
     hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
-    for model in (cfg.embedder_model, cfg.llm_model, cfg.helper_model):
+    for model in models:
         cache_dir = hf_cache / f"models--{model.replace('/', '--')}"
         if cache_dir.is_dir():
             console.print(f"[green]✓[/green] cached: {model}")

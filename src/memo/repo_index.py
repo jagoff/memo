@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from memo.config import Config
-from memo.embedder import MLXEmbedder, assert_valid_embedding
+from memo.embedder import assert_valid_embedding
 from memo.ingest_helpers import enrich_with_ocr
 from memo.ocr import ocr_enabled_via_env
 
@@ -76,17 +76,18 @@ class RepoCorpus:
         cfg: Config,
         *,
         store: VecStore | None = None,
-        embedder: MLXEmbedder | None = None,
+        embedder: Any | None = None,
     ) -> None:
         self.cfg = cfg
         cfg.ensure_dirs()
         self.store = store or VecStore(
             cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model
         )
-        self.embedder = embedder or MLXEmbedder(
-            model_path=cfg.embedder_model,
-            expected_dims=cfg.embedder_dims,
-        )
+        # make_embedder picks MLX (Apple Silicon) or the CPU sentence-transformers
+        # backend (Linux/Ubuntu) — never hard-construct MLXEmbedder here.
+        from memo.embedder_select import make_embedder
+
+        self.embedder = embedder or make_embedder(cfg)
 
     def index(
         self,

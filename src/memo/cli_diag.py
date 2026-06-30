@@ -215,14 +215,21 @@ def _profile_overrides(cfg: Config) -> list[dict[str, Any]]:
 
 
 def _model_cache_report(cfg: Config) -> list[dict[str, Any]]:
+    from memo.embedder_select import resolve_backend
+
     hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
-    roles = [
-        ("embedder", cfg.embedder_model),
-        ("llm", cfg.llm_model),
-        ("helper", cfg.helper_model),
-    ]
-    if cfg.reranker_enabled:
-        roles.append(("reranker", cfg.reranker_model))
+    if resolve_backend(cfg) == "mlx":
+        roles = [
+            ("embedder", cfg.embedder_model),
+            ("llm", cfg.llm_model),
+            ("helper", cfg.helper_model),
+        ]
+        if cfg.reranker_enabled:
+            roles.append(("reranker", cfg.reranker_model))
+    else:
+        # CPU backend: only the sentence-transformers embedder model is loaded;
+        # the MLX llm/helper/reranker never run here.
+        roles = [("embedder", cfg.st_embedder_model)]
     seen: set[tuple[str, str]] = set()
     out: list[dict[str, Any]] = []
     for role, model in roles:
@@ -481,6 +488,9 @@ def _doctor_report(
         import mlx.core  # noqa: F401
         import mlx_lm  # noqa: F401
 
+    def check_sentence_transformers() -> None:
+        import sentence_transformers  # noqa: F401
+
     def check_fts5() -> None:
         # FTS5 is the BM25 backbone. If sqlite was built without it, hybrid
         # search degrades silently to vec-only. Probe with a throwaway table.
@@ -501,11 +511,18 @@ def _doctor_report(
         "ok": True if cfg.vault_path is None else cfg.vault_path.is_dir(),
         "set": cfg.vault_path is not None,
     }
+    # Backend-aware: on the CPU (sentence-transformers) backend MLX is expected
+    # to be absent, so probing it must not fail an otherwise-healthy Linux install.
+    from memo.embedder_select import resolve_backend
+
     imports = [
         _json_import_check("sqlite_vec", check_sqlite_vec),
         _json_import_check("sqlite_fts5", check_fts5),
-        _json_import_check("mlx", check_mlx),
     ]
+    if resolve_backend(cfg) == "mlx":
+        imports.append(_json_import_check("mlx", check_mlx))
+    else:
+        imports.append(_json_import_check("sentence_transformers", check_sentence_transformers))
     daemon = _recall_daemon_health(cfg)
     db_report = _db_health_report(cfg) if check_db else []
     gc_report: dict[str, Any] | None = None

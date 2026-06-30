@@ -50,6 +50,13 @@ def install_watcher(memo_bin: str | None, no_load: bool) -> None:
     crash is enabled (`KeepAlive=true`). Logs land in
     `~/Library/Logs/memo/`.
     """
+    import sys
+
+    if sys.platform != "darwin":
+        raise click.ClickException(
+            "launchd is macOS-only. On Linux run the foreground watcher "
+            "(`memo watch`) under systemd/supervisor instead."
+        )
     import shutil as _shutil
     import subprocess
 
@@ -137,6 +144,12 @@ def install_watcher(memo_bin: str | None, no_load: bool) -> None:
 @click.command(name="uninstall-watcher")
 def uninstall_watcher_cmd() -> None:
     """Unload + remove the file-watcher launchd job."""
+    import sys
+
+    if sys.platform != "darwin":
+        raise click.ClickException(
+            "launchd is macOS-only — there is no watcher launchd job to remove on Linux."
+        )
     import subprocess
 
     from memo.watcher import _PLIST_LABEL, uninstall_plist
@@ -211,11 +224,13 @@ def prewarm(download_all: bool) -> None:
     if flag_bool("MEMO_RECALL_DISABLE"):
         _sys.exit(0)
     try:
-        from memo.embedder import MLXEmbedder
+        from memo.embedder_select import make_embedder
 
         cfg = Config.from_env()
-        emb = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
-        emb.embed(["warmup"])  # batch=1; forces MLX load + first forward pass
+        # make_embedder picks MLX (Apple Silicon) or the CPU backend (Linux),
+        # so prewarm actually warms whichever embedder this host will use.
+        emb = make_embedder(cfg)
+        emb.embed(["warmup"])  # batch=1; forces the model load + first forward pass
         # Reranker prewarm — same rationale as the embedder. Skipped
         # when disabled to keep the SessionStart hook below its
         # 30s budget on machines that opted out of rerank entirely.
