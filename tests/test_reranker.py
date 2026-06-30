@@ -261,3 +261,61 @@ def test_score_real_model_separates_relevant_from_irrelevant():
     assert p_rel > 0.1
     assert p_irr < 0.05
     assert p_rel - p_irr > 0.1
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.slow
+def test_head_slice_matches_full_forward_ranking():
+    """`score` projects only the last token's hidden state through the LM
+    head (head-slice) instead of running the head over all T positions.
+
+    This must rank a doc set identically to the full-forward reference
+    (head applied to every position, then sliced). On fp/8-bit weights the
+    two are bit-identical; on a 4-bit model the quantized head matmul is
+    shape-sensitive, so P(yes) can differ at the ~1/64 quantization step —
+    which never changes the retrieved set. This pins ranking parity vs the
+    reference and bounds the drift, so a head-application bug (wrong head,
+    pre-norm hidden, transposed weights) — which scrambles scores wholesale
+    — still trips."""
+    import math as _math
+
+    import mlx.core as mx
+
+    from memo.mlx_gpu import gpu_guard
+
+    rr = MLXReranker(
+        model_path="vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
+        revision="9655b27c01d2ff1c49f7e672a04b70d630161b46",
+    )
+    rr._ensure_loaded()
+    model = rr._model
+    query = "favourite TV series"
+    docs = [
+        "List of best TV series: Breaking Bad, The Office, Dexter.",
+        "Quarterly revenue report for Q3 2024 — supply chain logistics.",
+        "My short notes on cooking pasta and a few Italian recipes I like.",
+        "TV shows I love: True Detective, Better Call Saul, and The Wire.",
+        "Grocery list: milk, eggs, bread, coffee, olive oil.",
+        "Best HBO shows of the decade according to fans.",
+    ]
+
+    def full_forward(doc: str) -> float:
+        # Reference: LM head over ALL positions, then read the last one.
+        ids = rr._tokenizer.encode(rr._format(query, doc), add_special_tokens=False)
+        if len(ids) > rr.max_seq_len:
+            ids = ids[: rr.max_seq_len]
+        with gpu_guard():
+            last = model(mx.array([ids]))[:, -1, :]
+            y = float(last[0, rr._yes_id])
+            n = float(last[0, rr._no_id])
+        m = max(y, n)
+        return _math.exp(y - m) / (_math.exp(y - m) + _math.exp(n - m))
+
+    ref = [full_forward(d) for d in docs]
+    new = [rr.score(query, d) for d in docs]  # head-slice path
+
+    rank_ref = sorted(range(len(docs)), key=lambda i: ref[i], reverse=True)
+    rank_new = sorted(range(len(docs)), key=lambda i: new[i], reverse=True)
+    for k in (3, 5):
+        assert set(rank_new[:k]) == set(rank_ref[:k])
+    assert max(abs(a - b) for a, b in zip(ref, new, strict=True)) < 0.05

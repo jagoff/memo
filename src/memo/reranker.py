@@ -186,8 +186,19 @@ class MLXReranker:
         # concurrent eval aborts the interpreter (see memo.mlx_gpu).
         with gpu_guard():
             arr = mx.array([ids])
-            logits = model(arr)
-            last = logits[:, -1, :]  # [1, V]
+            # Run the transformer BODY (no LM head), then project ONLY the
+            # last token's hidden state through the head. Scoring reads a
+            # single position, so the usual full-logits path wastes the head
+            # matmul (hidden × 151k vocab) over every OTHER position — the
+            # dominant cost once the body is done (~9% of the 4B forward,
+            # ~20% of the 0.6B). Slicing before the head is mathematically
+            # identical (a position-wise linear projection) and is bit-exact
+            # on fp/8-bit weights; on a 4-bit model the quantized head matmul
+            # is shape-sensitive, so P(yes) can shift at the ~1/64
+            # quantization step — ranking-safe (the retrieved set is
+            # unchanged; verified test_head_slice_matches_full_forward_ranking).
+            hidden = model.model(arr)  # (1, T, H) — body only
+            last = self._apply_lm_head(model, hidden[:, -1, :])  # (1, V)
             y = float(last[0, yes_id])
             n = float(last[0, no_id])
         # Softmax over the (no, yes) pair only — we don't care about
@@ -196,6 +207,30 @@ class MLXReranker:
         e_y = math.exp(y - m)
         e_n = math.exp(n - m)
         return e_y / (e_y + e_n)
+
+    @staticmethod
+    def _apply_lm_head(model: Any, hidden: Any) -> Any:
+        """Project hidden states ``(…, H)`` → logits ``(…, vocab)`` via the
+        model's LM head.
+
+        Qwen3-Reranker ties its input embeddings to the output projection
+        (`tie_word_embeddings=True`), so there is no separate ``lm_head``
+        module — the head is ``model.embed_tokens.as_linear`` (exactly what
+        the model's own ``__call__`` applies after the body). Untied variants
+        expose ``lm_head`` directly. Raises (never silently mis-scores) if
+        neither is present.
+        """
+        lm_head = getattr(model, "lm_head", None)
+        if callable(lm_head):
+            return lm_head(hidden)
+        embed_tokens = getattr(getattr(model, "model", None), "embed_tokens", None)
+        as_linear = getattr(embed_tokens, "as_linear", None)
+        if callable(as_linear):
+            return as_linear(hidden)
+        raise RuntimeError(
+            "reranker model exposes neither `lm_head` nor tied "
+            "`embed_tokens.as_linear`; cannot project hidden states to logits"
+        )
 
     def rerank(
         self,
