@@ -7,7 +7,7 @@ import struct
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from memo.flags import flag_bool, flag_str
@@ -317,6 +317,87 @@ def dedup_hits(hits: list[Any]) -> list[Any]:
         seen_keys.add(key)
         out.append(h)
     return out
+
+
+@dataclass(frozen=True)
+class RankKnobs:
+    """Knobs for the post-search ranking core (mirrors the recall-hook flags)."""
+
+    top_k: int = 3
+    min_sim: float = 0.5
+    min_body_chars: int = 40
+    mode: str = "vec"
+    project_tag: str | None = None
+    project_boost: float = 0.25
+    global_boost: float = 0.10
+    contextual: bool = False
+
+
+def make_vec_cosine(mem: Any, prompt: str) -> Callable[[Any], float | None]:
+    """Build the hybrid-gate cosine fn: true query·doc cosine (both L2-norm),
+    lazily embedding the query once and caching per hit. An uncomputable cosine
+    returns None (callers must not drop a hit on None — surface-on-doubt)."""
+    qvec_holder: dict[str, list[float] | None] = {}
+    cache: dict[str, float | None] = {}
+
+    def _cos(h: Any) -> float | None:
+        if h.id in cache:
+            return cache[h.id]
+        if "q" not in qvec_holder:
+            try:
+                qvec_holder["q"] = list(mem.embedder.embed_query(prompt))
+            except Exception as exc:
+                _logger.debug("make_vec_cosine: query embed failed: %s", exc)
+                qvec_holder["q"] = None
+        q = qvec_holder["q"]
+        cos: float | None = None
+        if q is not None:
+            try:
+                blob = mem.store.get_embedding_blob(h.id)
+                if blob:
+                    doc = struct.unpack(f"<{len(blob) // 4}f", blob)
+                    if len(doc) == len(q):
+                        cos = sum(x * y for x, y in zip(q, doc, strict=True))
+            except Exception as exc:
+                _logger.debug("make_vec_cosine: cosine for %s failed: %s", h.id[:8], exc)
+        cache[h.id] = cos
+        return cos
+
+    return _cos
+
+
+def rank_hits(
+    hits: list[Any],
+    knobs: RankKnobs,
+    *,
+    vec_cosine: Callable[[Any], float | None] | None = None,
+    preferences: Any | None = None,
+    graph_boost: Callable[[list[Any]], list[Any]] | None = None,
+) -> list[Any]:
+    """The daemon's post-search ranking core, pure + reusable.
+
+    project-tiers -> preference-boost -> [graph_boost seam] -> dedup_hits ->
+    min_sim/cosine + min_body gate -> synthesis-dedup. Returns the gated,
+    deduped, ordered candidate list (caller splits top_k vs nudge). Used by both
+    ``_recall_logic`` and the eval harness so they cannot diverge; Phase 2's
+    graph-proximity term plugs into ``graph_boost``."""
+    raw = hits
+    if knobs.project_tag:
+        raw = _apply_project_tiers(raw, knobs.project_tag, knobs.project_boost, knobs.global_boost)
+    if knobs.contextual and preferences is not None:
+        with contextlib.suppress(Exception):
+            raw = _apply_preference_boost(raw, preferences)
+    if graph_boost is not None:
+        with contextlib.suppress(Exception):
+            raw = graph_boost(raw)
+
+    def _passes(h: Any) -> bool:
+        gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
+        if gate is not None and gate < knobs.min_sim:
+            return False
+        return not (knobs.min_body_chars > 0 and len((h.body or "").strip()) < knobs.min_body_chars)
+
+    return _deduplicate_synthesis([h for h in dedup_hits(raw) if _passes(h)])
 
 
 def _recall_logic(
