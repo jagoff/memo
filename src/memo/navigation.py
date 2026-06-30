@@ -1,6 +1,4 @@
-"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
-
-Graph-based memory navigation — path finding, community detection, visualization.
+"""Graph-based memory navigation — path finding, weighted community detection, visualization.
 
 Extends the basic entity graph in graph.py with:
 - Shortest path finding between entities (BFS)
@@ -251,10 +249,48 @@ class GraphNavigator:
             degree=len(adj[entity]),
         )
 
+    def _weighted_adjacency(
+        self, *, use_codegraph: bool | None = None
+    ) -> dict[str, dict[str, float]]:
+        """entity -> {neighbor -> weight}, read from materialized entity_edges.
+
+        Falls back to deriving unweighted (weight 1) from entity_memory when the
+        edge table is empty (e.g. before the first rebuild). Optionally merges the
+        codegraph layer at weight 1.
+        """
+        adj: dict[str, dict[str, float]] = defaultdict(dict)
+        edges: list[tuple[str, str, float]] = []
+        try:
+            edges = self.graph.all_weighted_edges()
+        except Exception as e:  # pragma: no cover - defensive
+            _log.debug("all_weighted_edges failed: %s", e)
+        if edges:
+            for a, b, w in edges:
+                adj[a][b] = w
+                adj[b][a] = w
+        else:
+            base = self._build_adjacency_list(use_codegraph=False)
+            for e, nbrs in base.items():
+                for nb, _mid in nbrs:
+                    adj[e][nb] = adj[e].get(nb, 0.0) + 1.0
+
+        _merge_cg = (
+            flag_bool("MEMO_GRAPH_USE_CODEGRAPH") if use_codegraph is None else use_codegraph
+        )
+        if _merge_cg:
+            try:
+                cg_adj, _ = codegraph_loader.load()
+                for node, neighbors in cg_adj.items():
+                    for nb in neighbors:
+                        adj[node][nb] = adj[node].get(nb, 0.0) + 1.0
+            except Exception as e:
+                _log.debug("codegraph merge skipped: %s", e)
+        return adj
+
     def detect_communities(
         self, min_size: int = 2, *, use_codegraph: bool | None = None
     ) -> list[Community]:
-        """Detect connected components as communities.
+        """Detect communities via deterministic weighted label propagation.
 
         Args:
             min_size: Minimum community size to include.
@@ -263,44 +299,31 @@ class GraphNavigator:
         Returns:
             List of communities sorted by size descending.
         """
-        adj = self._build_adjacency_list(use_codegraph=use_codegraph)
+        from memo.graph_communities import label_propagation
 
-        visited: set[str] = set()
+        adj = self._weighted_adjacency(use_codegraph=use_codegraph)
+        labels = label_propagation(adj)
+
+        groups: dict[int, list[str]] = defaultdict(list)
+        for node, lb in labels.items():
+            groups[lb].append(node)
+
         communities: list[Community] = []
         community_id = 0
-
-        for entity in adj:
-            if entity in visited:
+        for members in groups.values():
+            if len(members) < min_size:
                 continue
-
-            # BFS to find connected component
-            component = []
-            queue = deque([entity])
-            visited.add(entity)
-
-            while queue:
-                current = queue.popleft()
-                component.append(current)
-
-                for neighbor, _ in adj[current]:
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        queue.append(neighbor)
-
-            if len(component) >= min_size:
-                # Find representative (most central = highest degree)
-                degrees = {e: len(adj[e]) for e in component}
-                representative = max(component, key=lambda e: degrees[e])
-
-                communities.append(
-                    Community(
-                        id=community_id,
-                        entities=sorted(component),
-                        size=len(component),
-                        representative_entity=representative,
-                    )
+            degrees = {e: sum((adj.get(e) or {}).values()) for e in members}
+            representative = max(members, key=lambda e: degrees[e])
+            communities.append(
+                Community(
+                    id=community_id,
+                    entities=sorted(members),
+                    size=len(members),
+                    representative_entity=representative,
                 )
-                community_id += 1
+            )
+            community_id += 1
 
         communities.sort(key=lambda c: c.size, reverse=True)
         return communities
