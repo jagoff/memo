@@ -426,20 +426,27 @@ def recall_hook() -> None:
             _recall_format = "full"
         else:
             _recall_format = "balanced"
+    # Compute associative nudge once for all formats — degrades to [] on any error.
+    from memo.recall_assoc import build_nudge, render_associative_line
+
+    try:
+        _nudge = build_nudge(mem, relevant)
+    except Exception:
+        _nudge = []
+
     if _recall_format == "compact":
         context = render_recall_compact(relevant, token_budget=token_budget)
     elif _recall_format == "balanced":
         context = render_recall_balanced(relevant, token_budget=token_budget)
     else:
-        from memo.recall_assoc import build_nudge
-
         context = render_recall_context(
             relevant,
-            build_nudge(mem, relevant),
+            [],  # nudge rendered below, format-agnostic via render_associative_line
             turn=_turn,
             body_chars=body_chars,
             token_budget=token_budget,
         )
+    context = render_associative_line(context, _nudge, token_budget=token_budget)
     if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
         approx = _est_tokens(context)
         print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=sys.stderr)

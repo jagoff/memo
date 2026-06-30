@@ -27,6 +27,8 @@ def related_for(memory: Any, query_or_id: str, hops: int = 2, limit: int = 5) ->
         cg = codegraph_loader.load()[0]
     except Exception:
         cg = None
+    _min_act_v = flag_float("MEMO_ASSOCIATIVE_MIN_ACTIVATION")
+    min_act: float = 0.5 if _min_act_v is None else _min_act_v
     hits = associate(
         seed_ids,
         store=memory.graph,
@@ -34,7 +36,7 @@ def related_for(memory: Any, query_or_id: str, hops: int = 2, limit: int = 5) ->
         hops=hops,
         limit=limit,
         exclude_ids=frozenset(seed_ids),
-        min_activation=flag_float("MEMO_ASSOCIATIVE_MIN_ACTIVATION") or 0.0,
+        min_activation=min_act,
     )
     out = []
     for h in hits:
