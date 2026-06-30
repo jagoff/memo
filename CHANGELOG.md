@@ -9,6 +9,14 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-06-29
+
+### Changed
+- Removed the Spanish command aliases `memo historia` / `memo mapa` (use `memo record-history` / `memo map`); the CLI surface is now English-only.
+
+### Fixed
+- Silenced HuggingFace hub progress bars globally (set `HF_HUB_DISABLE_PROGRESS_BARS` at import). Model loads, prewarm, daemon startup and self-update no longer leak repeated "Fetching N files / Download complete 0.00B" noise for already-cached models.
+
 ## [2.4.1] - 2026-06-29
 
 ### Fixed
