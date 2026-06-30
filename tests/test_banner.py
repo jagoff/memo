@@ -93,6 +93,103 @@ def test_codex_badge_uses_memo_version_notify_protocol(tmp_cfg, tmp_path, monkey
     assert raw.endswith(b"\x1b\\")
 
 
+def _opencode_dir(tmp_path, monkeypatch):
+    """Point XDG_CONFIG_HOME at a tmp dir and create an opencode/ config dir."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    oc = tmp_path / "config" / "opencode"
+    oc.mkdir(parents=True)
+    return oc
+
+
+def test_refresh_opencode_username_stamps_version_badge(tmp_path, monkeypatch):
+    import getpass
+
+    from memo.cli_banner import _refresh_opencode_username
+
+    _opencode_dir(tmp_path, monkeypatch)
+    monkeypatch.setattr(getpass, "getuser", lambda: "fer")
+
+    result = _refresh_opencode_username("2.4.3")
+
+    assert result == "fer · [Memo 2.4.3]"
+    import json
+
+    data = json.loads((tmp_path / "config" / "opencode" / "opencode.json").read_text())
+    assert data["username"] == "fer · [Memo 2.4.3]"
+
+
+def test_refresh_opencode_username_is_idempotent(tmp_path, monkeypatch):
+    import getpass
+
+    from memo.cli_banner import _opencode_config_path, _refresh_opencode_username
+
+    _opencode_dir(tmp_path, monkeypatch)
+    monkeypatch.setattr(getpass, "getuser", lambda: "fer")
+
+    assert _refresh_opencode_username("2.4.3") == "fer · [Memo 2.4.3]"
+    before = _opencode_config_path().read_text()
+    # Second call with same version is a no-op (no rewrite).
+    assert _refresh_opencode_username("2.4.3") is None
+    assert _opencode_config_path().read_text() == before
+
+
+def test_refresh_opencode_username_restamps_old_badge_and_preserves_keys(tmp_path, monkeypatch):
+    import json
+
+    from memo.cli_banner import _refresh_opencode_username
+
+    oc = _opencode_dir(tmp_path, monkeypatch)
+    (oc / "opencode.json").write_text(
+        json.dumps({"$schema": "x", "lsp": True, "username": "bob · [Memo 1.0.0]"})
+    )
+
+    result = _refresh_opencode_username("9.9.9")
+
+    assert result == "bob · [Memo 9.9.9]"
+    data = json.loads((oc / "opencode.json").read_text())
+    assert data["username"] == "bob · [Memo 9.9.9]"
+    # Non-conflicting keys survive the rewrite.
+    assert data["lsp"] is True
+    assert data["$schema"] == "x"
+
+
+def test_refresh_opencode_username_noop_when_opencode_absent(tmp_path, monkeypatch):
+    from memo.cli_banner import _refresh_opencode_username
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))  # no opencode/ dir
+
+    assert _refresh_opencode_username("2.4.3") is None
+    assert not (tmp_path / "config" / "opencode").exists()
+
+
+def test_startup_banner_opencode_writes_username(tmp_cfg, tmp_path, monkeypatch):
+    import json
+
+    _opencode_dir(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda name: "3.2.1" if name == "mlx-memo" else "0",
+    )
+
+    result = CliRunner().invoke(
+        cli, ["startup-banner", "--agent", "opencode"], env=_env(tmp_cfg)
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads((tmp_path / "config" / "opencode" / "opencode.json").read_text())
+    assert data["username"].endswith("[Memo 3.2.1]")
+
+
+def test_startup_banner_codex_does_not_touch_opencode_config(tmp_cfg, tmp_path, monkeypatch):
+    _opencode_dir(tmp_path, monkeypatch)
+
+    CliRunner().invoke(cli, ["startup-banner", "--agent", "codex"], env=_env(tmp_cfg))
+
+    # Only opencode refreshes the username; other agents leave it absent.
+    assert not (tmp_path / "config" / "opencode" / "opencode.json").exists()
+
+
 def test_install_shims_skips_non_memo_file(tmp_cfg, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
