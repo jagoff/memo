@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-06-30
+
+### Added
+- Graph-native program: associative recall nudge (spreading activation over the merged entity + codegraph graph with IDF hub-damping), entity-centric "Knowledge map" briefing section, nightly community-synthesis dream pass (off by default, `MEMO_DREAM_COMMUNITIES_ENABLED`), and `memo graph explore` / `memo_explore` knowledge exploration.
+- codegraph migration: memo navigation merges colbymchenry/codegraph's symbol graph as the primary layer (`MEMO_GRAPH_USE_CODEGRAPH`).
+
+### Fixed
+- Associative recall nudge now renders on the warm-daemon (primary) recall path, not only the subprocess fallback (it was dormant in normal operation).
+- `compute_centrality` rebuilt the graph adjacency O(N²) times (hung on real corpora); now builds it once.
+- Storage: `get_by_path` / `get_by_path_ci` and prune/eviction candidate queries no longer return soft-deleted rows (path-collision false positives, UNIQUE constraint crashes, inflated eviction pools).
+- HyDE search reuses the shared MLX chat instead of cold-loading a second copy of the LLM.
+- `llm.chat_stream` no longer holds the GPU lock across the entire streamed response.
+- `AmbiguousIdError` guards on `memo_related` (and the HTTP/CLI paths); restore tolerates a corrupt manifest; numerous CLI/MCP/flags/dream correctness fixes from a whole-project adversarial audit.
+
+### Changed
+- English-only user-facing strings (associative nudge); removed dead code (`find_node_fuzzy`, `auto_update_on_commit`, `get_session_metadata`); gitignore scratch output.
+
 ## [2.4.3] - 2026-06-29
 
 ### Added
