@@ -12,6 +12,9 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 ### Changed
 - Startup banner and statusline badges now render as `[Memo <version>]` instead of `[MEMO <version>]`.
 
+### Fixed
+- Agent shims now always render memo's own startup banner before delegating to downstream wrappers or binaries.
+
 ## [2.6.6] - 2026-06-30
 
 ### Fixed
