@@ -231,7 +231,12 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     finally:
                         self.server._priority_lock.release()
                 elif op == "embed_query":
-                    if self.server._priority_lock.acquire(priority=1, timeout=5.0):
+                    from memo.flags import flag_int
+
+                    _embed_timeout_s = max(
+                        0.1, (flag_int("MEMO_EMBED_LOCK_TIMEOUT_MS") or 60000) / 1000.0
+                    )
+                    if self.server._priority_lock.acquire(priority=1, timeout=_embed_timeout_s):
                         try:
                             result = self._embed_query(req)
                         finally:
