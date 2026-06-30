@@ -8,6 +8,7 @@ the engine is hermetically testable.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,15 +73,23 @@ def associate(
     # Token activation map: seeds + code-graph expansion.
     tok_act = _expand(seed_tokens, codegraph_adj, hops)
 
-    # Map activated tokens -> candidate memories, accumulating activation + via.
+    # Map activated tokens -> candidate memories, weighting each token by its
+    # rarity (inverse document frequency). A hub entity like "memo" that appears
+    # in hundreds of memories carries almost no associative signal; a rare entity
+    # or code symbol is a strong, specific link. df = how many memories the token
+    # touches; rarity falls off as 1/log1p(df) (df<=1 → full weight).
     cand: dict[str, tuple[float, str]] = {}
     for tok, (act, via) in tok_act.items():
-        for mid in store.entity_memories(tok)[:_FANOUT_MEMS]:
+        mems = store.entity_memories(tok)
+        df = len(mems)
+        rarity = 1.0 if df <= 1 else min(1.0, 1.0 / math.log1p(df))
+        weighted = act * rarity
+        for mid in mems[:_FANOUT_MEMS]:
             if mid in exclude_ids:
                 continue
             prev = cand.get(mid)
-            if prev is None or prev[0] < act:
-                cand[mid] = (act, via)
+            if prev is None or prev[0] < weighted:
+                cand[mid] = (weighted, via)
 
     # Co-recall boost: memories historically recalled alongside the seeds.
     for seed in seed_ids:
