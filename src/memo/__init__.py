@@ -22,6 +22,15 @@ Public API:
     hits = mem.search("query", limit=10)
 """
 
+import os
+
+# Silence HuggingFace hub progress/download bars globally, before any model
+# load. Otherwise embedder/llm/reranker loads, prewarm, and daemon startups
+# leak repeated "Fetching N files / Download complete 0.00B" noise for
+# already-cached models. setdefault honors an explicit override (e.g. the
+# installer may set "0" to show real first-download progress).
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+
 from memo.mlx_gpu import suppress_swig_deprecation_warnings
 
 suppress_swig_deprecation_warnings()
