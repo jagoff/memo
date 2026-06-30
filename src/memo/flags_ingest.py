@@ -14,6 +14,18 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_INGEST_STRICT", "bool", False, "ingest", "Strict ingest filtering."),
     _spec("MEMO_INGEST_DEBUG", "bool", False, "ingest", "Verbose ingest diagnostics."),
     _spec(
+        "MEMO_SAVE_EXTRACT",
+        "bool",
+        False,
+        "ingest",
+        "Default for write-time fact extraction (mem0 ADD-model): when on, "
+        "`memo save` / `memo_save` decompose the content into atomic facts via "
+        "the helper LLM and save each as its own memory instead of one opaque "
+        "blob. Off by default (adds ~1-3s LLM latency); the per-call "
+        "`--extract` flag / `extract=` arg always wins. Falls back to a verbatim "
+        "save when nothing extractable is found.",
+    ),
+    _spec(
         "MEMO_CHUNK_INGEST",
         "bool",
         False,
