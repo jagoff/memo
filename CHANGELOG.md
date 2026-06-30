@@ -9,6 +9,15 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-06-30
+
+### Fixed
+- `memo doctor` / `memo doctor --json` no longer false-fail (exit 1) on a healthy Linux/Ubuntu `[cpu]` install: the import probe is now backend-aware — it checks `sentence-transformers` on the CPU backend instead of MLX, and the model-cache report lists `st_embedder_model`.
+- `memo install-watcher` / `uninstall-watcher` give a clean "launchd is macOS-only" message on Linux instead of an uncaught `FileNotFoundError` (no `launchctl`).
+- `memo search --rerank` warns and skips on non-Apple-Silicon instead of trying to load the MLX-only cross-encoder.
+- `RepoCorpus` (and the opt-in ingest daemon) routes the embedder through `make_embedder`, so it uses the CPU backend on Linux instead of hard-constructing `MLXEmbedder`. SessionStart prewarm likewise warms the active backend.
+- Obsidian vault auto-detection reads the per-OS registry path (`~/.config/obsidian/obsidian.json` on Linux, `%APPDATA%` on Windows).
+
 ## [2.6.0] - 2026-06-30
 
 ### Added
