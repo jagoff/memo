@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.4] - 2026-06-30
+
+### Changed
+- Documentation sweep for Linux/Ubuntu: the PyPI/plugin/MCP-registry package descriptions, the README (hero, hybrid-search line, diagram alt text), and `docs/reference.md` + `docs/install-new-mac.md` now state that memo runs on Apple Silicon (MLX) **or** Linux/Ubuntu (CPU `sentence-transformers`), instead of implying macOS-only. The "when not to pick memo" note no longer lists "not on Apple Silicon" as a disqualifier (memo runs standalone on Linux; only the reranker + LLM features are MLX-only).
+
 ## [2.6.3] - 2026-06-30
 
 ### Fixed
