@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.5] - 2026-06-30
+
+### Fixed
+- The MCP-registry `server.json` description is back under the registry's 100-character limit (2.6.4's longer Linux-mentioning description was rejected with HTTP 422, so the registry stayed at 2.6.3). Shortened to "Memory for AI agents — MLX (Apple Silicon) or CPU (Linux), sqlite-vec + BM25, zero cloud." — still names the Linux path. PyPI/plugin descriptions (no length cap) keep the fuller wording.
+
 ## [2.6.4] - 2026-06-30
 
 ### Changed
