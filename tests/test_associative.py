@@ -87,3 +87,22 @@ def test_associate_hub_filtered_by_min_activation_gate():
     hits = associate(["seed"], store=store, codegraph_adj=None,
                      exclude_ids=frozenset({"seed"}), min_activation=0.5)
     assert "viahub" not in {h.id for h in hits}
+
+
+def test_associate_entity_2hop_discovery():
+    # 'target' shares NO entity with the seed; it is only reachable via the
+    # entity-graph 2-hop seed(a) -> bridge(a,b) -> target(b).
+    store = FakeStore({"seed": ["a"], "bridge": ["a", "b"], "target": ["b"]})
+    hits = associate(["seed"], store=store, codegraph_adj=None, limit=10,
+                     exclude_ids=frozenset({"seed"}))
+    ids = {h.id for h in hits}
+    assert "target" in ids   # found via entity 2-hop, not a shared seed entity
+
+
+def test_associate_overlap_ranks_multi_token_higher():
+    # 'both' connects via two specific seed entities; 'one' via a single one.
+    store = FakeStore({"seed": ["x", "y"], "both": ["x", "y"], "one": ["x"]})
+    hits = associate(["seed"], store=store, codegraph_adj=None, limit=10,
+                     exclude_ids=frozenset({"seed"}))
+    by_id = {h.id: h.activation for h in hits}
+    assert by_id["both"] > by_id["one"]
