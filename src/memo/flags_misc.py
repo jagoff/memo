@@ -768,6 +768,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "Minimum entities in a graph community before it is synthesized.",
         min_val=2,
     ),
+    # dream v2 — bridge / multi-hop link synthesis (spec 3, phase 3)
+    _spec(
+        "MEMO_DREAM_BRIDGES_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the `memo dream bridges` pass: detect articulation entities that "
+        "solely connect two graph regions and abstract each into one durable "
+        "synthesis memory (synthesis_kind=bridge, provenance = bridge + side reps). "
+        "OFF by default; deduped by provenance; runs alongside community synthesis.",
+    ),
     # dream v2 — episodic→semantic consolidation (Phase 2): cross-session themes
     _spec(
         "MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED",
