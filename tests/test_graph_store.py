@@ -136,3 +136,27 @@ def test_decay_weight_halves_after_one_half_life() -> None:
     assert 3.8 < w < 4.2  # ~one half-life elapsed
     # no date -> undecayed
     assert decay_weight(8.0, None, now_iso="2025-12-28") == 8.0
+
+
+def test_edge_stats_reports_counts_and_weight_distribution(tmp_path: Path) -> None:
+    g = _store(tmp_path)
+    for mid in ("m1", "m2"):  # A-B co-occur twice -> weight 2
+        g.record_extraction(memory_id=mid, memory_date="2026-01-01",
+                            entities=[{"name": "A", "type": "concept"},
+                                      {"name": "B", "type": "concept"}],
+                            extracted_at="2026-01-01T00:00:00Z")
+    g.record_extraction(memory_id="m3", memory_date="2026-01-01",  # A-C once -> weight 1
+                        entities=[{"name": "A", "type": "concept"},
+                                  {"name": "C", "type": "concept"}],
+                        extracted_at="2026-01-01T00:00:00Z")
+    g.rebuild_edges()
+    es = g.edge_stats()
+    assert es["edges"] == 2
+    assert es["weight_max"] == 2.0
+    assert es["weight_min"] == 1.0
+    assert es["edges_gt1"] == 1
+
+
+def test_edge_stats_empty_graph(tmp_path: Path) -> None:
+    es = _store(tmp_path).edge_stats()
+    assert es["edges"] == 0 and es["weight_mean"] == 0.0

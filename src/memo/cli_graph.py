@@ -173,6 +173,28 @@ def graph_communities(min_size: int, as_json: bool) -> None:
         console.print(f"[dim]...and {len(communities) - 10} more communities[/dim]")
 
 
+@graph_group.command(name="stats")
+def graph_stats() -> None:
+    """Entity-graph health: entity / link / edge counts + weight distribution.
+
+    Example: memo graph stats
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    s = mem.graph.stats()
+    es = mem.graph.edge_stats()
+    console.print(
+        f"[bold]entities[/bold] {s['entities']}  "
+        f"[bold]links[/bold] {s['links']}  "
+        f"[bold]edges[/bold] {es['edges']}"
+    )
+    pct = (es["edges_gt1"] / es["edges"] * 100) if es["edges"] else 0.0
+    console.print(
+        f"edge weight: min {es['weight_min']:.0f} / mean {es['weight_mean']:.2f} / "
+        f"max {es['weight_max']:.0f}  ([green]{es['edges_gt1']}[/green] = {pct:.1f}% > 1)"
+    )
+
+
 @graph_group.command(name="rebuild")
 def graph_rebuild() -> None:
     """Canonicalize entities and rebuild the weighted edge table.
