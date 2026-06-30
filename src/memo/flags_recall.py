@@ -197,6 +197,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "Daemon: max ms a recall waits for the shared embedder/Memory lock before returning empty. Bounds the latency tail when a cold embed_batch holds the lock — recall bails fast instead of hanging tens of seconds and blowing the 5s hook budget.",
     ),
     _spec(
+        "MEMO_EMBED_LOCK_TIMEOUT_MS",
+        "int",
+        60000,
+        "recall",
+        "Daemon: max ms an embed_query waits for the shared embedder lock before falling back in-process. Unlike recall (5s hook budget), embed_query callers (save dedup, dream passes) are not latency-bound, so the default matches the 60s embed_batch hold — an embed_query never bails before the in-flight batch chunk releases, avoiding a redundant cold MLX load when a heavy job (e.g. `memo dream run`) self-contends on the daemon.",
+        min_val=100,
+    ),
+    _spec(
         "MEMO_RECALL_DAEMON_TIMEOUT_MS",
         "int",
         2000,
