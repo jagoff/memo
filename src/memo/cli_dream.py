@@ -377,6 +377,30 @@ def dream_run(
                 receipt["errors"].append(f"consolidate_episodes: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[consolidate] [yellow]warn[/yellow]")
 
+        # Phase 2 — graph→semantic: community synthesis (spec 3) -------------
+        if flag_bool("MEMO_DREAM_COMMUNITIES_ENABLED"):
+            progress.update(step, description="[communities] graph clusters...")
+            try:
+                from memo import dream_communities
+
+                receipt["communities"] = dream_communities.run_synthesize_communities(
+                    cfg,
+                    mem,
+                    min_size=flag_int("MEMO_DREAM_COMMUNITIES_MIN_SIZE") or 4,
+                    dry_run=dry_run,
+                )
+                _cm = receipt["communities"]
+                progress.update(
+                    step,
+                    description=(
+                        f"[communities] [green]✓[/green]  "
+                        f"{_cm.get('status')} ({len(_cm.get('synthesized', []))})"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"communities: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[communities] [yellow]warn[/yellow]")
+
         # 0. Forget TTLs (always — explicit user intent) ---------------------
         progress.update(step, description="[dim]TTLs — enforce forget...[/dim]")
         try:
