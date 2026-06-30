@@ -332,19 +332,21 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     id_,
                 ),
             )
-            # Sync FTS title + tags (body unchanged on metadata-only updates).
-            # FTS5 doesn't support partial UPDATE cleanly; we delete + reinsert
-            # the row preserving the existing body text.
-            existing = cx.execute(
-                "SELECT body FROM fts WHERE id = ?",
-                (id_,),
-            ).fetchone()
-            body_text = existing["body"] if existing else ""
-            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
-            cx.execute(
-                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
-                (id_, title, " ".join(tags), body_text),
-            )
+            # Sync FTS title + tags only when the meta row was actually updated.
+            # Unconditional delete+insert would create a ghost FTS row for a
+            # non-existent id_ (rowcount 0 means no meta row matched).
+            body_text = ""
+            if cur.rowcount > 0:
+                existing = cx.execute(
+                    "SELECT body FROM fts WHERE id = ?",
+                    (id_,),
+                ).fetchone()
+                body_text = existing["body"] if existing else ""
+                cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+                cx.execute(
+                    "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                    (id_, title, " ".join(tags), body_text),
+                )
             # Sync vec.type — vec0 has no UPDATE, so delete + reinsert
             existing_emb = cx.execute("SELECT embedding FROM vec WHERE id = ?", (id_,)).fetchone()
             if existing_emb is not None:
@@ -433,11 +435,21 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return [r["id"] for r in rows]
 
     def get_by_path(self, path: str) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-            "FROM meta WHERE path = ?",
-            (path,),
-        ).fetchone()
+        try:
+            row = self._conn.execute(
+                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                "FROM meta WHERE path = ? AND (deleted_at IS NULL OR deleted_at = '')",
+                (path,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such column" not in str(exc):
+                raise
+            # Fallback for old DBs without deleted_at column
+            row = self._conn.execute(
+                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                "FROM meta WHERE path = ?",
+                (path,),
+            ).fetchone()
         return _row_to_dict(row) if row else None
 
     def get_by_path_ci(self, path: str) -> dict[str, Any] | None:
@@ -449,11 +461,21 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         reuses that row's id instead of minting a duplicate. Returns the
         oldest match if several casings somehow coexist.
         """
-        row = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-            "FROM meta WHERE path = ? COLLATE NOCASE ORDER BY created LIMIT 1",
-            (path,),
-        ).fetchone()
+        try:
+            row = self._conn.execute(
+                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                "FROM meta WHERE path = ? COLLATE NOCASE AND (deleted_at IS NULL OR deleted_at = '') ORDER BY created LIMIT 1",
+                (path,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such column" not in str(exc):
+                raise
+            # Fallback for old DBs without deleted_at column
+            row = self._conn.execute(
+                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                "FROM meta WHERE path = ? COLLATE NOCASE ORDER BY created LIMIT 1",
+                (path,),
+            ).fetchone()
         return _row_to_dict(row) if row else None
 
     def vault_ingest_rows(self, label: str) -> list[dict[str, Any]]:

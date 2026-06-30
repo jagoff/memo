@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
@@ -307,21 +308,42 @@ class _SignalQueriesMixin(_StoreBase):
         """
         excluded = (exclude_types or set()) | {"synthesis", "reference"}
         placeholders = ",".join("?" for _ in excluded)
-        rows = self._conn.execute(
-            f"""
-            SELECT m.id,
-                   h.roi_score                                      AS roi_score,
-                   CAST(julianday('now') - julianday(m.updated) AS INTEGER) AS days_old
-              FROM meta m
-              LEFT JOIN memory_health h ON h.id = m.id
-              LEFT JOIN access a       ON a.id = m.id
-             WHERE COALESCE(h.roi_score, 1.0) < ?
-               AND COALESCE(a.access_count, 0) = 0
-               AND m.updated < datetime('now', '-' || ? || ' days')
-               AND m.type NOT IN ({placeholders})
-            """,  # noqa: S608
-            (roi_floor, min_age_days, *excluded),
-        ).fetchall()
+        try:
+            rows = self._conn.execute(
+                f"""
+                SELECT m.id,
+                       h.roi_score                                      AS roi_score,
+                       CAST(julianday('now') - julianday(m.updated) AS INTEGER) AS days_old
+                  FROM meta m
+                  LEFT JOIN memory_health h ON h.id = m.id
+                  LEFT JOIN access a       ON a.id = m.id
+                 WHERE COALESCE(h.roi_score, 1.0) < ?
+                   AND COALESCE(a.access_count, 0) = 0
+                   AND m.updated < datetime('now', '-' || ? || ' days')
+                   AND m.type NOT IN ({placeholders})
+                   AND (m.deleted_at IS NULL OR m.deleted_at = '')
+                """,  # noqa: S608
+                (roi_floor, min_age_days, *excluded),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such column" not in str(exc):
+                raise
+            # Fallback for old DBs without deleted_at column
+            rows = self._conn.execute(
+                f"""
+                SELECT m.id,
+                       h.roi_score                                      AS roi_score,
+                       CAST(julianday('now') - julianday(m.updated) AS INTEGER) AS days_old
+                  FROM meta m
+                  LEFT JOIN memory_health h ON h.id = m.id
+                  LEFT JOIN access a       ON a.id = m.id
+                 WHERE COALESCE(h.roi_score, 1.0) < ?
+                   AND COALESCE(a.access_count, 0) = 0
+                   AND m.updated < datetime('now', '-' || ? || ' days')
+                   AND m.type NOT IN ({placeholders})
+                """,  # noqa: S608
+                (roi_floor, min_age_days, *excluded),
+            ).fetchall()
         return [{"id": r["id"], "roi_score": r["roi_score"], "days_old": r["days_old"]} for r in rows]
 
     def eviction_candidates(
@@ -350,18 +372,39 @@ class _SignalQueriesMixin(_StoreBase):
         order = ("COALESCE(a.access_count, 0) ASC, COALESCE(a.last_accessed, m.updated) ASC"
                  if policy == "lfu"
                  else "COALESCE(a.last_accessed, m.updated) ASC")
+        # Always filter soft-deleted rows; WHERE clause always has at least deleted_at guard.
         sql = (
             "SELECT m.id AS id, m.type AS type, "
             "COALESCE(a.access_count, 0) AS access_count, "
             "COALESCE(a.last_accessed, m.updated) AS last_accessed, m.updated AS updated "
             "FROM meta m LEFT JOIN access a ON a.id = m.id "
+            "WHERE (m.deleted_at IS NULL OR m.deleted_at = '') "
         )
         params: list[Any] = []
         if exclude_types:
             placeholders = ",".join("?" for _ in exclude_types)
-            sql += f"WHERE m.type NOT IN ({placeholders}) "
+            sql += f"AND m.type NOT IN ({placeholders}) "
             params.extend(sorted(exclude_types))
         sql += f"ORDER BY {order} LIMIT ?"
         params.append(limit)
-        rows = self._conn.execute(sql, params).fetchall()
+        try:
+            rows = self._conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such column" not in str(exc):
+                raise
+            # Fallback for old DBs without deleted_at column
+            sql = (
+                "SELECT m.id AS id, m.type AS type, "
+                "COALESCE(a.access_count, 0) AS access_count, "
+                "COALESCE(a.last_accessed, m.updated) AS last_accessed, m.updated AS updated "
+                "FROM meta m LEFT JOIN access a ON a.id = m.id "
+            )
+            params = []
+            if exclude_types:
+                placeholders = ",".join("?" for _ in exclude_types)
+                sql += f"WHERE m.type NOT IN ({placeholders}) "
+                params.extend(sorted(exclude_types))
+            sql += f"ORDER BY {order} LIMIT ?"
+            params.append(limit)
+            rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]

@@ -304,6 +304,10 @@ class _MaintainOpsMixin(_MemoryBase):
                         md_id[:8],
                     )
                     self.store.delete(stale["id"])
+                had_embed_pending = False
+                if isinstance(extra, dict):
+                    extra = dict(extra)
+                    had_embed_pending = extra.pop("_memo_embed_pending", None) is not None
                 try:
                     emb = self._embed_cached(
                         self._compose_for_embed(title, body), ctx=f"reindex add {md_id[:8]}"
@@ -325,6 +329,20 @@ class _MaintainOpsMixin(_MemoryBase):
                     _log.warning("reindex: skipping %s (embed failed): %s", md_path.name, exc)
                     skipped += 1
                     continue
+                if had_embed_pending:
+                    try:
+                        _post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+                        _raw_extra = _post.metadata.get("extra")
+                        _post_extra = dict(_raw_extra) if isinstance(_raw_extra, dict) else {}
+                        _post_extra.pop("_memo_embed_pending", None)
+                        _post.metadata["extra"] = _post_extra
+                        md_path.write_text(frontmatter.dumps(_post), encoding="utf-8")
+                    except Exception as _pend_exc:
+                        _log.debug(
+                            "reindex: could not clear _memo_embed_pending from %s: %s",
+                            md_path.name,
+                            _pend_exc,
+                        )
                 added += 1
                 if chunk_ingest:
                     added += self._reindex_emit_chunks(

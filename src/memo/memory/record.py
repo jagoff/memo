@@ -540,9 +540,10 @@ _RECALL_DECAY_HALFLIFE_DEFAULT = 90.0
 
 # Per-type decay half-life flag names. Values are the MEMO_* env var names
 # that override the global MEMO_SEARCH_DECAY_HALFLIFE for a given memory type.
-# None as the mapped flag name means the type carries its own default of None
-# (no decay), e.g. 'reference'. Unknown types fall back to the global halflife.
-_PER_TYPE_HALFLIFE_FLAGS: dict[str, str | None] = {
+# Unknown types fall back to the global halflife. No-decay behavior (e.g. for
+# 'reference') is achieved by registering a flag whose default is None in
+# flags.py — flag_float() returns None, which _halflife_for_type maps to 0.0.
+_PER_TYPE_HALFLIFE_FLAGS: dict[str, str] = {
     "decision": "MEMO_DECAY_HALFLIFE_DECISION",
     "feedback": "MEMO_DECAY_HALFLIFE_FEEDBACK",
     "note": "MEMO_DECAY_HALFLIFE_NOTE",

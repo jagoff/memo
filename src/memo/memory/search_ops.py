@@ -576,8 +576,6 @@ class _SearchOpsMixin(_MemoryBase):
 
     def _generate_hyde_document(self, query: str) -> str | None:
         """Generate a hypothetical answer document for HyDE query expansion."""
-        from memo.llm import MLXChat
-
         max_tokens = flag_int("MEMO_HYDE_MAX_TOKENS") or 256
         prompt = (
             f"Given the user's question, write a hypothetical ideal answer as a concise "
@@ -587,7 +585,7 @@ class _SearchOpsMixin(_MemoryBase):
             f"Hypothetical Answer:"
         )
         try:
-            chat = MLXChat()
+            chat = self._ensure_chat()
             resp = chat.chat(
                 model=self.cfg.llm_model,
                 messages=[{"role": "user", "content": prompt}],

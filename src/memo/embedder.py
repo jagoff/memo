@@ -155,7 +155,13 @@ class MicroEmbedder:
                 row = mx.mean(hidden, axis=1)
                 norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
                 emb = row / norm
-                out.append([float(x) for x in cast(list[Any], emb[0].tolist())])
+                vec = [float(x) for x in cast(list[Any], emb[0].tolist())]
+                if len(vec) != self.expected_dims:
+                    raise RuntimeError(
+                        f"MicroEmbedder produced dim={len(vec)} but expected "
+                        f"{self.expected_dims}. Check MEMO_MICRO_EMBEDDER_MODEL."
+                    )
+                out.append(vec)
         return out
 
     def embed_query(self, query: str) -> list[float]:
@@ -195,7 +201,7 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         self._model: Any = None
         self._tokenizer: Any = None
         self._load_lock = threading.Lock()
-        self._last_use: float = 0.0
+        self._last_use: float = 0.0  # reserved for future idle-unload watchdog
         # Query embedding cache (LRU). Uses the shared consciousness-contracts
         # cache when available. The embedder is a foundation module that must not
         # import memo.flags (see the architecture-boundary test), so flags-aware
@@ -354,6 +360,8 @@ class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
         # the same value for both, else "foo " and "foo" share a key but embed
         # different strings.
         q = (query or "").strip()
+        if not q:
+            return [0.0] * self.expected_dims
         cache_key = f"{self.model_path}:{self.expected_dims}:{q}"
 
         if self._query_cache is not None:
@@ -436,4 +444,4 @@ def assert_valid_embedding(
         )
 
 
-__all__ = ["MLXEmbedder", "assert_valid_embedding"]
+__all__ = ["MLXEmbedder", "MicroEmbedder", "assert_valid_embedding"]

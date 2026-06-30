@@ -265,7 +265,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 for cluster in clusters:
                     rep_item = items[cluster[0]]
                     norm_r = sum(x * x for x in rep_item["emb"]) ** 0.5 or 1.0
-                    cosine = sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=True)) / (norm_i * norm_r)
+                    cosine = sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=False)) / (norm_i * norm_r)
                     if cosine >= threshold:
                         cluster.append(i)
                         joined = True
@@ -567,7 +567,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
             title = (data.get("title") or "").strip()
             body = (data.get("body") or "").strip()
             # normalize relative temporal references to ISO dates
-            body = _normalize_relative_dates(body, _dt.date.today())
+            body = _normalize_relative_dates(body, _dt.datetime.now(_dt.UTC).date())
             confidence = data.get("confidence") if data.get("confidence") in _conf_rank else "low"
             rationale = (data.get("rationale") or "").strip()
 

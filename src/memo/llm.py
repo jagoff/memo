@@ -87,7 +87,7 @@ class MLXChat:
         # OrderedDict used as an LRU cache: most-recently-used moves to end.
         self._loaded: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._load_lock = threading.Lock()
-        self._last_use: dict[str, float] = {}
+        self._last_use: dict[str, float] = {}  # reserved for future idle-unload watchdog
         # Prefix prompt-cache (opt-in via MEMO_PROMPT_CACHE). Per-model:
         # (cache_obj, token_ids_held, model_obj_id). model_obj_id auto-
         # invalidates when _ensure_model returns a freshly reloaded model.
@@ -396,22 +396,27 @@ class MLXChat:
                 gen_tokens: list[int] = []
                 committed = False
                 try:
-                    with gpu_guard():
-                        for resp in _mlx_stream(
-                            m,
-                            tok,
-                            feed,
-                            max_tokens=max_tokens,
-                            sampler=sampler,
-                            prompt_cache=cache,
-                        ):
-                            if getattr(resp, "finish_reason", None) is None:
-                                tk = getattr(resp, "token", None)
-                                if tk is not None:
-                                    gen_tokens.append(int(tk))
-                            delta = getattr(resp, "text", "") or ""
-                            if delta:
-                                yield delta
+                    _sentinel = object()
+                    stream = _mlx_stream(
+                        m,
+                        tok,
+                        feed,
+                        max_tokens=max_tokens,
+                        sampler=sampler,
+                        prompt_cache=cache,
+                    )
+                    while True:
+                        with gpu_guard():
+                            resp = next(stream, _sentinel)
+                        if resp is _sentinel:
+                            break
+                        if getattr(resp, "finish_reason", None) is None:
+                            tk = getattr(resp, "token", None)
+                            if tk is not None:
+                                gen_tokens.append(int(tk))
+                        delta = getattr(resp, "text", "") or ""
+                        if delta:
+                            yield delta
                     self._prompt_cache_commit(
                         model,
                         m,
@@ -436,18 +441,17 @@ class MLXChat:
             add_generation_prompt=True,
             enable_thinking=thinking,
         )
+        _sentinel = object()
+        stream = _mlx_stream(m, tok, prompt, max_tokens=max_tokens, sampler=sampler)
         try:
-            with gpu_guard():
-                for resp in _mlx_stream(
-                    m,
-                    tok,
-                    prompt,
-                    max_tokens=max_tokens,
-                    sampler=sampler,
-                ):
-                    delta = getattr(resp, "text", "") or ""
-                    if delta:
-                        yield delta
+            while True:
+                with gpu_guard():
+                    resp = next(stream, _sentinel)
+                if resp is _sentinel:
+                    break
+                delta = getattr(resp, "text", "") or ""
+                if delta:
+                    yield delta
         finally:
             self._last_use[model] = time.time()
 

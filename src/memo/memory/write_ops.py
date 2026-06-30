@@ -639,14 +639,9 @@ class _WriteOpsMixin(_MemoryBase):
         """
         _log.warning(
             "save: indexing failed after .md write (id=%s, path=%s) — marking "
-            "embed-pending for reindex to replay: %s",
+            "embed-pending for `memo reindex` to replay: %s",
             record_id[:8],
             rel_path,
-            exc,
-        )
-        _log.warning(
-            "Memory %s saved to disk but embedding failed — run 'memo reindex' to index it. Error: %s",
-            record_id[:8],
             exc,
         )
         extra_for_store["_memo_embed_pending"] = True
