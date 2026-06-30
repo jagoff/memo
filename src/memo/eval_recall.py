@@ -278,7 +278,7 @@ class Row:
     config: str
     precision_at_k: float = 0.0
     noise_at_k: float = 0.0
-    assoc_precision_at_k: float = 0.0  # fraction of expect_associative_ids present in top-K
+    assoc_precision_at_k: float = 0.0  # fraction of expect_associative_ids the associative engine surfaces from the top-K seeds
     latency_ms_p50: float = 0.0
     detail: list[dict[str, Any]] = field(default_factory=list)
 
@@ -307,6 +307,17 @@ def run_config(
     assoc_total = 0
     detail: list[dict[str, Any]] = []
     n_prompts = len(labels.prompts) or 1
+    # Honest associative metric: measure what the associative engine actually
+    # surfaces from the top-K seeds, not whether vector search already found the
+    # graph-neighbor ids. Load the codegraph layer once (degrades to None).
+    from memo.associative import associate
+
+    try:
+        from memo import codegraph_loader
+
+        _assoc_cg = codegraph_loader.load()[0]
+    except Exception:
+        _assoc_cg = None
     for index, prompt in enumerate(labels.prompts, start=1):
         if progress is not None:
             progress(cfg, index, len(labels.prompts))
@@ -329,8 +340,21 @@ def run_config(
             prec_hits += sum(1 for h in top if _is_relevant(h, prompt, labels))
         if prompt.expect_associative_ids:
             assoc_total += len(prompt.expect_associative_ids)
+            seed_ids = [getattr(h, "id", "") for h in top if getattr(h, "id", "")]
+            assoc_ids = [
+                a.id
+                for a in associate(
+                    seed_ids,
+                    store=mem.graph,
+                    codegraph_adj=_assoc_cg,
+                    hops=2,
+                    limit=20,
+                    exclude_ids=frozenset(seed_ids),
+                    min_activation=0.0,
+                )
+            ]
             for aid in prompt.expect_associative_ids:
-                if any(_id_matches(getattr(h, "id", ""), [aid]) for h in top):
+                if any(_id_matches(a, [aid]) for a in assoc_ids):
                     assoc_hits += 1
         detail.append(
             {
@@ -385,7 +409,10 @@ def rows_to_table(rows: list[Row], k: int) -> str:
             f"{r.config:<18} {r.precision_at_k:>7} {r.noise_at_k:>8} {r.assoc_precision_at_k:>8} {r.latency_ms_p50:>8}"
         )
     lines.append("\nHigher prec@k + lower noise@k is better. Baseline = first config.")
-    lines.append("assoc@k: fraction of graph-neighbor expect_associative_ids found in top-K vec results.")
+    lines.append(
+        "assoc@k: fraction of graph-neighbor expect_associative_ids the associative "
+        "engine surfaces from the top-K seeds (the path vector search alone missed)."
+    )
     return "\n".join(lines)
 
 
