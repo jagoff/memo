@@ -106,11 +106,80 @@ jobs:
           assert isinstance(hits, list) and len(hits) >= 1, f"no hits: {hits!r}"
           print("OK: save+search roundtrip, hits:", len(hits))
           PY
-      - name: memo-mcp builds + registers tools (no MLX)
+      - name: memo-mcp real stdio MCP handshake (initialize -> tools/list -> tools/call)
         run: |
           python - <<'PY'
-          from memo.server import build_server
+          import json
+          import select
+          import subprocess
 
-          srv = build_server()
-          print("OK: memo-mcp build_server ->", type(srv).__name__)
+          proc = subprocess.Popen(
+              ["memo-mcp"],
+              stdin=subprocess.PIPE,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+
+          def send(obj):
+              proc.stdin.write(json.dumps(obj) + "\n")
+              proc.stdin.flush()
+
+          def read_msg(timeout=90):
+              # MCP stdio is newline-delimited JSON-RPC on stdout; skip any noise.
+              while True:
+                  r, _, _ = select.select([proc.stdout], [], [], timeout)
+                  if not r:
+                      raise SystemExit(
+                          f"timeout; mcp exited={proc.poll()}; stderr=\n{proc.stderr.read()}"
+                      )
+                  line = proc.stdout.readline()
+                  if not line:
+                      raise SystemExit("mcp closed stdout; stderr=\n" + proc.stderr.read())
+                  line = line.strip()
+                  if not line:
+                      continue
+                  try:
+                      return json.loads(line)
+                  except json.JSONDecodeError:
+                      continue
+
+          # 1. initialize — the real MCP handshake over stdio
+          send({
+              "jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {
+                  "protocolVersion": "2024-11-05", "capabilities": {},
+                  "clientInfo": {"name": "smoke", "version": "0"},
+              },
+          })
+          init = read_msg()
+          assert init.get("id") == 1 and "result" in init, init
+          print("initialize OK:", init["result"].get("serverInfo"))
+
+          # 2. initialized notification
+          send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+          # 3. tools/list — every memo tool must register over the wire
+          send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+          tl = read_msg()
+          tools = [t["name"] for t in tl["result"]["tools"]]
+          assert "memo_search" in tools, tools
+          print("tools/list OK:", len(tools), "tools, incl.", sorted(tools)[:5])
+
+          # 4. tools/call — dispatch a real tool round-trip over stdio
+          send({
+              "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+              "params": {"name": "memo_version", "arguments": {}},
+          })
+          cr = read_msg()
+          assert cr.get("id") == 3 and ("result" in cr or "error" in cr), cr
+          print("tools/call dispatched:", "result" if "result" in cr else "error")
+
+          try:
+              proc.stdin.close()
+              proc.terminate()
+              proc.wait(timeout=10)
+          except Exception:
+              proc.kill()
+          print("OK: memo-mcp stdio MCP handshake")
           PY
