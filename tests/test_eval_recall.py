@@ -384,3 +384,38 @@ def test_label_parses_expect_associative_ids():
     })
     assert isinstance(lab, Label)
     assert lab.expect_associative_ids == ("abcd1234", "ef567890")
+
+
+def test_run_config_uses_faithful_ranking_dedup() -> None:
+    """run_config must rank via rank_hits — so the same memory surfaced twice is
+    deduped the way the daemon does, not counted as two separate top-K hits."""
+    from dataclasses import dataclass, field
+    from typing import Any
+
+    from memo.eval_recall import Cfg, LabelSet, Prompt, run_config
+
+    @dataclass
+    class _Hit:
+        id: str
+        score: float | None
+        title: str = ""
+        body: str = ""
+        type: str = "note"
+        tags: list[str] = field(default_factory=list)
+        path: str = "p.md"
+        extra: dict[str, Any] = field(default_factory=dict)
+
+    class _Mem:
+        def search(self, *a: Any, **k: Any) -> list[Any]:
+            # id 'a' surfaced twice (same memory) collapses; 'b' is distinct.
+            return [
+                _Hit("a", 0.9, title="arch a", body="distinct body a long enough"),
+                _Hit("a", 0.85, title="arch a", body="distinct body a long enough"),
+                _Hit("b", 0.8, title="arch b", body="distinct body b long enough"),
+            ]
+
+    labels = LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["a"])])
+    row = run_config(_Mem(), Cfg("X vec/0.0/keep", "vec", 0.0, exclude_archived=False), 3, labels)
+    # 'a' (deduped to one) + 'b' = two top hits, not three
+    assert len(row.detail[0]["top"]) == 2
+    assert row.precision_at_k <= 1.0

@@ -330,10 +330,20 @@ def run_config(
         t0 = time.time()
         hits = mem.search(query, limit=k * 4, mode=cfg.mode)
         lat.append((time.time() - t0) * 1000)
-        hits = [h for h in hits if h.score is None or h.score >= cfg.floor]
+        # Rank exactly as the daemon does (shared rank_hits): dedup + the hybrid
+        # true-cosine gate + the Phase-2 graph_boost seam — so the eval measures
+        # the real ranking, not a hand-rolled floor filter. cfg.floor -> min_sim.
+        from memo.recall_logic import RankKnobs, make_vec_cosine, rank_hits
+
+        vc = make_vec_cosine(mem, query) if cfg.mode == "hybrid" else None
+        ranked = rank_hits(
+            hits,
+            RankKnobs(top_k=k, min_sim=cfg.floor, min_body_chars=0, mode=cfg.mode),
+            vec_cosine=vc,
+        )
         if cfg.exclude_archived:
-            hits = [h for h in hits if not _is_noise(h, labels)]
-        top = hits[:k]
+            ranked = [h for h in ranked if not _is_noise(h, labels)]
+        top = ranked[:k]
         noise_hits += sum(1 for h in top if _is_noise(h, labels))
         if scored:
             prec_total += k
