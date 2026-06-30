@@ -497,6 +497,24 @@ class GraphStore:
         n_links = self._conn.execute("SELECT COUNT(*) FROM entity_memory").fetchone()[0]
         return {"entities": n_entities, "links": n_links}
 
+    def edge_stats(self) -> dict[str, float]:
+        """Materialized-edge health: count + weight distribution. Surfaces graph
+        substrate state (otherwise only visible via raw SQL) so canonicalization
+        / weighting regressions are catchable from `memo graph stats`."""
+        row = self._conn.execute(
+            "SELECT COUNT(*), MIN(weight), MAX(weight), AVG(weight), "
+            "SUM(CASE WHEN weight > 1 THEN 1 ELSE 0 END) FROM entity_edges"
+        ).fetchone()
+        if row is None or not row[0]:
+            return {"edges": 0, "weight_min": 0.0, "weight_max": 0.0, "weight_mean": 0.0, "edges_gt1": 0}
+        return {
+            "edges": int(row[0]),
+            "weight_min": float(row[1] or 0),
+            "weight_max": float(row[2] or 0),
+            "weight_mean": round(float(row[3] or 0), 3),
+            "edges_gt1": int(row[4] or 0),
+        }
+
     def record_co_recall(self, ids: list[str]) -> int:
         """Increment co-recall count for every pair in `ids`.
 
