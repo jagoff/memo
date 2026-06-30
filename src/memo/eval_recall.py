@@ -40,6 +40,27 @@ class Prompt:
     text: str
     relevant: bool = False  # contributes to precision@K when True
     expect_ids: list[str] = field(default_factory=list)
+    expect_associative_ids: tuple[str, ...] = ()  # ids reachable via graph hop, not pure vec/BM25
+
+
+# Alias so tests/code can import `Label` as the per-prompt record type.
+Label = Prompt
+
+
+def _label_from_dict(d: dict) -> Label:
+    """Build a Label from a JSON dict.
+
+    Accepts ``"prompt"`` or ``"text"`` as the text key so that both
+    new-style (``"prompt"``) and existing (``"text"``) JSON files are
+    supported.
+    """
+    text = str(d.get("prompt") or d.get("text") or "")
+    return Prompt(
+        text=text,
+        relevant=bool(d.get("relevant", False)),
+        expect_ids=[str(x) for x in (d.get("expect_ids") or [])],
+        expect_associative_ids=tuple(str(x) for x in (d.get("expect_associative_ids") or ())),
+    )
 
 
 @dataclass
@@ -56,7 +77,7 @@ class LabelSet:
 
         payload = json.dumps(
             {
-                "prompts": [(p.text, p.relevant, sorted(p.expect_ids)) for p in self.prompts],
+                "prompts": [(p.text, p.relevant, sorted(p.expect_ids), sorted(p.expect_associative_ids)) for p in self.prompts],
                 "relevant_terms": sorted(self.relevant_terms),
                 "noise_tags": sorted(self.noise_tags),
                 "noise_path_fragments": list(self.noise_path_fragments),
@@ -129,14 +150,8 @@ def load_labels(path: Path) -> LabelSet:
     for p in raw["prompts"]:
         if isinstance(p, str):
             prompts.append(Prompt(text=p))
-        elif isinstance(p, dict) and p.get("text"):
-            prompts.append(
-                Prompt(
-                    text=str(p["text"]),
-                    relevant=bool(p.get("relevant", False)),
-                    expect_ids=[str(x) for x in (p.get("expect_ids") or [])],
-                )
-            )
+        elif isinstance(p, dict) and (p.get("text") or p.get("prompt")):
+            prompts.append(_label_from_dict(p))
     if not prompts:
         raise ValueError(f"label set {path} has no usable prompts")
     return LabelSet(
@@ -263,6 +278,7 @@ class Row:
     config: str
     precision_at_k: float = 0.0
     noise_at_k: float = 0.0
+    assoc_precision_at_k: float = 0.0  # fraction of expect_associative_ids present in top-K
     latency_ms_p50: float = 0.0
     detail: list[dict[str, Any]] = field(default_factory=list)
 
@@ -287,6 +303,8 @@ def run_config(
     prec_hits = 0
     prec_total = 0
     noise_hits = 0
+    assoc_hits = 0
+    assoc_total = 0
     detail: list[dict[str, Any]] = []
     n_prompts = len(labels.prompts) or 1
     for index, prompt in enumerate(labels.prompts, start=1):
@@ -309,6 +327,11 @@ def run_config(
         if scored:
             prec_total += k
             prec_hits += sum(1 for h in top if _is_relevant(h, prompt, labels))
+        if prompt.expect_associative_ids:
+            assoc_total += len(prompt.expect_associative_ids)
+            for aid in prompt.expect_associative_ids:
+                if any(_id_matches(getattr(h, "id", ""), [aid]) for h in top):
+                    assoc_hits += 1
         detail.append(
             {
                 "prompt": prompt.text[:48],
@@ -329,6 +352,7 @@ def run_config(
         config=cfg.name,
         precision_at_k=round(prec_hits / prec_total, 3) if prec_total else 0.0,
         noise_at_k=round(noise_hits / (n_prompts * k), 3) if (n_prompts * k) else 0.0,
+        assoc_precision_at_k=round(assoc_hits / assoc_total, 3) if assoc_total else 0.0,
         latency_ms_p50=round(lat[len(lat) // 2], 1) if lat else 0.0,
         detail=detail,
     )
@@ -352,15 +376,16 @@ def evaluate(
 
 def rows_to_table(rows: list[Row], k: int) -> str:
     lines = [
-        f"\nRecall eval — precision@{k} (answerable prompts) / noise@{k} (all)\n",
-        f"{'config':<18} {'prec@k':>7} {'noise@k':>8} {'p50 ms':>8}",
-        "-" * 45,
+        f"\nRecall eval — precision@{k} (answerable) / noise@{k} (all) / assoc@{k} (graph-neighbor labels)\n",
+        f"{'config':<18} {'prec@k':>7} {'noise@k':>8} {'assoc@k':>8} {'p50 ms':>8}",
+        "-" * 55,
     ]
     for r in rows:
         lines.append(
-            f"{r.config:<18} {r.precision_at_k:>7} {r.noise_at_k:>8} {r.latency_ms_p50:>8}"
+            f"{r.config:<18} {r.precision_at_k:>7} {r.noise_at_k:>8} {r.assoc_precision_at_k:>8} {r.latency_ms_p50:>8}"
         )
     lines.append("\nHigher prec@k + lower noise@k is better. Baseline = first config.")
+    lines.append("assoc@k: fraction of graph-neighbor expect_associative_ids found in top-K vec results.")
     return "\n".join(lines)
 
 
