@@ -83,6 +83,11 @@ tantivy = [
 contracts = [
     "consciousness-contracts>=0.2.0",
 ]
+# Optional REST API server (`memo http-api`).
+http = [
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+]
 
 [project.scripts]
 memo = "memo.cli:main"

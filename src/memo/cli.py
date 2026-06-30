@@ -58,6 +58,7 @@ from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
 from memo.cli_health import health as health_cmd
 from memo.cli_history import diff_cmd, history_cmd
+from memo.cli_http import http_api
 from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
@@ -376,6 +377,7 @@ cli.add_command(export_group)
 cli.add_command(multimodal_group)
 cli.add_command(collaborative_group)
 cli.add_command(contradict_group)
+cli.add_command(http_api)
 cli.add_command(startup_banner_cmd)
 cli.add_command(codex_badge_cmd)
 cli.add_command(install_shims_cmd)
@@ -409,6 +411,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "map",
     "backend-native",
     "profile",
+    "http-api",
     "startup-banner",
     "codex-badge",
     "install-shims",
