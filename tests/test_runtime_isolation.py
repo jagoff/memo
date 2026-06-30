@@ -136,6 +136,16 @@ def test_mcp_command_json(monkeypatch):
     assert '"MEMO_NONINTERACTIVE": "1"' in result.output
 
 
+def test_mcp_server_env_clears_pythonpath(monkeypatch):
+    _clear_memo_env(monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", "src")
+    monkeypatch.setattr(mcp_mod, "_actual_embedder_config", lambda: {})
+
+    env = mcp_mod._mcp_server_env()
+
+    assert env["PYTHONPATH"] == ""
+
+
 def test_mcp_command_codex(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(

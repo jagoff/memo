@@ -2,7 +2,7 @@
 
 A config that hardcodes a venv-internal binary path (pipx/uv site) breaks the
 moment the runtime is reinstalled or switched. The stable target is the shim
-``~/.local/bin/<bin>`` or the bare name on PATH. Format-agnostic: matches the
+``~/.local/bin/<bin>``. Format-agnostic: matches the
 raw text, so JSON, JSONC, and YAML all work without a parser.
 """
 
@@ -25,6 +25,23 @@ KNOWN_MCP_CONFIGS: tuple[str, ...] = (
 # Absolute path ending in /memo or /memo-mcp (the launched binary).
 _MEMO_BIN_PATH = re.compile(r"(/[^\s\"':,]*?/(?:memo-mcp|memo))(?=[\s\"':,]|$)")
 
+# Bare launch command values are path-ambiguous: MCP clients inherit different
+# PATHs, so `command = "memo-mcp"` can start a different install than the shell.
+_BARE_MEMO_COMMAND_VALUE = re.compile(
+    r"(?P<prefix>(?:\"command\"|command)\s*[:=]\s*)"
+    r"(?P<quote>[\"']?)"
+    r"(?P<command>memo(?:-mcp)?)"
+    r"(?P=quote)"
+    r"(?=[\s,}\n\r]|$)"
+)
+_BARE_MEMO_COMMAND_ARRAY_VALUE = re.compile(
+    r"(?P<prefix>(?:\"command\"|command)\s*[:=]\s*\[\s*)"
+    r"(?P<quote>[\"'])"
+    r"(?P<command>memo(?:-mcp)?)"
+    r"(?P=quote)"
+    r"(?=[\s,\]\n\r]|$)"
+)
+
 # Fragile: points inside a managed venv instead of the stable shim.
 _VENV_INTERNAL = re.compile(r"/(?:pipx/venvs|uv/tools|\.venv|site-packages)/")
 
@@ -36,6 +53,13 @@ _PATH_BOUNDARY = r"(?=[\s\"':,]|$)"
 def extract_memo_command_paths(text: str) -> list[str]:
     """All absolute ``/…/memo`` or ``/…/memo-mcp`` paths mentioned in a config file."""
     return sorted({m.group(1) for m in _MEMO_BIN_PATH.finditer(text)})
+
+
+def extract_bare_memo_launch_commands(text: str) -> list[str]:
+    """Bare ``memo``/``memo-mcp`` values used as exact config ``command`` values."""
+    commands = {m.group("command") for m in _BARE_MEMO_COMMAND_VALUE.finditer(text)}
+    commands.update(m.group("command") for m in _BARE_MEMO_COMMAND_ARRAY_VALUE.finditer(text))
+    return sorted(commands)
 
 
 def classify_command_path(path: str) -> str | None:
@@ -80,7 +104,40 @@ def scan_mcp_configs(
                     "suggestion": f"{shim}/{bin_name}",
                 }
             )
+        for cmd in extract_bare_memo_launch_commands(text):
+            findings.append(
+                {
+                    "config": str(cfg_path),
+                    "command": cmd,
+                    "issue": "path-ambiguous",
+                    "suggestion": f"{shim}/{cmd}",
+                }
+            )
     return findings
+
+
+def _replace_bare_launch_command(text: str, command: str, suggestion: str) -> str:
+    command_pattern = re.escape(command)
+    scalar_pattern = re.compile(
+        r"(?P<prefix>(?:\"command\"|command)\s*[:=]\s*)"
+        r"(?P<quote>[\"']?)"
+        rf"(?P<command>{command_pattern})"
+        r"(?P=quote)"
+        r"(?=[\s,}\n\r]|$)"
+    )
+    array_pattern = re.compile(
+        r"(?P<prefix>(?:\"command\"|command)\s*[:=]\s*\[\s*)"
+        r"(?P<quote>[\"'])"
+        rf"(?P<command>{command_pattern})"
+        r"(?P=quote)"
+        r"(?=[\s,\]\n\r]|$)"
+    )
+
+    def repl(match: re.Match[str]) -> str:
+        quote = match.group("quote")
+        return f"{match.group('prefix')}{quote}{suggestion}{quote}"
+
+    return array_pattern.sub(repl, scalar_pattern.sub(repl, text))
 
 
 def repair_mcp_configs(
@@ -120,8 +177,15 @@ def repair_mcp_configs(
             if not Path(finding["suggestion"]).exists():
                 repairs.append({**finding, "status": "skipped-no-target"})
                 continue
-            pattern = re.compile(re.escape(finding["command"]) + _PATH_BOUNDARY)
-            rewritten = pattern.sub(finding["suggestion"], text)
+            if finding["issue"] == "path-ambiguous":
+                rewritten = _replace_bare_launch_command(
+                    text,
+                    finding["command"],
+                    finding["suggestion"],
+                )
+            else:
+                pattern = re.compile(re.escape(finding["command"]) + _PATH_BOUNDARY)
+                rewritten = pattern.sub(finding["suggestion"], text)
             if rewritten != text:
                 text = rewritten
                 applied.append(finding)

@@ -94,6 +94,10 @@ def _mcp_server_env() -> dict[str, str]:
     env = {
         "MEMO_NONINTERACTIVE": "1",
         "MEMO_MCP_PROFILE": flag_str("MEMO_MCP_PROFILE") or "agent",
+        # MCP clients may inherit a dev shell's PYTHONPATH (for example `src`
+        # inside this checkout). Clear it so the isolated memo-mcp shim imports
+        # its installed runtime, not whichever repo happens to be the cwd.
+        "PYTHONPATH": "",
         # Keep installs current: memo-mcp checks for a newer git TAG on start and
         # self-upgrades (tag-gated + throttled). This is what makes the [MEMO <ver>]
         # statusline badge follow releases automatically. Set MEMO_AUTO_UPDATE=0 in

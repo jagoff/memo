@@ -56,6 +56,48 @@ def test_scan_reports_dead_path(tmp_path: Path) -> None:
     assert findings[0]["suggestion"].endswith("/memo-mcp")
 
 
+def test_scan_reports_bare_memo_mcp_launch_command(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[mcp_servers.memo]\ncommand = "memo-mcp"\n', encoding="utf-8")
+
+    findings = scan_mcp_configs((str(cfg),), shim_dir=str(tmp_path / "shim"))
+
+    assert findings == [
+        {
+            "config": str(cfg),
+            "command": "memo-mcp",
+            "issue": "path-ambiguous",
+            "suggestion": str(tmp_path / "shim" / "memo-mcp"),
+        }
+    ]
+
+
+def test_scan_reports_bare_memo_mcp_command_array(tmp_path: Path) -> None:
+    cfg = tmp_path / "opencode.jsonc"
+    cfg.write_text('{"mcp": {"memo": {"command": ["memo-mcp"]}}}', encoding="utf-8")
+
+    findings = scan_mcp_configs((str(cfg),), shim_dir=str(tmp_path / "shim"))
+
+    assert findings == [
+        {
+            "config": str(cfg),
+            "command": "memo-mcp",
+            "issue": "path-ambiguous",
+            "suggestion": str(tmp_path / "shim" / "memo-mcp"),
+        }
+    ]
+
+
+def test_scan_ignores_shell_hook_commands_with_bare_memo(tmp_path: Path) -> None:
+    cfg = tmp_path / "devin.json"
+    cfg.write_text(
+        '{"command": "MEMO_NONINTERACTIVE=1 memo recall-hook"}',
+        encoding="utf-8",
+    )
+
+    assert scan_mcp_configs((str(cfg),), shim_dir=str(tmp_path / "shim")) == []
+
+
 def test_classify_uv_tools_internal() -> None:
     assert (
         classify_command_path("/Users/x/.local/share/uv/tools/mlx-memo/bin/memo-mcp")
@@ -89,6 +131,34 @@ def test_repair_repoints_dead_path_and_backs_up(tmp_path: Path) -> None:
     assert cfg.read_text(encoding="utf-8") == f'command = "{shim}/memo-mcp"\n'
     assert (tmp_path / "config.toml.bak").read_text(encoding="utf-8") == (
         'command = "/Users/x/.local/pipx/venvs/mlx-memo/bin/memo-mcp"\n'
+    )
+
+
+def test_repair_repoints_bare_memo_mcp_launch_command(tmp_path: Path) -> None:
+    shim = _shim(tmp_path, "memo-mcp")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[mcp_servers.memo]\ncommand = "memo-mcp"\n', encoding="utf-8")
+
+    repairs = repair_mcp_configs((str(cfg),), shim_dir=shim, apply=True)
+
+    assert len(repairs) == 1
+    assert repairs[0]["status"] == "repaired"
+    assert cfg.read_text(encoding="utf-8") == (
+        f'[mcp_servers.memo]\ncommand = "{shim}/memo-mcp"\n'
+    )
+
+
+def test_repair_repoints_bare_memo_mcp_command_array(tmp_path: Path) -> None:
+    shim = _shim(tmp_path, "memo-mcp")
+    cfg = tmp_path / "opencode.jsonc"
+    cfg.write_text('{"mcp": {"memo": {"command": ["memo-mcp"]}}}', encoding="utf-8")
+
+    repairs = repair_mcp_configs((str(cfg),), shim_dir=shim, apply=True)
+
+    assert len(repairs) == 1
+    assert repairs[0]["status"] == "repaired"
+    assert cfg.read_text(encoding="utf-8") == (
+        f'{{"mcp": {{"memo": {{"command": ["{shim}/memo-mcp"]}}}}}}'
     )
 
 
