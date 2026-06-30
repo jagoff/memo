@@ -31,7 +31,7 @@ from memo.cli_analytics import analytics_group
 from memo.cli_as_of import as_of_group
 from memo.cli_backend_native import backend_native_group
 from memo.cli_backup import backup_group
-from memo.cli_banner import startup_banner_cmd
+from memo.cli_banner import codex_badge_cmd, startup_banner_cmd
 from memo.cli_briefing import briefing
 from memo.cli_capture import capture_stop, capture_tick, episodes_group, resume
 from memo.cli_chat import chat_group
@@ -377,6 +377,7 @@ cli.add_command(multimodal_group)
 cli.add_command(collaborative_group)
 cli.add_command(contradict_group)
 cli.add_command(startup_banner_cmd)
+cli.add_command(codex_badge_cmd)
 cli.add_command(install_shims_cmd)
 
 
@@ -409,6 +410,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "backend-native",
     "profile",
     "startup-banner",
+    "codex-badge",
     "install-shims",
 }
 

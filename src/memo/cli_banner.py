@@ -59,3 +59,13 @@ def _fast_sync_state() -> str:
         return "al día" if ahead == 0 else f"ahead {ahead}"
     except Exception:
         return "-"
+
+
+@click.command(name="codex-badge")
+@click.option("--agent", default="", help="Agent name; accepted for shim symmetry.")
+def codex_badge_cmd(agent: str) -> None:
+    """Show memo's version badge in Codex/Supacode's top-line notification area."""
+    del agent
+    from memo.runtime.codex_notify import emit_memo_badge
+
+    emit_memo_badge()

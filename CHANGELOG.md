@@ -16,6 +16,7 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 - Startup banner and statusline badges now render as `[Memo <version>]` instead of `[MEMO <version>]`.
 
 ### Fixed
+- Codex shims now also emit a delayed `[Memo <version>]` Codex/Supacode notification so the memo version remains visible after the Codex TUI takes over the terminal.
 - Agent shims now always render memo's own startup banner before delegating to downstream wrappers or binaries, and refresh stale PATH snippets so memo stays ahead of downstream wrappers.
 
 ## [2.6.6] - 2026-06-30

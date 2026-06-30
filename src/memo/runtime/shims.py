@@ -49,6 +49,9 @@ _MEMO="$(command -v memo 2>/dev/null || true)"
 if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ -t 2 ]; then
     "$_MEMO" startup-banner --agent "$_AGENT" || true
 fi
+if [ "$_AGENT" = "codex" ] && [ -n "$_MEMO" ] && [ "${MEMO_CODEX_BADGE:-1}" != "0" ] && [ -n "${MEMO_AGENT_TTY:-}" ]; then
+    ( sleep "${MEMO_CODEX_BADGE_DELAY:-1}"; "$_MEMO" codex-badge --agent "$_AGENT" >/dev/null 2>&1 || true ) &
+fi
 exec "$_NEXT" "$@"
 """
 
