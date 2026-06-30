@@ -63,3 +63,27 @@ def test_associative_flags_registered_with_defaults():
     assert flag_int("MEMO_ASSOCIATIVE_LIMIT") == 2
     assert flag_float("MEMO_ASSOCIATIVE_MIN_ACTIVATION") == 0.5
     assert flag_int("MEMO_ASSOCIATIVE_BUDGET_MS") == 300
+
+
+def test_associate_down_weights_hub_entities():
+    # 'hub' is in many memories; 'rare' in few. A candidate reachable only via
+    # the hub must score below one reachable via the rare entity.
+    mem_entities = {"seed": ["hub", "rare"], "viahub": ["hub"], "viarare": ["rare"]}
+    for i in range(20):
+        mem_entities[f"filler{i}"] = ["hub"]
+    store = FakeStore(mem_entities)
+    hits = associate(["seed"], store=store, codegraph_adj=None, limit=10,
+                     exclude_ids=frozenset({"seed"}))
+    by_id = {h.id: h.activation for h in hits}
+    assert by_id["viarare"] > by_id["viahub"]
+
+
+def test_associate_hub_filtered_by_min_activation_gate():
+    # A very common hub entity drops below the 0.5 gate and is dropped entirely.
+    mem_entities = {"seed": ["hub"], "viahub": ["hub"]}
+    for i in range(50):
+        mem_entities[f"f{i}"] = ["hub"]
+    store = FakeStore(mem_entities)
+    hits = associate(["seed"], store=store, codegraph_adj=None,
+                     exclude_ids=frozenset({"seed"}), min_activation=0.5)
+    assert "viahub" not in {h.id for h in hits}
