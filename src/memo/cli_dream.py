@@ -410,6 +410,29 @@ def dream_run(
                 receipt["errors"].append(f"communities: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[communities] [yellow]warn[/yellow]")
 
+        # Phase 3 — graph→semantic: bridge / multi-hop link synthesis (spec 3) -
+        if flag_bool("MEMO_DREAM_BRIDGES_ENABLED"):
+            progress.update(step, description="[bridges] articulation links...")
+            try:
+                from memo import dream_bridges
+
+                receipt["bridges"] = dream_bridges.run_synthesize_bridges(
+                    cfg,
+                    mem,
+                    dry_run=dry_run,
+                )
+                _br = receipt["bridges"]
+                progress.update(
+                    step,
+                    description=(
+                        f"[bridges] [green]✓[/green]  "
+                        f"{_br.get('status')} ({len(_br.get('synthesized', []))})"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"bridges: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[bridges] [yellow]warn[/yellow]")
+
         # 0. Forget TTLs (always — explicit user intent) ---------------------
         progress.update(step, description="[dim]TTLs — enforce forget...[/dim]")
         try:
