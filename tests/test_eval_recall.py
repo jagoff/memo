@@ -369,3 +369,18 @@ def test_merge_label_prompts_unions_expect_ids(tmp_path: Path):
     # Jaccard-similar → single entry with unioned ids, not a duplicate.
     assert len(merged) == 1
     assert set(merged[0]["expect_ids"]) == {"aaaa1111", "bbbb2222"}
+
+
+# --- associative-recall eval labels ------------------------------------------
+
+
+def test_label_parses_expect_associative_ids():
+    from memo.eval_recall import Label, _label_from_dict  # parser helper
+
+    lab = _label_from_dict({
+        "prompt": "how does recall connect to the store?",
+        "relevant": True,
+        "expect_associative_ids": ["abcd1234", "ef567890"],
+    })
+    assert isinstance(lab, Label)
+    assert lab.expect_associative_ids == ("abcd1234", "ef567890")

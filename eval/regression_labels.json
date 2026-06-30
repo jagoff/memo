@@ -179,6 +179,20 @@
       "_note": "Freshness lookup — contradiction scan + supersede/archive, the authoritative freshness state."
     },
     {
+      "text": "how does the recall hook surface related decisions on mention",
+      "relevant": true,
+      "expect_ids": ["e97a3758"],
+      "expect_associative_ids": ["2cddfbfc", "04dd736b"],
+      "_note": "Associative label — primary hit is 'Recall hook surfaces decision 954af723 on mention' (e97a3758); graph neighbors 2cddfbfc (Trinity runbook) and 04dd736b (Instalación/Operaciones Memo) are reachable via the 'memo' entity edge but may not rank top-K in pure vector search. Sourced via `memo related e97a3758a3ae`."
+    },
+    {
+      "text": "what is the memory-first agent architecture and how does it integrate memo",
+      "relevant": true,
+      "expect_ids": ["334870f3"],
+      "expect_associative_ids": ["2cddfbfc", "75057eca"],
+      "_note": "Associative label — primary hit is 'Memory-First Agent Architecture' (334870f3); graph neighbors 2cddfbfc (Trinity runbook) and 75057eca (memo + graphify integration) are reachable via the 'memo' entity edge. Sourced via `memo related 334870f3`. expect_associative_ids may need human curation if graph edges change."
+    },
+    {
       "text": "best pasta recipe for tonight",
       "relevant": false,
       "_note": "Noise probe — culinary content not in the developer's vault."
