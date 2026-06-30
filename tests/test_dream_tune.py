@@ -81,3 +81,61 @@ def test_run_tuning_pass_dry_run_writes_nothing(tmp_cfg, monkeypatch):
     res = dt.run_tuning_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, min_used_score=0.5, dry_run=True)
     assert res["status"] == "would_apply"
     assert dt.read_overlay(tmp_cfg.state_dir) == {}  # nothing written
+
+
+# --- graph-proximity weight tuning (Phase 2, mirrors the min_sim path) -------
+
+_GRAPH_SCORES = {0.0: 0.1, 0.05: 0.15, 0.1: 0.3, 0.2: 0.2}  # precision peaks at 0.1
+
+
+def _stub_graph_measure(mem, labels, *, k, weight, floor):
+    return {"precision_at_k": _GRAPH_SCORES.get(round(weight, 4), 0.0), "noise_at_k": 0.0}
+
+
+def test_search_graph_weight_selects_max(monkeypatch):
+    monkeypatch.setattr(dt, "measure_graph_weight", _stub_graph_measure)
+    labels = LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])])
+    best, before, after = dt.search_graph_weight(
+        _StubMem(), labels, k=3, current=0.0, floor=0.5, grid=(0.0, 0.05, 0.1, 0.2), max_evals=20
+    )
+    assert best == 0.1  # the weight maximizing the stubbed precision
+    assert after["precision_at_k"] == 0.3
+    assert before["precision_at_k"] == 0.1  # weight=current(0.0) baseline
+
+
+def test_run_graph_weight_pass_applies_and_writes_overlay(tmp_cfg, monkeypatch):
+    monkeypatch.setattr(
+        dt, "build_labels",
+        lambda *a, **k: (LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])]), True),
+    )
+    monkeypatch.setattr(dt, "measure_graph_weight", _stub_graph_measure)
+    res = dt.run_graph_weight_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, dry_run=False)
+    assert res["status"] == "applied"
+    assert res["weight_after"] == 0.1
+    assert dt.read_overlay(tmp_cfg.state_dir)["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1
+
+
+def test_run_graph_weight_pass_dry_run_writes_nothing(tmp_cfg, monkeypatch):
+    monkeypatch.setattr(
+        dt, "build_labels",
+        lambda *a, **k: (LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])]), True),
+    )
+    monkeypatch.setattr(dt, "measure_graph_weight", _stub_graph_measure)
+    res = dt.run_graph_weight_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, dry_run=True)
+    assert res["status"] == "would_apply"
+    assert dt.read_overlay(tmp_cfg.state_dir) == {}
+
+
+def test_run_graph_weight_pass_preserves_existing_overlay_params(tmp_cfg, monkeypatch):
+    # A prior min_sim tune wrote the overlay; the graph pass must not clobber it.
+    dt.write_overlay(tmp_cfg.state_dir, {"MEMO_RECALL_MIN_SIM": 0.6}, {"set_by": "dream"})
+    monkeypatch.setattr(
+        dt, "build_labels",
+        lambda *a, **k: (LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])]), True),
+    )
+    monkeypatch.setattr(dt, "measure_graph_weight", _stub_graph_measure)
+    res = dt.run_graph_weight_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, dry_run=False)
+    assert res["status"] == "applied"
+    overlay = dt.read_overlay(tmp_cfg.state_dir)
+    assert overlay["MEMO_RECALL_MIN_SIM"] == 0.6  # preserved
+    assert overlay["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1
