@@ -103,7 +103,16 @@ def search(
 
     cfg = Config.from_env()
     if use_rerank is True:
-        cfg = cfg.model_copy(update={"reranker_enabled": True})
+        from memo.platform_detect import is_apple_silicon
+
+        if is_apple_silicon():
+            cfg = cfg.model_copy(update={"reranker_enabled": True})
+        else:
+            click.echo(
+                "note: --rerank ignored — the cross-encoder reranker requires "
+                "the MLX runtime (Apple Silicon).",
+                err=True,
+            )
     mem = _get_memory(cfg)
     disable_reranker = use_rerank is False
     t0 = int(time.time() * 1000)
