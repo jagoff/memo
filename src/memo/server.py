@@ -44,6 +44,7 @@ from memo import server_entities as _srv_entities
 from memo import server_episodes as _srv_episodes
 from memo import server_feedback as _srv_feedback
 from memo import server_graph as _srv_graph
+from memo import server_graph_tool as _srv_graph_tool
 from memo import server_health as _srv_health
 from memo import server_idle_capture as _srv_idle_capture
 from memo import server_import_export as _srv_import_export
@@ -172,6 +173,9 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         from memo.mcp_tools import register_version as _register_version_tool
 
         _register_version_tool(server, memory)
+    # One consolidated read-only graph navigator on every profile (incl. agent) —
+    # corpus navigation, not the nine advanced memo_graph_* tools.
+    _srv_graph_tool.register(server, memory)
     _srv_core_records.register(server, memory)
     _srv_core_search.register(server, memory)
     _srv_core_history.register(server, memory)

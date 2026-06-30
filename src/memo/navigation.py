@@ -287,6 +287,47 @@ class GraphNavigator:
                 _log.debug("codegraph merge skipped: %s", e)
         return adj
 
+    def weighted_path(
+        self, a: str, b: str, max_length: int = 5
+    ) -> dict[str, Any] | None:
+        """Shortest path between two entities as evidence, with per-edge weights.
+
+        BFS for the fewest-hop path over the materialized weighted adjacency
+        (``_weighted_adjacency``), then reads each traversed edge's weight.
+
+        Returns ``{"path": [entity, ...], "edges": [{"from", "to", "weight"}, ...]}``
+        or ``None`` when either endpoint is absent or no path exists within
+        ``max_length`` hops.
+        """
+        a = a.lower().strip()
+        b = b.lower().strip()
+        if a == b:
+            return {"path": [a], "edges": []}
+
+        adj = self._weighted_adjacency()
+        if a not in adj or b not in adj:
+            return None
+
+        queue: deque[list[str]] = deque([[a]])
+        visited = {a}
+        while queue:
+            path = queue.popleft()
+            current = path[-1]
+            if current == b:
+                edges = [
+                    {"from": path[i], "to": path[i + 1], "weight": adj[path[i]][path[i + 1]]}
+                    for i in range(len(path) - 1)
+                ]
+                return {"path": path, "edges": edges}
+            if len(path) - 1 >= max_length:
+                continue
+            for neighbor in adj[current]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append([*path, neighbor])
+
+        return None
+
     def detect_communities(
         self, min_size: int = 2, *, use_codegraph: bool | None = None
     ) -> list[Community]:
