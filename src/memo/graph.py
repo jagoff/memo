@@ -112,6 +112,29 @@ VALID_ENTITY_TYPES = frozenset(
 )
 
 
+def decay_weight(
+    weight: float,
+    last_seen: str | None,
+    *,
+    now_iso: str,
+    half_life_days: float = 180.0,
+) -> float:
+    """Time-decayed edge weight: weight * 0.5 ** (age_days / half_life_days).
+    `last_seen` None or unparseable -> undecayed. Ready for Phase 2 ranking;
+    Phase 0 callers use raw weight."""
+    if not last_seen:
+        return weight
+    from datetime import date
+
+    try:
+        ls = date.fromisoformat(last_seen[:10])
+        now = date.fromisoformat(now_iso[:10])
+    except ValueError:
+        return weight
+    age = max(0, (now - ls).days)
+    return weight * (0.5 ** (age / half_life_days))
+
+
 @dataclass(frozen=True)
 class EntityMention:
     """Entity linked to a memory."""
@@ -342,6 +365,65 @@ class GraphStore:
                     (cid, cid),
                 )
             return merged
+
+    def rebuild_edges(self) -> int:
+        """Materialize entity_edges from entity_memory co-occurrence. Idempotent.
+        weight = #shared memories; last_seen = max endpoint last_seen."""
+        from collections import defaultdict
+
+        with self._tx() as cx:
+            cx.execute("DELETE FROM entity_edges")
+            last_seen = {
+                r["id"]: r["last_seen"]
+                for r in cx.execute("SELECT id, last_seen FROM entities")
+            }
+            mem_ents: dict[str, list[int]] = defaultdict(list)
+            for r in cx.execute("SELECT memory_id, entity_id FROM entity_memory"):
+                mem_ents[r["memory_id"]].append(r["entity_id"])
+            edges: dict[tuple[int, int], int] = defaultdict(int)
+            for ents in mem_ents.values():
+                u = sorted(set(ents))
+                for i in range(len(u)):
+                    for j in range(i + 1, len(u)):
+                        edges[(u[i], u[j])] += 1
+            for (a, b), w in edges.items():
+                la, lb = last_seen.get(a), last_seen.get(b)
+                ls = max(x for x in (la, lb) if x) if (la or lb) else None
+                cx.execute(
+                    "INSERT INTO entity_edges (a_id, b_id, weight, last_seen) VALUES (?, ?, ?, ?)",
+                    (a, b, w, ls),
+                )
+            return len(edges)
+
+    def all_weighted_edges(self) -> list[tuple[str, str, float]]:
+        rows = self._conn.execute(
+            "SELECT ea.name AS a, eb.name AS b, e.weight AS w "
+            "FROM entity_edges e "
+            "JOIN entities ea ON ea.id = e.a_id "
+            "JOIN entities eb ON eb.id = e.b_id"
+        ).fetchall()
+        return [(r["a"], r["b"], float(r["w"])) for r in rows]
+
+    def weighted_neighbors(self, name: str) -> dict[str, float]:
+        name = name.strip().lower()
+        row = self._conn.execute(
+            "SELECT id FROM entities WHERE name = ? LIMIT 1", (name,)
+        ).fetchone()
+        if row is None:
+            return {}
+        eid = row["id"]
+        out: dict[str, float] = {}
+        for r in self._conn.execute(
+            "SELECT CASE WHEN a_id = ? THEN b_id ELSE a_id END AS other, weight "
+            "FROM entity_edges WHERE a_id = ? OR b_id = ?",
+            (eid, eid, eid),
+        ):
+            nm = self._conn.execute(
+                "SELECT name FROM entities WHERE id = ?", (r["other"],)
+            ).fetchone()
+            if nm is not None:
+                out[nm["name"]] = float(r["weight"])
+        return out
 
     def top_entities(
         self,

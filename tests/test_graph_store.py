@@ -106,3 +106,33 @@ def test_canonicalize_merges_fragmented_entities(tmp_path: Path) -> None:
     assert g.memory_entities("m2")[0]["type"] == "technology"
     # idempotent
     assert g.canonicalize_existing() == 0
+
+
+def test_rebuild_edges_weights_by_shared_memories(tmp_path: Path) -> None:
+    g = _store(tmp_path)
+    # A & B share two memories; A & C share one.
+    for mid in ("m1", "m2"):
+        g.record_extraction(memory_id=mid, memory_date="2026-01-01",
+                            entities=[{"name": "A", "type": "concept"},
+                                      {"name": "B", "type": "concept"}],
+                            extracted_at="2026-01-01T00:00:00Z")
+    g.record_extraction(memory_id="m3", memory_date="2026-01-01",
+                        entities=[{"name": "A", "type": "concept"},
+                                  {"name": "C", "type": "concept"}],
+                        extracted_at="2026-01-01T00:00:00Z")
+    n = g.rebuild_edges()
+    assert n == 2  # (A,B) and (A,C)
+    nbrs = g.weighted_neighbors("A")
+    assert nbrs == {"b": 2.0, "c": 1.0}
+    edges = {(a, b): w for a, b, w in g.all_weighted_edges()}
+    assert edges[("a", "b")] == 2.0
+    # rebuild is idempotent on count
+    assert g.rebuild_edges() == 2
+
+
+def test_decay_weight_halves_after_one_half_life() -> None:
+    from memo.graph import decay_weight
+    w = decay_weight(8.0, "2025-07-01", now_iso="2025-12-28", half_life_days=180.0)
+    assert 3.8 < w < 4.2  # ~one half-life elapsed
+    # no date -> undecayed
+    assert decay_weight(8.0, None, now_iso="2025-12-28") == 8.0
