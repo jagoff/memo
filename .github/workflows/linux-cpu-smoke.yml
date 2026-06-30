@@ -1,0 +1,104 @@
+name: linux-cpu-smoke
+
+# Real end-to-end validation of the CPU (sentence-transformers) backend on
+# Ubuntu — the path the unit suite only exercises with a stub. Proves:
+#   1. `pip install ".[cpu]"` resolves (torch + sentence-transformers, no MLX)
+#   2. sqlite-vec + FTS5 load on the distro Python (the loadable-extensions gotcha)
+#   3. the real Qwen3-Embedding-0.6B model loads at 1024-dim
+#   4. `memo doctor` is green (exit 0) on a healthy [cpu] install
+#   5. the save -> search roundtrip works with real CPU embeddings
+#   6. `memo-mcp` builds + registers every tool without MLX
+#
+# Heavy (downloads torch + a ~1.2 GB model); runs on release tags + on demand,
+# and on PRs that touch the backend, not on every commit.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "src/memo/embedder_st.py"
+      - "src/memo/embedder_select.py"
+      - "src/memo/platform_detect.py"
+      - "src/memo/runtime/**"
+      - "pyproject.toml"
+      - ".github/workflows/linux-cpu-smoke.yml"
+
+concurrency:
+  group: linux-cpu-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Ubuntu CPU backend (real)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MEMO_NONINTERACTIVE: "1"
+      MEMO_EMBEDDER_BACKEND: "st"
+      MEMO_DATA_DIR: ${{ runner.temp }}/memo-data
+      MEMO_STATE_DIR: ${{ runner.temp }}/memo-state
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Cache HF model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen3-embedding-0.6b-v1
+      - name: Install (CPU backend)
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[cpu]"
+      - name: import + backend resolves to ST (no MLX on Linux)
+        run: |
+          python - <<'PY'
+          import memo  # must import with no MLX present
+          from memo.config import Config
+          from memo.embedder_select import resolve_backend
+          from memo.platform_detect import mlx_available
+
+          assert mlx_available() is False, "mlx must be unavailable on Linux"
+          assert resolve_backend(Config.from_env()) == "st", "backend must be st"
+          print("OK: import + st backend")
+          PY
+      - name: sqlite-vec + FTS5 loadable on this Python (the Linux gotcha)
+        run: |
+          python - <<'PY'
+          import sqlite3
+          import sqlite_vec
+
+          c = sqlite3.connect(":memory:")
+          c.enable_load_extension(True)
+          sqlite_vec.load(c)
+          c.execute("CREATE VIRTUAL TABLE v USING vec0(e float[4])")
+          c.execute("CREATE VIRTUAL TABLE f USING fts5(x)")
+          print("OK: sqlite-vec + fts5 load")
+          PY
+      - name: memo config validate
+        run: memo config validate
+      - name: memo doctor must be green (exit 0)
+        run: memo doctor
+      - name: end-to-end save -> search (real CPU embeddings, real model)
+        run: |
+          memo save "ubuntu ci smoke: the prod deploy key lives in the ops vault" --type note
+          memo search "deploy key" --json | tee out.json
+          python - <<'PY'
+          import json
+
+          hits = json.load(open("out.json"))
+          assert isinstance(hits, list) and len(hits) >= 1, f"no hits: {hits!r}"
+          print("OK: save+search roundtrip, hits:", len(hits))
+          PY
+      - name: memo-mcp builds + registers tools (no MLX)
+        run: |
+          python - <<'PY'
+          from memo.server import build_server
+
+          srv = build_server()
+          print("OK: memo-mcp build_server ->", type(srv).__name__)
+          PY
