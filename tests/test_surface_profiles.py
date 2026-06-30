@@ -124,12 +124,13 @@ def test_agent_tools_definition_is_nine_and_excludes_idle_from_removal(monkeypat
     from memo.surface import AGENT_MCP_TOOLS, mcp_tools_to_remove
 
     removed = mcp_tools_to_remove()
-    assert len(AGENT_MCP_TOOLS) == 10
+    assert len(AGENT_MCP_TOOLS) == 11
     for name in (
         "memo_idle_capture",
         "memo_pop_notification",
         "memo_start_session",
         "memo_save_text",
+        "memo_graph",
     ):
         assert name in AGENT_MCP_TOOLS
         assert name not in removed

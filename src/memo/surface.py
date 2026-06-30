@@ -46,6 +46,7 @@ AGENT_MCP_TOOLS: frozenset[str] = frozenset(
     {
         "memo_ask",
         "memo_get",
+        "memo_graph",
         "memo_save",
         "memo_search",
         "memo_unified_briefing",
