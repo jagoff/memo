@@ -108,7 +108,8 @@ hf download mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510
 ### Installing on another Mac
 
 For a fresh Apple Silicon Mac, run the one-line installer first, then bring over
-the corpus:
+the corpus. (On **Linux / Ubuntu**, install the CPU backend with
+`pipx install "mlx-memo[cpu]"` instead — see [ubuntu.md](ubuntu.md).)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
@@ -640,7 +641,8 @@ latest PyPI without installing.
 
 ## Configuration
 
-All env vars are optional; defaults aim at a fresh Apple Silicon Mac. On first
+All env vars are optional; defaults aim at a fresh Apple Silicon Mac (or a
+Linux/Ubuntu `[cpu]` install — see [ubuntu.md](ubuntu.md)). On first
 run in an interactive shell, an arrow-key picker asks where memories should live
 and persists the choice to `~/.config/memo/config.toml`. Re-run it with
 `memo init`. Hooks get `MEMO_NONINTERACTIVE=1` so they never trigger the picker.
@@ -791,10 +793,12 @@ own memory in plain text.
 5. **MCP is a primary interface** — same stdio contract for every client on day
    one, with a deliberately tiny default tool surface.
 
-**When *not* to pick memo:** you're not on Apple Silicon (MLX is load-bearing);
-you need a hosted multi-tenant service (`supermemory`/`mem0` cloud); you want an
-explicit core/archival agent runtime (`letta`); or you want a knowledge-graph +
-ontology layer (`cognee`).
+**When *not* to pick memo:** you need a hosted multi-tenant service
+(`supermemory`/`mem0` cloud); you want an explicit core/archival agent runtime
+(`letta`); or you want a knowledge-graph + ontology layer (`cognee`). (Not on
+Apple Silicon? memo still runs standalone on **Linux/Ubuntu** via a CPU backend —
+search / recall / save — but the reranker and the LLM features (ask / synthesize /
+dream) are MLX-only. See [ubuntu.md](ubuntu.md).)
 
 ### Experimental modules
 

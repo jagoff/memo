@@ -19,7 +19,7 @@
 
 <div align="center">
 
-<img src="docs/diagram-loop.svg" alt="Save a fact once and any later session recalls it automatically, all stored locally on your Mac." width="760" />
+<img src="docs/diagram-loop.svg" alt="Save a fact once and any later session recalls it automatically, all stored locally on your own machine." width="760" />
 
 </div>
 
@@ -263,7 +263,7 @@ Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
 ## Retrieval architecture
 
-**Hybrid search:** vec leg (MLX embedding) + BM25 leg (FTS5/Tantivy, diacritic-folding for Spanish) fused via Reciprocal Rank Fusion → optional MLX cross-encoder rerank.
+**Hybrid search:** vec leg (MLX embedding on Apple Silicon, CPU `sentence-transformers` on Linux) + BM25 leg (FTS5/Tantivy, diacritic-folding for Spanish) fused via Reciprocal Rank Fusion → optional MLX cross-encoder rerank (Apple Silicon).
 
 <div align="center">
 

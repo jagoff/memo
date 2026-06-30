@@ -3,6 +3,10 @@
 Use this checklist for a fresh Apple Silicon Mac or a second machine that should
 run the same local memo memory.
 
+> Installing on **Linux / Ubuntu** instead? memo runs there standalone via a CPU
+> `sentence-transformers` backend (`pipx install "mlx-memo[cpu]"`). See
+> [ubuntu.md](ubuntu.md) for that path and its trade-offs.
+
 ## 1. Prepare the Mac
 
 Requirements:
