@@ -82,3 +82,27 @@ def test_schema_has_edge_and_alias_tables(tmp_path: Path) -> None:
     }
     assert "entity_edges" in tables
     assert "entity_aliases" in tables
+
+
+def test_canonicalize_merges_fragmented_entities(tmp_path: Path) -> None:
+    g = _store(tmp_path)
+    # Two spellings + a cross-type duplicate, all the same real entity.
+    g.record_extraction(memory_id="m1", memory_date="2026-01-01",
+                        entities=[{"name": "fast api", "type": "concept"}],
+                        extracted_at="2026-01-01T00:00:00Z")
+    g.record_extraction(memory_id="m2", memory_date="2026-01-02",
+                        entities=[{"name": "FastAPI", "type": "technology"}],
+                        extracted_at="2026-01-02T00:00:00Z")
+    assert g.count_entities() == 2  # fragmented before
+
+    merged = g.canonicalize_existing()
+    assert merged == 1
+    assert g.count_entities() == 1
+    # both memories now resolve through the single canonical entity
+    name = g.memory_entities("m1")[0]["name"]
+    assert "m1" in g.entity_memories(name)
+    assert "m2" in g.entity_memories(name)
+    # cross-type fold prefers the non-"concept" type
+    assert g.memory_entities("m2")[0]["type"] == "technology"
+    # idempotent
+    assert g.canonicalize_existing() == 0

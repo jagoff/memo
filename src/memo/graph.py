@@ -288,6 +288,61 @@ class GraphStore:
                 )
         return len(old)
 
+    def canonicalize_existing(self) -> int:
+        """Fold fragmented entity rows (case/separator/alias variants, and the
+        regex-"concept" vs LLM-typed duplicate) into one canonical row each.
+
+        Groups all entities by fold_key. Canonical = highest mention_count;
+        on a tie, the most specific type (non-"concept" wins). Rewrites
+        entity_memory links to the canonical id, records merged spellings in
+        entity_aliases, recomputes mention_count, deletes the merged rows.
+        Idempotent: a graph with no fragments returns 0. Returns rows merged.
+        """
+        from collections import defaultdict
+
+        from memo.graph_canonical import fold_key
+
+        with self._tx() as cx:
+            rows = cx.execute("SELECT id, name, type, mention_count FROM entities").fetchall()
+            buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for r in rows:
+                buckets[fold_key(r["name"])].append(dict(r))
+
+            merged = 0
+            for members in buckets.values():
+                if len(members) < 2:
+                    continue
+
+                # Canonical: most mentions; tie-break prefers a non-"concept" type.
+                def _rank(m: dict[str, Any]) -> tuple[int, int]:
+                    return (int(m["mention_count"]), 0 if m["type"] == "concept" else 1)
+
+                canonical = max(members, key=_rank)
+                cid = canonical["id"]
+                for m in members:
+                    if m["id"] == cid:
+                        continue
+                    # Re-point links (dedup on UNIQUE(entity_id, memory_id)).
+                    cx.execute(
+                        "UPDATE OR IGNORE entity_memory SET entity_id = ? WHERE entity_id = ?",
+                        (cid, m["id"]),
+                    )
+                    cx.execute("DELETE FROM entity_memory WHERE entity_id = ?", (m["id"],))
+                    cx.execute(
+                        "INSERT OR REPLACE INTO entity_aliases (alias_key, canonical_id, alias_name) "
+                        "VALUES (?, ?, ?)",
+                        (fold_key(m["name"]) + "|" + str(m["id"]), cid, m["name"]),
+                    )
+                    cx.execute("DELETE FROM entities WHERE id = ?", (m["id"],))
+                    merged += 1
+                # Recompute mention_count = distinct memories now linked.
+                cx.execute(
+                    "UPDATE entities SET mention_count = "
+                    "(SELECT COUNT(*) FROM entity_memory WHERE entity_id = ?) WHERE id = ?",
+                    (cid, cid),
+                )
+            return merged
+
     def top_entities(
         self,
         *,
