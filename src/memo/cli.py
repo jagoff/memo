@@ -56,7 +56,6 @@ from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
 from memo.cli_health import health as health_cmd
 from memo.cli_history import diff_cmd, historia_cmd
-from memo.cli_http import http_api
 from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
@@ -294,10 +293,8 @@ cli.add_command(migrate_vault)
 cli.add_command(migrate_vault, name="migrate")  # alias
 cli.add_command(mcp_command)
 cli.add_command(install_slash)
-cli.add_command(install_slash, name="setup")  # `setup` alias for install-slash
 cli.add_command(install_mcp)
 cli.add_command(install_statusline)
-cli.add_command(http_api)
 cli.add_command(self_update)  # primary name: "update"
 # Back-compat: keep the old `memo upgrade` / `memo self-update` names working
 # (now hidden) so any auto-update path or muscle memory still resolves. Same
