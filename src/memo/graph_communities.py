@@ -8,7 +8,23 @@ node order for full determinism. Pure — no DB, no memo imports.
 
 from __future__ import annotations
 
-__all__ = ["label_propagation"]
+__all__ = ["degree_normalized", "label_propagation"]
+
+
+def degree_normalized(
+    adjacency: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """Scale each neighbour's vote by 1/its weighted degree.
+
+    A ubiquitous hub (e.g. an entity mentioned across the whole corpus) has a
+    huge weighted degree, so each of its edges contributes negligibly — it no
+    longer fuses tight local clusters into one giant community under label
+    propagation. Tight, low-degree clusters dominate. Pure."""
+    deg = {n: sum(nbrs.values()) for n, nbrs in adjacency.items()}
+    return {
+        n: {nb: w / (deg.get(nb) or 1.0) for nb, w in nbrs.items()}
+        for n, nbrs in adjacency.items()
+    }
 
 
 def label_propagation(

@@ -299,10 +299,12 @@ class GraphNavigator:
         Returns:
             List of communities sorted by size descending.
         """
-        from memo.graph_communities import label_propagation
+        from memo.graph_communities import degree_normalized, label_propagation
 
         adj = self._weighted_adjacency(use_codegraph=use_codegraph)
-        labels = label_propagation(adj)
+        # Down-weight hub votes so a ubiquitous entity does not fuse the graph
+        # into one blob; representative selection below still uses raw degree.
+        labels = label_propagation(degree_normalized(adj))
 
         groups: dict[int, list[str]] = defaultdict(list)
         for node, lb in labels.items():

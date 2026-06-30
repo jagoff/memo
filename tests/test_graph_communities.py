@@ -24,3 +24,34 @@ def test_two_dense_clusters_get_two_labels() -> None:
 def test_deterministic() -> None:
     adj = {"a": {"b": 1.0}, "b": {"a": 1.0}}
     assert label_propagation(adj) == label_propagation(adj)
+
+
+def test_degree_normalization_breaks_hub_fusion() -> None:
+    from memo.graph_communities import degree_normalized
+
+    # Two tight triangles + a strong hub `h` wired to all six nodes.
+    adj: dict[str, dict[str, float]] = {}
+
+    def link(u: str, v: str, w: float) -> None:
+        adj.setdefault(u, {})[v] = w
+        adj.setdefault(v, {})[u] = w
+
+    for tri in (("a", "b", "c"), ("x", "y", "z")):
+        for i in range(len(tri)):
+            for j in range(i + 1, len(tri)):
+                link(tri[i], tri[j], 5.0)
+    for n in ("a", "b", "c", "x", "y", "z"):
+        link("h", n, 10.0)
+
+    # Raw: the strong hub fuses everything into one label.
+    raw = label_propagation(adj)
+    assert len(set(raw.values())) <= 2
+
+    # Degree-normalized: the two triangles stay distinct communities.
+    norm = label_propagation(degree_normalized(adj))
+    groups: dict[int, set[str]] = {}
+    for node, lb in norm.items():
+        groups.setdefault(lb, set()).add(node)
+    cores = [g & {"a", "b", "c", "x", "y", "z"} for g in groups.values()]
+    assert {"a", "b", "c"} in cores
+    assert {"x", "y", "z"} in cores
