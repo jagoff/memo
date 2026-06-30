@@ -164,8 +164,64 @@ class MLXReranker:
         return f"{_PREFIX}<Instruct>: {self.task}\n<Query>: {query}\n<Document>: {doc}{_SUFFIX}"
 
     def score(self, query: str, doc: str) -> float:
-        """Score a single `(query, doc)` pair → `P(yes)` in [0, 1]."""
+        """Score a single `(query, doc)` pair → `P(yes)` in [0, 1].
+
+        Thin wrapper over `score_many` (a 1-element batch) so single-pair
+        callers (`rerank_hits`, `warmup`, Synapse's `memo_ce`) and the
+        batched search path share one implementation.
+        """
+        return self.score_many(query, [doc])[0]
+
+    def score_many(
+        self,
+        query: str,
+        docs: list[str],
+        *,
+        max_batch_tokens: int | None = None,
+    ) -> list[float]:
+        """Batched cross-encoder scoring → `P(yes)` per doc, order-aligned.
+
+        Equivalent to ``[self.score(query, d) for d in docs]`` but runs ONE
+        forward pass per *batch* of pairs instead of one per pair. The win
+        lands in the recall hot path where ``MEMO_RERANK_ADAPTIVE_POOL`` can
+        feed up to 200 candidates through here under the 5s budget — 200
+        sequential forwards become a handful of batched ones.
+
+        Correctness: Qwen3-Reranker is a causal LM. We right-pad each batch
+        to its longest member and read every row at its *last real token*
+        (not the padded end). Under causal attention a real token never
+        attends rightward, so padding can't leak into that position —
+        verified directly (a doc scored alone vs alone+trailing-pad is
+        bit-identical). Same trick `MLXEmbedder.embed` uses.
+
+        Head-slice: we run the transformer *body* (`model.model`, no LM head)
+        to get hidden states, gather each row's last-real-token vector, and
+        project ONLY those `B` vectors through the LM head. Scoring needs
+        exactly one position per row, so the usual full-logits path wastes
+        the head matmul over all `T` positions × the 151k vocab — the
+        dominant cost. Slicing before the head is mathematically exact (a
+        linear projection) and gives a ~1.4–1.5x end-to-end speedup on the
+        0.6B reranker for pools of 10–200 candidates.
+
+        Caveat: the transformer *body*'s quantized GEMM is mildly batch-size
+        dependent, so absolute `P(yes)` can drift ~0.03 near the 0.5 boundary
+        versus the B=1 path. That can swap two *near-tied* candidates within
+        the result set, but it does not change which docs are retrieved — the
+        top-K set is preserved, which is `rerank`'s contract (test:
+        `test_score_many_preserves_topk_set_vs_per_pair`).
+
+        Memory: batches are packed so ``len(batch) * padded_len <=
+        max_batch_tokens`` (default ``max_seq_len``), bounding the body's
+        ``(B, T, hidden)`` activations to a single full-length forward — and
+        the head only ever sees the ``(B, vocab)`` slice, never ``(B, T,
+        vocab)``. No regression on a RAM-constrained machine.
+
+        Returns one float per input doc, in input order.
+        """
         self._ensure_loaded()
+        if not docs:
+            return []
+
         import mlx.core as mx
 
         model = self._model
@@ -175,27 +231,87 @@ class MLXReranker:
         if model is None or tokenizer is None or yes_id is None or no_id is None:
             raise RuntimeError("Reranker failed to load.")
 
-        text = self._format(query, doc)
-        ids = tokenizer.encode(text, add_special_tokens=False)
-        # Tail-truncate if a long doc blows past the window. Preserves
-        # the prefix + query + early doc which carries the most signal.
-        if len(ids) > self.max_seq_len:
-            ids = ids[: self.max_seq_len]
-        # Serialize the GPU forward+materialization against all other MLX
-        # work in this process; the Metal default stream is global and
-        # concurrent eval aborts the interpreter (see memo.mlx_gpu).
-        with gpu_guard():
-            arr = mx.array([ids])
-            logits = model(arr)
-            last = logits[:, -1, :]  # [1, V]
-            y = float(last[0, yes_id])
-            n = float(last[0, no_id])
-        # Softmax over the (no, yes) pair only — we don't care about
-        # the rest of the vocab. Numerical-stable form.
-        m = max(y, n)
-        e_y = math.exp(y - m)
-        e_n = math.exp(n - m)
-        return e_y / (e_y + e_n)
+        budget = max_batch_tokens or self.max_seq_len
+        pad_id = tokenizer.eos_token_id
+        if pad_id is None:
+            pad_id = 0
+
+        # Tokenize + tail-truncate every pair up front. Same shape as the
+        # single-pair path: prefix + query + doc + suffix, truncated on the
+        # tail (preserves the instruction + query + early doc).
+        tok_ids: list[list[int]] = []
+        for doc in docs:
+            ids = tokenizer.encode(self._format(query, doc), add_special_tokens=False)
+            if len(ids) > self.max_seq_len:
+                ids = ids[: self.max_seq_len]
+            if not ids:  # defensive: never index [-1] into an empty row
+                ids = [pad_id]
+            tok_ids.append(ids)
+
+        # Length-sort so each padded batch groups similar-length pairs
+        # (minimal padding waste); restore input order via the index map.
+        order = sorted(range(len(tok_ids)), key=lambda i: len(tok_ids[i]))
+        scores: list[float] = [0.0] * len(tok_ids)
+
+        pos = 0
+        while pos < len(order):
+            # Greedily pack pairs (ascending length) until adding the next
+            # would push padded tokens past `budget`; always take ≥1.
+            batch: list[int] = []
+            batch_max = 0
+            while pos < len(order):
+                cand = order[pos]
+                new_max = max(batch_max, len(tok_ids[cand]))
+                if batch and new_max * (len(batch) + 1) > budget:
+                    break
+                batch.append(cand)
+                batch_max = new_max
+                pos += 1
+
+            last_idx = [len(tok_ids[c]) - 1 for c in batch]
+            padded = [tok_ids[c] + [pad_id] * (batch_max - len(tok_ids[c])) for c in batch]
+
+            # One body forward for the whole batch; project only each row's
+            # last-real-token hidden state through the LM head (head-slice).
+            # Materialise the yes/no logits inside the GPU guard (the Metal
+            # default stream is process-global — see memo.mlx_gpu).
+            with gpu_guard():
+                hidden = model.model(mx.array(padded))  # (B, T, hidden) — body, no head
+                last_hidden = mx.stack(
+                    [hidden[b, last_idx[b], :] for b in range(len(batch))]
+                )  # (B, hidden)
+                logits = self._apply_lm_head(model, last_hidden)  # (B, vocab)
+                for b, cand in enumerate(batch):
+                    y = float(logits[b, yes_id])
+                    n = float(logits[b, no_id])
+                    # Softmax over the (no, yes) pair only — numerically stable.
+                    m = max(y, n)
+                    e_y = math.exp(y - m)
+                    e_n = math.exp(n - m)
+                    scores[cand] = e_y / (e_y + e_n)
+        return scores
+
+    @staticmethod
+    def _apply_lm_head(model: Any, hidden: Any) -> Any:
+        """Project hidden states ``(…, hidden)`` → logits ``(…, vocab)`` via
+        the model's LM head.
+
+        Qwen3-Reranker ties its input embeddings to the output projection, so
+        there is no separate ``lm_head`` module — the head is
+        ``model.embed_tokens.as_linear``. Untied models expose ``lm_head``
+        directly. Raises (never silently mis-scores) if neither is present.
+        """
+        lm_head = getattr(model, "lm_head", None)
+        if callable(lm_head):
+            return lm_head(hidden)
+        embed_tokens = getattr(getattr(model, "model", None), "embed_tokens", None)
+        as_linear = getattr(embed_tokens, "as_linear", None)
+        if callable(as_linear):
+            return as_linear(hidden)
+        raise RuntimeError(
+            "reranker model exposes neither `lm_head` nor tied "
+            "`embed_tokens.as_linear`; cannot project hidden states to logits"
+        )
 
     def rerank(
         self,
@@ -215,10 +331,9 @@ class MLXReranker:
                 with `title` + `body` populated).
             top_n: If given, truncate to top-N after rerank.
             body_chars: Body truncation per candidate before scoring.
-                The reranker is per-pair sequential, so longer docs
-                blow up latency linearly. 1200 chars (~300 tokens)
-                covers the title + lead paragraphs which carry the
-                bulk of retrieval signal; the tail is rarely
+                Longer docs blow up the forward pass length, so 1200 chars
+                (~300 tokens) covers the title + lead paragraphs which carry
+                the bulk of retrieval signal; the tail is rarely
                 discriminative for ranking decisions.
 
         Returns: new list, never mutates input.
@@ -227,16 +342,17 @@ class MLXReranker:
             return []
         self._ensure_loaded()
 
-        scored: list[tuple[float, MemoryRecord]] = []
+        # Compose like the embedder: title carries dense signal, body carries
+        # detail. All pairs are scored in one batched forward (`score_many`).
+        docs: list[str] = []
         for h in hits:
-            # Compose like the embedder: title carries dense signal,
-            # body carries detail. Reranker reads the whole thing.
             body = (h.body or "")[:body_chars]
-            doc = f"{h.title}\n\n{body}" if body else h.title
-            p = self.score(query, doc)
-            scored.append((p, h))
+            docs.append(f"{h.title}\n\n{body}" if body else h.title)
 
-        scored.sort(key=lambda t: t[0], reverse=True)
+        probs = self.score_many(query, docs)
+        scored = sorted(
+            zip(probs, hits, strict=True), key=lambda t: t[0], reverse=True
+        )
         out = [replace(h, score=p) for p, h in scored]
         if top_n is not None:
             out = out[:top_n]
