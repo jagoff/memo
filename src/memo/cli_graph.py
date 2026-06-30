@@ -145,7 +145,7 @@ def graph_explore(entity: str, max_neighbors: int, max_memories: int, as_json: b
 @click.option("--min-size", type=int, default=2, help="Minimum community size (default: 2)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def graph_communities(min_size: int, as_json: bool) -> None:
-    """Detect communities (connected components) in the entity graph.
+    """Detect communities (weighted label propagation) in the entity graph.
 
     Example: memo graph communities --min-size 3
     """
@@ -171,6 +171,21 @@ def graph_communities(min_size: int, as_json: bool) -> None:
 
     if len(communities) > 10:
         console.print(f"[dim]...and {len(communities) - 10} more communities[/dim]")
+
+
+@graph_group.command(name="rebuild")
+def graph_rebuild() -> None:
+    """Canonicalize entities and rebuild the weighted edge table.
+
+    Example: memo graph rebuild
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    merged = mem.graph.canonicalize_existing()
+    edges = mem.graph.rebuild_edges()
+    console.print(
+        f"[green]graph rebuilt[/green]: merged {merged} duplicate entities, {edges} edges"
+    )
 
 
 @graph_group.command(name="centrality")

@@ -170,6 +170,13 @@ def run_synthesize_communities(
         res["status"] = "disabled"
         return res
     try:
+        # Refresh the substrate so synthesis runs on a de-fragmented, weighted
+        # graph (cheap + idempotent; best-effort).
+        try:
+            mem.graph.canonicalize_existing()
+            mem.graph.rebuild_edges()
+        except Exception as exc:  # pragma: no cover - defensive
+            res["rebuild_error"] = f"{type(exc).__name__}: {exc}"
         clusters = community_clusters(mem, min_size=min_size, max_communities=max_communities)
         if not clusters:
             res["status"] = "skipped"

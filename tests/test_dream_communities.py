@@ -105,3 +105,23 @@ def test_community_key_stable_against_tail_growth():
     changed = {"representative": "x", "entities": [*core, "zzz1"]}
     assert provenance_hash(_community_key(base)) == provenance_hash(_community_key(grew))
     assert provenance_hash(_community_key(base)) != provenance_hash(_community_key(changed))
+
+
+def test_synthesize_refreshes_graph_first(monkeypatch, tmp_cfg):
+    """run_synthesize_communities must canonicalize + rebuild edges before
+    clustering, so synthesis sees a fresh, de-fragmented graph."""
+    from memo import dream_communities
+    from memo.graph import GraphStore
+
+    g = GraphStore(tmp_cfg.graph_db)
+    calls = []
+    monkeypatch.setattr(g, "canonicalize_existing", lambda: calls.append("canon") or 0)
+    monkeypatch.setattr(g, "rebuild_edges", lambda: calls.append("edges") or 0)
+
+    class _Mem:
+        graph = g
+        navigator = type("N", (), {"detect_communities": staticmethod(lambda **k: [])})()
+
+    monkeypatch.setenv("MEMO_DREAM_COMMUNITIES_ENABLED", "1")
+    dream_communities.run_synthesize_communities(tmp_cfg, _Mem())
+    assert calls == ["canon", "edges"]
