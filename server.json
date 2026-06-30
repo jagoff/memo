@@ -7,12 +7,12 @@
     "url": "https://github.com/jagoff/memo",
     "source": "github"
   },
-  "version": "2.4.2",
+  "version": "2.4.3",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "mlx-memo",
-      "version": "2.4.2",
+      "version": "2.4.3",
       "transport": {
         "type": "stdio"
       },
