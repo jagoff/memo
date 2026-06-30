@@ -4,6 +4,7 @@ from __future__ import annotations
 from click.testing import CliRunner
 
 from memo.cli import cli
+from memo.runtime.shims import install_path_snippet
 
 
 def _env(tmp_cfg) -> dict:
@@ -62,6 +63,7 @@ def test_install_shims_contains_memo_shim_marker(tmp_cfg, tmp_path):
     assert "MEMFLOW_STARTUP_BANNER" not in content
     assert "grep -qF" not in content
     assert 'startup-banner --agent "$_AGENT"' in content
+    assert 'startup-banner --agent "$_AGENT" 2>/dev/null' not in content
     assert "exec" in content
 
 
@@ -100,3 +102,27 @@ def test_install_shims_dry_run_writes_nothing(tmp_cfg, tmp_path):
     )
     assert result.exit_code == 0
     assert not bin_dir.exists() or not any(bin_dir.iterdir())
+
+
+def test_install_path_snippet_keeps_memo_before_downstream_wrappers(
+    monkeypatch, tmp_path
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    rc = home / ".zshrc"
+    rc.write_text(
+        'export PATH="$HOME/.memflow/bin:$PATH"\n'
+        "# memo-shims PATH\n"
+        'export PATH="/old/memo/bin:$PATH"  # memo-shims PATH\n',
+        encoding="utf-8",
+    )
+    memo_bin = home / ".memo" / "bin"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+
+    status = install_path_snippet(memo_bin)
+
+    assert status.startswith(("written:", "upgraded:"))
+    text = rc.read_text(encoding="utf-8")
+    assert str(memo_bin) in text
+    assert text.rindex(str(memo_bin)) > text.rindex(".memflow/bin")
