@@ -9,6 +9,17 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-06-30
+
+### Added
+- Linux/Ubuntu (and Intel mac) support via a CPU `sentence-transformers` embedder backend (`STEmbedder`), auto-selected off Apple Silicon. Semantic search, recall, and save work without MLX as a **standalone** corpus. New `embedder_select.make_embedder` is the single MLX-vs-CPU decision point, routed through the `Memory` facade, the `embedder_client` daemon fallback, and `memo ingest`.
+- `MEMO_EMBEDDER_BACKEND` (`auto`/`mlx`/`st`) and `MEMO_ST_EMBEDDER_MODEL` (default `Qwen/Qwen3-Embedding-0.6B`, 1024-dim — same family/dims as the MLX quant, so the vec0 schema and asymmetric query prefix are unchanged).
+- `pip install "mlx-memo[cpu]"` extra, `scripts/install-ubuntu.sh` (uv/pipx), and `docs/ubuntu.md`.
+
+### Changed
+- `reranker_enabled` now defaults ON only on Apple Silicon (the cross-encoder is MLX-only); on other hosts hybrid search returns fusion-ranked results without the rerank pass.
+- LLM features (`ask`/`synthesize`/`dream`) raise a clear `MemoError` off Apple Silicon instead of an opaque import failure; search/recall/save are unaffected.
+
 ## [2.5.0] - 2026-06-30
 
 ### Added
