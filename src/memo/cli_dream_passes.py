@@ -90,7 +90,7 @@ def _build_orientation(mem: Memory) -> dict:
     return result
 
 
-def _run_signal_gather(since_days: int, file_limit: int = 20) -> dict:
+def _run_signal_gather(since_days: float, file_limit: int = 20) -> dict:
     """Run transcript mining and return a compact summary.
 
     Never raises — exceptions are captured in the returned dict.
