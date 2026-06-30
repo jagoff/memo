@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.8] - 2026-06-30
+
+### Added
+- `[Memo <ver>]` badge in opencode. opencode has no native statusline/tagline slot for custom text (plugin status-bar widgets are an open feature request), so `startup-banner --agent opencode` now stamps the live memo version into opencode's `username` config (`<base> · [Memo <ver>]`), shown next to each user message. Idempotent upsert into the pure-JSON `opencode.json` (merges with `opencode.jsonc`); no-op when opencode is absent.
+
 ## [2.6.7] - 2026-06-30
 
 ### Added
