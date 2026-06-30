@@ -131,15 +131,13 @@ def entity_graph_lines(mem: Any, *, top: int = 5, max_scan: int = 40) -> list[st
     from collections import Counter
 
     try:
-        graph = mem.graph
-        ents = sorted(
-            graph.top_entities(limit=top * 4),
-            key=lambda e: -int(e.get("mention_count") or 0),
-        )[:top]
+        # top_entities already orders by mention_count DESC — no re-sort needed.
+        ents = mem.graph.top_entities(limit=top)
     except Exception:
         return []
     if not ents:
         return []
+    graph = mem.graph
     lines = ["### Knowledge map (your hubs)", ""]
     for e in ents:
         name = str(e.get("name") or "")
@@ -180,6 +178,7 @@ def memo_native_briefing_lines(
     Codex) gets grounded even when synapse is unreachable. Best-effort: any
     failure yields fewer lines, never raises.
     """
+    import contextlib
     import hashlib
     import json as _json
 
@@ -188,8 +187,10 @@ def memo_native_briefing_lines(
     lines: list[str] = []
 
     # ── 0. Knowledge map: graph hubs (entity-centric orientation) ────────
+    # Guarded like every other section so a map failure never sinks the briefing.
     if flag_bool("MEMO_BRIEFING_GRAPH"):
-        lines.extend(entity_graph_lines(mem))
+        with contextlib.suppress(Exception):
+            lines.extend(entity_graph_lines(mem))
 
     # ── Open loops: recently updated memories ────────────────────────────
     try:

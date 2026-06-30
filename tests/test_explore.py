@@ -63,3 +63,30 @@ def test_explore_entity_empty():
     assert v["degree"] == 0
     assert v["neighbors"] == []
     assert v["memories"] == []
+
+
+def test_explore_excludes_codegraph_placeholder_from_shared():
+    class _Nav:
+        def get_neighbors(self, entity, max_neighbors=50):
+            return EntityNeighbors(
+                entity=entity,
+                direct_neighbors=["codesym", "realnbr"],
+                neighbor_memories={"codesym": ["(codegraph)"], "realnbr": ["m1", "(codegraph)"]},
+                degree=3,
+            )
+
+    class _Graph:
+        def entity_memories(self, name, type_=None):
+            return []
+
+    class _Mem:
+        navigator = _Nav()
+        graph = _Graph()
+
+        def get(self, mid):
+            return None
+
+    v = explore_entity(_Mem(), "x")
+    by = {n["name"]: n["shared"] for n in v["neighbors"]}
+    assert by["codesym"] == 0   # pure code link bridges 0 memories
+    assert by["realnbr"] == 1   # one real memory; the codegraph placeholder excluded

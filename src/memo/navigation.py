@@ -149,10 +149,16 @@ class GraphNavigator:
 
         return None
 
-    def _build_adjacency_list(self) -> dict[str, set[tuple[str, str]]]:
+    def _build_adjacency_list(
+        self, *, use_codegraph: bool | None = None
+    ) -> dict[str, set[tuple[str, str]]]:
         """Build adjacency list from entity-memory graph.
 
         Returns: entity -> set of (neighbor_entity, memory_id)
+
+        ``use_codegraph`` overrides the MEMO_GRAPH_USE_CODEGRAPH flag per call
+        (None = read the flag). Lets a caller (e.g. community synthesis) force the
+        entity-only graph without mutating process-global env.
         """
         adj: dict[str, set[tuple[str, str]]] = defaultdict(set)
 
@@ -184,7 +190,8 @@ class GraphNavigator:
         # point lights up every navigator op — path, neighbors, communities,
         # centrality, export — so they leverage code structure, not just the
         # entity-memory graph. Degrades silently if the index is absent or off.
-        if flag_bool("MEMO_GRAPH_USE_CODEGRAPH"):
+        _merge_cg = flag_bool("MEMO_GRAPH_USE_CODEGRAPH") if use_codegraph is None else use_codegraph
+        if _merge_cg:
             try:
                 cg_adj, _ = codegraph_loader.load()
                 for node, neighbors in cg_adj.items():
@@ -235,16 +242,19 @@ class GraphNavigator:
             degree=len(adj[entity]),
         )
 
-    def detect_communities(self, min_size: int = 2) -> list[Community]:
+    def detect_communities(
+        self, min_size: int = 2, *, use_codegraph: bool | None = None
+    ) -> list[Community]:
         """Detect connected components as communities.
 
         Args:
             min_size: Minimum community size to include.
+            use_codegraph: Override the codegraph-merge flag (None = read flag).
 
         Returns:
             List of communities sorted by size descending.
         """
-        adj = self._build_adjacency_list()
+        adj = self._build_adjacency_list(use_codegraph=use_codegraph)
 
         visited: set[str] = set()
         communities: list[Community] = []

@@ -32,8 +32,14 @@ def explore_entity(
     nav = memory.navigator
     nb = nav.get_neighbors(entity, max_neighbors=max_neighbors)
 
+    # "shared" = how many MEMORIES bridge this neighbour. Code-graph edges are
+    # stored with a "(codegraph)" placeholder instead of a memory id; exclude it
+    # so a pure code-symbol link doesn't read as a shared memory.
     neighbors = [
-        {"name": n, "shared": len(nb.neighbor_memories.get(n, []))}
+        {
+            "name": n,
+            "shared": sum(1 for m in nb.neighbor_memories.get(n, []) if m != "(codegraph)"),
+        }
         for n in nb.direct_neighbors[:max_neighbors]
     ]
 

@@ -13,7 +13,6 @@ the clustering source: graph communities instead of recurring sessions.
 from __future__ import annotations
 
 import hashlib
-import os
 from collections.abc import Callable
 from typing import Any
 
@@ -29,6 +28,16 @@ def provenance_hash(keys: list[str]) -> str:
     return hashlib.sha256("|".join(sorted(keys)).encode("utf-8")).hexdigest()[:16]
 
 
+def _community_key(cluster: dict[str, Any]) -> list[str]:
+    """A drift-tolerant identity for a community: its representative plus the
+    alphabetically-first entities. Hashing the full membership re-synthesizes a
+    near-duplicate whenever one bridging memory grows/merges the component, so we
+    anchor on the most stable core instead.
+    """
+    rep = str(cluster.get("representative") or "")
+    return [rep, *sorted(cluster.get("entities") or [])[:8]]
+
+
 def community_clusters(
     mem: Any, *, min_size: int, max_communities: int, max_size: int = 40
 ) -> list[dict[str, Any]]:
@@ -40,15 +49,9 @@ def community_clusters(
     a hub entity (e.g. "memo") fuses most of the graph into one giant blob that
     is "everything", not a coherent theme to synthesize.
     """
-    prev = os.environ.get("MEMO_GRAPH_USE_CODEGRAPH")
-    os.environ["MEMO_GRAPH_USE_CODEGRAPH"] = "0"
-    try:
-        comms = mem.navigator.detect_communities(min_size=min_size)
-    finally:
-        if prev is None:
-            os.environ.pop("MEMO_GRAPH_USE_CODEGRAPH", None)
-        else:
-            os.environ["MEMO_GRAPH_USE_CODEGRAPH"] = prev
+    # Force the entity-only graph per-call (no process-global env mutation):
+    # community synthesis is about knowledge, not code structure.
+    comms = mem.navigator.detect_communities(min_size=min_size, use_codegraph=False)
 
     out: list[dict[str, Any]] = []
     eligible = [c for c in comms if c.size <= max_size]
@@ -81,7 +84,7 @@ def decide_syntheses(
     """Turn clusters into save-decisions, deduped by provenance hash."""
     decisions: list[dict[str, Any]] = []
     for cl in clusters[:max_clusters]:
-        phash = provenance_hash(cl["entities"])
+        phash = provenance_hash(_community_key(cl))
         if exists_fn(phash):
             decisions.append({"status": "skip_exists", "provenance_hash": phash})
             continue
@@ -173,8 +176,11 @@ def run_synthesize_communities(
             return res
 
         def _exists(phash: str) -> bool:
+            # Best-effort dedup: the phash is embedded verbatim in the saved body
+            # ("[community <hash>]"). Search a small window (limit>1 so the target
+            # is not lost behind one higher-ranked hit) and match the literal hash.
             try:
-                hits = mem.search(f"community {phash}", limit=1, disable_reranker=True)
+                hits = mem.search(f"community {phash}", limit=5, disable_reranker=True)
                 return any(phash in (getattr(h, "body", "") or "") for h in hits)
             except Exception:
                 return False
@@ -196,6 +202,7 @@ def run_synthesize_communities(
                         extra={
                             "synthesis_kind": "community",
                             "synthesis_sources": d["provenance"],
+                            "synthesis_source_memories": d.get("memory_ids", []),
                         },
                     )
                     d["status"] = "saved"
