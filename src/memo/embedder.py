@@ -36,6 +36,7 @@ import time
 from collections.abc import Sequence
 from typing import Any, cast
 
+from memo.embed_base import EmbedderBase
 from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
 
 try:
@@ -172,7 +173,7 @@ class MicroEmbedder:
         return self._model is not None
 
 
-class MLXEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
+class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
     """In-process MLX embedder. Drop-in for any code that needs a
     `embed(list[str]) -> list[list[float]]` callable.
 

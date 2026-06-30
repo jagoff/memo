@@ -20,7 +20,7 @@ from memo.config import Config
 from memo.consolidation import AdvancedConsolidator
 from memo.contextual_retrieval import get_or_generate_context, prepend_context
 from memo.contradict import ContradictionScanner, ContradictionStore
-from memo.embedder import MLXEmbedder
+from memo.errors import MemoError
 from memo.graph import GraphStore
 from memo.llm import MLXChat
 from memo.memory.ask_ops import _AskOpsMixin
@@ -124,13 +124,12 @@ class Memory(
             # and pass it explicitly — the embedder can't import memo.flags
             # itself, and a raw env read there defaults to 0/off, silently
             # disabling the cache on every Memory-backed path (recall hook, CLI).
+            # make_embedder picks MLX (Apple Silicon) or the CPU sentence-
+            # transformers backend (Linux/Ubuntu, Intel mac). See embedder_select.
+            from memo.embedder_select import make_embedder
             from memo.flags import flag_int as _flag_int
 
-            self.embedder = MLXEmbedder(
-                model_path=cfg.embedder_model,
-                expected_dims=cfg.embedder_dims,
-                cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"),
-            )
+            self.embedder = make_embedder(cfg, cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"))
         self.store = VecStore(
             cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model
         )
@@ -186,6 +185,14 @@ class Memory(
         wrapper instead of racing two constructions.
         """
         if self._chat is None:
+            from memo.platform_detect import mlx_available
+
+            if not mlx_available():
+                raise MemoError(
+                    "LLM features (ask / synthesize / dream) require the MLX "
+                    "runtime (Apple Silicon). They are unavailable on this host; "
+                    "search, recall, and save work without them. See docs/ubuntu.md."
+                )
             with self._chat_lock:
                 if self._chat is None:
                     self._chat = MLXChat()

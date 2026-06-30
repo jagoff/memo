@@ -99,23 +99,20 @@ def _try_socket(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | No
 
 
 def _inproc() -> Any:
-    """Lazy-load an in-process `MLXEmbedder` instance (singleton).
+    """Lazy-load an in-process embedder instance (singleton).
 
     Imports are deferred so callers without MLX (Linux CI) never trigger
-    the import unless they actually reach the fallback path.
+    the import unless they actually reach the fallback path. `make_embedder`
+    picks MLX (Apple Silicon) or the CPU sentence-transformers backend.
     """
     global _inproc_embedder
     with _inproc_lock:
         if _inproc_embedder is not None:
             return _inproc_embedder
         from memo.config import Config
-        from memo.embedder import MLXEmbedder
+        from memo.embedder_select import make_embedder
 
-        cfg = Config.from_env()
-        _inproc_embedder = MLXEmbedder(
-            model_path=cfg.embedder_model,
-            expected_dims=cfg.embedder_dims,
-        )
+        _inproc_embedder = make_embedder(Config.from_env())
         return _inproc_embedder
 
 

@@ -135,7 +135,8 @@ def ingest(
     import frontmatter
 
     from memo.chunker import chunk_markdown
-    from memo.embedder import MLXEmbedder, assert_valid_embedding
+    from memo.embedder import assert_valid_embedding
+    from memo.embedder_select import make_embedder
     from memo.flags import flag_str as _flag_str
     from memo.ingest_helpers import (
         IMAGE_EXTENSIONS,
@@ -273,7 +274,7 @@ def ingest(
                 )
         return
 
-    embedder = MLXEmbedder(model_path=cfg.embedder_model, expected_dims=cfg.embedder_dims)
+    embedder = make_embedder(cfg)
     store = VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
 
     skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0
