@@ -750,6 +750,24 @@ SPECS: tuple[FlagSpec, ...] = (
         "misc",
         "Max recurring gaps surfaced per anticipatory pass.",
     ),
+    # dream v2 — graph-community synthesis (spec 3): abstract knowledge clusters
+    _spec(
+        "MEMO_DREAM_COMMUNITIES_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the `memo dream communities` pass: detect entity-graph communities "
+        "and abstract each into one durable synthesis memory (synthesis_kind=community, "
+        "provenance = the community's entities). OFF by default; deduped by provenance.",
+    ),
+    _spec(
+        "MEMO_DREAM_COMMUNITIES_MIN_SIZE",
+        "int",
+        4,
+        "misc",
+        "Minimum entities in a graph community before it is synthesized.",
+        min_val=2,
+    ),
     # dream v2 — episodic→semantic consolidation (Phase 2): cross-session themes
     _spec(
         "MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED",

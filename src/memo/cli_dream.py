@@ -907,6 +907,31 @@ def dream_consolidate_cmd(dry_run: bool, as_json: bool) -> None:
         console.print(f"  [{d['status']}] {d.get('project')}: {d.get('title', '')}")
 
 
+@dream_cmd.command(name="communities")
+@click.option("--dry-run", is_flag=True, help="Detect + preview communities, save nothing.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the synthesis fragment as JSON.")
+def dream_communities_cmd(dry_run: bool, as_json: bool) -> None:
+    """Graph→semantic — abstract each entity-graph community into a synthesis memo."""
+    from memo import dream_communities
+    from memo.flags import flag_int
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    res = dream_communities.run_synthesize_communities(
+        cfg,
+        mem,
+        min_size=flag_int("MEMO_DREAM_COMMUNITIES_MIN_SIZE") or 4,
+        dry_run=dry_run,
+    )
+    if as_json:
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]communities:[/bold] {res.get('status')}")
+    for d in res.get("synthesized", []):
+        rep = d.get("representative") or ""
+        console.print(f"  [{d['status']}] {rep}: {d.get('title', '')}")
+
+
 @dream_cmd.command(name="tune")
 @click.option("--dry-run", is_flag=True, help="Measure + search, write nothing.")
 @click.option("--rollback", "do_rollback", is_flag=True, help="Restore the previous tuned params.")
