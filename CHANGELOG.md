@@ -9,6 +9,15 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.2] - 2026-06-30
+
+### Fixed
+- `memo install-mcp claude-desktop` writes to the per-OS Claude Desktop config path (`~/.config/Claude/...` on Linux, `%APPDATA%` on Windows) instead of the hardcoded macOS path.
+- The MCP-config scan (`memo doctor` / mcp-config) now also checks the Linux Windsurf path (`~/.config/Windsurf/User/mcp_config.json`).
+
+### Added
+- Linux systemd **user** units in `systemd/` (`memo-dream.service` + `memo-dream.timer` for nightly maintenance, `memo-watch.service` for auto-reindex) — the counterpart of memo's macOS launchd agents. See `systemd/README.md` and `docs/ubuntu.md`.
+
 ## [2.6.1] - 2026-06-30
 
 ### Fixed
