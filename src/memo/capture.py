@@ -502,13 +502,17 @@ def _extract_and_save(
     assistant_text: str,
     *,
     debug: bool = False,
+    merge_tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """Extract insights from one (user, assistant) blob, dedup, save.
 
-    Shared by the Stop-hook (`run_capture`) and the incremental
-    (`run_capture_incremental`) paths so both apply the same quality
-    gate, near-duplicate check, and save metadata. Returns counts; every
-    per-candidate failure is absorbed (logged only in debug)."""
+    Shared by the Stop-hook (`run_capture`), the incremental
+    (`run_capture_incremental`), and the explicit write-time extraction
+    (`extract_and_save_text`) paths so all apply the same quality gate,
+    near-duplicate check, and save metadata. `merge_tags` (e.g. a caller's
+    `project:` tag) is appended to every saved fact's tags; default None keeps
+    the hook paths unchanged. Returns counts; every per-candidate failure is
+    absorbed (logged only in debug)."""
     insights = extract_insights(
         mem._ensure_chat(),
         cfg.helper_model,
@@ -575,7 +579,7 @@ def _extract_and_save(
                 content=cand["body"],
                 title=cand["title"],
                 type_=cand["type"],
-                tags=cand["tags"],
+                tags=[*cand["tags"], *merge_tags] if merge_tags else cand["tags"],
             )
             saved.append(rec.id)
             saved_titles.append(rec.title)
@@ -593,6 +597,57 @@ def _extract_and_save(
         "reconciled": reconciled,
         "skipped_quality": skipped_quality,
     }
+
+
+def extract_and_save_text(
+    mem: Any,
+    cfg: Any,
+    text: str,
+    *,
+    merge_tags: list[str] | None = None,
+    title: str | None = None,
+    type_: str = "note",
+    debug: bool = False,
+) -> dict[str, Any]:
+    """Write-time fact extraction (mem0 ADD-model) for an explicit save.
+
+    Instead of storing `text` as one opaque record, run the SAME
+    extract → quality → dedup → save pipeline the capture hook uses
+    (`_extract_and_save`), framing the blob as the assistant side of an
+    exchange. The blob is decomposed into atomic, individually-searchable
+    facts; `merge_tags` (e.g. a `project:` tag the caller passed) is added to
+    every fact so explicit save context propagates.
+
+    The prefilter is deliberately NOT applied — the caller explicitly asked to
+    save this, so triggerless prose still goes to the extractor.
+
+    Fallback — an explicit save must never silently vanish: if the extractor
+    yields ZERO candidates (LLM can't atomize it, or no MLX / helper available),
+    the blob is saved verbatim with the caller's `title`/`type_`/`merge_tags`.
+    Candidates that ARE found but dropped as near-duplicates / low quality are
+    respected (the information is already in the corpus) — no verbatim re-save.
+
+    Returns a summary dict: ``status`` ("extracted" | "verbatim") plus the
+    `_extract_and_save` counts (candidates/saved/saved_titles/...).
+    """
+    result = _extract_and_save(mem, cfg, "", text, debug=debug, merge_tags=merge_tags)
+    if result["candidates"] == 0:
+        rec = mem.save(
+            content=text,
+            title=title,
+            type_=type_,
+            tags=list(merge_tags) if merge_tags else None,
+        )
+        return {
+            "status": "verbatim",
+            "candidates": 0,
+            "saved": [rec.id],
+            "saved_titles": [rec.title],
+            "skipped_dup": 0,
+            "reconciled": 0,
+            "skipped_quality": 0,
+        }
+    return {"status": "extracted", **result}
 
 
 def run_capture(

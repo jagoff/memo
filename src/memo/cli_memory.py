@@ -45,6 +45,15 @@ from memo.errors import StorageError
     "Adds ~1-2s latency on first call.",
 )
 @click.option(
+    "--extract",
+    is_flag=True,
+    help="Decompose CONTENT into atomic facts via the helper LLM and save each "
+    "as its own memory (mem0 ADD-model), instead of one blob; --tag values "
+    "propagate to every fact. Falls back to a verbatim save if nothing "
+    "extractable is found. Adds ~1-3s LLM latency. "
+    "(Ignores --auto-derive / --defer-embed / --meta.)",
+)
+@click.option(
     "--no-project-tag",
     "no_project_tag",
     is_flag=True,
@@ -71,6 +80,7 @@ def save(
     type_: str,
     tags: tuple[str, ...],
     auto_derive: bool,
+    extract: bool,
     no_project_tag: bool,
     defer_embed: bool,
     meta_pairs: tuple[str, ...],
@@ -98,6 +108,38 @@ def save(
                 )
             extra[key] = value
     mem = _get_memory(Config.from_env())
+
+    from memo.flags import flag_bool
+
+    if extract or flag_bool("MEMO_SAVE_EXTRACT"):
+        from memo.capture import extract_and_save_text
+
+        try:
+            summary = extract_and_save_text(
+                mem,
+                mem.cfg,
+                content,
+                merge_tags=list(tags),
+                title=title,
+                type_=type_,
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        if as_json:
+            click.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+            return
+        titles = summary.get("saved_titles") or []
+        verb = "verbatim (no atomic facts)" if summary["status"] == "verbatim" else "atomic facts"
+        body = "\n".join(f"· {t}" for t in titles) or "[dim]—[/dim]"
+        console.print(
+            Panel.fit(
+                f"[bold]{len(summary.get('saved') or [])} {verb}[/bold]\n{body}",
+                title="✓ extracted" if summary["status"] == "extracted" else "✓ saved",
+                border_style="green",
+            )
+        )
+        return
+
     try:
         rec = mem.save(
             content=content,

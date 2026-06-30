@@ -13,10 +13,35 @@ def register(server: Any, memory: Memory) -> None:
         type: str = "note",
         tags: list[str] | None = None,
         auto_derive: bool = False,
+        extract: bool | None = None,
         extra: dict[str, Any] | None = None,
         respect_synapse_freeze: bool | None = None,
     ) -> dict[str, Any]:
+        """Persist `content` to memo.
+
+        When `extract` is true (defaults to the `MEMO_SAVE_EXTRACT` flag, off),
+        the helper LLM decomposes `content` into atomic facts and saves each as
+        its own memory (mem0 ADD-model) instead of one opaque blob; `tags`
+        propagate to every fact. Returns an extraction summary
+        (`status`, `saved` ids, `saved_titles`, counts) rather than a single
+        record. If nothing extractable is found, the blob is saved verbatim.
+        """
+        from memo.flags import flag_bool
         from memo.memory import WriteRefused
+
+        if extract is None:
+            extract = flag_bool("MEMO_SAVE_EXTRACT")
+        if extract:
+            from memo.capture import extract_and_save_text
+
+            return extract_and_save_text(
+                memory,
+                memory.cfg,
+                content,
+                merge_tags=tags,
+                title=title,
+                type_=type,
+            )
 
         try:
             rec = memory.save(
