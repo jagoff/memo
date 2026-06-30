@@ -37,8 +37,8 @@ jobs:
     env:
       MEMO_NONINTERACTIVE: "1"
       MEMO_EMBEDDER_BACKEND: "st"
-      MEMO_DATA_DIR: ${{ runner.temp }}/memo-data
-      MEMO_STATE_DIR: ${{ runner.temp }}/memo-state
+      MEMO_DATA_DIR: /tmp/memo-data
+      MEMO_STATE_DIR: /tmp/memo-state
       HF_HUB_DISABLE_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v4
