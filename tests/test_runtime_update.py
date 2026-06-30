@@ -10,6 +10,7 @@ pointing at git + uv sync instead.
 
 from __future__ import annotations
 
+import base64
 import json
 
 from click.testing import CliRunner
@@ -84,6 +85,7 @@ def test_self_update_proceeds_for_isolated_install(monkeypatch):
     monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
     monkeypatch.setattr(upd, "_find_uv", lambda: "uv")
     monkeypatch.setattr(upd, "_clear_update_notify", lambda: None)
+    monkeypatch.setattr(upd, "_notify_codex_plugin_updated", lambda: False)
     monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
 
     calls: list = []
@@ -93,3 +95,47 @@ def test_self_update_proceeds_for_isolated_install(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert any("tool" in c and "install" in c for c in calls), calls
+
+
+def test_codex_plugin_update_notification_uses_notify_protocol(tmp_path, monkeypatch):
+    tty = tmp_path / "tty"
+    tty.touch()
+    monkeypatch.setenv("MEMO_AGENT_TTY", str(tty))
+
+    assert upd._notify_codex_plugin_updated() is True
+
+    raw = tty.read_bytes()
+    title = base64.b64encode(b"Plugin updated: memo").decode("ascii")
+    body = base64.b64encode(b"Run /reload_plugins to apply").decode("ascii")
+    assert raw.startswith(b"\x1b]3008;start=codex;kind=notify;")
+    assert f"title={title}".encode("ascii") in raw
+    assert f"body={body}".encode("ascii") in raw
+    assert raw.endswith(b"\x1b\\")
+
+
+def test_codex_plugin_update_notification_noops_without_tty(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEMO_AGENT_TTY", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "missing-data-home"))
+
+    assert upd._notify_codex_plugin_updated() is False
+
+
+def test_self_update_to_tag_notifies_codex_after_success(monkeypatch):
+    monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
+    monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
+    monkeypatch.setattr(upd, "_find_uv", lambda: "uv")
+    monkeypatch.setattr(upd, "_clear_update_notify", lambda: None)
+    monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
+    notified: list[bool] = []
+    monkeypatch.setattr(
+        upd, "_notify_codex_plugin_updated", lambda: notified.append(True), raising=False
+    )
+
+    calls: list = []
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: calls.append(a[0]) or _Rc(0))
+
+    result = CliRunner().invoke(cli, ["update", "--to-tag", "v9.9.9"])
+
+    assert result.exit_code == 0, result.output
+    assert any("tool" in c and "install" in c for c in calls), calls
+    assert notified == [True]

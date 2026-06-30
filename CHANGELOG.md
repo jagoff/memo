@@ -9,11 +9,14 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+- Successful memo updates notify Codex with `Plugin updated: memo · Run /reload_plugins to apply`.
+
 ### Changed
 - Startup banner and statusline badges now render as `[Memo <version>]` instead of `[MEMO <version>]`.
 
 ### Fixed
-- Agent shims now always render memo's own startup banner before delegating to downstream wrappers or binaries.
+- Agent shims now always render memo's own startup banner before delegating to downstream wrappers or binaries, and refresh stale PATH snippets so memo stays ahead of downstream wrappers.
 
 ## [2.5.0] - 2026-06-30
 

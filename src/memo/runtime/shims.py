@@ -47,7 +47,7 @@ if [ -z "$_NEXT" ]; then
 fi
 _MEMO="$(command -v memo 2>/dev/null || true)"
 if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ -t 2 ]; then
-    "$_MEMO" startup-banner --agent "$_AGENT" 2>/dev/null || true
+    "$_MEMO" startup-banner --agent "$_AGENT" || true
 fi
 exec "$_NEXT" "$@"
 """
@@ -65,6 +65,25 @@ _TTY_SNIPPET = (
     "  {m}\n"
 )
 _TTY_SNIPPET_V1 = "[ -t 1 ] && export MEMO_AGENT_TTY="  # old snippet without file write
+
+
+def _strip_path_snippet(content: str) -> str:
+    """Remove the managed PATH block so it can be re-appended at the end."""
+    lines = content.splitlines(keepends=True)
+    kept: list[str] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() == _PATH_MARKER:
+            i += 1
+            while i < len(lines):
+                line = lines[i]
+                i += 1
+                if _PATH_MARKER in line:
+                    break
+            continue
+        kept.append(lines[i])
+        i += 1
+    return "".join(kept)
 
 
 def install_path_snippet(
@@ -86,28 +105,45 @@ def install_path_snippet(
 
     existing = rc_path.read_text(encoding="utf-8") if rc_path.is_file() else ""
     path_present = _PATH_MARKER in existing
+    path_line = f'export PATH="{bin_dir}:$PATH"  {_PATH_MARKER}'
+    path_needs_upgrade = (
+        (not path_present)
+        or path_line not in existing
+        or (".memflow/bin" in existing and existing.rfind(path_line) < existing.rfind(".memflow/bin"))
+    )
     tty_present = _TTY_MARKER in existing
     # Detect v1 snippet (no file write) and upgrade it in-place.
     tty_needs_upgrade = tty_present and _TTY_SNIPPET_V1 in existing and "agent_tty" not in existing
 
-    if path_present and tty_present and not tty_needs_upgrade:
+    if path_present and not path_needs_upgrade and tty_present and not tty_needs_upgrade:
         return "already"
     if dry_run:
         return f"would-write:{rc_path}"
     try:
-        if tty_needs_upgrade:
+        if path_needs_upgrade or tty_needs_upgrade:
             import re
 
-            new_content = re.sub(
-                rf"{re.escape(_TTY_MARKER)}.*?{re.escape(_TTY_MARKER)}",
-                tty_snippet.strip("\n"),
-                existing,
-                flags=re.DOTALL,
-            )
+            new_content = existing
+            if path_needs_upgrade:
+                new_content = _strip_path_snippet(new_content)
+                if new_content and not new_content.endswith("\n"):
+                    new_content += "\n"
+                new_content += path_snippet
+            if tty_needs_upgrade:
+                new_content = re.sub(
+                    rf"{re.escape(_TTY_MARKER)}.*?{re.escape(_TTY_MARKER)}",
+                    tty_snippet.strip("\n"),
+                    new_content,
+                    flags=re.DOTALL,
+                )
+            elif not tty_present:
+                if new_content and not new_content.endswith("\n"):
+                    new_content += "\n"
+                new_content += tty_snippet
             tmp = rc_path.with_suffix(rc_path.suffix + ".tmp")
             tmp.write_text(new_content, encoding="utf-8")
             os.replace(tmp, rc_path)
-            return f"upgraded:{rc_path}"
+            return f"{'upgraded' if path_present or tty_needs_upgrade else 'written'}:{rc_path}"
         with rc_path.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
                 fh.write("\n")
@@ -201,9 +237,13 @@ def install_shims_cmd(agents: str, bin_dir: str, dry_run: bool) -> None:
             console.print(f"[green]wrote[/green] {path}")
 
     path_status = install_path_snippet(bin_path, dry_run=dry_run)
-    if path_status.startswith("written"):
-        console.print(f"[green]wrote[/green] PATH snippet → {path_status.split(':', 1)[1]}")
-        console.print(f"[dim]Reload shell or run: source {path_status.split(':', 1)[1]}[/dim]")
+    if path_status.startswith(("written", "upgraded")):
+        verb, path = path_status.split(":", 1)
+        if verb == "upgraded":
+            console.print(f"[green]upgraded[/green] PATH snippet → {path}")
+        else:
+            console.print(f"[green]wrote[/green] PATH snippet → {path}")
+        console.print(f"[dim]Reload shell or run: source {path}[/dim]")
     elif path_status == "already":
         console.print("[dim]✓ PATH snippet already in shell rc[/dim]")
     else:
