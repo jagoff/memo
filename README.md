@@ -15,7 +15,7 @@
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
-`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your Mac**. Each memory is a plain Markdown file; embeddings live in a single sqlite file; the LLM, embedder, and reranker run **in-process via [Apple MLX](https://github.com/ml-explore/mlx)** — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
+`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your own machine** — **macOS on Apple Silicon** via [Apple MLX](https://github.com/ml-explore/mlx), or **Linux / Ubuntu on a CPU `sentence-transformers` backend** (`pipx install "mlx-memo[cpu]"`, see [docs/ubuntu.md](docs/ubuntu.md)). Each memory is a plain Markdown file; embeddings live in a single sqlite file; the embedder, reranker, and LLM run in-process — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
 
 <div align="center">
 
@@ -190,7 +190,7 @@ memo entities                          # list extracted entities
 memo links --id abc123                 # backlinks + outlinks
 ```
 
-Entity extraction uses a dependency-free regex backend; Codegraph integration provides fallback for code graphs.
+Entity extraction uses a dependency-free regex backend. For code-heavy corpora, memo can merge a **[codegraph](https://github.com/colbymchenry/codegraph) symbol graph** as the graph's primary layer (opt-in, `MEMO_GRAPH_USE_CODEGRAPH`) — callers, callees, and imports become first-class edges, so recall and `memo graph path` reason over real code structure, not just text similarity. The merged graph also powers the `memo_graph` MCP tool and the entity-centric "Knowledge map" briefing.
 
 ### 🏥 Health scoring & eval gates
 
