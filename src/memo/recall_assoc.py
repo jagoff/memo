@@ -62,6 +62,7 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
             limit=limit + 5,  # buffer: backfill after dropping forgotten/missing
             exclude_ids=frozenset(seed_ids),
             min_activation=min_act,
+            deadline=deadline,
         )
         if time.monotonic() > deadline:
             return []
@@ -100,15 +101,15 @@ def render_associative_line(context: str, nudge: list[Any], *, token_budget: int
 
     Format::
 
-        _🔗 También conectado (vía grafo · no verificado): [id8] title — vía via; …_
+        _🔗 Also connected (via graph · unverified): [id8] title — via via; …_
 
     ``token_budget <= 0`` means no cap (always append).  Otherwise the line is
     skipped when ``len(context) + len(line) > token_budget * 4``.
     """
     if not nudge:
         return context
-    parts = "; ".join(f"[{h.id[:8]}] {h.title} — vía {h.via}" for h in nudge)
-    line = f"\n_🔗 También conectado (vía grafo · no verificado): {parts}._"
+    parts = "; ".join(f"[{h.id[:8]}] {h.title} — via {h.via}" for h in nudge)
+    line = f"\n_🔗 Also connected (via graph · unverified): {parts}._"
     if token_budget > 0 and len(context) + len(line) > token_budget * 4:
         return context
     return context + line

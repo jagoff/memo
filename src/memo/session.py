@@ -310,7 +310,7 @@ def list_sessions(
 def get_session(state_dir: Path, session_id_or_prefix: str) -> dict[str, Any] | None:
     """Look up a session by full id or unique prefix (≥4 chars).
     Returns None if not found. Returns the *first* match on tie —
-    sessions are LRU-capped at 50 so collision surface is tiny, and
+    sessions are LRU-capped at 250 so collision surface is tiny, and
     paying for a full prefix-resolution dance like `Memory.resolve_id`
     isn't worth it here."""
     if not session_id_or_prefix or len(session_id_or_prefix) < 4:
@@ -665,39 +665,3 @@ def render_continuity(rows: list[dict[str, Any]], cwd: str) -> str:
     if active_memory:
         lines += ["", *active_memory]
     return "\n".join(lines)
-
-
-def get_session_metadata(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Compute enriched metadata from session snapshot.
-
-    Computes duration_secs from created/updated timestamps.
-    The snapshot can have these additional fields:
-    - client: str - MCP client: "opencode", "claude", "cli", "http-api"
-    - operation_count: int - CRUD operations in this session
-    """
-    from datetime import datetime
-
-    created = snapshot.get("created")
-    updated = snapshot.get("updated")
-    duration_secs: int | None = None
-    if created and updated:
-        try:
-            c = datetime.fromisoformat(created)
-            u = datetime.fromisoformat(updated)
-            duration_secs = int((u - c).total_seconds())
-        except (ValueError, TypeError):
-            pass
-
-    return {
-        "session_id": snapshot.get("session_id"),
-        "created": created,
-        "updated": updated,
-        "duration_secs": duration_secs,
-        "turn_count": snapshot.get("turn_count"),
-        "cwd": snapshot.get("cwd"),
-        "project": snapshot.get("project"),
-        "client": snapshot.get("client"),
-        "operation_count": snapshot.get("operation_count"),
-        "branch": snapshot.get("branch"),
-        "head_commit": snapshot.get("head_commit"),
-    }

@@ -315,12 +315,13 @@ def recall_hook() -> None:
                     if days > staleness_days and (h.score or 0.0) < stale_threshold:
                         continue
                 except Exception:
+                    # Unknown/unparseable age — treat as non-stale and keep the
+                    # hit rather than silently dropping it.
                     _log.debug(
-                        "recall hook: excluding hit %s due to date parse error",
+                        "recall hook: keeping hit %s (unparseable updated date)",
                         h.id[:8],
                         exc_info=True,
                     )
-                    continue
                 filtered.append(h)
             rel = filtered
         from memo.recall_server import dedup_hits
@@ -407,6 +408,9 @@ def recall_hook() -> None:
             _prev_recalled = {}
     if _prev_recalled:
         relevant = [h for h in relevant if h.id not in _prev_recalled]
+    if not relevant:
+        _bail("all hits already recalled this session")
+        return
 
     from memo.recall_logic import (
         render_recall_balanced,

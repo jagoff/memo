@@ -65,7 +65,7 @@ def test_render_associative_line_appends_nudge():
     assert "🔗" in result
     assert "[abc12345]" in result
     assert "Test Title" in result
-    assert "vía memory" in result
+    assert "via memory" in result
 
 
 def test_render_associative_line_includes_via():
@@ -78,8 +78,8 @@ def test_render_associative_line_includes_via():
         NudgeItem(id="bbb22222ccc", title="Beta", via="co-recall"),
     ]
     result = render_associative_line(context, nudge, token_budget=0)
-    assert "vía entity-foo" in result
-    assert "vía co-recall" in result
+    assert "via entity-foo" in result
+    assert "via co-recall" in result
     # Both items joined by "; "
     assert "[aaa11111]" in result
     assert "[bbb22222]" in result

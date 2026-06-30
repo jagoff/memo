@@ -5,8 +5,9 @@ needed. Provides a lightweight symbol adjacency index for entity path queries
 as a fallback when memo's own knowledge graph (``graph.db``) has no data.
 
 Unlike a build-on-demand backend, codegraph keeps its index continuously fresh
-via its own file-watcher, so this loader never shells out to rebuild — it just
-reads the live DB and caches the adjacency in-process.
+via its own file-watcher, so this loader never shells out to rebuild — it reads
+the live DB and caches the adjacency in-process, reloading automatically when the
+DB's mtime advances so long-lived processes don't serve a frozen graph.
 """
 
 from __future__ import annotations

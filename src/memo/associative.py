@@ -9,6 +9,7 @@ the engine is hermetically testable.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -99,6 +100,7 @@ def associate(
     limit: int = 2,
     exclude_ids: frozenset[str] = frozenset(),
     min_activation: float = 0.0,
+    deadline: float | None = None,
 ) -> list[AssociativeHit]:
     seed_tokens = _seed_tokens(seed_ids, store)
     if not seed_tokens:
@@ -113,6 +115,9 @@ def associate(
     # reached through several specific links ranks above one reached through one.
     cand: dict[str, list[Any]] = {}  # mid -> [score, via, via_weight]
     for tok, act in tok_act.items():
+        # Honour the caller's time budget — the nudge runs on the 5s recall path.
+        if deadline is not None and time.monotonic() > deadline:
+            break
         mems = store.entity_memories(tok)
         weighted = act * _rarity(len(mems))
         for mid in mems[:_FANOUT_MEMS]:

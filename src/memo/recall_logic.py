@@ -182,17 +182,18 @@ def render_recall_balanced(relevant: list[Any], *, token_budget: int) -> str:
         sentences = hit.body.strip().split(". ")
         bullets = [s.strip()[:50] for s in sentences[:2] if s.strip()]
         if bullets:
-            indent = "  • ".join(bullets)
+            indent = "\n  • ".join(bullets)
             if i < len(lines):
                 lines[i] = lines[i] + "\n  • " + indent
 
-    context = "<memo-recall readonly>\n## Memory\n" + "\n".join(lines) + "\n" + _render_footer()
+    footer = _render_footer()
+    body = "<memo-recall readonly>\n## Memory\n" + "\n".join(lines) + "\n"
 
-    if max_chars is not None and len(context) > max_chars:
-        # Truncate while preserving header
-        context = context[: max_chars - 3].rstrip() + "..."
+    if max_chars is not None and len(body) + len(footer) > max_chars:
+        # Truncate the body but keep the footer (and its closing tag) intact.
+        body = body[: max(0, max_chars - len(footer) - 3)].rstrip() + "..."
 
-    return context
+    return body + footer
 
 
 def _apply_project_boost(
@@ -546,6 +547,16 @@ def _recall_logic(
         body_chars=body_chars,
         token_budget=token_budget,
     )
+
+    # Graph-associative nudge (MEMO_RECALL_ASSOCIATIVE) — render it on the daemon
+    # (primary) path too, not only the subprocess fallback. build_nudge gates on
+    # the flag and is internally time-guarded; degrade silently on any error.
+    with contextlib.suppress(Exception):
+        from memo.recall_assoc import build_nudge, render_associative_line
+
+        _assoc = build_nudge(mem, relevant)
+        if _assoc:
+            context = render_associative_line(context, _assoc, token_budget=token_budget)
 
     hits_snapshot = [
         {"id": h.id, "score": h.score, "title": h.title, "snippet": (h.body or "")[:240]}

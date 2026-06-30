@@ -87,7 +87,7 @@ def _make_hit(id_: str, title: str, body: str = "body text here") -> dict:
 
 
 def test_subprocess_path_dedup_short_ref_on_second_turn(tmp_cfg, monkeypatch) -> None:
-    """Second-turn call for the same session/memory emits the short reference line."""
+    """Second-turn call for the same session/memory injects nothing (all hits already recalled)."""
     from click.testing import CliRunner
 
     from memo.cli_recall_hook import recall_hook
@@ -173,7 +173,6 @@ def test_subprocess_path_dedup_short_ref_on_second_turn(tmp_cfg, monkeypatch) ->
     result2 = runner.invoke(recall_hook, input=payload_second, env=env, catch_exceptions=False)
     assert result2.exit_code == 0, result2.output
     out2 = json.loads(result2.output)
-    context2 = out2["hookSpecificOutput"]["additionalContext"]
-    # Filtered out — memory already in context window, saves tokens
-    assert "Test Memory" not in context2
-    assert "full body" not in context2
+    # All hits already recalled this session -> nothing injected (not even an
+    # empty <memo-recall> shell), which saves tokens.
+    assert out2 == {}

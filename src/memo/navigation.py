@@ -106,6 +106,19 @@ class GraphNavigator:
         source = source.lower().strip()
         target = target.lower().strip()
 
+        # Build the adjacency once, then BFS. compute_centrality reuses _bfs with
+        # a pre-built adjacency so it does not rebuild the graph O(N^2) times.
+        adj = self._build_adjacency_list()
+        return self._bfs(adj, source, target, max_length)
+
+    def _bfs(
+        self,
+        adj: dict[str, set[tuple[str, str]]],
+        source: str,
+        target: str,
+        max_length: int,
+    ) -> EntityPath | None:
+        """Shortest path between two entities over a pre-built adjacency list."""
         if source == target:
             return EntityPath(
                 source=source,
@@ -115,13 +128,9 @@ class GraphNavigator:
                 intermediate_memories=[],
             )
 
-        # Build adjacency list: entity -> set of (neighbor_entity, memory_id)
-        adj = self._build_adjacency_list()
-
         if source not in adj or target not in adj:
             return None
 
-        # BFS
         queue: deque[tuple[str, list[str], list[str]]] = deque(
             [(source, [source], [])],
         )  # (current, path, memory_ids)
@@ -318,7 +327,7 @@ class GraphNavigator:
         for i in range(sample_size):
             for j in range(i + 1, sample_size):
                 source, target = entities[i], entities[j]
-                path = self.find_shortest_path(source, target, max_length=4)
+                path = self._bfs(adj, source, target, max_length=4)
                 if path and path.length > 1:
                     # Count intermediate nodes
                     for intermediate in path.path[1:-1]:
