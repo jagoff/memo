@@ -2,13 +2,13 @@
 
 Copies the bundled ``memo-statusline.sh`` to ``~/.claude/memo-statusline.sh`` and
 wires it into ``~/.claude/settings.json`` as the ``statusLine`` command. The
-statusline prints a compact ``<dir> · <branch> · <model> · [MEMO <version>]``
+statusline prints a compact ``<dir> · <branch> · <model> · [Memo <version>]``
 line, with the version derived from the installed dist-info dir (no python
 launch — fast enough to run every prompt).
 
 Chain-aware (the systemic guarantee): if a *foreign* ``statusLine`` already
 exists (caveman, memflow, a hand-rolled one), memo does **not** skip — it
-**wraps** that command so the inner statusline still renders and ``[MEMO
+**wraps** that command so the inner statusline still renders and ``[Memo
 <version>]`` is prepended. This makes the badge appear on ANY machine,
 coexisting with whatever was there, instead of silently never wiring. ``--force``
 collapses back to a memo-only standalone line.
@@ -171,7 +171,7 @@ def install_statusline(force: bool) -> None:
     if action == "wrapped":
         console.print(
             "[green]✓[/green] wrapped the existing statusLine — "
-            "[MEMO <version>] is prepended to it."
+            "[Memo <version>] is prepended to it."
         )
     elif action == "already":
         console.print("[dim]statusLine already points at the memo badge — nothing to do.[/dim]")
@@ -179,4 +179,4 @@ def install_statusline(force: bool) -> None:
         console.print("[green]✓[/green] replaced the existing statusLine with the memo badge.")
     else:  # standalone
         console.print("[green]✓[/green] set statusLine to the memo badge.")
-    console.print("[dim]Open a new Claude Code session to see the [MEMO <version>] badge.[/dim]")
+    console.print("[dim]Open a new Claude Code session to see the [Memo <version>] badge.[/dim]")

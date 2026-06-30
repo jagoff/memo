@@ -9,6 +9,9 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Changed
+- Startup banner and statusline badges now render as `[Memo <version>]` instead of `[MEMO <version>]`.
+
 ## [2.5.0] - 2026-06-30
 
 ### Added

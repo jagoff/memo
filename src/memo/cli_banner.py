@@ -1,4 +1,4 @@
-"""`memo startup-banner` — prints [MEMO ver] status at agent launch.
+"""`memo startup-banner` — prints [Memo ver] status at agent launch.
 
 Called by agent shims (installed via `memo install-shims`). Must stay
 fast and MLX-free: only git + importlib.metadata, no embedding.
@@ -24,7 +24,7 @@ def startup_banner_cmd(agent: str) -> None:
     sync_str = _fast_sync_state()
     update_tag = _pending_update_tag()
     update_str = f" | ⬆ {update_tag} available — run: memo update" if update_tag else ""
-    memo_line = f"[MEMO {version}] | sync {sync_str}{update_str}"
+    memo_line = f"[Memo {version}] | sync {sync_str}{update_str}"
     label = f"─── memo / {agent} " if agent else "─── memo "
     width = max(len(memo_line) + 2, len(label) + 4, 44)
     pad = max(0, width - len(label))

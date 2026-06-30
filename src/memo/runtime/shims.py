@@ -1,4 +1,4 @@
-"""Memo agent shims — wrap agent binaries to show [MEMO] banner at startup.
+"""Memo agent shims — wrap agent binaries to show [Memo] banner at startup.
 
 Each shim is a small bash script placed in ~/.memo/bin/ (before other
 agent locations in PATH). When an agent starts:
@@ -175,7 +175,7 @@ def install_shims(
 )
 @click.option("--dry-run", is_flag=True, help="Show what would be written, write nothing.")
 def install_shims_cmd(agents: str, bin_dir: str, dry_run: bool) -> None:
-    """Install PATH shims that show [MEMO ver] banner when agents start.
+    """Install PATH shims that show [Memo ver] banner when agents start.
 
     \b
     Each shim wraps the next agent binary in PATH:
