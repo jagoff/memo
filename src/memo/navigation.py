@@ -270,9 +270,9 @@ class GraphNavigator:
                 adj[b][a] = w
         else:
             base = self._build_adjacency_list(use_codegraph=False)
-            for e, nbrs in base.items():
+            for ent, nbrs in base.items():
                 for nb, _mid in nbrs:
-                    adj[e][nb] = adj[e].get(nb, 0.0) + 1.0
+                    adj[ent][nb] = adj[ent].get(nb, 0.0) + 1.0
 
         _merge_cg = (
             flag_bool("MEMO_GRAPH_USE_CODEGRAPH") if use_codegraph is None else use_codegraph

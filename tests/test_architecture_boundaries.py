@@ -20,7 +20,7 @@ FOUNDATION_MODULES = ["util", "store", "embedder", "graph"]
 
 # Pure-stdlib leaves at the very bottom of the stack. Foundation modules may
 # depend on these (they import nothing from memo, so no cycle is possible).
-PURE_LEAF_MODULES = {"util", "mlx_gpu"}
+PURE_LEAF_MODULES = {"util", "mlx_gpu", "graph_canonical"}
 
 
 def _memo_imports(module_file: Path) -> set[str]:
@@ -126,6 +126,12 @@ def test_mlx_gpu_is_pure_stdlib_leaf() -> None:
     only) — it must import nothing from memo so every MLX caller can depend
     on it without risking a cycle."""
     assert _memo_imports(SRC / "mlx_gpu.py") == set()
+
+
+def test_graph_canonical_is_pure_stdlib_leaf() -> None:
+    """memo.graph_canonical is a pure (re + unicodedata) canonicalization leaf —
+    it must import nothing from memo so graph.py can depend on it cycle-free."""
+    assert _memo_imports(SRC / "graph_canonical.py") == set()
 
 
 # Optional Memory subsystems that MUST stay behind lazy @property accessors —
