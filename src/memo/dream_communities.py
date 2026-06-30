@@ -12,9 +12,14 @@ the clustering source: graph communities instead of recurring sessions.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from collections.abc import Callable
 from typing import Any
+
+# A community whose representative is one of the top-N weighted-degree entities
+# is hub-dominated (an incoherent grab-bag), not a theme — excluded from synthesis.
+_HUB_TOP_N = 3
 
 _SYS = (
     "You abstract a cluster of a user's memories into one durable insight. "
@@ -53,8 +58,22 @@ def community_clusters(
     # community synthesis is about knowledge, not code structure.
     comms = mem.navigator.detect_communities(min_size=min_size, use_codegraph=False)
 
+    # Hub-led communities are incoherent grab-bags — a mega-hub (e.g. "memo")
+    # pulls scattered nodes into one cluster under the size cap. Drop a community
+    # whose representative is one of the graph's top weighted-degree hubs.
+    from collections import defaultdict as _dd
+
+    degree: dict[str, float] = _dd(float)
+    with contextlib.suppress(Exception):
+        for a, b, w in mem.graph.all_weighted_edges():
+            degree[a] += w
+            degree[b] += w
+    hubs = {n for n, _ in sorted(degree.items(), key=lambda kv: (-kv[1], kv[0]))[:_HUB_TOP_N]}
+
     out: list[dict[str, Any]] = []
-    eligible = [c for c in comms if c.size <= max_size]
+    eligible = [
+        c for c in comms if c.size <= max_size and c.representative_entity not in hubs
+    ]
     for c in sorted(eligible, key=lambda c: -c.size)[:max_communities]:
         seen: set[str] = set()
         mem_ids: list[str] = []
