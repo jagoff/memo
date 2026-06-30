@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.6] - 2026-06-30
+
+### Fixed
+- Recall-daemon `embed_query` no longer bails after a hardcoded 5s wait for the shared embedder lock — shorter than a single 4B `embed_batch` chunk hold (60s). A heavy job like `memo dream run`, routing through the auto-detected warm daemon, self-contended: its own batch embed held the lock while its interleaved `embed_query` timed out at 5s and paid a redundant ~2s in-process cold MLX load (the `timeout acquiring lock` → `falling back to in-process` warning pair). New `MEMO_EMBED_LOCK_TIMEOUT_MS` (default 60000) matches the `embed_batch` hold so `embed_query` waits out the in-flight chunk instead of bailing. Mirrors the existing `MEMO_RECALL_LOCK_TIMEOUT_MS` pattern; background callers aren't latency-bound so the longer wait is free.
+
 ## [2.6.5] - 2026-06-30
 
 ### Fixed
