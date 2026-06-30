@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.jagoff/memo",
   "title": "memo",
-  "description": "Local-first memory for AI agents — MLX (Apple Silicon) or CPU (Linux/Ubuntu), markdown-on-disk, sqlite-vec + BM25 hybrid, zero cloud.",
+  "description": "Memory for AI agents — MLX (Apple Silicon) or CPU (Linux), sqlite-vec + BM25, zero cloud.",
   "repository": {
     "url": "https://github.com/jagoff/memo",
     "source": "github"
   },
-  "version": "2.6.4",
+  "version": "2.6.5",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "mlx-memo",
-      "version": "2.6.4",
+      "version": "2.6.5",
       "transport": {
         "type": "stdio"
       },
