@@ -202,6 +202,15 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_BRIEFING_GRAPH",
+        "bool",
+        True,
+        "misc",
+        "Add an entity-centric 'Knowledge map' (graph hubs + their clusters) to "
+        "the SessionStart briefing and memo_unified_briefing. Default on.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True
     ),
     _spec(

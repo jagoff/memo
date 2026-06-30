@@ -121,6 +121,46 @@ def _conflicts_section(rows: Any) -> list[str]:
     return out
 
 
+def entity_graph_lines(mem: Any, *, top: int = 5, max_scan: int = 40) -> list[str]:
+    """A compact knowledge-graph map: the corpus's hub entities and what each
+    clusters with (entities co-occurring in its memories).
+
+    Entity-graph only — code symbols (codegraph) are excluded so the map reflects
+    *knowledge*, not code structure. Best-effort: any failure yields no lines.
+    """
+    from collections import Counter
+
+    try:
+        graph = mem.graph
+        ents = sorted(
+            graph.top_entities(limit=top * 4),
+            key=lambda e: -int(e.get("mention_count") or 0),
+        )[:top]
+    except Exception:
+        return []
+    if not ents:
+        return []
+    lines = ["### Knowledge map (your hubs)", ""]
+    for e in ents:
+        name = str(e.get("name") or "")
+        if not name:
+            continue
+        mc = int(e.get("mention_count") or 0)
+        co: Counter[str] = Counter()
+        try:
+            for mid in graph.entity_memories(name)[:max_scan]:
+                for other in graph.memory_entities(mid):
+                    on = (other.get("name") or "").lower()
+                    if on and on != name.lower():
+                        co[on] += 1
+        except Exception:  # noqa: S110 — one bad memory must not sink the map
+            pass
+        near = ", ".join(n for n, _ in co.most_common(3)) or "—"
+        lines.append(f"- **{name}** ({mc}) → {near}")
+    lines.append("")
+    return lines
+
+
 def memo_native_briefing_lines(
     mem: Any,
     *,
@@ -143,7 +183,13 @@ def memo_native_briefing_lines(
     import hashlib
     import json as _json
 
+    from memo.flags import flag_bool
+
     lines: list[str] = []
+
+    # ── 0. Knowledge map: graph hubs (entity-centric orientation) ────────
+    if flag_bool("MEMO_BRIEFING_GRAPH"):
+        lines.extend(entity_graph_lines(mem))
 
     # ── Open loops: recently updated memories ────────────────────────────
     try:
