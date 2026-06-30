@@ -52,6 +52,27 @@ def register(server: FastMCP, memory: Memory) -> None:
         return neighbors.__dict__
 
     @server.tool()
+    def memo_explore(
+        entity: str,
+        max_neighbors: int = 8,
+        max_memories: int = 8,
+    ) -> dict[str, Any]:
+        """Zoom into one entity: its degree, the neighbours it connects to (with
+        how many memories bridge each link), and the memories that mention it —
+        one rich "what's around X" view over the merged entity + code graph.
+
+        Args:
+            entity: Entity or code-symbol name.
+            max_neighbors: Max neighbours to return.
+            max_memories: Max mentioning memories to return.
+        """
+        from memo.explore import explore_entity
+
+        return explore_entity(
+            memory, entity, max_neighbors=max_neighbors, max_memories=max_memories
+        )
+
+    @server.tool()
     def memo_graph_communities(
         min_size: int = 2,
     ) -> list[dict[str, Any]]:

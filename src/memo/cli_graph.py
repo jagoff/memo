@@ -104,6 +104,43 @@ def graph_neighbors(entity: str, max_neighbors: int, as_json: bool) -> None:
         console.print(f"[dim]...and {len(neighbors.direct_neighbors) - 20} more[/dim]")
 
 
+@graph_group.command(name="explore")
+@click.argument("entity")
+@click.option("--neighbors", "max_neighbors", type=int, default=8, help="Max neighbours.")
+@click.option("--memories", "max_memories", type=int, default=8, help="Max mentioning memories.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def graph_explore(entity: str, max_neighbors: int, max_memories: int, as_json: bool) -> None:
+    """Zoom into one entity: what it connects to + the memories about it.
+
+    Example: memo graph explore vecstore
+    """
+    from memo.explore import explore_entity
+
+    view = explore_entity(
+        _get_memory(Config.from_env()),
+        entity,
+        max_neighbors=max_neighbors,
+        max_memories=max_memories,
+    )
+    if as_json:
+        click.echo(json.dumps(view, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]Around '{view['entity']}'[/bold]  (degree {view['degree']})")
+    if view["neighbors"]:
+        table = Table(title="Connects to")
+        table.add_column("Neighbor", style="cyan")
+        table.add_column("Shared", style="green")
+        for n in view["neighbors"]:
+            table.add_row(str(n["name"]), str(n["shared"]))
+        console.print(table)
+    if view["memories"]:
+        console.print("[bold]Memories[/bold]")
+        for m in view["memories"]:
+            console.print(f"  [dim]{m['id'][:8]}[/dim] {m['title']}")
+    if not view["neighbors"] and not view["memories"]:
+        console.print("[dim]Nothing around this entity.[/dim]")
+
+
 @graph_group.command(name="communities")
 @click.option("--min-size", type=int, default=2, help="Minimum community size (default: 2)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
