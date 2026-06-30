@@ -20,7 +20,9 @@ FOUNDATION_MODULES = ["util", "store", "embedder", "graph"]
 
 # Pure-stdlib leaves at the very bottom of the stack. Foundation modules may
 # depend on these (they import nothing from memo, so no cycle is possible).
-PURE_LEAF_MODULES = {"util", "mlx_gpu", "graph_canonical"}
+# embed_base = the shared EmbedderBase contract (collections.abc + typing only);
+# MLXEmbedder/STEmbedder inherit it, so embedder.py imports it.
+PURE_LEAF_MODULES = {"util", "mlx_gpu", "graph_canonical", "embed_base"}
 
 
 def _memo_imports(module_file: Path) -> set[str]:

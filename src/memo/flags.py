@@ -149,6 +149,8 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_MEMORY_SUBDIR",
         "MEMO_EMBEDDER_MODEL",
         "MEMO_EMBEDDER_DIMS",
+        "MEMO_EMBEDDER_BACKEND",
+        "MEMO_ST_EMBEDDER_MODEL",
         "MEMO_LLM_MODEL",
         "MEMO_HELPER_MODEL",
         "MEMO_RERANKER_MODEL",

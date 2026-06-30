@@ -70,7 +70,8 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 
 ## Requirements
 
-- **macOS on Apple Silicon** (M1–M4) — MLX is the load-bearing piece. memo does **not** run on Linux / Windows / Intel Macs.
+- **macOS on Apple Silicon** (M1–M4) — MLX is the load-bearing piece and the only path with the reranker + LLM features (ask / synthesize / dream).
+- **Linux / Ubuntu / Intel Mac** — supported as a **standalone** install via a CPU `sentence-transformers` backend (search + recall + save, no MLX). One command: `pipx install "mlx-memo[cpu]"`. See **[docs/ubuntu.md](docs/ubuntu.md)** for what works and the trade-offs.
 - **~8 GB** free disk for the default model set (the installer downloads it).
 - *Optional:* an Obsidian vault. Without one, memo defaults to `~/Documents/memo/`.
 

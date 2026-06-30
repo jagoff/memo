@@ -37,6 +37,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from memo.flags import flag_bool, flag_str
+from memo.platform_detect import is_apple_silicon
 
 _log = logging.getLogger(__name__)
 
@@ -266,6 +267,21 @@ class Config(BaseModel):
             "model is gated by the runtime dim check in `MLXEmbedder.embed`."
         ),
     )
+    embedder_backend: str = Field(
+        default="auto",
+        description=(
+            "Embedder backend: 'auto' (MLX on Apple Silicon, else CPU "
+            "sentence-transformers), 'mlx', or 'st'. See `embedder_select`."
+        ),
+    )
+    st_embedder_model: str = Field(
+        default="Qwen/Qwen3-Embedding-0.6B",
+        description=(
+            "HF id for the CPU (sentence-transformers) backend. Same family/dims "
+            "(1024) as the default MLX quant, so the vec0 schema is unchanged. "
+            "Used on Linux/Ubuntu and Intel macs."
+        ),
+    )
 
     # ── Reranker ─────────────────────────────────────────────────────────
     # Cross-encoder applied AFTER hybrid retrieval when enabled. Lifts
@@ -273,11 +289,12 @@ class Config(BaseModel):
     # per candidate. Same Qwen3 family as the embedder so no extra
     # tokenizer/architecture surface is added.
     reranker_enabled: bool = Field(
-        default=True,
+        default_factory=is_apple_silicon,
         description=(
             "When True, hybrid-mode searches fetch a wider candidate "
-            "set and rerank via the cross-encoder. Disable to skip the "
-            "extra forward pass — useful on Linux/CI or for benchmarks."
+            "set and rerank via the cross-encoder. Defaults ON on Apple "
+            "Silicon and OFF elsewhere (the reranker is MLX-only); "
+            "set MEMO_RERANKER_ENABLED to override."
         ),
     )
     reranker_model: str = Field(
@@ -506,6 +523,8 @@ class Config(BaseModel):
             "MEMO_HELPER_MODEL": "helper_model",
             "MEMO_EMBEDDER_MODEL": "embedder_model",
             "MEMO_EMBEDDER_DIMS": "embedder_dims",
+            "MEMO_EMBEDDER_BACKEND": "embedder_backend",
+            "MEMO_ST_EMBEDDER_MODEL": "st_embedder_model",
             "MEMO_MAX_CONTENT_CHARS": "max_content_chars",
             "MEMO_SEARCH_DEFAULT_LIMIT": "search_default_limit",
             "MEMO_RERANKER_ENABLED": "reranker_enabled",

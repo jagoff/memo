@@ -18,6 +18,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -62,6 +63,12 @@ dev = [
 ocr = [
     "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+]
+# CPU embedder backend for non-Apple-Silicon hosts (Linux/Ubuntu, Intel macs).
+# Pulls torch (CPU). Opt-in so default macOS installs stay lean (MLX only).
+# Install: pipx install "mlx-memo[cpu]"  (see docs/ubuntu.md)
+cpu = [
+    "sentence-transformers>=3.0",
 ]
 # Tantivy-backed FTS: replaces FTS5 BM25 when installed.
 # Adds fuzzy/typo-tolerant search (mode="fuzzy") and configurable BM25.
@@ -118,7 +125,10 @@ python_version = "3.13"
 module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
           "consciousness_contracts", "consciousness_contracts.*",
           "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "huggingface_hub",
-          "numpy", "tantivy"]
+          "numpy", "tantivy",
+          # sentence-transformers (+torch) — optional [cpu] extra, absent on the
+          # default macOS/CI runtime; the ST embedder import is deferred.
+          "sentence_transformers", "sentence_transformers.*", "torch", "torch.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
