@@ -24,7 +24,7 @@ def recall_daemon_group() -> None:
     The daemon keeps the MLX embedder in RAM so recall-hook answers in
     <200 ms instead of 1-2 s per prompt (cold Python + MLX load).
 
-    Subcommands: start, stop, status, (internal) _serve.
+    Subcommands: start, stop, restart, status, (internal) _serve.
     """
 
 
@@ -94,6 +94,37 @@ def recall_daemon_stop() -> None:
     except ProcessLookupError:
         console.print("[dim]recall daemon already gone[/dim]")
     _cleanup(cfg.state_dir)
+
+
+@recall_daemon_group.command(name="restart")
+@click.pass_context
+def recall_daemon_restart(ctx: click.Context) -> None:
+    """Restart the recall daemon (stop, then start).
+
+    Use after upgrading the runtime so the daemon reloads new code. If the
+    daemon is launchd-managed (KeepAlive), the SIGTERM from stop already
+    triggers a respawn — this waits for that new process and only starts a
+    fresh one if launchd doesn't bring it back, avoiding a double daemon.
+    """
+    from memo.recall_server import _is_pid_alive, _read_pid
+
+    cfg = Config.from_env()
+    old_pid = _read_pid(cfg.state_dir)
+
+    ctx.invoke(recall_daemon_stop)
+
+    # Old process is dead + PID file cleaned. Give a launchd KeepAlive up to
+    # ~5s to respawn under its own management; if a new live PID appears,
+    # launchd handled the restart and we must NOT start a competing process.
+    for _ in range(50):
+        time.sleep(0.1)
+        pid = _read_pid(cfg.state_dir)
+        if pid is not None and pid != old_pid and _is_pid_alive(pid):
+            console.print(f"[green]restarted[/green] (respawned by launchd, pid={pid})")
+            return
+
+    # Not launchd-managed (or respawn disabled) — start a fresh daemon.
+    ctx.invoke(recall_daemon_start)
 
 
 @recall_daemon_group.command(name="status")
