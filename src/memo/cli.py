@@ -56,6 +56,7 @@ from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
 from memo.cli_health import health as health_cmd
 from memo.cli_history import diff_cmd, historia_cmd
+from memo.cli_http import http_api
 from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
@@ -85,6 +86,7 @@ from memo.cli_profile import profile_group
 from memo.cli_query import query_group
 from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_recall_hook import recall_hook
+from memo.cli_related import related
 from memo.cli_release import release_group
 from memo.cli_repo import repo_group
 from memo.cli_retier import retier_cmd
@@ -257,6 +259,7 @@ def cli(ctx: click.Context) -> None:
 
 # Command groups extracted from this module live in cli_*.py and register here.
 cli.add_command(graph_group)
+cli.add_command(related)
 cli.add_command(eval_group)
 cli.add_command(dream_cmd)
 cli.add_command(maintain_cmd)
@@ -291,8 +294,10 @@ cli.add_command(migrate_vault)
 cli.add_command(migrate_vault, name="migrate")  # alias
 cli.add_command(mcp_command)
 cli.add_command(install_slash)
+cli.add_command(install_slash, name="setup")  # `setup` alias for install-slash
 cli.add_command(install_mcp)
 cli.add_command(install_statusline)
+cli.add_command(http_api)
 cli.add_command(self_update)  # primary name: "update"
 # Back-compat: keep the old `memo upgrade` / `memo self-update` names working
 # (now hidden) so any auto-update path or muscle memory still resolves. Same
