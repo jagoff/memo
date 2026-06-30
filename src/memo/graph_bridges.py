@@ -26,6 +26,55 @@ def _symmetric_neighbors(
     return neighbors
 
 
+def _articulation_points(neighbors: dict[str, set[str]]) -> set[str]:
+    """Articulation points via iterative Tarjan DFS — O(V+E), recursion-safe.
+
+    A node is an articulation point iff removing it increases the number of
+    connected components. Iterative (explicit stack) so a deep DFS over a large
+    entity graph cannot blow Python's recursion limit.
+    """
+    disc: dict[str, int] = {}
+    low: dict[str, int] = {}
+    parent: dict[str, str | None] = {}
+    aps: set[str] = set()
+    timer = 0
+
+    for root in sorted(neighbors):
+        if root in disc:
+            continue
+        parent[root] = None
+        disc[root] = low[root] = timer
+        timer += 1
+        root_children = 0
+        stack: list[tuple[str, Any]] = [(root, iter(sorted(neighbors[root])))]
+        while stack:
+            u, it = stack[-1]
+            nxt = next(it, None)
+            if nxt is None:
+                stack.pop()
+                p = parent[u]
+                if p is not None:
+                    low[p] = min(low[p], low[u])
+                    if parent[p] is not None and low[u] >= disc[p]:
+                        aps.add(p)
+                continue
+            v = nxt
+            if v == parent[u]:
+                continue
+            if v in disc:
+                low[u] = min(low[u], disc[v])
+            else:
+                parent[v] = u
+                disc[v] = low[v] = timer
+                timer += 1
+                if u == root:
+                    root_children += 1
+                stack.append((v, iter(sorted(neighbors[v]))))
+        if root_children >= 2:
+            aps.add(root)
+    return aps
+
+
 def _components_without(
     neighbors: dict[str, set[str]], excluded: str
 ) -> list[list[str]]:
@@ -50,27 +99,36 @@ def _components_without(
 
 
 def find_bridges(
-    adjacency: dict[str, dict[str, float]], *, min_side: int = 2
+    adjacency: dict[str, dict[str, float]], *, min_side: int = 2, max_side: int = 40
 ) -> list[dict[str, Any]]:
-    """Find articulation bridges.
+    """Find articulation bridges between two BOUNDED, meaningful clusters.
 
     Returns ``[{"bridge": str, "left": list[str], "right": list[str]}]`` — one
     entry per bridging entity, where ``left``/``right`` are the two largest
-    qualifying components its neighbours fall into. Deterministic.
+    qualifying components its neighbours fall into. A side qualifies only when
+    its size is in ``[min_side, max_side]``: the upper bound EXCLUDES the global
+    giant component, so a node that merely tethers a small cluster to the whole
+    graph is not reported (that produced the degenerate "memo and X via Y"
+    insights). Deterministic.
+
+    Only articulation points are examined (Tarjan, O(V+E)), so the per-node
+    component flood runs for the few cut vertices instead of every node.
     """
     neighbors = _symmetric_neighbors(adjacency)
+    aps = _articulation_points(neighbors)
     out: list[dict[str, Any]] = []
-    for node in sorted(neighbors):
+    for node in sorted(aps):
         nbr_set = neighbors.get(node, set())
         if len(nbr_set) < 2:
             continue
         components = _components_without(neighbors, node)
-        # Keep only components that contain a neighbour of ``node`` and are big
-        # enough to be a meaningful side.
+        # A side must contain a neighbour of ``node`` and be a BOUNDED cluster
+        # (>= min_side so it is meaningful, <= max_side so it is not the global
+        # giant component masquerading as a "theme").
         qualifying = [
             c
             for c in components
-            if len(c) >= min_side and any(x in nbr_set for x in c)
+            if min_side <= len(c) <= max_side and any(x in nbr_set for x in c)
         ]
         if len(qualifying) < 2:
             continue

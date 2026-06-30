@@ -47,3 +47,32 @@ def test_min_side_excludes_small_components():
 def test_find_bridges_is_deterministic():
     adj = _two_triangles_joined()
     assert find_bridges(adj) == find_bridges(adj)
+
+
+def test_giant_component_side_is_excluded():
+    # 'j' joins a BIG component (>max_side) and a small triangle. The giant side
+    # is not a meaningful "theme", so with it excluded there is only one bounded
+    # side and 'j' is NOT emitted as a bridge (fixes the 'memo and X' degeneration).
+    adj: dict[str, dict[str, float]] = {}
+
+    def link(a: str, b: str) -> None:
+        adj.setdefault(a, {})[b] = 1.0
+        adj.setdefault(b, {})[a] = 1.0
+
+    big = [f"g{i}" for i in range(45)]
+    link("j", big[0])
+    for i in range(len(big) - 1):
+        link(big[i], big[i + 1])  # 45-node chain hanging off j (> max_side=40)
+    link("j", "s1")
+    link("s1", "s2")
+    link("s2", "j")  # small bounded triangle j-s1-s2
+
+    bridges = find_bridges(adj, min_side=2, max_side=40)
+    assert all(b["bridge"] != "j" for b in bridges)  # j's giant side excluded
+
+
+def test_articulation_points_match_known_graph():
+    from memo.graph_bridges import _articulation_points, _symmetric_neighbors
+
+    aps = _articulation_points(_symmetric_neighbors(_two_triangles_joined()))
+    assert aps == {"j"}  # only the joining node is an articulation point
