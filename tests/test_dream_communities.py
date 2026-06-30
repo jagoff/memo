@@ -58,6 +58,35 @@ def test_community_clusters_skips_hub_blob():
     assert [c["representative"] for c in cl] == ["a"]  # 200-entity blob dropped
 
 
+def test_community_clusters_excludes_hub_led_community():
+    from memo.navigation import Community
+
+    class _Nav:
+        def detect_communities(self, *, min_size, use_codegraph=None):
+            return [
+                Community(id=1, entities=["hub", "n1", "n2", "n3"], size=4,
+                          representative_entity="hub"),
+                Community(id=2, entities=["a", "b", "c", "d"], size=4,
+                          representative_entity="a"),
+            ]
+
+    class _Graph:
+        def all_weighted_edges(self):
+            # 'hub' has a huge weighted degree -> a mega-hub; the rest are small.
+            return [("hub", f"x{i}", 5.0) for i in range(20)] + [("a", "b", 1.0), ("c", "d", 1.0)]
+
+        def entity_memories(self, name, type_=None):
+            return ["m1"]
+
+    class _Mem:
+        navigator = _Nav()
+        graph = _Graph()
+
+    cl = community_clusters(_Mem(), min_size=4, max_communities=5, max_size=40)
+    # the 'hub'-led grab-bag is dropped; only the coherent 'a' community survives
+    assert [c["representative"] for c in cl] == ["a"]
+
+
 def test_decide_syntheses_dedup_dryrun_save_and_fail():
     clusters = [{"entities": ["a", "b"], "representative": "a", "memory_ids": ["m1"]}]
 
