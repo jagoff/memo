@@ -2,10 +2,18 @@
 
 Called by agent shims (installed via `memo install-shims`). Must stay
 fast and MLX-free: only git + importlib.metadata, no embedding.
+
+For opencode the printed banner is wiped by its TUI, so we also stamp the
+live memo version into opencode's `username` — the only config-controlled
+persistent text slot in its TUI (it has no native statusline/tagline for
+custom text; plugin status-bar widgets are an open feature request). That
+makes `[Memo <ver>]` show next to every user message.
 """
 from __future__ import annotations
 
+import re
 import sys
+from pathlib import Path
 
 import click
 
@@ -32,6 +40,72 @@ def startup_banner_cmd(agent: str) -> None:
     sys.stderr.write(f"{label}{'─' * pad}\n")
     sys.stderr.write(f"{memo_line}\n")
     sys.stderr.write(f"{'─' * width}\n")
+
+    # opencode's TUI wipes the banner above; stamp the version into its
+    # `username` so [Memo <ver>] persists next to user messages.
+    if agent == "opencode":
+        _refresh_opencode_username(version)
+
+
+def _opencode_config_path() -> Path:
+    import os
+
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "opencode" / "opencode.json"
+
+
+# Matches a trailing " · [Memo x.y.z]" badge so it can be re-stamped idempotently.
+_OPENCODE_BADGE_RE = re.compile(r"\s*·?\s*\[Memo [^\]]*\]\s*$")
+
+
+def _refresh_opencode_username(version: str) -> str | None:
+    """Stamp the live memo version into opencode's `username`.
+
+    opencode exposes no statusline/tagline config for arbitrary text, so
+    `username` (shown beside each user message) is the only persistent slot.
+    Writes the pure-JSON `opencode.json` (comment-safe; it merges with the
+    user's `opencode.jsonc`). Idempotent — only writes when the value changes.
+    Returns the new value, or None if unchanged / opencode absent / on error.
+    """
+    import json
+
+    path = _opencode_config_path()
+    if not path.parent.is_dir():
+        return None  # opencode not installed on this machine
+
+    data: dict = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, ValueError):
+            data = {}
+
+    existing = data.get("username")
+    base = _OPENCODE_BADGE_RE.sub("", existing).strip() if isinstance(existing, str) else ""
+    if not base:
+        import getpass
+
+        try:
+            base = getpass.getuser()
+        except Exception:
+            base = "user"
+
+    desired = f"{base} · [Memo {version}]"
+    if existing == desired:
+        return None
+
+    data["username"] = desired
+    try:
+        import os
+
+        tmp = path.with_suffix(".json.memo-tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        return None
+    return desired
 
 
 def _pending_update_tag() -> str | None:
