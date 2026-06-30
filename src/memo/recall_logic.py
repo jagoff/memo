@@ -491,11 +491,10 @@ def _recall_logic(
     _gpw = _flag_float("MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT") or 0.0
     if flag_bool("MEMO_RECALL_GRAPH_PROXIMITY") and _gpw > 0:
         with contextlib.suppress(Exception):
-            from memo.entity_extractor import extract_entities
-            from memo.graph_proximity import graph_boost_factory
+            from memo.graph_proximity import extract_query_entities, graph_boost_factory
 
             _graph_boost = graph_boost_factory(
-                mem.graph, extract_entities(prompt), weight=_gpw
+                mem.graph, extract_query_entities(prompt, mem.graph), weight=_gpw
             )
 
     try:
