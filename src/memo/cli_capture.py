@@ -116,6 +116,19 @@ def capture_stop() -> None:
         if debug:
             print(f"# memo grounding failed: {exc}", file=_sys.stderr)
 
+    # Token-savings ledger: fold the (just-updated) grounded events into the
+    # durable per-day file before grounding.log rotates them out, so `memo
+    # tokens` keeps a monotonic all-time total. Trivial JSON I/O, never fails
+    # the turn.
+    try:
+        from memo import token_ledger
+        from memo.config import Config
+
+        token_ledger.roll_up(Config.from_env().state_dir)
+    except Exception as exc:
+        if debug:
+            print(f"# memo token-ledger rollup failed: {exc}", file=_sys.stderr)
+
     # Episodic memory: index this session's prompt-arc so `memo resume` can find
     # it by meaning. Content-hash-skip makes most Stops a no-op; never fails the hook.
     try:
