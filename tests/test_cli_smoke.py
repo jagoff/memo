@@ -88,7 +88,7 @@ def test_sync_clone_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
 
 # ---------------------------------------------------------------------------
-# memo map / mapa alias
+# memo map
 # ---------------------------------------------------------------------------
 
 
@@ -98,26 +98,12 @@ def test_map_help(tmp_path: Path) -> None:
     assert "--output" in res.output
 
 
-def test_mapa_alias_help(tmp_path: Path) -> None:
-    """mapa is registered as a back-compat alias for map."""
-    res = CliRunner().invoke(cli, ["mapa", "--help"], env=_env(tmp_path))
-    assert res.exit_code == 0
-    assert "--output" in res.output
-
-
 # ---------------------------------------------------------------------------
-# memo record-history / historia alias
+# memo record-history
 # ---------------------------------------------------------------------------
 
 
 def test_record_history_help(tmp_path: Path) -> None:
     res = CliRunner().invoke(cli, ["record-history", "--help"], env=_env(tmp_path))
-    assert res.exit_code == 0
-    assert "ID_OR_PREFIX" in res.output
-
-
-def test_historia_alias_help(tmp_path: Path) -> None:
-    """historia is a back-compat alias for record-history."""
-    res = CliRunner().invoke(cli, ["historia", "--help"], env=_env(tmp_path))
     assert res.exit_code == 0
     assert "ID_OR_PREFIX" in res.output
