@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.6.11] - 2026-06-30
+
+### Fixed
+- `memo init` now exits cleanly with guidance on a non-TTY / non-interactive shell instead of crashing inside the interactive picker.
+- LLM features (`ask` / `synthesize` / `dream`) on the CPU (non-MLX) backend now print the "requires the MLX runtime" guidance as a clean error instead of an uncaught traceback.
+- MCP `serverInfo.version` now reports memo's own version instead of the FastMCP framework version.
+
+### Changed
+- README: corrected the CLI command count (95 → 105) and the full MCP surface count (123 → 126).
+
 ## [2.6.10] - 2026-06-30
 
 ### Fixed
