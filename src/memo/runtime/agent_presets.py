@@ -76,6 +76,8 @@ AGENT_PRESETS: dict[str, AgentPreset] = {
     "kiro": AgentPreset("kiro", Writer.JSON_MAP, _all("~/.kiro/settings/mcp.json")),
     "antigravity": AgentPreset("antigravity", Writer.JSON_MAP, _all("~/.gemini/config/mcp_config.json")),
     "warp": AgentPreset("warp", Writer.JSON_MAP, _all("~/.warp/.mcp.json")),
+    "continue": AgentPreset("continue", Writer.YAML_CONTINUE, _all("~/.continue/mcpServers/memo.yaml")),
+    "goose": AgentPreset("goose", Writer.YAML_GOOSE, _all("~/.config/goose/config.yaml")),
     "jetbrains": AgentPreset("jetbrains", Writer.SNIPPET, {}),
 }
 
@@ -135,7 +137,8 @@ def install_from_preset(preset: AgentPreset, server: Any, *, write: bool) -> dic
     if preset.writer is Writer.JSON_MAP:
         action = _write_mcp_json(path, target, json_key=preset.json_key, include_type=preset.include_type)
     else:
-        # YAML dispatch is wired in Task 2 once the writers exist (keeps this task's
-        # mypy gate clean — no import of not-yet-defined functions).
-        return {"ok": False, "agent": preset.agent, "error": f"writer {preset.writer.value} not available"}
+        from memo.runtime.mcp import _write_yaml_continue, _write_yaml_goose
+
+        writer = _write_yaml_continue if preset.writer is Writer.YAML_CONTINUE else _write_yaml_goose
+        action = writer(path, target)
     return {"ok": True, "agent": preset.agent, "action": action, "path": str(path)}

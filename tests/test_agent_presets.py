@@ -6,6 +6,8 @@ import dataclasses
 import json
 from pathlib import Path
 
+import pytest
+
 from memo.runtime import agent_presets as ap
 
 
@@ -84,3 +86,46 @@ def test_dry_run_reports_path_no_write(monkeypatch, tmp_path):
     res = ap.install_from_preset(ap.AGENT_PRESETS["warp"], _server(tmp_path / "memo-mcp"), write=False)
     assert res["action"] == "dry-run" and res["path"].endswith("/.warp/.mcp.json")
     assert not Path(res["path"]).exists()
+
+
+def test_continue_block_file_shape(monkeypatch, tmp_path):
+    import yaml
+
+    monkeypatch.setattr(ap.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(ap.sys, "platform", "darwin")
+    res = ap.install_from_preset(ap.AGENT_PRESETS["continue"], _server(tmp_path / "memo-mcp"), write=True)
+    assert res["path"].endswith("/.continue/mcpServers/memo.yaml")
+    doc = yaml.safe_load(Path(res["path"]).read_text())
+    assert doc["schema"] == "v1"
+    assert isinstance(doc["mcpServers"], list)  # list, not object map
+    assert doc["mcpServers"][0]["command"].endswith("memo-mcp")
+    assert doc["mcpServers"][0]["env"]["MEMO_SOURCE"] == "continue"
+
+
+def test_goose_extensions_merge_preserves_and_renames(monkeypatch, tmp_path):
+    import yaml
+
+    monkeypatch.setattr(ap.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(ap.sys, "platform", "linux")
+    path = ap.resolve_preset_path(ap.AGENT_PRESETS["goose"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"extensions": {"existing": {"type": "stdio"}}, "OPENAI_HOST": "x"}))
+    ap.install_from_preset(ap.AGENT_PRESETS["goose"], _server(tmp_path / "memo-mcp"), write=True)
+    doc = yaml.safe_load(path.read_text())
+    assert "existing" in doc["extensions"]           # merge preserved
+    assert doc["OPENAI_HOST"] == "x"                 # top-level preserved
+    memo_ext = doc["extensions"]["memo"]
+    assert memo_ext["cmd"].endswith("memo-mcp")      # `cmd`, not `command`
+    assert memo_ext["envs"]["MEMO_SOURCE"] == "goose"  # `envs` value map (delivers values)
+
+
+def test_goose_rejects_malformed_yaml(monkeypatch, tmp_path):
+    import click
+
+    monkeypatch.setattr(ap.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(ap.sys, "platform", "linux")
+    path = ap.resolve_preset_path(ap.AGENT_PRESETS["goose"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("extensions: [unclosed\n")
+    with pytest.raises(click.ClickException):
+        ap.install_from_preset(ap.AGENT_PRESETS["goose"], _server(tmp_path / "memo-mcp"), write=True)
