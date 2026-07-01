@@ -9,6 +9,12 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-07-01
+
+### Added
+- **Generic online proof loop** for the recall self-tuner — out-of-sample grounding verification now covers any tuned knob, not just `min_sim`. The graph-proximity-weight tuner joins the proof loop: each applied change is confirmed or reverted by real grounding under its new params version, with a knob-generic revert that restores the correct per-knob offline baseline. A one-cycle revert cooldown stops a co-gated pass from re-applying a just-reverted value the same night. (All gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default — no default behavior change.)
+- Proof-loop ledger, `memo dream status`, and `memo dream timeline` now label each entry by the tuned knob (`min_sim` / `graph_proximity_weight`).
+
 ## [2.7.0] - 2026-07-01
 
 ### Added
