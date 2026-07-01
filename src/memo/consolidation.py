@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from memo.llm import MLXChat
-from memo.memory.record import chat_with_timeout
+from memo.memory.record import chat_with_timeout, derived_save_scope
 
 _log = logging.getLogger(__name__)
 
@@ -303,12 +303,16 @@ class AdvancedConsolidator:
             )
             type_ = latest_rec.type if latest_rec else "note"
 
-            merged_rec = self.memory.save(
-                content=proposal.merged_body,
-                title=proposal.merged_title,
-                type_=type_,
-                tags=list(all_tags),
-            )
+            # A merged record is a near-duplicate of the members it replaces by
+            # construction — suppress the dedup nag whether consolidation runs
+            # inside dream (already scoped) or standalone via `memo consolidate`.
+            with derived_save_scope():
+                merged_rec = self.memory.save(
+                    content=proposal.merged_body,
+                    title=proposal.merged_title,
+                    type_=type_,
+                    tags=list(all_tags),
+                )
 
             # Archive the old memories
             archived = []

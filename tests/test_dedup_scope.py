@@ -76,3 +76,32 @@ def test_scope_resets_after_exit(mem_const_embed, caplog):
     with derived_save_scope():
         assert in_derived_save_scope()
     assert not in_derived_save_scope()
+
+
+def test_apply_merge_suppresses_dedup_nag(mem_const_embed, caplog):
+    """`apply_merge` (also reachable standalone via `memo consolidate`, outside
+    dream's scope) must not nag: a merged record is a near-dup of its members by
+    construction, so its save runs inside `derived_save_scope()`."""
+    from memo.consolidation import AdvancedConsolidator, MergeProposal
+
+    a = mem_const_embed.save(content="alpha body", title="a", type_="note")
+    b = mem_const_embed.save(content="beta body", title="b", type_="note")
+    cons = AdvancedConsolidator(mem_const_embed)
+    proposal = MergeProposal(
+        cluster_id=1,
+        memory_ids=[a.id, b.id],
+        merged_title="merged",
+        merged_body="merged body",
+        merge_strategy="synthesis",
+        rationale="t",
+        archived_ids=[b.id],
+    )
+    caplog.clear()  # drop the seed saves' own near-dup logs (const embedder)
+    with caplog.at_level(logging.DEBUG, logger="memo.memory.record"):
+        cons.apply_merge(proposal, dry_run=False)
+
+    recs = _dedup_records(caplog)
+    assert recs, "the merged save should hit the dedup check"
+    assert all(r.levelno == logging.DEBUG for r in recs), (
+        "apply_merge must run the merged save inside derived_save_scope()"
+    )
