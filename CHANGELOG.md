@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-07-01
+
+### Added
+- **Self-improvement proof loop** for the recall self-tuner — all gated behind `MEMO_DREAM_TUNE_ENABLED` (OFF by default), no default behavior change. Each nightly `min_sim` change the tuner applies is now judged out-of-sample by the real grounding accumulated under its new tuned-params version, reverted if that regresses, and recorded in a durable ledger.
+  - `params_version` attribution stamped on every grounding row; `memo eval baseline` snapshots offline precision/noise + online grounded/tokens (7d/30d) + the active params version.
+  - Online-guarded confirm/revert/wait/expire verdicts (`resolve_pending`), with a self-contained revert that restores the pre-apply floor and offline baseline.
+  - One overlay change per proof cycle: the graph tuner passes defer (`deferred_pending`) while a `min_sim` change is being proven, so its grounding cohort is never orphaned.
+  - Graduation-readiness checker surfaced in `memo dream status`; `memo dream timeline` renders the proof-loop history with realized online impact.
+- Flags: `MEMO_DREAM_TUNE_MIN_COHORT` (20), `MEMO_DREAM_TUNE_ONLINE_EPS` (0.02), `MEMO_DREAM_TUNE_GRADUATION_K` (5).
+
 ## [2.6.11] - 2026-06-30
 
 ### Fixed
