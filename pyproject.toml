@@ -115,6 +115,7 @@ testpaths = ["tests"]
 markers = [
     "requires_mlx: smoke test que carga modelos MLX reales (Apple Silicon only). Auto-skipea sin mlx_lm.",
     "slow: tests >1s; default `-m 'not slow'`.",
+    "no_stub_embedder: test conduce el embedder por su cuenta; se saltea el stub backend-free autouse del conftest.",
 ]
 
 [tool.mypy]

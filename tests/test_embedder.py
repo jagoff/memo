@@ -119,6 +119,7 @@ def test_cache_size_param_zero_disables_even_with_env(monkeypatch):
     assert MLXEmbedder(expected_dims=4, cache_size=0)._query_cache is None  # ...0 wins
 
 
+@pytest.mark.no_stub_embedder
 def test_memory_facade_enables_query_cache_by_default(tmp_cfg, monkeypatch):
     # Regression: the embedder reads MEMO_QUERY_CACHE_SIZE raw (default off),
     # so before the facade passed the registry default (256) the query cache

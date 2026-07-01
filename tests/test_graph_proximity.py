@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from memo.graph_proximity import graph_boost_factory
 
 
@@ -210,6 +212,7 @@ def test_recall_flag_off_leaves_ranking_unchanged(tmp_path, monkeypatch):
     mem.close()
 
 
+@pytest.mark.no_stub_embedder
 def test_recall_flag_on_reorders_graph_proximal_up(tmp_path, monkeypatch):
     from memo.recall_logic import _recall_logic
 

@@ -46,6 +46,7 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     (tmp_path / "state").mkdir()
 
 
+@pytest.mark.no_stub_embedder
 def test_memo_embed_single_returns_vector_with_dim(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -66,6 +67,7 @@ def test_memo_embed_single_returns_vector_with_dim(
     assert calls["embed"] == []
 
 
+@pytest.mark.no_stub_embedder
 def test_memo_embed_batch_via_stdin(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -88,6 +90,7 @@ def test_memo_embed_batch_via_stdin(
     assert calls["embed_query"] == []
 
 
+@pytest.mark.no_stub_embedder
 def test_memo_embed_query_uses_asymmetric_prefix(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

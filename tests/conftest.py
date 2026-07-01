@@ -62,6 +62,7 @@ os.environ.setdefault(
 )
 
 from memo.config import Config
+from memo.embed_base import EmbedderBase
 
 
 @pytest.fixture
@@ -225,3 +226,75 @@ def _skip_if_no_mlx(request) -> None:
             import mlx_lm  # noqa: F401
         except ImportError:
             pytest.skip("mlx_lm not importable — Apple Silicon only")
+
+
+class _StubEmbedder(EmbedderBase):
+    """Deterministic, dependency-free embedder for backend-free unit runs.
+
+    Produces stable `sha256`-derived unit vectors of the config's dim, so the
+    whole non-`requires_mlx` suite runs with neither MLX nor sentence-transformers
+    installed (the Linux CI condition) instead of erroring at the embed step.
+    """
+
+    def __init__(self, dims: int) -> None:
+        self._dims = max(1, int(dims))
+
+    @property
+    def dims(self) -> int:
+        return self._dims
+
+    def _vec(self, text: str) -> list[float]:
+        digest = hashlib.sha256((text or "").encode("utf-8")).digest()
+        vals = [((digest[i % len(digest)] / 255.0) * 2.0) - 1.0 for i in range(self._dims)]
+        norm = sum(v * v for v in vals) ** 0.5 or 1.0
+        return [v / norm for v in vals]
+
+    def embed(self, inputs):
+        return [self._vec(t) for t in inputs]
+
+    def embed_text(self, text: str) -> list[float]:
+        return self._vec(text)
+
+    def embed_image(self, path) -> list[float]:
+        return self._vec(f"image::{path}")
+
+    def embed_audio(self, path) -> list[float]:
+        return self._vec(f"audio::{path}")
+
+    def unload(self) -> None:  # lifecycle no-op
+        return None
+
+    @property
+    def model_name(self) -> str:
+        return "stub-embedder"
+
+    @property
+    def is_warm(self) -> bool:
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _stub_embedder_backend_free(request, monkeypatch) -> None:
+    """Make `Memory` use a deterministic stub embedder whenever no real backend
+    is available (Linux CI: no MLX, no sentence-transformers), so embedder-dependent
+    unit tests run instead of erroring at the embed step.
+
+    Skipped for `requires_mlx` tests (they exercise the real embedder). On a dev
+    box where MLX *is* importable the real embedder is kept — set
+    `MEMO_TEST_FORCE_STUB=1` to force the stub locally and reproduce the CI path.
+    """
+    if request.node.get_closest_marker("requires_mlx"):
+        return
+    # Tests that drive the embedder themselves (dim/norm validation, batching,
+    # cache, the real asymmetric-prefix path) opt out and keep full control.
+    if request.node.get_closest_marker("no_stub_embedder"):
+        return
+    from memo.platform_detect import mlx_available
+
+    if mlx_available() and not os.environ.get("MEMO_TEST_FORCE_STUB"):
+        return  # real MLX embedder on Apple-Silicon dev boxes (no behaviour change)
+
+    def _make_stub(cfg, *, cache_size=None):
+        return _StubEmbedder(cfg.embedder_dims)
+
+    monkeypatch.setattr("memo.embedder_select.make_embedder", _make_stub)

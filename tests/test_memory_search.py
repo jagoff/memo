@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from memo.config import Config
 from memo.memory import Memory
 
@@ -81,6 +83,7 @@ def test_bm25_handles_empty_and_garbage_queries(mem_with_stub: Memory):
     assert isinstance(out, list)
 
 
+@pytest.mark.no_stub_embedder
 def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
     seen_inputs: list[str] = []
 
