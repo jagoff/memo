@@ -20,7 +20,7 @@ from pathlib import Path
 
 import click
 
-from memo import eval_recall
+from memo import eval_baseline, eval_recall
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
@@ -249,6 +249,49 @@ def eval_recall_cmd(
                 for h in d["top"]:
                     flag = "NOISE" if h["noise"] else ("rel" if h["relevant"] else "—")
                     console.print(f"      {h['score']:>5}  {flag:<5}  {h['title']}")
+
+
+@eval_group.command(name="baseline")
+@click.option("--k", type=int, default=5, help="Top-K for the offline recall metrics (default: 5).")
+@click.option(
+    "--labels",
+    "labels_path",
+    default="eval/regression_labels.json",
+    help="Label set for the offline metrics (schema memo.eval_recall.labels.v1).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the snapshot as raw JSON.")
+def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
+    """Freeze a baseline snapshot for self-improvement comparison.
+
+    Captures offline prec@K / noise@K, online grounded + tokens (7d / 30d), and
+    the active tuned-params version, to state_dir/eval/baseline_snapshot.json.
+    """
+    cfg = Config.from_env()
+    try:
+        labels = eval_recall.load_labels(Path(labels_path))
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(f"labels: {exc}") from exc
+
+    mem = _get_memory(cfg)
+    rows = eval_recall.evaluate(mem, k=k, labels=labels, configs=eval_recall.select_configs(None))
+    offline = eval_recall.gate_metrics(rows)
+
+    snap = eval_baseline.build_baseline_snapshot(cfg.state_dir, offline)
+    path = eval_baseline.snapshot_path(cfg.state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if as_json:
+        console.print_json(data=snap)
+    else:
+        w7 = snap["online"]["window_7d"]
+        console.print(
+            f"[green]✓[/green] baseline snapshot → {path}\n"
+            f"  offline prec@{k} {snap['offline']['precision_at_k']} / "
+            f"noise@{k} {snap['offline']['noise_at_k']}\n"
+            f"  online 7d grounded {w7['grounded']} (~{w7['tokens']} tok) · "
+            f"params {snap['params_version']}"
+        )
 
 
 @eval_group.command(name="harvest")
