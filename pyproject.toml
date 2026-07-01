@@ -34,6 +34,8 @@ dependencies = [
     "sqlite-vec>=0.1.9,<0.2",
     "fastmcp>=0.5,<4",  # Cap at <4: 3.4.2 patches 9 CVEs
     "python-frontmatter>=1.1",
+    # YAML config writers (Continue block file, Goose extensions merge) in install-mcp.
+    "pyyaml>=6.0",
     # First-run interactive picker (pure Python; cross-platform).
     "questionary>=2.0",
     "tomli-w>=1.0",
@@ -58,6 +60,7 @@ dev = [
     "pytest-timeout>=2.3",
     "ruff==0.15.20",
     "mypy>=1.10",
+    "types-PyYAML>=6.0",
 ]
 # Apple Vision OCR for screenshots/images embedded in Obsidian notes.
 # macOS-only. Install with: pip install -e ".[ocr]"
