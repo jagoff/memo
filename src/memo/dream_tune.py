@@ -446,6 +446,15 @@ def run_graph_weight_pass(
             res["status"] = "would_apply"
             return res
 
+        # One overlay change per proof cycle: if the min_sim proof loop has an
+        # unresolved pending, don't perturb the live overlay (it would orphan the
+        # pending's grounding cohort — the Phase-1 freeze root cause). Defer.
+        from memo import dream_tune_online
+
+        if dream_tune_online.has_unresolved_pending(cfg.state_dir):
+            res["status"] = "deferred_pending"
+            return res
+
         params = _overlay_params(cfg.state_dir)
         params[_GRAPH_WEIGHT] = best_weight
         write_overlay(
@@ -654,6 +663,14 @@ def run_graph_retrieval_pass(
         if dry_run:
             res["status"] = "would_apply"
             res["would_apply"] = best_cfg["name"]
+            return res
+
+        # One overlay change per proof cycle: hold the overlay steady while the
+        # min_sim proof loop has an unresolved pending (avoids orphaning its cohort).
+        from memo import dream_tune_online
+
+        if dream_tune_online.has_unresolved_pending(cfg.state_dir):
+            res["status"] = "deferred_pending"
             return res
 
         # Apply: preserve prior scalar knobs, clear any retrieval levers we

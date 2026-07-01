@@ -205,3 +205,11 @@ def graduation_status(state_dir: Path, *, k: int) -> dict[str, Any]:
     confirmed-streak >= k? Never flips any flag — reports only."""
     streak = graduation_streak(read_ledger(state_dir, limit=max(k * 4, 20)))
     return {"streak": streak, "k": k, "graduated": streak >= k}
+
+
+def has_unresolved_pending(state_dir: Path) -> bool:
+    """True when the min_sim proof loop has an applied-but-not-yet-resolved
+    change in flight. Other tuner passes consult this to hold the overlay steady
+    (one change per proof cycle) so the pending's grounding cohort is not
+    orphaned."""
+    return read_pending(state_dir) is not None
