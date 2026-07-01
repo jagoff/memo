@@ -90,3 +90,4 @@ docs/registry-submission.md
 # scratch/debug output
 *.log
 err_synth*.txt
+uv.lock
