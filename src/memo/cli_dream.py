@@ -999,6 +999,53 @@ def dream_status() -> None:
             console.print(f"  [yellow]warn:[/yellow] {e}")
 
 
+@dream_cmd.command(name="timeline")
+@click.option("--limit", type=int, default=20, help="Most recent proof-loop entries to show (default: 20).")
+@click.option("--json", "as_json", is_flag=True, help="Emit the ledger entries as raw JSON.")
+def dream_timeline(limit: int, as_json: bool) -> None:
+    """Proof-loop timeline: how the recall self-tuner changed over time and
+    whether each change actually improved real grounding (realized online impact).
+    """
+    from memo.dream_tune_online import graduation_streak, read_ledger
+
+    cfg = Config.from_env()
+    entries = read_ledger(cfg.state_dir, limit=limit)
+    if as_json:
+        click.echo(json.dumps(entries, ensure_ascii=False, indent=2))
+        return
+    if not entries:
+        console.print("[dim]no proof-loop history yet (the recall self-tuner has applied no change)[/dim]")
+        return
+
+    console.print("[bold]recall self-tuner — proof-loop timeline[/bold]")
+    for e in entries:
+        verdict = e.get("verdict") or ""
+        mark = {
+            "confirmed": "[green]✓ kept[/green]",
+            "reverted": "[red]✗ reverted[/red]",
+            "expired": "[yellow]~ expired[/yellow]",
+        }.get(verdict, verdict)
+        ts = (e.get("resolved_ts") or "")[:16]
+        delta = e.get("realized_delta")
+        delta_s = f"{delta:+g}" if isinstance(delta, (int, float)) else "—"
+        console.print(
+            f"  {ts}  {mark}  min_sim {e.get('floor_before')}→{e.get('floor_after')}  "
+            f"online {e.get('online_before')}→{e.get('online_after')} (Δ{delta_s}) n={e.get('n_after')}"
+        )
+
+    confirmed = sum(1 for e in entries if e.get("verdict") == "confirmed")
+    reverted = sum(1 for e in entries if e.get("verdict") == "reverted")
+    expired = sum(1 for e in entries if e.get("verdict") == "expired")
+    net = sum(
+        e["realized_delta"] for e in entries
+        if e.get("verdict") == "confirmed" and isinstance(e.get("realized_delta"), (int, float))
+    )
+    console.print(
+        f"  [dim]—[/dim] {confirmed} kept · {reverted} reverted · {expired} expired · "
+        f"net realized Δ{net:+g} · streak {graduation_streak(entries)}"
+    )
+
+
 @dream_cmd.command(name="anticipate")
 @click.option("--json", "as_json", is_flag=True, help="Emit the anticipated-needs fragment as JSON.")
 def dream_anticipate_cmd(as_json: bool) -> None:
