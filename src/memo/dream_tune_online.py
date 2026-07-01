@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from memo.dashboard import GROUNDED_SCORE, read_grounding_log
+from memo.tuned_overlay import params_version
 
 PENDING_FILE = "tune_pending.json"
 LEDGER_FILE = "tune_ledger.jsonl"
@@ -80,6 +81,41 @@ def write_pending(state_dir: Path, record: dict[str, Any]) -> None:
     p = pending_path(state_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
+_DEFAULT_KNOB = "MEMO_RECALL_MIN_SIM"
+
+
+def record_pending(
+    state_dir: Path,
+    *,
+    knob: str,
+    value_before: Any,
+    value_after: Any,
+    offline_before: dict[str, float],
+    offline_after: dict[str, float],
+    version_before: str,
+) -> None:
+    """Record an applied tuner change for a later night to resolve online.
+
+    Generic over which knob changed. Must be called AFTER the overlay write (so
+    ``params_version`` reflects the new config) and given the ``version_before``
+    captured BEFORE that write. ``online_before`` is the pre-apply grounded
+    fraction of the old-version cohort. Field names ``floor_before/after`` are
+    kept for ledger back-compat (they hold the knob's before/after value)."""
+    write_pending(
+        state_dir,
+        {
+            "knob": knob,
+            "floor_before": value_before,
+            "floor_after": value_after,
+            "version_before": version_before,
+            "version_after": params_version(state_dir),
+            "offline_before": offline_before,
+            "offline_after": offline_after,
+            "online_before": online_fraction(state_dir, version_before)[0],
+        },
+    )
 
 
 def clear_pending(state_dir: Path) -> None:
@@ -148,6 +184,7 @@ def resolve_pending(
                 "resolved_ts": (now or datetime.now(UTC)).isoformat(timespec="seconds"),
                 "verdict": "expired",
                 "reason": "version_drift",
+                "knob": pending.get("knob", _DEFAULT_KNOB),
                 "floor_before": pending.get("floor_before"),
                 "floor_after": pending.get("floor_after"),
                 "version_before": pending.get("version_before"),
@@ -170,6 +207,7 @@ def resolve_pending(
     entry = {
         "resolved_ts": (now or datetime.now(UTC)).isoformat(timespec="seconds"),
         "verdict": verdict,
+        "knob": pending.get("knob", _DEFAULT_KNOB),
         "floor_before": pending.get("floor_before"),
         "floor_after": pending.get("floor_after"),
         "version_before": pending.get("version_before"),

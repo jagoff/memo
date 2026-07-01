@@ -115,3 +115,42 @@ def test_resolve_waiting_when_live_matches_version(tmp_path, monkeypatch):
     assert r["status"] == "waiting"
     assert dto.read_pending(tmp_path) is not None                # kept (still live)
     assert dto.read_ledger(tmp_path) == []
+
+
+def test_record_pending_captures_version_and_online(tmp_path):
+    from memo.dashboard_logs import append_grounding_log
+    from memo.tuned_overlay import params_version, write_overlay
+
+    # simulate the pre-apply cohort under the OLD version
+    write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.5}, {"set_by": "test"})
+    v_before = params_version(tmp_path)
+    append_grounding_log(tmp_path, session_id="s", turn=1, recall_id="a1", used_score=0.9, method="lexical")
+    # apply a change (new overlay = new version)
+    write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.62}, {"set_by": "test"})
+    dto.record_pending(
+        tmp_path, knob="MEMO_RECALL_MIN_SIM", value_before=0.5, value_after=0.62,
+        offline_before={"precision_at_k": 0.2, "noise_at_k": 0.0},
+        offline_after={"precision_at_k": 0.3, "noise_at_k": 0.0},
+        version_before=v_before,
+    )
+    pend = dto.read_pending(tmp_path)
+    assert pend["knob"] == "MEMO_RECALL_MIN_SIM"
+    assert pend["floor_before"] == 0.5 and pend["floor_after"] == 0.62
+    assert pend["version_before"] == v_before
+    assert pend["version_after"] == params_version(tmp_path)   # current (new) version
+    assert pend["online_before"] == 1.0                          # 1/1 grounded under v_before
+
+
+def test_resolve_pending_carries_knob(tmp_path, monkeypatch):
+    dto.write_pending(tmp_path, _pending(knob="MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"))
+    monkeypatch.setattr(dto, "online_fraction", lambda sd, v, **k: (0.55, 40))
+    r = dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02)
+    assert r["status"] == "confirmed"
+    assert r["knob"] == "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"
+
+
+def test_resolve_pending_knob_defaults_when_absent(tmp_path, monkeypatch):
+    dto.write_pending(tmp_path, _pending())  # no knob key
+    monkeypatch.setattr(dto, "online_fraction", lambda sd, v, **k: (0.55, 40))
+    r = dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02)
+    assert r["knob"] == "MEMO_RECALL_MIN_SIM"
