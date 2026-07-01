@@ -36,6 +36,24 @@ def test_graph_weight_defers_while_pending_in_flight(tmp_path, monkeypatch):
     assert dream_tune_online.read_pending(tmp_path) is not None  # untouched
 
 
+def test_graph_retrieval_defers_while_pending_in_flight(tmp_path, monkeypatch):
+    dream_tune_online.write_pending(tmp_path, {"version_after": "v2"})
+    monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
+    monkeypatch.setattr(dream_tune, "load_retrieval_baseline", lambda sd: None)
+    # force a winning non-vec config so it would apply if not for the pending
+    good = {"precision_at_k": 0.9, "noise_at_k": 0.0, "latency_ms_p50": 10.0}
+    vecm = {"precision_at_k": 0.2, "noise_at_k": 0.0, "latency_ms_p50": 10.0}
+    monkeypatch.setattr(dream_tune, "measure_retrieval_config",
+                        lambda mem, labels, *, k, mode, flags: good if mode == "hybrid" else vecm)
+
+    def _boom(*a, **k):
+        raise AssertionError("overlay must not be written while a pending is in flight")
+
+    monkeypatch.setattr(dream_tune, "write_overlay", _boom)
+    res = dream_tune.run_graph_retrieval_pass(_cfg(tmp_path), object(), k=5)
+    assert res["status"] == "deferred_pending"
+
+
 def test_graph_weight_applies_when_no_pending(tmp_path, monkeypatch):
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
     monkeypatch.setattr(dream_tune, "load_graph_baseline", lambda sd: None)

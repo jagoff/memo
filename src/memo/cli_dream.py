@@ -972,10 +972,12 @@ def dream_status() -> None:
         console.print("  [bold]proof loop[/bold] (realized online impact):")
         for e in _proof:
             mark = "[green]✓ confirmed[/green]" if e.get("verdict") == "confirmed" else "[red]✗ reverted[/red]"
+            _d = e.get("realized_delta")
+            _ds = f"{_d:+g}" if isinstance(_d, (int, float)) else "—"
             console.print(
                 f"    {mark}  min_sim {e.get('floor_before')}→{e.get('floor_after')}  "
                 f"online {e.get('online_before')}→{e.get('online_after')} "
-                f"(Δ{e.get('realized_delta'):+g}) n={e.get('n_after')}"
+                f"(Δ{_ds}) n={e.get('n_after')}"
             )
 
     _gk = flag_int("MEMO_DREAM_TUNE_GRADUATION_K") or 5

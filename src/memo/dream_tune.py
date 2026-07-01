@@ -30,6 +30,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from memo import dream_tune_online
 from memo.eval_recall import (
     Cfg,
     LabelSet,
@@ -184,7 +185,8 @@ def run_tuning_pass(
         if not dry_run:
             from memo.flags import flag_int
 
-            min_cohort = flag_int("MEMO_DREAM_TUNE_MIN_COHORT") or 20
+            _mc = flag_int("MEMO_DREAM_TUNE_MIN_COHORT")
+            min_cohort = 20 if _mc is None else _mc
             eps = flag_float("MEMO_DREAM_TUNE_ONLINE_EPS")
             eps = 0.02 if eps is None else eps
             resolution = dream_tune_online.resolve_pending(
@@ -449,8 +451,6 @@ def run_graph_weight_pass(
         # One overlay change per proof cycle: if the min_sim proof loop has an
         # unresolved pending, don't perturb the live overlay (it would orphan the
         # pending's grounding cohort — the Phase-1 freeze root cause). Defer.
-        from memo import dream_tune_online
-
         if dream_tune_online.has_unresolved_pending(cfg.state_dir):
             res["status"] = "deferred_pending"
             return res
@@ -667,8 +667,6 @@ def run_graph_retrieval_pass(
 
         # One overlay change per proof cycle: hold the overlay steady while the
         # min_sim proof loop has an unresolved pending (avoids orphaning its cohort).
-        from memo import dream_tune_online
-
         if dream_tune_online.has_unresolved_pending(cfg.state_dir):
             res["status"] = "deferred_pending"
             return res

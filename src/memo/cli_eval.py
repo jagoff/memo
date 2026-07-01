@@ -279,7 +279,10 @@ def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
     snap = eval_baseline.build_baseline_snapshot(cfg.state_dir, offline)
     path = eval_baseline.snapshot_path(cfg.state_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8")
+    import os
+    os.replace(tmp, path)
 
     if as_json:
         console.print_json(data=snap)
