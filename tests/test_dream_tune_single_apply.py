@@ -103,6 +103,19 @@ def test_tuning_pass_sets_cooldown_on_online_revert(tmp_path, monkeypatch):
     assert dream_tune_online.in_revert_cooldown(tmp_path) is True
 
 
+def test_graph_weight_skips_search_when_deferring(tmp_path, monkeypatch):
+    dream_tune_online.write_pending(tmp_path, {"version_after": "v2"})  # pending in flight
+    monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
+
+    def _boom_search(*a, **k):
+        raise AssertionError("search must not run when the pass is going to defer")
+
+    monkeypatch.setattr(dream_tune, "search_graph_weight", _boom_search)
+    # a real object() as mem would also fail in search; the guard must return first
+    res = dream_tune.run_graph_weight_pass(_cfg(tmp_path), object(), k=5)
+    assert res["status"] == "deferred_pending"
+
+
 def test_tuning_pass_clears_cooldown_at_cycle_start(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
     dream_tune_online.set_revert_cooldown(tmp_path)  # stale marker from a prior cycle

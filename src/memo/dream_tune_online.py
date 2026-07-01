@@ -253,7 +253,8 @@ def graduation_streak(entries: list[dict[str, Any]]) -> int:
     """Count the trailing run of graduating verdicts: consecutive newest-first
     ledger entries with verdict ``"confirmed"`` and a non-negative
     ``realized_delta``. Any ``reverted``/``expired`` (or a negative delta) breaks
-    the streak. ``entries`` is oldest→newest (as ``read_ledger`` returns)."""
+    the streak. ``entries`` is oldest→newest (as ``read_ledger`` returns).
+    Covers any tuned knob, not only min_sim."""
     streak = 0
     for e in reversed(entries):
         if e.get("verdict") == "confirmed" and float(e.get("realized_delta", 0.0)) >= 0.0:
@@ -264,8 +265,8 @@ def graduation_streak(entries: list[dict[str, Any]]) -> int:
 
 
 def graduation_status(state_dir: Path, *, k: int) -> dict[str, Any]:
-    """Read-only graduation readiness: is the min_sim proof loop's trailing
-    confirmed-streak >= k? Never flips any flag — reports only."""
+    """Read-only graduation readiness: is the proof loop's trailing
+    confirmed-streak >= k (any tuned knob)? Never flips any flag — reports only."""
     streak = graduation_streak(read_ledger(state_dir, limit=max(k * 4, 20)))
     return {"streak": streak, "k": k, "graduated": streak >= k}
 

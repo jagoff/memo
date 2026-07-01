@@ -415,6 +415,13 @@ def run_graph_weight_pass(
         if not labels.prompts:
             return res
 
+        # One overlay change per proof cycle: if the proof loop has an
+        # unresolved pending OR a revert just happened this cycle, hold the overlay
+        # steady — skip the (expensive) search entirely and defer.
+        if dream_tune_online.has_unresolved_pending(cfg.state_dir) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
+            res["status"] = "deferred_pending"
+            return res
+
         floor = flag_float(_MIN_SIM)
         floor = 0.5 if floor is None else floor
         current = flag_float(_GRAPH_WEIGHT) or 0.0
@@ -457,16 +464,6 @@ def run_graph_weight_pass(
             return res
         if dry_run:
             res["status"] = "would_apply"
-            return res
-
-        # One overlay change per proof cycle: if the min_sim proof loop has an
-        # unresolved pending, don't perturb the live overlay (it would orphan the
-        # pending's grounding cohort — the Phase-1 freeze root cause). Also defer
-        # when a revert cooldown is active (an online revert happened this cycle —
-        # applying a new change in the same cycle re-introduces the just-reverted
-        # value). Defer.
-        if dream_tune_online.has_unresolved_pending(cfg.state_dir) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
-            res["status"] = "deferred_pending"
             return res
 
         version_before = params_version(cfg.state_dir)
@@ -639,6 +636,13 @@ def run_graph_retrieval_pass(
         if not labels.prompts:
             return res
 
+        # One overlay change per proof cycle: if the proof loop has an
+        # unresolved pending OR a revert just happened this cycle, hold the overlay
+        # steady — skip the (expensive) search entirely and defer.
+        if dream_tune_online.has_unresolved_pending(cfg.state_dir) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
+            res["status"] = "deferred_pending"
+            return res
+
         # rollback guard: if the LIVE overlay config already regressed vs the
         # saved baseline, revert before considering new configs.
         baseline = load_retrieval_baseline(cfg.state_dir)
@@ -689,14 +693,6 @@ def run_graph_retrieval_pass(
         if dry_run:
             res["status"] = "would_apply"
             res["would_apply"] = best_cfg["name"]
-            return res
-
-        # One overlay change per proof cycle: hold the overlay steady while the
-        # min_sim proof loop has an unresolved pending (avoids orphaning its cohort),
-        # or while a revert cooldown is active (an online revert happened this cycle —
-        # applying a new change re-introduces the just-reverted value).
-        if dream_tune_online.has_unresolved_pending(cfg.state_dir) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
-            res["status"] = "deferred_pending"
             return res
 
         # Apply: preserve prior scalar knobs, clear any retrieval levers we
