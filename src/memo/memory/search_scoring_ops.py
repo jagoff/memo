@@ -42,19 +42,42 @@ class _SearchScoringMixin(_MemoryBase):
             if not query_entities:
                 return []
 
-            # Find memories sharing these entities
-            # Score them by how many distinct query entities they match
-            memoria_counts: dict[str, int] = {}
-            for ent_name in query_entities:
-                for mid in self.graph.entity_memories(ent_name):
-                    memoria_counts[mid] = memoria_counts.get(mid, 0) + 1
+            # Find memories sharing these entities, scored by the summed IDF
+            # (rarity) of the shared entities — NOT a raw match count. Raw
+            # counting lets a memory that shares several *ubiquitous* entities
+            # ("memo", "synapse") outrank one sharing a single discriminating
+            # one, flooding the graph leg with generic junk. IDF weighting fixes
+            # that: an entity in every memory contributes 0, a rare one a lot.
+            # A ubiquitous entity (idf 0) is skipped entirely, so we never even
+            # fetch its (huge, useless) memory list.
+            from memo.graph_proximity import _idf
 
-            if not memoria_counts:
+            n_docs = 0
+            try:
+                n_docs = int(self.graph.total_indexed_memories())
+            except Exception:
+                n_docs = 0
+            doc_freqs: dict[str, float] = {}
+            if n_docs > 0:
+                try:
+                    doc_freqs = self.graph.entity_doc_freqs(query_entities)
+                except Exception:
+                    doc_freqs = {}
+
+            memoria_scores: dict[str, float] = {}
+            for ent_name in query_entities:
+                w = _idf(doc_freqs.get(ent_name.strip().lower(), 0.0), n_docs) if n_docs > 0 else 1.0
+                if w <= 0.0:  # ubiquitous / unknown entity carries no signal
+                    continue
+                for mid in self.graph.entity_memories(ent_name):
+                    memoria_scores[mid] = memoria_scores.get(mid, 0.0) + w
+
+            if not memoria_scores:
                 return []
 
-            # Sort by count desc, then by updated desc (tie-breaker)
+            # Sort by summed-IDF desc (strongest discriminating overlap first).
             sorted_mids = sorted(
-                memoria_counts.keys(), key=lambda x: memoria_counts[x], reverse=True
+                memoria_scores.keys(), key=lambda x: memoria_scores[x], reverse=True
             )
 
             # Fetch batch from store
@@ -69,11 +92,11 @@ class _SearchScoringMixin(_MemoryBase):
                     continue
                 filtered.append(r)
 
-            # Sort by entity match count descending so that _rrf_fuse, which
-            # uses list position as rank, places high-match candidates first.
+            # Sort by summed-IDF descending so that _rrf_fuse, which uses list
+            # position as rank, places the most discriminating candidates first.
             # get_batch() returns rows in storage order (not insertion order),
             # so we must re-sort here to get the correct rank ordering.
-            filtered.sort(key=lambda r: memoria_counts[r["id"]], reverse=True)
+            filtered.sort(key=lambda r: memoria_scores[r["id"]], reverse=True)
             out = filtered[:limit]
 
             # Assign a synthetic RRF score so the graph list is on the same

@@ -160,3 +160,36 @@ def test_edge_stats_reports_counts_and_weight_distribution(tmp_path: Path) -> No
 def test_edge_stats_empty_graph(tmp_path: Path) -> None:
     es = _store(tmp_path).edge_stats()
     assert es["edges"] == 0 and es["weight_mean"] == 0.0
+
+
+def test_total_indexed_memories_counts_distinct(tmp_path: Path) -> None:
+    g = _store(tmp_path)
+    for mid in ("m1", "m2", "m3"):
+        g.record_extraction(memory_id=mid, memory_date="2026-01-01",
+                            entities=[{"name": "Common", "type": "concept"}],
+                            extracted_at="2026-01-01T00:00:00Z")
+    # a memory with two entities still counts once
+    g.record_extraction(memory_id="m3", memory_date="2026-01-01",
+                        entities=[{"name": "Common", "type": "concept"},
+                                  {"name": "Rare", "type": "concept"}],
+                        extracted_at="2026-01-01T00:00:00Z")
+    assert g.total_indexed_memories() == 3
+    assert _store(tmp_path / "empty").total_indexed_memories() == 0
+
+
+def test_entity_doc_freqs_batch_and_unknown(tmp_path: Path) -> None:
+    g = _store(tmp_path)
+    # "common" in 3 memories, "rare" in 1
+    for mid in ("m1", "m2", "m3"):
+        g.record_extraction(memory_id=mid, memory_date="2026-01-01",
+                            entities=[{"name": "Common", "type": "concept"}],
+                            extracted_at="2026-01-01T00:00:00Z")
+    g.record_extraction(memory_id="m1", memory_date="2026-01-01",
+                        entities=[{"name": "Common", "type": "concept"},
+                                  {"name": "Rare", "type": "concept"}],
+                        extracted_at="2026-01-01T00:00:00Z")
+    df = g.entity_doc_freqs(["Common", "rare", "does-not-exist"])
+    assert df["common"] == 3.0
+    assert df["rare"] == 1.0
+    assert "does-not-exist" not in df  # unknown names omitted
+    assert g.entity_doc_freqs([]) == {}
