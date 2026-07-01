@@ -11,7 +11,7 @@ jobs:
     # MLX slow tests require Apple Silicon — use macos runner for real inference
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Python 3.13 + uv via Homebrew
         run: brew install python@3.13 uv
       - name: Create virtualenv
