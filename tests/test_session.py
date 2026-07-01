@@ -33,6 +33,7 @@ from memo import session as session_mod
 from memo.cli_session import session_group
 from memo.session import (
     checkpoint,
+    find_transcript_path,
     format_relative,
     gather_git_state,
     get_session,
@@ -58,6 +59,31 @@ def fake_git(monkeypatch):
         }
 
     monkeypatch.setattr(session_mod, "gather_git_state", _fake)
+
+
+def test_find_transcript_path_recovers_by_session_id(tmp_path, monkeypatch):
+    """Some hook events omit transcript_path (seen 2026-06-27 onward) — the
+    recovery path globs ~/.claude/projects/*/<session_id>.jsonl."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    proj = tmp_path / ".claude" / "projects" / "-Users-fer-repos-memo"
+    proj.mkdir(parents=True)
+    transcript = proj / "abc-123.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    found = find_transcript_path("abc-123")
+
+    assert found == str(transcript)
+
+
+def test_find_transcript_path_missing_session_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".claude" / "projects").mkdir(parents=True)
+
+    assert find_transcript_path("no-such-session") is None
+
+
+def test_find_transcript_path_empty_session_id_returns_none():
+    assert find_transcript_path("") is None
 
 
 def test_checkpoint_creates_new_session(tmp_cfg, fake_git):
@@ -772,3 +798,96 @@ def test_reflect_flock_prevents_concurrent_reflect(tmp_path: Path, monkeypatch) 
     assert not t.is_alive(), "idle-maintenance reflect hung instead of skipping under held lock"
     assert results, "idle-maintenance produced no output"
     assert results[0] == "skipped_concurrent", f"expected skipped_concurrent, got {results[0]!r}"
+
+
+def test_autosave_persists_last_hook_payload_without_transcript(tmp_path, monkeypatch) -> None:
+    """Regression: 2026-06-27 onward some hook events omit transcript_path,
+    and autosave used to gate `last_hook_payload.json` persistence on having
+    one — starving async hooks (checkpoint/idle-maintenance) of even the
+    session_id fallback. Persistence must key on session_id alone."""
+    from memo import session as session_mod
+    from memo.cli_session import session_group
+
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setattr(session_mod, "find_transcript_path", lambda sid: None)
+
+    sid = "test-sid-no-transcript"
+    result = CliRunner().invoke(
+        session_group,
+        ["autosave"],
+        input=json.dumps({"session_id": sid}),
+    )
+
+    assert result.exit_code == 0
+    payload_file = state / "last_hook_payload.json"
+    assert payload_file.exists(), "last_hook_payload.json must persist even without transcript_path"
+    saved = json.loads(payload_file.read_text(encoding="utf-8"))
+    assert saved["session_id"] == sid
+    assert saved["transcript_path"] is None
+
+
+def test_autosave_recovers_transcript_path_from_session_id(tmp_path, monkeypatch) -> None:
+    """When the payload omits transcript_path, autosave should recover it via
+    session_id before giving up — restoring the size-threshold check instead
+    of silently no-oping every turn."""
+    from memo import session as session_mod
+    from memo.cli_session import session_group
+
+    state = tmp_path / "state"
+    state.mkdir()
+    transcript = tmp_path / "recovered.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setattr(session_mod, "find_transcript_path", lambda sid: str(transcript))
+
+    sid = "test-sid-recovered"
+    result = CliRunner().invoke(
+        session_group,
+        ["autosave"],
+        input=json.dumps({"session_id": sid}),
+    )
+
+    assert result.exit_code == 0
+    saved = json.loads((state / "last_hook_payload.json").read_text(encoding="utf-8"))
+    assert saved["transcript_path"] == str(transcript)
+
+
+def test_checkpoint_cli_recovers_transcript_via_session_id(tmp_path, monkeypatch, fake_git) -> None:
+    """Regression: session_checkpoint (Stop hook) must not persist a skeleton
+    snapshot (session_id + nothing else) when transcript_path is missing from
+    the payload but recoverable by session_id."""
+    from memo.cli_session import session_group
+
+    state = tmp_path / "state"
+    state.mkdir()
+    transcript = tmp_path / "recovered.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"role": "user", "content": "hola"}}) + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setattr(
+        "memo.session.find_transcript_path", lambda sid: str(transcript)
+    )
+
+    sid = "test-sid-checkpoint-recovered"
+    result = CliRunner().invoke(
+        session_group,
+        ["checkpoint", "--cwd", str(tmp_path), "--json"],
+        input=json.dumps({"session_id": sid}),
+    )
+
+    assert result.exit_code == 0
+    snap = json.loads(result.output)
+    assert snap["transcript_path"] == str(transcript)
+    assert snap["last_user_msg"] == "hola"
