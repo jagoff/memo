@@ -253,6 +253,25 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         row = self._conn.execute("SELECT body FROM fts WHERE id = ?", (id_,)).fetchone()
         return str(row["body"]) if row else ""
 
+    def get_dedup_keys(self, id_: str) -> tuple[str | None, str | None]:
+        """Return ``(topic_key, normalized_hash)`` for ``id_`` — the dedup keys.
+
+        These live ONLY in the sqlite ``meta`` index (not in the ``.md``
+        frontmatter), so ``get()`` omits them. A delete-rollback that restores
+        a row from ``get()`` would drop them, letting a later same-topic upsert
+        create a duplicate instead of updating. Delete pre-fetches them here so
+        the rollback restores faithfully. Older stores without the pattern
+        columns return ``(None, None)``.
+        """
+        if not self._has_pattern_cols:
+            return (None, None)
+        row = self._conn.execute(
+            "SELECT topic_key, normalized_hash FROM meta WHERE id = ?", (id_,)
+        ).fetchone()
+        if not row:
+            return (None, None)
+        return (row["topic_key"], row["normalized_hash"])
+
     def get_fts_bodies(self, ids: list[str]) -> dict[str, str]:
         """Batch-fetch FTS body text for many ids in one query.
 

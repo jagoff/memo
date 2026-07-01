@@ -191,3 +191,30 @@ def test_delete_double_failure_reports_rollback_and_reindex_hint(
         mem_with_stub.delete(rec.id)
 
     assert "memo reindex" in str(exc_info.value)
+
+
+def test_delete_rollback_preserves_topic_key_dedup(mem_with_stub: Memory, monkeypatch):
+    """topic_key + normalized_hash live ONLY in the sqlite index (not in the
+    .md frontmatter), so a delete-rollback that restores the row via
+    store.get() (which omits them) would drop them — and a later same-topic
+    save would then create a DUPLICATE instead of updating in place. The
+    rollback must pre-fetch and restore the dedup keys so the row stays
+    reachable by its topic_key."""
+    rec = mem_with_stub.save(
+        content="memoria con dedup key",
+        title="DedupProtegido",
+        topic_key="tk-dedup",
+    )
+    # Precondition: the row is reachable by its topic_key before the delete.
+    assert mem_with_stub.store.find_by_topic_key("tk-dedup") is not None
+
+    _unlink_boom_for_md(mem_with_stub, monkeypatch)
+    with pytest.raises(StorageError, match="delete partially failed"):
+        mem_with_stub.delete(rec.id)
+
+    # After the rollback the dedup key survives → a same-topic save updates in
+    # place instead of creating a duplicate. Without restoring topic_key on
+    # rollback this returns None and the memory silently duplicates.
+    assert (
+        mem_with_stub.store.find_by_topic_key("tk-dedup") is not None
+    ), "topic_key dropped on delete-rollback → next same-topic save would duplicate"

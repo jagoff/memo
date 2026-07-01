@@ -97,6 +97,10 @@ class _DeleteOpsMixin(_MemoryBase):
         elif isinstance(blob, (list, tuple)):
             stored_embedding = list(blob)
         stored_body_text = self.store.get_fts_body(id_)
+        # topic_key + normalized_hash live ONLY in the sqlite index (not in the
+        # .md), and store.get() omits them — pre-fetch so the rollback restores
+        # them, else a later same-topic save would duplicate instead of update.
+        stored_topic_key, stored_normalized_hash = self.store.get_dedup_keys(id_)
 
         # Step 1: drop the derived index row + edges first (reversible via reindex)
         existed = self.store.delete(id_)
@@ -182,6 +186,8 @@ class _DeleteOpsMixin(_MemoryBase):
                     embedding=stored_embedding,
                     extra=r.get("extra"),
                     body_text=stored_body_text,
+                    topic_key=stored_topic_key,
+                    normalized_hash=stored_normalized_hash,
                 )
             except Exception as restore_exc:
                 raise StorageError(
