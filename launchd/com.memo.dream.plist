@@ -34,6 +34,13 @@
   <dict>
     <key>MEMO_NONINTERACTIVE</key>
     <string>1</string>
+    <!-- Self-improving recall tuner: min_sim + graph-weight (offline-gated + online-verified)
+         and the online-only project-boost explorer. Every applied change is proven against
+         real grounding and reverted if it regresses, so enabling by default is safe. -->
+    <key>MEMO_DREAM_TUNE_ENABLED</key>
+    <string>1</string>
+    <key>MEMO_DREAM_TUNE_BOOST_ENABLED</key>
+    <string>1</string>
     <key>HF_HUB_OFFLINE</key>
     <string>1</string>
     <key>TRANSFORMERS_OFFLINE</key>
