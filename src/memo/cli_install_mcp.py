@@ -24,6 +24,12 @@ from typing import Any
 
 import click
 
+from memo.runtime.agent_presets import (
+    AGENT_PRESETS,
+    Writer,
+    install_from_preset,
+    resolve_preset_path,
+)
 from memo.runtime.detect import _resolved_memo_mcp
 from memo.runtime.mcp import (
     _config_path,
@@ -205,6 +211,26 @@ def _fallback_register_agent_mcp(
         return {"ok": False, "agent": agent, "error": str(exc)}
 
 
+def _agent_present(agent: str) -> bool:
+    """True if this agent looks installed on the current machine (best-effort)."""
+    preset = AGENT_PRESETS.get(agent)
+    if preset is not None:
+        if preset.writer is Writer.SNIPPET:
+            return False
+        path = resolve_preset_path(preset)
+        return bool(path and path.parent.exists())
+    cli_bins = {"claude-code": "claude", "codex": "codex", "devin": "devin", "opencode": "opencode"}
+    binary = cli_bins.get(agent)
+    if binary:
+        return shutil.which(binary) is not None
+    desktop_dirs = {
+        "claude-desktop": _claude_desktop_config_path().parent,
+        "devin-desktop": Path.home() / ".devin",
+    }
+    directory = desktop_dirs.get(agent)
+    return bool(directory and directory.exists())
+
+
 def _report(result: dict[str, Any]) -> None:
     agent = result.get("agent", "?")
     if not result.get("ok", False):
@@ -212,6 +238,11 @@ def _report(result: dict[str, Any]) -> None:
             click.echo(f"  - {agent}: skipped ({result.get('error')})")
         else:
             click.echo(f"  ✗ {agent}: {result.get('error')}")
+        return
+    if result.get("action") == "snippet":
+        click.echo(f"  {agent}: paste this into the client's MCP config —")
+        click.echo(result["snippet"])
+        click.echo(f"  ({result['note']})")
         return
     action = result.get("action", "")
     if result.get("strategy") == "cli":
@@ -232,7 +263,8 @@ def _report(result: dict[str, Any]) -> None:
     multiple=True,
     help="Agent to wire (repeatable). Use 'all' for every known agent. "
     "Known: codex, claude-code, claude-desktop, devin-desktop, gemini, cursor, "
-    "opencode, devin.",
+    "opencode, devin, vscode, antigravity, windsurf, zed, cline, roo, kiro, warp, "
+    "continue, goose, jetbrains.",
 )
 @click.option(
     "--config-path", default="", help="Generic: write into this JSON config path (under $HOME)."
@@ -243,6 +275,11 @@ def _report(result: dict[str, Any]) -> None:
     help="Generic: server-map key in the config (default mcpServers).",
 )
 @click.option("--write", is_flag=True, help="Apply changes (default: dry-run).")
+@click.option(
+    "--only-present",
+    is_flag=True,
+    help="Only install for agents that look installed on this machine (config dir/binary present).",
+)
 @click.option("--with-mandate", is_flag=True, help="Also write the 'consult memo first' mandate.")
 @click.option(
     "--profile",
@@ -257,6 +294,7 @@ def install_mcp(
     config_path: str,
     json_key: str,
     write: bool,
+    only_present: bool,
     with_mandate: bool,
     profile: str,
 ) -> None:
@@ -289,7 +327,13 @@ def install_mcp(
     else:
         selected = list(agents) or ["all"]
         if "all" in selected:
-            selected = list(SUPPORTED_AGENTS)
+            selected = list(dict.fromkeys((*SUPPORTED_AGENTS, *AGENT_PRESETS)))
+        if only_present:
+            kept = [a for a in selected if _agent_present(a)]
+            for a in selected:
+                if a not in kept:
+                    click.echo(f"  - {a}: skipped (not present)")
+            selected = kept
         for agent in selected:
             eff_profile = _effective_profile(profile, agent)
             if eff_profile and eff_profile != "default":
@@ -298,7 +342,9 @@ def install_mcp(
                 agent_server = dataclasses.replace(server, env=agent_env)
             else:
                 agent_server = server
-            if agent == "devin-desktop":
+            if agent in AGENT_PRESETS:
+                _report(install_from_preset(AGENT_PRESETS[agent], agent_server, write=write))
+            elif agent == "devin-desktop":
                 _report(_fallback_register_agent_mcp(agent, agent_server, write=write))
             else:
                 _report(register_agent_mcp(agent, agent_server, write=write))
