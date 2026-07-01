@@ -1,10 +1,11 @@
 """Tests for server_import_export MCP tool registration."""
+
 from __future__ import annotations
 
 import ast
 import pathlib
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 
 def _make_server_and_tools():
@@ -20,6 +21,7 @@ def _make_server_and_tools():
         def wrapper(fn):
             tools[fn.__name__] = fn
             return fn
+
         return wrapper
 
     server.tool = tool_decorator
@@ -175,9 +177,10 @@ def test_unsafe_path_is_rejected(tmp_cfg, tmp_path: Path) -> None:
 
     # tmp_path is typically /private/var/folders/... — well outside allowed dirs
     fake_file = tmp_path / "secret.json"
-    fake_file.write_text('[]', encoding="utf-8")
+    fake_file.write_text("[]", encoding="utf-8")
 
     import pytest
+
     with pytest.raises(ValueError, match="Unsafe import path"):
         _resolve_safe_path(str(fake_file), "import")
 
@@ -185,6 +188,7 @@ def test_unsafe_path_is_rejected(tmp_cfg, tmp_path: Path) -> None:
 def test_resolve_safe_path_rejects_missing_import_file(tmp_cfg) -> None:
     """_resolve_safe_path with purpose='import' must raise if the file doesn't exist."""
     import pytest
+
     from memo.server_import_export import _ALLOWED_BASE_DIRS, _resolve_safe_path
 
     # Use an allowed base dir so only the existence check fails
