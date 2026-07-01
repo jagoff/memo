@@ -711,6 +711,28 @@ SPECS: tuple[FlagSpec, ...] = (
         "tunes MEMO_RECALL_MIN_SIM against ground-truth-by-use labels, gated by the curated "
         "regression set, reverted when a later night regresses.",
     ),
+    _spec(
+        "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly graph-injection config tuner inside `memo dream run`. OFF by "
+        "default (separate opt-in from MEMO_DREAM_TUNE_ENABLED because it may flip "
+        "MEMO_RECALL_MODE to hybrid and toggle MEMO_GRAPH_RETRIEVAL_ENABLED / "
+        "MEMO_GRAPH_EXPANSION_ENABLED). Grids the candidate recall configs, applies the best "
+        "via the overlay only when it beats the plain-vec baseline within the recall-hook "
+        "latency budget, gated by the curated regression set, reverted on regression.",
+    ),
+    _spec(
+        "MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS",
+        "float",
+        2500.0,
+        "misc",
+        "Search-latency p50 ceiling (ms) a candidate recall config must respect to be "
+        "eligible in the graph-injection tuner. A hybrid flip that helps precision but blows "
+        "this budget is rejected to protect the 5s recall-hook budget.",
+        min_val=0.0,
+    ),
     _spec("MEMO_DREAM_TUNE_K", "int", 5, "misc", "K for precision@K/noise@K during dream tuning."),
     _spec(
         "MEMO_DREAM_TUNE_MAX_EVALS",
