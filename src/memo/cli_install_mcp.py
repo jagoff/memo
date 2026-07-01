@@ -2,7 +2,7 @@
 
 Thin wrapper over the shared ``consciousness_contracts.agent_install`` contract
 (the same one memflow uses), so memo is installable into Codex, Claude Code,
-Claude Desktop, Windsurf, Gemini, Cursor, opencode, Devin — and any future agent
+Claude Desktop, Devin Desktop, Gemini, Cursor, opencode, Devin — and any future agent
 via ``--config-path``. MCP-only and idempotent; for the heavier skill+plugin+MCP
 flow use ``memo install-slash``.
 
@@ -14,7 +14,6 @@ in MCP" (see CLAUDE.md). Dry-run by default; pass ``--write`` to apply.
 from __future__ import annotations
 
 import dataclasses
-import json
 import os
 import shutil
 import subprocess
@@ -27,10 +26,11 @@ import click
 
 from memo.runtime.detect import _resolved_memo_mcp
 from memo.runtime.mcp import (
+    _config_path,
     _mcp_add_command,
     _mcp_server_env,
-    _mcp_server_json,
     _run_agent_command,
+    _write_mcp_json,
 )
 
 
@@ -59,9 +59,9 @@ _FALLBACK_SUPPORTED_AGENTS: tuple[str, ...] = (
     "codex",
     "cursor",
     "devin",
+    "devin-desktop",
     "gemini",
     "opencode",
-    "windsurf",
 )
 
 
@@ -137,39 +137,6 @@ def _generic_preset(config_path: str, json_key: str = "mcpServers") -> _GenericP
     return _GenericPreset(config_path=config_path, json_key=json_key)
 
 
-def _config_path(raw: str) -> Path:
-    p = Path(raw).expanduser()
-    return p if p.is_absolute() else Path.home() / p
-
-
-def _write_mcp_json(path: Path, server: Any, *, json_key: str, include_type: bool) -> str:
-    data: dict[str, Any]
-    if path.is_file() and path.read_text(encoding="utf-8").strip():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise click.ClickException(f"MCP config is not valid JSON: {path} ({exc})") from exc
-        if not isinstance(loaded, dict):
-            raise click.ClickException(f"MCP config must be a JSON object: {path}")
-        data = loaded
-        action = "updated"
-    else:
-        data = {}
-        action = "created"
-
-    servers = data.setdefault(json_key, {})
-    if not isinstance(servers, dict):
-        raise click.ClickException(f"`{json_key}` must be a JSON object in {path}")
-    servers[server.name] = _mcp_server_json(
-        Path(server.command), server.env, include_type=include_type
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
-    return action
-
-
 def _fallback_register_agent_mcp(
     agent: str,
     server: Any,
@@ -210,11 +177,16 @@ def _fallback_register_agent_mcp(
         config_targets: dict[str, tuple[Path, bool]] = {
             "claude-desktop": (_claude_desktop_config_path(), False),
             "cursor": (Path.home() / ".cursor" / "mcp.json", True),
+            "devin-desktop": (Path.home() / ".devin" / "mcp.json", True),
             "gemini": (Path.home() / ".gemini" / "settings.json", True),
-            "windsurf": (Path.home() / ".codeium" / "windsurf" / "mcp_config.json", False),
         }
         if agent in config_targets:
             path, include_type = config_targets[agent]
+            target_server = server
+            if agent == "devin-desktop":
+                target_server = dataclasses.replace(
+                    server, env={**server.env, "MEMO_SOURCE": "devin-desktop"}
+                )
             if not write:
                 return {
                     "ok": True,
@@ -223,7 +195,9 @@ def _fallback_register_agent_mcp(
                     "would": "write",
                     "path": str(path),
                 }
-            action = _write_mcp_json(path, server, json_key="mcpServers", include_type=include_type)
+            action = _write_mcp_json(
+                path, target_server, json_key="mcpServers", include_type=include_type
+            )
             return {"ok": True, "agent": agent, "action": action, "path": str(path)}
 
         return {"ok": False, "agent": agent, "skipped": True, "error": "unsupported agent"}
@@ -257,7 +231,7 @@ def _report(result: dict[str, Any]) -> None:
     "agents",
     multiple=True,
     help="Agent to wire (repeatable). Use 'all' for every known agent. "
-    "Known: codex, claude-code, claude-desktop, windsurf, gemini, cursor, "
+    "Known: codex, claude-code, claude-desktop, devin-desktop, gemini, cursor, "
     "opencode, devin.",
 )
 @click.option(
@@ -289,10 +263,10 @@ def install_mcp(
     """Register the memo MCP server into one or more agents."""
     try:
         from consciousness_contracts import (
-            SUPPORTED_AGENTS,
             generic_preset,
             register_agent_mcp,
         )
+        SUPPORTED_AGENTS = _FALLBACK_SUPPORTED_AGENTS
     except ImportError:
         SUPPORTED_AGENTS = _FALLBACK_SUPPORTED_AGENTS
         generic_preset = _generic_preset
@@ -324,7 +298,10 @@ def install_mcp(
                 agent_server = dataclasses.replace(server, env=agent_env)
             else:
                 agent_server = server
-            _report(register_agent_mcp(agent, agent_server, write=write))
+            if agent == "devin-desktop":
+                _report(_fallback_register_agent_mcp(agent, agent_server, write=write))
+            else:
+                _report(register_agent_mcp(agent, agent_server, write=write))
 
     if with_mandate:
         click.echo("mandate (consult memo first):")
@@ -332,6 +309,6 @@ def install_mcp(
 
         target_agents = list(agents) or ["all"]
         if "all" in target_agents:
-            target_agents = ["codex", "devin", "opencode", "windsurf", "cursor"]
+            target_agents = ["codex", "devin", "devin-desktop", "opencode", "cursor"]
         for rel, status in write_mandates_for_clients(target_agents, dry_run=not write):
             click.echo(f"  {rel:<22} {status}")

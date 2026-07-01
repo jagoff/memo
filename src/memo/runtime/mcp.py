@@ -140,6 +140,39 @@ def _mcp_server_json(memo_mcp: Path, env: dict[str, str], *, include_type: bool)
     return config
 
 
+def _config_path(raw: str) -> Path:
+    p = Path(raw).expanduser()
+    return p if p.is_absolute() else Path.home() / p
+
+
+def _write_mcp_json(path: Path, server: Any, *, json_key: str, include_type: bool) -> str:
+    data: dict[str, Any]
+    if path.is_file() and path.read_text(encoding="utf-8").strip():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(f"MCP config is not valid JSON: {path} ({exc})") from exc
+        if not isinstance(loaded, dict):
+            raise click.ClickException(f"MCP config must be a JSON object: {path}")
+        data = loaded
+        action = "updated"
+    else:
+        data = {}
+        action = "created"
+
+    servers = data.setdefault(json_key, {})
+    if not isinstance(servers, dict):
+        raise click.ClickException(f"`{json_key}` must be a JSON object in {path}")
+    servers[server.name] = _mcp_server_json(
+        Path(server.command), server.env, include_type=include_type
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return action
+
+
 def _agent_asset_root(repo: Path | None = None) -> Path:
     from memo.runtime.detect import _safe_resolve
 
@@ -238,16 +271,18 @@ def _mcp_add_command(client: str, memo_mcp: Path, env: dict[str, str]) -> list[s
     return ["claude", "mcp", "add-json", "-s", "user", "memo", mcp_json]
 
 
-def _windsurf_mcp_config_path() -> Path:
-    raw = os.environ.get("WINDSURF_MCP_CONFIG")
+def _devin_desktop_mcp_config_path() -> Path:
+    raw = os.environ.get("DEVIN_DESKTOP_MCP_CONFIG")
     if raw:
         return Path(raw).expanduser()
-    return Path.home() / ".codeium" / "windsurf" / "mcp_config.json"
+    return Path.home() / ".devin" / "mcp.json"
 
 
-def _install_windsurf_mcp(memo_mcp: Path, env: dict[str, str], *, dry_run: bool) -> None:
-    path = _windsurf_mcp_config_path()
-    server_config = _mcp_server_json(memo_mcp, env, include_type=False)
+def _install_devin_desktop_mcp(
+    memo_mcp: Path, env: dict[str, str], *, dry_run: bool
+) -> None:
+    path = _devin_desktop_mcp_config_path()
+    server_config = _mcp_server_json(memo_mcp, env, include_type=True)
     if dry_run:
         console.print(
             f"[dim]write {path}  # mcpServers.memo = "
@@ -261,10 +296,10 @@ def _install_windsurf_mcp(memo_mcp: Path, env: dict[str, str], *, dry_run: bool)
             loaded = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise click.ClickException(
-                f"Windsurf MCP config is not valid JSON: {path} ({exc})"
+                f"Devin Desktop MCP config is not valid JSON: {path} ({exc})"
             ) from exc
         if not isinstance(loaded, dict):
-            raise click.ClickException(f"Windsurf MCP config must be a JSON object: {path}")
+            raise click.ClickException(f"Devin Desktop MCP config must be a JSON object: {path}")
         data = loaded
     else:
         data = {}
@@ -278,4 +313,4 @@ def _install_windsurf_mcp(memo_mcp: Path, env: dict[str, str], *, dry_run: bool)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
-    console.print(f"[green]✓[/green] wrote Windsurf MCP config: {path}")
+    console.print(f"[green]✓[/green] wrote Devin Desktop MCP config: {path}")
