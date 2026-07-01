@@ -1,0 +1,14 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+tests
+docs/superpowers
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache
+.mypy_cache
+.ruff_cache
+dist
+build
