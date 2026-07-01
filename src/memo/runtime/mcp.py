@@ -314,3 +314,64 @@ def _install_devin_desktop_mcp(
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
     console.print(f"[green]✓[/green] wrote Devin Desktop MCP config: {path}")
+
+
+def _write_yaml_continue(path: Path, server: Any) -> str:
+    """Write Continue's dedicated per-server block file (memo-owned; overwrite)."""
+    import yaml
+
+    doc = {
+        "name": "memo",
+        "version": "0.0.1",
+        "schema": "v1",
+        "mcpServers": [
+            {"name": server.name, "command": str(server.command), "args": [], "env": dict(server.env)}
+        ],
+    }
+    action = "updated" if path.is_file() else "created"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    os.replace(tmp, path)
+    return action
+
+
+def _write_yaml_goose(path: Path, server: Any) -> str:
+    """Merge memo into Goose's config.yaml `extensions` map (round-trip, non-clobbering).
+
+    Uses `cmd` (not `command`) and `envs` (a value map — required so the embedder
+    model/dims reach memo-mcp; `env_keys` names alone would drop the values).
+    """
+    import yaml
+
+    if path.is_file() and path.read_text(encoding="utf-8").strip():
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            raise click.ClickException(f"Goose config is not valid YAML: {path} ({exc})") from exc
+        if not isinstance(loaded, dict):
+            raise click.ClickException(f"Goose config must be a YAML mapping: {path}")
+        data = loaded
+        action = "updated"
+    else:
+        data = {}
+        action = "created"
+
+    exts = data.setdefault("extensions", {})
+    if not isinstance(exts, dict):
+        raise click.ClickException(f"`extensions` must be a mapping in {path}")
+    exts["memo"] = {
+        "type": "stdio",
+        "name": "memo",
+        "cmd": str(server.command),
+        "args": [],
+        "envs": dict(server.env),
+        "timeout": 300,
+        "enabled": True,
+        "bundled": False,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    os.replace(tmp, path)
+    return action
