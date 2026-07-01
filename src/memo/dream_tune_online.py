@@ -122,6 +122,31 @@ def clear_pending(state_dir: Path) -> None:
     pending_path(state_dir).unlink(missing_ok=True)
 
 
+COOLDOWN_FILE = "tune_cooldown"
+
+
+def cooldown_path(state_dir: Path) -> Path:
+    return _dream_dir(state_dir) / COOLDOWN_FILE
+
+
+def set_revert_cooldown(state_dir: Path) -> None:
+    """Mark that an online revert happened this cycle. Other tuner passes hold
+    the overlay steady for the rest of the cycle — no new apply lands in the same
+    cycle a change was reverted (prevents the reverting pass and a co-gated pass
+    from re-applying the just-reverted value)."""
+    p = cooldown_path(state_dir)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("1", encoding="utf-8")
+
+
+def clear_revert_cooldown(state_dir: Path) -> None:
+    cooldown_path(state_dir).unlink(missing_ok=True)
+
+
+def in_revert_cooldown(state_dir: Path) -> bool:
+    return cooldown_path(state_dir).exists()
+
+
 def append_ledger(state_dir: Path, entry: dict[str, Any]) -> None:
     p = ledger_path(state_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -246,8 +271,8 @@ def graduation_status(state_dir: Path, *, k: int) -> dict[str, Any]:
 
 
 def has_unresolved_pending(state_dir: Path) -> bool:
-    """True when the min_sim proof loop has an applied-but-not-yet-resolved
-    change in flight. Other tuner passes consult this to hold the overlay steady
-    (one change per proof cycle) so the pending's grounding cohort is not
-    orphaned."""
+    """True when the proof loop has an applied-but-not-yet-resolved change in
+    flight (any tuned knob). Other tuner passes consult this to hold the overlay
+    steady — one change per proof cycle — so the pending's grounding cohort is
+    not orphaned."""
     return read_pending(state_dir) is not None

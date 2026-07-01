@@ -183,6 +183,9 @@ def run_tuning_pass(
         from memo import dream_tune_online
 
         if not dry_run:
+            # New tuning cycle: clear last cycle's revert-cooldown marker.
+            dream_tune_online.clear_revert_cooldown(cfg.state_dir)
+
             from memo.flags import flag_int
 
             _mc = flag_int("MEMO_DREAM_TUNE_MIN_COHORT")
@@ -207,6 +210,7 @@ def run_tuning_pass(
                 _saver = _KNOB_BASELINE_SAVERS.get(resolution["knob"])
                 if _saver is not None:
                     _saver(cfg.state_dir, resolution["offline_before"])
+                dream_tune_online.set_revert_cooldown(cfg.state_dir)
                 res["status"] = "online_reverted"
                 return res
             if resolution["status"] == "waiting":
@@ -457,8 +461,11 @@ def run_graph_weight_pass(
 
         # One overlay change per proof cycle: if the min_sim proof loop has an
         # unresolved pending, don't perturb the live overlay (it would orphan the
-        # pending's grounding cohort — the Phase-1 freeze root cause). Defer.
-        if dream_tune_online.has_unresolved_pending(cfg.state_dir):
+        # pending's grounding cohort — the Phase-1 freeze root cause). Also defer
+        # when a revert cooldown is active (an online revert happened this cycle —
+        # applying a new change in the same cycle re-introduces the just-reverted
+        # value). Defer.
+        if dream_tune_online.has_unresolved_pending(cfg.state_dir) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
             res["status"] = "deferred_pending"
             return res
 
@@ -685,8 +692,10 @@ def run_graph_retrieval_pass(
             return res
 
         # One overlay change per proof cycle: hold the overlay steady while the
-        # min_sim proof loop has an unresolved pending (avoids orphaning its cohort).
-        if dream_tune_online.has_unresolved_pending(cfg.state_dir):
+        # min_sim proof loop has an unresolved pending (avoids orphaning its cohort),
+        # or while a revert cooldown is active (an online revert happened this cycle —
+        # applying a new change re-introduces the just-reverted value).
+        if dream_tune_online.has_unresolved_pending(cfg.state_dir) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
             res["status"] = "deferred_pending"
             return res
 
