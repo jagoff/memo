@@ -712,6 +712,23 @@ SPECS: tuple[FlagSpec, ...] = (
         "regression set, reverted when a later night regresses.",
     ),
     _spec(
+        "MEMO_DREAM_TUNE_MIN_COHORT",
+        "int",
+        20,
+        "misc",
+        "Phase-1 proof loop: minimum grounded-scored recalls under a newly-applied "
+        "params version before its online impact is judged. Below this the tuner waits "
+        "(one change per proof cycle).",
+    ),
+    _spec(
+        "MEMO_DREAM_TUNE_ONLINE_EPS",
+        "float",
+        0.02,
+        "misc",
+        "Phase-1 proof loop: deadband on the realized online grounded-fraction delta. A "
+        "change whose next-cohort fraction drops by more than this vs pre-apply is reverted.",
+    ),
+    _spec(
         "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
         "bool",
         False,
