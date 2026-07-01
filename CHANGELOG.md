@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-07-01
+
+### Changed
+- The nightly `memo dream run` LaunchAgent template now enables the self-improving recall tuner by default (`MEMO_DREAM_TUNE_ENABLED` + `MEMO_DREAM_TUNE_BOOST_ENABLED`). Every applied change is verified against real grounding by the online proof loop and reverted if it regresses, so on-by-default is safe. Reversible by removing the flags from the plist.
+
 ## [2.9.0] - 2026-07-01
 
 ### Added
