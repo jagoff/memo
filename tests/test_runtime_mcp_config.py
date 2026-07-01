@@ -109,11 +109,11 @@ def test_scan_skips_missing_config(tmp_path: Path) -> None:
     assert scan_mcp_configs((str(tmp_path / "nope.json"),)) == []
 
 
-def test_known_configs_cover_codex_and_windsurf() -> None:
+def test_known_configs_cover_codex_and_devin_desktop() -> None:
     joined = "\n".join(KNOWN_MCP_CONFIGS)
 
     assert "~/.codex/config.toml" in joined
-    assert "windsurf" in joined.lower()
+    assert ".devin/mcp.json" in joined
 
 
 def test_repair_repoints_dead_path_and_backs_up(tmp_path: Path) -> None:
