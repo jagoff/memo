@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.6] - 2026-07-01
+
+### Fixed
+- **`install-mcp` now merges JSONC agent configs.** Comments (`//`, `/* */`) and trailing commas are tolerated when merging an existing config (Zed `settings.json`, VS Code, Cursor). Previously these raised "not valid JSON". Comments are not preserved on rewrite; the config data is.
+
 ## [2.9.5] - 2026-07-01
 
 ### Fixed
