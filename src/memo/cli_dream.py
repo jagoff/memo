@@ -369,6 +369,33 @@ def dream_run(
                 receipt["errors"].append(f"graph_tuner: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[tune] graph-weight tuner [yellow]warn[/yellow]")
 
+        # Phase 2 — graph-injection config tuner (retrieval / expansion, may flip
+        # recall mode). Separate opt-in flag; latency-budget-gated + reversible.
+        if flag_bool("MEMO_DREAM_RETRIEVAL_TUNE_ENABLED"):
+            progress.update(step, description="[tune] graph-injection tuner...")
+            try:
+                from memo import dream_tune
+                from memo.flags import flag_float
+
+                receipt["retrieval_tuner"] = dream_tune.run_graph_retrieval_pass(
+                    cfg,
+                    mem,
+                    k=flag_int("MEMO_DREAM_TUNE_K") or 5,
+                    min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+                    dry_run=dry_run,
+                    latency_budget_ms=flag_float("MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS") or 2500.0,
+                )
+                progress.update(
+                    step,
+                    description=(
+                        f"[tune] graph-injection tuner [green]✓[/green]  "
+                        f"{receipt['retrieval_tuner'].get('status')}"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"retrieval_tuner: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[tune] graph-injection tuner [yellow]warn[/yellow]")
+
         # Phase 3 — anticipatory: surface unmet gaps + prewarm (no fabrication)
         if flag_bool("MEMO_DREAM_ANTICIPATE_ENABLED"):
             progress.update(step, description="[anticipate] surfacing gaps...")

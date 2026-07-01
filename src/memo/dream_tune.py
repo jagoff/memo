@@ -7,11 +7,21 @@ applies the winner via the tuned-params overlay. Every apply must not regress
 the curated regression set; a later night whose live config regresses vs the
 saved baseline rolls back. OFF by default (``MEMO_DREAM_TUNE_ENABLED``).
 
-Scope note: only ``min_sim`` is tuned this phase — it is the one ranking knob
-the existing eval harness measures faithfully (its ``Cfg.floor`` is the same
-``h.score < min_sim`` gate the recall path applies in vec mode). Boosts /
-rerank pool need a recall-faithful eval (a pure ``rank_hits()`` extracted from
-``recall_logic``) and are deliberately deferred.
+Three tuner passes, each gated + reversible, sharing the mined∪curated label
+set and the (precision@K, -noise@K) objective:
+  - ``run_tuning_pass``          — line-searches ``MEMO_RECALL_MIN_SIM``.
+  - ``run_graph_weight_pass``    — grid-searches the graph-proximity boost
+    weight (``MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT``) via the recall-faithful
+    ``rank_hits()`` seam.
+  - ``run_graph_retrieval_pass`` — selects among candidate recall CONFIGS
+    (whether to inject entity-graph candidates as a retrieval source and/or
+    expand 1-hop, incl. the ``MEMO_RECALL_MODE`` flip retrieval needs),
+    applying the winner only when it beats the plain-vec baseline within the
+    recall-hook latency budget.
+
+Each writes only its own key(s) into the shared overlay and preserves the
+others, so the passes coexist. A later night whose live config regresses vs the
+saved baseline rolls back.
 """
 
 from __future__ import annotations
@@ -406,18 +416,239 @@ def run_graph_weight_pass(
     return res
 
 
+# --- graph-injection (retrieval / expansion) config tuning -------------------
+#
+# Distinct from the two knob tuners above: those move a scalar (min_sim /
+# proximity weight); this one selects among a small set of *candidate recall
+# configs* — whether to inject entity-graph candidates as a retrieval source
+# (hybrid RRF) and/or expand 1-hop after ranking, including the recall mode flip
+# that graph retrieval requires. It applies the winning config via the overlay
+# only when it beats the plain-vec baseline AND stays within the recall-hook
+# latency budget (a hybrid flip that helps precision but blows the 5s budget is
+# rejected — see MEMO recall-hook budget in CLAUDE.md). Reversible like the
+# others.
+
+_RETRIEVAL_BASELINE = "dream_retrieval_baseline.json"
+_RECALL_MODE = "MEMO_RECALL_MODE"
+# Graph-injection env levers this pass owns (cleared/reset per measurement so a
+# prior night's overlay never leaks into another config's numbers).
+_MANAGED_RETRIEVAL_FLAGS = ("MEMO_GRAPH_RETRIEVAL_ENABLED", "MEMO_GRAPH_EXPANSION_ENABLED")
+# All overlay keys this pass manages (so applying a winner clears a prior one).
+_MANAGED_RETRIEVAL_KEYS = (_RECALL_MODE, *_MANAGED_RETRIEVAL_FLAGS)
+# Search-latency ceiling (p50, ms) a config must respect to be eligible. Hybrid
+# is materially slower; the recall hook has ~3s for embed+search+format after a
+# ~2s cold MLX load, so a config whose search p50 exceeds this would risk the
+# 5s budget and is refused regardless of precision.
+_RETRIEVAL_LATENCY_BUDGET_MS = 2500.0
+
+# name -> (recall mode, {env flag: "0"/"1"}, overlay-to-apply-if-it-wins).
+# The plain-vec baseline carries an empty overlay (pure defaults).
+RETRIEVAL_CONFIGS: tuple[dict[str, Any], ...] = (
+    {"name": "vec", "mode": "vec", "flags": {"MEMO_GRAPH_RETRIEVAL_ENABLED": "0",
+     "MEMO_GRAPH_EXPANSION_ENABLED": "0"}, "overlay": {}},
+    {"name": "vec+expansion", "mode": "vec", "flags": {"MEMO_GRAPH_RETRIEVAL_ENABLED": "0",
+     "MEMO_GRAPH_EXPANSION_ENABLED": "1"},
+     "overlay": {"MEMO_GRAPH_EXPANSION_ENABLED": True}},
+    {"name": "hybrid+retrieval", "mode": "hybrid", "flags": {"MEMO_GRAPH_RETRIEVAL_ENABLED": "1",
+     "MEMO_GRAPH_EXPANSION_ENABLED": "0"},
+     "overlay": {_RECALL_MODE: "hybrid", "MEMO_GRAPH_RETRIEVAL_ENABLED": True}},
+    {"name": "hybrid+retrieval+expansion", "mode": "hybrid",
+     "flags": {"MEMO_GRAPH_RETRIEVAL_ENABLED": "1", "MEMO_GRAPH_EXPANSION_ENABLED": "1"},
+     "overlay": {_RECALL_MODE: "hybrid", "MEMO_GRAPH_RETRIEVAL_ENABLED": True,
+                 "MEMO_GRAPH_EXPANSION_ENABLED": True}},
+)
+
+
+def _retrieval_baseline_path(state_dir: Path) -> Path:
+    return Path(state_dir) / "eval" / _RETRIEVAL_BASELINE
+
+
+def load_retrieval_baseline(state_dir: Path) -> dict[str, float] | None:
+    try:
+        return json.loads(_retrieval_baseline_path(state_dir).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def save_retrieval_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
+    p = _retrieval_baseline_path(state_dir)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+
+def measure_retrieval_config(
+    mem: Any, labels: LabelSet, *, k: int, mode: str, flags: dict[str, str]
+) -> dict[str, float]:
+    """precision@K / noise@K / latency_ms_p50 for one candidate recall config.
+
+    The graph-injection flags are set in ``os.environ`` around a reuse of the
+    shared ``evaluate()`` harness (which reads them inside ``mem.search`` and
+    applies the real hybrid true-cosine gate), so the numbers reflect the
+    production recall path. Both managed flags are always fully specified so a
+    prior night's overlay cannot leak into the measurement. The environment is
+    restored afterwards.
+    """
+    import os
+
+    from memo.flags import flag_float
+
+    saved = {kk: os.environ.get(kk) for kk in _MANAGED_RETRIEVAL_FLAGS}
+    try:
+        for kk, vv in flags.items():
+            os.environ[kk] = vv
+        floor = flag_float(_MIN_SIM)
+        floor = 0.5 if floor is None else floor
+        cfg = Cfg(name=mode, mode=mode, floor=floor, exclude_archived=True)
+        rows = evaluate(mem, k=k, labels=labels, configs=[cfg])
+        metrics = gate_metrics(rows)
+        metrics["latency_ms_p50"] = round(rows[0].latency_ms_p50, 1) if rows else 0.0
+        return metrics
+    finally:
+        for kk, prev in saved.items():
+            if prev is None:
+                os.environ.pop(kk, None)
+            else:
+                os.environ[kk] = prev
+
+
+def _scalar_overlay(state_dir: Path) -> dict[str, Any]:
+    """Current overlay params (no ``_meta``), native types preserved — so
+    applying a retrieval winner keeps a float knob a prior pass set."""
+    return {k: v for k, v in read_overlay(state_dir).items() if k != "_meta"}
+
+
+def _live_retrieval_config(state_dir: Path) -> dict[str, Any]:
+    """The RETRIEVAL_CONFIGS entry the overlay currently applies (for the
+    rollback guard). Matches on the managed levers; defaults to plain vec."""
+    ov = read_overlay(state_dir)
+    live_mode = str(ov.get(_RECALL_MODE, "vec"))
+    live_ret = bool(ov.get("MEMO_GRAPH_RETRIEVAL_ENABLED", False))
+    live_exp = bool(ov.get("MEMO_GRAPH_EXPANSION_ENABLED", False))
+    for c in RETRIEVAL_CONFIGS:
+        if (
+            c["mode"] == live_mode
+            and (c["flags"]["MEMO_GRAPH_RETRIEVAL_ENABLED"] == "1") == live_ret
+            and (c["flags"]["MEMO_GRAPH_EXPANSION_ENABLED"] == "1") == live_exp
+        ):
+            return c
+    return RETRIEVAL_CONFIGS[0]
+
+
+def run_graph_retrieval_pass(
+    cfg: Any,
+    mem: Any,
+    *,
+    k: int = 5,
+    min_used_score: float = 0.5,
+    dry_run: bool = False,
+    latency_budget_ms: float = _RETRIEVAL_LATENCY_BUDGET_MS,
+) -> dict[str, Any]:
+    """One nightly graph-injection config pass. Grid the candidate recall
+    configs, apply the best via the overlay when it beats the plain-vec
+    baseline within the latency budget, revert a regressed live config first.
+    Never raises — mirrors ``run_graph_weight_pass``."""
+    res: dict[str, Any] = {"status": "noop"}
+    try:
+        labels, curated_used = build_labels(cfg, min_used_score=min_used_score)
+        res["n_labels"] = len(labels.prompts)
+        res["curated_used"] = curated_used
+        if not labels.prompts:
+            return res
+
+        # rollback guard: if the LIVE overlay config already regressed vs the
+        # saved baseline, revert before considering new configs.
+        baseline = load_retrieval_baseline(cfg.state_dir)
+        if baseline is not None:
+            live_cfg = _live_retrieval_config(cfg.state_dir)
+            live = measure_retrieval_config(
+                mem, labels, k=k, mode=live_cfg["mode"], flags=live_cfg["flags"]
+            )
+            if _regressed(live, baseline) and not dry_run:
+                rolled = rollback_overlay(cfg.state_dir)
+                if rolled is not None:
+                    res["status"] = "rolled_back"
+                    res["restored"] = rolled
+                    return res
+
+        measured = []
+        for c in RETRIEVAL_CONFIGS:
+            m = measure_retrieval_config(mem, labels, k=k, mode=c["mode"], flags=c["flags"])
+            measured.append((c, m))
+        base = measured[0][1]
+        res["baseline"] = base
+        res["configs"] = [{"name": c["name"], **m} for c, m in measured]
+
+        # Eligible = respects the latency budget. The baseline (plain vec) is
+        # always eligible so we never get stuck with nothing to compare against.
+        eligible = [
+            (c, m)
+            for c, m in measured
+            if c["name"] == "vec" or m["latency_ms_p50"] <= latency_budget_ms
+        ]
+        res["latency_rejected"] = [
+            c["name"] for c, m in measured
+            if c["name"] != "vec" and m["latency_ms_p50"] > latency_budget_ms
+        ]
+        best_cfg, best = max(
+            eligible,
+            key=lambda cm: (cm[1]["precision_at_k"], -cm[1]["noise_at_k"]),
+        )
+        res["best"] = {"name": best_cfg["name"], **best}
+
+        improved = (best["precision_at_k"], -best["noise_at_k"]) > (
+            base["precision_at_k"],
+            -base["noise_at_k"],
+        )
+        if not improved or best_cfg["name"] == "vec":
+            res["status"] = "noop"
+            return res
+        if dry_run:
+            res["status"] = "would_apply"
+            res["would_apply"] = best_cfg["name"]
+            return res
+
+        # Apply: preserve prior scalar knobs, clear any retrieval levers we
+        # manage, then set the winner's overlay.
+        params = _scalar_overlay(cfg.state_dir)
+        for kk in _MANAGED_RETRIEVAL_KEYS:
+            params.pop(kk, None)
+        params.update(best_cfg["overlay"])
+        write_overlay(
+            cfg.state_dir,
+            params,
+            {
+                "set_by": "dream-retrieval",
+                "config": best_cfg["name"],
+                "baseline_prec": best["precision_at_k"],
+                "baseline_noise": best["noise_at_k"],
+            },
+        )
+        save_retrieval_baseline(cfg.state_dir, best)
+        res["status"] = "applied"
+        res["applied"] = best_cfg["name"]
+    except Exception as exc:  # surfaced into the receipt, never silent
+        res["status"] = "error"
+        res["error"] = f"{type(exc).__name__}: {exc}"
+    return res
+
+
 __all__ = [
     "GRAPH_WEIGHT_GRID",
+    "RETRIEVAL_CONFIGS",
     "build_labels",
     "load_baseline",
     "load_graph_baseline",
+    "load_retrieval_baseline",
     "measure",
     "measure_graph_weight",
+    "measure_retrieval_config",
     "read_overlay",
+    "run_graph_retrieval_pass",
     "run_graph_weight_pass",
     "run_tuning_pass",
     "save_baseline",
     "save_graph_baseline",
+    "save_retrieval_baseline",
     "search_graph_weight",
     "search_min_sim",
 ]
