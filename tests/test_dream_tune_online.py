@@ -96,3 +96,22 @@ def test_resolve_reverted_carries_offline_before(tmp_path, monkeypatch):
     assert r["offline_before"] == {"precision_at_k": 0.2, "noise_at_k": 0.0}
     assert dto.read_pending(tmp_path) is None
     assert dto.read_ledger(tmp_path)[0]["verdict"] == "reverted"
+
+
+def test_resolve_expired_on_version_drift(tmp_path, monkeypatch):
+    dto.write_pending(tmp_path, _pending(version_after="v2"))
+    monkeypatch.setattr(dto, "online_fraction", lambda sd, v, **k: (0.9, 3))  # cohort < min
+    r = dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02, live_version="vDRIFT")
+    assert r["status"] == "expired"
+    assert r["reason"] == "version_drift"
+    assert dto.read_pending(tmp_path) is None                    # cleared
+    assert dto.read_ledger(tmp_path)[0]["verdict"] == "expired"
+
+
+def test_resolve_waiting_when_live_matches_version(tmp_path, monkeypatch):
+    dto.write_pending(tmp_path, _pending(version_after="v2"))
+    monkeypatch.setattr(dto, "online_fraction", lambda sd, v, **k: (0.9, 3))
+    r = dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02, live_version="v2")
+    assert r["status"] == "waiting"
+    assert dto.read_pending(tmp_path) is not None                # kept (still live)
+    assert dto.read_ledger(tmp_path) == []

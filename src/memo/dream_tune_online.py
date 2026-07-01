@@ -115,6 +115,7 @@ def resolve_pending(
     *,
     min_cohort: int,
     eps: float,
+    live_version: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Resolve a prior night's applied change against its out-of-sample cohort.
@@ -138,6 +139,24 @@ def resolve_pending(
     version_after = str(pending.get("version_after", ""))
     online_after, n_after = online_fraction(state_dir, version_after)
     if n_after < min_cohort:
+        # Version drift: a co-running overlay writer (e.g. the graph-weight pass,
+        # gated by the same flag) moved the live config off version_after, so its
+        # cohort can never fill — expire honestly instead of waiting forever. Only
+        # genuinely wait while the applied config is still the live one.
+        if live_version is not None and live_version != version_after:
+            entry = {
+                "resolved_ts": (now or datetime.now(UTC)).isoformat(timespec="seconds"),
+                "verdict": "expired",
+                "reason": "version_drift",
+                "floor_before": pending.get("floor_before"),
+                "floor_after": pending.get("floor_after"),
+                "version_before": pending.get("version_before"),
+                "version_after": version_after,
+                "n_after": n_after,
+            }
+            append_ledger(state_dir, entry)
+            clear_pending(state_dir)
+            return {"status": "expired", **entry}
         return {
             "status": "waiting",
             "version_after": version_after,

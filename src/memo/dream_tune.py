@@ -188,17 +188,26 @@ def run_tuning_pass(
             eps = flag_float("MEMO_DREAM_TUNE_ONLINE_EPS")
             eps = 0.02 if eps is None else eps
             resolution = dream_tune_online.resolve_pending(
-                cfg.state_dir, min_cohort=min_cohort, eps=eps
+                cfg.state_dir,
+                min_cohort=min_cohort,
+                eps=eps,
+                live_version=params_version(cfg.state_dir),
             )
             res["online"] = resolution
             if resolution["status"] == "reverted":
-                rollback_overlay(cfg.state_dir)
+                # Self-contained revert: restore min_sim to the pre-apply floor by
+                # merging into the CURRENT overlay, rather than trusting the shared
+                # one-step _meta.prev (which a co-running pass may have overwritten).
+                params = _overlay_params(cfg.state_dir)
+                params[_MIN_SIM] = resolution["floor_before"]
+                write_overlay(cfg.state_dir, params, {"set_by": "dream-online-revert"})
                 save_baseline(cfg.state_dir, resolution["offline_before"])
                 res["status"] = "online_reverted"
                 return res
             if resolution["status"] == "waiting":
                 res["status"] = "awaiting_online"  # one change per proof cycle
                 return res
+            # "none"/"expired" → fall through and search a new change.
 
         current = flag_float(_MIN_SIM)
         current = 0.5 if current is None else current

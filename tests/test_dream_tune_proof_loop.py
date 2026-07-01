@@ -18,6 +18,8 @@ def test_awaiting_online_skips_search(tmp_path, monkeypatch):
     # a pending exists; cohort too small → waiting → must return before measuring
     dream_tune_online.write_pending(tmp_path, {"version_after": "v2", "online_before": 0.5})
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.9, 3))
+    # live_version must match version_after so drift-check keeps it "waiting" (not "expired")
+    monkeypatch.setattr(dream_tune, "params_version", lambda sd: "v2")
 
     def _boom(*a, **k):
         raise AssertionError("search/measure must not run while awaiting online")
@@ -31,24 +33,26 @@ def test_awaiting_online_skips_search(tmp_path, monkeypatch):
     assert dream_tune_online.read_pending(tmp_path) is not None
 
 
-def test_online_reverted_rolls_back_and_restores_baseline(tmp_path, monkeypatch):
+def test_online_reverted_restores_floor_before_and_baseline(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
     dream_tune_online.write_pending(
         tmp_path,
-        {"version_after": "v2", "online_before": 0.6,
-         "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0}},
+        {"version_before": "v1", "version_after": "v2", "floor_before": 0.5,
+         "online_before": 0.6, "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0}},
     )
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
-    calls = {"rollback": 0, "baseline": None}
-    monkeypatch.setattr(dream_tune, "rollback_overlay", lambda sd: calls.__setitem__("rollback", 1))
+    calls = {"overlay": None, "baseline": None}
+    monkeypatch.setattr(dream_tune, "write_overlay",
+                        lambda sd, params, meta: calls.__setitem__("overlay", dict(params)))
     monkeypatch.setattr(dream_tune, "save_baseline", lambda sd, m: calls.__setitem__("baseline", m))
-    monkeypatch.setattr(dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure")))
+    monkeypatch.setattr(dream_tune, "measure",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure")))
 
     res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "online_reverted"
-    assert calls["rollback"] == 1
-    assert calls["baseline"] == {"precision_at_k": 0.2, "noise_at_k": 0.0}  # restored offline baseline
+    assert calls["overlay"]["MEMO_RECALL_MIN_SIM"] == 0.5   # restored floor_before
+    assert calls["baseline"] == {"precision_at_k": 0.2, "noise_at_k": 0.0}
 
 
 def test_apply_writes_pending(tmp_path, monkeypatch):
