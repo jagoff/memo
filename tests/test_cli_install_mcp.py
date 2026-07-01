@@ -42,10 +42,10 @@ def test_install_mcp_dry_run_reports_per_agent(monkeypatch, tmp_path):
     iso.write_text("#!/bin/sh\n")
     monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
 
-    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "windsurf", "--agent", "codex"])
+    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "devin-desktop", "--agent", "codex"])
     assert res.exit_code == 0, res.output
     assert "memo MCP → " in res.output and "/.local/bin/memo-mcp" in res.output
-    assert "windsurf" in res.output
+    assert "devin-desktop" in res.output
     assert "codex mcp add memo" in res.output  # cli strategy argv shown
     assert "dry-run" in res.output
 
