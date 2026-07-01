@@ -39,7 +39,7 @@ from memo.eval_recall import (
     harvest_labels,
     merge_label_prompts,
 )
-from memo.tuned_overlay import read_overlay, rollback_overlay, write_overlay
+from memo.tuned_overlay import params_version, read_overlay, rollback_overlay, write_overlay
 
 _MIN_SIM = "MEMO_RECALL_MIN_SIM"
 _BASELINE = "dream_baseline.json"
@@ -176,6 +176,30 @@ def run_tuning_pass(
         if not labels.prompts:
             return res
 
+        # Phase-1 online proof loop: resolve a prior night's applied change
+        # against its out-of-sample grounding cohort BEFORE searching again.
+        # Skipped under dry_run — a preview must not mutate the sidecars.
+        from memo import dream_tune_online
+
+        if not dry_run:
+            from memo.flags import flag_int
+
+            min_cohort = flag_int("MEMO_DREAM_TUNE_MIN_COHORT") or 20
+            eps = flag_float("MEMO_DREAM_TUNE_ONLINE_EPS")
+            eps = 0.02 if eps is None else eps
+            resolution = dream_tune_online.resolve_pending(
+                cfg.state_dir, min_cohort=min_cohort, eps=eps
+            )
+            res["online"] = resolution
+            if resolution["status"] == "reverted":
+                rollback_overlay(cfg.state_dir)
+                save_baseline(cfg.state_dir, resolution["offline_before"])
+                res["status"] = "online_reverted"
+                return res
+            if resolution["status"] == "waiting":
+                res["status"] = "awaiting_online"  # one change per proof cycle
+                return res
+
         current = flag_float(_MIN_SIM)
         current = 0.5 if current is None else current
 
@@ -217,6 +241,7 @@ def run_tuning_pass(
 
         # Merge, don't clobber: preserve a graph-weight a prior pass set (symmetric
         # with run_graph_weight_pass) so the two tuners coexist in the overlay.
+        version_before = params_version(cfg.state_dir)
         params = _overlay_params(cfg.state_dir)
         params[_MIN_SIM] = best_floor
         write_overlay(
@@ -229,6 +254,21 @@ def run_tuning_pass(
             },
         )
         save_baseline(cfg.state_dir, after)
+        # Record the pending online evaluation for a later night to resolve.
+        version_after = params_version(cfg.state_dir)
+        online_before, _n_before = dream_tune_online.online_fraction(cfg.state_dir, version_before)
+        dream_tune_online.write_pending(
+            cfg.state_dir,
+            {
+                "version_before": version_before,
+                "version_after": version_after,
+                "floor_before": current,
+                "floor_after": best_floor,
+                "offline_before": before,
+                "offline_after": after,
+                "online_before": online_before,
+            },
+        )
         res["status"] = "applied"
     except Exception as exc:  # surfaced into the receipt, never silent
         res["status"] = "error"
