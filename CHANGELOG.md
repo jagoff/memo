@@ -9,6 +9,18 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.4] - 2026-07-01
+
+### Added
+- **MCP server surface is now under test.** 21 new `tests/test_server_*.py` files cover the previously-untested `server_*` domains (analytics, asof, backup, cache, collaborative, contextual, contradict, core_history, entities, episodes, feedback, graph, import_export, links, multimodal, query, reflect, repo, sync, temporal, version) — each mocks `Memory`, invokes every tool through its `register()`, and asserts the returned envelope. Measured suite coverage rose ~60% → 67%, and the coverage floor (`fail_under`) is ratcheted **58 → 64**.
+
+### Fixed
+- **`delete()` rollback no longer drops the sqlite-only dedup keys.** `topic_key` / `normalized_hash` live only in the sqlite index (never in the `.md` frontmatter), and `store.get()` omits them — so a failed-final-unlink rollback restored the row *without* them, and a later same-topic save would then create a **duplicate** instead of updating in place. A new `VecStore.get_dedup_keys()` (mirroring `get_embedding_blob` / `get_fts_body`) pre-fetches them so the rollback restores the row faithfully.
+- **`delete()` mutates derived/audit state only after the authoritative unlink.** History logging, graph-edge drop, and receipt/event emission now run strictly *after* the canonical `.md` is removed. A failed unlink therefore rolls back cleanly with **no spurious `delete` audit event** and no dropped graph edges for a memory that actually survives the failure.
+
+### Changed
+- **`cli_dream.py` god-file thinned** (1228 → 1142 LOC): five extractable helpers (`_state_path`, `_older_id`, `_corpus_fingerprint`, `_make_progress`, `_render_run_summary`) moved into `cli_dream_passes.py` and re-exported, so existing imports keep resolving. Behaviour-preserving; the CLI file stays wiring-only per the repo convention.
+
 ## [2.9.3] - 2026-07-01
 
 ### Fixed
