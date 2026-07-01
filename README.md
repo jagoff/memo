@@ -85,7 +85,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
 ```
 
-The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, OpenCode, Windsurf).
+The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, Devin Desktop, OpenCode).
 
 Prefer a manual install? Any of these expose the same two binaries — `memo` (CLI) and `memo-mcp` (MCP server):
 
@@ -163,7 +163,7 @@ memo synthesize                       # generate cross-cluster insights (LLM)
 memo dream                            # nightly: signal gather → prune → orient
 ```
 
-`MEMO_SYNTHESIS_ENABLED=1` runs synthesis automatically during `memo maintain`.
+`MEMO_SYNTHESIS_ENABLED=1` runs synthesis automatically during `memo maintain`. Nightly `memo dream` can also **self-tune recall** (`MEMO_DREAM_TUNE_ENABLED=1`): it mines ground-truth labels from real usage, adjusts the recall threshold, and auto-reverts if the eval baseline regresses.
 
 ### 🌐 Cross-Mac git sync
 
@@ -203,7 +203,7 @@ memo eval recall --gate                             # exit non-zero if precision
 memo eval recall --update-baseline                  # snapshot current best
 ```
 
-Wire `--gate` into a pre-commit hook to catch retrieval regressions before they ship.
+Wire `--gate` into a pre-commit hook to catch retrieval regressions before they ship. `memo feedback` records per-source 👍/👎 votes that teach the retriever which memories to surface (or hide) for similar queries.
 
 ### 🖼️ Multi-modal ingestion
 
@@ -224,7 +224,7 @@ memo runs four background daemons:
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
-### All 95 CLI commands
+### All 104 CLI commands
 
 <details>
 <summary>Click to expand</summary>
@@ -233,13 +233,13 @@ memo runs four background daemons:
 
 **Recall & Hooks:** `recall` `recall-hook` `briefing` `continuity` `prewarm` `capture-tick` `capture-stop`
 
-**Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history`
+**Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes`
 
-**Maintenance:** `reindex` `maintain` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `temporal`
+**Maintenance:** `reindex` `maintain` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `temporal` `compress-context`
 
-**Analysis & Quality:** `health` `stats` `doctor` `lint` `analytics` `eval` `roi` `token-savings` `usefulness` `gaps` `outcome` `profile`
+**Analysis & Quality:** `health` `stats` `doctor` `lint` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile`
 
-**Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version`
+**Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version` `related`
 
 **Advanced Search:** `embed` `rerank` `contextual` `chat` `chat-ask` `multimodal` `repo`
 
@@ -247,9 +247,11 @@ memo runs four background daemons:
 
 **Visualization:** `tui` `dashboard` `map` `logs` `hook-log`
 
-**Setup & Config:** `init` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `watch` `mcp-command`
+**Setup & Config:** `init` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `watch` `release` `mcp-command`
 
-**Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon`
+**Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon` `idle-daemon`
+
+**Other:** `feedback` `query` `provenance` `mandate` `sleep-cycle` `ocr-image` `http-api` `codex-badge` `backend-native` `collaborative`
 
 </details>
 
@@ -262,6 +264,8 @@ memo runs four background daemons:
 | `full` | 123 | ~15k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
+
+Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON).
 
 ## Retrieval architecture
 
