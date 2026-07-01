@@ -19,6 +19,19 @@ KNOWN_MCP_CONFIGS: tuple[str, ...] = (
     "~/.devin/mcp.json",
     "~/.config/opencode/opencode.jsonc",
     "~/.config/mcp-gateway/gateway.yaml",
+    # Multi-agent expansion (user-scope MCP configs).
+    "~/.cursor/mcp.json",
+    "~/.gemini/settings.json",
+    "~/.gemini/config/mcp_config.json",
+    "~/.codeium/windsurf/mcp_config.json",
+    "~/.kiro/settings/mcp.json",
+    "~/.warp/.mcp.json",
+    "~/.config/zed/settings.json",
+    "~/.continue/mcpServers/memo.yaml",
+    "~/.config/goose/config.yaml",
+    "~/Library/Application Support/Code/User/mcp.json",
+    "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+    "~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
 )
 
 # Absolute path ending in /memo or /memo-mcp (the launched binary).
