@@ -14,7 +14,6 @@ in MCP" (see CLAUDE.md). Dry-run by default; pass ``--write`` to apply.
 from __future__ import annotations
 
 import dataclasses
-import json
 import os
 import shutil
 import subprocess
@@ -27,10 +26,11 @@ import click
 
 from memo.runtime.detect import _resolved_memo_mcp
 from memo.runtime.mcp import (
+    _config_path,
     _mcp_add_command,
     _mcp_server_env,
-    _mcp_server_json,
     _run_agent_command,
+    _write_mcp_json,
 )
 
 
@@ -135,39 +135,6 @@ def _build_server() -> Any:
 
 def _generic_preset(config_path: str, json_key: str = "mcpServers") -> _GenericPreset:
     return _GenericPreset(config_path=config_path, json_key=json_key)
-
-
-def _config_path(raw: str) -> Path:
-    p = Path(raw).expanduser()
-    return p if p.is_absolute() else Path.home() / p
-
-
-def _write_mcp_json(path: Path, server: Any, *, json_key: str, include_type: bool) -> str:
-    data: dict[str, Any]
-    if path.is_file() and path.read_text(encoding="utf-8").strip():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise click.ClickException(f"MCP config is not valid JSON: {path} ({exc})") from exc
-        if not isinstance(loaded, dict):
-            raise click.ClickException(f"MCP config must be a JSON object: {path}")
-        data = loaded
-        action = "updated"
-    else:
-        data = {}
-        action = "created"
-
-    servers = data.setdefault(json_key, {})
-    if not isinstance(servers, dict):
-        raise click.ClickException(f"`{json_key}` must be a JSON object in {path}")
-    servers[server.name] = _mcp_server_json(
-        Path(server.command), server.env, include_type=include_type
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
-    return action
 
 
 def _fallback_register_agent_mcp(
