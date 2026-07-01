@@ -44,6 +44,18 @@ _CLIENT_FILES: dict[str, str] = {
     "opencode": "AGENTS.md",
     "cursor": ".cursor/rules/memo.md",
     "blackbox": "AGENTS.md",
+    # Multi-agent expansion: AGENTS.md where the agent honors it, else its own file.
+    "zed": "AGENTS.md",
+    "antigravity": "AGENTS.md",
+    "continue": "AGENTS.md",
+    "vscode": ".github/copilot-instructions.md",
+    "windsurf": ".windsurf/rules/memo.md",
+    "cline": ".clinerules/memo.md",
+    "roo": ".roo/rules/memo.md",
+    "kiro": ".kiro/steering/memo.md",
+    "goose": ".goosehints",
+    "jetbrains": ".junie/guidelines.md",
+    "warp": "WARP.md",
 }
 
 
@@ -90,7 +102,11 @@ def _write_mandate(target: Path, *, dry_run: bool) -> str:
     "--client",
     "client",
     type=click.Choice(
-        ["all", "codex", "devin", "devin-desktop", "opencode", "cursor", "blackbox"]
+        [
+            "all", "codex", "devin", "devin-desktop", "opencode", "cursor", "blackbox",
+            "zed", "antigravity", "continue", "vscode", "windsurf", "cline", "roo",
+            "kiro", "goose", "jetbrains", "warp",
+        ]
     ),
     default=None,
     help="Write the mandate into this client's project-local instruction file.",
@@ -105,7 +121,7 @@ def mandate(*, client: str | None = None, do_write: bool = False, dry_run: bool 
         click.echo(MANDATE_TEXT)
         click.echo(
             "\n# Paste into the client's instruction file, or run with "
-            "--client <codex|devin|devin-desktop|opencode|cursor|all> --write "
+            "--client <codex|devin|opencode|cursor|vscode|kiro|goose|...|all> --write "
             "(project-local)."
         )
         return

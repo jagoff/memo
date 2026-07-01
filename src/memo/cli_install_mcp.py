@@ -344,10 +344,10 @@ def install_mcp(
 
     if with_mandate:
         click.echo("mandate (consult memo first):")
-        from memo.cli_mandate import write_mandates_for_clients
+        from memo.cli_mandate import _CLIENT_FILES, write_mandates_for_clients
 
         target_agents = list(agents) or ["all"]
         if "all" in target_agents:
-            target_agents = ["codex", "devin", "opencode", "windsurf", "cursor"]
+            target_agents = list(_CLIENT_FILES)
         for rel, status in write_mandates_for_clients(target_agents, dry_run=not write):
-            click.echo(f"  {rel:<22} {status}")
+            click.echo(f"  {rel:<28} {status}")
