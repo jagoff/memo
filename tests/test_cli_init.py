@@ -32,7 +32,10 @@ def test_init_writes_config_file(tmp_path: Path, runner_env):
     runner = CliRunner()
     target_data = tmp_path / "chosen"
     fake_result = PickerResult(data_dir=target_data, vault_path=None)
-    with patch("memo.cli.run_picker", return_value=fake_result):
+    with (
+        patch("memo.runtime.install._init_is_interactive", return_value=True),
+        patch("memo.cli.run_picker", return_value=fake_result),
+    ):
         result = runner.invoke(cli, ["init", "--force"], env=runner_env)
     assert result.exit_code == 0, result.output
     cfg_path = Path(runner_env["MEMO_CONFIG_FILE"])
@@ -48,7 +51,10 @@ def test_init_writes_vault_path_when_obsidian_branch(tmp_path: Path, runner_env)
     vault.mkdir()
     data_dir = vault / "AI" / "memory"
     fake = PickerResult(data_dir=data_dir, vault_path=vault)
-    with patch("memo.cli.run_picker", return_value=fake):
+    with (
+        patch("memo.runtime.install._init_is_interactive", return_value=True),
+        patch("memo.cli.run_picker", return_value=fake),
+    ):
         result = runner.invoke(cli, ["init", "--force"], env=runner_env)
     assert result.exit_code == 0, result.output
     body = Path(runner_env["MEMO_CONFIG_FILE"]).read_text(encoding="utf-8")
@@ -69,6 +75,17 @@ def test_init_prompts_to_overwrite_existing(tmp_path: Path, runner_env):
     assert result.exit_code == 0
     # Old config preserved.
     assert "/tmp/old" in cfg_file.read_text(encoding="utf-8")
+
+
+def test_init_refuses_non_interactive(tmp_path: Path, runner_env):
+    """`memo init` on a non-TTY exits cleanly with guidance, not a traceback."""
+    runner = CliRunner()
+    with patch("memo.cli.run_picker") as picker_mock:
+        # runner_env sets MEMO_NONINTERACTIVE=1; CliRunner is also non-TTY.
+        result = runner.invoke(cli, ["init", "--force"], env=runner_env)
+    picker_mock.assert_not_called()
+    assert result.exit_code == 1
+    assert "interactive terminal" in result.output
 
 
 def test_doctor_doesnt_trigger_picker(tmp_path: Path):

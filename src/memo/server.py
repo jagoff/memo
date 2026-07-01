@@ -120,7 +120,9 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     if memory is None:
         memory = Memory(Config.from_env())
 
-    server = FastMCP("memo", instructions=_SERVER_INSTRUCTIONS)
+    from memo import __version__ as _memo_version
+
+    server = FastMCP("memo", instructions=_SERVER_INSTRUCTIONS, version=_memo_version)
 
     # Stitch the synapse trace header into the shared trace contextvar so
     # warm-daemon writes carry the same trace id as the subprocess path.
