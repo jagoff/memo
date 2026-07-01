@@ -23,6 +23,12 @@
 
 </div>
 
+<div align="center">
+
+<img src="docs/demo.gif" alt="memo in a terminal: save a fact once, then a later session recalls it automatically." width="760" />
+
+</div>
+
 ## What makes memo different
 
 | Capability | memo | mem0 | letta | cognee | engram | basic-memory | cipher |
@@ -96,6 +102,16 @@ brew tap jagoff/memo && brew install mlx-memo
 ```
 
 > Keep memo **isolated as its own tool** (uv tool / pipx / Homebrew). Don't vendor it inside another project's `.venv`. `memo doctor --strict-runtime` verifies the install.
+
+**On Linux, or just want to try it without installing anything?** Run the Docker
+image (CPU backend, cross-platform — search/recall/save; the reranker + `ask`/
+`synthesize`/`dream` verbs are Apple-Silicon-only):
+
+```bash
+docker run --rm ghcr.io/jagoff/memo:latest memo doctor
+```
+
+Details in **[docs/docker.md](docs/docker.md)**.
 
 First install downloads ~8 GB of MLX models (5–15 min); later installs hit the HuggingFace cache. Full installer knobs and "move to a new Mac" steps: **[docs/reference.md › Install](docs/reference.md#install-detail)**.
 
