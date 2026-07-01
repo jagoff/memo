@@ -224,3 +224,45 @@ def test_profile_annotation_omitted_for_default(monkeypatch, tmp_path):
     res = CliRunner().invoke(cli, ["install-mcp", "--agent", "claude-code", "--profile", "default"])
     assert res.exit_code == 0, res.output
     assert "[profile:" not in res.output
+
+
+def test_install_mcp_preset_agent_dry_run(monkeypatch, tmp_path):
+    iso = tmp_path / ".local" / "bin" / "memo-mcp"
+    iso.parent.mkdir(parents=True)
+    iso.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+
+    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "vscode"])
+    assert res.exit_code == 0, res.output
+    assert "vscode" in res.output
+    assert "Code/User/mcp.json" in res.output
+    assert "dry-run" in res.output
+
+
+def test_install_mcp_jetbrains_prints_snippet(monkeypatch, tmp_path):
+    iso = tmp_path / ".local" / "bin" / "memo-mcp"
+    iso.parent.mkdir(parents=True)
+    iso.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+
+    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "jetbrains", "--write"])
+    assert res.exit_code == 0, res.output
+    assert "mcpServers" in res.output  # the pasteable snippet
+    assert "Import from Claude" in res.output
+
+
+def test_install_mcp_only_present_filters(monkeypatch, tmp_path):
+    iso = tmp_path / ".local" / "bin" / "memo-mcp"
+    iso.parent.mkdir(parents=True)
+    iso.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+    # Only Kiro's config dir exists → only kiro should be written.
+    (tmp_path / ".kiro" / "settings").mkdir(parents=True)
+
+    res = CliRunner().invoke(
+        cli, ["install-mcp", "--agent", "kiro", "--agent", "warp", "--only-present", "--write"]
+    )
+    assert res.exit_code == 0, res.output
+    assert (tmp_path / ".kiro" / "settings" / "mcp.json").is_file()
+    assert not (tmp_path / ".warp" / ".mcp.json").exists()
+    assert "warp" in res.output and "skipped" in res.output
