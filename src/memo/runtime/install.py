@@ -33,14 +33,14 @@ from memo.runtime.mcp import (
     _MCP_ENV_FORWARD_KEYS,
     _MISSING_MCP_OK_ERRORS,
     _agent_asset_root,
+    _devin_desktop_mcp_config_path,
     _env_flags,
     _format_command,
-    _install_windsurf_mcp,
+    _install_devin_desktop_mcp,
     _mcp_add_command,
     _mcp_server_env,
     _mcp_server_json,
     _run_agent_command,
-    _windsurf_mcp_config_path,
 )
 from memo.runtime.migrate import _consolidate_sidecar_dbs, migrate_vault
 from memo.runtime.shell_wrapper import _WRAPPER_SNIPPET_ZSH, install_shell_wrapper
@@ -56,12 +56,13 @@ __all__ = [
     "_codex_send_app_server_request",
     "_consolidate_sidecar_dbs",
     "_copy_slash_skill",
+    "_devin_desktop_mcp_config_path",
     "_env_flags",
     "_env_root_for_bin",
     "_format_command",
     "_install_codex_plugin",
+    "_install_devin_desktop_mcp",
     "_install_mode",
-    "_install_windsurf_mcp",
     "_mcp_add_command",
     "_mcp_server_env",
     "_mcp_server_json",
@@ -71,7 +72,6 @@ __all__ = [
     "_run_agent_command",
     "_runtime_install_report",
     "_safe_resolve",
-    "_windsurf_mcp_config_path",
     "init_cmd",
     "install_shell_wrapper",
     "install_slash",
@@ -131,7 +131,7 @@ def init_cmd(force: bool) -> None:
 @click.option(
     "--client",
     type=click.Choice(
-        ["claude-code", "claude-desktop", "codex", "devin", "opencode", "windsurf", "json"]
+        ["claude-code", "claude-desktop", "codex", "devin", "devin-desktop", "opencode", "json"]
     ),
     default="claude-code",
     show_default=True,
@@ -158,10 +158,18 @@ def mcp_command(client: str) -> None:
             )
         )
         return
-    if client == "windsurf":
+    if client == "devin-desktop":
         click.echo(
             json.dumps(
-                {"mcpServers": {"memo": _mcp_server_json(memo_mcp, env, include_type=False)}},
+                {
+                    "mcpServers": {
+                        "memo": _mcp_server_json(
+                            memo_mcp,
+                            {**env, "MEMO_SOURCE": "devin-desktop"},
+                            include_type=True,
+                        )
+                    }
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -192,7 +200,9 @@ def mcp_command(client: str) -> None:
     "--client",
     "clients",
     multiple=True,
-    type=click.Choice(["all", "claude-code", "codex", "devin", "opencode", "windsurf", "blackbox"]),
+    type=click.Choice(
+        ["all", "claude-code", "codex", "devin", "devin-desktop", "opencode", "blackbox"]
+    ),
     help="Client to configure. Repeatable. Defaults to all supported agent clients.",
 )
 @click.option(
@@ -215,7 +225,7 @@ def install_slash(
     selected = set(clients or ("all",))
     if "all" in selected:
         selected.remove("all")
-        selected.update({"claude-code", "codex", "devin", "opencode", "windsurf"})
+        selected.update({"claude-code", "codex", "devin", "devin-desktop", "opencode"})
 
     needs_assets = bool(selected & {"claude-code", "codex", "devin"})
     root = _agent_asset_root(repo) if needs_assets else None
@@ -281,10 +291,12 @@ def install_slash(
             _mcp_add_command("devin", memo_mcp, {**env, "MEMO_SOURCE": "devin"}), dry_run=dry_run
         )
 
-    def install_windsurf() -> None:
-        console.print("[bold]Windsurf[/bold]")
-        _install_windsurf_mcp(memo_mcp, env, dry_run=dry_run)
-        console.print("[dim]Refresh MCP servers in Windsurf Cascade after editing config.[/dim]")
+    def install_devin_desktop() -> None:
+        console.print("[bold]Devin Desktop[/bold]")
+        _install_devin_desktop_mcp(
+            memo_mcp, {**env, "MEMO_SOURCE": "devin-desktop"}, dry_run=dry_run
+        )
+        console.print("[dim]Restart Devin Desktop after editing config.[/dim]")
 
     def install_opencode() -> None:
         console.print("[bold]OpenCode[/bold]")
@@ -301,13 +313,13 @@ def install_slash(
         run_client("Devin", install_devin)
     if "opencode" in selected:
         run_client("OpenCode", install_opencode)
-    if "windsurf" in selected:
-        run_client("Windsurf", install_windsurf)
+    if "devin-desktop" in selected:
+        run_client("Devin Desktop", install_devin_desktop)
 
     mandate_clients = [
         client
         for client in selected
-        if client in {"codex", "devin", "opencode", "windsurf", "cursor", "blackbox"}
+        if client in {"codex", "devin", "devin-desktop", "opencode", "cursor", "blackbox"}
     ]
     if mandate_clients:
         console.print("[bold]Mandate[/bold]")
@@ -350,7 +362,7 @@ def install_slash(
         )
         console.print(
             "[dim]Install those clients, then rerun: "
-            "memo install-slash --client claude-code --client codex --client opencode --client windsurf[/dim]"
+            "memo install-slash --client claude-code --client codex --client opencode --client devin-desktop[/dim]"
         )
     else:
         console.print(
