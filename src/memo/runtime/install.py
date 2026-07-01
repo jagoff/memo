@@ -81,6 +81,21 @@ __all__ = [
 ]
 
 
+def _init_is_interactive() -> bool:
+    """True when `memo init` can safely run its interactive picker.
+
+    The picker needs a real TTY; `MEMO_NONINTERACTIVE=1` (set by hooks) also
+    opts out. Extracted so tests can simulate an interactive terminal.
+    """
+    import sys
+
+    from memo.flags import flag_bool
+
+    if flag_bool("MEMO_NONINTERACTIVE"):
+        return False
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 @click.command(name="init")
 @click.option("--force", is_flag=True, help="Overwrite existing config without confirmation.")
 def init_cmd(force: bool) -> None:
@@ -98,6 +113,15 @@ def init_cmd(force: bool) -> None:
     ):
         console.print("[yellow]aborted[/yellow]")
         return
+    # The picker is interactive; in a non-TTY / non-interactive context (piped
+    # install, CI) exit cleanly instead of crashing inside prompt_toolkit.
+    if not _init_is_interactive():
+        console.print(
+            "[yellow]memo init needs an interactive terminal.[/yellow] "
+            "Set MEMO_DATA_DIR (and optionally MEMO_VAULT_PATH) to configure "
+            "non-interactively, or run `memo init` from a TTY."
+        )
+        raise click.exceptions.Exit(1)
     from memo.cli import _run_picker_and_save
 
     _run_picker_and_save()
@@ -144,13 +168,21 @@ def mcp_command(client: str) -> None:
         )
         return
     if client == "codex":
-        click.echo(_format_command(_mcp_add_command("codex", memo_mcp, {**env, "MEMO_SOURCE": "codex"})))
+        click.echo(
+            _format_command(_mcp_add_command("codex", memo_mcp, {**env, "MEMO_SOURCE": "codex"}))
+        )
         return
     if client == "devin":
-        click.echo(_format_command(_mcp_add_command("devin", memo_mcp, {**env, "MEMO_SOURCE": "devin"})))
+        click.echo(
+            _format_command(_mcp_add_command("devin", memo_mcp, {**env, "MEMO_SOURCE": "devin"}))
+        )
         return
     if client == "opencode":
-        click.echo(_format_command(_mcp_add_command("opencode", memo_mcp, {**env, "MEMO_SOURCE": "opencode"})))
+        click.echo(
+            _format_command(
+                _mcp_add_command("opencode", memo_mcp, {**env, "MEMO_SOURCE": "opencode"})
+            )
+        )
         return
     click.echo(_format_command(_mcp_add_command("claude-code", memo_mcp, env)))
 
@@ -207,7 +239,9 @@ def install_slash(
         _copy_slash_skill(root, _codex_home() / "skills" / "memo" / "SKILL.md", dry_run=dry_run)
         _install_codex_plugin(root, dry_run=dry_run)
         _run_agent_command(["codex", "mcp", "remove", "memo"], dry_run=dry_run, best_effort=True)
-        _run_agent_command(_mcp_add_command("codex", memo_mcp, {**env, "MEMO_SOURCE": "codex"}), dry_run=dry_run)
+        _run_agent_command(
+            _mcp_add_command("codex", memo_mcp, {**env, "MEMO_SOURCE": "codex"}), dry_run=dry_run
+        )
         console.print(
             "[yellow]![/yellow] Codex CLI's TUI slash menu currently lists only built-in "
             "slash commands. memo is installed as a model-visible skill and MCP server, "
@@ -217,17 +251,35 @@ def install_slash(
     def install_claude_code() -> None:
         assert root is not None
         console.print("[bold]Claude Code[/bold]")
-        _run_agent_command(["claude", "plugin", "marketplace", "add", root], dry_run=dry_run, ok_errors=("already", "exists"))
-        _run_agent_command(["claude", "plugin", "install", "memo@memo", "-s", "user"], dry_run=dry_run, ok_errors=("already", "installed", "exists"))
-        _run_agent_command(["claude", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, best_effort=True)
+        _run_agent_command(
+            ["claude", "plugin", "marketplace", "add", root],
+            dry_run=dry_run,
+            ok_errors=("already", "exists"),
+        )
+        _run_agent_command(
+            ["claude", "plugin", "install", "memo@memo", "-s", "user"],
+            dry_run=dry_run,
+            ok_errors=("already", "installed", "exists"),
+        )
+        _run_agent_command(
+            ["claude", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, best_effort=True
+        )
         _run_agent_command(_mcp_add_command("claude-code", memo_mcp, env), dry_run=dry_run)
 
     def install_devin() -> None:
         assert root is not None
         console.print("[bold]Devin[/bold]")
-        _copy_slash_skill(root, Path.home() / ".config" / "devin" / "skills" / "memo" / "SKILL.md", dry_run=dry_run)
-        _run_agent_command(["devin", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, best_effort=True)
-        _run_agent_command(_mcp_add_command("devin", memo_mcp, {**env, "MEMO_SOURCE": "devin"}), dry_run=dry_run)
+        _copy_slash_skill(
+            root,
+            Path.home() / ".config" / "devin" / "skills" / "memo" / "SKILL.md",
+            dry_run=dry_run,
+        )
+        _run_agent_command(
+            ["devin", "mcp", "remove", "-s", "user", "memo"], dry_run=dry_run, best_effort=True
+        )
+        _run_agent_command(
+            _mcp_add_command("devin", memo_mcp, {**env, "MEMO_SOURCE": "devin"}), dry_run=dry_run
+        )
 
     def install_windsurf() -> None:
         console.print("[bold]Windsurf[/bold]")
@@ -236,7 +288,10 @@ def install_slash(
 
     def install_opencode() -> None:
         console.print("[bold]OpenCode[/bold]")
-        _run_agent_command(_mcp_add_command("opencode", memo_mcp, {**env, "MEMO_SOURCE": "opencode"}), dry_run=dry_run)
+        _run_agent_command(
+            _mcp_add_command("opencode", memo_mcp, {**env, "MEMO_SOURCE": "opencode"}),
+            dry_run=dry_run,
+        )
 
     if "codex" in selected:
         run_client("Codex", install_codex)
@@ -249,18 +304,29 @@ def install_slash(
     if "windsurf" in selected:
         run_client("Windsurf", install_windsurf)
 
-    mandate_clients = [client for client in selected if client in {"codex", "devin", "opencode", "windsurf", "cursor", "blackbox"}]
+    mandate_clients = [
+        client
+        for client in selected
+        if client in {"codex", "devin", "opencode", "windsurf", "cursor", "blackbox"}
+    ]
     if mandate_clients:
         console.print("[bold]Mandate[/bold]")
-        for rel, status in write_mandates_for_clients(mandate_clients, cwd=Path.cwd(), dry_run=dry_run):
+        for rel, status in write_mandates_for_clients(
+            mandate_clients, cwd=Path.cwd(), dry_run=dry_run
+        ):
             console.print(f"  {rel:<22} {status}")
 
     # Startup-banner shims — wrap agent binaries to show [MEMO ver] at launch.
     # Agents covered by memflow shims show a combined banner; others get memo's own box.
-    _shim_agents = tuple(a for a in ("codex", "devin", "opencode", "gemini", "blackbox") if a in selected or "all" in (clients or ()))
+    _shim_agents = tuple(
+        a
+        for a in ("codex", "devin", "opencode", "gemini", "blackbox")
+        if a in selected or "all" in (clients or ())
+    )
     if not _shim_agents:
         _shim_agents = ("codex", "devin", "opencode", "gemini", "blackbox")
     from memo.runtime.shims import _DEFAULT_BIN_DIR, install_path_snippet, install_shims
+
     console.print("[bold]Startup-banner shims[/bold]")
     shim_results = install_shims(_shim_agents, _DEFAULT_BIN_DIR, dry_run=dry_run)
     for r in shim_results:
@@ -273,7 +339,9 @@ def install_slash(
     elif path_status == "already":
         console.print("  [dim]✓ ~/.memo/bin already in PATH snippet[/dim]")
     else:
-        console.print(f"  [yellow]![/yellow] PATH: {path_status} — add manually: export PATH=\"$HOME/.memo/bin:$PATH\"")
+        console.print(
+            f'  [yellow]![/yellow] PATH: {path_status} — add manually: export PATH="$HOME/.memo/bin:$PATH"'
+        )
 
     if failures:
         console.print(
@@ -285,7 +353,9 @@ def install_slash(
             "memo install-slash --client claude-code --client codex --client opencode --client windsurf[/dim]"
         )
     else:
-        console.print("[green]✓[/green] agent-client install complete. Open a new agent session to reload.")
+        console.print(
+            "[green]✓[/green] agent-client install complete. Open a new agent session to reload."
+        )
 
 
 def _require_isolated_memo_mcp() -> Path:
