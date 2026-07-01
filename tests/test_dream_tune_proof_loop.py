@@ -129,12 +129,13 @@ def test_online_revert_pins_prev_so_offline_rollback_is_noop(tmp_path, monkeypat
     from memo.tuned_overlay import _scalar_params, read_overlay, rollback_overlay, write_overlay
 
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
-    # live overlay = the GOOD (pre-apply) config that the revert will restore
-    write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.5}, {"set_by": "test"})
+    # good baseline 0.62, then a BAD change 0.7 applied over it (so _meta.prev = 0.62)
+    write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.62}, {"set_by": "test"})
+    write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.7}, {"set_by": "test"})
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
     dream_tune_online.write_pending(
         tmp_path,
-        {"knob": "MEMO_RECALL_MIN_SIM", "version_after": "v2", "floor_before": 0.5,
+        {"knob": "MEMO_RECALL_MIN_SIM", "version_after": "v2", "floor_before": 0.62,
          "online_before": 0.6, "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0}},
     )
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
@@ -142,8 +143,9 @@ def test_online_revert_pins_prev_so_offline_rollback_is_noop(tmp_path, monkeypat
 
     res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "online_reverted"
-    # after the revert, _meta.prev == current params → rollback_overlay is a no-op
-    cur = _scalar_params(read_overlay(tmp_path))
+    # the revert restored the good 0.62
+    assert _scalar_params(read_overlay(tmp_path))["MEMO_RECALL_MIN_SIM"] == 0.62
+    # WITHOUT the fix, _meta.prev would be the bad 0.7 and this rollback would resurrect it.
     rolled = rollback_overlay(tmp_path)
-    assert rolled == cur   # rollback restored the SAME (good) config — bad config not resurrected
-    assert _scalar_params(read_overlay(tmp_path)) == cur
+    assert rolled["MEMO_RECALL_MIN_SIM"] == 0.62
+    assert _scalar_params(read_overlay(tmp_path))["MEMO_RECALL_MIN_SIM"] == 0.62
