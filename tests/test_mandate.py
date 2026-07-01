@@ -14,10 +14,9 @@ def test_expected_consumers_covers_non_hook_clients() -> None:
     for c in ("claude-code", "synapse", "memflow", "codex"):
         assert c in dashboard.EXPECTED_CONSUMERS
     # On-demand tools the user invokes explicitly (not continuous daemons) must
-    # NOT be flagged silent when idle: devin/opencode appear as readers if/when
-    # they query, but absence isn't a gap. "windsurf" retired (now Devin
-    # Desktop); devin-desktop is a GUI app that can't be driven headless.
-    for c in ("devin", "opencode", "windsurf", "devin-desktop"):
+    # NOT be flagged silent when idle: devin/opencode/devin-desktop appear as
+    # readers if/when they query, but absence isn't a gap.
+    for c in ("devin", "opencode", "devin-desktop"):
         assert c not in dashboard.EXPECTED_CONSUMERS
 
 
@@ -57,7 +56,9 @@ def test_mandate_text_mentions_source_attribution() -> None:
 
 
 def test_write_mandates_for_clients_deduplicates_shared_files(tmp_path: Path) -> None:
-    results = write_mandates_for_clients(["devin", "opencode", "windsurf"], cwd=tmp_path, dry_run=False)
+    results = write_mandates_for_clients(
+        ["devin", "opencode", "devin-desktop"], cwd=tmp_path, dry_run=False
+    )
     assert results[0][0] == "AGENTS.md"
     assert len([path for path, _status in results if path == "AGENTS.md"]) == 1
-    assert any(path == ".windsurfrules" for path, _status in results)
+    assert all(path != ".cursor/rules/memo.md" for path, _status in results)

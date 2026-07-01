@@ -1,15 +1,15 @@
 """`memo mandate` — the cross-client inevitability lever (P4, lever a).
 
-Clients without an ambient recall hook (Codex, Devin, OpenCode, Windsurf, Cursor) won't
-read memo unless instructed to. This command emits the canonical "consult memo
-first" mandate and, with --write, drops it into the project-local instruction
-file each client actually reads — so memo becomes a mandated first step, and the
-silent-gap flag in `memo usefulness` / `memo roi` (EXPECTED_CONSUMERS now covers
-all four) makes non-compliance visible.
+Clients without an ambient recall hook (Codex, Devin, Devin Desktop, OpenCode,
+Cursor) won't read memo unless instructed to. This command emits the canonical
+"consult memo first" mandate and, with --write, drops it into the project-local
+instruction file each client actually reads — so memo becomes a mandated first
+step, and the silent-gap flag in `memo usefulness` / `memo roi`
+(EXPECTED_CONSUMERS now covers all four) makes non-compliance visible.
 
 No external/global config is touched: --write only creates project-local files
-in the current repo (AGENTS.md, .windsurfrules, .cursor/rules/memo.md). Safe,
-idempotent (skips if the marker is already present).
+in the current repo (AGENTS.md, .cursor/rules/memo.md). Safe, idempotent
+(skips if the marker is already present).
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ consult memo FIRST:
 _CLIENT_FILES: dict[str, str] = {
     "codex": "AGENTS.md",
     "devin": "AGENTS.md",
+    "devin-desktop": "AGENTS.md",
     "opencode": "AGENTS.md",
-    "windsurf": ".windsurfrules",
     "cursor": ".cursor/rules/memo.md",
     "blackbox": "AGENTS.md",
 }
@@ -89,7 +89,9 @@ def _write_mandate(target: Path, *, dry_run: bool) -> str:
 @click.option(
     "--client",
     "client",
-    type=click.Choice(["all", "codex", "devin", "opencode", "windsurf", "cursor", "blackbox"]),
+    type=click.Choice(
+        ["all", "codex", "devin", "devin-desktop", "opencode", "cursor", "blackbox"]
+    ),
     default=None,
     help="Write the mandate into this client's project-local instruction file.",
 )
@@ -103,7 +105,8 @@ def mandate(*, client: str | None = None, do_write: bool = False, dry_run: bool 
         click.echo(MANDATE_TEXT)
         click.echo(
             "\n# Paste into the client's instruction file, or run with "
-            "--client <codex|devin|opencode|windsurf|cursor|all> --write (project-local)."
+            "--client <codex|devin|devin-desktop|opencode|cursor|all> --write "
+            "(project-local)."
         )
         return
 
