@@ -9,6 +9,61 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-07-01
+
+### Fixed
+- Online proof-loop revert now self-heals the tuned-params overlay's one-step `_meta.prev`, so a later offline rollback-guard can no longer resurrect the config the online loop just reverted away under index drift. (Gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default.)
+
+## [2.8.1] - 2026-07-01
+
+### Fixed
+- Proof-loop deferral is now checked BEFORE the (expensive) MLX search in the graph tuner passes: when a min_sim change is being proven or a revert cooldown is active, the graph passes skip the search entirely instead of grid-searching and only then deferring. Surfaced by end-to-end empirical testing of the proof loop. (Still gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default.)
+
+## [2.8.0] - 2026-07-01
+
+### Added
+- **Generic online proof loop** for the recall self-tuner — out-of-sample grounding verification now covers any tuned knob, not just `min_sim`. The graph-proximity-weight tuner joins the proof loop: each applied change is confirmed or reverted by real grounding under its new params version, with a knob-generic revert that restores the correct per-knob offline baseline. A one-cycle revert cooldown stops a co-gated pass from re-applying a just-reverted value the same night. (All gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default — no default behavior change.)
+- Proof-loop ledger, `memo dream status`, and `memo dream timeline` now label each entry by the tuned knob (`min_sim` / `graph_proximity_weight`).
+
+## [2.7.0] - 2026-07-01
+
+### Added
+- **Self-improvement proof loop** for the recall self-tuner — all gated behind `MEMO_DREAM_TUNE_ENABLED` (OFF by default), no default behavior change. Each nightly `min_sim` change the tuner applies is now judged out-of-sample by the real grounding accumulated under its new tuned-params version, reverted if that regresses, and recorded in a durable ledger.
+  - `params_version` attribution stamped on every grounding row; `memo eval baseline` snapshots offline precision/noise + online grounded/tokens (7d/30d) + the active params version.
+  - Online-guarded confirm/revert/wait/expire verdicts (`resolve_pending`), with a self-contained revert that restores the pre-apply floor and offline baseline.
+  - One overlay change per proof cycle: the graph tuner passes defer (`deferred_pending`) while a `min_sim` change is being proven, so its grounding cohort is never orphaned.
+  - Graduation-readiness checker surfaced in `memo dream status`; `memo dream timeline` renders the proof-loop history with realized online impact.
+- Flags: `MEMO_DREAM_TUNE_MIN_COHORT` (20), `MEMO_DREAM_TUNE_ONLINE_EPS` (0.02), `MEMO_DREAM_TUNE_GRADUATION_K` (5).
+
+## [2.6.11] - 2026-06-30
+
+### Fixed
+- `memo init` now exits cleanly with guidance on a non-TTY / non-interactive shell instead of crashing inside the interactive picker.
+- LLM features (`ask` / `synthesize` / `dream`) on the CPU (non-MLX) backend now print the "requires the MLX runtime" guidance as a clean error instead of an uncaught traceback.
+- MCP `serverInfo.version` now reports memo's own version instead of the FastMCP framework version.
+
+### Changed
+- README: corrected the CLI command count (95 → 105) and the full MCP surface count (123 → 126).
+
+## [2.6.10] - 2026-06-30
+
+### Fixed
+- Dashboard historic tokens-saved now reads from the durable per-day ledger (`token_ledger`) instead of the capped `grounding.log`, so the gerencial headline keeps growing like `memo tokens` instead of plateauing once old grounded rows rotate out of the log.
+
+### Performance
+- Reranker: reverted the batched cross-encoder forward (it regressed the configured 4B model) while keeping the per-pair head-slice in `score()` — projecting only the last token through the LM head.
+
+## [2.6.9] - 2026-06-30
+
+### Added
+- `memo tokens` — TUI showing how many tokens memo saved today / this month / all-time, with big-number panels (HOY/MES/HISTÓRICO) plus daily and monthly bar charts and a month-over-month growth indicator (`--json` for machine output). Savings are attributable to memo alone: it counts *grounded* recalls — surfaced memories the answer actually used (re-derivations memo prevented) — times `MEMO_ROI_TOKENS_PER_GROUNDED`, so the total rises as memo accumulates more useful memories.
+- Durable token-savings ledger (`token_ledger.py`, `state_dir/token_savings_daily.json`). `grounding.log` is capped (~12 days) and rotates, so an all-time total read from it alone would plateau; the ledger folds grounded events into a monotonic per-day file before they evict, giving `memo tokens` a durable, ever-growing historic total. Rolled up on the Stop hook and on demand.
+
+## [2.6.8] - 2026-06-30
+
+### Added
+- `[Memo <ver>]` badge in opencode. opencode has no native statusline/tagline slot for custom text (plugin status-bar widgets are an open feature request), so `startup-banner --agent opencode` now stamps the live memo version into opencode's `username` config (`<base> · [Memo <ver>]`), shown next to each user message. Idempotent upsert into the pure-JSON `opencode.json` (merges with `opencode.jsonc`); no-op when opencode is absent.
+
 ## [2.6.7] - 2026-06-30
 
 ### Added
