@@ -12,6 +12,7 @@ as its native JSON scalar and surfaced to ``flag()`` as a coercible string.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -38,6 +39,17 @@ def read_overlay(state_dir: Path) -> dict[str, Any]:
         return doc if isinstance(doc, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def params_version(state_dir: Path) -> str:
+    """Stable short hash of the active scalar overlay params. Returns ``"base"``
+    when the overlay is empty/missing (the identity config). Order-independent,
+    so re-serialising the same params never changes the version."""
+    params = _scalar_params(read_overlay(Path(state_dir)))
+    if not params:
+        return "base"
+    payload = json.dumps(params, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def _scalar_params(doc: dict[str, Any]) -> dict[str, Any]:

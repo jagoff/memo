@@ -90,3 +90,23 @@ def test_flag_precedence_env_over_overlay_over_default(tmp_path: Path):
     assert flags.flag_float("MEMO_RECALL_MIN_SIM", env=env) == 0.8
     # no overlay, no env → registry default (0.5)
     assert flags.flag_float("MEMO_RECALL_MIN_SIM", env={"MEMO_STATE_DIR": "/nonexistent"}) == 0.5
+
+
+def test_params_version_base_when_no_overlay(tmp_path):
+    from memo.tuned_overlay import params_version
+
+    assert params_version(tmp_path) == "base"
+
+
+def test_params_version_stable_and_order_independent(tmp_path):
+    from memo.tuned_overlay import params_version, write_overlay
+
+    write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.62, "MEMO_RECALL_MODE": "hybrid"}, {"set_by": "test"})
+    v1 = params_version(tmp_path)
+    # same params, different insertion order → identical hash
+    write_overlay(tmp_path, {"MEMO_RECALL_MODE": "hybrid", "MEMO_RECALL_MIN_SIM": 0.62}, {"set_by": "test"})
+    v2 = params_version(tmp_path)
+
+    assert v1 == v2
+    assert v1 != "base"
+    assert len(v1) == 12
