@@ -278,6 +278,12 @@ def append_grounding_log(
         "used_score": round(float(used_score), 4),
         "method": method,
     }
+    try:
+        from memo.tuned_overlay import params_version
+
+        entry["params_version"] = params_version(state_dir)
+    except Exception:  # noqa: S110  # attribution is best-effort — never break grounding logging
+        pass
     if client is not None:
         entry["client"] = client
     if answer_len is not None:
