@@ -197,13 +197,16 @@ def run_tuning_pass(
             )
             res["online"] = resolution
             if resolution["status"] == "reverted":
-                # Self-contained revert: restore min_sim to the pre-apply floor by
-                # merging into the CURRENT overlay, rather than trusting the shared
-                # one-step _meta.prev (which a co-running pass may have overwritten).
+                # Self-contained, knob-generic revert: restore the reverted knob to
+                # its pre-apply value by merging into the CURRENT overlay (not the
+                # shared one-step _meta.prev), and restore that knob's own offline
+                # baseline file.
                 params = _overlay_params(cfg.state_dir)
-                params[_MIN_SIM] = resolution["floor_before"]
+                params[resolution["knob"]] = resolution["floor_before"]
                 write_overlay(cfg.state_dir, params, {"set_by": "dream-online-revert"})
-                save_baseline(cfg.state_dir, resolution["offline_before"])
+                _saver = _KNOB_BASELINE_SAVERS.get(resolution["knob"])
+                if _saver is not None:
+                    _saver(cfg.state_dir, resolution["offline_before"])
                 res["status"] = "online_reverted"
                 return res
             if resolution["status"] == "waiting":
@@ -265,20 +268,14 @@ def run_tuning_pass(
             },
         )
         save_baseline(cfg.state_dir, after)
-        # Record the pending online evaluation for a later night to resolve.
-        version_after = params_version(cfg.state_dir)
-        online_before, _n_before = dream_tune_online.online_fraction(cfg.state_dir, version_before)
-        dream_tune_online.write_pending(
+        dream_tune_online.record_pending(
             cfg.state_dir,
-            {
-                "version_before": version_before,
-                "version_after": version_after,
-                "floor_before": current,
-                "floor_after": best_floor,
-                "offline_before": before,
-                "offline_after": after,
-                "online_before": online_before,
-            },
+            knob=_MIN_SIM,
+            value_before=current,
+            value_after=best_floor,
+            offline_before=before,
+            offline_after=after,
+            version_before=version_before,
         )
         res["status"] = "applied"
     except Exception as exc:  # surfaced into the receipt, never silent
@@ -371,6 +368,16 @@ def save_graph_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
     p.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 
+# Which offline-baseline saver each tunable knob calls on an online revert.
+# Lambda wrappers preserve late-binding: save_baseline / save_graph_baseline are
+# looked up in the module's global namespace at call time, not at dict-construction
+# time, so monkeypatching either function works correctly in tests.
+_KNOB_BASELINE_SAVERS = {
+    _MIN_SIM: lambda sd, m: save_baseline(sd, m),
+    _GRAPH_WEIGHT: lambda sd, m: save_graph_baseline(sd, m),
+}
+
+
 def _overlay_params(state_dir: Path) -> dict[str, float]:
     """Current numeric overlay params (no ``_meta``) — so a graph-weight write
     preserves a min_sim value a prior pass set, instead of clobbering it."""
@@ -455,6 +462,7 @@ def run_graph_weight_pass(
             res["status"] = "deferred_pending"
             return res
 
+        version_before = params_version(cfg.state_dir)
         params = _overlay_params(cfg.state_dir)
         params[_GRAPH_WEIGHT] = best_weight
         write_overlay(
@@ -467,6 +475,17 @@ def run_graph_weight_pass(
             },
         )
         save_graph_baseline(cfg.state_dir, after)
+        # Join the online proof loop: this graph-weight change is now verified
+        # out-of-sample next cycle (and reverted by knob if it regresses).
+        dream_tune_online.record_pending(
+            cfg.state_dir,
+            knob=_GRAPH_WEIGHT,
+            value_before=current,
+            value_after=best_weight,
+            offline_before=before,
+            offline_after=after,
+            version_before=version_before,
+        )
         res["status"] = "applied"
     except Exception as exc:  # surfaced into the receipt, never silent
         res["status"] = "error"
