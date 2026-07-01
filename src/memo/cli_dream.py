@@ -965,6 +965,7 @@ def dream_status() -> None:
         o = data["tuner"]["online"]
         console.print(f"  tuner online: waiting (cohort {o.get('n_after')}/{o.get('min_cohort')})")
     from memo.dream_tune_online import read_ledger
+    from memo.flags import flag_int
 
     _proof = read_ledger(cfg.state_dir, limit=3)
     if _proof:
@@ -976,6 +977,15 @@ def dream_status() -> None:
                 f"online {e.get('online_before')}→{e.get('online_after')} "
                 f"(Δ{e.get('realized_delta'):+g}) n={e.get('n_after')}"
             )
+
+    _gk = flag_int("MEMO_DREAM_TUNE_GRADUATION_K") or 5
+    _grad = read_ledger(cfg.state_dir, limit=max(_gk * 4, 20))
+    if _grad:
+        from memo.dream_tune_online import graduation_streak
+
+        _streak = graduation_streak(_grad)
+        _verdict = "[green]✓ ready to enable by default[/green]" if _streak >= _gk else "accumulating"
+        console.print(f"  graduation: {_streak}/{_gk} confirmed nights — {_verdict}")
     if data.get("anticipated"):
         from memo.dream_anticipate import briefing_line
 

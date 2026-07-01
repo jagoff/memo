@@ -729,6 +729,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "change whose next-cohort fraction drops by more than this vs pre-apply is reverted.",
     ),
     _spec(
+        "MEMO_DREAM_TUNE_GRADUATION_K",
+        "int",
+        5,
+        "misc",
+        "Phase-2 graduation bar: consecutive confirmed proof-loop verdicts (non-negative "
+        "realized online delta) before the min_sim tuner is considered ready to enable by "
+        "default. Reporting only — memo never flips MEMO_DREAM_TUNE_ENABLED automatically.",
+    ),
+    _spec(
         "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
         "bool",
         False,
