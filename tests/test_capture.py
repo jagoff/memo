@@ -425,3 +425,65 @@ def test_capture_stop_no_notification_when_nothing_saved(tmp_path: Path, monkeyp
 
     assert result.exit_code == 0
     assert not (state / "pending_idle_notification.txt").exists()
+
+
+def test_capture_stop_recovers_transcript_path_from_session_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression: 2026-06-27 onward some Stop-hook payloads omit
+    transcript_path outright, so capture-stop used to no-op — including its
+    grounding.score_turn call, the source of `memo tokens`' data. When
+    session_id is present, it must recover transcript_path before bailing."""
+    from click.testing import CliRunner
+
+    import memo.capture as capture_mod
+    import memo.session as session_mod
+    from memo.cli_capture import capture_stop
+
+    state = tmp_path / "state"
+    state.mkdir()
+    transcript = tmp_path / "recovered.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setattr(session_mod, "find_transcript_path", lambda sid: str(transcript))
+
+    captured_paths: list[Path] = []
+    monkeypatch.setattr(
+        capture_mod,
+        "run_capture",
+        lambda path, **k: (captured_paths.append(path), {"status": "ok", "saved": [], "saved_titles": []})[1],
+    )
+
+    payload = json.dumps({"session_id": "s-missing-transcript"})
+    result = CliRunner().invoke(capture_stop, input=payload)
+
+    assert result.exit_code == 0
+    assert captured_paths == [transcript]
+
+
+def test_capture_stop_still_noops_when_session_id_also_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No session_id at all → nothing to recover by, must stay a silent no-op."""
+    from click.testing import CliRunner
+
+    import memo.capture as capture_mod
+    from memo.cli_capture import capture_stop
+
+    state = tmp_path / "state"
+    state.mkdir()
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+
+    called = []
+    monkeypatch.setattr(capture_mod, "run_capture", lambda *a, **k: called.append(1))
+
+    result = CliRunner().invoke(capture_stop, input=json.dumps({}))
+
+    assert result.exit_code == 0
+    assert not called

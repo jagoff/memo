@@ -127,6 +127,14 @@ def session_checkpoint(
             click.echo("{}")
         sys.exit(0)
 
+    if not transcript:
+        # Last resort: some hook events omit transcript_path outright (seen
+        # 2026-06-27 onward) — recover it by session_id rather than persist a
+        # skeleton snapshot missing cwd/branch/prompt data.
+        from memo.session import find_transcript_path
+
+        transcript = find_transcript_path(sid)
+
     try:
         from memo.session import checkpoint as _checkpoint
 
@@ -197,6 +205,30 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
     transcript = payload.get("transcript_path")
     cwd = payload.get("cwd") or _os.getcwd()
 
+    if not transcript and sid:
+        # Some hook events omit transcript_path (seen 2026-06-27 onward) —
+        # recover it from session_id so this doesn't starve check_autosave
+        # AND the last_hook_payload.json fallback other hooks depend on.
+        from memo.session import find_transcript_path
+
+        transcript = find_transcript_path(sid)
+
+    if sid:
+        # Persist the payload so async hooks (idle-maintenance, checkpoint)
+        # can read session_id/transcript_path without stdin being piped.
+        # Keyed on `sid` alone — a still-missing transcript shouldn't block
+        # downstream hooks from at least resolving the session_id.
+        try:
+            cfg0 = Config.from_env()
+            cfg0.ensure_dirs()
+            _payload_data = _json.dumps(
+                {"session_id": sid, "transcript_path": transcript, "cwd": cwd},
+                ensure_ascii=False,
+            )
+            (cfg0.state_dir / "last_hook_payload.json").write_text(_payload_data, encoding="utf-8")
+        except Exception:  # noqa: S110
+            pass
+
     if not sid or not transcript:
         print("{}")
         _sys.exit(0)
@@ -205,18 +237,6 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
         from memo.session import check_autosave, mark_autosaved
 
         cfg = Config.from_env()
-        # Persist the payload so async hooks (idle-maintenance, checkpoint)
-        # can read session_id/transcript_path without stdin being piped.
-        try:
-            cfg.ensure_dirs()
-            _payload_data = _json.dumps(
-                {"session_id": sid, "transcript_path": transcript, "cwd": cwd},
-                ensure_ascii=False,
-            )
-            (cfg.state_dir / "last_hook_payload.json").write_text(_payload_data, encoding="utf-8")
-        except Exception:  # noqa: S110
-            pass
-
         should_save, size_kb = check_autosave(
             cfg.state_dir,
             session_id=sid,
@@ -354,6 +374,13 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
     if not sid:
         print("{}")
         _sys.exit(0)
+
+    if not transcript:
+        # Last resort: some hook events omit transcript_path outright (seen
+        # 2026-06-27 onward) — recover it by session_id.
+        from memo.session import find_transcript_path
+
+        transcript = find_transcript_path(sid)
 
     delay = delay_secs
     if delay is None:

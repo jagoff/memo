@@ -100,6 +100,22 @@ def _session_path(state_dir: Path, session_id: str) -> Path:
     return sessions_dir(state_dir) / f"{session_id}.json"
 
 
+def find_transcript_path(session_id: str) -> str | None:
+    """Recover a transcript path by session id when a hook payload omits
+    `transcript_path` (observed 2026-06-27 onward: some hook events stop
+    carrying it, starving autosave/checkpoint/capture-stop/grounding of the
+    one field they all key on). Claude Code names transcripts deterministically
+    (`~/.claude/projects/<project>/<session_id>.jsonl`), so a glob recovers it
+    without needing the payload. Best-effort, never raises."""
+    if not session_id:
+        return None
+    try:
+        matches = list((Path.home() / ".claude" / "projects").glob(f"*/{session_id}.jsonl"))
+    except OSError:
+        return None
+    return str(matches[0]) if matches else None
+
+
 def _load(state_dir: Path, session_id: str) -> dict[str, Any] | None:
     p = _session_path(state_dir, session_id)
     if not p.is_file():

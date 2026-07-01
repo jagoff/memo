@@ -82,6 +82,15 @@ def capture_stop() -> None:
 
     transcript_path = payload.get("transcript_path")
     if not transcript_path:
+        # Some hook events omit transcript_path (seen 2026-06-27 onward) —
+        # recover it from session_id before giving up, so capture/grounding/
+        # the token ledger don't go dark for want of one field.
+        from memo.session import find_transcript_path
+
+        transcript_path = find_transcript_path(str(payload.get("session_id") or ""))
+        if transcript_path:
+            payload = {**payload, "transcript_path": transcript_path}
+    if not transcript_path:
         print("{}")
         _sys.exit(0)
 
