@@ -45,6 +45,7 @@ from memo.cli_dream_passes import (
     _run_signal_gather,
 )
 from memo.config import Config
+from memo.memory.record import derived_save_scope
 
 _log = _logging.getLogger(__name__)
 
@@ -224,7 +225,10 @@ def dream_run(
     )
     active_steps = total_steps - skipped
 
-    with _make_progress() as progress:
+    # Mark every save inside the pipeline as derived/batch so the interactive
+    # near-duplicate nag stays quiet — these near-dups are what the same run's
+    # consolidate pass merges. (`skipped_dup` in the receipt is the real signal.)
+    with derived_save_scope(), _make_progress() as progress:
         overall = progress.add_task("[bold cyan]pipeline[/bold cyan]", total=active_steps)
         step = progress.add_task("loading memory...", total=None)
 

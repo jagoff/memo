@@ -11,9 +11,11 @@ imports only foundation modules, never the mixins or facade.
 from __future__ import annotations
 
 import concurrent.futures as _futures
+import contextlib
 import logging
 import re
 import threading
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -33,6 +35,31 @@ from memo.memory.prompts import (
 from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES
 
 _log = logging.getLogger(__name__)
+
+# Derived-save scope: dream/consolidation passes save memories that are expected
+# to be near-duplicates of existing ones (the same run's consolidate pass merges
+# them). The interactive "consider `memo update` instead" dedup nag is noise in
+# that context, so callers wrap batch/derived saves in `derived_save_scope()` and
+# the dedup check (write_ops) demotes its warning to debug while it's active. A
+# ContextVar (not a module global) keeps the flag thread- and task-local so a
+# concurrent interactive save on another thread still gets the nudge.
+_derived_save: ContextVar[bool] = ContextVar("memo_derived_save", default=False)
+
+
+@contextlib.contextmanager
+def derived_save_scope() -> Any:
+    """Mark saves within this scope as derived/batch (suppress the dedup nag)."""
+    token = _derived_save.set(True)
+    try:
+        yield
+    finally:
+        _derived_save.reset(token)
+
+
+def in_derived_save_scope() -> bool:
+    """True when the current thread/task is inside `derived_save_scope()`."""
+    return _derived_save.get()
+
 
 # Durable tiers + the bulk `reference` tier. The split (which types the recall
 # hook / briefing surface automatically vs. on-demand-only) lives in
