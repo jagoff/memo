@@ -974,8 +974,9 @@ def dream_status() -> None:
             mark = "[green]✓ confirmed[/green]" if e.get("verdict") == "confirmed" else "[red]✗ reverted[/red]"
             _d = e.get("realized_delta")
             _ds = f"{_d:+g}" if isinstance(_d, (int, float)) else "—"
+            _knob = (e.get("knob") or "MEMO_RECALL_MIN_SIM").replace("MEMO_RECALL_", "").lower()
             console.print(
-                f"    {mark}  min_sim {e.get('floor_before')}→{e.get('floor_after')}  "
+                f"    {mark}  {_knob} {e.get('floor_before')}→{e.get('floor_after')}  "
                 f"online {e.get('online_before')}→{e.get('online_after')} "
                 f"(Δ{_ds}) n={e.get('n_after')}"
             )
@@ -1030,8 +1031,9 @@ def dream_timeline(limit: int, as_json: bool) -> None:
         ts = (e.get("resolved_ts") or "")[:16]
         delta = e.get("realized_delta")
         delta_s = f"{delta:+g}" if isinstance(delta, (int, float)) else "—"
+        _knob = (e.get("knob") or "MEMO_RECALL_MIN_SIM").replace("MEMO_RECALL_", "").lower()
         console.print(
-            f"  {ts}  {mark}  min_sim {e.get('floor_before')}→{e.get('floor_after')}  "
+            f"  {ts}  {mark}  {_knob} {e.get('floor_before')}→{e.get('floor_after')}  "
             f"online {e.get('online_before')}→{e.get('online_after')} (Δ{delta_s}) n={e.get('n_after')}"
         )
 
