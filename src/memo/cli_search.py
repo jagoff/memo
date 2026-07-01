@@ -76,10 +76,10 @@ def _compact_hit_dicts(hits: list[dict], body_chars: int) -> list[dict]:
 )
 @click.option(
     "--body-chars",
-    default=280,
+    default=None,
     type=int,
-    show_default=True,
-    help="Preview length for JSON bodies (use -1 for full bodies).",
+    help="Preview length for JSON bodies (use -1 for full bodies). "
+    "Default: MEMO_SEARCH_JSON_BODY_CHARS (280).",
 )
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
@@ -94,12 +94,17 @@ def search(
     type_: str | None,
     mode: str,
     use_rerank: bool | None,
-    body_chars: int,
+    body_chars: int | None,
     as_json: bool,
     source: str | None,
 ) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
     import time
+
+    from memo.flags import flag_int
+
+    if body_chars is None:
+        body_chars = flag_int("MEMO_SEARCH_JSON_BODY_CHARS") or 280
 
     cfg = Config.from_env()
     if use_rerank is True:
@@ -394,10 +399,10 @@ def chat_ask(
 @click.option("--json", "as_json", is_flag=True, help='Emit {"results": [...]} for callers.')
 @click.option(
     "--body-chars",
-    default=280,
+    default=None,
     type=int,
-    show_default=True,
-    help="Preview length for JSON bodies (use -1 for full bodies).",
+    help="Preview length for JSON bodies (use -1 for full bodies). "
+    "Default: MEMO_SEARCH_JSON_BODY_CHARS (280).",
 )
 @click.option(
     "--source",
@@ -410,7 +415,7 @@ def recall(
     limit: int,
     type_: str | None,
     as_json: bool,
-    body_chars: int,
+    body_chars: int | None,
     source: str | None,
 ) -> None:
     """Hybrid recall for programmatic callers (synapse / memflow bridge).
@@ -420,6 +425,11 @@ def recall(
     layer stops showing as silent in ``memo usefulness``.
     """
     import time
+
+    from memo.flags import flag_int
+
+    if body_chars is None:
+        body_chars = flag_int("MEMO_SEARCH_JSON_BODY_CHARS") or 280
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)

@@ -9,11 +9,13 @@ Endpoints mirror MCP tools but return plain JSON for any HTTP client.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from memo import __version__
 from memo.config import Config
 from memo.memory import Memory
 
@@ -21,19 +23,25 @@ _log = logging.getLogger(__name__)
 
 # Lazy-initialized memory instance (constructed on first request).
 _memory: Memory | None = None
+# Endpoints are sync handlers running on FastAPI's threadpool: without the
+# lock, concurrent first requests would each build a Memory (duplicate sqlite
+# conns + a multi-GB embedder load for the loser instance).
+_memory_lock = threading.Lock()
 
 
 def _get_memory() -> Memory:
     global _memory
     if _memory is None:
-        _memory = Memory(Config.from_env())
+        with _memory_lock:
+            if _memory is None:
+                _memory = Memory(Config.from_env())
     return _memory
 
 
 app = FastAPI(
     title="memo HTTP API",
     description="Local-first semantic memory REST API",
-    version="2.3.12",
+    version=__version__,
 )
 
 
@@ -55,7 +63,7 @@ class SearchInput(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "version": "2.3.12"}
+    return {"status": "ok", "version": __version__}
 
 
 # --- Core CRUD ---

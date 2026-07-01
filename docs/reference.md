@@ -23,7 +23,7 @@ sqlite state, and CLI should move together as one subsystem.
 
 ```bash
 # One-line installer (pipx under the hood, installs GitHub master,
-# and configures Claude Code + Codex + OpenCode + Windsurf when available)
+# and configures Claude Code + Codex + OpenCode + Devin Desktop when available)
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
 # or install the latest published PyPI release explicitly
 pipx install mlx-memo
@@ -114,7 +114,7 @@ the corpus. (On **Linux / Ubuntu**, install the CPU backend with
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
 memo doctor --strict-runtime
-memo install-slash --client claude-code --client codex --client opencode --client windsurf
+memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
 ```
 
 To move existing data:
@@ -165,7 +165,7 @@ accidentally start a copy from a project `.venv`:
 memo install-slash
 ```
 
-`install-slash` configures Claude Code, Codex, Windsurf, and Devin where each
+`install-slash` configures Claude Code, Codex, Devin Desktop, and Devin where each
 supports it, and forwards current `MEMO_*` model/storage env vars into each MCP
 client config. This matters with the 2560-dim quality embedder: GUI clients
 often don't inherit your shell env, and a 1024/2560 mismatch breaks semantic
@@ -250,13 +250,13 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-### Windsurf / Cascade
+### Devin Desktop
 
-Windsurf stores Cascade MCP servers in `~/.codeium/windsurf/mcp_config.json`.
-memo can write that file directly (`memo install-slash --client windsurf`) or
-print the JSON block for manual editing (`memo mcp-command --client windsurf`).
+Devin Desktop stores MCP servers in `~/.devin/mcp.json`.
+memo can write that file directly (`memo install-slash --client devin-desktop`) or
+print the JSON block for manual editing (`memo mcp-command --client devin-desktop`).
 It preserves any existing `mcpServers` and only replaces the `memo` entry. Set
-`WINDSURF_MCP_CONFIG` for a non-standard config path.
+`DEVIN_DESKTOP_MCP_CONFIG` for a non-standard config path.
 
 ### Cursor / Cline / Continue
 
@@ -343,7 +343,7 @@ six hooks plug in automatically:
 | `Stop` | `memo session checkpoint` | async | 5 s | Snapshots session state for crash recovery |
 
 **Note:** idle capture and other hooks require Claude Code's hook system
-(`hooks/hooks.json`). Other agents (OpenCode, Windsurf, …) using MCP only get
+(`hooks/hooks.json`). Other agents (OpenCode, Devin Desktop, …) using MCP only get
 the `memo_*` tools — add a similar idle trigger via the agent's native hook
 system or use `memo session idle-maintenance --mode capture`. All hooks run 100%
 local; your prompts never leave the machine.
@@ -577,8 +577,8 @@ memo map --limit 200 --no-animate
 memo doctor                       # self-check
 memo doctor --gc                  # report orphans (store ↔ disk)
 memo doctor --gc --fix            # drop orphan store rows (.md never auto-deleted)
-memo install-slash                # configure Claude Code, Codex, Windsurf, Devin
-memo mcp-command --client windsurf # print Windsurf mcp_config.json block
+memo install-slash                # configure Claude Code, Codex, Devin Desktop, Devin
+memo mcp-command --client devin-desktop # print Devin Desktop mcp.json block
 memo init                         # re-run first-run picker
 memo migrate-vault <new-path>     # move memories to a different folder
 memo backup --out memo.zip        # backup .md files + index

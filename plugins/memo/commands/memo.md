@@ -16,8 +16,8 @@ register memo first:
 
 ```bash
 memo mcp-command --client codex
-# for Windsurf/Cascade:
-memo install-slash --client windsurf
+# for Devin Desktop:
+memo install-slash --client devin-desktop
 ```
 
 Then open a new Codex session so MCP tools reload.

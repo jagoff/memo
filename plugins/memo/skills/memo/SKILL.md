@@ -15,12 +15,12 @@ If `mcp__memo__memo_*` tools are unavailable, tell the user to run:
 
 ```bash
 memo install-slash --client codex
-# for Windsurf/Cascade MCP config:
-memo install-slash --client windsurf
+# for Devin Desktop MCP config:
+memo install-slash --client devin-desktop
 ```
 
 Then start a new Codex session so plugin skills and MCP tools reload, or
-refresh MCP servers in Windsurf Cascade.
+restart Devin Desktop after editing its MCP config.
 
 ## Routing
 

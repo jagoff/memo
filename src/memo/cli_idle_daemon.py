@@ -22,7 +22,7 @@ def idle_daemon_group() -> None:
 
     Runs memo_idle_capture periodically in background to automatically
     save insights from sessions without Claude Code hooks. Useful for opencode,
-    Windsurf, and other agents that use MCP instead of hooks.
+    Devin Desktop, and other agents that use MCP instead of hooks.
 
     Subcommands: start, stop, status, (internal) _serve.
     """

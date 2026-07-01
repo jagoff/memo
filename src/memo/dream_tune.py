@@ -118,9 +118,13 @@ def _curated_prompts(state_dir: Path) -> list[dict[str, Any]]:
 
 
 def build_labels(
-    cfg: Any, *, min_used_score: float = 0.5, limit: int = 200
+    cfg: Any, *, min_used_score: float = 0.5, limit: int | None = None
 ) -> tuple[LabelSet, bool]:
     """Mined (grounding) ∪ curated labels. Returns (label_set, curated_used)."""
+    if limit is None:
+        from memo.flags import flag_int
+
+        limit = flag_int("MEMO_DREAM_MINE_LIMIT") or 200
     mined = harvest_labels(cfg.state_dir, strong=min_used_score, max_labels=limit)
     curated = _curated_prompts(cfg.state_dir)
     merged = merge_label_prompts(curated, mined)

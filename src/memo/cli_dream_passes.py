@@ -142,14 +142,13 @@ def _run_eviction(mem: Memory, max_count: int, dry_run: bool) -> list[dict]:
 
     Returns list of {id, access_count} archived (or would-archive in dry-run).
     """
+    # No defensive except here: a DB error must propagate to the cli_dream
+    # caller (which records it in receipt["errors"]), not read as "evicted: 0".
     conn = mem.store._conn
-    try:
-        total_row = conn.execute(
-            "SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'"
-        ).fetchone()
-        total = int(total_row["n"]) if total_row else 0
-    except Exception:
-        return []
+    total_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'"
+    ).fetchone()
+    total = int(total_row["n"]) if total_row else 0
 
     excess = total - max_count
     if excess <= 0:
@@ -174,17 +173,16 @@ def _run_compress(mem: Memory, threshold: int, dry_run: bool) -> list[dict]:
 
     Returns list of {id, original_len, compressed_len}.
     """
+    # No defensive except here: a DB error must propagate to the cli_dream
+    # caller (which records it in receipt["errors"]), not read as "compressed: 0".
     conn = mem.store._conn
-    try:
-        rows = conn.execute(
-            "SELECT m.id, m.path FROM meta m "
-            "JOIN fts ON fts.id = m.id "
-            "WHERE m.type NOT IN ('reference','synthesis') "
-            "AND length(fts.body) > ?",
-            (threshold,),
-        ).fetchall()
-    except Exception:
-        return []
+    rows = conn.execute(
+        "SELECT m.id, m.path FROM meta m "
+        "JOIN fts ON fts.id = m.id "
+        "WHERE m.type NOT IN ('reference','synthesis') "
+        "AND length(fts.body) > ?",
+        (threshold,),
+    ).fetchall()
 
     if not rows:
         return []

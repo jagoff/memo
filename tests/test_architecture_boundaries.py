@@ -235,10 +235,6 @@ def test_behavior_flags_are_not_read_directly_from_environ() -> None:
         SRC / "embedder.py": {"MEMO_QUERY_CACHE_SIZE"},
         SRC / "mlx_gpu.py": {"MEMO_GPU_LOCK_PATH", "MEMO_GPU_XPROC_LOCK"},
         SRC / "store" / "schema.py": {"MEMO_SKIP_MODEL_VERSION_CHECK"},
-        # store/queries.py is a foundation module. Tantivy is kept here as an
-        # operational storage switch; soft-delete is registered and read through
-        # memo.flags.
-        SRC / "store" / "queries.py": {"MEMO_TANTIVY_ENABLED"},
         # MEMO_AGENT_TTY is set by the shim, not user-configurable; read here for IPC.
         SRC / "cli_session.py": {"MEMO_AGENT_TTY"},
         # autoupdate reads directly for the setdefault pattern (env check before flag default)

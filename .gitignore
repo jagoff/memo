@@ -31,7 +31,6 @@ venv/
 # Editor / IDE / OS
 .DS_Store
 .claude/
-.windsurf/
 .idea/
 .vscode/
 
@@ -79,9 +78,6 @@ memo-version.json
 docs/superpowers/
 docs/distribution.md
 docs/registry-submission.md
-
-# Obsolete IDE client rules (product renamed: Windsurf retired → Devin Desktop)
-.windsurfrules
 
 # Agent instruction files kept local, not versioned (CLAUDE.md stays tracked)
 /AGENTS.md

@@ -215,10 +215,11 @@ The `.md` files are canonical; the sqlite index is **derived and replayable**:
 
 ## Releasing
 
-Bump the version in sync across **four** source-of-truth files:
+Bump the version in sync across **five** source-of-truth files:
 `pyproject.toml` `[project].version`, `.claude-plugin/plugin.json`,
-`server.json` (version + package version), and `CHANGELOG.md`
-(Keep-a-Changelog). Commit / tag / push stays manual.
+`plugins/memo/.codex-plugin/plugin.json`, `server.json` (version + package
+version), and `CHANGELOG.md` (Keep-a-Changelog) — `memo release bump` edits
+all five. Commit / tag / push stays manual.
 
 ## Source of truth — role & contract
 
@@ -250,7 +251,7 @@ Contract for any layer above memo (synapse, memflow, agents):
    - **MCP tools** — pass `source="<layer>"` on `memo_search` / `memo_ask` /
      `memo_chat_ask` / `memo_unified_briefing`. If omitted, `log_consult`
      falls back to `MEMO_SOURCE` then to the MCP client's handshake
-     `clientInfo.name` — so agent clients (devin/opencode/windsurf) attribute
+     `clientInfo.name` — so agent clients (devin/opencode/devin-desktop) attribute
      automatically without per-call args.
    - **CLI** (synapse/memflow shell out) — `memo search/ask/chat-ask/recall`
      take `--source` or read `MEMO_SOURCE` env; a consult logs only when one is

@@ -221,7 +221,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **install.sh: progress spinners + step counter.** Each install phase now shows a numbered step and an animated spinner so it's clear something is happening during slow operations.
 - **install.sh: model-download explainer.** Before the download phase, install.sh prints a human-readable breakdown of what is being fetched and why, including sizes and the rationale for deferring the chat model.
 - **install.sh: fast model downloads via `hf_transfer`.** `HF_HUB_ENABLE_HF_TRANSFER=1` (plus `HF_HUB_DISABLE_XET=1`) are set for the duration of install, giving 3–5× faster Hugging Face downloads. Both flags are scoped to install time and not persisted to user config.
-- **install.sh: wire MCP into all supported clients via `--client all`.** Replaces the retired Windsurf-only wiring; now covers Claude Code, Cursor, Devin Desktop, Blackbox, and any other client registered in `install_mcp.py`. `--client all` is the new default for the full-install path.
+- **install.sh: wire MCP into all supported clients via `--client all`.** Replaces the retired single-client wiring; now covers Claude Code, Cursor, Devin Desktop, Blackbox, and any other client registered in `install_mcp.py`. `--client all` is the new default for the full-install path.
 - **install.sh: factory memo statusline badge.** After install, a `[MEMO <version>]` badge is written to the user's statusline config so the active version is visible at a glance in the terminal.
 - **CLI: `memo upgrade` command.** Renames the former `memo self-update` to `memo upgrade` for discoverability. The old name is kept as a hidden alias for backward compatibility. `memo update <ID>` (edit a stored memory) is unchanged.
 

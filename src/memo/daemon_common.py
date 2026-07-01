@@ -95,6 +95,11 @@ def serve_until_shutdown(
         name=name,
         daemon=True,
     )
+    # ThreadingMixIn defaults (daemon_threads=False, block_on_close=True) make
+    # server_close() join in-flight handler threads UNBOUNDED — one stuck
+    # handler would hang SIGTERM shutdown forever and join_timeout would never
+    # apply. Daemonic handlers keep shutdown bounded; requests are short-lived.
+    server.daemon_threads = True
     server_thread.start()
     try:
         # Poll so a signal delivered to the main thread is observed promptly

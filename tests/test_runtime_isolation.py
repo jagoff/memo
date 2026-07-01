@@ -5,12 +5,40 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 import memo.cli_runtime as cli_mod
 import memo.runtime.install as install_mod
 import memo.runtime.mcp as mcp_mod
+import memo.runtime.shims as shims_mod
 from memo.cli import cli
+
+
+@pytest.fixture(autouse=True)
+def _sandbox_home(monkeypatch, tmp_path_factory):
+    """Keep install-slash side effects off the developer's machine.
+
+    Non-dry-run `install-slash` writes startup-banner shims (+ a PATH snippet
+    into ~/.zshrc) and AGENTS.md mandates at cwd. Point every HOME-derived
+    path at a per-test sandbox: `_DEFAULT_BIN_DIR` is a module constant bound
+    at import time, so patching HOME alone is not enough. Mandate writes are
+    redirected into the sandbox (their cwd is the real checkout when pytest
+    runs from the repo root); dry runs stay untouched so output asserts hold.
+    """
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(shims_mod, "_DEFAULT_BIN_DIR", home / ".memo" / "bin")
+
+    real_write = install_mod.write_mandates_for_clients
+
+    def _sandboxed_write(*args, **kwargs):
+        if not kwargs.get("dry_run"):
+            kwargs["cwd"] = home
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(install_mod, "write_mandates_for_clients", _sandboxed_write)
+    return home
 
 
 def test_runtime_report_accepts_pipx_install(monkeypatch, tmp_path):
@@ -198,7 +226,7 @@ def test_mcp_command_devin(monkeypatch):
     assert result.output.rstrip().endswith("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp")
 
 
-def test_mcp_command_windsurf(monkeypatch):
+def test_mcp_command_devin_desktop(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
         install_mod,
@@ -206,19 +234,28 @@ def test_mcp_command_windsurf(monkeypatch):
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
-    result = CliRunner().invoke(cli, ["mcp-command", "--client", "windsurf"])
+    result = CliRunner().invoke(cli, ["mcp-command", "--client", "devin-desktop"])
 
     assert result.exit_code == 0
     assert '"memo"' in result.output
     assert '"command": "/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"' in result.output
     assert '"MEMO_NONINTERACTIVE": "1"' in result.output
-    assert '"type": "stdio"' not in result.output
+    assert '"MEMO_SOURCE": "devin-desktop"' in result.output
+    assert '"type": "stdio"' in result.output
 
 
 def test_mcp_command_forwards_model_env(monkeypatch):
     _clear_memo_env(monkeypatch)
-    monkeypatch.setenv("MEMO_EMBEDDER_MODEL", "mlx-community/Qwen3-Embedding-4B-4bit-DWQ")
-    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
+    # Model/dims come from the live index via _actual_embedder_config(), never
+    # from env — stub it so the test doesn't depend on this machine's memvec.db.
+    monkeypatch.setattr(
+        mcp_mod,
+        "_actual_embedder_config",
+        lambda: {
+            "MEMO_EMBEDDER_MODEL": "mlx-community/Qwen3-Embedding-4B-4bit-DWQ",
+            "MEMO_EMBEDDER_DIMS": "2560",
+        },
+    )
     monkeypatch.setattr(
         install_mod,
         "_resolved_memo_mcp",
@@ -402,22 +439,27 @@ def test_install_slash_devin_proceeds_to_add_when_remove_fails(monkeypatch, tmp_
     assert "agent-client install complete" in result.output
 
 
-def test_install_slash_windsurf_writes_mcp_config(monkeypatch, tmp_path):
+def test_install_slash_devin_desktop_writes_mcp_config(monkeypatch, tmp_path):
     _clear_memo_env(monkeypatch)
     cfg_path = tmp_path / "mcp_config.json"
     cfg_path.write_text(
         '{"mcpServers":{"existing":{"command":"node","args":["server.js"]}}}\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("WINDSURF_MCP_CONFIG", str(cfg_path))
-    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
+    monkeypatch.setenv("DEVIN_DESKTOP_MCP_CONFIG", str(cfg_path))
+    # MEMO_EMBEDDER_DIMS is deliberately NOT forwarded from env — it comes from
+    # the live index via _actual_embedder_config(). Stub it so the assertion
+    # doesn't depend on whatever memvec.db this machine happens to have.
+    monkeypatch.setattr(
+        mcp_mod, "_actual_embedder_config", lambda: {"MEMO_EMBEDDER_DIMS": "2560"}
+    )
     monkeypatch.setattr(
         install_mod,
         "_resolved_memo_mcp",
         lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
     )
 
-    result = CliRunner().invoke(cli, ["install-slash", "--client", "windsurf"])
+    result = CliRunner().invoke(cli, ["install-slash", "--client", "devin-desktop"])
 
     assert result.exit_code == 0
     data = json.loads(cfg_path.read_text(encoding="utf-8"))
@@ -427,12 +469,15 @@ def test_install_slash_windsurf_writes_mcp_config(monkeypatch, tmp_path):
     assert memo["args"] == []
     assert memo["env"]["MEMO_NONINTERACTIVE"] == "1"
     assert memo["env"]["MEMO_EMBEDDER_DIMS"] == "2560"
-    assert "type" not in memo
+    assert memo["env"]["MEMO_SOURCE"] == "devin-desktop"
+    assert memo["type"] == "stdio"
 
 
 def test_mcp_command_opencode(monkeypatch):
     _clear_memo_env(monkeypatch)
-    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
+    monkeypatch.setattr(
+        mcp_mod, "_actual_embedder_config", lambda: {"MEMO_EMBEDDER_DIMS": "2560"}
+    )
     monkeypatch.setattr(
         install_mod,
         "_resolved_memo_mcp",
@@ -451,4 +496,4 @@ def test_mcp_command_opencode(monkeypatch):
 def _clear_memo_env(monkeypatch):
     for key in cli_mod._MCP_ENV_FORWARD_KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.delenv("WINDSURF_MCP_CONFIG", raising=False)
+    monkeypatch.delenv("DEVIN_DESKTOP_MCP_CONFIG", raising=False)
