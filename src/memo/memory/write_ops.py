@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import uuid
@@ -31,6 +32,7 @@ from memo.memory.record import (
     _normalise_tags,
     _now_iso,
     _slugify,
+    in_derived_save_scope,
     is_reference_noise,
 )
 from memo.tiers import REFERENCE_TYPES
@@ -357,7 +359,15 @@ class _WriteOpsMixin(_MemoryBase):
                             _dup_title = _dh.get("title") or (_dh.get("id") or "")[:8]
                             _dup_score = _dh.get("score", 0.0)
                             _dup_id = (_dh.get("id") or "")[:8]
-                            _log.warning(
+                            # Demote to debug for dream/consolidation batch saves:
+                            # the nudge to `memo update` is only actionable for an
+                            # interactive human, and the same dream run's consolidate
+                            # pass merges these near-dups anyway.
+                            _dedup_level = (
+                                logging.DEBUG if in_derived_save_scope() else logging.WARNING
+                            )
+                            _log.log(
+                                _dedup_level,
                                 "save: near-duplicate detected — '%s' (sim=%.2f, id=%s). "
                                 "Consider `memo update %s` instead of creating a new memory.",
                                 _dup_title,

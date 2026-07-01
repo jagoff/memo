@@ -156,14 +156,19 @@ class AdvancedConsolidator:
             {"role": "user", "content": prompt},
         ]
 
-        # max_tokens=1024 keeps generation fast (~25-35s on a 7B) so the
-        # 180s timeout is never hit even on cold model load (~60s for 30B).
-        # The merged body can be concise; overly long output is wasteful.
+        # The merge JSON carries a body targeted "under 2000 chars" (~600-700
+        # tokens) plus title/strategy/rationale + the JSON scaffold, so the first
+        # attempt gets max_tokens=1536 to leave headroom the old 1024 cap didn't.
         #
-        # Greedy decode (temp=0.0) is deterministic, so a cluster whose output
-        # truncates into invalid JSON fails identically on every run. One sampled
-        # retry (temp=0.3) breaks that determinism and recovers it; a still-bad
-        # second output degrades to a skipped cluster (never a crash).
+        # Two failure modes produce unparseable JSON:
+        #   1. truncation — the body overruns the cap, cutting the JSON mid-value;
+        #   2. determinism — greedy decode (temp=0.0) fails identically every run.
+        # The retry addresses BOTH: it flips to sampling (temp=0.3, breaking the
+        # deterministic truncation point) AND doubles the cap to 3072 (so a
+        # genuinely long body completes). A still-bad second output degrades to a
+        # skipped cluster (never a crash; the originals are untouched, retried next
+        # night). Generation stays well under the 180s timeout even cold-loading a
+        # 30B (~60s) since only the rare long cluster hits the larger cap.
         # Cap prompt to avoid blowing context on large clusters.
         # Members already carry body_preview at ~600 chars each, so 20
         # members ≈ 12K chars — well within most windows.
@@ -175,14 +180,18 @@ class AdvancedConsolidator:
 
         timeout_s = flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180
         data: dict[str, Any] | None = None
-        for attempt, temperature in enumerate((0.0, 0.3)):
+        for attempt, (temperature, max_tokens) in enumerate(((0.0, 1536), (0.3, 3072))):
             try:
                 out = chat_with_timeout(
                     chat,
                     timeout=timeout_s,
                     model=self.memory.cfg.llm_model,
                     messages=messages,
-                    options={"temperature": temperature, "max_tokens": 1024, "thinking": False},
+                    options={
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "thinking": False,
+                    },
                 )
             except Exception as exc:
                 _log.warning("consolidation: merge-proposal LLM call failed: %s", exc)
