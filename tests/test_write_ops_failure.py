@@ -218,3 +218,31 @@ def test_delete_rollback_preserves_topic_key_dedup(mem_with_stub: Memory, monkey
     assert (
         mem_with_stub.store.find_by_topic_key("tk-dedup") is not None
     ), "topic_key dropped on delete-rollback → next same-topic save would duplicate"
+
+
+def test_delete_rollback_leaves_no_spurious_history_event(mem_with_stub: Memory, monkeypatch):
+    """History log + graph-edge drop run only AFTER the authoritative unlink
+    succeeds. A failed-unlink rollback must therefore leave NO 'delete' audit
+    event — the memory was not actually deleted, so the audit trail must not
+    claim it was."""
+    rec = mem_with_stub.save(content="sin evento espurio", title="SinEvento")
+    assert mem_with_stub.history.list_recent(op="delete", record_id=rec.id) == []
+
+    _unlink_boom_for_md(mem_with_stub, monkeypatch)
+    with pytest.raises(StorageError, match="delete partially failed"):
+        mem_with_stub.delete(rec.id)
+
+    assert (
+        mem_with_stub.history.list_recent(op="delete", record_id=rec.id) == []
+    ), "delete-rollback logged a spurious 'delete' audit event for a surviving memory"
+
+
+def test_successful_delete_still_logs_history_event(mem_with_stub: Memory):
+    """The reorder must not break the happy path: a completed delete logs
+    exactly one 'delete' audit event."""
+    rec = mem_with_stub.save(content="borrado real", title="BorradoReal")
+
+    assert mem_with_stub.delete(rec.id) is True
+
+    events = mem_with_stub.history.list_recent(op="delete", record_id=rec.id)
+    assert len(events) == 1
