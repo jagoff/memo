@@ -121,3 +121,13 @@ def rollback_overlay(state_dir: Path) -> dict[str, Any] | None:
     restored = dict(_scalar_params(prev))
     write_overlay(sd, restored, {"set_by": "rollback"})
     return restored
+
+
+def pin_prev_to_current(state_dir: Path) -> None:
+    """Point ``_meta.prev`` at the CURRENT scalar params, making a subsequent
+    one-step :func:`rollback_overlay` a safe no-op. Used after an online
+    proof-loop revert so a later offline rollback-guard cannot resurrect the
+    config the online loop just reverted away."""
+    sd = Path(state_dir)
+    cur = _scalar_params(read_overlay(sd))
+    write_overlay(sd, cur, {"set_by": "pin-prev"})

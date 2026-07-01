@@ -123,3 +123,27 @@ def test_graph_weight_apply_records_pending(tmp_path, monkeypatch):
     pend = dream_tune_online.read_pending(tmp_path)
     assert pend["knob"] == "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"
     assert pend["floor_after"] == 0.2
+
+
+def test_online_revert_pins_prev_so_offline_rollback_is_noop(tmp_path, monkeypatch):
+    from memo.tuned_overlay import _scalar_params, read_overlay, rollback_overlay, write_overlay
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
+    # live overlay = the GOOD (pre-apply) config that the revert will restore
+    write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.5}, {"set_by": "test"})
+    monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
+    dream_tune_online.write_pending(
+        tmp_path,
+        {"knob": "MEMO_RECALL_MIN_SIM", "version_after": "v2", "floor_before": 0.5,
+         "online_before": 0.6, "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0}},
+    )
+    monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
+    monkeypatch.setattr(dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure")))
+
+    res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
+    assert res["status"] == "online_reverted"
+    # after the revert, _meta.prev == current params → rollback_overlay is a no-op
+    cur = _scalar_params(read_overlay(tmp_path))
+    rolled = rollback_overlay(tmp_path)
+    assert rolled == cur   # rollback restored the SAME (good) config — bad config not resurrected
+    assert _scalar_params(read_overlay(tmp_path)) == cur

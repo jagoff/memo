@@ -40,7 +40,13 @@ from memo.eval_recall import (
     harvest_labels,
     merge_label_prompts,
 )
-from memo.tuned_overlay import params_version, read_overlay, rollback_overlay, write_overlay
+from memo.tuned_overlay import (
+    params_version,
+    pin_prev_to_current,
+    read_overlay,
+    rollback_overlay,
+    write_overlay,
+)
 
 _MIN_SIM = "MEMO_RECALL_MIN_SIM"
 _BASELINE = "dream_baseline.json"
@@ -211,6 +217,9 @@ def run_tuning_pass(
                 if _saver is not None:
                     _saver(cfg.state_dir, resolution["offline_before"])
                 dream_tune_online.set_revert_cooldown(cfg.state_dir)
+                # Self-heal _meta.prev so a later offline rollback-guard can't
+                # resurrect the config the online loop just reverted away.
+                pin_prev_to_current(cfg.state_dir)
                 res["status"] = "online_reverted"
                 return res
             if resolution["status"] == "waiting":
