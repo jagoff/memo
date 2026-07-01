@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-07-01
+
+### Fixed
+- Online proof-loop revert now self-heals the tuned-params overlay's one-step `_meta.prev`, so a later offline rollback-guard can no longer resurrect the config the online loop just reverted away under index drift. (Gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default.)
+
 ## [2.8.1] - 2026-07-01
 
 ### Fixed
