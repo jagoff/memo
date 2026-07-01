@@ -9,6 +9,15 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-07-01
+
+### Added
+- **F4 consolidate-reuse metric** (`memo dream consolidate-reuse`): read-only report of whether the `type=synthesis` memories the episodic-consolidation pass creates actually get grounded/reused in real recall (n_consolidated / n_reused / reuse_fraction). Measures the value of consolidation with real data.
+- **Online-only project-boost explorer** (`MEMO_DREAM_TUNE_BOOST_ENABLED`, OFF by default): nudges `MEMO_RECALL_PROJECT_BOOST` and lets the online proof loop confirm/revert it against real grounding. Boosts are not offline-measurable (the label eval has no project context), so this knob is tuned purely by real outcomes — no offline gate. Rides the generic proof loop (generic per-knob revert). Direction is hill-climbed from the ledger (repeat confirmed, reverse reverted).
+
+### Fixed
+- Online proof-loop revert self-heals the overlay's `_meta.prev` so the offline rollback-guard cannot resurrect a just-reverted config under index drift.
+
 ## [2.8.2] - 2026-07-01
 
 ### Fixed
