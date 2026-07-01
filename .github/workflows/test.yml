@@ -16,6 +16,12 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.13"]
+    env:
+      # Linux has no MLX; force the sentence-transformers (CPU) backend so the
+      # embedder-dependent unit tests run against a real embedder instead of
+      # erroring out (the job installs the `[cpu]` extra below).
+      MEMO_EMBEDDER_BACKEND: "st"
+      HF_HUB_DISABLE_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
@@ -27,16 +33,28 @@ jobs:
         with:
           path: ~/.cache/uv
           key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+      - name: Cache HF model
+        # Same key as linux-cpu-smoke — share the ~1.2 GB Qwen3-Embedding-0.6B
+        # download so it is fetched at most once across both workflows.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen3-embedding-0.6b-v1
       - name: Install uv
         run: pip install uv
-      - name: Install package + dev deps
+      - name: Install package + dev deps + CPU backend
         run: |
           uv venv .venv
-          uv pip install -e '.[dev]'
+          uv pip install -e '.[dev,cpu]'
       - name: Lint (ruff)
         run: .venv/bin/ruff check src/ tests/
       - name: Type check (mypy)
         run: .venv/bin/mypy src/memo
+      - name: Warm the CPU embedder
+        # Pre-fetch + load the ST model ONCE, single-threaded, so the parallel
+        # xdist workers below hit the local HF cache instead of racing to
+        # download 1.2 GB (which would blow the per-test --timeout).
+        run: .venv/bin/memo embed "warm up the sentence-transformers model cache" >/dev/null
       - name: Tests (excluding slow real-MLX smoke)
         # -n auto: parallelize across cores. --timeout: kill hung MLX/socket
         # tests. --cov + fail_under (pyproject) gates coverage regressions.
