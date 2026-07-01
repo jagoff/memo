@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.5] - 2026-07-01
+
+### Fixed
+- **CI `mypy` step is green again.** `fastapi` / `uvicorn` are optional (`[http]`) dependencies not installed in the default `[dev]` CI runtime, but `server_http.py` / `cli_http.py` import them at module level — so `mypy src/memo` failed with `import-not-found` (a pre-existing gap, unrelated to the 2.9.4 changes). Added them to the `[[tool.mypy.overrides]]` `ignore_missing_imports` list, matching how the `[cpu]`/MLX optional extras are already handled. No runtime change.
+
 ## [2.9.4] - 2026-07-01
 
 ### Added
