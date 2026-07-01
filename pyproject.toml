@@ -157,10 +157,10 @@ source = ["memo"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-# Floor is current measured coverage (~60%) minus a small buffer so a
+# Floor is current measured coverage (~67%) minus a small buffer so a
 # one-line dip doesn't redden CI. Ratchet upward as untested modules
 # (embedder, llm, recall_server, graph, …) get backfilled.
-fail_under = 58
+fail_under = 64
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
