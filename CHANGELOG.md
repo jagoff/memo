@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.2] - 2026-07-01
+
+### Fixed
+- Recover `transcript_path` by `session_id` when hook payloads omit it — since 2026-06-27 some Stop/UserPromptSubmit hook payloads stopped carrying `transcript_path` while `session_id` kept arriving, silently starving `capture-stop`'s grounding scoring (and therefore the token-savings ledger `memo tokens` reads), session autosave's payload persistence, and session checkpoint's snapshot fields. Recovered via a `~/.claude/projects/*/<session_id>.jsonl` glob fallback.
+
 ## [2.9.1] - 2026-07-01
 
 ### Changed
