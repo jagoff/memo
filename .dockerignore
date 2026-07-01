@@ -4,6 +4,7 @@
 **/*.pyc
 tests
 docs/superpowers
+.superpowers
 *.db
 *.db-wal
 *.db-shm
