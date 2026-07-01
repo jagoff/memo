@@ -961,6 +961,21 @@ def dream_status() -> None:
             else ""
         )
         console.print(f"  tuner:      {t.get('status')}{extra}")
+    if data.get("tuner", {}).get("online", {}).get("status") == "waiting":
+        o = data["tuner"]["online"]
+        console.print(f"  tuner online: waiting (cohort {o.get('n_after')}/{o.get('min_cohort')})")
+    from memo.dream_tune_online import read_ledger
+
+    _proof = read_ledger(cfg.state_dir, limit=3)
+    if _proof:
+        console.print("  [bold]proof loop[/bold] (realized online impact):")
+        for e in _proof:
+            mark = "[green]✓ confirmed[/green]" if e.get("verdict") == "confirmed" else "[red]✗ reverted[/red]"
+            console.print(
+                f"    {mark}  min_sim {e.get('floor_before')}→{e.get('floor_after')}  "
+                f"online {e.get('online_before')}→{e.get('online_after')} "
+                f"(Δ{e.get('realized_delta'):+g}) n={e.get('n_after')}"
+            )
     if data.get("anticipated"):
         from memo.dream_anticipate import briefing_line
 
