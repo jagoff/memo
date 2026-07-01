@@ -289,6 +289,14 @@ def main() -> None:
 
     threading.Thread(target=selfheal_statusline, daemon=True).start()
 
+    # Idempotently re-assert the recall hook (UserPromptSubmit → memo recall-hook,
+    # absolute path) in ~/.claude/settings.json so recall survives a
+    # de-registered/clobbered plugin. No-op when already correct. Gated by
+    # MEMO_HOOK_SELFHEAL.
+    from memo.cli_hooks import selfheal_recall_hook
+
+    threading.Thread(target=selfheal_recall_hook, daemon=True).start()
+
     transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
         # Long-lived daemon: enable the prompt cache + a larger query-embedding
@@ -312,7 +320,7 @@ def main() -> None:
 def _ensure_idle_daemon() -> None:
     """Start the idle capture daemon as a background subprocess if not running.
 
-    This enables auto-capture for MCP-only clients (opencode, Devin, Windsurf)
+    This enables auto-capture for MCP-only clients (opencode, Devin, Devin Desktop)
     that don't have Claude Code hooks to trigger idle-maintenance.
     """
     import subprocess as _subprocess

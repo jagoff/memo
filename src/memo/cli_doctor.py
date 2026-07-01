@@ -212,6 +212,30 @@ def doctor(
             "[dim](`memo recall-daemon start` to enable warm recall)[/dim]"
         )
 
+    # Recall hook wiring — memo-owned settings.json entry, self-healed on
+    # memo-mcp start. If it's missing, recall silently stops firing (the whole
+    # recall pipeline goes dark with no error). Surfaces that here.
+    from memo.cli_hooks import recall_hook_wired
+
+    if recall_hook_wired():
+        _last = None
+        try:
+            from memo.dashboard import read_recall_hook_log
+
+            _rows = read_recall_hook_log(cfg.state_dir, limit=1)
+            if _rows:
+                _last = _rows[-1].get("ts")
+        except Exception:
+            _last = None
+        _fired = f", last fired {_last}" if _last else ""
+        console.print(f"[green]✓[/green] recall hook: wired in settings.json{_fired}")
+    else:
+        console.print(
+            "[yellow]![/yellow] recall hook: NOT wired in settings.json — "
+            "run `memo install-recall-hook` (auto-heals on next memo-mcp start "
+            "unless MEMO_HOOK_SELFHEAL=0)"
+        )
+
     # GitHub sync health — surfaces the silent no-op (data_dir not a git clone)
     # and stranded commits (committed locally but never pushed).
     from memo.sync_git import sync_status as _sync_status

@@ -69,6 +69,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "wiring in ~/.claude/settings.json (wrapping any foreign statusline). "
         "No-op when already correct. Default on; set =0 to opt out.",
     ),
+    _spec(
+        "MEMO_HOOK_SELFHEAL",
+        "bool",
+        True,
+        "update",
+        "On memo-mcp start, idempotently re-assert the recall hook "
+        "(UserPromptSubmit → memo recall-hook, absolute path) in "
+        "~/.claude/settings.json, coexisting with foreign hooks. Makes recall "
+        "survive a de-registered/clobbered plugin. Default on; set =0 to opt out.",
+    ),
     # MCP transport
     _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
     _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),
