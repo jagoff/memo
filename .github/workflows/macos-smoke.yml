@@ -12,14 +12,14 @@ jobs:
     # MLX/runtime path that Linux CI cannot exercise.
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Python 3.13 + uv via Homebrew
         # actions/setup-python ships a CPython whose sqlite3 lacks
         # enable_load_extension, so sqlite-vec (core to memo) cannot load.
         # Homebrew's python@3.13 has extension loading enabled.
         run: brew install python@3.13 uv
       - name: Cache Hugging Face models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface
           key: macos-hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
