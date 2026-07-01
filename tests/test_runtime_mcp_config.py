@@ -219,3 +219,17 @@ def test_repair_does_not_clobber_memo_when_repointing_memo_mcp(tmp_path: Path) -
     assert f'"bin": "{shim}/memo"' in text
     assert "pipx" not in text  # no dead path survives
     assert f"{shim}/memo-mcp-mcp" not in text  # not mangled
+
+
+def test_known_configs_cover_new_agents() -> None:
+    from memo.runtime.mcp_config import KNOWN_MCP_CONFIGS
+
+    joined = " ".join(KNOWN_MCP_CONFIGS)
+    for fragment in (
+        ".codeium/windsurf/mcp_config.json",
+        ".kiro/settings/mcp.json",
+        ".warp/.mcp.json",
+        ".continue/mcpServers/memo.yaml",
+        "goose/config.yaml",
+    ):
+        assert fragment in joined
