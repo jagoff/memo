@@ -58,6 +58,16 @@ _GRAPH_WEIGHT = "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"
 _GRAPH_BASELINE = "dream_graph_baseline.json"
 GRAPH_WEIGHT_GRID: tuple[float, ...] = (0.0, 0.05, 0.1, 0.2)
 
+# Online-only project-boost tuning (F3 boosts). Distinct from the offline knob
+# tuners above: the project-affinity boost fires only for hits in the cwd
+# project, which the offline label eval does NOT model (labels carry no project
+# context). So boosts are NOT offline-measurable — the online proof loop is the
+# sole judge. A small hill-climb nudge is applied; if grounding improves it is
+# confirmed; if it regresses the online loop reverts it. Gated by
+# MEMO_DREAM_TUNE_BOOST_ENABLED (separate opt-in, default OFF).
+_PROJECT_BOOST = "MEMO_RECALL_PROJECT_BOOST"
+_BOOST_LO, _BOOST_HI = 0.0, 0.5
+
 
 # --- measurement -------------------------------------------------------------
 
@@ -729,6 +739,74 @@ def run_graph_retrieval_pass(
     return res
 
 
+# --- online-only project-boost tuner ----------------------------------------
+
+
+def _boost_direction(state_dir: Any, step: float) -> float:
+    """Next nudge direction for the project-boost, learned from the ledger:
+    repeat the direction that was confirmed, reverse the one that was reverted/
+    expired, explore up (+step) when there is no history for this knob."""
+    for e in reversed(dream_tune_online.read_ledger(state_dir, limit=50)):
+        if e.get("knob") != _PROJECT_BOOST:
+            continue
+        last_up = float(e.get("floor_after", 0.0)) >= float(e.get("floor_before", 0.0))
+        if e.get("verdict") == "confirmed":
+            return step if last_up else -step
+        if e.get("verdict") in ("reverted", "expired"):
+            return -step if last_up else step
+        break
+    return step
+
+
+def run_boost_pass(
+    cfg: Any, mem: Any, *, step: float = 0.05, dry_run: bool = False
+) -> dict[str, Any]:
+    """One nightly ONLINE-ONLY project-boost exploration. Proposes a small nudge
+    and lets the online proof loop verify it (no offline measure — boosts are not
+    offline-measurable). Respects the one-change-per-cycle guard. Never raises."""
+    from memo.flags import flag_float
+
+    res: dict[str, Any] = {"status": "noop"}
+    try:
+        # one change per proof cycle: defer while any pending/cooldown is active
+        if dream_tune_online.has_unresolved_pending(cfg.state_dir) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
+            res["status"] = "deferred_pending"
+            return res
+
+        current = flag_float(_PROJECT_BOOST)
+        current = 0.25 if current is None else current
+        direction = _boost_direction(cfg.state_dir, step)
+        proposed = round(current + direction, 4)
+        res.update({"boost_before": current, "boost_after": proposed, "direction": direction})
+        if proposed < _BOOST_LO or proposed > _BOOST_HI or proposed == current:
+            res["status"] = "noop"
+            res["reason"] = "boundary"
+            return res
+        if dry_run:
+            res["status"] = "would_apply"
+            return res
+
+        version_before = params_version(cfg.state_dir)
+        params = _overlay_params(cfg.state_dir)
+        params[_PROJECT_BOOST] = proposed
+        write_overlay(cfg.state_dir, params, {"set_by": "dream-boost"})
+        # No offline metrics for boosts — the online proof loop is the sole judge.
+        dream_tune_online.record_pending(
+            cfg.state_dir,
+            knob=_PROJECT_BOOST,
+            value_before=current,
+            value_after=proposed,
+            offline_before={},
+            offline_after={},
+            version_before=version_before,
+        )
+        res["status"] = "applied"
+    except Exception as exc:  # surfaced into the receipt, never silent
+        res["status"] = "error"
+        res["error"] = f"{type(exc).__name__}: {exc}"
+    return res
+
+
 __all__ = [
     "GRAPH_WEIGHT_GRID",
     "RETRIEVAL_CONFIGS",
@@ -740,6 +818,7 @@ __all__ = [
     "measure_graph_weight",
     "measure_retrieval_config",
     "read_overlay",
+    "run_boost_pass",
     "run_graph_retrieval_pass",
     "run_graph_weight_pass",
     "run_tuning_pass",

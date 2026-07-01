@@ -396,6 +396,18 @@ def dream_run(
                 receipt["errors"].append(f"retrieval_tuner: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[tune] graph-injection tuner [yellow]warn[/yellow]")
 
+        # Online-only project-boost explorer (separate opt-in; no offline gate).
+        if flag_bool("MEMO_DREAM_TUNE_BOOST_ENABLED"):
+            try:
+                from memo import dream_tune
+                from memo.flags import flag_float
+
+                receipt["boost_tuner"] = dream_tune.run_boost_pass(
+                    cfg, mem, step=flag_float("MEMO_DREAM_TUNE_BOOST_STEP") or 0.05, dry_run=dry_run
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"boost_tuner: {type(exc).__name__}: {exc}")
+
         # Phase 3 — anticipatory: surface unmet gaps + prewarm (no fabrication)
         if flag_bool("MEMO_DREAM_ANTICIPATE_ENABLED"):
             progress.update(step, description="[anticipate] surfacing gaps...")

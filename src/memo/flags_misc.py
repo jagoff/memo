@@ -738,6 +738,23 @@ SPECS: tuple[FlagSpec, ...] = (
         "default. Reporting only — memo never flips MEMO_DREAM_TUNE_ENABLED automatically.",
     ),
     _spec(
+        "MEMO_DREAM_TUNE_BOOST_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly ONLINE-ONLY project-boost explorer inside `memo dream run`. OFF by "
+        "default (separate opt-in from MEMO_DREAM_TUNE_ENABLED). Nudges MEMO_RECALL_PROJECT_BOOST "
+        "and lets the online proof loop confirm/revert it against real grounding — boosts are not "
+        "offline-measurable, so there is no offline gate for this knob.",
+    ),
+    _spec(
+        "MEMO_DREAM_TUNE_BOOST_STEP",
+        "float",
+        0.05,
+        "misc",
+        "Nudge size for the online project-boost explorer (MEMO_DREAM_TUNE_BOOST_ENABLED).",
+    ),
+    _spec(
         "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
         "bool",
         False,
