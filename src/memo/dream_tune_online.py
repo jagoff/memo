@@ -14,6 +14,7 @@ MLX-free: operates only over grounding.log + two JSON sidecars under
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -107,3 +108,60 @@ def read_ledger(state_dir: Path, *, limit: int = 50) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return out
+
+
+def resolve_pending(
+    state_dir: Path,
+    *,
+    min_cohort: int,
+    eps: float,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Resolve a prior night's applied change against its out-of-sample cohort.
+
+    ``status`` is one of:
+      - ``"none"``      — no pending change.
+      - ``"waiting"``   — the new-version cohort is still smaller than
+        ``min_cohort``; the pending record is kept for a later night.
+      - ``"confirmed"`` — realized online fraction held (>= before - eps); the
+        change stays. Pending cleared, ledger appended.
+      - ``"reverted"``  — realized online fraction regressed (< before - eps).
+        Pending cleared, ledger appended; the return carries ``offline_before``
+        so the CALLER can roll back the overlay and restore the offline baseline.
+
+    No overlay side effects here — only grounding.log reads + sidecar writes.
+    """
+    pending = read_pending(state_dir)
+    if not pending:
+        return {"status": "none"}
+
+    version_after = str(pending.get("version_after", ""))
+    online_after, n_after = online_fraction(state_dir, version_after)
+    if n_after < min_cohort:
+        return {
+            "status": "waiting",
+            "version_after": version_after,
+            "n_after": n_after,
+            "min_cohort": min_cohort,
+        }
+
+    online_before = float(pending.get("online_before", 0.0))
+    realized = round(online_after - online_before, 4)
+    verdict = "reverted" if realized < -eps else "confirmed"
+    entry = {
+        "resolved_ts": (now or datetime.now(UTC)).isoformat(timespec="seconds"),
+        "verdict": verdict,
+        "floor_before": pending.get("floor_before"),
+        "floor_after": pending.get("floor_after"),
+        "version_before": pending.get("version_before"),
+        "version_after": version_after,
+        "offline_before": pending.get("offline_before"),
+        "offline_after": pending.get("offline_after"),
+        "online_before": round(online_before, 4),
+        "online_after": round(online_after, 4),
+        "n_after": n_after,
+        "realized_delta": realized,
+    }
+    append_ledger(state_dir, entry)
+    clear_pending(state_dir)
+    return {"status": verdict, **entry}

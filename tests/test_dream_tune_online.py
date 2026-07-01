@@ -47,3 +47,52 @@ def test_online_fraction_reads_grounding_log(tmp_path):
     frac, n = dto.online_fraction(tmp_path, v)
     assert n == 2
     assert frac == 0.5
+
+
+def _pending(**over):
+    base = {
+        "version_before": "v1",
+        "version_after": "v2",
+        "floor_before": 0.5,
+        "floor_after": 0.6,
+        "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0},
+        "offline_after": {"precision_at_k": 0.3, "noise_at_k": 0.0},
+        "online_before": 0.5,
+    }
+    base.update(over)
+    return base
+
+
+def test_resolve_none(tmp_path):
+    assert dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02) == {"status": "none"}
+
+
+def test_resolve_waiting_keeps_pending(tmp_path, monkeypatch):
+    dto.write_pending(tmp_path, _pending())
+    monkeypatch.setattr(dto, "online_fraction", lambda sd, v, **k: (0.9, 5))
+    r = dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02)
+    assert r["status"] == "waiting"
+    assert r["n_after"] == 5
+    assert dto.read_pending(tmp_path) is not None          # kept
+    assert dto.read_ledger(tmp_path) == []                 # nothing recorded
+
+
+def test_resolve_confirmed(tmp_path, monkeypatch):
+    dto.write_pending(tmp_path, _pending(online_before=0.5))
+    monkeypatch.setattr(dto, "online_fraction", lambda sd, v, **k: (0.55, 40))
+    r = dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02)
+    assert r["status"] == "confirmed"
+    assert r["realized_delta"] == 0.05
+    assert dto.read_pending(tmp_path) is None               # cleared
+    led = dto.read_ledger(tmp_path)
+    assert len(led) == 1 and led[0]["verdict"] == "confirmed"
+
+
+def test_resolve_reverted_carries_offline_before(tmp_path, monkeypatch):
+    dto.write_pending(tmp_path, _pending(online_before=0.5))
+    monkeypatch.setattr(dto, "online_fraction", lambda sd, v, **k: (0.40, 40))  # -0.10 < -eps
+    r = dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02)
+    assert r["status"] == "reverted"
+    assert r["offline_before"] == {"precision_at_k": 0.2, "noise_at_k": 0.0}
+    assert dto.read_pending(tmp_path) is None
+    assert dto.read_ledger(tmp_path)[0]["verdict"] == "reverted"
