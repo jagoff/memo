@@ -1156,6 +1156,30 @@ def dream_tune_cmd(dry_run: bool, do_rollback: bool, show_status: bool) -> None:
     click.echo(json.dumps(res, indent=2, ensure_ascii=False))
 
 
+@dream_cmd.command(name="consolidate-reuse")
+@click.option("--json", "as_json", is_flag=True, help="Emit result as JSON.")
+def dream_consolidate_reuse_cmd(as_json: bool) -> None:
+    """F4 metric: of synthesis memories consolidate created, how many are
+    actually grounded (reused) in real recall.
+    """
+    from memo import dream_reuse
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    result = dream_reuse.consolidated_reuse(mem)
+    if as_json:
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    n = result["n_consolidated"]
+    r = result["n_reused"]
+    pct = result["reuse_fraction"] * 100
+    cs = result["cross_session"]
+    suffix = f" · {cs} cross-session" if cs else ""
+    console.print(
+        f"[bold]consolidate-reuse:[/bold] {n} consolidated · {r} reused ({pct:.0f}%){suffix}"
+    )
+
+
 @dream_cmd.command(name="if-due")
 def dream_if_due() -> None:
     """Spawn a background dream run if > 24h since last run (for launchd)."""
