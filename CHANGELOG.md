@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-07-01
+
+### Fixed
+- Proof-loop deferral is now checked BEFORE the (expensive) MLX search in the graph tuner passes: when a min_sim change is being proven or a revert cooldown is active, the graph passes skip the search entirely instead of grid-searching and only then deferring. Surfaced by end-to-end empirical testing of the proof loop. (Still gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default.)
+
 ## [2.8.0] - 2026-07-01
 
 ### Added
