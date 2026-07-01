@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -491,6 +491,28 @@ class GraphStore:
     def count_entities(self) -> int:
         """Return the number of unique entities in the graph."""
         return int(self._conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0])
+
+    def total_indexed_memories(self) -> int:
+        """Distinct memories carrying at least one entity link — the ``N`` for
+        entity IDF (rarity) weighting of the graph recall signals."""
+        row = self._conn.execute("SELECT COUNT(DISTINCT memory_id) FROM entity_memory").fetchone()
+        return int(row[0]) if row and row[0] else 0
+
+    def entity_doc_freqs(self, names: Sequence[str]) -> dict[str, float]:
+        """Document frequency (distinct memories mentioning it) per entity name,
+        lower-cased, in ONE batched query. Feeds the IDF weighting that lets the
+        graph signals discriminate rare entities from ubiquitous ones. Names not
+        in the graph are omitted (an unknown entity has no measurable rarity)."""
+        wanted = [n.strip().lower() for n in names if n and n.strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" * len(wanted))
+        sql = (
+            "SELECT e.name AS name, COUNT(DISTINCT em.memory_id) AS df "  # noqa: S608
+            "FROM entities e JOIN entity_memory em ON em.entity_id = e.id "
+            f"WHERE e.name IN ({placeholders}) GROUP BY e.name"
+        )
+        return {r["name"]: float(r["df"]) for r in self._conn.execute(sql, wanted).fetchall()}
 
     def stats(self) -> dict[str, int]:
         n_entities = self.count_entities()

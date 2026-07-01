@@ -78,6 +78,63 @@ def test_none_score_hit_is_preserved():
     assert ids["a"] is None  # no boost applied to a scoreless hit
 
 
+# --- IDF weighting (fix: raw entity-overlap promotes generic-entity junk) -----
+
+
+class _IdfGraph(_StubGraph):
+    """Stub that also reports corpus size + doc-frequencies so the IDF path
+    engages. Query 'fastapi' neighbors both a RARE entity ('pydantic', df=1)
+    and a UBIQUITOUS one ('common', df=N)."""
+
+    def __init__(self, n_docs, doc_freqs, **kw):
+        super().__init__(**kw)
+        self._n = n_docs
+        self._df = {k.lower(): float(v) for k, v in doc_freqs.items()}
+
+    def total_indexed_memories(self):
+        return self._n
+
+    def entity_doc_freqs(self, names):
+        return {n.strip().lower(): self._df[n.strip().lower()]
+                for n in names if n.strip().lower() in self._df}
+
+
+def test_idf_downweights_ubiquitous_neighbor():
+    # 'a' reaches rare 'pydantic' (df=1 -> high idf); 'b' reaches ubiquitous
+    # 'common' (df=N -> idf 0). Raw counting would tie/boost both; IDF must
+    # boost only 'a'.
+    g = _IdfGraph(
+        n_docs=100,
+        doc_freqs={"pydantic": 1, "common": 100},
+        neighbors={"fastapi": {"pydantic": 1.0, "common": 1.0}},
+        mem_entities={
+            "a": [{"name": "pydantic", "type": "tech", "mention_count": 1}],
+            "b": [{"name": "common", "type": "tech", "mention_count": 1}],
+        },
+    )
+    boost = graph_boost_factory(g, ["FastAPI"], weight=0.1)
+    out = boost([_Hit("a", 0.5), _Hit("b", 0.5)])
+    scores = {h.id: h.score for h in out}
+    assert scores["a"] > 0.5      # rare neighbor -> boosted
+    assert scores["b"] == 0.5      # ubiquitous neighbor -> idf 0 -> untouched
+    assert out[0].id == "a"
+
+
+def test_min_idf_gate_suppresses_ubiquitous_only_query():
+    # Query entity itself is ubiquitous (df=N -> idf 0); with a positive
+    # min_idf the whole boost must be suppressed (identity).
+    g = _IdfGraph(
+        n_docs=100,
+        doc_freqs={"fastapi": 100, "pydantic": 1},
+        neighbors={"fastapi": {"pydantic": 1.0}},
+    )
+    hits = [_Hit("a", 0.5), _Hit("b", 0.6)]
+    gated = graph_boost_factory(g, ["FastAPI"], weight=0.1, min_idf=1.0)
+    assert gated(hits) == hits          # gate fails -> identity
+    ungated = graph_boost_factory(g, ["FastAPI"], weight=0.1, min_idf=0.0)
+    assert ungated(hits)[0].id == "a"   # no gate -> rare neighbor still boosts
+
+
 # --- wiring into _recall_logic (flag-gated, default OFF) ---------------------
 
 
