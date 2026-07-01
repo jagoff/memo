@@ -9,6 +9,13 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.3] - 2026-07-01
+
+### Fixed
+- **`memo dream run` no longer emits misleading warnings for by-design behavior.** Two `WARNING`-level log lines fired on every manual dream run despite the run succeeding (`receipt["errors"]` stayed empty):
+  - *Near-duplicate save nag.* The save-time dedup advisory (`consider `memo update` instead`) is only actionable for an interactive human, but dream's signal-gather/synthesize passes save near-duplicates by construction (the same run's consolidate pass merges them). A new `derived_save_scope()` (a `ContextVar` in `memory/record.py`) marks batch/derived saves; `dream run` wraps its whole pipeline and `apply_merge` wraps its merged save, so the nag drops to `DEBUG` in those paths. A human's direct `memo save` still gets the warning.
+  - *Consolidation merge-proposal JSON unparseable.* The retry only flipped decode temperature (0.0→0.3), which cannot recover a proposal truncated by too small a token budget. The retry now escalates **both** temperature and `max_tokens` (1536→3072) so a long merged body completes instead of being cut mid-value; skipping the cluster remains the safe final fallback (originals untouched, retried next night).
+
 ## [2.9.2] - 2026-07-01
 
 ### Fixed
