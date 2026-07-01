@@ -48,7 +48,7 @@
 
 memo is built to **spend fewer tokens, not more**.
 
-- **92% smaller MCP surface.** The default `agent` profile exposes **10 tools / ~1.2k schema tokens**, versus **123 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **92% smaller MCP surface.** The default `agent` profile exposes **10 tools / ~1.2k schema tokens**, versus **126 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -224,7 +224,7 @@ memo runs four background daemons:
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
-### All 95 CLI commands
+### All 105 CLI commands
 
 <details>
 <summary>Click to expand</summary>
