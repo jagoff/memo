@@ -58,6 +58,7 @@ from memo.cli_feedback import feedback_group
 from memo.cli_graph import graph_group
 from memo.cli_health import health as health_cmd
 from memo.cli_history import diff_cmd, history_cmd
+from memo.cli_hooks import install_recall_hook
 from memo.cli_http import http_api
 from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
@@ -217,6 +218,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
             "uninstall-watcher",
             "install-slash",
             "install-statusline",
+            "install-recall-hook",
             "install-shell-wrapper",
             "install-shims",
             "startup-banner",
@@ -359,6 +361,7 @@ cli.add_command(mcp_command)
 cli.add_command(install_slash)
 cli.add_command(install_mcp)
 cli.add_command(install_statusline)
+cli.add_command(install_recall_hook)
 cli.add_command(self_update)  # primary name: "update"
 # Back-compat: keep the old `memo upgrade` / `memo self-update` names working
 # (now hidden) so any auto-update path or muscle memory still resolves. Same
@@ -461,6 +464,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "install-slash",
     "install-mcp",
     "install-statusline",
+    "install-recall-hook",
     "continuity",
     "prewarm",
     "recall-hook",

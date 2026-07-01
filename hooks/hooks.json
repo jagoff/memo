@@ -1,9 +1,147 @@
 {
-  "hooks": [
-    {
-      "match": "SessionStart",
-      "id": "memo-first",
-      "command": "node $CLAUDE_ROOT/scripts/hooks/memo-first-hook.js"
-    }
-  ]
+  "description": "memo ambient memory hooks \u2014 proactive recall on every UserPromptSubmit, passive auto-capture on Stop, prewarm on SessionStart for fast cold-load, session snapshots so closed/crashed sessions can be resumed, and El Briefing (open loops + memory of the day) at startup. Every command is prefixed with MEMO_NONINTERACTIVE=1 so the first-run picker never fires inside a hook.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo sync pull --quiet",
+            "timeout": 90000,
+            "async": true,
+            "statusMessage": "memo: pulling cross-Mac memories\u2026",
+            "comment": "Cross-Mac git pull + signal merge + reindex (F5). --quiet soft-fails (exit 0) when the memorias dir isn't a git clone, so non-synced installs are unaffected. Async so startup isn't blocked."
+          }
+        ]
+      },
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo reflect --last --if-due --quiet",
+            "timeout": 90000,
+            "async": true,
+            "comment": "Synthesize the previous session into durable memorias before briefing. --if-due skips if already done. Runs async so startup isn't blocked."
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo prewarm",
+            "timeout": 30,
+            "async": true,
+            "statusMessage": "memo: warming MLX models\u2026"
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo recall-daemon start",
+            "timeout": 5,
+            "async": true,
+            "statusMessage": "memo: starting recall daemon\u2026"
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session recent",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 MEMO_SYNTHESIS_ENABLED=1 memo maintain --if-due",
+            "timeout": 5,
+            "async": true,
+            "comment": "Daily corpus freshness (archive-only, reversible). No-op unless >24h since last run; spawns detached so it never blocks startup. Disable with MEMO_MAINTAIN_DISABLE=1."
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo briefing --compact",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session autosave",
+            "timeout": 5,
+            "comment": "Increased from 3s: DB writes can be slow on first call"
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 MEMO_AGENT_TTY=${MEMO_AGENT_TTY:-$(tty 2>/dev/null | grep -E '^/dev/' | head -1)} memo session idle-maintenance --mode capture",
+            "timeout": 30,
+            "async": true,
+            "comment": "Idle capture: waits for a quiet window (MEMO_SESSION_IDLE_CAPTURE_SECS, default 10s) after the turn finishes and then mines the current session chunk into durable memorias. MEMO_AGENT_TTY captures the terminal PTY so the notification writes directly to the user's terminal. Stale workers self-cancel if a newer prompt updated the session snapshot. Async + soft-fail. Disable with MEMO_CAPTURE_DISABLE=1."
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session checkpoint",
+            "timeout": 5,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo sync auto",
+            "timeout": 90000,
+            "async": true,
+            "comment": "Durable in-session GitHub sync: self-throttled (MEMO_SYNC_PUSH_DEBOUNCE_S / MEMO_SYNC_PULL_INTERVAL_S) so a crashed/long session doesn't strand hours of memorias until Stop, and a long session converges on another Mac's pushes without a restart. Cheap no-op (timestamp check, no git) when not due; soft no-ops on non-git installs. Async so it never touches the recall 5s budget. Disable with MEMO_SYNC_AUTO=0."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo capture-stop",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session checkpoint",
+            "timeout": 5,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo session refresh-summary",
+            "timeout": 20,
+            "async": true,
+            "statusMessage": "memo: updating session summary\u2026"
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo sync once --quiet",
+            "timeout": 90000,
+            "async": true,
+            "statusMessage": "memo: pushing memories cross-Mac\u2026",
+            "comment": "Final flush via the single lock-guarded machine coordinator (pull-rebase-before-push). Listed last so this session's capture-stop write is on disk first. Lock-guarded so it never races the per-prompt `sync auto` or a sibling session. --quiet soft no-ops on local-tier (no remote) installs."
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 MEMO_AGENT_TTY=${MEMO_AGENT_TTY:-$(tty 2>/dev/null | grep -E '^/dev/' | head -1)} memo session idle-maintenance --mode reflect",
+            "timeout": 360,
+            "async": true,
+            "comment": "Longer idle consolidation: waits for a longer quiet window (MEMO_SESSION_IDLE_REFLECT_SECS, default 5m) after the turn finishes and then synthesizes the active session into a durable arc note. MEMO_AGENT_TTY for terminal notifications. Stale workers self-cancel if a newer prompt updated the session snapshot. Async + soft-fail. Disable with MEMO_CAPTURE_DISABLE=1."
+          },
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo dream if-due",
+            "timeout": 300,
+            "async": true,
+            "comment": "Daily body compression: LLM-compresses memorias > 2000 chars to 2-3 sentences (MEMO_DREAM_COMPRESS_THRESHOLD). Shorter stored bodies \u2192 more signal-dense recall injections. No-op unless > 24h since last dream run. Async + soft-fail."
+          }
+        ]
+      }
+    ]
+  }
 }
