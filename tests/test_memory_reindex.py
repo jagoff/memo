@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import pytest
-
 from memo.memory import Memory
 
 
-@pytest.mark.no_stub_embedder
 def test_save_index_failure_recovers_on_reindex(mem_with_stub: Memory, monkeypatch):
     calls = {"n": 0}
     real_embed = type(mem_with_stub.embedder).embed

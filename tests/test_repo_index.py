@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, cast
 
-import pytest
 from click.testing import CliRunner
 
 from memo.cli import cli
@@ -87,7 +86,6 @@ def _patch_embedder(monkeypatch) -> None:
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed_query", _embed_query)
 
 
-@pytest.mark.no_stub_embedder
 def test_repo_index_indexes_lines_chunks_and_gets_ranges(tmp_path: Path, monkeypatch):
     _patch_embedder(monkeypatch)
     repo = _make_repo(tmp_path)
@@ -185,7 +183,6 @@ def test_repo_index_never_embeds_single_huge_line(tmp_path: Path, monkeypatch):
     assert max_seen < 3800
 
 
-@pytest.mark.no_stub_embedder
 def test_repo_index_can_skip_embeddings_then_embed_later(tmp_path: Path, monkeypatch):
     repo = _make_repo(tmp_path)
     mem = Memory(_cfg(tmp_path))
@@ -214,7 +211,6 @@ def test_repo_index_can_skip_embeddings_then_embed_later(tmp_path: Path, monkeyp
     assert mem.repo_search("zebra", repo="sample", mode="vec")[0].path == "README.md"
 
 
-@pytest.mark.no_stub_embedder
 def test_repo_embed_reuses_cache_on_force(tmp_path: Path, monkeypatch):
     repo = _make_repo(tmp_path)
     mem = Memory(_cfg(tmp_path))
@@ -246,7 +242,6 @@ def test_repo_embed_reuses_cache_on_force(tmp_path: Path, monkeypatch):
     assert second["semantic_status"] == "semantic_ready"
 
 
-@pytest.mark.no_stub_embedder
 def test_repo_embed_sorts_batches_by_input_length(tmp_path: Path, monkeypatch):
     repo = _make_text_repo(
         tmp_path,
@@ -273,7 +268,6 @@ def test_repo_embed_sorts_batches_by_input_length(tmp_path: Path, monkeypatch):
     assert seen_lengths == sorted(seen_lengths)
 
 
-@pytest.mark.no_stub_embedder
 def test_repo_embed_reduces_batch_size_after_runtime_error(tmp_path: Path, monkeypatch):
     repo = _make_text_repo(
         tmp_path,

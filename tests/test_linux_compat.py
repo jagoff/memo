@@ -107,7 +107,6 @@ def test_obsidian_registry_path_per_os(monkeypatch, platform, fragment):
 # ── RepoCorpus routes through the factory ───────────────────────────────────
 
 
-@pytest.mark.no_stub_embedder
 def test_repocorpus_uses_factory_not_hardcoded_mlx(tmp_cfg):
     from memo.repo_index import RepoCorpus
 

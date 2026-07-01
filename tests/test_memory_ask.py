@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import pytest
-
 from memo.memory import Memory, MemoryRecord
 
 
-@pytest.mark.no_stub_embedder
 def test_consolidate_clusters_near_duplicates(mem_with_stub: Memory, monkeypatch):
     monkeypatch.setattr(
         "memo.embedder.MLXEmbedder.embed",

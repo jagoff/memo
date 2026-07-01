@@ -46,7 +46,6 @@ def _dedup_records(caplog) -> list[logging.LogRecord]:
     return [r for r in caplog.records if _DEDUP_MSG in r.getMessage()]
 
 
-@pytest.mark.no_stub_embedder
 def test_dedup_warns_for_interactive_save(mem_const_embed, caplog):
     mem_const_embed.save(content="seed body one", title="seed", type_="note")
     with caplog.at_level(logging.DEBUG, logger="memo.memory.record"):
@@ -57,7 +56,6 @@ def test_dedup_warns_for_interactive_save(mem_const_embed, caplog):
     assert all(r.levelno == logging.WARNING for r in recs)
 
 
-@pytest.mark.no_stub_embedder
 def test_dedup_demoted_to_debug_inside_derived_scope(mem_const_embed, caplog):
     mem_const_embed.save(content="seed body one", title="seed", type_="note")
     with caplog.at_level(logging.DEBUG, logger="memo.memory.record"):
@@ -80,7 +78,6 @@ def test_scope_resets_after_exit(mem_const_embed, caplog):
     assert not in_derived_save_scope()
 
 
-@pytest.mark.no_stub_embedder
 def test_apply_merge_suppresses_dedup_nag(mem_const_embed, caplog):
     """`apply_merge` (also reachable standalone via `memo consolidate`, outside
     dream's scope) must not nag: a merged record is a near-dup of its members by

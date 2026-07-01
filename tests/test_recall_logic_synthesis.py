@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from memo.recall_logic import _deduplicate_synthesis
 
 
@@ -76,7 +74,6 @@ def _hybrid_mem(tmp_path, monkeypatch):
     return Memory(cfg), cfg
 
 
-@pytest.mark.no_stub_embedder
 def test_hybrid_recall_gate_uses_vec_cosine_not_rrf(tmp_path, monkeypatch):
     from memo.recall_logic import _recall_logic
 

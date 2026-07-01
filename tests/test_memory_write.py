@@ -83,7 +83,6 @@ def test_save_rejects_empty_content(mem_with_stub: Memory):
         mem_with_stub.save(content="   ")
 
 
-@pytest.mark.no_stub_embedder
 def test_save_index_failure_keeps_md_and_marks_pending(mem_with_stub: Memory, monkeypatch):
     def _explode(self, inputs):
         raise RuntimeError("embedder down")
@@ -109,7 +108,6 @@ def test_title_derived_from_first_line(mem_with_stub: Memory):
     assert rec.title == "Encabezado"
 
 
-@pytest.mark.no_stub_embedder
 def test_embed_batch_preserves_order_and_handles_empty(tmp_cfg: Config, monkeypatch):
     seen: list[int] = []
 
@@ -198,7 +196,6 @@ def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
     assert on_disk.count("x") <= 110
 
 
-@pytest.mark.no_stub_embedder
 def test_save_rejects_wrong_dim_embedding(tmp_cfg: Config, monkeypatch):
     cfg = Config(
         data_dir=tmp_cfg.data_dir,
@@ -230,7 +227,6 @@ def test_high_signal_detector_rescues_pin_notes():
     assert not _is_high_signal("algo corto sin nada especial", ["random"])
 
 
-@pytest.mark.no_stub_embedder
 def test_save_rejects_zero_norm_embedding(tmp_cfg: Config, monkeypatch):
     cfg = Config(
         data_dir=tmp_cfg.data_dir,
