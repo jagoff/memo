@@ -24,25 +24,22 @@ import time
 from typing import Any
 
 import click
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.cli_dream_passes import (
     _build_orientation,
+    _corpus_fingerprint,
+    _make_progress,
+    _older_id,
+    _render_run_summary,
     _run_compress,
     _run_eviction,
     _run_presynthesis,
     _run_prewarm_queries,
     _run_prune_floor,
     _run_signal_gather,
+    _state_path,
 )
 from memo.config import Config
 from memo.memory.record import derived_save_scope
@@ -50,43 +47,9 @@ from memo.memory.record import derived_save_scope
 _log = _logging.getLogger(__name__)
 
 
-def _state_path(cfg: Config):
-    return cfg.state_dir / "dream"
-
-
-def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
-    ra, rb = mem.get(id_a), mem.get(id_b)
-    ua = getattr(ra, "updated", "") or ""
-    ub = getattr(rb, "updated", "") or ""
-    if ua and ub:
-        return (id_a, id_b) if ua <= ub else (id_b, id_a)
-    return id_a, id_b
-
-
 @click.group(name="dream")
 def dream_cmd() -> None:
     """Autonomous nightly maintenance — synthesise, heal, decay."""
-
-
-def _make_progress() -> Progress:
-    import sys
-
-    from memo.flags import flag_bool
-
-    # Non-interactive runs (launchd dream, piped output) still get the live-render
-    # ANSI control stream from Rich — ~2MB of escapes per run. Disable the bar
-    # there; the per-pass `console.print` summary at the end still emits.
-    disable = flag_bool("MEMO_NONINTERACTIVE") or not sys.stderr.isatty()
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(bar_width=24),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        console=console,
-        transient=False,
-        disable=disable,
-    )
 
 
 @dream_cmd.command(name="run")
@@ -168,17 +131,6 @@ def dream_run(
         ).get("corpus_fp")
     except Exception:
         _prev_fp = None
-
-    def _corpus_fingerprint() -> str | None:
-        """A cheap change-signal: (row count, latest update timestamp) of the
-        canonical `meta` table. Any save/edit/delete moves at least one."""
-        try:
-            row = mem.store._conn.execute(
-                "SELECT COUNT(*), COALESCE(MAX(updated), '') FROM meta"
-            ).fetchone()
-            return f"{row[0]}:{row[1]}"
-        except Exception:
-            return None
 
     from memo.flags import flag_bool, flag_int
 
@@ -296,7 +248,7 @@ def dream_run(
         # fingerprint matches the last run, the heavy LLM passes (contradict /
         # synthesize / consolidate) would redo identical work. Skip them; a
         # re-run is then near-instant. `--force` overrides.
-        _cur_fp = _corpus_fingerprint()
+        _cur_fp = _corpus_fingerprint(mem)
         _sg_saved = int(receipt["signal_gathered"].get("memories_saved", 0) or 0)
         _converged = (
             not force
@@ -891,7 +843,7 @@ def dream_run(
             d.mkdir(parents=True, exist_ok=True)
             # Stamp the post-mutation corpus fingerprint so the next run can
             # detect "nothing changed" and converge (skip the heavy passes).
-            receipt["corpus_fp"] = _corpus_fingerprint()
+            receipt["corpus_fp"] = _corpus_fingerprint(mem)
             (d / "last.json").write_text(
                 json.dumps({"ts": time.time(), **receipt}, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -904,45 +856,7 @@ def dream_run(
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
         return
 
-    tag = "[dim](dry-run)[/dim] " if dry_run else ""
-    console.print(f"{tag}[bold]memo dream[/bold]")
-    console.print(
-        f"  contradictions superseded: {len(receipt['superseded'])}, "
-        f"evolutions: {len(receipt['evolved'])}, "
-        f"confidence penalized: {receipt['confidence_penalized']}"
-    )
-    console.print(f"  duplicate clusters merged: {len(receipt['merged'])}")
-    console.print(f"  stale memories archived:   {len(receipt['archived_stale'])}")
-    if receipt["synthesized"]:
-        saved = sum(1 for s in receipt["synthesized"] if s.get("saved"))
-        console.print(
-            f"  emergent syntheses:        {saved} saved, {len(receipt['synthesized'])} proposed"
-        )
-    console.print(f"  entities extracted:        {receipt['entities_extracted']}")
-    console.print(
-        f"  roi reconciled (grounding):{receipt['roi_reconciled']} rescored, "
-        f"{len(receipt['dead_archived'])} dead-archived"
-    )
-    console.print(f"  roi rows decayed:          {receipt['roi_decayed']}")
-    console.print(f"  quality-floor pruned:      {len(receipt['pruned_floor'])}")
-    if receipt.get("evicted"):
-        console.print(f"  evicted (LFU):             {len(receipt['evicted'])}")
-    if receipt.get("compressed"):
-        console.print(f"  compressed:                {len(receipt['compressed'])}")
-    pw = receipt.get("prewarm", {})
-    if pw.get("queries_warmed"):
-        console.print(f"  cache pre-warmed:          {pw['queries_warmed']} queries")
-    if receipt.get("presynthesis"):
-        console.print(f"  pre-syntheses:             {len(receipt['presynthesis'])} clusters")
-    sg = receipt.get("signal_gathered", {})
-    if sg.get("files_processed") or sg.get("memories_saved"):
-        console.print(
-            f"  signal gather:             {sg['files_processed']} files, "
-            f"{sg['memories_saved']} saved, {sg.get('skipped_dup', 0)} dup skipped"
-        )
-    if receipt["errors"]:
-        for e in receipt["errors"]:
-            console.print(f"  [yellow]warn:[/yellow] {e}")
+    _render_run_summary(receipt, dry_run)
 
 
 @dream_cmd.command(name="status")
