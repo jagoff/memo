@@ -41,6 +41,89 @@ def test_flag_default_is_on(monkeypatch) -> None:
     assert flag_bool("MEMO_RECALL_SYSTEM_MESSAGE") is False
 
 
+def test_cite_instruction_flag_default_is_on(monkeypatch) -> None:
+    from memo.flags import flag_bool
+
+    monkeypatch.delenv("MEMO_RECALL_CITE_INSTRUCTION", raising=False)
+    assert flag_bool("MEMO_RECALL_CITE_INSTRUCTION") is True
+    monkeypatch.setenv("MEMO_RECALL_CITE_INSTRUCTION", "0")
+    assert flag_bool("MEMO_RECALL_CITE_INSTRUCTION") is False
+
+
+def test_cite_instruction_flag_gating(tmp_cfg, monkeypatch) -> None:
+    """Full-hook: CITE_INSTRUCTION in additionalContext when flag on; absent when =0.
+
+    Memory.search is stubbed to supply a deterministic hit so the hook always
+    reaches the additionalContext rendering code. The flag-gating logic in
+    cli_recall_hook.py (the ``if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):``
+    block) is exercised through the real hook invocation via CliRunner.
+
+    Route chosen: full-hook with Memory.search stub (not a bare unit test of
+    the append logic). BM25 + saved-memory was attempted first but failed
+    because the hook's in-process Memory instance uses Config.from_env() which
+    can resolve a different db_path than the fixture's Memory; stubbing search
+    directly is more robust and still exercises the real flag-gating code path.
+    """
+    import json
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+    from memo.memory import MemoryRecord
+    from memo.recall_logic import CITE_INSTRUCTION
+
+    # Stub embedder so no MLX model is loaded (nudge-building may call embed).
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0]] * len(inputs),
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed_query",
+        lambda self, q: [1.0, 0.0, 0.0, 0.0],
+    )
+
+    # Isolated storage for the hook's Config.from_env()
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_cfg.data_dir))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_cfg.state_dir))
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_cfg.vault_path))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+
+    # Fake hit with score > default min_sim (0.5) and body > default min_body_chars (40)
+    _fake = MemoryRecord(
+        id="a1b2c3d4e5f6a7b8",
+        path="notes/deployment-decision.md",
+        title="deployment decision",
+        type="decision",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="deployment orchestration decision about container systems " * 5,
+        extra={},
+        score=0.9,
+    )
+    monkeypatch.setattr("memo.memory.Memory.search", lambda self, q, **kw: [_fake])
+
+    runner = CliRunner()
+    payload = json.dumps({"prompt": "deployment orchestration container decision systems"})
+
+    # Flag ON (default): CITE_INSTRUCTION must appear in additionalContext
+    monkeypatch.delenv("MEMO_RECALL_CITE_INSTRUCTION", raising=False)
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, f"exit={result.exit_code} output={result.output}"
+    data = json.loads(result.output.strip())
+    ctx = data.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert ctx, "hook returned no additionalContext with flag on — check hook pipeline"
+    assert CITE_INSTRUCTION in ctx
+
+    # Flag OFF: CITE_INSTRUCTION must NOT appear
+    monkeypatch.setenv("MEMO_RECALL_CITE_INSTRUCTION", "0")
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, f"exit={result.exit_code} output={result.output}"
+    data = json.loads(result.output.strip())
+    ctx = data.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert CITE_INSTRUCTION not in ctx
+
+
 def test_cite_instruction_constant() -> None:
     from memo.recall_logic import CITE_INSTRUCTION
 
