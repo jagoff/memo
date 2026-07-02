@@ -330,30 +330,30 @@ def install_slash(
 
     # Startup-banner shims — wrap agent binaries to show [MEMO ver] at launch.
     # Agents covered by memflow shims show a combined banner; others get memo's own box.
+    all_requested = "all" in clients
     _shim_agents = tuple(
         a
         for a in ("codex", "devin", "opencode", "gemini", "blackbox")
-        if a in selected or "all" in (clients or ())
+        if a in selected or all_requested
     )
-    if not _shim_agents:
-        _shim_agents = ("codex", "devin", "opencode", "gemini", "blackbox")
-    from memo.runtime.shims import _DEFAULT_BIN_DIR, install_path_snippet, install_shims
+    if _shim_agents:
+        from memo.runtime.shims import _DEFAULT_BIN_DIR, install_path_snippet, install_shims
 
-    console.print("[bold]Startup-banner shims[/bold]")
-    shim_results = install_shims(_shim_agents, _DEFAULT_BIN_DIR, dry_run=dry_run)
-    for r in shim_results:
-        kind, path = r.split(":", 1)
-        icon = "[green]✓[/green]" if kind == "wrote" else "[dim]✓[/dim]"
-        console.print(f"  {icon} {path}")
-    path_status = install_path_snippet(_DEFAULT_BIN_DIR, dry_run=dry_run)
-    if path_status.startswith("written"):
-        console.print(f"  [green]✓[/green] PATH snippet → {path_status.split(':', 1)[1]}")
-    elif path_status == "already":
-        console.print("  [dim]✓ ~/.memo/bin already in PATH snippet[/dim]")
-    else:
-        console.print(
-            f'  [yellow]![/yellow] PATH: {path_status} — add manually: export PATH="$HOME/.memo/bin:$PATH"'
-        )
+        console.print("[bold]Startup-banner shims[/bold]")
+        shim_results = install_shims(_shim_agents, _DEFAULT_BIN_DIR, dry_run=dry_run)
+        for r in shim_results:
+            kind, path = r.split(":", 1)
+            icon = "[green]✓[/green]" if kind == "wrote" else "[dim]✓[/dim]"
+            console.print(f"  {icon} {path}")
+        path_status = install_path_snippet(_DEFAULT_BIN_DIR, dry_run=dry_run)
+        if path_status.startswith("written"):
+            console.print(f"  [green]✓[/green] PATH snippet → {path_status.split(':', 1)[1]}")
+        elif path_status == "already":
+            console.print("  [dim]✓ ~/.memo/bin already in PATH snippet[/dim]")
+        else:
+            console.print(
+                f'  [yellow]![/yellow] PATH: {path_status} — add manually: export PATH="$HOME/.memo/bin:$PATH"'
+            )
 
     if failures:
         console.print(

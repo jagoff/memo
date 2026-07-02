@@ -292,7 +292,6 @@ def _agent_asset_root(repo: Path | None = None) -> Path:
             (root / ".claude-plugin" / "plugin.json").is_file()
             and (root / "commands" / "memo.md").is_file()
             and (root / "plugins" / "memo" / ".codex-plugin" / "plugin.json").is_file()
-            and (root / "plugins" / "memo" / "skills" / "memo" / "SKILL.md").is_file()
             and (root / "skills" / "memo" / "SKILL.md").is_file()
         ):
             return root

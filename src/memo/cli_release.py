@@ -187,6 +187,46 @@ def _add_doc_drift(
     destination.append(f"{path.name} references {found}, expected {expected}")
 
 
+def _check_mcpb_manifest(
+    repo: Path, *, expected: str, versions: dict[str, str], issues: list[str]
+) -> None:
+    manifest = repo / "packaging" / "mcpb" / "manifest.json"
+    if not manifest.exists():
+        return
+    key = manifest.relative_to(repo).as_posix()
+    try:
+        raw = _json_file(manifest)
+    except ValueError as exc:
+        issues.append(f"{key}: {exc}")
+        return
+
+    found = str(raw.get("version") or "")
+    versions[key] = found
+    if found != expected:
+        issues.append(f"{key} version {found!r} != pyproject {expected!r}")
+
+    try:
+        args = _json_path_value(raw, ("server", "mcp_config", "args"), label=key)
+    except ValueError as exc:
+        issues.append(str(exc))
+        return
+    if not isinstance(args, list):
+        issues.append(f"{key} server.mcp_config.args must be a list")
+        return
+
+    for arg in args:
+        if not isinstance(arg, str):
+            continue
+        match = re.fullmatch(r"mlx-memo(?:==|>=)([^,\s]+)", arg)
+        if match is None:
+            continue
+        package_key = f"{key} mlx-memo"
+        package_version = match.group(1)
+        versions[package_key] = package_version
+        if package_version != expected:
+            issues.append(f"{package_key} version {package_version!r} != pyproject {expected!r}")
+
+
 def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseCheckReport:
     """Validate that the checkout is release-ready.
 
@@ -227,6 +267,8 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
                 versions[key] = found
                 if found != version:
                     issues.append(f"{key} version {found!r} != pyproject {version!r}")
+
+    _check_mcpb_manifest(repo, expected=version, versions=versions, issues=issues)
 
     changelog = repo / "CHANGELOG.md"
     try:

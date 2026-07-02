@@ -471,6 +471,15 @@ def test_install_slash_devin_desktop_writes_mcp_config(monkeypatch, tmp_path):
     assert memo["env"]["MEMO_EMBEDDER_DIMS"] == "2560"
     assert memo["env"]["MEMO_SOURCE"] == "devin-desktop"
     assert memo["type"] == "stdio"
+    assert "Startup-banner shims" not in result.output
+
+
+def test_codex_plugin_manifest_does_not_duplicate_user_skill() -> None:
+    manifest = json.loads(
+        Path("plugins/memo/.codex-plugin/plugin.json").read_text(encoding="utf-8")
+    )
+
+    assert "skills" not in manifest
 
 
 def test_mcp_command_opencode(monkeypatch):

@@ -161,6 +161,11 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_MAX_CONTENT_CHARS",
         "MEMO_SEARCH_DEFAULT_LIMIT",
         "MEMO_CONFIG_FILE",
+        # Runtime shim/control vars. These are exported between wrapper processes
+        # for IPC/idempotency, not user-configurable MEMO_* knobs.
+        "MEMO_AGENT_TTY",
+        "MEMO_CODEX_BADGE_SHOWN",
+        "MEMO_STARTUP_BANNER_SHOWN",
     }
     return sorted(k for k in src if k.startswith("MEMO_") and k not in REGISTRY and k not in owned)
 

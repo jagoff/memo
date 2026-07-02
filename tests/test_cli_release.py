@@ -185,6 +185,21 @@ def test_release_check_report_rejects_codex_plugin_bundle_drift(tmp_path: Path) 
     assert any("plugins/memo/.codex-plugin/plugin.json" in issue for issue in report.issues)
 
 
+def test_release_check_report_rejects_mcpb_manifest_drift(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    manifest = repo / "packaging" / "mcpb" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        '{"version":"1.2.2","server":{"mcp_config":{"args":["--from","mlx-memo>=1.2.2","memo-mcp"]}}}\n',
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any("packaging/mcpb/manifest.json" in issue for issue in report.issues)
+
+
 def test_release_check_report_rejects_changelog_todo(tmp_path: Path) -> None:
     repo = _fake_repo(tmp_path, "1.2.3")
     (repo / "CHANGELOG.md").write_text(
