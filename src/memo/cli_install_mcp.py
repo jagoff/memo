@@ -351,3 +351,45 @@ def install_mcp(
             target_agents = list(_CLIENT_FILES)
         for rel, status in write_mandates_for_clients(target_agents, dry_run=not write):
             click.echo(f"  {rel:<28} {status}")
+
+    if write:
+        _seed_install_memory()
+
+
+def _seed_install_memory() -> None:
+    """Save a one-shot install proof memory and stamp the date.
+
+    The stamp (state_dir/.install_seed.json) is checked by `memo briefing`
+    (SessionStart hook), which surfaces the memory once and marks it shown.
+    Early exit if stamp already exists (idempotent).
+    """
+    import json
+    from datetime import date
+
+    from memo.config import Config
+    from memo.memory import Memory
+
+    cfg = Config.from_env()
+    stamp_path = cfg.state_dir / ".install_seed.json"
+
+    # Idempotent: early exit if stamp exists.
+    if stamp_path.exists():
+        return
+
+    # Ensure state_dir exists BEFORE saving.
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save the seed memory.
+    memory = Memory(cfg)
+    rec = memory.save(
+        content="You installed memo — this memory is the proof.",
+        title="memo installed",
+        type_="note",
+        tags=["onboarding"],
+    )
+
+    # Write the stamp with the memory id and today's date.
+    stamp_path.write_text(
+        json.dumps({"id": rec.id, "ts": date.today().isoformat(), "shown": False}),
+        encoding="utf-8",
+    )
