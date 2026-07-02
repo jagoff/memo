@@ -32,7 +32,11 @@ def test_extract_entities_writes_graph(mem_with_stub: Memory, monkeypatch):
     )
 
     def _stub_chat(self, model, messages, options=None):
-        return {"message": {"content": '{"entities": [{"name": "obsidian-rag", "type": "project"}, {"name": "mlx", "type": "technology"}, {"name": "qwen3-embedding", "type": "technology"}]}'}}
+        return {
+            "message": {
+                "content": '{"entities": [{"name": "obsidian-rag", "type": "project"}, {"name": "mlx", "type": "technology"}, {"name": "qwen3-embedding", "type": "technology"}]}'
+            }
+        }
 
     monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
     counts = mem_with_stub.extract_entities(ids=[rec.id])

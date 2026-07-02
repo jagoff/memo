@@ -5,6 +5,7 @@ Covers three properties:
 2. Clean degradation (no crash) when the embedder raises.
 3. No deadlocks or corrupt output from concurrent invocations.
 """
+
 from __future__ import annotations
 
 import json

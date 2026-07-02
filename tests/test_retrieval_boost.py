@@ -9,7 +9,10 @@ from memo.retrieval_boost import boost_for, query_terms
 
 def test_query_terms_drops_stopwords() -> None:
     assert query_terms("Cuales son los pasos para correr goku") == [
-        "son", "pasos", "correr", "goku",
+        "son",
+        "pasos",
+        "correr",
+        "goku",
     ]
 
 

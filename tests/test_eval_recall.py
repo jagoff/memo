@@ -29,8 +29,7 @@ def _rec(**kw) -> SimpleNamespace:
 
 
 def test_is_noise_by_tag_and_path():
-    labels = LabelSet(prompts=[], noise_tags={"04-archive"},
-                      noise_path_fragments=("/old/",))
+    labels = LabelSet(prompts=[], noise_tags={"04-archive"}, noise_path_fragments=("/old/",))
     assert eval_recall._is_noise(_rec(tags=["04-archive"]), labels)
     assert eval_recall._is_noise(_rec(path="memory/old/x.md"), labels)
     assert not eval_recall._is_noise(_rec(tags=["work"], path="memory/x.md"), labels)
@@ -41,8 +40,7 @@ def test_is_relevant_by_terms_excludes_noise():
     p = Prompt("q", relevant=True)
     assert eval_recall._is_relevant(_rec(title="synapse stack"), p, labels)
     # term present but record is noise → not relevant
-    assert not eval_recall._is_relevant(
-        _rec(title="synapse", tags=["04-archive"]), p, labels)
+    assert not eval_recall._is_relevant(_rec(title="synapse", tags=["04-archive"]), p, labels)
     assert not eval_recall._is_relevant(_rec(title="unrelated"), p, labels)
 
 
@@ -53,7 +51,8 @@ def test_is_relevant_by_expect_ids_prefix_match():
     assert not eval_recall._is_relevant(_rec(id="ffffffffffff"), p, labels)
     # expect_ids takes precedence over term heuristic
     assert not eval_recall._is_relevant(
-        _rec(id="0000", title="synapse"), Prompt("q", expect_ids=["deadbeefdead"]), labels)
+        _rec(id="0000", title="synapse"), Prompt("q", expect_ids=["deadbeefdead"]), labels
+    )
 
 
 def test_id_matches_requires_8_char_floor():
@@ -67,16 +66,21 @@ def test_id_matches_requires_8_char_floor():
 
 def test_load_labels_roundtrip(tmp_path: Path):
     p = tmp_path / "labels.json"
-    p.write_text(json.dumps({
-        "session_context": "ctx",
-        "relevant_terms": ["Synapse"],
-        "noise_tags": ["04-Archive"],
-        "noise_path_fragments": ["/old/"],
-        "prompts": [
-            {"text": "where is the stack", "relevant": True, "expect_ids": ["abc12345"]},
-            "a bare string prompt",
-        ],
-    }), encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "session_context": "ctx",
+                "relevant_terms": ["Synapse"],
+                "noise_tags": ["04-Archive"],
+                "noise_path_fragments": ["/old/"],
+                "prompts": [
+                    {"text": "where is the stack", "relevant": True, "expect_ids": ["abc12345"]},
+                    "a bare string prompt",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     labels = eval_recall.load_labels(p)
     assert labels.session_context == "ctx"
     assert labels.relevant_terms == {"synapse"}  # lowercased
@@ -130,16 +134,24 @@ def test_recommend_maps_winner_to_knobs():
 
 def test_recommend_warns_when_winner_blows_hook_budget():
     rows = [
-        eval_recall.Row(config="A vec/0.60/keep", precision_at_k=0.6, noise_at_k=0.4, latency_ms_p50=120),
-        eval_recall.Row(config="D hyb/0.40/ctx", precision_at_k=1.0, noise_at_k=0.0, latency_ms_p50=14000),
+        eval_recall.Row(
+            config="A vec/0.60/keep", precision_at_k=0.6, noise_at_k=0.4, latency_ms_p50=120
+        ),
+        eval_recall.Row(
+            config="D hyb/0.40/ctx", precision_at_k=1.0, noise_at_k=0.0, latency_ms_p50=14000
+        ),
     ]
     out = eval_recall.recommend(rows)
     assert "D hyb/0.40/ctx" in out
     assert "recall-hook budget" in out
     # a fast winner gets no latency warning
     fast = [
-        eval_recall.Row(config="A vec/0.60/keep", precision_at_k=0.6, noise_at_k=0.4, latency_ms_p50=120),
-        eval_recall.Row(config="B vec/0.72/excl", precision_at_k=0.9, noise_at_k=0.0, latency_ms_p50=130),
+        eval_recall.Row(
+            config="A vec/0.60/keep", precision_at_k=0.6, noise_at_k=0.4, latency_ms_p50=120
+        ),
+        eval_recall.Row(
+            config="B vec/0.72/excl", precision_at_k=0.9, noise_at_k=0.0, latency_ms_p50=130
+        ),
     ]
     assert "recall-hook budget" not in eval_recall.recommend(fast)
 
@@ -246,12 +258,16 @@ def test_check_gate_fails_on_noise_rise():
 
 
 def test_evaluate_returns_one_row_per_config_in_range(mock_memory):
-    mock_memory.save(content="synapse memflow memo stack architecture", title="Stack", tags=["stack"])
+    mock_memory.save(
+        content="synapse memflow memo stack architecture", title="Stack", tags=["stack"]
+    )
     mock_memory.save(content="old archived HR note", title="HR", tags=["04-archive"])
 
     labels = LabelSet(
-        prompts=[Prompt("how is the stack architected", relevant=True),
-                 Prompt("apple pie recipe", relevant=False)],
+        prompts=[
+            Prompt("how is the stack architected", relevant=True),
+            Prompt("apple pie recipe", relevant=False),
+        ],
         relevant_terms={"synapse", "stack", "memo"},
         noise_tags={"04-archive"},
     )
@@ -294,8 +310,7 @@ def test_cli_eval_recall_help_lists_options():
 def test_cli_eval_recall_rejects_malformed_labels(tmp_path: Path):
     bad = tmp_path / "bad.json"
     bad.write_text("{ not json", encoding="utf-8")
-    result = CliRunner().invoke(
-        cli, ["eval", "recall", "--labels", str(bad)], env=_env(tmp_path))
+    result = CliRunner().invoke(cli, ["eval", "recall", "--labels", str(bad)], env=_env(tmp_path))
     assert result.exit_code != 0
     assert "bad.json" in result.output
 
@@ -363,8 +378,16 @@ def test_harvest_labels_skips_rows_without_prompt(tmp_path: Path):
 
 
 def test_merge_label_prompts_unions_expect_ids(tmp_path: Path):
-    existing = [{"text": "cómo configuro el daemon de recall", "relevant": True, "expect_ids": ["aaaa1111"]}]
-    harvested = [{"text": "cómo configuro el daemon de recall warm", "relevant": True, "expect_ids": ["bbbb2222"]}]
+    existing = [
+        {"text": "cómo configuro el daemon de recall", "relevant": True, "expect_ids": ["aaaa1111"]}
+    ]
+    harvested = [
+        {
+            "text": "cómo configuro el daemon de recall warm",
+            "relevant": True,
+            "expect_ids": ["bbbb2222"],
+        }
+    ]
     merged = eval_recall.merge_label_prompts(existing, harvested)
     # Jaccard-similar → single entry with unioned ids, not a duplicate.
     assert len(merged) == 1
@@ -377,11 +400,13 @@ def test_merge_label_prompts_unions_expect_ids(tmp_path: Path):
 def test_label_parses_expect_associative_ids():
     from memo.eval_recall import Label, _label_from_dict  # parser helper
 
-    lab = _label_from_dict({
-        "prompt": "how does recall connect to the store?",
-        "relevant": True,
-        "expect_associative_ids": ["abcd1234", "ef567890"],
-    })
+    lab = _label_from_dict(
+        {
+            "prompt": "how does recall connect to the store?",
+            "relevant": True,
+            "expect_associative_ids": ["abcd1234", "ef567890"],
+        }
+    )
     assert isinstance(lab, Label)
     assert lab.expect_associative_ids == ("abcd1234", "ef567890")
 

@@ -1,4 +1,5 @@
 """P4 cross-client inevitability: mandate writer + expanded silent-gap set."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -67,9 +68,9 @@ def test_write_mandates_for_clients_deduplicates_shared_files(tmp_path: Path) ->
 def test_mandate_new_agents_target_correct_files(tmp_path: Path) -> None:
     from memo.cli_mandate import write_mandates_for_clients
 
-    results = dict(write_mandates_for_clients(
-        ["vscode", "kiro", "goose", "zed"], cwd=tmp_path, dry_run=False
-    ))
+    results = dict(
+        write_mandates_for_clients(["vscode", "kiro", "goose", "zed"], cwd=tmp_path, dry_run=False)
+    )
     assert ".github/copilot-instructions.md" in results
     assert ".kiro/steering/memo.md" in results
     assert ".goosehints" in results
@@ -81,6 +82,8 @@ def test_mandate_new_agents_target_correct_files(tmp_path: Path) -> None:
 def test_mandate_dedups_agents_md(tmp_path: Path) -> None:
     from memo.cli_mandate import write_mandates_for_clients
 
-    results = write_mandates_for_clients(["zed", "antigravity", "continue"], cwd=tmp_path, dry_run=False)
+    results = write_mandates_for_clients(
+        ["zed", "antigravity", "continue"], cwd=tmp_path, dry_run=False
+    )
     paths = [rel for rel, _ in results]
     assert paths.count("AGENTS.md") == 1  # collapsed

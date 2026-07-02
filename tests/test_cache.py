@@ -40,18 +40,22 @@ def test_invalid_mode_falls_back_to_off() -> None:
 
 
 def test_invalid_eviction_falls_back_to_lru() -> None:
-    p = CachePolicy.from_env(env={"MEMO_CACHE_MODE": "read_through", "MEMO_CACHE_EVICTION": "bogus"})
+    p = CachePolicy.from_env(
+        env={"MEMO_CACHE_MODE": "read_through", "MEMO_CACHE_EVICTION": "bogus"}
+    )
     assert p.eviction == "lru"
 
 
 def test_numeric_knobs_parsed_and_floored() -> None:
-    p = CachePolicy.from_env(env={
-        "MEMO_CACHE_MODE": "read_through",
-        "MEMO_CACHE_MAX_ENTRIES": "500",
-        "MEMO_CACHE_TTL_DAYS": "30",
-        "MEMO_CACHE_EVICTION": "ttl",
-        "MEMO_CACHE_BACKEND": "vault",
-    })
+    p = CachePolicy.from_env(
+        env={
+            "MEMO_CACHE_MODE": "read_through",
+            "MEMO_CACHE_MAX_ENTRIES": "500",
+            "MEMO_CACHE_TTL_DAYS": "30",
+            "MEMO_CACHE_EVICTION": "ttl",
+            "MEMO_CACHE_BACKEND": "vault",
+        }
+    )
     assert p.max_entries == 500
     assert p.ttl_days == 30
     assert p.eviction == "ttl"

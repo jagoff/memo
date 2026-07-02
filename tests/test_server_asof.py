@@ -1,4 +1,5 @@
 """Tests for server_asof MCP tool registration (time-machine domain)."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -226,9 +227,7 @@ def test_memo_diff_returns_envelope(tmp_cfg) -> None:
     mock_corpus_diff.to_ts = to_dt
     mock_corpus_diff.added = [added_rec]
     mock_corpus_diff.removed = [removed_rec]
-    mock_corpus_diff.updated = [
-        {"id": "mid1", "title": "Changed", "changed_fields": ["title"]}
-    ]
+    mock_corpus_diff.updated = [{"id": "mid1", "title": "Changed", "changed_fields": ["title"]}]
     mock_corpus_diff.summary.return_value = "1 added · 1 removed · 1 updated"
 
     with patch("memo.time_machine.diff", return_value=mock_corpus_diff) as mock_diff:

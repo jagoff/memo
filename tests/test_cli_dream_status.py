@@ -12,11 +12,20 @@ def test_status_renders_proof_loop_ledger(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
     (state / "dream").mkdir(parents=True)
-    (state / "dream" / "last.json").write_text(json.dumps({"ts": 1751000000, "tuner": {"status": "applied"}}))
+    (state / "dream" / "last.json").write_text(
+        json.dumps({"ts": 1751000000, "tuner": {"status": "applied"}})
+    )
     dream_tune_online.append_ledger(
         state,
-        {"verdict": "confirmed", "floor_before": 0.5, "floor_after": 0.6,
-         "online_before": 0.5, "online_after": 0.55, "realized_delta": 0.05, "n_after": 40},
+        {
+            "verdict": "confirmed",
+            "floor_before": 0.5,
+            "floor_after": 0.6,
+            "online_before": 0.5,
+            "online_after": 0.55,
+            "realized_delta": 0.05,
+            "n_after": 40,
+        },
     )
 
     res = CliRunner().invoke(dream_cmd, ["status"])

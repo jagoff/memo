@@ -62,7 +62,8 @@ def test_if_due_is_noop_when_recently_run(tmp_path: Path):
 
 def test_if_due_disabled_by_env(tmp_path: Path):
     result = CliRunner().invoke(
-        cli, ["maintain", "--if-due"], env={**_env(tmp_path), "MEMO_MAINTAIN_DISABLE": "1"})
+        cli, ["maintain", "--if-due"], env={**_env(tmp_path), "MEMO_MAINTAIN_DISABLE": "1"}
+    )
     assert result.exit_code == 0, result.output
     assert result.output.strip() == ""
 
@@ -71,6 +72,7 @@ def test_dry_run_on_empty_corpus_is_safe_noop(tmp_path: Path):
     result = CliRunner().invoke(cli, ["maintain", "--dry-run", "--json"], env=_env(tmp_path))
     assert result.exit_code == 0, result.output
     import json
+
     receipt = json.loads(result.output)
     assert receipt["dry_run"] is True
     assert receipt["superseded"] == []

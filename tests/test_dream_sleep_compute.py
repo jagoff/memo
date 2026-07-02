@@ -1,4 +1,5 @@
 """Tests for Sleep-time Compute dream improvements (B/C/D/E/A)."""
+
 from __future__ import annotations
 
 import json
@@ -17,13 +18,23 @@ def _insert_meta(cx, id_: str, type_: str = "fact", days_old: int = 10) -> None:
         "INSERT OR REPLACE INTO meta "
         "(id, title, type, tags, path, created, updated, body_hash) "
         "VALUES (?, ?, ?, ?, ?, datetime('now', ? || ' days'), datetime('now', ? || ' days'), ?)",
-        (id_, f"title-{id_}", type_, "[]", f"/fake/{id_}.md", f"-{days_old}", f"-{days_old}", f"hash-{id_}"),
+        (
+            id_,
+            f"title-{id_}",
+            type_,
+            "[]",
+            f"/fake/{id_}.md",
+            f"-{days_old}",
+            f"-{days_old}",
+            f"hash-{id_}",
+        ),
     )
 
 
 # ---------------------------------------------------------------------------
 # C: Co-recall graph edges
 # ---------------------------------------------------------------------------
+
 
 class TestCoRecallGraph:
     def test_record_co_recall_creates_pairs(self, tmp_path):
@@ -102,9 +113,15 @@ class TestCoRecallBoost:
         from memo.memory.record import MemoryRecord
 
         return MemoryRecord(
-            id=rid, path=f"{rid}.md", title=rid, type="fact", tags=[],
-            created="2026-01-01T00:00:00+00:00", updated="2026-01-01T00:00:00+00:00",
-            body="", score=score,
+            id=rid,
+            path=f"{rid}.md",
+            title=rid,
+            type="fact",
+            tags=[],
+            created="2026-01-01T00:00:00+00:00",
+            updated="2026-01-01T00:00:00+00:00",
+            body="",
+            score=score,
         )
 
     def test_boost_promotes_associated_candidate(self, mock_memory):
@@ -131,6 +148,7 @@ class TestCoRecallBoost:
 # ---------------------------------------------------------------------------
 # D: Eviction automation
 # ---------------------------------------------------------------------------
+
 
 class TestDreamEviction:
     def _make_mem_with_corpus(self, tmp_path, n: int):
@@ -181,6 +199,7 @@ class TestDreamEviction:
 # ---------------------------------------------------------------------------
 # E: Pre-warm cache
 # ---------------------------------------------------------------------------
+
 
 class TestPrewarmQueries:
     def test_prewarm_embeds_recent_queries(self, tmp_path):
@@ -244,6 +263,7 @@ class TestPrewarmQueries:
 # B: Verbose compression
 # ---------------------------------------------------------------------------
 
+
 class TestVerboseCompression:
     def test_compress_skips_short_bodies(self, tmp_path):
         from memo.cli_dream import _run_compress
@@ -252,8 +272,10 @@ class TestVerboseCompression:
         # Insert FTS entry with short body
         with store._conn as cx:
             _insert_meta(cx, "short01", type_="fact", days_old=10)
-            cx.execute("INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
-                       ("short01", "short title", "[]", "short body"))
+            cx.execute(
+                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                ("short01", "short title", "[]", "short body"),
+            )
 
         mem = MagicMock()
         mem.store = store
@@ -272,8 +294,10 @@ class TestVerboseCompression:
         store = _make_store(tmp_path)
         with store._conn as cx:
             _insert_meta(cx, "long01", type_="fact", days_old=10)
-            cx.execute("INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
-                       ("long01", "long title", "[]", long_body))
+            cx.execute(
+                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                ("long01", "long title", "[]", long_body),
+            )
 
         mock_rec = MagicMock()
         mock_rec.body = long_body
@@ -303,6 +327,7 @@ class TestVerboseCompression:
 # A: Query-prediction pre-synthesis (unit test — mostly integration-free)
 # ---------------------------------------------------------------------------
 
+
 class TestPresynthesisQueries:
     def test_presynthesis_empty_log_returns_empty(self, tmp_path):
         from memo.cli_dream import _run_presynthesis
@@ -322,7 +347,9 @@ class TestPresynthesisQueries:
         log_path = tmp_path / "recall.log"
         entries = []
         for _ in range(5):
-            entries.append({"ts": "2026-06-18T10:00:00+00:00", "prompt": "popular query", "hits": []})
+            entries.append(
+                {"ts": "2026-06-18T10:00:00+00:00", "prompt": "popular query", "hits": []}
+            )
         entries.append({"ts": "2026-06-18T10:00:00+00:00", "prompt": "rare query", "hits": []})
         log_path.write_text("\n".join(json.dumps(e) for e in entries))
 

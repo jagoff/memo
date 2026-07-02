@@ -21,6 +21,7 @@ def context_store(tmp_cfg):
 def contextual_recall(mock_memory):
     """Fixture providing ContextualRecall instance."""
     from memo.contextual import ContextStore
+
     context_store = ContextStore(mock_memory.cfg.state_dir)
     return ContextualRecall(mock_memory, context_store)
 

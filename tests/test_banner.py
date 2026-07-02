@@ -1,4 +1,5 @@
 """Tests for memo startup-banner and install-shims commands."""
+
 from __future__ import annotations
 
 import base64
@@ -25,24 +26,18 @@ def _env(tmp_cfg) -> dict:
 
 
 def test_startup_banner_exits_zero(tmp_cfg):
-    result = CliRunner().invoke(
-        cli, ["startup-banner", "--agent", "codex"], env=_env(tmp_cfg)
-    )
+    result = CliRunner().invoke(cli, ["startup-banner", "--agent", "codex"], env=_env(tmp_cfg))
     assert result.exit_code == 0
 
 
 def test_startup_banner_contains_memo_version(tmp_cfg):
-    result = CliRunner().invoke(
-        cli, ["startup-banner", "--agent", "opencode"], env=_env(tmp_cfg)
-    )
+    result = CliRunner().invoke(cli, ["startup-banner", "--agent", "opencode"], env=_env(tmp_cfg))
     assert "[Memo " in result.output
     assert "[MEMO " not in result.output
 
 
 def test_startup_banner_contains_agent_name(tmp_cfg):
-    result = CliRunner().invoke(
-        cli, ["startup-banner", "--agent", "blackbox"], env=_env(tmp_cfg)
-    )
+    result = CliRunner().invoke(cli, ["startup-banner", "--agent", "blackbox"], env=_env(tmp_cfg))
     assert "blackbox" in result.output
 
 
@@ -58,6 +53,7 @@ def test_install_shims_writes_executable_scripts(tmp_cfg, tmp_path):
     assert (bin_dir / "opencode").is_file()
     # Must be executable
     import stat as _stat
+
     mode = (bin_dir / "codex").stat().st_mode
     assert mode & _stat.S_IEXEC
 
@@ -75,7 +71,7 @@ def test_install_shims_contains_memo_shim_marker(tmp_cfg, tmp_path):
     assert 'startup-banner --agent "$_AGENT"' in content
     assert 'startup-banner --agent "$_AGENT" 2>/dev/null' not in content
     assert 'codex-badge --agent "$_AGENT"' in content
-    assert 'MEMO_CODEX_BADGE_DELAY:-1' in content
+    assert "MEMO_CODEX_BADGE_DELAY:-1" in content
     assert "exec" in content
 
 
@@ -88,8 +84,7 @@ def test_codex_shim_prints_startup_banner_once_for_nested_codex_call(tmp_path):
     real_dir.mkdir()
 
     (tools_dir / "memo").write_text(
-        "#!/usr/bin/env bash\n"
-        'printf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
         encoding="utf-8",
     )
     (real_dir / "codex").write_text(
@@ -129,9 +124,7 @@ def test_codex_shim_prints_startup_banner_once_for_nested_codex_call(tmp_path):
         os.close(master_fd)
 
     assert proc.returncode == 0, proc.stderr
-    assert log_path.read_text(encoding="utf-8").splitlines() == [
-        "startup-banner --agent codex"
-    ]
+    assert log_path.read_text(encoding="utf-8").splitlines() == ["startup-banner --agent codex"]
 
 
 def test_codex_shim_prints_startup_banner_before_memflow_shim_by_default(tmp_path):
@@ -144,13 +137,11 @@ def test_codex_shim_prints_startup_banner_before_memflow_shim_by_default(tmp_pat
     memflow_dir.mkdir(parents=True)
 
     (tools_dir / "memo").write_text(
-        "#!/usr/bin/env bash\n"
-        'printf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
         encoding="utf-8",
     )
     (memflow_dir / "codex").write_text(
-        "#!/usr/bin/env bash\n"
-        'printf "memflow-ran\\n" >> "$MEMFLOW_TEST_LOG"\n',
+        '#!/usr/bin/env bash\nprintf "memflow-ran\\n" >> "$MEMFLOW_TEST_LOG"\n',
         encoding="utf-8",
     )
     (tools_dir / "memo").chmod(0o755)
@@ -185,9 +176,7 @@ def test_codex_shim_prints_startup_banner_before_memflow_shim_by_default(tmp_pat
 
     assert proc.returncode == 0, proc.stderr
     assert memflow_log.read_text(encoding="utf-8").splitlines() == ["memflow-ran"]
-    assert memo_log.read_text(encoding="utf-8").splitlines() == [
-        "startup-banner --agent codex"
-    ]
+    assert memo_log.read_text(encoding="utf-8").splitlines() == ["startup-banner --agent codex"]
 
 
 def test_codex_shim_delegates_startup_banner_to_memflow_shim_when_enabled(tmp_path):
@@ -200,13 +189,11 @@ def test_codex_shim_delegates_startup_banner_to_memflow_shim_when_enabled(tmp_pa
     memflow_dir.mkdir(parents=True)
 
     (tools_dir / "memo").write_text(
-        "#!/usr/bin/env bash\n"
-        'printf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
         encoding="utf-8",
     )
     (memflow_dir / "codex").write_text(
-        "#!/usr/bin/env bash\n"
-        'printf "memflow-ran\\n" >> "$MEMFLOW_TEST_LOG"\n',
+        '#!/usr/bin/env bash\nprintf "memflow-ran\\n" >> "$MEMFLOW_TEST_LOG"\n',
         encoding="utf-8",
     )
     (tools_dir / "memo").chmod(0o755)
@@ -345,9 +332,7 @@ def test_startup_banner_opencode_writes_username(tmp_cfg, tmp_path, monkeypatch)
         lambda name: "3.2.1" if name == "mlx-memo" else "0",
     )
 
-    result = CliRunner().invoke(
-        cli, ["startup-banner", "--agent", "opencode"], env=_env(tmp_cfg)
-    )
+    result = CliRunner().invoke(cli, ["startup-banner", "--agent", "opencode"], env=_env(tmp_cfg))
 
     assert result.exit_code == 0, result.output
     data = json.loads((tmp_path / "config" / "opencode" / "opencode.json").read_text())
@@ -366,7 +351,7 @@ def test_startup_banner_codex_does_not_touch_opencode_config(tmp_cfg, tmp_path, 
 def test_install_shims_skips_non_memo_file(tmp_cfg, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "codex").write_text("#!/bin/bash\nexec real-codex \"$@\"\n")
+    (bin_dir / "codex").write_text('#!/bin/bash\nexec real-codex "$@"\n')
     result = CliRunner().invoke(
         cli, ["install-shims", "--agents", "codex", "--bin-dir", str(bin_dir)], env=_env(tmp_cfg)
     )
@@ -380,7 +365,7 @@ def test_install_shims_overwrites_own_shim(tmp_cfg, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     # Write a stale memo shim
-    (bin_dir / "codex").write_text("#!/bin/bash\n# memo-shim\nexec old \"$@\"\n")
+    (bin_dir / "codex").write_text('#!/bin/bash\n# memo-shim\nexec old "$@"\n')
     result = CliRunner().invoke(
         cli, ["install-shims", "--agents", "codex", "--bin-dir", str(bin_dir)], env=_env(tmp_cfg)
     )
@@ -400,9 +385,7 @@ def test_install_shims_dry_run_writes_nothing(tmp_cfg, tmp_path):
     assert not bin_dir.exists() or not any(bin_dir.iterdir())
 
 
-def test_install_path_snippet_keeps_memo_before_downstream_wrappers(
-    monkeypatch, tmp_path
-):
+def test_install_path_snippet_keeps_memo_before_downstream_wrappers(monkeypatch, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     rc = home / ".zshrc"

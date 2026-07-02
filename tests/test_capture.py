@@ -264,7 +264,9 @@ def test_extract_and_save_drops_near_identical_paraphrase(mem_with_stub, monkeyp
     monkeypatch.setattr(capture_mod, "_passes_quality", lambda *a, **kw: True)
     # >= drop threshold (0.97) → a paraphrase with no new info → drop.
     monkeypatch.setattr(
-        capture_mod, "find_near_duplicate", lambda *a, **kw: {"id": "x" * 32, "score": 0.99, "title": "t"}
+        capture_mod,
+        "find_near_duplicate",
+        lambda *a, **kw: {"id": "x" * 32, "score": 0.99, "title": "t"},
     )
     out = capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "u", "a")
     assert out["skipped_dup"] == 1
@@ -281,7 +283,9 @@ def test_extract_and_save_admits_same_topic_evolution(mem_with_stub, monkeypatch
     # In the 0.85–0.97 band → same topic evolving → ADMIT as new so the
     # supersede pass can run (the old behaviour silently dropped it).
     monkeypatch.setattr(
-        capture_mod, "find_near_duplicate", lambda *a, **kw: {"id": "x" * 32, "score": 0.90, "title": "t"}
+        capture_mod,
+        "find_near_duplicate",
+        lambda *a, **kw: {"id": "x" * 32, "score": 0.90, "title": "t"},
     )
     out = capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "u", "a")
     assert out["reconciled"] == 1
@@ -427,9 +431,7 @@ def test_capture_stop_no_notification_when_nothing_saved(tmp_path: Path, monkeyp
     assert not (state / "pending_idle_notification.txt").exists()
 
 
-def test_capture_stop_recovers_transcript_path_from_session_id(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_capture_stop_recovers_transcript_path_from_session_id(tmp_path: Path, monkeypatch) -> None:
     """Regression: 2026-06-27 onward some Stop-hook payloads omit
     transcript_path outright, so capture-stop used to no-op — including its
     grounding.score_turn call, the source of `memo tokens`' data. When
@@ -454,7 +456,10 @@ def test_capture_stop_recovers_transcript_path_from_session_id(
     monkeypatch.setattr(
         capture_mod,
         "run_capture",
-        lambda path, **k: (captured_paths.append(path), {"status": "ok", "saved": [], "saved_titles": []})[1],
+        lambda path, **k: (
+            captured_paths.append(path),
+            {"status": "ok", "saved": [], "saved_titles": []},
+        )[1],
     )
 
     payload = json.dumps({"session_id": "s-missing-transcript"})
@@ -464,9 +469,7 @@ def test_capture_stop_recovers_transcript_path_from_session_id(
     assert captured_paths == [transcript]
 
 
-def test_capture_stop_still_noops_when_session_id_also_missing(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_capture_stop_still_noops_when_session_id_also_missing(tmp_path: Path, monkeypatch) -> None:
     """No session_id at all → nothing to recover by, must stay a silent no-op."""
     from click.testing import CliRunner
 

@@ -5,6 +5,7 @@ The systemic guarantee under test: installing the memo statusline makes the
 statusline was already configured (caveman, memflow, a hand-rolled one) instead
 of silently skipping it. See ``src/memo/cli_statusline.py``.
 """
+
 from __future__ import annotations
 
 import json
@@ -287,7 +288,7 @@ def test_activity_badge_all_zero_counters_plain_badge(tmp_path) -> None:
         {"model": {"display_name": "X"}},
         env={"MEMO_STATE_DIR": str(tmp_path), "CLAUDE_CONFIG_DIR": str(tmp_path)},
     )
-    assert "[Memo " in out   # badge present in some form
+    assert "[Memo " in out  # badge present in some form
     assert "🧠" not in out
     assert "💾" not in out
     assert "tok" not in out

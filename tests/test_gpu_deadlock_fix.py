@@ -1,4 +1,5 @@
 """Tests for the GPU lock deadlock fix in chat_with_timeout / gpu_guard."""
+
 from __future__ import annotations
 
 import threading

@@ -47,7 +47,8 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 def test_memo_embed_single_returns_vector_with_dim(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     _env(monkeypatch, tmp_path)
     calls = _patch_embedder(monkeypatch, dims=4)
@@ -67,14 +68,16 @@ def test_memo_embed_single_returns_vector_with_dim(
 
 
 def test_memo_embed_batch_via_stdin(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     _env(monkeypatch, tmp_path)
     calls = _patch_embedder(monkeypatch, dims=4)
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["embed", "--batch-json", "-"],
+        cli,
+        ["embed", "--batch-json", "-"],
         input='["alpha", "beta", "gamma"]',
     )
     assert result.exit_code == 0, result.output
@@ -89,7 +92,8 @@ def test_memo_embed_batch_via_stdin(
 
 
 def test_memo_embed_query_uses_asymmetric_prefix(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Single TEXT always goes through `embed_query` (query prefix).
     Critical invariant — mixing the symmetric path here would degrade
@@ -105,7 +109,8 @@ def test_memo_embed_query_uses_asymmetric_prefix(
 
 
 def test_memo_embed_no_text_and_no_batch_raises(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     _env(monkeypatch, tmp_path)
     _patch_embedder(monkeypatch)
@@ -117,14 +122,16 @@ def test_memo_embed_no_text_and_no_batch_raises(
 
 
 def test_memo_embed_text_and_batch_mutually_exclusive(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     _env(monkeypatch, tmp_path)
     _patch_embedder(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["embed", "hello", "--batch-json", "-"],
+        cli,
+        ["embed", "hello", "--batch-json", "-"],
         input='["a"]',
     )
     assert result.exit_code != 0
@@ -132,7 +139,8 @@ def test_memo_embed_text_and_batch_mutually_exclusive(
 
 
 def test_memo_embed_batch_invalid_json_raises(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     _env(monkeypatch, tmp_path)
     _patch_embedder(monkeypatch)
@@ -144,12 +152,13 @@ def test_memo_embed_batch_invalid_json_raises(
 
 
 def test_memo_embed_batch_non_string_list_raises(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     _env(monkeypatch, tmp_path)
     _patch_embedder(monkeypatch)
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["embed", "--batch-json", "-"], input='[1, 2, 3]')
+    result = runner.invoke(cli, ["embed", "--batch-json", "-"], input="[1, 2, 3]")
     assert result.exit_code != 0
     assert "expected JSON list of strings" in result.output

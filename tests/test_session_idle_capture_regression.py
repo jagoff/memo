@@ -1,4 +1,5 @@
 """Regression tests for cli_session.py correctness."""
+
 from __future__ import annotations
 
 import json
@@ -10,7 +11,9 @@ from click.testing import CliRunner
 from memo.cli_session import session_group
 
 
-def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path: Path, monkeypatch) -> None:
+def test_idle_maintenance_capture_mode_does_not_raise_name_error(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Regression: _hb('captured-notified', saved=n) used undefined `n`.
 
     When capture mode runs and saves titles, the heartbeat call crashed with
@@ -52,11 +55,15 @@ def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path: Path,
                         session_group,
                         [
                             "idle-maintenance",
-                            "--mode", "capture",
-                            "--delay-secs", "0",
+                            "--mode",
+                            "capture",
+                            "--delay-secs",
+                            "0",
                             "--detached-worker",
                         ],
-                        input=json.dumps({"session_id": "test-sid-001", "transcript_path": str(transcript)}),
+                        input=json.dumps(
+                            {"session_id": "test-sid-001", "transcript_path": str(transcript)}
+                        ),
                         catch_exceptions=False,
                     )
 

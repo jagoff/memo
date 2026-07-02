@@ -1,4 +1,5 @@
 """Tests for server_contradict MCP tool registration."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -152,7 +153,9 @@ def test_memo_contradict_list_non_open_routes_to_list_all(tmp_cfg) -> None:
 
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
-    pair = _make_pair_record(pair_id=3, status="dismissed", relationship="evolution", confidence=0.8)
+    pair = _make_pair_record(
+        pair_id=3, status="dismissed", relationship="evolution", confidence=0.8
+    )
     mem.contradict_store.list_all.return_value = [pair]
 
     server, tools = _make_server_and_tools()
@@ -181,7 +184,9 @@ def test_memo_contradict_list_filters_by_relationship(tmp_cfg) -> None:
 
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
-    match = _make_pair_record(pair_id=1, status="evolved", relationship="evolution", confidence=0.88)
+    match = _make_pair_record(
+        pair_id=1, status="evolved", relationship="evolution", confidence=0.88
+    )
     no_match = _make_pair_record(
         pair_id=2, status="evolved", relationship="contradiction", confidence=0.75
     )
@@ -240,9 +245,7 @@ def test_memo_contradict_resolve_returns_envelope(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_contradict_resolve"](
-        pair_id=42, status="dismissed", note="false positive"
-    )
+    result = tools["memo_contradict_resolve"](pair_id=42, status="dismissed", note="false positive")
 
     mem.contradict_store.resolve.assert_called_once_with(42, "dismissed", note="false positive")
     assert result["updated"] is True

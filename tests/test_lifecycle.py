@@ -297,15 +297,15 @@ def test_include_forgotten_surfaces_it(mock_memory):
     mock_memory.forget(rec.id)
 
     assert any(
-        h.id == rec.id
-        for h in mock_memory.search("zephyrine", mode="bm25", include_forgotten=True)
+        h.id == rec.id for h in mock_memory.search("zephyrine", mode="bm25", include_forgotten=True)
     )
     assert any(r.id == rec.id for r in mock_memory.list(include_forgotten=True))
 
 
 def test_unforget_restores_and_clears_ttl(mock_memory):
     rec = mock_memory.save(
-        content="zephyrine protocol notes", title="Zephyrine",
+        content="zephyrine protocol notes",
+        title="Zephyrine",
         extra={FORGET_AFTER_KEY: _past(), FORGET_REASON_KEY: "stale"},
     )
     mock_memory.forget(rec.id, reason="stale")
@@ -320,7 +320,8 @@ def test_unforget_restores_and_clears_ttl(mock_memory):
 
 def test_forget_preserves_other_extra_keys(mock_memory):
     rec = mock_memory.save(
-        content="zephyrine protocol notes", title="Zephyrine",
+        content="zephyrine protocol notes",
+        title="Zephyrine",
         extra={"synapse_trace_id": "trace-123"},
     )
     out = mock_memory.forget(rec.id, reason="obsolete")
@@ -336,11 +337,13 @@ def test_forget_unknown_id_returns_none(mock_memory):
 
 def test_enforce_forget_ttl_forgets_elapsed_only(mock_memory):
     due = mock_memory.save(
-        content="elapsed alpha", title="Elapsed",
+        content="elapsed alpha",
+        title="Elapsed",
         extra={FORGET_AFTER_KEY: _past()},
     )
     not_due = mock_memory.save(
-        content="future beta", title="Future",
+        content="future beta",
+        title="Future",
         extra={FORGET_AFTER_KEY: _future()},
     )
     plain = mock_memory.save(content="plain gamma", title="Plain")
@@ -356,7 +359,8 @@ def test_enforce_forget_ttl_forgets_elapsed_only(mock_memory):
 
 def test_enforce_forget_ttl_dry_run_changes_nothing(mock_memory):
     rec = mock_memory.save(
-        content="elapsed alpha", title="Elapsed",
+        content="elapsed alpha",
+        title="Elapsed",
         extra={FORGET_AFTER_KEY: _past()},
     )
     acted = mock_memory.lifecycle.enforce_forget_ttl(dry_run=True)
@@ -366,7 +370,8 @@ def test_enforce_forget_ttl_dry_run_changes_nothing(mock_memory):
 
 def test_should_forget_skips_already_forgotten(mock_memory):
     rec = mock_memory.save(
-        content="elapsed alpha", title="Elapsed",
+        content="elapsed alpha",
+        title="Elapsed",
         extra={FORGET_AFTER_KEY: _past()},
     )
     mock_memory.forget(rec.id)
@@ -376,7 +381,8 @@ def test_should_forget_skips_already_forgotten(mock_memory):
 
 def test_lifecycle_report_counts_forget_candidates(mock_memory):
     mock_memory.save(
-        content="elapsed alpha", title="Elapsed",
+        content="elapsed alpha",
+        title="Elapsed",
         extra={FORGET_AFTER_KEY: _past()},
     )
     mock_memory.save(content="plain gamma", title="Plain")
@@ -387,7 +393,8 @@ def test_lifecycle_report_counts_forget_candidates(mock_memory):
 def test_forget_after_accepts_full_datetime(mock_memory):
     stamp = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     rec = mock_memory.save(
-        content="elapsed alpha", title="Elapsed",
+        content="elapsed alpha",
+        title="Elapsed",
         extra={FORGET_AFTER_KEY: stamp},
     )
     should, _ = mock_memory.lifecycle.should_forget(rec.id)
@@ -396,7 +403,8 @@ def test_forget_after_accepts_full_datetime(mock_memory):
 
 def test_forget_after_unparseable_is_ignored(mock_memory):
     rec = mock_memory.save(
-        content="elapsed alpha", title="Elapsed",
+        content="elapsed alpha",
+        title="Elapsed",
         extra={FORGET_AFTER_KEY: "not-a-date"},
     )
     should, _ = mock_memory.lifecycle.should_forget(rec.id)

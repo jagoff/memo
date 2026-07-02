@@ -39,9 +39,7 @@ def test_save_embed_pending_logs_warning(mock_memory, caplog):
         (m for m in messages if "memo reindex" in m),
         None,
     )
-    assert user_msg is not None, (
-        f"Expected a WARNING containing 'memo reindex', got: {messages}"
-    )
+    assert user_msg is not None, f"Expected a WARNING containing 'memo reindex', got: {messages}"
     # The record id (8-char prefix) should appear in the message.
     assert rec.id[:8] in user_msg
 

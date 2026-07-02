@@ -1,4 +1,5 @@
 """Tests for server_feedback MCP tool registration."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -19,6 +20,7 @@ def _make_server_and_tools():
         def wrapper(fn):
             tools[fn.__name__] = fn
             return fn
+
         return wrapper
 
     server.tool = tool_decorator
@@ -45,7 +47,11 @@ def test_memo_feedback_record_delegates_to_memory(tmp_cfg) -> None:
 
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
-    mem.feedback_record.return_value = {"status": "ok", "source_id": "abc123", "rating": "thumbs_up"}
+    mem.feedback_record.return_value = {
+        "status": "ok",
+        "source_id": "abc123",
+        "rating": "thumbs_up",
+    }
 
     server, tools = _make_server_and_tools()
     register(server, mem)
@@ -76,9 +82,7 @@ def test_memo_feedback_record_supports_all_rating_values(tmp_cfg) -> None:
         server, tools = _make_server_and_tools()
         register(server, mem)
 
-        result = tools["memo_feedback_record"](
-            source_id="id1", query="q", rating=rating
-        )
+        result = tools["memo_feedback_record"](source_id="id1", query="q", rating=rating)
         mem.feedback_record.assert_called_once_with("id1", query_text="q", rating=rating)
         assert result == {"rating": rating}
 

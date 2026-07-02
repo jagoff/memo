@@ -74,9 +74,10 @@ class TestChatAskCommand:
         }
 
         runner = CliRunner()
-        with patch("memo.cli_chat.Config") as mock_cfg_cls, patch(
-            "memo.cli_chat._get_memory"
-        ) as mock_get_mem:
+        with (
+            patch("memo.cli_chat.Config") as mock_cfg_cls,
+            patch("memo.cli_chat._get_memory") as mock_get_mem,
+        ):
             mock_cfg = MagicMock()
             mock_cfg_cls.from_env.return_value = mock_cfg
             mock_mem = MagicMock()
@@ -103,9 +104,10 @@ class TestChatAskCommand:
         }
 
         runner = CliRunner()
-        with patch("memo.cli_chat.Config") as mock_cfg_cls, patch(
-            "memo.cli_chat._get_memory"
-        ) as mock_get_mem:
+        with (
+            patch("memo.cli_chat.Config") as mock_cfg_cls,
+            patch("memo.cli_chat._get_memory") as mock_get_mem,
+        ):
             mock_cfg_cls.from_env.return_value = MagicMock()
             mock_mem = MagicMock()
             mock_mem.chat_ask.return_value = fake_envelope
@@ -121,9 +123,7 @@ class TestChatAskCommand:
         parsed = json.loads(result.output)
         assert parsed["answer"] == "The answer."
 
-    def test_chat_ask_stream_calls_chat_ask_stream(
-        self, runner_env: dict[str, str]
-    ) -> None:
+    def test_chat_ask_stream_calls_chat_ask_stream(self, runner_env: dict[str, str]) -> None:
         """--stream calls chat_ask_stream and emits NDJSON events."""
         events = [
             {"type": "context", "sources": []},
@@ -133,9 +133,10 @@ class TestChatAskCommand:
         ]
 
         runner = CliRunner()
-        with patch("memo.cli_chat.Config") as mock_cfg_cls, patch(
-            "memo.cli_chat._get_memory"
-        ) as mock_get_mem:
+        with (
+            patch("memo.cli_chat.Config") as mock_cfg_cls,
+            patch("memo.cli_chat._get_memory") as mock_get_mem,
+        ):
             mock_cfg_cls.from_env.return_value = MagicMock()
             mock_mem = MagicMock()
             mock_mem.chat_ask_stream.return_value = iter(events)
@@ -155,9 +156,7 @@ class TestChatAskCommand:
             obj = json.loads(line)
             assert obj["type"] == events[i]["type"]
 
-    def test_chat_group_distinct_from_flat_chat_ask(
-        self, runner_env: dict[str, str]
-    ) -> None:
+    def test_chat_group_distinct_from_flat_chat_ask(self, runner_env: dict[str, str]) -> None:
         """Both memo chat-ask and memo chat ask are reachable."""
         runner = CliRunner()
         # flat hyphenated form (backwards compat)
@@ -189,9 +188,10 @@ class TestSearchRerankFlag:
     ) -> None:
         """--no-rerank must pass disable_reranker=True to memory.search."""
         runner = CliRunner()
-        with patch("memo.cli_search.Config") as mock_cfg_cls, patch(
-            "memo.cli_search._get_memory"
-        ) as mock_get_mem:
+        with (
+            patch("memo.cli_search.Config") as mock_cfg_cls,
+            patch("memo.cli_search._get_memory") as mock_get_mem,
+        ):
             mock_cfg_cls.from_env.return_value = MagicMock()
             mock_mem = MagicMock()
             mock_mem.search.return_value = []
@@ -207,15 +207,14 @@ class TestSearchRerankFlag:
         call_kwargs = mock_mem.search.call_args[1]
         assert call_kwargs.get("disable_reranker") is True
 
-    def test_search_rerank_passes_disable_false(
-        self, runner_env: dict[str, str]
-    ) -> None:
+    def test_search_rerank_passes_disable_false(self, runner_env: dict[str, str]) -> None:
         """--rerank must pass disable_reranker=False (no MEMO_RERANKER_ENABLED mutation)."""
         runner = CliRunner()
 
-        with patch("memo.cli_search.Config") as mock_cfg_cls, patch(
-            "memo.cli_search._get_memory"
-        ) as mock_get_mem:
+        with (
+            patch("memo.cli_search.Config") as mock_cfg_cls,
+            patch("memo.cli_search._get_memory") as mock_get_mem,
+        ):
             mock_cfg_cls.from_env.return_value = MagicMock(reranker_enabled=True)
             mock_mem = MagicMock()
             mock_mem.search.return_value = []
@@ -234,9 +233,10 @@ class TestSearchRerankFlag:
     def test_search_default_no_rerank_override(self, runner_env: dict[str, str]) -> None:
         """When neither --rerank nor --no-rerank is given, disable_reranker is False."""
         runner = CliRunner()
-        with patch("memo.cli_search.Config") as mock_cfg_cls, patch(
-            "memo.cli_search._get_memory"
-        ) as mock_get_mem:
+        with (
+            patch("memo.cli_search.Config") as mock_cfg_cls,
+            patch("memo.cli_search._get_memory") as mock_get_mem,
+        ):
             mock_cfg_cls.from_env.return_value = MagicMock()
             mock_mem = MagicMock()
             mock_mem.search.return_value = []
@@ -274,9 +274,7 @@ class TestImportCommands:
         assert result.exit_code == 0
         assert "INPUT_PATH" in result.output
 
-    def test_import_csv_calls_import_from(
-        self, runner_env: dict[str, str], tmp_path: Path
-    ) -> None:
+    def test_import_csv_calls_import_from(self, runner_env: dict[str, str], tmp_path: Path) -> None:
         """import csv delegates to memory.import_export.import_from."""
         csv_file = tmp_path / "test.csv"
         # Write a minimal CSV
@@ -290,9 +288,10 @@ class TestImportCommands:
         fake_result = ImportResult(imported_count=1, skipped_count=0, errors=[])
 
         runner = CliRunner()
-        with patch("memo.cli_import.Config") as mock_cfg_cls, patch(
-            "memo.cli_import._get_memory"
-        ) as mock_get_mem:
+        with (
+            patch("memo.cli_import.Config") as mock_cfg_cls,
+            patch("memo.cli_import._get_memory") as mock_get_mem,
+        ):
             mock_cfg_cls.from_env.return_value = MagicMock()
             mock_mem = MagicMock()
             mock_mem.import_export.import_from.return_value = fake_result
@@ -325,9 +324,10 @@ class TestImportCommands:
         fake_result = ImportResult(imported_count=1, skipped_count=0, errors=[])
 
         runner = CliRunner()
-        with patch("memo.cli_import.Config") as mock_cfg_cls, patch(
-            "memo.cli_import._get_memory"
-        ) as mock_get_mem:
+        with (
+            patch("memo.cli_import.Config") as mock_cfg_cls,
+            patch("memo.cli_import._get_memory") as mock_get_mem,
+        ):
             mock_cfg_cls.from_env.return_value = MagicMock()
             mock_mem = MagicMock()
             mock_mem.import_export.import_from.return_value = fake_result

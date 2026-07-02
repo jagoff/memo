@@ -108,7 +108,8 @@ def test_bulk_update_type_retiers_notes(store):
     _add(store, "d1", "Decision", type_="decision")
     rows = store.list_recent(limit=50)
     to_move = [
-        r["id"] for r in rows
+        r["id"]
+        for r in rows
         if r["type"] == "note" and is_reference_candidate(r["path"], r["tags"], r["title"])
     ]
     assert to_move == ["n1"]
@@ -141,20 +142,29 @@ def test_record_feedback_ignores_reference_tier(tmp_path):
 def test_recall_health_summarises_log(tmp_path):
     from memo.dashboard import append_recall_log, recall_health
 
-    append_recall_log(tmp_path, prompt="a useful question here",
-                      hits=[{"id": "1", "score": 0.9, "title": "T"}],
-                      mode="vec", latency_ms=120, via="daemon")
-    append_recall_log(tmp_path, prompt="another good question",
-                      hits=[{"id": "2", "score": 0.8, "title": "U"}],
-                      mode="vec", latency_ms=140, via="subprocess")
-    append_recall_log(tmp_path, prompt="x", hits=[], via="bail",
-                      reason="prompt too short")
+    append_recall_log(
+        tmp_path,
+        prompt="a useful question here",
+        hits=[{"id": "1", "score": 0.9, "title": "T"}],
+        mode="vec",
+        latency_ms=120,
+        via="daemon",
+    )
+    append_recall_log(
+        tmp_path,
+        prompt="another good question",
+        hits=[{"id": "2", "score": 0.8, "title": "U"}],
+        mode="vec",
+        latency_ms=140,
+        via="subprocess",
+    )
+    append_recall_log(tmp_path, prompt="x", hits=[], via="bail", reason="prompt too short")
 
     h = recall_health(tmp_path)
     assert h["sampled"] == 3
     assert h["fired"] == 2
     assert h["bailed"] == 1
-    assert h["hit_rate"] == 1.0          # both fired recalls had a hit
+    assert h["hit_rate"] == 1.0  # both fired recalls had a hit
     assert h["median_top_score"] == 0.85  # true median of [0.8, 0.9]
     assert h["p50_latency_ms"] == 130.0  # true median of [120, 140]
 

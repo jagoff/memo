@@ -49,12 +49,8 @@ def test_seed_helper_is_idempotent(tmp_path: Path, monkeypatch) -> None:
     class _FakeCfg:
         state_dir = tmp_path
 
-    monkeypatch.setattr(
-        "memo.config.Config.from_env", classmethod(lambda cls: _FakeCfg())
-    )
+    monkeypatch.setattr("memo.config.Config.from_env", classmethod(lambda cls: _FakeCfg()))
     # Memory must never be constructed when the stamp exists.
-    monkeypatch.setattr(
-        "memo.memory.Memory", lambda cfg: calls.append("constructed") or None
-    )
+    monkeypatch.setattr("memo.memory.Memory", lambda cfg: calls.append("constructed") or None)
     cli_install_mcp._seed_install_memory()
     assert calls == []

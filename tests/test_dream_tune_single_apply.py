@@ -43,8 +43,11 @@ def test_graph_retrieval_defers_while_pending_in_flight(tmp_path, monkeypatch):
     # force a winning non-vec config so it would apply if not for the pending
     good = {"precision_at_k": 0.9, "noise_at_k": 0.0, "latency_ms_p50": 10.0}
     vecm = {"precision_at_k": 0.2, "noise_at_k": 0.0, "latency_ms_p50": 10.0}
-    monkeypatch.setattr(dream_tune, "measure_retrieval_config",
-                        lambda mem, labels, *, k, mode, flags: good if mode == "hybrid" else vecm)
+    monkeypatch.setattr(
+        dream_tune,
+        "measure_retrieval_config",
+        lambda mem, labels, *, k, mode, flags: good if mode == "hybrid" else vecm,
+    )
 
     def _boom(*a, **k):
         raise AssertionError("overlay must not be written while a pending is in flight")
@@ -61,7 +64,11 @@ def test_graph_weight_applies_when_no_pending(tmp_path, monkeypatch):
     after = {"precision_at_k": 0.3, "noise_at_k": 0.0}
     monkeypatch.setattr(dream_tune, "search_graph_weight", lambda *a, **k: (0.2, before, after))
     calls = {"overlay": None}
-    monkeypatch.setattr(dream_tune, "write_overlay", lambda sd, params, meta: calls.__setitem__("overlay", dict(params)))
+    monkeypatch.setattr(
+        dream_tune,
+        "write_overlay",
+        lambda sd, params, meta: calls.__setitem__("overlay", dict(params)),
+    )
     monkeypatch.setattr(dream_tune, "save_graph_baseline", lambda sd, m: None)
 
     res = dream_tune.run_graph_weight_pass(_cfg(tmp_path), object(), k=5)
@@ -90,13 +97,20 @@ def test_tuning_pass_sets_cooldown_on_online_revert(tmp_path, monkeypatch):
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
     dream_tune_online.write_pending(
         tmp_path,
-        {"knob": "MEMO_RECALL_MIN_SIM", "version_after": "v2", "floor_before": 0.5,
-         "online_before": 0.6, "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0}},
+        {
+            "knob": "MEMO_RECALL_MIN_SIM",
+            "version_after": "v2",
+            "floor_before": 0.5,
+            "online_before": 0.6,
+            "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0},
+        },
     )
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
     monkeypatch.setattr(dream_tune, "write_overlay", lambda sd, params, meta: None)
     monkeypatch.setattr(dream_tune, "save_baseline", lambda sd, m: None)
-    monkeypatch.setattr(dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure")))
+    monkeypatch.setattr(
+        dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure"))
+    )
 
     res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "online_reverted"
@@ -122,7 +136,14 @@ def test_tuning_pass_clears_cooldown_at_cycle_start(tmp_path, monkeypatch):
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
     monkeypatch.setattr(dream_tune, "load_baseline", lambda sd: None)
     # no pending → resolve returns "none"; search finds no improvement → noop, but cooldown must be cleared
-    monkeypatch.setattr(dream_tune, "search_min_sim",
-                        lambda *a, **k: (0.5, {"precision_at_k": 0.2, "noise_at_k": 0.0}, {"precision_at_k": 0.2, "noise_at_k": 0.0}))
+    monkeypatch.setattr(
+        dream_tune,
+        "search_min_sim",
+        lambda *a, **k: (
+            0.5,
+            {"precision_at_k": 0.2, "noise_at_k": 0.0},
+            {"precision_at_k": 0.2, "noise_at_k": 0.0},
+        ),
+    )
     dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert dream_tune_online.in_revert_cooldown(tmp_path) is False

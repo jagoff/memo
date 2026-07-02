@@ -19,8 +19,10 @@ def _now() -> datetime:
 @pytest.fixture
 def mem(tmp_cfg: Config, monkeypatch) -> Memory:
     cfg = Config(
-        data_dir=tmp_cfg.data_dir, vault_path=tmp_cfg.vault_path,
-        state_dir=tmp_cfg.state_dir, embedder_dims=4,
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
     )
 
     def _embed(self, inputs):

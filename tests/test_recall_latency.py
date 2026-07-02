@@ -26,9 +26,16 @@ from memo.recall_server import _recall_logic, _RecallHandler
 
 def _rec(id_: str, title: str, score: float) -> MemoryRecord:
     return MemoryRecord(
-        id=id_, path=f"notes/{id_}.md", title=title, type="note", tags=[],
-        created="2026-05-21T00:00:00+00:00", updated="2026-05-21T00:00:00+00:00",
-        body="body " * 20, extra={}, score=score,
+        id=id_,
+        path=f"notes/{id_}.md",
+        title=title,
+        type="note",
+        tags=[],
+        created="2026-05-21T00:00:00+00:00",
+        updated="2026-05-21T00:00:00+00:00",
+        body="body " * 20,
+        extra={},
+        score=score,
     )
 
 
@@ -132,8 +139,11 @@ def test_recall_logic_no_hits_returns_none_thunk(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MEMO_RECALL_EXPAND_CONTEXT", "0")
     result, log_fn = _recall_logic(
         "a prompt that finds nothing at all",
-        cwd=None, mem=EmptyMemory(), cfg=SimpleNamespace(state_dir=tmp_path),
-        debug=False, t0=time.time(),
+        cwd=None,
+        mem=EmptyMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+        t0=time.time(),
     )
     assert result == "{}"
     assert log_fn is None

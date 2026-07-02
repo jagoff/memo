@@ -38,8 +38,8 @@ def _write_fake_memflow(dest: Path, log_file: Path) -> None:
     """Write a tiny shell script that records argv to a log and prints a path."""
     script = (
         "#!/bin/sh\n"
-        f"echo \"$@\" >> \"{log_file}\"\n"
-        f"echo \"memflow://fake/{int.from_bytes(os.urandom(4), 'big')}\"\n"
+        f'echo "$@" >> "{log_file}"\n'
+        f'echo "memflow://fake/{int.from_bytes(os.urandom(4), "big")}"\n'
     )
     dest.write_text(script)
     dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -137,7 +137,9 @@ def test_save_emits_receipt(monkeypatch, mock_memory, fake_memflow):
 def test_save_skip_kwarg_suppresses_receipt(monkeypatch, mock_memory, fake_memflow):
     monkeypatch.setenv("MEMO_EMIT_RECEIPTS", "1")
     mock_memory.save(
-        content="body two", title="skipped-save", skip_memflow_receipt=True,
+        content="body two",
+        title="skipped-save",
+        skip_memflow_receipt=True,
     )
     assert _read_calls(fake_memflow) == []
 
@@ -191,14 +193,16 @@ def test_synapse_backend_remember_skips_receipt(monkeypatch, mock_memory, fake_m
     monkeypatch.setenv("MEMO_EMIT_RECEIPTS", "1")
     monkeypatch.setattr(synapse_client, "is_available", lambda: False)
     backend = MemoSynapseBackend(mock_memory)
-    backend.remember({
-        "kind": "decision",
-        "text": "synapse-originated body",
-        "metadata": {
-            "synapse_trace_id": "trace-X",
-            "synapse_agent_id": "claude-4-7",
-        },
-    })
+    backend.remember(
+        {
+            "kind": "decision",
+            "text": "synapse-originated body",
+            "metadata": {
+                "synapse_trace_id": "trace-X",
+                "synapse_agent_id": "claude-4-7",
+            },
+        }
+    )
     assert _read_calls(fake_memflow) == []
 
 

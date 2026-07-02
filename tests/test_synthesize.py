@@ -14,6 +14,7 @@ import pytest
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
+
 def _unit_vec(dims: int) -> list[float]:
     """Unit vector in all-equal direction — cosine sim = 1.0 between any two."""
     v = 1.0 / math.sqrt(dims)
@@ -35,12 +36,14 @@ class _SynthesisChat:
         if "collectively IMPLY" in system:
             return {
                 "message": {
-                    "content": json.dumps({
-                        "title": "FP vs OOP tension in memo",
-                        "body": "Tension between FP preferences and OOP architecture explains recurring confusion.",
-                        "confidence": "medium",
-                        "rationale": "Pattern across cluster: preference conflicts with codebase style.",
-                    })
+                    "content": json.dumps(
+                        {
+                            "title": "FP vs OOP tension in memo",
+                            "body": "Tension between FP preferences and OOP architecture explains recurring confusion.",
+                            "confidence": "medium",
+                            "rationale": "Pattern across cluster: preference conflicts with codebase style.",
+                        }
+                    )
                 }
             }
         # Fallback for other LLM calls (entity extraction, consolidation, etc.)
@@ -56,7 +59,13 @@ class _NullSynthesisChat(_SynthesisChat):
     def chat(self, model: str, messages: list[dict], options: dict | None = None) -> dict:
         system = (messages[0].get("content") or "") if messages else ""
         if "collectively IMPLY" in system:
-            return {"message": {"content": json.dumps({"title": None, "body": "", "confidence": "low", "rationale": ""})}}
+            return {
+                "message": {
+                    "content": json.dumps(
+                        {"title": None, "body": "", "confidence": "low", "rationale": ""}
+                    )
+                }
+            }
         return {"message": {"content": "{}"}}
 
 
@@ -68,12 +77,14 @@ class _LowConfidenceChat(_SynthesisChat):
         if "collectively IMPLY" in system:
             return {
                 "message": {
-                    "content": json.dumps({
-                        "title": "Weak pattern",
-                        "body": "Some possible relationship.",
-                        "confidence": "low",
-                        "rationale": "Speculative.",
-                    })
+                    "content": json.dumps(
+                        {
+                            "title": "Weak pattern",
+                            "body": "Some possible relationship.",
+                            "confidence": "low",
+                            "rationale": "Speculative.",
+                        }
+                    )
                 }
             }
         return {"message": {"content": "{}"}}
@@ -88,6 +99,7 @@ def _force_close_embeddings(mem: Any) -> None:
 
 
 # ── synthesize_cross_cluster tests ──────────────────────────────────────────
+
 
 def test_synthesize_empty_corpus_returns_empty(mock_memory):
     results = mock_memory.synthesize_cross_cluster()
@@ -132,7 +144,9 @@ def test_synthesize_saves_medium_confidence_insight(mock_memory):
     mock_memory.save(content="Confused by mixin hierarchy in memo", type_="note")
 
     results = mock_memory.synthesize_cross_cluster(
-        min_cluster_size=2, min_confidence="medium", dry_run=False,
+        min_cluster_size=2,
+        min_confidence="medium",
+        dry_run=False,
     )
 
     saved = [r for r in results if r.get("saved")]
@@ -147,6 +161,7 @@ def test_synthesize_saves_medium_confidence_insight(mock_memory):
 
     # Provenance in extra frontmatter bag
     import frontmatter
+
     md_path = mock_memory._resolve_existing(rec.path)
     post = frontmatter.loads(md_path.read_text())
     ex = post.get("extra") or {}
@@ -177,7 +192,9 @@ def test_synthesize_skips_below_min_confidence(mock_memory):
         mock_memory.save(content=f"Weak pattern note {i}", type_="note")
 
     results = mock_memory.synthesize_cross_cluster(
-        min_cluster_size=2, min_confidence="medium", dry_run=False,
+        min_cluster_size=2,
+        min_confidence="medium",
+        dry_run=False,
     )
 
     assert all(not r.get("saved") for r in results)
@@ -249,6 +266,7 @@ def test_synthesize_result_structure(mock_memory):
 
 # ── stale synthesis gc tests ─────────────────────────────────────────────────
 
+
 def test_gc_reports_stale_synthesis_when_source_deleted(mock_memory):
     """gc() detects synthesis memories whose sources were deleted."""
     _force_close_embeddings(mock_memory)
@@ -316,6 +334,7 @@ def test_gc_no_stale_synthesis_when_sources_intact(mock_memory):
 
 
 # ── 3.3a: memo_synthesize_list confidence filter ──────────────────────────
+
 
 def _get_synth_tool_fn(mock_memory, tool_name: str):
     """Register server_synthesis and return the named tool's underlying function."""
@@ -440,6 +459,7 @@ def test_synthesize_delete_nonexistent_id(mock_memory):
 
 # ── 3.3c: dedup on re-run (synthesis_sources_hash) ──────────────────────────
 
+
 def test_synthesize_dedup_uses_source_hash(mock_memory):
     """Re-running synthesize on unchanged cluster produces no new saves (hash dedup)."""
     _force_close_embeddings(mock_memory)
@@ -452,7 +472,9 @@ def test_synthesize_dedup_uses_source_hash(mock_memory):
     assert any(r.get("saved") for r in first_run), "First run should save at least one synthesis"
 
     second_run = mock_memory.synthesize_cross_cluster(min_cluster_size=2, dry_run=False)
-    assert not any(r.get("saved") for r in second_run), "Second run should save nothing (hash already exists)"
+    assert not any(r.get("saved") for r in second_run), (
+        "Second run should save nothing (hash already exists)"
+    )
 
 
 def test_synthesize_dedup_hash_stored_in_frontmatter(mock_memory):

@@ -11,15 +11,21 @@ class _Cfg:
 
 def test_anticipate_aggregates_gaps_and_hot_queries(monkeypatch):
     monkeypatch.setattr(
-        da, "detect_gaps",
+        da,
+        "detect_gaps",
         lambda sd, **k: [
             {"prompt": "how does X work", "count": 3},
             {"prompt": "where is Y", "count": 2},
         ],
     )
     monkeypatch.setattr(
-        da, "read_recall_log",
-        lambda sd, **k: [{"prompt": "deploy steps"}, {"prompt": "deploy steps"}, {"prompt": "auth flow"}],
+        da,
+        "read_recall_log",
+        lambda sd, **k: [
+            {"prompt": "deploy steps"},
+            {"prompt": "deploy steps"},
+            {"prompt": "auth flow"},
+        ],
     )
     res = da.anticipate(_Cfg(), mem=None, top_gaps=5, top_queries=5)
     assert [g["prompt"] for g in res["gaps"]] == ["how does X work", "where is Y"]
@@ -57,5 +63,7 @@ def test_anticipate_prewarms_when_mem_given(monkeypatch):
 
 def test_briefing_line():
     assert "no recurring gaps" in da.briefing_line({"gaps": []})
-    line = da.briefing_line({"gaps": [{"prompt": "how does X work", "count": 3}, {"prompt": "b", "count": 2}]})
+    line = da.briefing_line(
+        {"gaps": [{"prompt": "how does X work", "count": 3}, {"prompt": "b", "count": 2}]}
+    )
     assert "1 more" in line and "unmet gap" in line

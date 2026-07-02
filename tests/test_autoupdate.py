@@ -103,7 +103,5 @@ def test_maybe_auto_update_spawns_when_newer_tag(tmp_cfg, monkeypatch):
 def test_maybe_auto_update_no_spawn_when_not_newer(tmp_cfg, monkeypatch):
     monkeypatch.setenv("MEMO_AUTO_UPDATE", "1")
     monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v0.0.1")
-    monkeypatch.setattr(
-        au.subprocess, "Popen", lambda *a, **k: pytest.fail("should not spawn")
-    )
+    monkeypatch.setattr(au.subprocess, "Popen", lambda *a, **k: pytest.fail("should not spawn"))
     assert au.maybe_auto_update(tmp_cfg) is False

@@ -32,13 +32,14 @@ class _Mem:
 
 def test_build_nudge_returns_associated_titles(monkeypatch):
     import memo.recall_assoc as ra
+
     monkeypatch.setattr(ra, "_codegraph_adj", lambda: None)
     monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "1")
 
     nudge = build_nudge(_Mem(), [_Rec("s1", "seed")])
     ids = {h.id for h in nudge}
-    assert "a1" in ids          # associated via shared entity 'memory'
-    assert "s1" not in ids      # seed excluded
+    assert "a1" in ids  # associated via shared entity 'memory'
+    assert "s1" not in ids  # seed excluded
     assert all(hasattr(h, "title") for h in nudge)
 
 
@@ -102,6 +103,7 @@ def test_render_associative_line_skips_when_over_budget():
     # token_budget=10 → max_chars=40; context already exceeds that
     result = render_associative_line(context, nudge, token_budget=10)
     assert result == context
+
 
 def test_render_associative_line_no_budget_cap_always_appends():
     """token_budget <= 0 means no cap — always append."""
@@ -186,8 +188,11 @@ def test_build_nudge_skips_forgotten(monkeypatch):
 
     class _Store:
         def memory_entities(self, mid):
-            return {"s1": [{"name": "memory"}], "a1": [{"name": "memory"}],
-                    "a2": [{"name": "memory"}]}.get(mid, [])
+            return {
+                "s1": [{"name": "memory"}],
+                "a1": [{"name": "memory"}],
+                "a2": [{"name": "memory"}],
+            }.get(mid, [])
 
         def entity_memories(self, name, type_=None):
             return ["s1", "a1", "a2"] if name == "memory" else []
@@ -208,8 +213,8 @@ def test_build_nudge_skips_forgotten(monkeypatch):
             return _Rec(mid, forgotten=(mid == "a1"))
 
     ids = {h.id for h in ra.build_nudge(_Mem(), [_Rec("s1")])}
-    assert "a1" not in ids   # soft-forgotten hit dropped
-    assert "a2" in ids       # backfilled past the forgotten one
+    assert "a1" not in ids  # soft-forgotten hit dropped
+    assert "a2" in ids  # backfilled past the forgotten one
 
 
 def test_recency_weight_prefers_recent():
@@ -220,5 +225,5 @@ def test_recency_weight_prefers_recent():
     today = datetime.now(UTC).isoformat()
     old = datetime(2020, 1, 1, tzinfo=UTC).isoformat()
     assert _recency_weight(today) > _recency_weight(old)
-    assert _recency_weight("") == 1.0       # unknown -> neutral
+    assert _recency_weight("") == 1.0  # unknown -> neutral
     assert 0.0 < _recency_weight(old) <= 1.0

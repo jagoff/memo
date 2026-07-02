@@ -48,9 +48,16 @@ def test_check_embedder_version_mismatch(tmp_path: Path):
 
     # Let's manually set up the schema_meta
     with closing(sqlite3.connect(db_path)) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        conn.execute("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)", ("embedder_model", "model-A"))
-        conn.execute("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)", ("embedder_dims", "8"))
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+            ("embedder_model", "model-A"),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)", ("embedder_dims", "8")
+        )
         conn.commit()
 
     # Now open with current_model = "model-B"
@@ -83,5 +90,8 @@ def test_check_embedder_version_mismatch(tmp_path: Path):
         store.close()
 
     error_msg = str(excinfo.value)
-    assert "Embedder model mismatch: index was built with model-A (8d) but current config is model-B (8d)" in error_msg
+    assert (
+        "Embedder model mismatch: index was built with model-A (8d) but current config is model-B (8d)"
+        in error_msg
+    )
     assert "Run 'memo reindex --rebuild'" in error_msg

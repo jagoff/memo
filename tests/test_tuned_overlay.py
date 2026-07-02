@@ -101,10 +101,14 @@ def test_params_version_base_when_no_overlay(tmp_path):
 def test_params_version_stable_and_order_independent(tmp_path):
     from memo.tuned_overlay import params_version, write_overlay
 
-    write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.62, "MEMO_RECALL_MODE": "hybrid"}, {"set_by": "test"})
+    write_overlay(
+        tmp_path, {"MEMO_RECALL_MIN_SIM": 0.62, "MEMO_RECALL_MODE": "hybrid"}, {"set_by": "test"}
+    )
     v1 = params_version(tmp_path)
     # same params, different insertion order → identical hash
-    write_overlay(tmp_path, {"MEMO_RECALL_MODE": "hybrid", "MEMO_RECALL_MIN_SIM": 0.62}, {"set_by": "test"})
+    write_overlay(
+        tmp_path, {"MEMO_RECALL_MODE": "hybrid", "MEMO_RECALL_MIN_SIM": 0.62}, {"set_by": "test"}
+    )
     v2 = params_version(tmp_path)
 
     assert v1 == v2

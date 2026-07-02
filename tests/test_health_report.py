@@ -124,7 +124,12 @@ def test_check_sync_stale_when_history_db_old(tmp_cfg, monkeypatch):
     history_db.touch()
     # Make time.time() return a value 25 hours in the future
     original = time.time
-    monkeypatch.setattr("memo.cli_health.time", type("T", (), {"time": staticmethod(lambda: original() + 25 * 3600), "sleep": time.sleep})())
+    monkeypatch.setattr(
+        "memo.cli_health.time",
+        type(
+            "T", (), {"time": staticmethod(lambda: original() + 25 * 3600), "sleep": time.sleep}
+        )(),
+    )
     result = _check_sync(tmp_cfg)
     assert result == "stale"
 
@@ -159,8 +164,10 @@ def test_collect_watch_signals_healthy_with_db(tmp_cfg):
     tmp_cfg.history_db.parent.mkdir(parents=True, exist_ok=True)
     tmp_cfg.history_db.touch()
 
-    with patch("memo.cli_health._check_daemon", return_value="running"), \
-         patch("memo.cli_health._check_fds", return_value=42):
+    with (
+        patch("memo.cli_health._check_daemon", return_value="running"),
+        patch("memo.cli_health._check_fds", return_value=42),
+    ):
         sig = _collect_watch_signals(tmp_cfg)
 
     assert sig["status"] == "healthy"
@@ -178,8 +185,10 @@ def test_collect_watch_signals_degraded_when_daemon_stopped(tmp_cfg):
     tmp_cfg.history_db.parent.mkdir(parents=True, exist_ok=True)
     tmp_cfg.history_db.touch()
 
-    with patch("memo.cli_health._check_daemon", return_value="stopped"), \
-         patch("memo.cli_health._check_fds", return_value=10):
+    with (
+        patch("memo.cli_health._check_daemon", return_value="stopped"),
+        patch("memo.cli_health._check_fds", return_value=10),
+    ):
         sig = _collect_watch_signals(tmp_cfg)
 
     assert sig["status"] == "degraded"
@@ -233,10 +242,17 @@ def test_cli_health_watch_json_single_iteration(monkeypatch, tmp_cfg):
         raise KeyboardInterrupt  # stop after one iteration
 
     monkeypatch.setattr("memo.cli_health.Config.from_env", staticmethod(lambda: tmp_cfg))
-    monkeypatch.setattr("memo.cli_health.time", type("T", (), {
-        "time": staticmethod(time.time),
-        "sleep": staticmethod(_fake_sleep),
-    })())
+    monkeypatch.setattr(
+        "memo.cli_health.time",
+        type(
+            "T",
+            (),
+            {
+                "time": staticmethod(time.time),
+                "sleep": staticmethod(_fake_sleep),
+            },
+        )(),
+    )
 
     result = CliRunner().invoke(cli, ["health", "--watch", "--json", "--interval", "5"])
     # May exit 0 or 1 depending on how Click handles KeyboardInterrupt
@@ -249,14 +265,22 @@ def test_cli_health_watch_json_single_iteration(monkeypatch, tmp_cfg):
 
 def test_cli_health_watch_plain_single_iteration(monkeypatch, tmp_cfg):
     """--watch (plain mode) emits a status line and exits cleanly."""
+
     def _fake_sleep(n: float) -> None:
         raise KeyboardInterrupt
 
     monkeypatch.setattr("memo.cli_health.Config.from_env", staticmethod(lambda: tmp_cfg))
-    monkeypatch.setattr("memo.cli_health.time", type("T", (), {
-        "time": staticmethod(time.time),
-        "sleep": staticmethod(_fake_sleep),
-    })())
+    monkeypatch.setattr(
+        "memo.cli_health.time",
+        type(
+            "T",
+            (),
+            {
+                "time": staticmethod(time.time),
+                "sleep": staticmethod(_fake_sleep),
+            },
+        )(),
+    )
 
     result = CliRunner().invoke(cli, ["health", "--watch", "--interval", "30"])
     lines = [ln.strip() for ln in result.output.strip().splitlines() if ln.strip()]

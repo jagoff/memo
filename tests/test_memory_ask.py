@@ -15,7 +15,11 @@ def test_consolidate_clusters_near_duplicates(mem_with_stub: Memory, monkeypatch
 
     def _stub_chat(self, model, messages, options=None):
         captured.append(messages)
-        return {"message": {"content": '{"summary": "Both notes describe the same alpha concept.", "relationship": "duplicate", "rationale": "Body strings differ by one character only."}'}}
+        return {
+            "message": {
+                "content": '{"summary": "Both notes describe the same alpha concept.", "relationship": "duplicate", "rationale": "Body strings differ by one character only."}'
+            }
+        }
 
     monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
     clusters = mem_with_stub.consolidate(threshold=0.99)
@@ -69,23 +73,39 @@ def test_ask_dedups_repo_hits_against_vault_and_intra_repo(mem_with_stub: Memory
 
     def _fake_repo_hit(line_start: int) -> RepoSearchHit:
         return RepoSearchHit(
-            id=f"chunk-{line_start}", repo_id="r1", repo_name="obsidian-personal",
-            url="https://example.com/r.git", ref="HEAD", commit_sha="abcdef12",
-            file_id="f1", path=vault_path, language="markdown", line_start=line_start,
-            line_end=line_start + 10, text="Sos la sal de este mar", score=0.5, match_type="hybrid",
+            id=f"chunk-{line_start}",
+            repo_id="r1",
+            repo_name="obsidian-personal",
+            url="https://example.com/r.git",
+            ref="HEAD",
+            commit_sha="abcdef12",
+            file_id="f1",
+            path=vault_path,
+            language="markdown",
+            line_start=line_start,
+            line_end=line_start + 10,
+            text="Sos la sal de este mar",
+            score=0.5,
+            match_type="hybrid",
         )
 
     monkeypatch.setattr(
-        Memory, "repo_search",
+        Memory,
+        "repo_search",
         lambda self, q, **kw: [_fake_repo_hit(1), _fake_repo_hit(20), _fake_repo_hit(40)],
     )
     monkeypatch.setattr(
-        type(mem_with_stub.store), "list_repo_sources",
+        type(mem_with_stub.store),
+        "list_repo_sources",
         lambda self, **kw: [{"name": "obsidian-personal"}],
     )
 
     _, sources, _, _ = mem_with_stub._build_ask_context(
-        "sal de este mar", k=5, type_=None, snippet_chars=200, include_repos=True,
+        "sal de este mar",
+        k=5,
+        type_=None,
+        snippet_chars=200,
+        include_repos=True,
     )
 
     assert [s["source"] for s in sources] == ["memory"]
@@ -97,17 +117,33 @@ def test_ask_dedups_repo_chunks_when_no_vault_overlap(mem_with_stub: Memory, mon
 
     def _hit(line_start: int) -> RepoSearchHit:
         return RepoSearchHit(
-            id=f"c-{line_start}", repo_id="r2", repo_name="code-repo",
-            url="x", ref="HEAD", commit_sha="deadbeef", file_id="f", path="src/foo.py",
-            language="python", line_start=line_start, line_end=line_start + 5,
-            text="def foo(): pass", score=0.8, match_type="hybrid",
+            id=f"c-{line_start}",
+            repo_id="r2",
+            repo_name="code-repo",
+            url="x",
+            ref="HEAD",
+            commit_sha="deadbeef",
+            file_id="f",
+            path="src/foo.py",
+            language="python",
+            line_start=line_start,
+            line_end=line_start + 5,
+            text="def foo(): pass",
+            score=0.8,
+            match_type="hybrid",
         )
 
     monkeypatch.setattr(Memory, "repo_search", lambda self, q, **kw: [_hit(1), _hit(50), _hit(100)])
-    monkeypatch.setattr(type(mem_with_stub.store), "list_repo_sources", lambda self, **kw: [{"name": "code-repo"}])
+    monkeypatch.setattr(
+        type(mem_with_stub.store), "list_repo_sources", lambda self, **kw: [{"name": "code-repo"}]
+    )
 
     _, sources, _, _ = mem_with_stub._build_ask_context(
-        "foo", k=5, type_=None, snippet_chars=200, include_repos=True,
+        "foo",
+        k=5,
+        type_=None,
+        snippet_chars=200,
+        include_repos=True,
     )
 
     repo_sources = [s for s in sources if s["source"] == "repo"]
@@ -142,21 +178,33 @@ def test_recency_helpers():
     assert not _is_conversation_query("resumen del proyecto memo")
 
     wa = MemoryRecord(
-        id="b" * 32, path="x/WhatsApp · Grecia.md", title="WhatsApp · Grecia 🩷",
-        type="reference", tags=["whatsapp", "chat"],
-        created="2026-05-18T00:00:00", updated="2026-05-18T00:00:00",
+        id="b" * 32,
+        path="x/WhatsApp · Grecia.md",
+        title="WhatsApp · Grecia 🩷",
+        type="reference",
+        tags=["whatsapp", "chat"],
+        created="2026-05-18T00:00:00",
+        updated="2026-05-18T00:00:00",
         body="## 2026-05-17\n- **Grecia 🩷** (16:26): Jajaja está linda",
     )
     contact = MemoryRecord(
-        id="a" * 32, path="Contacts/Grecia.md", title="Grecia",
-        type="reference", tags=["Obsidian", "Contacts"],
-        created="2026-05-30T00:00:00", updated="2026-05-30T00:00:00",
+        id="a" * 32,
+        path="Contacts/Grecia.md",
+        title="Grecia",
+        type="reference",
+        tags=["Obsidian", "Contacts"],
+        created="2026-05-30T00:00:00",
+        updated="2026-05-30T00:00:00",
         body="Grecia Ferrari, 15 años, Santa Fe.",
     )
     meta = MemoryRecord(
-        id="c" * 32, path="AI/memory/whatsapp-note.md", title="Maria y Grecia completados",
-        type="fact", tags=["whatsapp", "contacts", "vault"],
-        created="2026-05-30T00:00:00", updated="2026-05-30T00:00:00",
+        id="c" * 32,
+        path="AI/memory/whatsapp-note.md",
+        title="Maria y Grecia completados",
+        type="fact",
+        tags=["whatsapp", "contacts", "vault"],
+        created="2026-05-30T00:00:00",
+        updated="2026-05-30T00:00:00",
         body="Se completaron los JID de Maria y Grecia.",
     )
     assert _is_whatsapp_hit(wa)
@@ -166,62 +214,107 @@ def test_recency_helpers():
     assert _recency_key(contact) == "2026-05-30"
 
 
-def test_ask_recency_floats_whatsapp_transcript_over_contact_card(mem_with_stub: Memory, monkeypatch):
+def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
+    mem_with_stub: Memory, monkeypatch
+):
     contact = MemoryRecord(
-        id="a" * 32, path="Contacts/Grecia.md", title="Grecia",
-        type="reference", tags=["Obsidian", "Contacts"],
-        created="2026-05-30T00:00:00", updated="2026-05-30T00:00:00",
-        body="Grecia Ferrari, 15 años, Santa Fe.", score=0.92,
+        id="a" * 32,
+        path="Contacts/Grecia.md",
+        title="Grecia",
+        type="reference",
+        tags=["Obsidian", "Contacts"],
+        created="2026-05-30T00:00:00",
+        updated="2026-05-30T00:00:00",
+        body="Grecia Ferrari, 15 años, Santa Fe.",
+        score=0.92,
     )
     transcript = MemoryRecord(
-        id="b" * 32, path="AI/Whatsapp/Grecia.md", title="WhatsApp · Grecia 🩷",
-        type="reference", tags=["whatsapp", "chat"],
-        created="2026-05-18T00:00:00", updated="2026-05-18T00:00:00",
-        body="## 2026-05-17\n- **Grecia 🩷** (16:26): Jajaja está linda", score=0.90,
+        id="b" * 32,
+        path="AI/Whatsapp/Grecia.md",
+        title="WhatsApp · Grecia 🩷",
+        type="reference",
+        tags=["whatsapp", "chat"],
+        created="2026-05-18T00:00:00",
+        updated="2026-05-18T00:00:00",
+        body="## 2026-05-17\n- **Grecia 🩷** (16:26): Jajaja está linda",
+        score=0.90,
     )
     group = MemoryRecord(
-        id="d" * 32, path="AI/Whatsapp/Grecia's group.md", title="WhatsApp · Grecia's group",
-        type="reference", tags=["whatsapp", "chat"],
-        created="2026-05-19T00:00:00", updated="2026-05-19T00:00:00",
-        body="## 2026-05-19\n- **alguien** (10:00): Jajajajaj", score=0.91,
+        id="d" * 32,
+        path="AI/Whatsapp/Grecia's group.md",
+        title="WhatsApp · Grecia's group",
+        type="reference",
+        tags=["whatsapp", "chat"],
+        created="2026-05-19T00:00:00",
+        updated="2026-05-19T00:00:00",
+        body="## 2026-05-19\n- **alguien** (10:00): Jajajajaj",
+        score=0.91,
     )
     monkeypatch.setattr(Memory, "search", lambda self, q, **kw: [contact, group, transcript])
 
     _, sources, _, _ = mem_with_stub._build_ask_context(
-        "qué fue lo último que dijo Grecia por whatsapp", k=5, type_=None, snippet_chars=200, include_repos=False,
+        "qué fue lo último que dijo Grecia por whatsapp",
+        k=5,
+        type_=None,
+        snippet_chars=200,
+        include_repos=False,
     )
     assert sources[0]["title"] == "WhatsApp · Grecia's group"
     assert sources[1]["title"] == "WhatsApp · Grecia 🩷"
     assert sources[2]["title"] == "Grecia"
 
     _, sources_c, _, _ = mem_with_stub._build_ask_context(
-        "mostrame el chat con Grecia", k=5, type_=None, snippet_chars=200, include_repos=False,
+        "mostrame el chat con Grecia",
+        k=5,
+        type_=None,
+        snippet_chars=200,
+        include_repos=False,
     )
     assert sources_c[0]["title"] == "WhatsApp · Grecia 🩷"
 
     _, sources2, _, _ = mem_with_stub._build_ask_context(
-        "quién es Grecia", k=5, type_=None, snippet_chars=200, include_repos=False,
+        "quién es Grecia",
+        k=5,
+        type_=None,
+        snippet_chars=200,
+        include_repos=False,
     )
     assert sources2[0]["title"] == "Grecia"
 
 
-def test_ask_conversation_intent_without_whatsapp_preserves_order(mem_with_stub: Memory, monkeypatch):
+def test_ask_conversation_intent_without_whatsapp_preserves_order(
+    mem_with_stub: Memory, monkeypatch
+):
     top = MemoryRecord(
-        id="a" * 32, path="AI/memory/decision.md", title="Decisión arquitectura",
-        type="fact", tags=["memo"],
-        created="2026-05-10T00:00:00", updated="2026-05-10T00:00:00",
-        body="Migramos a MLX.", score=0.80,
+        id="a" * 32,
+        path="AI/memory/decision.md",
+        title="Decisión arquitectura",
+        type="fact",
+        tags=["memo"],
+        created="2026-05-10T00:00:00",
+        updated="2026-05-10T00:00:00",
+        body="Migramos a MLX.",
+        score=0.80,
     )
     older_but_newer_date = MemoryRecord(
-        id="b" * 32, path="AI/memory/note.md", title="Nota suelta",
-        type="note", tags=["memo"],
-        created="2026-05-25T00:00:00", updated="2026-05-25T00:00:00",
-        body="## 2026-05-25\nalgo", score=0.40,
+        id="b" * 32,
+        path="AI/memory/note.md",
+        title="Nota suelta",
+        type="note",
+        tags=["memo"],
+        created="2026-05-25T00:00:00",
+        updated="2026-05-25T00:00:00",
+        body="## 2026-05-25\nalgo",
+        score=0.40,
     )
     monkeypatch.setattr(Memory, "search", lambda self, q, **kw: [top, older_but_newer_date])
 
     _, sources, _, _ = mem_with_stub._build_ask_context(
-        "resumen de la conversación sobre arquitectura", k=5, type_=None, snippet_chars=200, include_repos=False,
+        "resumen de la conversación sobre arquitectura",
+        k=5,
+        type_=None,
+        snippet_chars=200,
+        include_repos=False,
     )
     assert sources[0]["title"] == "Decisión arquitectura"
 

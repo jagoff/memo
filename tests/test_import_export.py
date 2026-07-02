@@ -67,9 +67,7 @@ def test_importer_import_csv(tmp_path, importer):
     # Create test CSV file
     csv_file = tmp_path / "test.csv"
     csv_file.write_text(
-        "title,content,tags,type\n"
-        "Test 1,Content 1,test,note\n"
-        "Test 2,Content 2,test,decision\n",
+        "title,content,tags,type\nTest 1,Content 1,test,note\nTest 2,Content 2,test,decision\n",
         encoding="utf-8",
     )
 
@@ -100,6 +98,7 @@ def test_exporter_export_json(tmp_path, exporter, mock_memory):
     assert output_path.is_file()
 
     import json
+
     data = json.loads(output_path.read_text(encoding="utf-8"))
     assert len(data) >= 1
 
@@ -137,6 +136,7 @@ def test_exporter_export_markdown_bundle(tmp_path, exporter, mock_memory):
     assert output_path.is_file()
 
     import zipfile
+
     with zipfile.ZipFile(output_path, "r") as zf:
         assert len(zf.namelist()) >= 1
         assert any(f.endswith(".md") for f in zf.namelist())

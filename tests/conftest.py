@@ -102,8 +102,7 @@ def mock_memory(tmp_cfg):
     def _fake_embedding(text: str) -> list[float]:
         digest = hashlib.sha256((text or "").encode("utf-8")).digest()
         values = [
-            ((digest[i % len(digest)] / 255.0) * 2.0) - 1.0
-            for i in range(tmp_cfg.embedder_dims)
+            ((digest[i % len(digest)] / 255.0) * 2.0) - 1.0 for i in range(tmp_cfg.embedder_dims)
         ]
         norm = sum(v * v for v in values) ** 0.5
         return [v / norm for v in values]

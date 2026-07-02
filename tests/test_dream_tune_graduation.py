@@ -12,12 +12,15 @@ def test_graduation_streak_counts_trailing_confirmed():
 
 def test_graduation_streak_breaks_on_expired_or_negative():
     assert dto.graduation_streak([{"verdict": "expired"}]) == 0
-    assert dto.graduation_streak(
-        [
-            {"verdict": "confirmed", "realized_delta": 0.1},
-            {"verdict": "confirmed", "realized_delta": -0.01}
-        ]
-    ) == 0  # newest has negative delta → streak 0
+    assert (
+        dto.graduation_streak(
+            [
+                {"verdict": "confirmed", "realized_delta": 0.1},
+                {"verdict": "confirmed", "realized_delta": -0.01},
+            ]
+        )
+        == 0
+    )  # newest has negative delta → streak 0
 
 
 def test_graduation_status_reads_ledger(tmp_path):

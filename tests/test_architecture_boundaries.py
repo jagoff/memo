@@ -70,7 +70,11 @@ def test_brain_like_mcp_tools_are_not_registered() -> None:
     # def memo_*) and mcp_tools.py (ToolSpec name="memo_*"). Scan all of them so the
     # guard keeps biting after the monolith split + the memory_*->memo_* rename.
     memo_dir = REPO_ROOT / "src" / "memo"
-    sources = [memo_dir / "server.py", memo_dir / "mcp_tools.py", *sorted(memo_dir.glob("server_*.py"))]
+    sources = [
+        memo_dir / "server.py",
+        memo_dir / "mcp_tools.py",
+        *sorted(memo_dir.glob("server_*.py")),
+    ]
     forbidden = ("agent", "cognitive", "federation", "lifecycle", "suggest")
 
     for path in sources:
@@ -147,11 +151,24 @@ def test_graph_canonical_is_pure_stdlib_leaf() -> None:
 # constructing Memory() must not eagerly build any of them (cold-start cost +
 # import-cycle risk). Guards the god-object's 3b decomposition contract.
 LAZY_SUBSYSTEMS = [
-    "temporal", "consolidator", "contradict_store", "contradict_scanner",
-    "navigator", "contextual", "crossref", "link_suggester", "lifecycle",
-    "versioning", "query_composer", "backup",
-    "sync", "analytics", "dashboard",
-    "import_export", "multimodal", "collaborative",
+    "temporal",
+    "consolidator",
+    "contradict_store",
+    "contradict_scanner",
+    "navigator",
+    "contextual",
+    "crossref",
+    "link_suggester",
+    "lifecycle",
+    "versioning",
+    "query_composer",
+    "backup",
+    "sync",
+    "analytics",
+    "dashboard",
+    "import_export",
+    "multimodal",
+    "collaborative",
 ]
 
 
@@ -284,6 +301,8 @@ def test_behavior_flags_are_not_read_directly_from_environ() -> None:
                 and node.args[0].value not in config_owned
                 and node.args[0].value not in pure_leaf_owned.get(path, set())
             ):
-                violations.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {node.args[0].value}")
+                violations.append(
+                    f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {node.args[0].value}"
+                )
 
     assert violations == []

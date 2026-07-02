@@ -428,9 +428,7 @@ def test_install_slash_devin_proceeds_to_add_when_remove_fails(monkeypatch, tmp_
 
     runner = CliRunner()
     with runner.isolated_filesystem():
-        result = runner.invoke(
-            cli, ["install-slash", "--client", "devin", "--repo", str(repo)]
-        )
+        result = runner.invoke(cli, ["install-slash", "--client", "devin", "--repo", str(repo)])
 
     assert result.exit_code == 0, result.output
     assert any("remove" in argv for argv in calls)
@@ -450,9 +448,7 @@ def test_install_slash_devin_desktop_writes_mcp_config(monkeypatch, tmp_path):
     # MEMO_EMBEDDER_DIMS is deliberately NOT forwarded from env — it comes from
     # the live index via _actual_embedder_config(). Stub it so the assertion
     # doesn't depend on whatever memvec.db this machine happens to have.
-    monkeypatch.setattr(
-        mcp_mod, "_actual_embedder_config", lambda: {"MEMO_EMBEDDER_DIMS": "2560"}
-    )
+    monkeypatch.setattr(mcp_mod, "_actual_embedder_config", lambda: {"MEMO_EMBEDDER_DIMS": "2560"})
     monkeypatch.setattr(
         install_mod,
         "_resolved_memo_mcp",
@@ -484,9 +480,7 @@ def test_codex_plugin_manifest_does_not_duplicate_user_skill() -> None:
 
 def test_mcp_command_opencode(monkeypatch):
     _clear_memo_env(monkeypatch)
-    monkeypatch.setattr(
-        mcp_mod, "_actual_embedder_config", lambda: {"MEMO_EMBEDDER_DIMS": "2560"}
-    )
+    monkeypatch.setattr(mcp_mod, "_actual_embedder_config", lambda: {"MEMO_EMBEDDER_DIMS": "2560"})
     monkeypatch.setattr(
         install_mod,
         "_resolved_memo_mcp",

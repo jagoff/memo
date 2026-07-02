@@ -1,4 +1,5 @@
 """Tests for the orientation summary pass in dream run."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock

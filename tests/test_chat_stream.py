@@ -41,14 +41,17 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> Memory:
 
 
 def _stub_stream(deltas: list[str]):
-    def _stream(self, model: str, messages: list[dict[str, str]],
-                options: dict[str, Any] | None = None) -> Iterator[str]:
+    def _stream(
+        self, model: str, messages: list[dict[str, str]], options: dict[str, Any] | None = None
+    ) -> Iterator[str]:
         yield from deltas
+
     return _stream
 
 
 def test_chat_ask_stream_emits_context_tokens_done(
-    mem_with_stub: Memory, monkeypatch: pytest.MonkeyPatch,
+    mem_with_stub: Memory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rec = mem_with_stub.save(content="alpha decision body", title="Alpha")
 
@@ -83,7 +86,8 @@ def test_chat_ask_stream_emits_context_tokens_done(
 
 
 def test_chat_ask_stream_error_mid_stream_emits_partial_done(
-    mem_with_stub: Memory, monkeypatch: pytest.MonkeyPatch,
+    mem_with_stub: Memory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mem_with_stub.save(content="alpha decision body", title="Alpha")
 

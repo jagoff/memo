@@ -118,10 +118,7 @@ def test_expect_ids_are_strings_of_min_8_chars(prompts: list[dict]) -> None:
 
 
 def test_at_least_two_spanish_prompts(prompts: list[dict]) -> None:
-    texts = [
-        (p if isinstance(p, str) else p.get("text", ""))
-        for p in prompts
-    ]
+    texts = [(p if isinstance(p, str) else p.get("text", "")) for p in prompts]
     spanish = [t for t in texts if _is_spanish(t)]
     assert len(spanish) >= _MIN_SPANISH_PROMPTS, (
         f"Expected at least {_MIN_SPANISH_PROMPTS} Spanish-language prompts, "
@@ -132,10 +129,7 @@ def test_at_least_two_spanish_prompts(prompts: list[dict]) -> None:
 
 def test_at_least_one_noise_probe(prompts: list[dict]) -> None:
     """At least one prompt should be relevant=False (a noise probe)."""
-    noise_probes = [
-        p for p in prompts
-        if isinstance(p, dict) and p.get("relevant") is False
-    ]
+    noise_probes = [p for p in prompts if isinstance(p, dict) and p.get("relevant") is False]
     assert noise_probes, (
         "No noise probes found (relevant=false). Add at least one prompt "
         "that is NOT expected to match real content, to verify noise@K."
@@ -143,10 +137,7 @@ def test_at_least_one_noise_probe(prompts: list[dict]) -> None:
 
 
 def test_at_least_one_relevant_prompt(prompts: list[dict]) -> None:
-    relevant = [
-        p for p in prompts
-        if isinstance(p, dict) and p.get("relevant") is True
-    ]
+    relevant = [p for p in prompts if isinstance(p, dict) and p.get("relevant") is True]
     assert relevant, "No relevant=true prompts found — add ground-truth prompts."
 
 
@@ -171,4 +162,6 @@ def test_noise_path_fragments_is_a_list(labels_data: dict) -> None:
     if frags is not None:
         assert isinstance(frags, list), "'noise_path_fragments' must be a list of strings"
         for f in frags:
-            assert isinstance(f, str), f"noise_path_fragments entry must be str, got {type(f)}: {f!r}"
+            assert isinstance(f, str), (
+                f"noise_path_fragments entry must be str, got {type(f)}: {f!r}"
+            )

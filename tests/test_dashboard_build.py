@@ -1,4 +1,5 @@
 """Tests for the dashboard data builder + live-refresh split (web/build.py)."""
+
 from __future__ import annotations
 
 import json
@@ -128,8 +129,14 @@ def test_gerencial_historic_survives_grounding_log_rotation(tmp_cfg: Config, mon
     now = datetime.now(UTC).isoformat(timespec="seconds")
     (state_dir / "grounding.log").write_text(
         json.dumps(
-            {"ts": now, "session_id": "s", "turn": 1, "recall_id": "r0000001",
-             "used_score": 0.9, "method": "lexical"}
+            {
+                "ts": now,
+                "session_id": "s",
+                "turn": 1,
+                "recall_id": "r0000001",
+                "used_score": 0.9,
+                "method": "lexical",
+            }
         )
         + "\n",
         encoding="utf-8",

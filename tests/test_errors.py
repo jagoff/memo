@@ -7,13 +7,16 @@ import pytest
 from memo import errors
 
 
-@pytest.mark.parametrize("cls", [
-    errors.NotFoundError,
-    errors.ValidationError,
-    errors.StorageError,
-    errors.AmbiguousIdError,
-    errors.WriteRefused,
-])
+@pytest.mark.parametrize(
+    "cls",
+    [
+        errors.NotFoundError,
+        errors.ValidationError,
+        errors.StorageError,
+        errors.AmbiguousIdError,
+        errors.WriteRefused,
+    ],
+)
 def test_all_errors_subclass_memoerror(cls: type) -> None:
     assert issubclass(cls, errors.MemoError)
 
@@ -35,6 +38,7 @@ def test_memoerror_does_not_shadow_builtin_memoryerror() -> None:
 def test_memory_reexports_match() -> None:
     # back-compat: the names importable from memo.memory are the same objects
     from memo import memory
+
     assert memory.MemoError is errors.MemoError
     assert memory.AmbiguousIdError is errors.AmbiguousIdError
     assert memory.WriteRefused is errors.WriteRefused

@@ -79,7 +79,11 @@ def test_logs_recall_renders_bail_reason(tmp_path):
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True)
     append_recall_log(
-        state_dir, prompt="", hits=[], via="bail", reason="empty stdin",
+        state_dir,
+        prompt="",
+        hits=[],
+        via="bail",
+        reason="empty stdin",
     )
 
     result = _run(
@@ -92,7 +96,8 @@ def test_logs_recall_renders_bail_reason(tmp_path):
     )
     assert result.exit_code == 0, result.output
     import re
-    stripped = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+
+    stripped = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     assert "bail" in stripped
     assert "empty" in stripped
 
@@ -100,7 +105,11 @@ def test_logs_recall_renders_bail_reason(tmp_path):
 def test_append_recall_log_persists_reason_and_error(tmp_path):
     state_dir = tmp_path / "state"
     append_recall_log(
-        state_dir, prompt="hi", hits=[], via="daemon_error", error="ConnectionRefused",
+        state_dir,
+        prompt="hi",
+        hits=[],
+        via="daemon_error",
+        error="ConnectionRefused",
     )
     log_path = recall_log_path(state_dir)
     line = log_path.read_text(encoding="utf-8").strip().splitlines()[-1]
@@ -127,7 +136,10 @@ def test_history_error_count_increments_on_failure(tmp_path):
 
     h.log_save(ts="2026-05-27T00:00:00Z", record_id="abc", title="t", type_="memo")
     h.log_update(
-        ts="2026-05-27T00:00:00Z", record_id="abc", title="t", type_="memo",
+        ts="2026-05-27T00:00:00Z",
+        record_id="abc",
+        title="t",
+        type_="memo",
         delta={"title": ("a", "b")},
     )
     h.log_delete(ts="2026-05-27T00:00:00Z", record_id="abc", title="t", type_="memo")

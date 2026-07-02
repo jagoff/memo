@@ -30,8 +30,11 @@ def test_consult_breakdown_groups_and_flags_silent(tmp_path: Path) -> None:
     )
     dashboard.append_recall_log(tmp_path, prompt="q2", hits=[], via="bail", reason="short")
     dashboard.append_recall_log(
-        tmp_path, prompt="q3", hits=[{"id": "b" * 8, "score": 0.7, "title": "t2"}],
-        via="mcp:search", source="synapse",
+        tmp_path,
+        prompt="q3",
+        hits=[{"id": "b" * 8, "score": 0.7, "title": "t2"}],
+        via="mcp:search",
+        source="synapse",
     )
 
     b = dashboard.consult_breakdown(tmp_path)
@@ -88,7 +91,11 @@ def test_log_consult_explicit_source_overrides_env(tmp_path: Path, monkeypatch) 
     fake = SimpleNamespace(cfg=SimpleNamespace(state_dir=tmp_path))
     _log_consult(
         fake,  # type: ignore[arg-type]
-        tool="ask", query="q", hits=[], t0_ms=0, source="synapse",
+        tool="ask",
+        query="q",
+        hits=[],
+        t0_ms=0,
+        source="synapse",
     )
     rows = dashboard.read_recall_log(tmp_path, limit=5)
     assert rows and rows[0]["source"] == "synapse"

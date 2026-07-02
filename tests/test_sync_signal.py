@@ -96,8 +96,12 @@ def test_import_access_takes_max_count(store: VecStore, tmp_path: Path):
             }
         )
     )
-    (sig / "memory_health.json").write_text(json.dumps({"schema": "memo.sync.signal.v1", "rows": []}))
-    (sig / "source_feedback.json").write_text(json.dumps({"schema": "memo.sync.signal.v1", "rows": []}))
+    (sig / "memory_health.json").write_text(
+        json.dumps({"schema": "memo.sync.signal.v1", "rows": []})
+    )
+    (sig / "source_feedback.json").write_text(
+        json.dumps({"schema": "memo.sync.signal.v1", "rows": []})
+    )
 
     import_signal(store, sig)
 
@@ -115,12 +119,18 @@ def test_import_access_keeps_local_when_higher(store: VecStore, tmp_path: Path):
         json.dumps(
             {
                 "schema": "memo.sync.signal.v1",
-                "rows": [{"id": "a", "access_count": 2, "last_accessed": "2025-01-01T00:00:00+00:00"}],
+                "rows": [
+                    {"id": "a", "access_count": 2, "last_accessed": "2025-01-01T00:00:00+00:00"}
+                ],
             }
         )
     )
-    (sig / "memory_health.json").write_text(json.dumps({"schema": "memo.sync.signal.v1", "rows": []}))
-    (sig / "source_feedback.json").write_text(json.dumps({"schema": "memo.sync.signal.v1", "rows": []}))
+    (sig / "memory_health.json").write_text(
+        json.dumps({"schema": "memo.sync.signal.v1", "rows": []})
+    )
+    (sig / "source_feedback.json").write_text(
+        json.dumps({"schema": "memo.sync.signal.v1", "rows": []})
+    )
 
     import_signal(store, sig)
 
@@ -145,13 +155,25 @@ def test_import_health_keeps_newer(store: VecStore, tmp_path: Path):
             {
                 "schema": "memo.sync.signal.v1",
                 "rows": [
-                    {"id": "a", "confidence": 0.9, "roi_score": 1.3, "updated_at": "2026-06-01T00:00:00+00:00"},
-                    {"id": "b", "confidence": 0.7, "roi_score": 1.0, "updated_at": "2026-06-01T00:00:00+00:00"},
+                    {
+                        "id": "a",
+                        "confidence": 0.9,
+                        "roi_score": 1.3,
+                        "updated_at": "2026-06-01T00:00:00+00:00",
+                    },
+                    {
+                        "id": "b",
+                        "confidence": 0.7,
+                        "roi_score": 1.0,
+                        "updated_at": "2026-06-01T00:00:00+00:00",
+                    },
                 ],
             }
         )
     )
-    (sig / "source_feedback.json").write_text(json.dumps({"schema": "memo.sync.signal.v1", "rows": []}))
+    (sig / "source_feedback.json").write_text(
+        json.dumps({"schema": "memo.sync.signal.v1", "rows": []})
+    )
 
     import_signal(store, sig)
 
@@ -173,11 +195,20 @@ def test_import_health_keeps_local_when_newer(store: VecStore, tmp_path: Path):
         json.dumps(
             {
                 "schema": "memo.sync.signal.v1",
-                "rows": [{"id": "a", "confidence": 0.2, "roi_score": 0.2, "updated_at": "2026-01-01T00:00:00+00:00"}],
+                "rows": [
+                    {
+                        "id": "a",
+                        "confidence": 0.2,
+                        "roi_score": 0.2,
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                    }
+                ],
             }
         )
     )
-    (sig / "source_feedback.json").write_text(json.dumps({"schema": "memo.sync.signal.v1", "rows": []}))
+    (sig / "source_feedback.json").write_text(
+        json.dumps({"schema": "memo.sync.signal.v1", "rows": []})
+    )
 
     import_signal(store, sig)
 
@@ -192,14 +223,30 @@ def test_import_feedback_union_by_id(store: VecStore, tmp_path: Path):
     sig = tmp_path / "signal"
     sig.mkdir()
     (sig / "access.json").write_text(json.dumps({"schema": "memo.sync.signal.v1", "rows": []}))
-    (sig / "memory_health.json").write_text(json.dumps({"schema": "memo.sync.signal.v1", "rows": []}))
+    (sig / "memory_health.json").write_text(
+        json.dumps({"schema": "memo.sync.signal.v1", "rows": []})
+    )
     (sig / "source_feedback.json").write_text(
         json.dumps(
             {
                 "schema": "memo.sync.signal.v1",
                 "rows": [
-                    {"id": "f1", "source_id": "a", "query_text": "q", "rating": 1, "created_at": "2026-01-01T00:00:00+00:00", "extra_json": None},
-                    {"id": "f2", "source_id": "b", "query_text": "q", "rating": -1, "created_at": "2026-02-01T00:00:00+00:00", "extra_json": None},
+                    {
+                        "id": "f1",
+                        "source_id": "a",
+                        "query_text": "q",
+                        "rating": 1,
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "extra_json": None,
+                    },
+                    {
+                        "id": "f2",
+                        "source_id": "b",
+                        "query_text": "q",
+                        "rating": -1,
+                        "created_at": "2026-02-01T00:00:00+00:00",
+                        "extra_json": None,
+                    },
                 ],
             }
         )

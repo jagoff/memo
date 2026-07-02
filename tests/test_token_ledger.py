@@ -61,8 +61,13 @@ def _historic_grounded(ledger: dict) -> int:
 def test_roll_up_persists_grounded_counts(tmp_path: Path) -> None:
     for ts in ("2026-06-10T12:00:00+00:00", "2026-06-10T13:00:00+00:00"):
         dashboard.append_grounding_log(
-            tmp_path, session_id="s", turn=1, recall_id="a" * 8,
-            used_score=0.9, method="lexical", answer_len=800,
+            tmp_path,
+            session_id="s",
+            turn=1,
+            recall_id="a" * 8,
+            used_score=0.9,
+            method="lexical",
+            answer_len=800,
         )
         _ = ts  # ts not used by append helper; rows share its own now-stamp
     ledger = token_ledger.roll_up(tmp_path)

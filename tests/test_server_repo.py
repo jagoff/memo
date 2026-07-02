@@ -1,4 +1,5 @@
 """Tests for server_repo MCP tool registration."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -19,6 +20,7 @@ def _make_server_and_tools():
         def wrapper(fn):
             tools[fn.__name__] = fn
             return fn
+
         return wrapper
 
     server.tool = tool_decorator

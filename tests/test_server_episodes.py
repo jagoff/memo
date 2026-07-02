@@ -1,4 +1,5 @@
 """Tests for server_episodes MCP tool registration."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -60,9 +61,7 @@ def test_register_exposes_exactly_one_tool(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    assert {"memo_episodes_search"} == set(tools), (
-        f"Unexpected tools registered: {set(tools)}"
-    )
+    assert {"memo_episodes_search"} == set(tools), f"Unexpected tools registered: {set(tools)}"
 
 
 def test_memo_episodes_search_is_registered(tmp_cfg) -> None:
@@ -229,10 +228,7 @@ def test_memo_episodes_search_multiple_results_preserved(tmp_cfg) -> None:
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
 
-    candidates = [
-        _stub_candidate(session_id=f"sess-{i}", score=float(i) / 10)
-        for i in range(5)
-    ]
+    candidates = [_stub_candidate(session_id=f"sess-{i}", score=float(i) / 10) for i in range(5)]
 
     server, tools = _make_server_and_tools()
     register(server, mem)

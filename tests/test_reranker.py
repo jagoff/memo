@@ -34,9 +34,16 @@ if TYPE_CHECKING:
 
 def _rec(id_: str, title: str, body: str = "") -> MemoryRecord:
     return MemoryRecord(
-        id=id_, path=f"x/{id_}.md", title=title, type="note",
-        tags=[], created="2026-05-07", updated="2026-05-07",
-        body=body, extra={}, score=None,
+        id=id_,
+        path=f"x/{id_}.md",
+        title=title,
+        type="note",
+        tags=[],
+        created="2026-05-07",
+        updated="2026-05-07",
+        body=body,
+        extra={},
+        score=None,
     )
 
 
@@ -79,7 +86,8 @@ def test_rerank_top_n_truncates_after_sort(monkeypatch):
 
     scores = {"a": 0.9, "b": 0.5, "c": 0.1}
     monkeypatch.setattr(
-        MLXReranker, "score",
+        MLXReranker,
+        "score",
         lambda self, q, d: scores.get(d.split("\n")[0], 0.0),
     )
     monkeypatch.setattr(MLXReranker, "_ensure_loaded", lambda self: None)
@@ -189,7 +197,10 @@ def test_reranker_revision_downloads_pinned_snapshot(monkeypatch):
 
 
 def test_memory_ensure_reranker_rejects_missing_local_model_path(tmp_path, monkeypatch):
-    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs])
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
     cfg = Config(
         data_dir=tmp_path / "data",
         state_dir=tmp_path / "state",
@@ -215,11 +226,15 @@ def test_rerank_hits_logs_score_failures(caplog):
             raise RuntimeError("score boom")
 
     class _Memory:
-        cfg = type("Cfg", (), {
-            "reranker_enabled": True,
-            "reranker_model": "stub-reranker",
-            "reranker_revision": None,
-        })()
+        cfg = type(
+            "Cfg",
+            (),
+            {
+                "reranker_enabled": True,
+                "reranker_model": "stub-reranker",
+                "reranker_revision": None,
+            },
+        )()
 
         def _ensure_reranker(self):
             return _FailingReranker()

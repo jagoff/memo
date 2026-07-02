@@ -1,4 +1,5 @@
 """Tests for server_graph MCP tool registration (memo.server_graph domain)."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -178,7 +179,9 @@ def test_memo_graph_communities_returns_list_of_dicts(tmp_cfg) -> None:
 
     comms = [
         Community(id=0, entities=["alpha", "beta"], size=2, representative_entity="alpha"),
-        Community(id=1, entities=["gamma", "delta", "epsilon"], size=3, representative_entity="gamma"),
+        Community(
+            id=1, entities=["gamma", "delta", "epsilon"], size=3, representative_entity="gamma"
+        ),
     ]
     mem.navigator.detect_communities.return_value = comms
 
@@ -295,7 +298,10 @@ def test_memo_graph_export_json_format(tmp_cfg) -> None:
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
 
-    json_data = {"nodes": [{"id": "alpha"}, {"id": "beta"}], "edges": [{"source": "alpha", "target": "beta"}]}
+    json_data = {
+        "nodes": [{"id": "alpha"}, {"id": "beta"}],
+        "edges": [{"source": "alpha", "target": "beta"}],
+    }
     mem.navigator.export_json.return_value = json_data
 
     server, tools = _make_server_and_tools()

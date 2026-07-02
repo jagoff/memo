@@ -143,9 +143,7 @@ def test_repair_repoints_bare_memo_mcp_launch_command(tmp_path: Path) -> None:
 
     assert len(repairs) == 1
     assert repairs[0]["status"] == "repaired"
-    assert cfg.read_text(encoding="utf-8") == (
-        f'[mcp_servers.memo]\ncommand = "{shim}/memo-mcp"\n'
-    )
+    assert cfg.read_text(encoding="utf-8") == (f'[mcp_servers.memo]\ncommand = "{shim}/memo-mcp"\n')
 
 
 def test_repair_repoints_bare_memo_mcp_command_array(tmp_path: Path) -> None:

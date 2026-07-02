@@ -14,6 +14,7 @@ from memo.chunker import DEFAULT_TARGET_CHARS
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _long_body(n_sections: int = 3, words_per_section: int = 300) -> str:
     """Build a markdown body long enough to trigger chunking (> DEFAULT_TARGET_CHARS)."""
     sections = []
@@ -103,7 +104,9 @@ def test_reindex_chunk_records_are_reference_type(mock_memory, monkeypatch):
     for cid in chunk_ids:
         row = mock_memory.store.get(cid)
         assert row is not None
-        assert row["type"] == "reference", f"chunk {cid} has type={row['type']!r}, expected 'reference'"
+        assert row["type"] == "reference", (
+            f"chunk {cid} has type={row['type']!r}, expected 'reference'"
+        )
 
 
 def test_reindex_chunk_extra_fields(mock_memory, monkeypatch):

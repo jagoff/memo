@@ -5,6 +5,7 @@ These tests focus on CLI-level degradation paths: what happens when there is
 no git remote, when the machine lock is held by a concurrent session, and when
 the ``gh`` CLI is absent on a fresh machine.
 """
+
 from __future__ import annotations
 
 import fcntl

@@ -97,9 +97,7 @@ def echo_socket(tmp_path: Path) -> Iterator[tuple[Path, dict]]:
 
 def test_send_request_parses_dict(echo_socket: tuple[Path, dict]) -> None:
     sock_path, captured = echo_socket
-    captured["reply"] = json.dumps(
-        {"vector": [0.1, 0.2], "dim": 2, "dims": 2, "model": "x"}
-    )
+    captured["reply"] = json.dumps({"vector": [0.1, 0.2], "dim": 2, "dims": 2, "model": "x"})
     resp = ep.send_request(sock_path, {"op": "embed_query", "text": "q"}, timeout=2.0)
     assert resp == {"vector": [0.1, 0.2], "dim": 2, "dims": 2, "model": "x"}
     assert captured["request"] == {"op": "embed_query", "text": "q"}

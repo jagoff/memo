@@ -49,7 +49,11 @@ def test_set_confidence_batch_only_lowers(store: VecStore):
 
 def test_upsert_and_get(store: VecStore):
     store.upsert(
-        id_="abc", path="memory/x.md", title="X", type_="note", tags=["a", "b"],
+        id_="abc",
+        path="memory/x.md",
+        title="X",
+        type_="note",
+        tags=["a", "b"],
         created="2026-05-06T19:00:00-03:00",
         updated="2026-05-06T19:00:00-03:00",
         body_hash="deadbeef",
@@ -63,16 +67,26 @@ def test_upsert_and_get(store: VecStore):
 
 def test_upsert_replaces_on_same_id(store: VecStore):
     store.upsert(
-        id_="abc", path="memory/x.md", title="V1", type_="note", tags=[],
+        id_="abc",
+        path="memory/x.md",
+        title="V1",
+        type_="note",
+        tags=[],
         created="2026-05-06T19:00:00-03:00",
         updated="2026-05-06T19:00:00-03:00",
-        body_hash="h1", embedding=_emb(1, 0, 0, 0),
+        body_hash="h1",
+        embedding=_emb(1, 0, 0, 0),
     )
     store.upsert(
-        id_="abc", path="memory/x.md", title="V2", type_="note", tags=["new"],
+        id_="abc",
+        path="memory/x.md",
+        title="V2",
+        type_="note",
+        tags=["new"],
         created="2026-05-06T19:00:00-03:00",
         updated="2026-05-06T19:01:00-03:00",
-        body_hash="h2", embedding=_emb(0, 1, 0, 0),
+        body_hash="h2",
+        embedding=_emb(0, 1, 0, 0),
     )
     got = store.get("abc")
     assert got is not None
@@ -83,16 +97,37 @@ def test_upsert_replaces_on_same_id(store: VecStore):
 
 def test_search_orders_by_cosine(store: VecStore):
     store.upsert(
-        id_="x", path="memory/x.md", title="x", type_="note", tags=[],
-        created="t", updated="t", body_hash="h", embedding=_emb(1, 0, 0, 0),
+        id_="x",
+        path="memory/x.md",
+        title="x",
+        type_="note",
+        tags=[],
+        created="t",
+        updated="t",
+        body_hash="h",
+        embedding=_emb(1, 0, 0, 0),
     )
     store.upsert(
-        id_="y", path="memory/y.md", title="y", type_="note", tags=[],
-        created="t", updated="t", body_hash="h", embedding=_emb(0, 1, 0, 0),
+        id_="y",
+        path="memory/y.md",
+        title="y",
+        type_="note",
+        tags=[],
+        created="t",
+        updated="t",
+        body_hash="h",
+        embedding=_emb(0, 1, 0, 0),
     )
     store.upsert(
-        id_="z", path="memory/z.md", title="z", type_="note", tags=[],
-        created="t", updated="t", body_hash="h", embedding=_emb(0.9, 0.1, 0, 0),
+        id_="z",
+        path="memory/z.md",
+        title="z",
+        type_="note",
+        tags=[],
+        created="t",
+        updated="t",
+        body_hash="h",
+        embedding=_emb(0.9, 0.1, 0, 0),
     )
     hits = store.search(_emb(1, 0, 0, 0), limit=3)
     ids = [h["id"] for h in hits]
@@ -106,12 +141,26 @@ def test_search_orders_by_cosine(store: VecStore):
 
 def test_search_filters_by_type(store: VecStore):
     store.upsert(
-        id_="d1", path="memory/d1.md", title="d1", type_="decision", tags=[],
-        created="t", updated="t", body_hash="h", embedding=_emb(1, 0, 0, 0),
+        id_="d1",
+        path="memory/d1.md",
+        title="d1",
+        type_="decision",
+        tags=[],
+        created="t",
+        updated="t",
+        body_hash="h",
+        embedding=_emb(1, 0, 0, 0),
     )
     store.upsert(
-        id_="n1", path="memory/n1.md", title="n1", type_="note", tags=[],
-        created="t", updated="t", body_hash="h", embedding=_emb(1, 0, 0, 0),
+        id_="n1",
+        path="memory/n1.md",
+        title="n1",
+        type_="note",
+        tags=[],
+        created="t",
+        updated="t",
+        body_hash="h",
+        embedding=_emb(1, 0, 0, 0),
     )
     hits = store.search(_emb(1, 0, 0, 0), limit=10, type_="decision")
     assert [h["id"] for h in hits] == ["d1"]
@@ -131,8 +180,15 @@ def test_search_exclude_types_multi_value(store: VecStore):
         ("f1", "fact"),
     ]:
         store.upsert(
-            id_=id_, path=f"memory/{id_}.md", title=id_, type_=type_, tags=[],
-            created="t", updated="t", body_hash="h", embedding=_emb(1, 0, 0, 0),
+            id_=id_,
+            path=f"memory/{id_}.md",
+            title=id_,
+            type_=type_,
+            tags=[],
+            created="t",
+            updated="t",
+            body_hash="h",
+            embedding=_emb(1, 0, 0, 0),
         )
     hits = store.search(_emb(1, 0, 0, 0), limit=10, exclude_types={"decision", "reference"})
     hit_types = {h["type"] for h in hits}
@@ -145,8 +201,15 @@ def test_search_exclude_types_multi_value(store: VecStore):
 
 def test_delete_removes_from_both_tables(store: VecStore):
     store.upsert(
-        id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
-        created="t", updated="t", body_hash="h", embedding=_emb(1, 0, 0, 0),
+        id_="abc",
+        path="memory/x.md",
+        title="X",
+        type_="note",
+        tags=[],
+        created="t",
+        updated="t",
+        body_hash="h",
+        embedding=_emb(1, 0, 0, 0),
     )
     assert store.delete("abc") is True
     assert store.get("abc") is None
@@ -199,8 +262,14 @@ def test_get_fts_body_by_path(store: VecStore):
 def test_dim_mismatch_raises(store: VecStore):
     with pytest.raises(ValueError, match="dimension mismatch"):
         store.upsert(
-            id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
-            created="t", updated="t", body_hash="h",
+            id_="abc",
+            path="memory/x.md",
+            title="X",
+            type_="note",
+            tags=[],
+            created="t",
+            updated="t",
+            body_hash="h",
             embedding=[1.0, 0.0],  # 2-dim, store expects 4
         )
 
@@ -216,8 +285,14 @@ def test_unit_norm_wrong_dims_still_rejected_at_write(store: VecStore):
     assert abs(sum(x * x for x in unit_2d) ** 0.5 - 1.0) < 1e-9
     with pytest.raises(ValueError) as excinfo:
         store.upsert(
-            id_="abc", path="memory/x.md", title="X", type_="note", tags=[],
-            created="t", updated="t", body_hash="h",
+            id_="abc",
+            path="memory/x.md",
+            title="X",
+            type_="note",
+            tags=[],
+            created="t",
+            updated="t",
+            body_hash="h",
             embedding=unit_2d,
         )
     msg = str(excinfo.value)
@@ -261,8 +336,15 @@ def test_existing_schema_init_does_not_need_writer_lock(tmp_path: Path):
 def test_list_recent_orders_by_updated_desc(store: VecStore):
     for i, ts in enumerate(["2026-05-01", "2026-05-03", "2026-05-02"]):
         store.upsert(
-            id_=f"id-{i}", path=f"memory/n{i}.md", title=f"n{i}", type_="note", tags=[],
-            created=ts, updated=ts, body_hash="h", embedding=_emb(1, 0, 0, 0),
+            id_=f"id-{i}",
+            path=f"memory/n{i}.md",
+            title=f"n{i}",
+            type_="note",
+            tags=[],
+            created=ts,
+            updated=ts,
+            body_hash="h",
+            embedding=_emb(1, 0, 0, 0),
         )
     rows = store.list_recent(limit=10)
     assert [r["title"] for r in rows] == ["n1", "n2", "n0"]
@@ -363,9 +445,15 @@ def test_concurrent_writes_and_reads_do_not_collide(store: VecStore):
             barrier.wait()  # maximise overlap
             for i in range(10):
                 store.upsert(
-                    id_=f"t{n}-{i}", path=f"memory/t{n}-{i}.md", title=f"t{n}-{i}",
-                    type_="note", tags=[], created="t", updated="t",
-                    body_hash="h", embedding=_emb(1, n % 4, i % 4, 0),
+                    id_=f"t{n}-{i}",
+                    path=f"memory/t{n}-{i}.md",
+                    title=f"t{n}-{i}",
+                    type_="note",
+                    tags=[],
+                    created="t",
+                    updated="t",
+                    body_hash="h",
+                    embedding=_emb(1, n % 4, i % 4, 0),
                 )
                 store.search(_emb(1, 0, 0, 0), limit=5)
             with conn_ids_lock:
@@ -450,17 +538,15 @@ def _legacy_vec_db(path: Path) -> None:
         "CREATE VIRTUAL TABLE source_feedback_vec USING vec0("
         "feedback_id TEXT PRIMARY KEY, query_emb FLOAT[4] distance_metric=cosine)"
     )
+    conn.execute("INSERT INTO meta VALUES ('m1','/p1','T1','decision','[]','t','t','h',NULL)")
+    conn.execute("INSERT INTO meta VALUES ('m2','/p2','T2','reference','[]','t','t','h',NULL)")
     conn.execute(
-        "INSERT INTO meta VALUES ('m1','/p1','T1','decision','[]','t','t','h',NULL)"
+        "INSERT INTO vec (id, embedding) VALUES (?, ?)", ("m1", serialize_float32([1.0, 0, 0, 0]))
     )
     conn.execute(
-        "INSERT INTO meta VALUES ('m2','/p2','T2','reference','[]','t','t','h',NULL)"
+        "INSERT INTO vec (id, embedding) VALUES (?, ?)", ("m2", serialize_float32([0, 1.0, 0, 0]))
     )
-    conn.execute("INSERT INTO vec (id, embedding) VALUES (?, ?)", ("m1", serialize_float32([1.0, 0, 0, 0])))
-    conn.execute("INSERT INTO vec (id, embedding) VALUES (?, ?)", ("m2", serialize_float32([0, 1.0, 0, 0])))
-    conn.execute(
-        "INSERT INTO source_feedback VALUES ('f1','m1','why',1,'t',NULL)"
-    )
+    conn.execute("INSERT INTO source_feedback VALUES ('f1','m1','why',1,'t',NULL)")
     conn.execute(
         "INSERT INTO source_feedback_vec (feedback_id, query_emb) VALUES (?, ?)",
         ("f1", serialize_float32([1.0, 0, 0, 0])),
@@ -545,9 +631,7 @@ def test_embedder_version_dims_mismatch_raises(tmp_path: Path):
     s = VecStore(db, dims=8, embedder_model="vendor/Model-A")
     # Overwrite stored dims to simulate an old DB built with a different dims
     with s._conn:
-        s._conn.execute(
-            "UPDATE schema_meta SET value = '4' WHERE key = 'embedder_dims'"
-        )
+        s._conn.execute("UPDATE schema_meta SET value = '4' WHERE key = 'embedder_dims'")
     s.close()
 
     # Reopen with same vec dims (so _validate_vec_dims is happy) but schema_meta disagrees

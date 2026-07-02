@@ -666,8 +666,10 @@ def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path, monke
     sid = "test-sid-001"
     checkpoint(state, session_id=sid, cwd=str(tmp_path), transcript_path=str(transcript))
 
-    with patch("memo.capture.run_capture_incremental") as mock_cap, \
-         patch("memo.cli_capture._write_capture_notification"):
+    with (
+        patch("memo.capture.run_capture_incremental") as mock_cap,
+        patch("memo.cli_capture._write_capture_notification"),
+    ):
         mock_cap.return_value = {
             "status": "ok",
             "saved": ["mem-id-1"],
@@ -678,14 +680,18 @@ def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path, monke
             session_group,
             [
                 "idle-maintenance",
-                "--mode", "capture",
-                "--delay-secs", "0",
+                "--mode",
+                "capture",
+                "--delay-secs",
+                "0",
                 "--detached-worker",
             ],
-            input=json.dumps({
-                "session_id": sid,
-                "transcript_path": str(transcript),
-            }),
+            input=json.dumps(
+                {
+                    "session_id": sid,
+                    "transcript_path": str(transcript),
+                }
+            ),
             catch_exceptions=False,
         )
 
@@ -702,7 +708,9 @@ def test_idle_maintenance_capture_mode_does_not_raise_name_error(tmp_path, monke
     assert "captured-notified" in stages, f"stages={stages}"
 
 
-def test_idle_maintenance_reflect_mode_respects_maintain_disable(tmp_path: Path, monkeypatch) -> None:
+def test_idle_maintenance_reflect_mode_respects_maintain_disable(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Regression: MEMO_MAINTAIN_DISABLE=1 must skip reflect mode to prevent OOM.
 
     Without this gate, every idle session spawns a full LLM load after 300s.
@@ -730,8 +738,10 @@ def test_idle_maintenance_reflect_mode_respects_maintain_disable(tmp_path: Path,
             session_group,
             [
                 "idle-maintenance",
-                "--mode", "reflect",
-                "--delay-secs", "0",
+                "--mode",
+                "reflect",
+                "--delay-secs",
+                "0",
                 "--detached-worker",
             ],
             input=json.dumps({"session_id": sid, "transcript_path": str(transcript)}),
@@ -876,9 +886,7 @@ def test_checkpoint_cli_recovers_transcript_via_session_id(tmp_path, monkeypatch
     monkeypatch.setenv("MEMO_STATE_DIR", str(state))
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
-    monkeypatch.setattr(
-        "memo.session.find_transcript_path", lambda sid: str(transcript)
-    )
+    monkeypatch.setattr("memo.session.find_transcript_path", lambda sid: str(transcript))
 
     sid = "test-sid-checkpoint-recovered"
     result = CliRunner().invoke(

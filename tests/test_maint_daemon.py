@@ -73,7 +73,9 @@ def test_client_returns_none_when_daemon_absent(tmp_path: Path) -> None:
 def test_consolidate_in_process_when_flag_off(mock_memory, monkeypatch) -> None:
     monkeypatch.delenv("MEMO_MAINT_VIA_DAEMON", raising=False)
     monkeypatch.setattr(mock_memory, "_consolidate_in_process", lambda **k: [{"via": "in-process"}])
-    monkeypatch.setattr("memo.maint_client.consolidate", lambda **k: [{"via": "SHOULD_NOT_BE_USED"}])
+    monkeypatch.setattr(
+        "memo.maint_client.consolidate", lambda **k: [{"via": "SHOULD_NOT_BE_USED"}]
+    )
     assert mock_memory.consolidate() == [{"via": "in-process"}]
 
 

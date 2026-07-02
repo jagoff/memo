@@ -2,6 +2,7 @@
 
 No real MLX — the embedder is monkeypatched to canned vectors.
 """
+
 from __future__ import annotations
 
 import json
@@ -10,6 +11,7 @@ from pathlib import Path
 from memo import dashboard, grounding, session
 
 # ---------------- data layer: correlation + grounded_rate ----------------
+
 
 def test_append_recall_log_carries_correlation(tmp_path: Path) -> None:
     dashboard.append_recall_log(
@@ -34,22 +36,38 @@ def test_append_recall_log_carries_correlation(tmp_path: Path) -> None:
 def test_grounded_rate_joins_and_excludes_old_rows(tmp_path: Path) -> None:
     # Two correlatable surfacings + one legacy row (no session_id → excluded).
     dashboard.append_recall_log(
-        tmp_path, prompt="q1", via="subprocess", session_id="s", turn=1,
-        hits=[{"id": "mem00001", "score": 0.9, "title": "t", "snippet": "x"},
-              {"id": "mem00002", "score": 0.7, "title": "t", "snippet": "y"}],
+        tmp_path,
+        prompt="q1",
+        via="subprocess",
+        session_id="s",
+        turn=1,
+        hits=[
+            {"id": "mem00001", "score": 0.9, "title": "t", "snippet": "x"},
+            {"id": "mem00002", "score": 0.7, "title": "t", "snippet": "y"},
+        ],
     )
     dashboard.append_recall_log(  # legacy row, no session_id
-        tmp_path, prompt="q0", via="subprocess",
+        tmp_path,
+        prompt="q0",
+        via="subprocess",
         hits=[{"id": "mem99999", "score": 0.6, "title": "t"}],
     )
     # Only mem00001 was grounded in the answer.
     dashboard.append_grounding_log(
-        tmp_path, session_id="s", turn=1, recall_id="mem00001",
-        used_score=0.81, method="lexical",
+        tmp_path,
+        session_id="s",
+        turn=1,
+        recall_id="mem00001",
+        used_score=0.81,
+        method="lexical",
     )
     dashboard.append_grounding_log(
-        tmp_path, session_id="s", turn=1, recall_id="mem00002",
-        used_score=0.10, method="embed",
+        tmp_path,
+        session_id="s",
+        turn=1,
+        recall_id="mem00002",
+        used_score=0.10,
+        method="embed",
     )
     gr = dashboard.grounded_rate(tmp_path)
     # denominator = 2 correlatable surfacings (legacy mem99999 excluded)
@@ -60,13 +78,23 @@ def test_grounded_rate_joins_and_excludes_old_rows(tmp_path: Path) -> None:
 
 def test_recall_health_and_breakdown_expose_grounded(tmp_path: Path) -> None:
     dashboard.append_recall_log(
-        tmp_path, prompt="q", via="subprocess", session_id="s", turn=1,
-        client="claude-code", latency_ms=120,
+        tmp_path,
+        prompt="q",
+        via="subprocess",
+        session_id="s",
+        turn=1,
+        client="claude-code",
+        latency_ms=120,
         hits=[{"id": "mem00001", "score": 0.9, "title": "t", "snippet": "x"}],
     )
     dashboard.append_grounding_log(
-        tmp_path, session_id="s", turn=1, recall_id="mem00001",
-        used_score=0.9, method="lexical", client="claude-code",
+        tmp_path,
+        session_id="s",
+        turn=1,
+        recall_id="mem00001",
+        used_score=0.9,
+        method="lexical",
+        client="claude-code",
     )
     health = dashboard.recall_health(tmp_path)
     assert health["grounded_rate"] == 1.0
@@ -77,6 +105,7 @@ def test_recall_health_and_breakdown_expose_grounded(tmp_path: Path) -> None:
 
 
 # ---------------- correlation stamp ----------------
+
 
 def test_session_stamp_and_next_turn(tmp_path: Path) -> None:
     sid = "sess-xyz"
@@ -90,12 +119,15 @@ def test_session_stamp_and_next_turn(tmp_path: Path) -> None:
 
 # ---------------- grounding.score_turn (stubbed embedder) ----------------
 
+
 def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
     tp = tmp_path / "transcript.jsonl"
     lines = [
         {"type": "user", "message": {"role": "user", "content": "the question"}},
-        {"type": "assistant", "message": {"role": "assistant",
-                                          "content": [{"type": "text", "text": assistant_text}]}},
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+        },
     ]
     tp.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
     return tp
@@ -106,7 +138,11 @@ def _setup_turn(tmp_path: Path, snippet: str, assistant_text: str) -> dict:
     turn = session.next_turn(tmp_path, sid)  # 1
     session.stamp_recall_turn(tmp_path, sid, turn)
     dashboard.append_recall_log(
-        tmp_path, prompt="prompt", via="subprocess", session_id=sid, turn=turn,
+        tmp_path,
+        prompt="prompt",
+        via="subprocess",
+        session_id=sid,
+        turn=turn,
         client="claude-code",
         hits=[{"id": "memaaaa1", "score": 0.8, "title": "t", "snippet": snippet}],
     )
@@ -118,6 +154,7 @@ def test_grounding_lexical_marks_used_without_embedding(tmp_path: Path, monkeypa
     # Answer quotes the snippet's salient tokens → lexical containment high.
     def _boom(*a, **k):  # embedding must NOT be called on the high-lexical path
         raise AssertionError("embedder should not be called when lexical is high")
+
     monkeypatch.setattr("memo.embedder_client.embed", _boom)
     payload = _setup_turn(
         tmp_path,
@@ -283,7 +320,9 @@ def _write_transcript_citing(tmp_path: Path, prefix: str) -> Path:
             "type": "assistant",
             "message": {
                 "role": "assistant",
-                "content": [{"type": "text", "text": f"See memory [{prefix}] for the confirmed decision."}],
+                "content": [
+                    {"type": "text", "text": f"See memory [{prefix}] for the confirmed decision."}
+                ],
             },
         },
     ]
@@ -390,8 +429,8 @@ def test_cited_standalone_for_earlier_turn_memory(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr("memo.embedder_client.embed", lambda texts, state_dir=None: [])
 
     earlier_full_id = "aaa1bbb2cccc3333"
-    earlier_prefix = earlier_full_id[:8]   # "aaa1bbb2"
-    current_full_id = "memcurrent0000bb"   # not cited in the answer
+    earlier_prefix = earlier_full_id[:8]  # "aaa1bbb2"
+    current_full_id = "memcurrent0000bb"  # not cited in the answer
 
     sid = "cited-integ-2"
     # Earlier memory: add to session map before the current turn
@@ -407,7 +446,14 @@ def test_cited_standalone_for_earlier_turn_memory(tmp_path: Path, monkeypatch) -
         session_id=sid,
         turn=turn,
         client="claude-code",
-        hits=[{"id": current_full_id, "score": 0.7, "title": "current", "snippet": "current memory content"}],
+        hits=[
+            {
+                "id": current_full_id,
+                "score": 0.7,
+                "title": "current",
+                "snippet": "current memory content",
+            }
+        ],
     )
     session.mark_ids_recalled(tmp_path, sid, {current_full_id: turn})
 

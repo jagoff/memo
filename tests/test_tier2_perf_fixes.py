@@ -38,10 +38,7 @@ def _make_reranker_memory(tmp_path, monkeypatch):
 
     def _fake_embedding(text: str) -> list[float]:
         digest = hashlib.sha256((text or "").encode("utf-8")).digest()
-        values = [
-            ((digest[i % len(digest)] / 255.0) * 2.0) - 1.0
-            for i in range(dims)
-        ]
+        values = [((digest[i % len(digest)] / 255.0) * 2.0) - 1.0 for i in range(dims)]
         norm = sum(v * v for v in values) ** 0.5
         return [v / norm for v in values]
 

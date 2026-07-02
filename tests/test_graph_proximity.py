@@ -95,8 +95,11 @@ class _IdfGraph(_StubGraph):
         return self._n
 
     def entity_doc_freqs(self, names):
-        return {n.strip().lower(): self._df[n.strip().lower()]
-                for n in names if n.strip().lower() in self._df}
+        return {
+            n.strip().lower(): self._df[n.strip().lower()]
+            for n in names
+            if n.strip().lower() in self._df
+        }
 
 
 def test_idf_downweights_ubiquitous_neighbor():
@@ -115,8 +118,8 @@ def test_idf_downweights_ubiquitous_neighbor():
     boost = graph_boost_factory(g, ["FastAPI"], weight=0.1)
     out = boost([_Hit("a", 0.5), _Hit("b", 0.5)])
     scores = {h.id: h.score for h in out}
-    assert scores["a"] > 0.5      # rare neighbor -> boosted
-    assert scores["b"] == 0.5      # ubiquitous neighbor -> idf 0 -> untouched
+    assert scores["a"] > 0.5  # rare neighbor -> boosted
+    assert scores["b"] == 0.5  # ubiquitous neighbor -> idf 0 -> untouched
     assert out[0].id == "a"
 
 
@@ -130,9 +133,9 @@ def test_min_idf_gate_suppresses_ubiquitous_only_query():
     )
     hits = [_Hit("a", 0.5), _Hit("b", 0.6)]
     gated = graph_boost_factory(g, ["FastAPI"], weight=0.1, min_idf=1.0)
-    assert gated(hits) == hits          # gate fails -> identity
+    assert gated(hits) == hits  # gate fails -> identity
     ungated = graph_boost_factory(g, ["FastAPI"], weight=0.1, min_idf=0.0)
-    assert ungated(hits)[0].id == "a"   # no gate -> rare neighbor still boosts
+    assert ungated(hits)[0].id == "a"  # no gate -> rare neighbor still boosts
 
 
 # --- wiring into _recall_logic (flag-gated, default OFF) ---------------------
@@ -167,14 +170,25 @@ def _prox_mem(tmp_path, monkeypatch):
         embedder_dims=4,
     )
     mem = Memory(cfg)
-    rec_a = mem.save(content="DOCA note about rate limiting and pagination details here", title="DOCA", type_="note")
-    rec_b = mem.save(content="DOCB note about caching layers and retries described here", title="DOCB", type_="note")
+    rec_a = mem.save(
+        content="DOCA note about rate limiting and pagination details here",
+        title="DOCA",
+        type_="note",
+    )
+    rec_b = mem.save(
+        content="DOCB note about caching layers and retries described here",
+        title="DOCB",
+        type_="note",
+    )
     # A co-occurs MLX + Pydantic -> rebuild_edges yields an mlx<->pydantic edge, so
     # an 'MLX' query is 1 hop from A's 'pydantic' entity.
     mem.graph.record_extraction(
         memory_id=rec_a.id,
         memory_date="2026-01-01",
-        entities=[{"name": "MLX", "type": "technology"}, {"name": "Pydantic", "type": "technology"}],
+        entities=[
+            {"name": "MLX", "type": "technology"},
+            {"name": "Pydantic", "type": "technology"},
+        ],
         extracted_at="2026-01-01T00:00:00Z",
     )
     mem.graph.record_extraction(
@@ -204,7 +218,9 @@ def test_recall_flag_off_leaves_ranking_unchanged(tmp_path, monkeypatch):
     _common_env(monkeypatch)
     monkeypatch.delenv("MEMO_RECALL_GRAPH_PROXIMITY", raising=False)
     mem, cfg, a_id, b_id = _prox_mem(tmp_path, monkeypatch)
-    context, _cb = _recall_logic("how do I configure MLX here for the qzz thing", cwd=None, mem=mem, cfg=cfg)
+    context, _cb = _recall_logic(
+        "how do I configure MLX here for the qzz thing", cwd=None, mem=mem, cfg=cfg
+    )
     # Default OFF: vec ranking stands, so B (cosine 0.8) renders before A (0.6).
     assert context.index(b_id[:8]) < context.index(a_id[:8])
     mem.close()
@@ -217,7 +233,9 @@ def test_recall_flag_on_reorders_graph_proximal_up(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMO_RECALL_GRAPH_PROXIMITY", "1")
     monkeypatch.setenv("MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT", "0.5")
     mem, cfg, a_id, b_id = _prox_mem(tmp_path, monkeypatch)
-    context, _cb = _recall_logic("how do I configure MLX here for the qzz thing", cwd=None, mem=mem, cfg=cfg)
+    context, _cb = _recall_logic(
+        "how do I configure MLX here for the qzz thing", cwd=None, mem=mem, cfg=cfg
+    )
     # Flag ON: A is 1 hop from the 'MLX' query entity -> boosted above B.
     assert context.index(a_id[:8]) < context.index(b_id[:8])
     mem.close()
@@ -241,7 +259,7 @@ def test_extract_query_entities_matches_graph_vocabulary_lowercase() -> None:
     # Natural lowercase prompt: the proper-noun regex extracts nothing useful.
     q = [e.lower() for e in extract_query_entities("how does the recall hook budget work", g)]
     assert "recall hook" in q  # bigram matched from graph vocabulary
-    assert "budget" in q       # unigram matched from graph vocabulary
+    assert "budget" in q  # unigram matched from graph vocabulary
 
 
 def test_extract_query_entities_keeps_regex_proper_nouns() -> None:

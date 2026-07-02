@@ -14,9 +14,7 @@ import pytest
 
 from memo.store.tantivy_index import TantivyFTSIndex, _fold_diacritics, _tantivy_available
 
-requires_tantivy = pytest.mark.skipif(
-    not _tantivy_available(), reason="tantivy not installed"
-)
+requires_tantivy = pytest.mark.skipif(not _tantivy_available(), reason="tantivy not installed")
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +213,9 @@ def test_thread_safety_concurrent_upserts(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_to_fts5_when_tantivy_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fallback_to_fts5_when_tantivy_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """When tantivy is patched out, VecStore.search_bm25 uses FTS5."""
     import memo.store.store as store_mod
 

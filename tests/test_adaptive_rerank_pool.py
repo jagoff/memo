@@ -21,6 +21,7 @@ from unittest.mock import patch
 # Helper: build a list of fake vec-hit dicts with controlled scores
 # ---------------------------------------------------------------------------
 
+
 def _vec_hits(scores: list[float]) -> list[dict[str, Any]]:
     return [
         {
@@ -48,6 +49,7 @@ def _stddev(scores: list[float]) -> float:
 # Verify our test data actually has the right variance profile
 # ---------------------------------------------------------------------------
 
+
 def test_high_variance_fixture():
     scores = [0.95, 0.20, 0.85, 0.15, 0.90, 0.10, 0.80, 0.12]
     assert _stddev(scores) > 0.15, "fixture must be high-variance"
@@ -66,6 +68,7 @@ def test_medium_variance_fixture():
 # ---------------------------------------------------------------------------
 # Factory: isolated Memory with reranker_enabled=True and a known rerank_input_k
 # ---------------------------------------------------------------------------
+
 
 def _make_mem(tmp_path, monkeypatch, *, rerank_input_k: int = 20):
     """Build an isolated Memory with reranker_enabled=True and stub embedder."""
@@ -91,10 +94,7 @@ def _make_mem(tmp_path, monkeypatch, *, rerank_input_k: int = 20):
 
     def _fake_embedding(text: str) -> list[float]:
         digest = hashlib.sha256((text or "").encode("utf-8")).digest()
-        values = [
-            ((digest[i % len(digest)] / 255.0) * 2.0) - 1.0
-            for i in range(cfg.embedder_dims)
-        ]
+        values = [((digest[i % len(digest)] / 255.0) * 2.0) - 1.0 for i in range(cfg.embedder_dims)]
         norm = sum(v * v for v in values) ** 0.5
         return [v / norm for v in values]
 
@@ -106,6 +106,7 @@ def _make_mem(tmp_path, monkeypatch, *, rerank_input_k: int = 20):
 # ---------------------------------------------------------------------------
 # Helper: run search() and capture the limit passed to _rrf_fuse
 # ---------------------------------------------------------------------------
+
 
 def _captured_pool(
     tmp_path,
@@ -156,6 +157,7 @@ def _captured_pool(
 # Integration tests
 # ---------------------------------------------------------------------------
 
+
 def test_high_variance_widens_pool(tmp_path, monkeypatch):
     """High-variance scores → pool = min(int(rerank_input_k * 1.5), 200)."""
     scores = [0.95, 0.20, 0.85, 0.15, 0.90, 0.10, 0.80, 0.12]
@@ -172,9 +174,7 @@ def test_low_variance_shrinks_pool(tmp_path, monkeypatch):
     scores = [0.60, 0.61, 0.60, 0.61, 0.60, 0.60, 0.61, 0.60]
     assert _stddev(scores) < 0.05
 
-    pool = _captured_pool(
-        tmp_path, monkeypatch, scores, rerank_input_k=20, search_limit=10
-    )
+    pool = _captured_pool(tmp_path, monkeypatch, scores, rerank_input_k=20, search_limit=10)
 
     # limit=10 → max(10 + 5, 15) = 15
     assert pool == max(10 + 5, 15), f"expected 15, got {pool}"
@@ -195,9 +195,7 @@ def test_adaptive_pool_disabled_by_default(tmp_path, monkeypatch):
     scores = [0.95, 0.20, 0.85, 0.15, 0.90, 0.10]  # high-variance
     assert _stddev(scores) > 0.15
 
-    pool = _captured_pool(
-        tmp_path, monkeypatch, scores, adaptive="0", rerank_input_k=20
-    )
+    pool = _captured_pool(tmp_path, monkeypatch, scores, adaptive="0", rerank_input_k=20)
 
     # Must stay at 20, not widened to 30
     assert pool == 20, f"expected 20 (flag off), got {pool}"
@@ -209,8 +207,6 @@ def test_high_variance_pool_capped_at_200(tmp_path, monkeypatch):
     assert _stddev(scores) > 0.15
 
     # rerank_input_k=150 → 1.5x = 225 → capped at 200
-    pool = _captured_pool(
-        tmp_path, monkeypatch, scores, rerank_input_k=150
-    )
+    pool = _captured_pool(tmp_path, monkeypatch, scores, rerank_input_k=150)
 
     assert pool == 200, f"expected 200 (cap), got {pool}"

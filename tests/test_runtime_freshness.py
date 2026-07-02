@@ -53,16 +53,12 @@ def test_repo_ahead_when_versions_differ(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _make_pkg(repo, "1.3.0", "X = 1\n")
-    out = check_install_freshness(
-        installed_version="1.2.3", installed_pkg_dir=None, repo_root=repo
-    )
+    out = check_install_freshness(installed_version="1.2.3", installed_pkg_dir=None, repo_root=repo)
     assert out["status"] == "repo-ahead"
 
 
 def test_skipped_when_no_repo(tmp_path: Path) -> None:
-    out = check_install_freshness(
-        installed_version="1.2.3", installed_pkg_dir=None, repo_root=None
-    )
+    out = check_install_freshness(installed_version="1.2.3", installed_pkg_dir=None, repo_root=None)
     assert out["status"] == "skipped"
 
 

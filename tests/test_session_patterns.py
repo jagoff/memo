@@ -1,4 +1,5 @@
 """Tests for session-pattern implementations: project detection, memory relations, MCP tools."""
+
 from __future__ import annotations
 
 import os
@@ -27,9 +28,12 @@ def session_mem(tmp_path: Path):
     state.mkdir()
 
     import hashlib
+
     os.environ["MEMO_EMBEDDER_VIA_DAEMON"] = "0"
 
-    cfg = Config(data_dir=data, vault_path=vault, state_dir=state, embedder_dims=4, reranker_enabled=False)
+    cfg = Config(
+        data_dir=data, vault_path=vault, state_dir=state, embedder_dims=4, reranker_enabled=False
+    )
     mem = Memory(cfg)
 
     def stub(inputs):
@@ -49,6 +53,7 @@ def session_mem(tmp_path: Path):
 
 class _MockServer:
     """Captures tool registrations without a real MCP server."""
+
     def __init__(self):
         self._tools = {}
 
@@ -56,10 +61,12 @@ class _MockServer:
         def dec(f):
             self._tools[f.__name__] = f
             return f
+
         return dec
 
 
 # ── 1. Project detection ─────────────────────────────────────────
+
 
 class TestProjectDetection:
     def test_project_from_cwd_returns_string(self):
@@ -79,6 +86,7 @@ class TestProjectDetection:
 
 # ── 2. Tables exist in schema ────────────────────────────────────
 
+
 class TestTablesCreated:
     def test_sessions_table(self, session_mem):
         r = session_mem.store._conn.execute(
@@ -94,6 +102,7 @@ class TestTablesCreated:
 
 
 # ── 3. memory_relations ──────────────────────────────────────────
+
 
 class TestMemoryRelations:
     def test_insert_and_query_relation(self, session_mem):
@@ -133,14 +142,23 @@ class TestMemoryRelations:
 
 # ── 4. MCP tools ────────────────────────────────────────────────
 
+
 class TestMCPSessionTools:
     def test_all_tools_registered(self):
         mock = _MockServer()
         register(mock, None)  # none because tools don't inspect memory during registration
         expected = {
-            "mem_session_start", "mem_session_end", "mem_context", "mem_timeline",
-            "mem_judge", "mem_compare", "mem_suggest_topic_key", "mem_current_project",
-            "mem_review", "mem_doctor", "mem_stats",
+            "mem_session_start",
+            "mem_session_end",
+            "mem_context",
+            "mem_timeline",
+            "mem_judge",
+            "mem_compare",
+            "mem_suggest_topic_key",
+            "mem_current_project",
+            "mem_review",
+            "mem_doctor",
+            "mem_stats",
         }
         registered = set(mock._tools.keys())
         missing = expected - registered
@@ -153,10 +171,17 @@ class TestMCPSessionTools:
         assert "project" in res
         assert "project_source" in res
         assert "project_path" in res
-        assert res["project_source"] in {"config", "git_remote", "git_root", "git_child", "dir_basename"}
+        assert res["project_source"] in {
+            "config",
+            "git_remote",
+            "git_root",
+            "git_child",
+            "dir_basename",
+        }
 
 
 # ── 5. Helper functions ──────────────────────────────────────────
+
 
 class TestHelperFunctions:
     def test_normalize_hash_deterministic(self):

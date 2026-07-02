@@ -151,10 +151,12 @@ def test_get_unknown_prefix_returns_none(mem_with_stub: Memory):
 def test_get_ambiguous_prefix_raises(mem_with_stub: Memory, monkeypatch):
     import uuid
 
-    fixed = iter([
-        uuid.UUID("aaaaaaaa1111000000000000000000ff"),
-        uuid.UUID("aaaaaaaa2222000000000000000000ff"),
-    ])
+    fixed = iter(
+        [
+            uuid.UUID("aaaaaaaa1111000000000000000000ff"),
+            uuid.UUID("aaaaaaaa2222000000000000000000ff"),
+        ]
+    )
     monkeypatch.setattr("memo.memory.uuid.uuid4", lambda: next(fixed))
     mem_with_stub.save(content="a", title="A")
     mem_with_stub.save(content="b", title="B")

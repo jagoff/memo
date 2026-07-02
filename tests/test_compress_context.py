@@ -207,9 +207,7 @@ def test_stats_output_present(tmp_path: Path) -> None:
 
 def test_cli_idempotent(tmp_path: Path) -> None:
     """Running the CLI twice produces the same file."""
-    content = (
-        "# Title\n\n---\n\n- " + "word " * 30 + "\n\n\n\nSome text.  \n"
-    )
+    content = "# Title\n\n---\n\n- " + "word " * 30 + "\n\n\n\nSome text.  \n"
     target = tmp_path / "context.md"
     target.write_text(content, encoding="utf-8")
 

@@ -40,8 +40,8 @@ def test_has_blocking_freeze_returns_first_match():
         {"conflict_id": "skip-1", "freeze_write": False, "lifecycle_state": "detected"},
         {"conflict_id": "skip-2", "freeze_write": True, "lifecycle_state": "resolved"},
         {"conflict_id": "skip-3", "freeze_write": True, "lifecycle_state": "archived"},
-        {"conflict_id": "hit-1",  "freeze_write": True, "lifecycle_state": "acknowledged"},
-        {"conflict_id": "hit-2",  "freeze_write": True, "lifecycle_state": "detected"},
+        {"conflict_id": "hit-1", "freeze_write": True, "lifecycle_state": "acknowledged"},
+        {"conflict_id": "hit-2", "freeze_write": True, "lifecycle_state": "detected"},
     ]
     blocked, conflict = synapse_client.has_blocking_freeze(rows)
     assert blocked is True
@@ -87,7 +87,8 @@ def _sample_prov() -> dict[str, str]:
 def _patch_synapse(monkeypatch, *, available: bool, conflicts: list[dict[str, Any]]):
     monkeypatch.setattr(synapse_client, "is_available", lambda: available)
     monkeypatch.setattr(
-        synapse_client, "list_conflicts",
+        synapse_client,
+        "list_conflicts",
         lambda *args, **kwargs: list(conflicts),
     )
 
@@ -96,13 +97,15 @@ def test_save_refuses_when_synapse_freeze_active(mock_memory, monkeypatch):
     _patch_synapse(
         monkeypatch,
         available=True,
-        conflicts=[{
-            "conflict_id": "C-42",
-            "freeze_write": True,
-            "lifecycle_state": "detected",
-            "summary": "memo says X but memflow says ¬X",
-            "severity": "high",
-        }],
+        conflicts=[
+            {
+                "conflict_id": "C-42",
+                "freeze_write": True,
+                "lifecycle_state": "detected",
+                "summary": "memo says X but memflow says ¬X",
+                "severity": "high",
+            }
+        ],
     )
     with pytest.raises(WriteRefused) as exc_info:
         mock_memory.save(
@@ -131,7 +134,8 @@ def test_save_bypasses_freeze_when_anonymous(mock_memory, monkeypatch):
     called: list[bool] = []
     monkeypatch.setattr(synapse_client, "is_available", lambda: True)
     monkeypatch.setattr(
-        synapse_client, "list_conflicts",
+        synapse_client,
+        "list_conflicts",
         lambda *a, **kw: called.append(True) or [],
     )
     rec = mock_memory.save(
@@ -160,11 +164,13 @@ def test_save_env_knob_enables_freeze_check(mock_memory, monkeypatch):
     _patch_synapse(
         monkeypatch,
         available=True,
-        conflicts=[{
-            "conflict_id": "C-env",
-            "freeze_write": True,
-            "lifecycle_state": "detected",
-        }],
+        conflicts=[
+            {
+                "conflict_id": "C-env",
+                "freeze_write": True,
+                "lifecycle_state": "detected",
+            }
+        ],
     )
     with pytest.raises(WriteRefused):
         mock_memory.save(
@@ -179,11 +185,13 @@ def test_save_explicit_false_overrides_env(mock_memory, monkeypatch):
     _patch_synapse(
         monkeypatch,
         available=True,
-        conflicts=[{
-            "conflict_id": "C-block",
-            "freeze_write": True,
-            "lifecycle_state": "detected",
-        }],
+        conflicts=[
+            {
+                "conflict_id": "C-block",
+                "freeze_write": True,
+                "lifecycle_state": "detected",
+            }
+        ],
     )
     rec = mock_memory.save(
         content="override body",
@@ -314,12 +322,14 @@ def test_mcp_save_returns_structured_refused(tmp_cfg, monkeypatch):
     _patch_synapse(
         monkeypatch,
         available=True,
-        conflicts=[{
-            "conflict_id": "C-mcp",
-            "freeze_write": True,
-            "lifecycle_state": "detected",
-            "summary": "blocking via MCP",
-        }],
+        conflicts=[
+            {
+                "conflict_id": "C-mcp",
+                "freeze_write": True,
+                "lifecycle_state": "detected",
+                "summary": "blocking via MCP",
+            }
+        ],
     )
 
     server = build_server(memory=mem)
@@ -343,35 +353,43 @@ def test_backend_remember_respects_freeze_by_default(mock_memory, monkeypatch):
     _patch_synapse(
         monkeypatch,
         available=True,
-        conflicts=[{
-            "conflict_id": "C-backend",
-            "freeze_write": True,
-            "lifecycle_state": "detected",
-        }],
+        conflicts=[
+            {
+                "conflict_id": "C-backend",
+                "freeze_write": True,
+                "lifecycle_state": "detected",
+            }
+        ],
     )
     backend = MemoSynapseBackend(mock_memory)
     with pytest.raises(WriteRefused):
-        backend.remember({
-            "kind": "decision",
-            "text": "the body",
-            "metadata": _sample_prov(),
-        })
+        backend.remember(
+            {
+                "kind": "decision",
+                "text": "the body",
+                "metadata": _sample_prov(),
+            }
+        )
 
 
 def test_backend_remember_can_opt_out(mock_memory, monkeypatch):
     _patch_synapse(
         monkeypatch,
         available=True,
-        conflicts=[{
-            "conflict_id": "C-backend-2",
-            "freeze_write": True,
-            "lifecycle_state": "detected",
-        }],
+        conflicts=[
+            {
+                "conflict_id": "C-backend-2",
+                "freeze_write": True,
+                "lifecycle_state": "detected",
+            }
+        ],
     )
     backend = MemoSynapseBackend(mock_memory)
-    receipt = backend.remember({
-        "kind": "decision",
-        "text": "the body",
-        "metadata": {**_sample_prov(), "respect_synapse_freeze": False},
-    })
+    receipt = backend.remember(
+        {
+            "kind": "decision",
+            "text": "the body",
+            "metadata": {**_sample_prov(), "respect_synapse_freeze": False},
+        }
+    )
     assert receipt["uri"].startswith("memo://memoria/")

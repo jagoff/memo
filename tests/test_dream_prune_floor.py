@@ -1,4 +1,5 @@
 """Tests for prune_floor_candidates store method and dream pipeline integration."""
+
 from __future__ import annotations
 
 from pathlib import Path

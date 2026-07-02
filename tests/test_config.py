@@ -99,7 +99,7 @@ def test_config_file_loads(monkeypatch, tmp_path: Path):
     """A `~/.config/memo/config.toml` populates fields. Env vars still win."""
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
-        '[storage]\n'
+        "[storage]\n"
         f'data_dir = "{tmp_path / "from-file"}"\n'
         f'vault_path = "{tmp_path / "vault-from-file"}"\n'
     )
@@ -113,10 +113,7 @@ def test_config_file_loads(monkeypatch, tmp_path: Path):
 
 def test_env_overrides_config_file(monkeypatch, tmp_path: Path):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(
-        '[storage]\n'
-        f'data_dir = "{tmp_path / "from-file"}"\n'
-    )
+    cfg_file.write_text(f'[storage]\ndata_dir = "{tmp_path / "from-file"}"\n')
     monkeypatch.setenv("MEMO_CONFIG_FILE", str(cfg_file))
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "from-env"))
     cfg = Config.from_env()
@@ -139,9 +136,7 @@ def _write_index_meta(
     conn = sqlite3.connect(db_path)
     try:
         if model is not None and dims is not None:
-            conn.execute(
-                "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-            )
+            conn.execute("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             conn.executemany(
                 "INSERT INTO schema_meta (key, value) VALUES (?, ?)",
                 [("embedder_model", model), ("embedder_dims", str(dims))],
@@ -168,9 +163,7 @@ def test_from_env_adopts_index_embedder_profile(monkeypatch, tmp_path: Path):
         monkeypatch.delenv(var, raising=False)
 
     db_path = Config.from_env().db_path  # default profile (balanced/1024)
-    _write_index_meta(
-        db_path, model="mlx-community/Qwen3-Embedding-4B-4bit-DWQ", dims=2560
-    )
+    _write_index_meta(db_path, model="mlx-community/Qwen3-Embedding-4B-4bit-DWQ", dims=2560)
 
     cfg = Config.from_env()
     assert cfg.embedder_dims == 2560
@@ -186,9 +179,7 @@ def test_explicit_embedder_env_blocks_index_adoption(monkeypatch, tmp_path: Path
     monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "1024")
 
     db_path = Config.from_env().db_path
-    _write_index_meta(
-        db_path, model="mlx-community/Qwen3-Embedding-4B-4bit-DWQ", dims=2560
-    )
+    _write_index_meta(db_path, model="mlx-community/Qwen3-Embedding-4B-4bit-DWQ", dims=2560)
 
     cfg = Config.from_env()
     assert cfg.embedder_dims == 1024  # pin respected, no adoption
@@ -236,17 +227,13 @@ def test_memories_in_vault_derives_memory_dir(tmp_path: Path):
 
 def test_memories_in_vault_without_vault_falls_back_to_data_dir(tmp_path: Path):
     """The toggle is inert without a vault_path — no crash, no vault path."""
-    cfg = Config(
-        data_dir=tmp_path / "d", state_dir=tmp_path / "s", memories_in_vault=True
-    )
+    cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "s", memories_in_vault=True)
     assert cfg.memory_dir == cfg.data_dir
 
 
 def test_memories_in_vault_default_off(tmp_path: Path):
     """Default keeps existing installs on data_dir even with a vault configured."""
-    cfg = Config(
-        data_dir=tmp_path / "d", state_dir=tmp_path / "s", vault_path=tmp_path / "vault"
-    )
+    cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "s", vault_path=tmp_path / "vault")
     assert cfg.memories_in_vault is False
     assert cfg.memory_dir == cfg.data_dir
 
@@ -310,6 +297,7 @@ def test_ensure_dirs_no_longer_requires_vault_path(tmp_path: Path):
 
 def test_frozen():
     from pydantic import ValidationError
+
     cfg = Config()
     with pytest.raises(ValidationError):
         cfg.embedder_dims = 99  # type: ignore[misc]
@@ -345,9 +333,7 @@ def test_device_id_lost_mint_race_adopts_winner(tmp_path: Path, monkeypatch):
     assert id_path.read_text(encoding="utf-8").strip() == "winner123456"
 
 
-def test_device_id_lost_race_empty_winner_falls_back_transient(
-    tmp_path: Path, monkeypatch, caplog
-):
+def test_device_id_lost_race_empty_winner_falls_back_transient(tmp_path: Path, monkeypatch, caplog):
     """A lost race against an unreadable/empty winner keeps the existing
     transient fallback (never returns '')."""
     import logging

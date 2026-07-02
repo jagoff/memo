@@ -40,7 +40,9 @@ def seeded_old_layout(tmp_path: Path, monkeypatch):
 
 
 def test_migrate_copies_files_and_reindexes(
-    tmp_path: Path, seeded_old_layout, monkeypatch,
+    tmp_path: Path,
+    seeded_old_layout,
+    monkeypatch,
 ):
     cfg, _files = seeded_old_layout
     new_data = tmp_path / "new"
@@ -102,7 +104,9 @@ def test_migrate_refuses_non_empty_destination(tmp_path: Path, seeded_old_layout
         "MEMO_EMBEDDER_MODEL": "stub",
     }
     result = runner.invoke(
-        cli, ["migrate-vault", str(new_data), "--yes"], env=env,
+        cli,
+        ["migrate-vault", str(new_data), "--yes"],
+        env=env,
     )
     assert result.exit_code == 1
     assert "non-empty" in result.output
@@ -120,7 +124,9 @@ def test_migrate_refuses_same_src_and_dst(tmp_path: Path, seeded_old_layout):
         "MEMO_EMBEDDER_MODEL": "stub",
     }
     result = runner.invoke(
-        cli, ["migrate-vault", str(cfg.data_dir), "--yes"], env=env,
+        cli,
+        ["migrate-vault", str(cfg.data_dir), "--yes"],
+        env=env,
     )
     assert result.exit_code == 1
     assert "same" in result.output.lower()
@@ -156,7 +162,9 @@ def test_migrate_preserves_db_and_access_signal(tmp_path: Path, seeded_old_layou
     new_data = tmp_path / "new"
     cfg_file = tmp_path / "memo-config.toml"
     result = CliRunner().invoke(
-        cli, ["migrate-vault", str(new_data), "--yes"], env=_base_env(tmp_path, cfg, cfg_file),
+        cli,
+        ["migrate-vault", str(new_data), "--yes"],
+        env=_base_env(tmp_path, cfg, cfg_file),
     )
     assert result.exit_code == 0, result.output
     assert "removed stale memvec.db" not in result.output
@@ -202,6 +210,7 @@ def test_migrate_rollback_restores_config(tmp_path: Path, seeded_old_layout, mon
     cfg_file = tmp_path / "memo-config.toml"
     # Seed an initial config so there's something to snapshot + restore.
     from memo.setup.config_io import write_config_file
+
     write_config_file(data_dir=cfg.data_dir, path=cfg_file)
     before = cfg_file.read_text(encoding="utf-8")
 
@@ -277,7 +286,17 @@ def test_links_reindex_safe_under_single_db(tmp_path: Path, monkeypatch):
     assert result.exit_code == 0, result.output
     # The DB file (== memvec.db) must still exist with memorias intact.
     assert cfg.db_path.is_file()
-    assert Memory(Config.from_env(**{
-        "data_dir": data, "state_dir": state, "single_db": True, "embedder_dims": 4,
-        "embedder_model": cfg.embedder_model,
-    })).store.count() == 1
+    assert (
+        Memory(
+            Config.from_env(
+                **{
+                    "data_dir": data,
+                    "state_dir": state,
+                    "single_db": True,
+                    "embedder_dims": 4,
+                    "embedder_model": cfg.embedder_model,
+                }
+            )
+        ).store.count()
+        == 1
+    )

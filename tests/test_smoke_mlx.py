@@ -68,9 +68,7 @@ def test_save_and_search_roundtrip(tmp_cfg: Config):
     # Identity query → rec_a top.
     hits = mem.search("qué embedder local usamos en MLX", limit=3)
     assert hits, "search returned zero hits"
-    assert hits[0].id == rec_a.id, (
-        f"top hit was {hits[0].title!r}, expected {rec_a.title!r}"
-    )
+    assert hits[0].id == rec_a.id, f"top hit was {hits[0].title!r}, expected {rec_a.title!r}"
 
     # Off-topic recipe query → rec_b should outrank rec_a.
     hits = mem.search("cómo hago la masa de la pizza", limit=3)

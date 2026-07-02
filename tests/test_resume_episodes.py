@@ -399,7 +399,11 @@ def test_session_preview_repo_delta_and_open_loops(tmp_path: Path) -> None:
     # get_session needs an id ≥4 chars to resolve the snapshot.
     (state_dir / "sessions" / "sess-0001.json").write_text(
         json.dumps(
-            {"session_id": "sess-0001", "cwd": str(repo), "prompt_trail": ["fix the bug", "add tests"]}
+            {
+                "session_id": "sess-0001",
+                "cwd": str(repo),
+                "prompt_trail": ["fix the bug", "add tests"],
+            }
         ),
         encoding="utf-8",
     )

@@ -61,7 +61,9 @@ def test_ping(ingest_daemon: tuple[Path, list]) -> None:
 
 def test_enqueue_runs_job_and_returns_result(ingest_daemon: tuple[Path, list]) -> None:
     state_dir, runs = ingest_daemon
-    job_id = ingest_client.enqueue("repo", {"url": "https://x/y.git", "force": True}, state_dir=state_dir)
+    job_id = ingest_client.enqueue(
+        "repo", {"url": "https://x/y.git", "force": True}, state_dir=state_dir
+    )
     assert job_id is not None
     st = _wait_done(job_id, state_dir=state_dir)
     assert st["state"] == "done"
@@ -136,7 +138,9 @@ def test_repo_index_routes_to_daemon_when_flag_on_and_reachable(mock_memory, mon
     assert fake.calls == []  # never ran in-process
 
 
-def test_repo_index_falls_back_in_process_when_flag_on_but_daemon_down(mock_memory, monkeypatch) -> None:
+def test_repo_index_falls_back_in_process_when_flag_on_but_daemon_down(
+    mock_memory, monkeypatch
+) -> None:
     monkeypatch.setenv("MEMO_INGEST_VIA_DAEMON", "1")
     fake = _patch_corpus(mock_memory, monkeypatch)
     monkeypatch.setattr("memo.ingest_client.enqueue", lambda *a, **k: None)  # daemon unreachable
@@ -175,7 +179,9 @@ def test_serialized_writer_runs_jobs_one_at_a_time(tmp_path: Path) -> None:
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     try:
-        ids = [ingest_client.enqueue("repo", {"url": f"r{i}"}, state_dir=tmp_path) for i in range(4)]
+        ids = [
+            ingest_client.enqueue("repo", {"url": f"r{i}"}, state_dir=tmp_path) for i in range(4)
+        ]
         for jid in ids:
             _wait_done(jid, state_dir=tmp_path)
         assert active["max"] == 1  # never two jobs writing at once

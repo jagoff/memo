@@ -14,7 +14,7 @@ from memo import cache_backend as cb
 
 def test_null_backend_is_inert() -> None:
     nb = cb.NullBackend()
-    assert nb.push(object()) is False           # never claims a write succeeded
+    assert nb.push(object()) is False  # never claims a write succeeded
     assert nb.fetch("anything") == []
     assert nb.has_current("id", "hash") is False
 
@@ -39,7 +39,9 @@ def test_make_backend_memflow_unavailable_is_null(monkeypatch: pytest.MonkeyPatc
     assert isinstance(cb.make_backend("memflow"), cb.NullBackend)
 
 
-def test_make_backend_memflow_available_is_memflow(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_make_backend_memflow_available_is_memflow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     monkeypatch.setattr(cb, "_binary", lambda: "/usr/bin/true")
     monkeypatch.setattr(cb, "_project_root", lambda: tmp_path)
     assert isinstance(cb.make_backend("memflow"), cb.MemflowBackend)

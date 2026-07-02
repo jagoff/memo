@@ -102,7 +102,8 @@ def test_returns_empty_when_packet_is_none(monkeypatch):
 def test_returns_empty_when_packet_has_no_sections(monkeypatch):
     monkeypatch.setattr(synapse_client, "is_available", lambda: True)
     monkeypatch.setattr(
-        synapse_client, "get_packet",
+        synapse_client,
+        "get_packet",
         lambda *a, **kw: {"status": "ready", "present_state": [], "reality_conflicts": []},
     )
     assert briefing_mod.synapse_briefing_lines("/tmp") == []
@@ -167,7 +168,8 @@ def test_snippet_is_clipped(monkeypatch):
 def test_non_dict_rows_are_ignored(monkeypatch):
     monkeypatch.setattr(synapse_client, "is_available", lambda: True)
     monkeypatch.setattr(
-        synapse_client, "get_packet",
+        synapse_client,
+        "get_packet",
         lambda *a, **kw: {
             "status": "partial",
             "trace_id": "t/x",
@@ -186,7 +188,8 @@ def test_legacy_conflict_without_state_treated_as_detected(monkeypatch):
     """Memflow-projected conflicts may omit `lifecycle_state` — show them."""
     monkeypatch.setattr(synapse_client, "is_available", lambda: True)
     monkeypatch.setattr(
-        synapse_client, "get_packet",
+        synapse_client,
+        "get_packet",
         lambda *a, **kw: {
             "status": "ready",
             "trace_id": "t/y",
@@ -261,7 +264,9 @@ def test_mcp_unified_briefing_surfaces_memo_corpus_without_synapse(tmp_cfg, monk
         embedder_dims=4,
     )
     mem = Memory(cfg)
-    mem.save(content="decidí usar el reranker 0.6B por latencia", title="Reranker pick", type_="decision")
+    mem.save(
+        content="decidí usar el reranker 0.6B por latencia", title="Reranker pick", type_="decision"
+    )
 
     server = build_server(memory=mem)
     fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn

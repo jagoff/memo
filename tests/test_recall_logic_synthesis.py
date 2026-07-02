@@ -63,7 +63,9 @@ def _hybrid_mem(tmp_path, monkeypatch):
     def _vec(text: str) -> list[float]:
         return [1.0, 0.0, 0.0, 0.0] if "HYBRIDTARGET" in (text or "") else [0.0, 1.0, 0.0, 0.0]
 
-    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", lambda self, inputs: [_vec(t) for t in inputs])
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed", lambda self, inputs: [_vec(t) for t in inputs]
+    )
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed_query", lambda self, q: _vec(q))
     cfg = Config(
         data_dir=tmp_path / "data",
@@ -86,7 +88,11 @@ def test_hybrid_recall_gate_uses_vec_cosine_not_rrf(tmp_path, monkeypatch):
         title="HYBRIDTARGET decision",
         type_="decision",
     )
-    mem.save(content="algo totalmente distinto sobre otra cosa que no viene al caso aquí", title="otro", type_="note")
+    mem.save(
+        content="algo totalmente distinto sobre otra cosa que no viene al caso aquí",
+        title="otro",
+        type_="note",
+    )
 
     context, _cb = _recall_logic("HYBRIDTARGET cuál reranker", cwd=None, mem=mem, cfg=cfg)
     # Without the vec-cosine gate the hybrid RRF score (<0.5) would gate every

@@ -105,14 +105,19 @@ def test_provenance_keys_set_is_stable():
     # Synapse's contract depends on these exact keys. If we add one,
     # synapse-side code must also handle it; if we drop one, synapse
     # users see silent data loss. This test pins the public surface.
-    assert frozenset({
-        "synapse_trace_id",
-        "synapse_route_reason",
-        "synapse_write_policy_schema",
-        "synapse_write_target",
-        "synapse_agent_id",
-        "synapse_agent_signature",
-    }) == _PROVENANCE_KEYS
+    assert (
+        frozenset(
+            {
+                "synapse_trace_id",
+                "synapse_route_reason",
+                "synapse_write_policy_schema",
+                "synapse_write_target",
+                "synapse_agent_id",
+                "synapse_agent_signature",
+            }
+        )
+        == _PROVENANCE_KEYS
+    )
 
 
 # -- MemoSynapseBackend adapter --------------------------------------------
@@ -152,12 +157,14 @@ def test_backend_collect_empty_query_returns_empty(mock_memory):
 def test_backend_remember_persists_with_provenance(mock_memory):
     backend = MemoSynapseBackend(mock_memory)
     prov = _sample_provenance()
-    receipt = backend.remember({
-        "kind": "decision",
-        "text": "Switch embedder to Qwen3-4B.",
-        "target": "memo",
-        "metadata": {**prov, "title": "Embedder switch"},
-    })
+    receipt = backend.remember(
+        {
+            "kind": "decision",
+            "text": "Switch embedder to Qwen3-4B.",
+            "target": "memo",
+            "metadata": {**prov, "title": "Embedder switch"},
+        }
+    )
 
     assert receipt["schema"] == "synapse.memory_write_receipt.v1"
     assert receipt["backend"] == "memo"
@@ -180,11 +187,13 @@ def test_backend_remember_coerces_unknown_kind(mock_memory):
     # its frozenset. The adapter coerces to `note` and tags `kind:<orig>`
     # so the semantic intent survives.
     backend = MemoSynapseBackend(mock_memory)
-    receipt = backend.remember({
-        "kind": "task",
-        "text": "Schedule eval run nightly.",
-        "metadata": {"synapse_trace_id": "t-task"},
-    })
+    receipt = backend.remember(
+        {
+            "kind": "task",
+            "text": "Schedule eval run nightly.",
+            "metadata": {"synapse_trace_id": "t-task"},
+        }
+    )
 
     fetched = mock_memory.get(receipt["metadata"]["memory_id"])
     assert fetched is not None
@@ -203,11 +212,13 @@ def test_backend_remember_rejects_empty_text(mock_memory):
 
 def test_backend_remember_defaults_write_target(mock_memory):
     backend = MemoSynapseBackend(mock_memory)
-    receipt = backend.remember({
-        "kind": "note",
-        "text": "default-target body",
-        "metadata": {"synapse_trace_id": "t-default"},
-    })
+    receipt = backend.remember(
+        {
+            "kind": "note",
+            "text": "default-target body",
+            "metadata": {"synapse_trace_id": "t-default"},
+        }
+    )
     fetched = mock_memory.get(receipt["metadata"]["memory_id"])
     assert fetched is not None
     assert fetched.extra["synapse_write_target"] == "memo"
@@ -215,12 +226,14 @@ def test_backend_remember_defaults_write_target(mock_memory):
 
 def test_backend_remember_attaches_evidence_paths(mock_memory):
     backend = MemoSynapseBackend(mock_memory)
-    receipt = backend.remember({
-        "kind": "fact",
-        "text": "fact body",
-        "evidence_paths": ["memflow://event/abc", "memo://memoria/xyz"],
-        "metadata": {"synapse_trace_id": "t-evidence"},
-    })
+    receipt = backend.remember(
+        {
+            "kind": "fact",
+            "text": "fact body",
+            "evidence_paths": ["memflow://event/abc", "memo://memoria/xyz"],
+            "metadata": {"synapse_trace_id": "t-evidence"},
+        }
+    )
     fetched = mock_memory.get(receipt["metadata"]["memory_id"])
     assert fetched is not None
     assert fetched.extra["synapse_evidence_paths"] == [
@@ -269,14 +282,20 @@ def test_cli_save_meta_and_provenance(tmp_cfg, monkeypatch):
     result = runner.invoke(
         cli,
         [
-            "save", "hello via cli",
-            "--title", "cli-meta",
-            "--type", "decision",
-            "--meta", "synapse_trace_id=cli-trace",
-            "--meta", "synapse_agent_id=cli-agent",
+            "save",
+            "hello via cli",
+            "--title",
+            "cli-meta",
+            "--type",
+            "decision",
+            "--meta",
+            "synapse_trace_id=cli-trace",
+            "--meta",
+            "synapse_agent_id=cli-agent",
             "--json",
         ],
-        env=env, catch_exceptions=False,
+        env=env,
+        catch_exceptions=False,
     )
     assert result.exit_code == 0, result.output
     rec_dict = json.loads(result.output)
@@ -285,8 +304,10 @@ def test_cli_save_meta_and_provenance(tmp_cfg, monkeypatch):
     assert rec_dict["extra"]["synapse_agent_id"] == "cli-agent"
 
     prov_result = runner.invoke(
-        cli, ["provenance", memory_id, "--json"],
-        env=env, catch_exceptions=False,
+        cli,
+        ["provenance", memory_id, "--json"],
+        env=env,
+        catch_exceptions=False,
     )
     assert prov_result.exit_code == 0, prov_result.output
     payload = json.loads(prov_result.output)
@@ -297,14 +318,16 @@ def test_cli_save_meta_and_provenance(tmp_cfg, monkeypatch):
 
 def test_cli_save_meta_rejects_bad_pair(tmp_cfg, monkeypatch):
     monkeypatch.setattr(
-        "memo.embedder.MLXEmbedder.embed", lambda self, inputs: [[0.0] * tmp_cfg.embedder_dims for _ in inputs],
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[0.0] * tmp_cfg.embedder_dims for _ in inputs],
     )
     runner = CliRunner()
     env = _cli_env(tmp_cfg)
     result = runner.invoke(
         cli,
         ["save", "x", "--title", "t", "--meta", "no_equals_here"],
-        env=env, catch_exceptions=False,
+        env=env,
+        catch_exceptions=False,
     )
     assert result.exit_code != 0
     assert "KEY=VALUE" in result.output

@@ -41,8 +41,12 @@ def test_community_clusters_skips_hub_blob():
             from memo.navigation import Community
 
             return [
-                Community(id=1, entities=[f"e{i}" for i in range(200)], size=200,
-                          representative_entity="e0"),
+                Community(
+                    id=1,
+                    entities=[f"e{i}" for i in range(200)],
+                    size=200,
+                    representative_entity="e0",
+                ),
                 Community(id=2, entities=["a", "b", "c", "d"], size=4, representative_entity="a"),
             ]
 
@@ -64,10 +68,10 @@ def test_community_clusters_excludes_hub_led_community():
     class _Nav:
         def detect_communities(self, *, min_size, use_codegraph=None):
             return [
-                Community(id=1, entities=["hub", "n1", "n2", "n3"], size=4,
-                          representative_entity="hub"),
-                Community(id=2, entities=["a", "b", "c", "d"], size=4,
-                          representative_entity="a"),
+                Community(
+                    id=1, entities=["hub", "n1", "n2", "n3"], size=4, representative_entity="hub"
+                ),
+                Community(id=2, entities=["a", "b", "c", "d"], size=4, representative_entity="a"),
             ]
 
     class _Graph:
@@ -111,9 +115,7 @@ def test_decide_syntheses_dedup_dryrun_save_and_fail():
     assert save[0]["title"] == "T"
     assert save[0]["provenance"] == ["a", "b"]
 
-    fail = decide_syntheses(
-        clusters, synthesize_fn=lambda c: None, exists_fn=lambda h: False
-    )
+    fail = decide_syntheses(clusters, synthesize_fn=lambda c: None, exists_fn=lambda h: False)
     assert fail[0]["status"] == "synth_failed"
 
 

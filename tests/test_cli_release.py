@@ -85,8 +85,7 @@ def test_plan_release_edits_syncs_versioned_release_files(tmp_path: Path) -> Non
     assert 'version = "1.2.4"' in edits[repo / "pyproject.toml"]
     assert '"version": "1.2.4"' in edits[repo / ".claude-plugin" / "plugin.json"]
     assert (
-        '"version": "1.2.4"'
-        in edits[repo / "plugins" / "memo" / ".codex-plugin" / "plugin.json"]
+        '"version": "1.2.4"' in edits[repo / "plugins" / "memo" / ".codex-plugin" / "plugin.json"]
     )
     # server.json has TWO version occurrences — both must move.
     assert edits[repo / "server.json"].count('"version": "1.2.4"') == 2
@@ -111,7 +110,9 @@ def test_plan_release_edits_realigns_drifted_manifest(tmp_path: Path) -> None:
     assert '"version": "1.0.2"' not in edits[codex_plugin]
 
 
-def test_release_bump_dry_run_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_release_bump_dry_run_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = _fake_repo(tmp_path, "1.2.3")
     monkeypatch.setenv("MEMO_DEV_REPO", str(repo))
     result = CliRunner().invoke(release_group, ["bump", "patch", "--dry-run"])

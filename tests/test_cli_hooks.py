@@ -7,6 +7,7 @@ absolute path to the ``memo`` binary. This survives a de-registered/clobbered
 plugin (see the f5232b2 regression) and a minimal GUI PATH. Re-asserted on every
 memo-mcp start via ``selfheal_recall_hook`` (``MEMO_HOOK_SELFHEAL``).
 """
+
 from __future__ import annotations
 
 import json

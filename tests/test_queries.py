@@ -274,9 +274,7 @@ def test_query_store_load_corrupt_logs_warning(tmp_cfg, caplog):
     """A corrupt saved_queries.json is logged (not silently wiped)."""
     import logging
 
-    (tmp_cfg.state_dir / "saved_queries.json").write_text(
-        "{ not valid json", encoding="utf-8"
-    )
+    (tmp_cfg.state_dir / "saved_queries.json").write_text("{ not valid json", encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger="memo.saved_queries"):
         store = QueryStore(tmp_cfg.state_dir)
     assert store._queries == {}

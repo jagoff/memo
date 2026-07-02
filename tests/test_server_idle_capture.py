@@ -1,4 +1,5 @@
 """Tests for server_idle_capture MCP tool registration."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,6 +19,7 @@ def _make_server_and_tools():
         def wrapper(fn):
             tools[fn.__name__] = fn
             return fn
+
         return wrapper
 
     server.tool = tool_decorator
@@ -37,8 +39,12 @@ def test_memo_start_session_does_not_spawn_subprocesses(tmp_path: Path, tmp_cfg)
 
     assert "memo_start_session" in tools, "memo_start_session not registered"
 
-    with patch("subprocess.Popen") as mock_popen, \
-         patch("memo.session.checkpoint", return_value={"project": "test", "head_commit": "abc123def"}) as mock_ckpt:
+    with (
+        patch("subprocess.Popen") as mock_popen,
+        patch(
+            "memo.session.checkpoint", return_value={"project": "test", "head_commit": "abc123def"}
+        ) as mock_ckpt,
+    ):
         result = tools["memo_start_session"](session_id="test-123", cwd=str(tmp_path))
 
     assert not mock_popen.called, "memo_start_session must NOT spawn subprocesses"
@@ -58,7 +64,12 @@ def test_register_exposes_all_four_tools(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    expected = {"memo_idle_capture", "memo_pop_notification", "memo_start_session", "memo_save_text"}
+    expected = {
+        "memo_idle_capture",
+        "memo_pop_notification",
+        "memo_start_session",
+        "memo_save_text",
+    }
     assert expected == set(tools), f"Tool mismatch: {set(tools)}"
 
 

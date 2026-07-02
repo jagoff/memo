@@ -141,7 +141,11 @@ def test_auto_derive_fills_missing_fields(mem_with_stub: Memory, monkeypatch):
 
     def _stub_chat(self, model, messages, options=None):
         seen_messages.append(messages)
-        return {"message": {"content": '{"title": "Derived Title", "type": "decision", "tags": ["alpha", "beta", "gamma"]}'}}
+        return {
+            "message": {
+                "content": '{"title": "Derived Title", "type": "decision", "tags": ["alpha", "beta", "gamma"]}'
+            }
+        }
 
     monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
     rec = mem_with_stub.save(content="long body about something", auto_derive=True)
@@ -159,7 +163,11 @@ def test_auto_derive_does_not_override_caller(mem_with_stub: Memory, monkeypatch
 
     monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
     rec = mem_with_stub.save(
-        content="x", title="Mine", type_="fact", tags=["mine"], auto_derive=True,
+        content="x",
+        title="Mine",
+        type_="fact",
+        tags=["mine"],
+        auto_derive=True,
     )
     assert rec.title == "Mine"
     assert rec.type == "fact"

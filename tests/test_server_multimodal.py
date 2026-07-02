@@ -1,4 +1,5 @@
 """Tests for server_multimodal MCP tool registration."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -100,9 +101,11 @@ def test_memo_ocr_image_returns_extracted_text(tmp_cfg, tmp_path: Path) -> None:
     img = tmp_path / "test.png"
     img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
-    with patch("memo.ocr.vision_available", return_value=True), patch(
-        "memo.ocr.extract_text_cached", return_value="extracted text from image"
-    ), patch("memo.ocr.ocr_min_confidence", return_value=0.4):
+    with (
+        patch("memo.ocr.vision_available", return_value=True),
+        patch("memo.ocr.extract_text_cached", return_value="extracted text from image"),
+        patch("memo.ocr.ocr_min_confidence", return_value=0.4),
+    ):
         result = tools["memo_ocr_image"](image_path=str(img))
 
     assert result["text"] == "extracted text from image"
@@ -290,9 +293,7 @@ def test_memo_multimodal_search_audio_returns_list(tmp_cfg) -> None:
 
     result = tools["memo_multimodal_search_audio"](query="voice recording", limit=3)
 
-    mem.multimodal.search.search_text_find_audio.assert_called_once_with(
-        "voice recording", limit=3
-    )
+    mem.multimodal.search.search_text_find_audio.assert_called_once_with("voice recording", limit=3)
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0]["content_id"] == "aud-1"
@@ -314,9 +315,7 @@ def test_memo_multimodal_search_all_returns_dict_of_lists(tmp_cfg) -> None:
             CrossModalResult(content_id="img-1", modality="image", similarity=0.9, metadata={}),
         ],
         "audio": [
-            CrossModalResult(
-                content_id="aud-1", modality="audio", similarity=0.75, metadata={}
-            ),
+            CrossModalResult(content_id="aud-1", modality="audio", similarity=0.75, metadata={}),
         ],
     }
     mem.multimodal.search.search_all_modalities.return_value = fake_results

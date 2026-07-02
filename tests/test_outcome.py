@@ -1,4 +1,5 @@
 """The Outcome Loop — utility from grounding, roi reconcile, gaps, dead weight."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,22 +8,43 @@ from types import SimpleNamespace
 from memo import dashboard, outcome
 
 
-def _recall(tmp: Path, sid: str, turn: int, prompt: str, mem_id: str, *, via: str = "subprocess",
-            reason: str | None = None, hit: bool = True) -> None:
+def _recall(
+    tmp: Path,
+    sid: str,
+    turn: int,
+    prompt: str,
+    mem_id: str,
+    *,
+    via: str = "subprocess",
+    reason: str | None = None,
+    hit: bool = True,
+) -> None:
     hits = [{"id": mem_id, "score": 0.8, "title": "t"}] if hit else []
     dashboard.append_recall_log(
-        tmp, prompt=prompt, via=via, session_id=sid, turn=turn, client="claude-code",
-        hits=hits, reason=reason,
+        tmp,
+        prompt=prompt,
+        via=via,
+        session_id=sid,
+        turn=turn,
+        client="claude-code",
+        hits=hits,
+        reason=reason,
     )
 
 
 def _grounded(tmp: Path, sid: str, turn: int, mem_id: str, score: float = 0.9) -> None:
     dashboard.append_grounding_log(
-        tmp, session_id=sid, turn=turn, recall_id=mem_id, used_score=score, method="lexical",
+        tmp,
+        session_id=sid,
+        turn=turn,
+        recall_id=mem_id,
+        used_score=score,
+        method="lexical",
     )
 
 
 # ---------------- utility ----------------
+
 
 def test_compute_utilities_rewards_grounded_over_surfaced(tmp_path: Path) -> None:
     # mem00001: surfaced 2 turns, grounded both → high utility
@@ -63,6 +85,7 @@ def test_compute_utilities_uses_strong_grounding_decision(tmp_path: Path) -> Non
 
 # ---------------- roi reconcile ----------------
 
+
 class _FakeStore:
     def __init__(self, ids: list[str]) -> None:
         self._ids = ids
@@ -92,13 +115,16 @@ def test_reconcile_roi_promotes_grounded_demotes_dead(tmp_path: Path) -> None:
 
 # ---------------- dead weight ----------------
 
+
 def test_dead_weight_flags_surfaced_never_grounded(tmp_path: Path) -> None:
     for t in range(1, 6):  # surfaced 5×, never grounded
         _recall(tmp_path, "s", t, f"never used prompt {t}", "mem0dead")
     _recall(tmp_path, "s", 1, "useful one", "mem0live")
     _grounded(tmp_path, "s", 1, "mem0live")
 
-    mem = SimpleNamespace(cfg=SimpleNamespace(state_dir=tmp_path), store=_FakeStore(["mem0dead", "mem0live"]))
+    mem = SimpleNamespace(
+        cfg=SimpleNamespace(state_dir=tmp_path), store=_FakeStore(["mem0dead", "mem0live"])
+    )
     dead = outcome.dead_weight(mem, min_surfaced=4)
     ids = {d["id"] for d in dead}
     assert "mem0dead" in ids
@@ -118,13 +144,30 @@ def test_dead_weight_disabled_when_measurement_coverage_is_zero(tmp_path: Path) 
 
 # ---------------- gaps ----------------
 
+
 def test_detect_gaps_clusters_and_excludes_slash_and_answered(tmp_path: Path) -> None:
     # gap: knowledge prompt, no-match bail
-    _recall(tmp_path, "s", 1, "como configuro el sync loop de memflow exactamente",
-            "x", via="bail", reason="no hits above min_sim", hit=False)
+    _recall(
+        tmp_path,
+        "s",
+        1,
+        "como configuro el sync loop de memflow exactamente",
+        "x",
+        via="bail",
+        reason="no hits above min_sim",
+        hit=False,
+    )
     # near-dup of the above → same cluster
-    _recall(tmp_path, "s", 2, "como configuro exactamente el sync loop de memflow",
-            "x", via="bail", reason="no hits above min_sim", hit=False)
+    _recall(
+        tmp_path,
+        "s",
+        2,
+        "como configuro exactamente el sync loop de memflow",
+        "x",
+        via="bail",
+        reason="no hits above min_sim",
+        hit=False,
+    )
     # NOT a gap: slash command bail
     _recall(tmp_path, "s", 3, "/status", "x", via="bail", reason="slash command", hit=False)
     # NOT a gap: answered + grounded
@@ -139,19 +182,38 @@ def test_detect_gaps_clusters_and_excludes_slash_and_answered(tmp_path: Path) ->
 
 def test_detect_gaps_drops_injected_system_noise(tmp_path: Path) -> None:
     # injected hook/tool blobs land in recall.log but are not user questions
-    _recall(tmp_path, "s", 1, "<task-notification>\n<task-id>abc</task-id> something long here that exceeds sixty chars easily",
-            "x", via="bail", reason="no hits above min_sim", hit=False)
-    _recall(tmp_path, "s", 2, "system-reminder: the following context may be relevant to your task here",
-            "x", via="bail", reason="no hits above min_sim", hit=False)
+    _recall(
+        tmp_path,
+        "s",
+        1,
+        "<task-notification>\n<task-id>abc</task-id> something long here that exceeds sixty chars easily",
+        "x",
+        via="bail",
+        reason="no hits above min_sim",
+        hit=False,
+    )
+    _recall(
+        tmp_path,
+        "s",
+        2,
+        "system-reminder: the following context may be relevant to your task here",
+        "x",
+        via="bail",
+        reason="no hits above min_sim",
+        hit=False,
+    )
     assert outcome.detect_gaps(tmp_path) == []
 
 
 # ---------------- reconcile_source_feedback (#11 query-conditional) ----------------
 
+
 def test_reconcile_source_feedback_writes_click_for_grounded(mock_memory) -> None:
     mem = mock_memory
     sd = mem.cfg.state_dir
-    rec = mem.save(content="el reranker 0.6B gana en latencia warm", title="Reranker", type_="decision")
+    rec = mem.save(
+        content="el reranker 0.6B gana en latencia warm", title="Reranker", type_="decision"
+    )
     pid = rec.id[:8]
     # Surfaced for a query and the answer used it → grounded.
     _recall(sd, "s1", 1, "qué reranker conviene por latencia", pid)
@@ -162,6 +224,7 @@ def test_reconcile_source_feedback_writes_click_for_grounded(mock_memory) -> Non
     fb = mem.feedback_list(source_id=rec.id)
     assert len(fb) == 1
     import json as _j
+
     extra = _j.loads(fb[0].get("extra_json") or "{}")
     assert extra.get("signal") == "click"
 
@@ -182,5 +245,6 @@ def test_reconcile_source_feedback_never_overrides_manual(mock_memory) -> None:
     # Still exactly the manual rejection — auto-feedback did not clobber it.
     assert len(fb) == 1
     import json as _j
+
     extra = _j.loads(fb[0].get("extra_json") or "{}")
     assert extra.get("signal") == "thumbs_down"

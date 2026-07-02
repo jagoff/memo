@@ -31,9 +31,7 @@ def memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[ret
     mem.close()
 
 
-def test_env_trace_id_attaches_to_extra(
-    memory: Memory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_env_trace_id_attaches_to_extra(memory: Memory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYNAPSE_TRACE_ID", "trace-env-001")
     rec = memory.save(content="hello world", defer_embed=True)
     prov = memory.provenance(rec.id)
@@ -62,9 +60,7 @@ def test_missing_env_leaves_provenance_empty(
     assert not prov["current"].get("synapse_trace_id")
 
 
-def test_empty_env_trace_id_is_ignored(
-    memory: Memory, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_empty_env_trace_id_is_ignored(memory: Memory, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYNAPSE_TRACE_ID", "   ")
     rec = memory.save(content="hello", defer_embed=True)
     prov = memory.provenance(rec.id)

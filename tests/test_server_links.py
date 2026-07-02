@@ -1,4 +1,5 @@
 """Tests for server_links MCP tool registration."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock

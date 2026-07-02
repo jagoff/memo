@@ -160,10 +160,13 @@ def test_write_back_marks_dirty_then_flush_clears(mock_memory):
 def test_dirty_entry_not_evicted_without_backend(mock_memory):
     # write_back with a no-op backend (push always fails): dirty entries must
     # not be evicted (would lose the write). NullBackend.push() returns False.
-    _install_cache(mock_memory, CachePolicy(mode="write_back", max_entries=1, backend="none"),
-                   backend=NullBackend())
+    _install_cache(
+        mock_memory,
+        CachePolicy(mode="write_back", max_entries=1, backend="none"),
+        backend=NullBackend(),
+    )
     r0 = _save(mock_memory, "dirty one", "d0")  # dirty (write_back)
-    _save(mock_memory, "clean-ish two", "d1")   # also dirty under write_back
+    _save(mock_memory, "clean-ish two", "d1")  # also dirty under write_back
     # Both are dirty and there's no backend, so eviction can flush none of
     # them — capacity stays violated rather than losing a write.
     evicted = mock_memory.cache.evict_if_needed()
@@ -175,11 +178,19 @@ def test_dirty_entry_not_evicted_without_backend(mock_memory):
 
 
 def test_read_through_materializes_backend_hit(mock_memory):
-    backend = FakeBackend(fetch_result=[{
-        "id": "ext-1", "title": "Backing-only fact",
-        "type": "note", "body": "this fact lives only in the backing store",
-        "tags": [], "score": 0.9, "from_backend": True,
-    }])
+    backend = FakeBackend(
+        fetch_result=[
+            {
+                "id": "ext-1",
+                "title": "Backing-only fact",
+                "type": "note",
+                "body": "this fact lives only in the backing store",
+                "tags": [],
+                "score": 0.9,
+                "from_backend": True,
+            }
+        ]
+    )
     _install_cache(mock_memory, CachePolicy(mode="read_through", max_entries=0), backend)
     # Local store is empty for this query; read_through pulls + materializes.
     out = mock_memory.search("backing store fact", limit=5, read_through=True)
@@ -190,10 +201,17 @@ def test_read_through_materializes_backend_hit(mock_memory):
 
 
 def test_read_through_not_triggered_without_flag(mock_memory):
-    backend = FakeBackend(fetch_result=[{
-        "id": "ext-2", "title": "should not appear",
-        "type": "note", "body": "must not be fetched without the flag", "tags": [],
-    }])
+    backend = FakeBackend(
+        fetch_result=[
+            {
+                "id": "ext-2",
+                "title": "should not appear",
+                "type": "note",
+                "body": "must not be fetched without the flag",
+                "tags": [],
+            }
+        ]
+    )
     _install_cache(mock_memory, CachePolicy(mode="read_through", max_entries=0), backend)
     out = mock_memory.search("anything", limit=5)  # read_through defaults False
     assert mock_memory.store.count() == 0
@@ -203,10 +221,17 @@ def test_read_through_not_triggered_without_flag(mock_memory):
 def test_read_through_fill_is_clean_not_dirty(mock_memory):
     # Even under write_back, a read-through fill mirrors the backing store and
     # must stay clean (skip write policy).
-    backend = FakeBackend(fetch_result=[{
-        "id": "ext-3", "title": "filled", "type": "note",
-        "body": "filled from backing store", "tags": [],
-    }])
+    backend = FakeBackend(
+        fetch_result=[
+            {
+                "id": "ext-3",
+                "title": "filled",
+                "type": "note",
+                "body": "filled from backing store",
+                "tags": [],
+            }
+        ]
+    )
     _install_cache(mock_memory, CachePolicy(mode="write_back", max_entries=0), backend)
     out = mock_memory.search("filled backing", limit=5, read_through=True)
     filled = [r for r in out if "filled" in r.body]
@@ -235,5 +260,5 @@ def test_policy_from_env_validates(monkeypatch):
     monkeypatch.setenv("MEMO_CACHE_MODE", "bogus")
     monkeypatch.setenv("MEMO_CACHE_EVICTION", "nonsense")
     p = CachePolicy.from_env()
-    assert p.mode == "off"          # invalid mode falls back to off
-    assert p.eviction == "lru"      # invalid eviction falls back to lru
+    assert p.mode == "off"  # invalid mode falls back to off
+    assert p.eviction == "lru"  # invalid eviction falls back to lru

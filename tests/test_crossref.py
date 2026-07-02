@@ -23,6 +23,7 @@ def crossref_index(tmp_cfg):
 def link_suggester(mock_memory):
     """Fixture providing LinkSuggester instance."""
     from memo.crossref import CrossReferenceIndex
+
     crossref = CrossReferenceIndex(mock_memory.cfg.crossref_db)
     suggester = LinkSuggester(mock_memory, crossref)
     yield suggester

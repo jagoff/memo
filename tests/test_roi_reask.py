@@ -1,4 +1,5 @@
 """P1 re-ask avoidance, P2 downstream action, P3 memo roi — no real MLX."""
+
 from __future__ import annotations
 
 import json
@@ -10,19 +11,31 @@ from memo.cli_roi import compute_roi
 
 def _recall(tmp: Path, sid: str, turn: int, prompt: str, mem_id: str, snippet: str = "x") -> None:
     dashboard.append_recall_log(
-        tmp, prompt=prompt, via="subprocess", session_id=sid, turn=turn, client="claude-code",
+        tmp,
+        prompt=prompt,
+        via="subprocess",
+        session_id=sid,
+        turn=turn,
+        client="claude-code",
         hits=[{"id": mem_id, "score": 0.8, "title": "t", "snippet": snippet}],
     )
 
 
 def _grounded(tmp: Path, sid: str, turn: int, mem_id: str, score: float = 0.9, **kw) -> None:
     dashboard.append_grounding_log(
-        tmp, session_id=sid, turn=turn, recall_id=mem_id, used_score=score,
-        method="lexical", client="claude-code", **kw,
+        tmp,
+        session_id=sid,
+        turn=turn,
+        recall_id=mem_id,
+        used_score=score,
+        method="lexical",
+        client="claude-code",
+        **kw,
     )
 
 
 # ---------------- P1 re-ask avoidance ----------------
+
 
 def test_reask_avoided_when_no_followup(tmp_path: Path) -> None:
     _recall(tmp_path, "s", 1, "how to configure the deploy pipeline yaml", "mem00001")
@@ -50,8 +63,12 @@ def test_reask_only_counts_grounded(tmp_path: Path) -> None:
     # recall not grounded → not considered for re-ask avoidance
     _recall(tmp_path, "s", 1, "some prompt about things here", "mem00001")
     dashboard.append_grounding_log(
-        tmp_path, session_id="s", turn=1, recall_id="mem00001",
-        used_score=0.1, method="embed",  # below threshold → not grounded
+        tmp_path,
+        session_id="s",
+        turn=1,
+        recall_id="mem00001",
+        used_score=0.1,
+        method="embed",  # below threshold → not grounded
     )
     stats = dashboard.reask_stats(tmp_path)
     assert stats["considered"] == 0
@@ -60,14 +77,36 @@ def test_reask_only_counts_grounded(tmp_path: Path) -> None:
 
 # ---------------- P2 downstream action ----------------
 
+
 def test_collect_tool_targets_and_match(tmp_path: Path) -> None:
     tp = tmp_path / "t.jsonl"
-    tp.write_text("\n".join(json.dumps(x) for x in [
-        {"type": "assistant", "message": {"role": "assistant", "content": [
-            {"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/src/deploy.py"}},
-            {"type": "tool_use", "name": "Bash", "input": {"command": "make deploy production"}},
-        ]}},
-    ]) + "\n", encoding="utf-8")
+    tp.write_text(
+        "\n".join(
+            json.dumps(x)
+            for x in [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Read",
+                                "input": {"file_path": "/repo/src/deploy.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "make deploy production"},
+                            },
+                        ],
+                    },
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     targets = grounding.collect_recent_tool_targets(tp)
     assert {"action": "opened_file", "target": "/repo/src/deploy.py"} in targets
     # snippet that mentions deploy.py → opened_file action
@@ -82,11 +121,14 @@ def test_collect_tool_targets_and_match(tmp_path: Path) -> None:
 
 # ---------------- P3 memo roi ----------------
 
+
 def test_compute_roi_time_saved_and_table(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_ROI_SECS_PER_GROUNDED", "30")
     monkeypatch.setenv("MEMO_ROI_SECS_PER_REASK", "120")
     _recall(tmp_path, "s", 1, "configure the deploy pipeline yaml settings now", "mem00001")
-    _grounded(tmp_path, "s", 1, "mem00001", downstream_action="opened_file", action_evidence="/x.py")
+    _grounded(
+        tmp_path, "s", 1, "mem00001", downstream_action="opened_file", action_evidence="/x.py"
+    )
     # no near-dup follow-up → 1 reask_avoided ; 1 grounded
     data = compute_roi(tmp_path)
     assert data["grounded"] == 1

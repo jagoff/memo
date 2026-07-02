@@ -17,8 +17,13 @@ from memo.whatsapp_ingest import WAMessage, _parse_bridge_ts, render_chat_note
 
 def _msg(ts: float, sender: str, content: str, *, is_me: bool = False) -> WAMessage:
     return WAMessage(
-        id=f"id-{ts}", chat_jid="123@s.whatsapp.net", chat_name="Alice",
-        sender=sender, content=content, timestamp=ts, is_from_me=is_me,
+        id=f"id-{ts}",
+        chat_jid="123@s.whatsapp.net",
+        chat_name="Alice",
+        sender=sender,
+        content=content,
+        timestamp=ts,
+        is_from_me=is_me,
         media_type=None,
     )
 
@@ -57,7 +62,8 @@ def test_render_chat_note_groups_by_day() -> None:
     day1 = datetime(2026, 3, 1, 10, 0, tzinfo=UTC).timestamp()
     day2 = datetime(2026, 3, 2, 10, 0, tzinfo=UTC).timestamp()
     note = render_chat_note(
-        "123@s.whatsapp.net", "Alice",
+        "123@s.whatsapp.net",
+        "Alice",
         [_msg(day1, "Alice", "día uno"), _msg(day2, "Alice", "día dos")],
     )
     # one `## YYYY-MM-DD` header per distinct day
@@ -73,7 +79,10 @@ def test_render_chat_note_sorts_unordered_input() -> None:
 
 # ── Task 17: path validation ──────────────────────────────────────────────────
 
-def test_run_raises_valueerror_when_default_db_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+
+def test_run_raises_valueerror_when_default_db_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """run() raises ValueError with actionable message when MEMO_WHATSAPP_DB is
     unset and the compiled-in default path does not exist."""
     # Ensure the env var is unset so the default path is used.
@@ -106,6 +115,7 @@ def test_run_uses_memo_whatsapp_db_env(tmp_path: Path, monkeypatch: pytest.Monke
 
 # ── Task 18.1: signal handler safety ─────────────────────────────────────────
 
+
 def test_recall_server_sigterm_handler_only_sets_event() -> None:
     """The SIGTERM handler in recall_server.run_server only sets a threading.Event
     (no logging, no lock acquisition) — async-signal-safe."""
@@ -124,6 +134,7 @@ def test_recall_server_sigterm_handler_only_sets_event() -> None:
 def test_recall_server_shutdown_event_is_threading_event() -> None:
     """Verify the shutdown mechanism uses threading.Event (set-once, signal-safe)."""
     import threading
+
     # Simulate what the signal handler does: set an event.
     ev = threading.Event()
     ev.set()

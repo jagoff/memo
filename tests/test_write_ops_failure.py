@@ -215,9 +215,9 @@ def test_delete_rollback_preserves_topic_key_dedup(mem_with_stub: Memory, monkey
     # After the rollback the dedup key survives → a same-topic save updates in
     # place instead of creating a duplicate. Without restoring topic_key on
     # rollback this returns None and the memory silently duplicates.
-    assert (
-        mem_with_stub.store.find_by_topic_key("tk-dedup") is not None
-    ), "topic_key dropped on delete-rollback → next same-topic save would duplicate"
+    assert mem_with_stub.store.find_by_topic_key("tk-dedup") is not None, (
+        "topic_key dropped on delete-rollback → next same-topic save would duplicate"
+    )
 
 
 def test_delete_rollback_leaves_no_spurious_history_event(mem_with_stub: Memory, monkeypatch):
@@ -232,9 +232,9 @@ def test_delete_rollback_leaves_no_spurious_history_event(mem_with_stub: Memory,
     with pytest.raises(StorageError, match="delete partially failed"):
         mem_with_stub.delete(rec.id)
 
-    assert (
-        mem_with_stub.history.list_recent(op="delete", record_id=rec.id) == []
-    ), "delete-rollback logged a spurious 'delete' audit event for a surviving memory"
+    assert mem_with_stub.history.list_recent(op="delete", record_id=rec.id) == [], (
+        "delete-rollback logged a spurious 'delete' audit event for a surviving memory"
+    )
 
 
 def test_successful_delete_still_logs_history_event(mem_with_stub: Memory):

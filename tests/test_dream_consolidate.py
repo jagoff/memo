@@ -51,7 +51,9 @@ def test_consolidate_skips_existing_and_synthesizes_new():
 
 
 def test_consolidate_dry_run_marks_would_save():
-    clusters = [{"project": "memo", "episodes": [_ep("s1", "/r/memo")], "session_ids": ["s1", "s2"]}]
+    clusters = [
+        {"project": "memo", "episodes": [_ep("s1", "/r/memo")], "session_ids": ["s1", "s2"]}
+    ]
     decisions = dc.consolidate_clusters(
         clusters,
         synthesize_fn=lambda cl: {"title": "t", "body": "b"},
@@ -62,7 +64,9 @@ def test_consolidate_dry_run_marks_would_save():
 
 
 def test_consolidate_skips_when_synthesize_returns_none():
-    clusters = [{"project": "memo", "episodes": [_ep("s1", "/r/memo")], "session_ids": ["s1", "s2"]}]
+    clusters = [
+        {"project": "memo", "episodes": [_ep("s1", "/r/memo")], "session_ids": ["s1", "s2"]}
+    ]
     decisions = dc.consolidate_clusters(
         clusters, synthesize_fn=lambda cl: None, exists_fn=lambda h: False, dry_run=False
     )

@@ -8,9 +8,7 @@ from __future__ import annotations
 
 def _backdate(mock_memory, rec_id: str, ts: str) -> None:
     with mock_memory.store._conn:
-        mock_memory.store._conn.execute(
-            "UPDATE meta SET updated=? WHERE id=?", (ts, rec_id)
-        )
+        mock_memory.store._conn.execute("UPDATE meta SET updated=? WHERE id=?", (ts, rec_id))
 
 
 def test_list_updated_since_filters_at_db_level(mock_memory):

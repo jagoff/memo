@@ -153,7 +153,9 @@ def test_refresh_agent_artifacts_updates_static_agent_surfaces(monkeypatch, tmp_
 
     assert upd._refresh_agent_artifacts() is True
     assert (tmp_path, tmp_path / "codex-home" / "skills" / "memo" / "SKILL.md", False) in copied
-    assert any(str(dst).endswith(".config/devin/skills/memo/SKILL.md") for _root, dst, _dry in copied)
+    assert any(
+        str(dst).endswith(".config/devin/skills/memo/SKILL.md") for _root, dst, _dry in copied
+    )
     assert installed == [(tmp_path, False)]
     assert [call[0][:3] for call in commands] == [
         ["claude", "plugin", "marketplace"],

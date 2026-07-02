@@ -1,4 +1,5 @@
 """Unit tests for _normalize_relative_dates in consolidate_ops."""
+
 from __future__ import annotations
 
 import datetime

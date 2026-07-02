@@ -1,6 +1,7 @@
 """Reference-tier noise gate: near-empty bulk chunks with no heading/link must
 not be indexable via `memo_save`, while short *durable* facts stay allowed.
 """
+
 from __future__ import annotations
 
 import pytest

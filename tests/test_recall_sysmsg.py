@@ -14,7 +14,9 @@ def test_empty_hits_returns_empty_string() -> None:
 
 
 def test_counts_and_titles() -> None:
-    msg = build_system_message([_hit("a1b2c3d4e5", "sync tier decision"), _hit("f6e5d4c3b2", "delete rollback bug")])
+    msg = build_system_message(
+        [_hit("a1b2c3d4e5", "sync tier decision"), _hit("f6e5d4c3b2", "delete rollback bug")]
+    )
     assert msg.startswith("🧠 memo · 2: ")
     assert "sync tier decision" in msg
     assert "delete rollback bug" in msg

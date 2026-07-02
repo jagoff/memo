@@ -11,7 +11,9 @@ def test_search_returns_matching(mem_with_stub: Memory):
     assert any(h.title == "A" for h in hits)
 
 
-def test_contextual_retrieval_prepends_context_only_when_enabled(mem_with_stub: Memory, monkeypatch):
+def test_contextual_retrieval_prepends_context_only_when_enabled(
+    mem_with_stub: Memory, monkeypatch
+):
     seen_inputs: list[str] = []
 
     def _spy_embed(inputs):
@@ -113,9 +115,16 @@ def test_apply_decay_lets_fresher_memory_win_a_tie():
 
     def _rec(id_: str, updated: datetime) -> MemoryRecord:
         return MemoryRecord(
-            id=id_, path=f"{id_}.md", title=id_, type="note", tags=[],
-            created=updated.isoformat(), updated=updated.isoformat(),
-            body="b", extra={}, score=0.70,
+            id=id_,
+            path=f"{id_}.md",
+            title=id_,
+            type="note",
+            tags=[],
+            created=updated.isoformat(),
+            updated=updated.isoformat(),
+            body="b",
+            extra={},
+            score=0.70,
         )
 
     old = _rec("old", now - timedelta(days=400))
@@ -168,6 +177,7 @@ def test_hybrid_search_skips_rerank_when_rrf_has_confident_winner(
         "search",
         lambda *_a, **_k: [_row("clear", "Clear winner"), _row("vec-second", "Vec second")],
     )
+
     def _bm25(*_args, **kwargs):
         if kwargs.get("field_boost") == "exact":
             return []

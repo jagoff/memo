@@ -72,8 +72,15 @@ def test_decay_is_true_half_life():
     hl = _RECALL_DECAY_HALFLIFE_DEFAULT
     old = (datetime.now(tz=UTC) - timedelta(days=hl)).isoformat()
     rec = MemoryRecord(
-        id="a", path="a", title="t", type="preference", tags=[],
-        created=old, updated=old, body="", score=1.0,
+        id="a",
+        path="a",
+        title="t",
+        type="preference",
+        tags=[],
+        created=old,
+        updated=old,
+        body="",
+        score=1.0,
     )
     # alpha=1.0 isolates the decay term: final == decay == 0.5 at one half-life.
     out = _apply_decay([rec], halflife_days=hl, alpha=1.0)
@@ -136,9 +143,7 @@ def test_graph_candidates_do_not_dominate_high_vec_hits():
     results = _rrf_fuse(vec_list, bm25_list, graph_list, limit=5, k=k)
     ids = [r["id"] for r in results]
 
-    assert ids[0] == "best_doc", (
-        f"'best_doc' should rank first (appears in vec+BM25), got: {ids}"
-    )
+    assert ids[0] == "best_doc", f"'best_doc' should rank first (appears in vec+BM25), got: {ids}"
     # graph_only_doc should appear but not at the top
     assert "graph_only_doc" in ids, "graph_only_doc should still appear in results"
     graph_pos = ids.index("graph_only_doc")
@@ -246,14 +251,10 @@ def test_decision_decays_slower_than_note(monkeypatch):
     out = _apply_decay([decision_rec, note_rec], halflife_days=90.0, alpha=1.0)
 
     ids = [r.id for r in out]
-    assert ids[0] == "d1", (
-        f"decision should outrank note after per-type decay (got order {ids})"
-    )
+    assert ids[0] == "d1", f"decision should outrank note after per-type decay (got order {ids})"
     d_score = next(r.score for r in out if r.id == "d1")
     n_score = next(r.score for r in out if r.id == "n1")
-    assert d_score > n_score, (
-        f"decision score ({d_score}) should exceed note score ({n_score})"
-    )
+    assert d_score > n_score, f"decision score ({d_score}) should exceed note score ({n_score})"
     # Verify the note is actually at ~0.5 (one half-life at 30d default)
     assert abs(n_score - 0.5) < 0.02, f"note at one halflife should be ~0.5, got {n_score}"
     # Verify the decision is well above 0.5 (far from its 365d halflife)
@@ -275,9 +276,7 @@ def test_reference_not_decayed(monkeypatch):
 
     # note at 2× halflife (180/30) should be 0.5^6 ≈ 0.016 final with alpha=1
     # actually 0.5**(180/30) = 0.5**6 = 0.015625 → rounded to 0.015625
-    assert note_out.score < 0.1, (
-        f"note at 6 halflives should be nearly zero, got {note_out.score}"
-    )
+    assert note_out.score < 0.1, f"note at 6 halflives should be nearly zero, got {note_out.score}"
     # reference should be unchanged (score passed through)
     assert abs((ref_out.score or 0.0) - 0.8) < 1e-6, (
         f"reference score should be unchanged (0.8), got {ref_out.score}"

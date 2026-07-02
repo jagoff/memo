@@ -26,7 +26,9 @@ def test_edit_md_then_reindex_markdown_wins(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="contenido original", title="Editable")
     abs_path = mem_with_stub.cfg.memory_dir / rec.path
     text = abs_path.read_text(encoding="utf-8")
-    abs_path.write_text(text.replace("contenido original", "contenido EDITADO a mano"), encoding="utf-8")
+    abs_path.write_text(
+        text.replace("contenido original", "contenido EDITADO a mano"), encoding="utf-8"
+    )
 
     out = mem_with_stub.reindex()
     assert out["reindexed"] >= 1

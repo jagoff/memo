@@ -4,6 +4,7 @@ Covers two invariants from CLAUDE.md:
 1. Golden path: save → search returns the memory.
 2. Source-of-truth ordering: .md is written before the sqlite/vec insert.
 """
+
 from __future__ import annotations
 
 from memo.config import Config

@@ -154,7 +154,7 @@ def test_human_bytes_units() -> None:
     assert _human_bytes(512) == "512 B"
     assert _human_bytes(2048) == "2.0 KB"
     assert _human_bytes(3 * 1024 * 1024) == "3.0 MB"
-    assert _human_bytes(2 * 1024 ** 3) == "2.00 GB"
+    assert _human_bytes(2 * 1024**3) == "2.00 GB"
 
 
 def test_verdict_unused_when_too_few_consults(tmp_path: Path) -> None:

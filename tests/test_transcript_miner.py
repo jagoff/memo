@@ -19,12 +19,21 @@ def _write_jsonl(path: Path, entries: list[dict]) -> None:
 
 def test_iter_exchanges_pairs_user_then_assistant(tmp_path: Path) -> None:
     f = tmp_path / "session.jsonl"
-    _write_jsonl(f, [
-        {"type": "user", "message": {"content": "fix the bug"}},
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "found it in auth.py"}]}},
-        {"type": "user", "message": {"content": "now run tests"}},
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "all 42 passing"}]}},
-    ])
+    _write_jsonl(
+        f,
+        [
+            {"type": "user", "message": {"content": "fix the bug"}},
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "found it in auth.py"}]},
+            },
+            {"type": "user", "message": {"content": "now run tests"}},
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "all 42 passing"}]},
+            },
+        ],
+    )
     pairs = list(iter_exchanges(f))
     assert len(pairs) == 2
     assert pairs[0] == ("fix the bug", "found it in auth.py")
@@ -33,11 +42,14 @@ def test_iter_exchanges_pairs_user_then_assistant(tmp_path: Path) -> None:
 
 def test_iter_exchanges_concatenates_multiple_assistant_msgs(tmp_path: Path) -> None:
     f = tmp_path / "multi.jsonl"
-    _write_jsonl(f, [
-        {"type": "user", "message": {"content": "prompt"}},
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "part 1"}]}},
-        {"type": "assistant", "message": {"content": [{"type": "text", "text": "part 2"}]}},
-    ])
+    _write_jsonl(
+        f,
+        [
+            {"type": "user", "message": {"content": "prompt"}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "part 1"}]}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "part 2"}]}},
+        ],
+    )
     pairs = list(iter_exchanges(f))
     assert len(pairs) == 1
     assert pairs[0][1] == "part 1\n\npart 2"
@@ -45,14 +57,22 @@ def test_iter_exchanges_concatenates_multiple_assistant_msgs(tmp_path: Path) -> 
 
 def test_iter_exchanges_skips_tool_blocks(tmp_path: Path) -> None:
     f = tmp_path / "tools.jsonl"
-    _write_jsonl(f, [
-        {"type": "user", "message": {"content": "do it"}},
-        {"type": "assistant", "message": {"content": [
-            {"type": "text", "text": "running the tool"},
-            {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
-            {"type": "text", "text": "result analyzed"},
-        ]}},
-    ])
+    _write_jsonl(
+        f,
+        [
+            {"type": "user", "message": {"content": "do it"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "running the tool"},
+                        {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+                        {"type": "text", "text": "result analyzed"},
+                    ]
+                },
+            },
+        ],
+    )
     pairs = list(iter_exchanges(f))
     assert len(pairs) == 1
     assert "tool_use" not in pairs[0][1]
@@ -62,9 +82,12 @@ def test_iter_exchanges_skips_tool_blocks(tmp_path: Path) -> None:
 
 def test_iter_exchanges_orphan_assistant_dropped(tmp_path: Path) -> None:
     f = tmp_path / "orphan.jsonl"
-    _write_jsonl(f, [
-        {"type": "assistant", "message": {"content": "no user before me"}},
-    ])
+    _write_jsonl(
+        f,
+        [
+            {"type": "assistant", "message": {"content": "no user before me"}},
+        ],
+    )
     assert list(iter_exchanges(f)) == []
 
 

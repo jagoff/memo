@@ -8,6 +8,7 @@ Two delivery surfaces after the f5232b2 regression fix:
   ``memo.cli_hooks`` (self-healed on memo-mcp start), so it survives a
   de-registered/clobbered plugin.
 """
+
 from __future__ import annotations
 
 import json

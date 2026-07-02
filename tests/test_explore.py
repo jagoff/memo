@@ -88,5 +88,5 @@ def test_explore_excludes_codegraph_placeholder_from_shared():
 
     v = explore_entity(_Mem(), "x")
     by = {n["name"]: n["shared"] for n in v["neighbors"]}
-    assert by["codesym"] == 0   # pure code link bridges 0 memories
-    assert by["realnbr"] == 1   # one real memory; the codegraph placeholder excluded
+    assert by["codesym"] == 0  # pure code link bridges 0 memories
+    assert by["realnbr"] == 1  # one real memory; the codegraph placeholder excluded

@@ -38,20 +38,29 @@ def test_online_reverted_restores_floor_before_and_baseline(tmp_path, monkeypatc
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
     dream_tune_online.write_pending(
         tmp_path,
-        {"version_before": "v1", "version_after": "v2", "floor_before": 0.5,
-         "online_before": 0.6, "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0}},
+        {
+            "version_before": "v1",
+            "version_after": "v2",
+            "floor_before": 0.5,
+            "online_before": 0.6,
+            "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0},
+        },
     )
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
     calls = {"overlay": None, "baseline": None}
-    monkeypatch.setattr(dream_tune, "write_overlay",
-                        lambda sd, params, meta: calls.__setitem__("overlay", dict(params)))
+    monkeypatch.setattr(
+        dream_tune,
+        "write_overlay",
+        lambda sd, params, meta: calls.__setitem__("overlay", dict(params)),
+    )
     monkeypatch.setattr(dream_tune, "save_baseline", lambda sd, m: calls.__setitem__("baseline", m))
-    monkeypatch.setattr(dream_tune, "measure",
-                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure")))
+    monkeypatch.setattr(
+        dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure"))
+    )
 
     res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "online_reverted"
-    assert calls["overlay"]["MEMO_RECALL_MIN_SIM"] == 0.5   # restored floor_before
+    assert calls["overlay"]["MEMO_RECALL_MIN_SIM"] == 0.5  # restored floor_before
     assert calls["baseline"] == {"precision_at_k": 0.2, "noise_at_k": 0.0}
 
 
@@ -84,26 +93,39 @@ def test_graph_weight_reverted_restores_graph_knob_and_baseline(tmp_path, monkey
     # a graph-weight change is pending; its online cohort regressed
     dream_tune_online.write_pending(
         tmp_path,
-        {"knob": "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT", "version_after": "v2",
-         "floor_before": 0.0, "online_before": 0.6,
-         "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0}},
+        {
+            "knob": "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT",
+            "version_after": "v2",
+            "floor_before": 0.0,
+            "online_before": 0.6,
+            "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0},
+        },
     )
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
     calls = {"overlay": None, "graph_baseline": None, "min_baseline": None}
-    monkeypatch.setattr(dream_tune, "write_overlay",
-                        lambda sd, params, meta: calls.__setitem__("overlay", dict(params)))
-    monkeypatch.setattr(dream_tune, "save_graph_baseline",
-                        lambda sd, m: calls.__setitem__("graph_baseline", m))
-    monkeypatch.setattr(dream_tune, "save_baseline",
-                        lambda sd, m: calls.__setitem__("min_baseline", m))
-    monkeypatch.setattr(dream_tune, "measure",
-                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure")))
+    monkeypatch.setattr(
+        dream_tune,
+        "write_overlay",
+        lambda sd, params, meta: calls.__setitem__("overlay", dict(params)),
+    )
+    monkeypatch.setattr(
+        dream_tune, "save_graph_baseline", lambda sd, m: calls.__setitem__("graph_baseline", m)
+    )
+    monkeypatch.setattr(
+        dream_tune, "save_baseline", lambda sd, m: calls.__setitem__("min_baseline", m)
+    )
+    monkeypatch.setattr(
+        dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure"))
+    )
 
     res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "online_reverted"
-    assert calls["overlay"]["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.0   # graph knob restored
-    assert calls["graph_baseline"] == {"precision_at_k": 0.2, "noise_at_k": 0.0}  # graph baseline restored
-    assert calls["min_baseline"] is None                                   # NOT the min_sim baseline
+    assert calls["overlay"]["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.0  # graph knob restored
+    assert calls["graph_baseline"] == {
+        "precision_at_k": 0.2,
+        "noise_at_k": 0.0,
+    }  # graph baseline restored
+    assert calls["min_baseline"] is None  # NOT the min_sim baseline
 
 
 def test_graph_weight_apply_records_pending(tmp_path, monkeypatch):
@@ -135,11 +157,18 @@ def test_online_revert_pins_prev_so_offline_rollback_is_noop(tmp_path, monkeypat
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
     dream_tune_online.write_pending(
         tmp_path,
-        {"knob": "MEMO_RECALL_MIN_SIM", "version_after": "v2", "floor_before": 0.62,
-         "online_before": 0.6, "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0}},
+        {
+            "knob": "MEMO_RECALL_MIN_SIM",
+            "version_after": "v2",
+            "floor_before": 0.62,
+            "online_before": 0.6,
+            "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0},
+        },
     )
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
-    monkeypatch.setattr(dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure")))
+    monkeypatch.setattr(
+        dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure"))
+    )
 
     res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "online_reverted"

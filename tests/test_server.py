@@ -90,10 +90,12 @@ def test_search_trace_returns_hits_and_pipeline(mem: Memory):
 
 
 def test_get_returns_ambiguous_shape(mem: Memory, monkeypatch):
-    fixed = iter([
-        uuid.UUID("aaaaaaaa1111000000000000000000ff"),
-        uuid.UUID("aaaaaaaa2222000000000000000000ff"),
-    ])
+    fixed = iter(
+        [
+            uuid.UUID("aaaaaaaa1111000000000000000000ff"),
+            uuid.UUID("aaaaaaaa2222000000000000000000ff"),
+        ]
+    )
     monkeypatch.setattr("memo.memory.uuid.uuid4", lambda: next(fixed))
     mem.save(content="a", title="A")
     mem.save(content="b", title="B")

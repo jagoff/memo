@@ -26,8 +26,7 @@ def _make_repo(root: Path) -> Path:
     (repo / "src").mkdir(parents=True)
     (repo / "node_modules").mkdir()
     (repo / "src" / "app.py").write_text(
-        "def alpha():\n"
-        "    return 'needle-value'\n",
+        "def alpha():\n    return 'needle-value'\n",
         encoding="utf-8",
     )
     (repo / "README.md").write_text(
@@ -157,7 +156,9 @@ def test_repo_chunker_splits_single_huge_line():
 def test_repo_index_never_embeds_single_huge_line(tmp_path: Path, monkeypatch):
     repo = tmp_path / "huge-line-repo"
     repo.mkdir()
-    (repo / "minified.js").write_text("const payload = '" + ("x" * 12_000) + "';\n", encoding="utf-8")
+    (repo / "minified.js").write_text(
+        "const payload = '" + ("x" * 12_000) + "';\n", encoding="utf-8"
+    )
     subprocess.run(["git", "init", str(repo)], check=True, capture_output=True, text=True)
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "Test User")
@@ -406,7 +407,8 @@ def test_repo_cli_index_search_and_get(tmp_path: Path, monkeypatch):
     result = runner.invoke(cli, ["repo", "index", str(repo), "--name", "sample"], env=env)
     assert result.exit_code == 0, result.output
     import re
-    stripped = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+
+    stripped = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     assert "repo=sample" in stripped
 
     result = runner.invoke(
@@ -522,9 +524,7 @@ def test_path_name_boost_no_match_returns_zero() -> None:
 def test_path_name_boost_skips_ingest_dumps() -> None:
     # Ingest dumps may have the query term in filename but they are not
     # canonical sources — boost must be 0.
-    assert _path_name_boost(
-        "Obsidian/AI/external-ingest/Claude/grecia-dump.md", ["grecia"]
-    ) == 0.0
+    assert _path_name_boost("Obsidian/AI/external-ingest/Claude/grecia-dump.md", ["grecia"]) == 0.0
 
 
 def test_extract_query_terms_filters_stopwords_and_short_tokens() -> None:
@@ -561,7 +561,8 @@ def _make_grecia_repo(root: Path) -> Path:
 
 
 def test_repo_search_boosts_filename_match_over_body_density(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Single-term query "Grecia" must surface `Contacts/Grecia.md`
     (exact basename match) ahead of `02-Areas/Grecia/Grecia Accesos.md`
@@ -588,9 +589,7 @@ def test_repo_search_ignores_ingest_dump_paths(tmp_path: Path, monkeypatch) -> N
     must still rank above the dump."""
     _patch_embedder(monkeypatch)
     files = {
-        "Obsidian/Contacts/Grecia.md": (
-            "[[Grecia|@Grecia]]\nGrecia Ferrari hija\n"
-        ),
+        "Obsidian/Contacts/Grecia.md": ("[[Grecia|@Grecia]]\nGrecia Ferrari hija\n"),
         "Obsidian/AI/external-ingest/Claude/grecia-session.md": (
             "Grecia Grecia Grecia Grecia Grecia Grecia\n" * 20
         ),

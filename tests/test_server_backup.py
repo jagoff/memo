@@ -1,4 +1,5 @@
 """Tests for server_backup MCP tool registration."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -20,6 +21,7 @@ def _make_server_and_tools():
         def wrapper(fn):
             tools[fn.__name__] = fn
             return fn
+
         return wrapper
 
     server.tool = tool_decorator

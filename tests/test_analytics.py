@@ -85,6 +85,7 @@ def test_analytics_engine_export_metrics_json(tmp_path, analytics_engine):
     assert output_path.is_file()
 
     import json
+
     data = json.loads(output_path.read_text(encoding="utf-8"))
     assert "metrics" in data
     assert "growth" in data

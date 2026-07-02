@@ -54,6 +54,7 @@ def test_memo_config_file_env_var_overrides_default(tmp_path: Path, monkeypatch)
     # Re-import to re-resolve. The internal helper resolves the env at
     # call time, so this also tests that.
     from memo.setup.config_io import _resolve_config_path
+
     assert _resolve_config_path() == target
 
 

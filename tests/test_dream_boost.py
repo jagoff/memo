@@ -9,7 +9,11 @@ def _cfg(tmp_path):
 
 def test_boost_defers_under_pending(tmp_path, monkeypatch):
     dream_tune_online.write_pending(tmp_path, {"version_after": "v2"})
-    monkeypatch.setattr(dream_tune, "write_overlay", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no apply")))
+    monkeypatch.setattr(
+        dream_tune,
+        "write_overlay",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no apply")),
+    )
     res = dream_tune.run_boost_pass(_cfg(tmp_path), object(), step=0.05)
     assert res["status"] == "deferred_pending"
 
@@ -27,12 +31,28 @@ def test_boost_applies_and_records_pending(tmp_path, monkeypatch):
 
 
 def test_boost_direction_reverses_after_revert(tmp_path):
-    dream_tune_online.append_ledger(tmp_path, {"knob": "MEMO_RECALL_PROJECT_BOOST", "verdict": "reverted", "floor_before": 0.25, "floor_after": 0.30})
+    dream_tune_online.append_ledger(
+        tmp_path,
+        {
+            "knob": "MEMO_RECALL_PROJECT_BOOST",
+            "verdict": "reverted",
+            "floor_before": 0.25,
+            "floor_after": 0.30,
+        },
+    )
     assert dream_tune._boost_direction(tmp_path, 0.05) == -0.05  # up was reverted → go down
 
 
 def test_boost_direction_repeats_after_confirm(tmp_path):
-    dream_tune_online.append_ledger(tmp_path, {"knob": "MEMO_RECALL_PROJECT_BOOST", "verdict": "confirmed", "floor_before": 0.25, "floor_after": 0.30})
+    dream_tune_online.append_ledger(
+        tmp_path,
+        {
+            "knob": "MEMO_RECALL_PROJECT_BOOST",
+            "verdict": "confirmed",
+            "floor_before": 0.25,
+            "floor_after": 0.30,
+        },
+    )
     assert dream_tune._boost_direction(tmp_path, 0.05) == 0.05  # up was confirmed → keep going up
 
 

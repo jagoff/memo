@@ -235,7 +235,9 @@ def test_client_falls_back_when_daemon_returns_error(daemon: Path, monkeypatch):
     # Simpler: send an op the daemon doesn't know via the public client by
     # patching `_try_socket` to simulate a daemon error response.
     monkeypatch.setattr(
-        embedder_client, "_try_socket", lambda *_args, **_kw: None,
+        embedder_client,
+        "_try_socket",
+        lambda *_args, **_kw: None,
     )
     vec = embedder_client.embed_query("via fallback", state_dir=daemon)
     assert vec == sentinel.embed_query("via fallback")

@@ -28,6 +28,7 @@ def _isolate_codegraph(monkeypatch, tmp_path):
 def mock_graph_store(tmp_cfg):
     """Fixture providing a mock GraphStore instance."""
     from memo.graph import GraphStore
+
     gs = GraphStore(tmp_cfg.graph_db)
     yield gs
     gs.close()
@@ -295,25 +296,34 @@ def test_communities_split_hub_graph(mock_graph_store):
     g = mock_graph_store
     # cluster 1: m1,m2 over {a,b}; cluster 2: m3,m4 over {x,y}; hub 'h' touches both once.
     for mid in ("m1", "m2"):
-        g.record_extraction(memory_id=mid, memory_date="2026-01-01",
-                            entities=[{"name": "A", "type": "concept"},
-                                      {"name": "B", "type": "concept"}],
-                            extracted_at="2026-01-01T00:00:00Z")
+        g.record_extraction(
+            memory_id=mid,
+            memory_date="2026-01-01",
+            entities=[{"name": "A", "type": "concept"}, {"name": "B", "type": "concept"}],
+            extracted_at="2026-01-01T00:00:00Z",
+        )
     for mid in ("m3", "m4"):
-        g.record_extraction(memory_id=mid, memory_date="2026-01-01",
-                            entities=[{"name": "X", "type": "concept"},
-                                      {"name": "Y", "type": "concept"}],
-                            extracted_at="2026-01-01T00:00:00Z")
-    g.record_extraction(memory_id="m5", memory_date="2026-01-01",
-                        entities=[{"name": "B", "type": "concept"},
-                                  {"name": "H", "type": "concept"}],
-                        extracted_at="2026-01-01T00:00:00Z")
-    g.record_extraction(memory_id="m6", memory_date="2026-01-01",
-                        entities=[{"name": "X", "type": "concept"},
-                                  {"name": "H", "type": "concept"}],
-                        extracted_at="2026-01-01T00:00:00Z")
+        g.record_extraction(
+            memory_id=mid,
+            memory_date="2026-01-01",
+            entities=[{"name": "X", "type": "concept"}, {"name": "Y", "type": "concept"}],
+            extracted_at="2026-01-01T00:00:00Z",
+        )
+    g.record_extraction(
+        memory_id="m5",
+        memory_date="2026-01-01",
+        entities=[{"name": "B", "type": "concept"}, {"name": "H", "type": "concept"}],
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+    g.record_extraction(
+        memory_id="m6",
+        memory_date="2026-01-01",
+        entities=[{"name": "X", "type": "concept"}, {"name": "H", "type": "concept"}],
+        extracted_at="2026-01-01T00:00:00Z",
+    )
     g.rebuild_edges()
     from memo.navigation import GraphNavigator
+
     nav = GraphNavigator(g)
     comms = nav.detect_communities(min_size=2, use_codegraph=False)
     # the {a,b} core and {x,y} core stay distinct communities (not one blob)
