@@ -30,7 +30,7 @@ requires tap repos to start with the `homebrew-` prefix.
    brew tap jagoff/memo
    brew install mlx-memo
    memo prewarm --download-all
-   memo install-slash --client claude-code --client codex --client windsurf
+   memo install-slash --client claude-code --client codex --client devin-desktop
    ```
 
    Apple Silicon (M1/M2/M3/M4) only. The formula refuses to install on
@@ -60,7 +60,7 @@ requires tap repos to start with the `homebrew-` prefix.
    brew install mlx-memo
    memo --version    # should print the formula version
    memo doctor --strict-runtime
-   memo mcp-command --client windsurf
+   memo mcp-command --client devin-desktop
    brew uninstall mlx-memo
    brew untap jagoff/memo
    ```

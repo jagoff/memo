@@ -68,6 +68,11 @@ def test_owned_config_vars_not_flagged_unknown() -> None:
     assert flags.unknown_memo_vars(env=env) == []
 
 
+def test_runtime_shim_sentinels_not_flagged_unknown() -> None:
+    env = {"MEMO_STARTUP_BANNER_SHOWN": "1", "MEMO_CODEX_BADGE_SHOWN": "1"}
+    assert flags.validate(env=env) == []
+
+
 def test_active_flags_lists_only_set() -> None:
     env = {"MEMO_RECALL_TOP_K": "5", "MEMO_RECALL_DEBUG": ""}
     active = flags.active_flags(env=env)

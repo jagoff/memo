@@ -182,8 +182,73 @@ def _notify_codex_plugin_updated() -> bool:
     return emit_codex_notify(_CODEX_UPDATE_NOTIFY_TITLE, _CODEX_UPDATE_NOTIFY_BODY)
 
 
+def _devin_skill_path() -> Path:
+    return Path.home() / ".config" / "devin" / "skills" / "memo" / "SKILL.md"
+
+
+def _refresh_agent_artifacts() -> bool:
+    """Best-effort refresh of static agent artifacts after a memo runtime update.
+
+    OpenCode and Devin Desktop consume memo through MCP config only, so there is
+    no versioned plugin/skill cache to refresh for those clients.
+    """
+    has_claude = shutil.which("claude") is not None
+    has_codex = shutil.which("codex") is not None
+    devin_skill = _devin_skill_path()
+    has_devin = shutil.which("devin") is not None or devin_skill.is_file()
+    if not (has_claude or has_codex or has_devin):
+        return False
+
+    try:
+        from memo.runtime.codex import _codex_home, _copy_slash_skill, _install_codex_plugin
+        from memo.runtime.mcp import _agent_asset_root, _run_agent_command
+
+        root = _agent_asset_root()
+    except Exception as exc:
+        console.print(f"[yellow]![/yellow] agent artifact refresh skipped: {exc}")
+        return False
+
+    refreshed = False
+    if has_claude:
+        try:
+            _run_agent_command(
+                ["claude", "plugin", "marketplace", "add", root],
+                dry_run=False,
+                ok_errors=("already", "exists"),
+                best_effort=True,
+            )
+            # NOT best_effort: a genuinely failed install must surface as the
+            # warning below (refreshed stays False), not print "already handled".
+            _run_agent_command(
+                ["claude", "plugin", "install", "memo@memo", "-s", "user"],
+                dry_run=False,
+                ok_errors=("already", "installed", "exists"),
+            )
+            refreshed = True
+        except Exception as exc:
+            console.print(f"[yellow]![/yellow] Claude Code plugin refresh skipped: {exc}")
+
+    if has_codex:
+        try:
+            _copy_slash_skill(root, _codex_home() / "skills" / "memo" / "SKILL.md", dry_run=False)
+            _install_codex_plugin(root, dry_run=False)
+            refreshed = True
+        except Exception as exc:
+            console.print(f"[yellow]![/yellow] Codex plugin refresh skipped: {exc}")
+
+    if has_devin:
+        try:
+            _copy_slash_skill(root, devin_skill, dry_run=False)
+            refreshed = True
+        except Exception as exc:
+            console.print(f"[yellow]![/yellow] Devin skill refresh skipped: {exc}")
+
+    return refreshed
+
+
 def _finish_successful_update() -> None:
     _clear_update_notify()
+    _refresh_agent_artifacts()
     _notify_codex_plugin_updated()
 
 

@@ -3,15 +3,21 @@ from __future__ import annotations
 
 import base64
 import importlib.metadata
+import os
+import pty
+import subprocess
 
 from click.testing import CliRunner
 
 from memo.cli import cli
-from memo.runtime.shims import install_path_snippet
+from memo.runtime.shims import install_path_snippet, install_shims
 
 
 def _env(tmp_cfg) -> dict:
+    home = tmp_cfg.state_dir / "home"
+    home.mkdir(parents=True, exist_ok=True)
     return {
+        "HOME": str(home),
         "MEMO_NONINTERACTIVE": "1",
         "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
         "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
@@ -63,13 +69,180 @@ def test_install_shims_contains_memo_shim_marker(tmp_cfg, tmp_path):
     )
     content = (bin_dir / "codex").read_text()
     assert "memo-shim" in content
-    assert "MEMFLOW_STARTUP_BANNER" not in content
+    assert "MEMFLOW_STARTUP_BANNER" in content
+    assert "_MEMFLOW_BANNER_DEFAULT=0" in content
     assert "grep -qF" not in content
     assert 'startup-banner --agent "$_AGENT"' in content
     assert 'startup-banner --agent "$_AGENT" 2>/dev/null' not in content
     assert 'codex-badge --agent "$_AGENT"' in content
     assert 'MEMO_CODEX_BADGE_DELAY:-1' in content
     assert "exec" in content
+
+
+def test_codex_shim_prints_startup_banner_once_for_nested_codex_call(tmp_path):
+    shim_dir = tmp_path / "shim"
+    tools_dir = tmp_path / "tools"
+    real_dir = tmp_path / "real"
+    log_path = tmp_path / "memo-calls.log"
+    tools_dir.mkdir()
+    real_dir.mkdir()
+
+    (tools_dir / "memo").write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    (real_dir / "codex").write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'if [ "${1:-}" = "child" ]; then exit 0; fi\n'
+        "codex child\n",
+        encoding="utf-8",
+    )
+    (tools_dir / "memo").chmod(0o755)
+    (real_dir / "codex").chmod(0o755)
+    install_shims(("codex",), shim_dir)
+
+    env = {
+        **os.environ,
+        "PATH": os.pathsep.join(
+            [str(shim_dir), str(tools_dir), str(real_dir), os.environ.get("PATH", "")]
+        ),
+        "MEMO_TEST_LOG": str(log_path),
+        "MEMO_CODEX_BADGE": "0",
+        "MEMO_STARTUP_BANNER_SHOWN": "0",
+        "MEMO_CODEX_BADGE_SHOWN": "0",
+    }
+    master_fd, slave_fd = pty.openpty()
+    try:
+        proc = subprocess.run(
+            [str(shim_dir / "codex")],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=slave_fd,
+            text=True,
+            timeout=5,
+        )
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+    assert proc.returncode == 0, proc.stderr
+    assert log_path.read_text(encoding="utf-8").splitlines() == [
+        "startup-banner --agent codex"
+    ]
+
+
+def test_codex_shim_prints_startup_banner_before_memflow_shim_by_default(tmp_path):
+    shim_dir = tmp_path / "shim"
+    tools_dir = tmp_path / "tools"
+    memflow_dir = tmp_path / ".memflow" / "bin"
+    memo_log = tmp_path / "memo-calls.log"
+    memflow_log = tmp_path / "memflow-ran.log"
+    tools_dir.mkdir()
+    memflow_dir.mkdir(parents=True)
+
+    (tools_dir / "memo").write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    (memflow_dir / "codex").write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "memflow-ran\\n" >> "$MEMFLOW_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    (tools_dir / "memo").chmod(0o755)
+    (memflow_dir / "codex").chmod(0o755)
+    install_shims(("codex",), shim_dir)
+
+    env = {
+        **os.environ,
+        "PATH": os.pathsep.join(
+            [str(shim_dir), str(tools_dir), str(memflow_dir), os.environ.get("PATH", "")]
+        ),
+        "MEMO_TEST_LOG": str(memo_log),
+        "MEMFLOW_TEST_LOG": str(memflow_log),
+        "MEMO_CODEX_BADGE": "0",
+        "MEMO_STARTUP_BANNER_SHOWN": "0",
+        "MEMO_CODEX_BADGE_SHOWN": "0",
+    }
+    master_fd, slave_fd = pty.openpty()
+    try:
+        proc = subprocess.run(
+            [str(shim_dir / "codex")],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=slave_fd,
+            text=True,
+            timeout=5,
+        )
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+    assert proc.returncode == 0, proc.stderr
+    assert memflow_log.read_text(encoding="utf-8").splitlines() == ["memflow-ran"]
+    assert memo_log.read_text(encoding="utf-8").splitlines() == [
+        "startup-banner --agent codex"
+    ]
+
+
+def test_codex_shim_delegates_startup_banner_to_memflow_shim_when_enabled(tmp_path):
+    shim_dir = tmp_path / "shim"
+    tools_dir = tmp_path / "tools"
+    memflow_dir = tmp_path / ".memflow" / "bin"
+    memo_log = tmp_path / "memo-calls.log"
+    memflow_log = tmp_path / "memflow-ran.log"
+    tools_dir.mkdir()
+    memflow_dir.mkdir(parents=True)
+
+    (tools_dir / "memo").write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    (memflow_dir / "codex").write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "memflow-ran\\n" >> "$MEMFLOW_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    (tools_dir / "memo").chmod(0o755)
+    (memflow_dir / "codex").chmod(0o755)
+    install_shims(("codex",), shim_dir)
+
+    env = {
+        **os.environ,
+        "PATH": os.pathsep.join(
+            [str(shim_dir), str(tools_dir), str(memflow_dir), os.environ.get("PATH", "")]
+        ),
+        "MEMO_TEST_LOG": str(memo_log),
+        "MEMFLOW_TEST_LOG": str(memflow_log),
+        "MEMFLOW_STARTUP_BANNER": "1",
+        "MEMO_CODEX_BADGE": "0",
+        "MEMO_STARTUP_BANNER_SHOWN": "0",
+        "MEMO_CODEX_BADGE_SHOWN": "0",
+    }
+    master_fd, slave_fd = pty.openpty()
+    try:
+        proc = subprocess.run(
+            [str(shim_dir / "codex")],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=slave_fd,
+            text=True,
+            timeout=5,
+        )
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+    assert proc.returncode == 0, proc.stderr
+    assert memflow_log.read_text(encoding="utf-8").splitlines() == ["memflow-ran"]
+    assert not memo_log.exists()
 
 
 def test_codex_badge_uses_memo_version_notify_protocol(tmp_cfg, tmp_path, monkeypatch):

@@ -20,7 +20,7 @@ memo install-slash --client claude-code
 memo mcp-command --client claude-code
 # other client installers:
 memo install-slash --client codex
-memo install-slash --client windsurf
+memo install-slash --client devin-desktop
 ```
 
 Then open a new Claude Code session so the `/` menu and MCP tools reload.

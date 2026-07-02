@@ -50,7 +50,7 @@ def test_explicit_source_overrides_env(tmp_cfg: Config, monkeypatch):
 
 def test_mcp_consult_attributes_to_client_name(tmp_cfg: Config, monkeypatch):
     """An MCP consult with no explicit source / MEMO_SOURCE falls back to the
-    client's handshake name — so devin/opencode/windsurf aren't 'mcp:unknown'."""
+    client's handshake name — so devin/opencode/devin-desktop aren't 'mcp:unknown'."""
     import types as _t
 
     from memo import server_common

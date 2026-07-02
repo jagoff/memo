@@ -116,6 +116,7 @@ packages = ["src/memo"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
 markers = [
     "requires_mlx: smoke test que carga modelos MLX reales (Apple Silicon only). Auto-skipea sin mlx_lm.",
     "slow: tests >1s; default `-m 'not slow'`.",
@@ -135,6 +136,8 @@ module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
           "consciousness_contracts", "consciousness_contracts.*",
           "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "huggingface_hub",
           "numpy", "tantivy",
+          # Optional REST API server dependencies, absent unless [http] is used.
+          "fastapi", "fastapi.*", "uvicorn", "uvicorn.*",
           # sentence-transformers (+torch) — optional [cpu] extra, absent on the
           # default macOS/CI runtime; the ST embedder import is deferred.
           "sentence_transformers", "sentence_transformers.*", "torch", "torch.*"]

@@ -61,8 +61,8 @@
   <text x="532" y="150" class="meta">MCP stdio</text>
 
   <rect x="607" y="112" width="125" height="48" class="box-client box" rx="8" filter="url(#shadow)"/>
-  <text x="670" y="133" class="label">Windsurf</text>
-  <text x="670" y="150" class="meta">mcp_config.json</text>
+  <text x="670" y="133" class="label">Devin Desktop</text>
+  <text x="670" y="150" class="meta">mcp.json</text>
 
   <rect x="745" y="112" width="165" height="48" class="box-client box" rx="8" filter="url(#shadow)"/>
   <text x="828" y="133" class="label">your shell</text>

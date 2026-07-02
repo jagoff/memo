@@ -16,7 +16,7 @@ def now_ms() -> int:
 
 def _mcp_client_name() -> str | None:
     """Best-effort name of the connected MCP client, from the initialize
-    handshake's ``clientInfo.name`` (e.g. ``devin`` / ``opencode`` / ``windsurf``).
+    handshake's ``clientInfo.name`` (e.g. ``devin`` / ``opencode`` / ``devin-desktop``).
     Lets every MCP consult self-attribute even when the caller passed no
     ``source=`` and set no ``MEMO_SOURCE`` — so agent-class consumers stop
     showing up as the anonymous ``mcp:unknown``. Fully guarded: returns None off
@@ -45,7 +45,7 @@ def log_consult(
     ``source`` identifies the calling layer. Attribution precedence:
     explicit ``source=`` → ``MEMO_SOURCE`` env (mirrors the CLI's
     ``log_cli_consult``) → the MCP client's declared ``clientInfo.name``. The
-    last tier means agent-class clients (devin / opencode / windsurf …) are
+    last tier means agent-class clients (devin / opencode / devin-desktop …) are
     attributed automatically from the handshake instead of showing up as the
     anonymous ``mcp:unknown`` consumer — no per-call args or env needed.
     """

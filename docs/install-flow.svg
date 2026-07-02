@@ -94,7 +94,7 @@
   <!-- Step 4: doctor + agent clients -->
   <rect x="220" y="530" width="380" height="50" rx="8" class="box" filter="url(#sh)"/>
   <text x="410" y="552" class="step">4 · memo doctor --strict-runtime</text>
-  <text x="410" y="568" class="ok">MCP auto-wired into Claude Code, Devin, Codex, Windsurf, OpenCode</text>
+  <text x="410" y="568" class="ok">MCP auto-wired into Claude Code, Devin, Codex, Devin Desktop, OpenCode</text>
 
   <!-- Size annotation -->
   <text x="40" y="380" class="label" style="text-anchor:start">first install</text>

@@ -9,6 +9,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Fixed
+- Release version alignment now includes the internal Codex plugin bundle, with `memo release sync` to realign drifted manifests to `pyproject.toml` and `memo update` refreshing installed static agent artifacts for Claude Code, Codex, and Devin after a successful runtime update.
+- The retired desktop-agent surface was removed from CLI, docs, tests, and installer flows; use Devin Desktop via `--client/--agent devin-desktop`, `DEVIN_DESKTOP_MCP_CONFIG`, and `~/.devin/mcp.json`.
+- The HTTP API no longer hardcodes its OpenAPI and `/health` version; both use the runtime `memo.__version__`.
+- `memo release bump` detects surplus version fields again (the `re.subn` count cap had silently disabled over-match detection), and `memo release check` validates every `server.json` package instead of only the first.
+- `memo update` no longer masks a failed `claude plugin install` as "already handled" — a real failure now surfaces as a warning and the refresh is reported honestly.
+- Three dead flags are actually wired now: `MEMO_TANTIVY_ENABLED=0` really forces FTS5-only (it previously did nothing — only `MEMO_FTS_BACKEND` gated the index), `MEMO_SEARCH_JSON_BODY_CHARS` drives the default `--body-chars` of `memo search`/`memo recall`, and `MEMO_DREAM_MINE_LIMIT` caps the labels mined per dream tuning pass (was hardcoded at 200).
+- Unix-socket daemons (recall/ingest/maint) can no longer hang indefinitely on SIGTERM: handler threads are daemonic, so the shutdown `join_timeout` is a real bound (stdlib `ThreadingMixIn` defaults joined in-flight handlers unbounded in `server_close()`).
+- Dream `eviction`/`compress` DB errors now propagate into the receipt's `errors` list instead of reading as "nothing to do".
+- The HTTP API's lazy `Memory` init is thread-safe — concurrent first requests no longer construct duplicate `Memory` instances (duplicate sqlite connections + embedder load).
+- Historical CHANGELOG entries no longer retroactively claim Devin Desktop support for releases that actually shipped the retired client's paths.
+- Test hygiene: runtime-isolation tests run against a sandboxed `$HOME` (they wrote real `~/.memo/bin` shims and `~/.zshrc` PATH snippets on every run) and no longer depend on the developer machine's live index for `MEMO_EMBEDDER_DIMS`; the agent-artifact "skip" test is hermetic and uses recording stubs that can actually fail.
+
 ## [2.6.7] - 2026-06-30
 
 ### Added

@@ -132,10 +132,10 @@ def test_claude_desktop_config_path_per_os(monkeypatch, platform, fragment):
     assert fragment in str(_claude_desktop_config_path())
 
 
-def test_windsurf_scan_includes_linux_path():
+def test_devin_desktop_scan_includes_mcp_path():
     from memo.runtime.mcp_config import KNOWN_MCP_CONFIGS
 
-    assert "~/.config/Windsurf/User/mcp_config.json" in KNOWN_MCP_CONFIGS
+    assert "~/.devin/mcp.json" in KNOWN_MCP_CONFIGS
 
 
 # ── reranker (MLX-only) forced off on non-Apple-Silicon ─────────────────────

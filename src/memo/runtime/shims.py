@@ -45,11 +45,29 @@ if [ -z "$_NEXT" ]; then
     printf 'memo: shim: %s: not found in PATH\\n' "$_AGENT" >&2
     exit 127
 fi
-_MEMO="$(command -v memo 2>/dev/null || true)"
-if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ -t 2 ]; then
-    "$_MEMO" startup-banner --agent "$_AGENT" || true
+_NEXT_IS_MEMFLOW_SHIM=0
+if [[ "$_NEXT" == */.memflow/bin/"$_AGENT" ]]; then
+    _NEXT_IS_MEMFLOW_SHIM=1
 fi
-if [ "$_AGENT" = "codex" ] && [ -n "$_MEMO" ] && [ "${MEMO_CODEX_BADGE:-1}" != "0" ] && [ -n "${MEMO_AGENT_TTY:-}" ]; then
+_MEMFLOW_BANNER_DEFAULT=1
+if [ "$_AGENT" = "codex" ]; then
+    _MEMFLOW_BANNER_DEFAULT=0
+fi
+_NEXT_MEMFLOW_BANNER_ENABLED=0
+if [ "$_NEXT_IS_MEMFLOW_SHIM" = "1" ] && [ "${MEMFLOW_STARTUP_BANNER:-$_MEMFLOW_BANNER_DEFAULT}" != "0" ]; then
+    _NEXT_MEMFLOW_BANNER_ENABLED=1
+fi
+_MEMO="$(command -v memo 2>/dev/null || true)"
+if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ "${MEMO_STARTUP_BANNER_SHOWN:-0}" != "1" ]; then
+    MEMO_STARTUP_BANNER_SHOWN=1
+    export MEMO_STARTUP_BANNER_SHOWN
+    if [ "$_NEXT_MEMFLOW_BANNER_ENABLED" != "1" ] && [ -t 2 ]; then
+        "$_MEMO" startup-banner --agent "$_AGENT" || true
+    fi
+fi
+if [ "$_AGENT" = "codex" ] && [ -n "$_MEMO" ] && [ "${MEMO_CODEX_BADGE:-1}" != "0" ] && [ "${MEMO_CODEX_BADGE_SHOWN:-0}" != "1" ] && [ -n "${MEMO_AGENT_TTY:-}" ]; then
+    MEMO_CODEX_BADGE_SHOWN=1
+    export MEMO_CODEX_BADGE_SHOWN
     ( sleep "${MEMO_CODEX_BADGE_DELAY:-1}"; "$_MEMO" codex-badge --agent "$_AGENT" >/dev/null 2>&1 || true ) &
 fi
 exec "$_NEXT" "$@"

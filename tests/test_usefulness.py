@@ -67,7 +67,7 @@ def test_log_consult_records_via_and_lowercased_source(tmp_path: Path) -> None:
 
 
 def test_log_consult_falls_back_to_memo_source_env(tmp_path: Path, monkeypatch) -> None:
-    """A client that can't pass per-call source= (devin / opencode / windsurf)
+    """A client that can't pass per-call source= (devin / opencode / devin-desktop)
     is still attributed when MEMO_SOURCE is set in the server env."""
     monkeypatch.setenv("MEMO_SOURCE", "Devin")
     fake = SimpleNamespace(cfg=SimpleNamespace(state_dir=tmp_path))

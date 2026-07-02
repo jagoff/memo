@@ -23,9 +23,10 @@ AGENT_PROFILE_ALIASES: dict[str, str] = {
     "cursor agent": "cursor",
     "cursor-agent": "cursor",
     "devin ai": "devin",
+    "devin desktop": "devin-desktop",
+    "devin-desktop": "devin-desktop",
     "gemini cli": "gemini",
     "gemini-cli": "gemini",
-    "windsurf cascade": "windsurf",
     "opencode ai": "opencode",
     "opencode-ai": "opencode",
 }

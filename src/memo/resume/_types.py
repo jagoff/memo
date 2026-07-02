@@ -15,11 +15,23 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-ResumeAgent = Literal["all", "codex", "claude", "devin", "gemini", "windsurf", "cursor", "opencode", "generic"]
+ResumeAgent = Literal[
+    "all", "codex", "claude", "devin", "devin-desktop", "gemini", "cursor", "opencode", "generic"
+]
 ResumeMode = Literal["native_resume", "context_resume", "inspect_only"]
 _ResumeKey = Literal["up", "down", "enter", "quit", ""]
 
-RESUME_AGENT_CHOICES = ("all", "codex", "claude", "devin", "gemini", "windsurf", "cursor", "opencode", "generic")
+RESUME_AGENT_CHOICES = (
+    "all",
+    "codex",
+    "claude",
+    "devin",
+    "devin-desktop",
+    "gemini",
+    "cursor",
+    "opencode",
+    "generic",
+)
 MEMO_RESUME_REPORT_SCHEMA = "memo.resume_candidates.v1"
 _RESUME_ESCAPE_TIMEOUT_SECONDS = 0.25
 _ANSI_RESET = "\x1b[0m"
@@ -28,8 +40,8 @@ _RESUME_AGENT_COLORS = {
     "codex": "\x1b[36m",  # cyan
     "claude": "\x1b[32m",  # green
     "devin": "\x1b[35m",  # magenta/purple
+    "devin-desktop": "\x1b[35m",
     "gemini": "\x1b[94m",  # bright blue
-    "windsurf": "\x1b[34m",
     "cursor": "\x1b[37m",
     "generic": "\x1b[90m",
 }

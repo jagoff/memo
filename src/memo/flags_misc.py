@@ -316,6 +316,20 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_MODEL_PROFILE", "str", "", "misc", "Model profile: light | balanced | quality."),
     _spec("MEMO_NONINTERACTIVE", "bool", False, "misc", "Suppress interactive prompts (hooks/CI)."),
     _spec(
+        "MEMO_STARTUP_BANNER_SHOWN",
+        "bool",
+        False,
+        "runtime",
+        "Runtime sentinel exported by agent shims after the startup banner path runs.",
+    ),
+    _spec(
+        "MEMO_CODEX_BADGE_SHOWN",
+        "bool",
+        False,
+        "runtime",
+        "Runtime sentinel exported by the Codex shim after scheduling the Codex badge.",
+    ),
+    _spec(
         "MEMO_SUPPRESS_LEGACY_WARN",
         "bool",
         False,
@@ -594,14 +608,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "whatsapp",
         "WhatsApp chat JID for the notes destination chat.",
     ),
-    # tantivy dual-write toggle
+    # tantivy kill-switch
     _spec(
         "MEMO_TANTIVY_ENABLED",
         "bool",
         True,
         "store",
-        "Enable dual-write to Tantivy FTS index on upsert/delete. Set =0 to disable "
-        "(falls back to FTS5-only for text search). Useful for operational safety.",
+        "Enable the Tantivy FTS index (dual-write on upsert/delete + search + "
+        "startup rebuild). Set =0 to force FTS5-only — operational kill-switch, "
+        "wins over MEMO_FTS_BACKEND.",
     ),
     _spec(
         "MEMO_DEDUP_EXACT",

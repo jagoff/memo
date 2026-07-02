@@ -447,8 +447,8 @@ main() {
       say "no agent CLIs detected on PATH — wiring anyway (install-slash skips absent clients)"
     fi
     # Configure every supported client (claude-code, codex, devin, opencode,
-    # windsurf, blackbox) so the MCP lands in all tools present on the machine.
-    # `devin` covers the devin CLI and Devin Desktop (ex-Windsurf), which share
+    # devin-desktop, blackbox) so the MCP lands in all tools present on the machine.
+    # `devin` covers the devin CLI and Devin Desktop, which share
     # ~/.devin/mcp.json. --best-effort skips clients that aren't installed.
     if spin "wiring MCP into all available clients (best-effort)" \
       env MEMO_NONINTERACTIVE=1 "$memo_bin" install-slash \

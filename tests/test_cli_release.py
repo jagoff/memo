@@ -6,6 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from memo.cli_release import (
+    _REPO_ROOT,
     _atomic_write_all,
     bump_version,
     plan_release_edits,
@@ -33,6 +34,10 @@ def _fake_repo(root: Path, version: str) -> Path:
     (root / ".claude-plugin" / "plugin.json").write_text(
         f'{{\n  "name": "memo",\n  "version": "{version}"\n}}\n', encoding="utf-8"
     )
+    (root / "plugins" / "memo" / ".codex-plugin").mkdir(parents=True)
+    (root / "plugins" / "memo" / ".codex-plugin" / "plugin.json").write_text(
+        f'{{\n  "name": "memo",\n  "version": "{version}"\n}}\n', encoding="utf-8"
+    )
     (root / "server.json").write_text(
         f'{{\n  "version": "{version}",\n  "packages": [\n    {{\n      "version": "{version}"\n    }}\n  ]\n}}\n',
         encoding="utf-8",
@@ -44,12 +49,16 @@ def _fake_repo(root: Path, version: str) -> Path:
     return root
 
 
-def test_plan_release_edits_syncs_four_files(tmp_path: Path) -> None:
+def test_plan_release_edits_syncs_versioned_release_files(tmp_path: Path) -> None:
     repo = _fake_repo(tmp_path, "1.2.3")
     edits = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")
 
     assert 'version = "1.2.4"' in edits[repo / "pyproject.toml"]
     assert '"version": "1.2.4"' in edits[repo / ".claude-plugin" / "plugin.json"]
+    assert (
+        '"version": "1.2.4"'
+        in edits[repo / "plugins" / "memo" / ".codex-plugin" / "plugin.json"]
+    )
     # server.json has TWO version occurrences — both must move.
     assert edits[repo / "server.json"].count('"version": "1.2.4"') == 2
     assert edits[repo / "server.json"].count('"version": "1.2.3"') == 0
@@ -57,6 +66,20 @@ def test_plan_release_edits_syncs_four_files(tmp_path: Path) -> None:
     cl = edits[repo / "CHANGELOG.md"]
     assert "## [1.2.4] - 2026-06-25" in cl
     assert cl.index("## [1.2.4]") < cl.index("## [1.2.3]")
+
+
+def test_plan_release_edits_realigns_drifted_manifest(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    codex_plugin = repo / "plugins" / "memo" / ".codex-plugin" / "plugin.json"
+    codex_plugin.write_text(
+        '{\n  "name": "memo",\n  "version": "1.0.2"\n}\n',
+        encoding="utf-8",
+    )
+
+    edits = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")
+
+    assert '"version": "1.2.4"' in edits[codex_plugin]
+    assert '"version": "1.0.2"' not in edits[codex_plugin]
 
 
 def test_release_bump_dry_run_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,8 +117,34 @@ def test_release_bump_writes_all_files(tmp_path: Path, monkeypatch: pytest.Monke
     result = CliRunner().invoke(release_group, ["bump", "minor", "--date", "2026-06-25"])
     assert result.exit_code == 0, result.output
     assert 'version = "1.3.0"' in (repo / "pyproject.toml").read_text()
+    assert (
+        '"version": "1.3.0"'
+        in (repo / "plugins" / "memo" / ".codex-plugin" / "plugin.json").read_text()
+    )
     assert (repo / "server.json").read_text().count('"version": "1.3.0"') == 2
     assert "## [1.3.0] - 2026-06-25" in (repo / "CHANGELOG.md").read_text()
+
+
+def test_release_sync_realigns_files_to_pyproject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    codex_plugin = repo / "plugins" / "memo" / ".codex-plugin" / "plugin.json"
+    codex_plugin.write_text(
+        '{\n  "name": "memo",\n  "version": "1.0.2"\n}\n',
+        encoding="utf-8",
+    )
+    (repo / "server.json").write_text(
+        '{\n  "version": "1.0.2",\n  "packages": [{"version": "1.0.2"}]\n}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEMO_DEV_REPO", str(repo))
+
+    result = CliRunner().invoke(release_group, ["sync"])
+
+    assert result.exit_code == 0, result.output
+    assert '"version": "1.2.3"' in codex_plugin.read_text()
+    assert (repo / "server.json").read_text().count('"version": "1.2.3"') == 2
 
 
 def test_release_check_report_passes_synced_release(tmp_path: Path) -> None:
@@ -105,7 +154,35 @@ def test_release_check_report_passes_synced_release(tmp_path: Path) -> None:
 
     assert report.ok is True
     assert report.version == "1.2.3"
+    assert report.versions["plugins/memo/.codex-plugin/plugin.json"] == "1.2.3"
     assert report.issues == []
+
+
+def test_release_check_real_checkout_versions_are_synced() -> None:
+    if not (_REPO_ROOT / "pyproject.toml").is_file():
+        pytest.skip("not running from a source checkout")
+
+    report = release_check_report(_REPO_ROOT)
+
+    # This working tree is shared by concurrent sessions (see CLAUDE.md): a
+    # bump in flight legitimately leaves the TODO placeholder — skip, don't red.
+    if any("TODO" in issue for issue in report.issues):
+        pytest.skip("release bump in flight (CHANGELOG TODO placeholder)")
+    assert report.ok is True, report.issues
+    assert report.versions["plugins/memo/.codex-plugin/plugin.json"] == report.version
+
+
+def test_release_check_report_rejects_codex_plugin_bundle_drift(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "plugins" / "memo" / ".codex-plugin" / "plugin.json").write_text(
+        '{\n  "name": "memo",\n  "version": "1.0.2"\n}\n',
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any("plugins/memo/.codex-plugin/plugin.json" in issue for issue in report.issues)
 
 
 def test_release_check_report_rejects_changelog_todo(tmp_path: Path) -> None:

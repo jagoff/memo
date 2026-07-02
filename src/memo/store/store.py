@@ -154,15 +154,18 @@ class VecStore(
     def _get_tantivy(self) -> TantivyFTSIndex | None:
         """Return the live TantivyFTSIndex, or None to fall back to FTS5.
 
-        Respects `MEMO_FTS_BACKEND`: 'fts5' forces FTS5; 'tantivy' requires
-        tantivy (raises if absent); 'auto' (default) uses tantivy when installed.
-        Lazy-opens the index on first call; thread-safe.
+        Respects `MEMO_TANTIVY_ENABLED` (kill-switch: =0 forces FTS5-only, wins
+        over everything) and `MEMO_FTS_BACKEND`: 'fts5' forces FTS5; 'tantivy'
+        requires tantivy (raises if absent); 'auto' (default) uses tantivy when
+        installed. Lazy-opens the index on first call; thread-safe.
         Returns None when the index is known-unhealthy from a prior write failure.
         """
         if not self._tantivy_healthy:
             return None
-        from ..flags import flag_str
+        from ..flags import flag_bool, flag_str
 
+        if not flag_bool("MEMO_TANTIVY_ENABLED"):
+            return None
         backend = flag_str("MEMO_FTS_BACKEND")
         if backend == "fts5":
             return None
@@ -186,8 +189,10 @@ class VecStore(
 
     def _maybe_rebuild_tantivy(self) -> None:
         """Build the tantivy index from the FTS5 table on first startup."""
-        from ..flags import flag_str
+        from ..flags import flag_bool, flag_str
 
+        if not flag_bool("MEMO_TANTIVY_ENABLED"):
+            return
         if not _tantivy_available() or flag_str("MEMO_FTS_BACKEND") == "fts5":
             return
         if TantivyFTSIndex.exists(self.tantivy_index_dir):

@@ -120,6 +120,98 @@ def test_codex_plugin_update_notification_noops_without_tty(tmp_path, monkeypatc
     assert upd._notify_codex_plugin_updated() is False
 
 
+def test_refresh_agent_artifacts_updates_static_agent_surfaces(monkeypatch, tmp_path):
+    def fake_which(name: str) -> str | None:
+        if name in {"claude", "codex", "devin"}:
+            return f"/usr/bin/{name}"
+        return None
+
+    monkeypatch.setattr(upd.shutil, "which", fake_which)
+    monkeypatch.setattr("memo.runtime.mcp._agent_asset_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        upd,
+        "_devin_skill_path",
+        lambda: tmp_path / ".config" / "devin" / "skills" / "memo" / "SKILL.md",
+    )
+
+    copied: list[tuple] = []
+    installed: list[tuple] = []
+    commands: list[tuple] = []
+    monkeypatch.setattr("memo.runtime.codex._codex_home", lambda: tmp_path / "codex-home")
+    monkeypatch.setattr(
+        "memo.runtime.codex._copy_slash_skill",
+        lambda root, dst, *, dry_run: copied.append((root, dst, dry_run)),
+    )
+    monkeypatch.setattr(
+        "memo.runtime.codex._install_codex_plugin",
+        lambda root, *, dry_run: installed.append((root, dry_run)),
+    )
+    monkeypatch.setattr(
+        "memo.runtime.mcp._run_agent_command",
+        lambda args, **kwargs: commands.append((args, kwargs)),
+    )
+
+    assert upd._refresh_agent_artifacts() is True
+    assert (tmp_path, tmp_path / "codex-home" / "skills" / "memo" / "SKILL.md", False) in copied
+    assert any(str(dst).endswith(".config/devin/skills/memo/SKILL.md") for _root, dst, _dry in copied)
+    assert installed == [(tmp_path, False)]
+    assert [call[0][:3] for call in commands] == [
+        ["claude", "plugin", "marketplace"],
+        ["claude", "plugin", "install"],
+    ]
+
+
+def test_refresh_agent_artifacts_skips_agents_without_static_assets(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        upd.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}" if name in {"opencode", "devin-desktop"} else None,
+    )
+    # Pin the devin-skill probe off the developer's real HOME: on a machine
+    # where memo installed ~/.config/devin/skills/memo/SKILL.md, has_devin would
+    # otherwise be True and the "skip" path under test would never run.
+    monkeypatch.setattr(
+        upd,
+        "_devin_skill_path",
+        lambda: tmp_path / ".config" / "devin" / "skills" / "memo" / "SKILL.md",
+    )
+    monkeypatch.setattr("memo.runtime.mcp._agent_asset_root", lambda: tmp_path)
+    # Recording stubs, not raising ones: _refresh_agent_artifacts wraps each
+    # branch in `except Exception`, so a raised AssertionError would be
+    # swallowed and the test would pass for the wrong reason.
+    copied: list[tuple] = []
+    installed: list[tuple] = []
+    commands: list[tuple] = []
+    monkeypatch.setattr(
+        "memo.runtime.codex._copy_slash_skill",
+        lambda *args, **kwargs: copied.append(args),
+    )
+    monkeypatch.setattr(
+        "memo.runtime.codex._install_codex_plugin",
+        lambda *args, **kwargs: installed.append(args),
+    )
+    monkeypatch.setattr(
+        "memo.runtime.mcp._run_agent_command",
+        lambda *args, **kwargs: commands.append(args),
+    )
+
+    assert upd._refresh_agent_artifacts() is False
+    assert copied == []
+    assert installed == []
+    assert commands == []
+
+
+def test_finish_successful_update_refreshes_codex_plugin_before_notify(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(upd, "_clear_update_notify", lambda: calls.append("clear"))
+    monkeypatch.setattr(upd, "_refresh_agent_artifacts", lambda: calls.append("refresh"))
+    monkeypatch.setattr(upd, "_notify_codex_plugin_updated", lambda: calls.append("notify"))
+
+    upd._finish_successful_update()
+
+    assert calls == ["clear", "refresh", "notify"]
+
+
 def test_self_update_to_tag_notifies_codex_after_success(monkeypatch):
     monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
     monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
