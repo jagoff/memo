@@ -341,14 +341,6 @@ def test_install_slash_codex_installs_plugin_and_mcp(monkeypatch):
     assert "slash menu currently lists only built-in slash commands" in result.output
 
 
-def test_codex_plugin_manifest_does_not_duplicate_user_skill():
-    root = Path.cwd()
-    plugin = json.loads((root / "plugins" / "memo" / ".codex-plugin" / "plugin.json").read_text())
-
-    assert (root / "skills" / "memo" / "SKILL.md").is_file()
-    assert "skills" not in plugin
-
-
 def test_install_slash_claude_uses_add_json(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
@@ -479,6 +471,15 @@ def test_install_slash_devin_desktop_writes_mcp_config(monkeypatch, tmp_path):
     assert memo["env"]["MEMO_EMBEDDER_DIMS"] == "2560"
     assert memo["env"]["MEMO_SOURCE"] == "devin-desktop"
     assert memo["type"] == "stdio"
+    assert "Startup-banner shims" not in result.output
+
+
+def test_codex_plugin_manifest_does_not_duplicate_user_skill() -> None:
+    manifest = json.loads(
+        Path("plugins/memo/.codex-plugin/plugin.json").read_text(encoding="utf-8")
+    )
+
+    assert "skills" not in manifest
 
 
 def test_mcp_command_opencode(monkeypatch):

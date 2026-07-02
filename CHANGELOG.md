@@ -9,6 +9,21 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.8] - 2026-07-02
+
+### Fixed
+
+- **Sync can no longer destroy memories through a stale interrupted rebase.** A rebase killed mid-conflict (git timeout, machine sleep, session teardown) left `.git/rebase-merge` behind; the next sync matched `--skip` in git's "already a rebase in progress" error and ran `git rebase --skip` — silently dropping the local memories commit and committing raw conflict markers into `.md` files, which then pushed to every other machine. Sync now aborts a stale rebase before pulling (reported as `stale_rebase_aborted`), `_commit_local` refuses to commit unmerged paths, and the recovery loop treats "already a rebase" as a hard error instead of a skippable conflict.
+- **`memo sync pull` / `memo sync push` now take the machine sync lock.** Both called the git layer directly, bypassing the `.sync.lock` flock that `memo sync once` holds — a SessionStart pull could drive or abort a concurrent Stop-hook rebase mid-flight. They now route through the same locked coordinator and soft-skip when another sync owns the lock. Git subprocess timeouts (`subprocess.TimeoutExpired`) are wrapped as `SyncGitError`, so `sync_once`'s "never raises" contract and the `--quiet` hook paths hold under a blackholed network.
+- **Path traversal via `project:` tags is closed.** A tag like `project:../../evil` was used verbatim as the on-disk bucket, letting `memo save`/`memo_save` create directories and plant `.md` files outside the vault (and `memo migrate --bucket-by-project` rename memories out of it — data loss on the next reindex). The derived folder is now slugified (the tag itself is stored unchanged), and both the save and migrate paths enforce a containment check against `memory_dir`.
+- **Recall daemon startup is race-free.** `recall-daemon start` fired concurrently (SessionStart hooks, launchd respawns) could orphan a live MLX daemon on an unlinked socket and later have the orphan's shutdown unlink the survivor's socket, silently killing warm recall. `run_server` now takes the same non-blocking startup flock as the maint/ingest daemons, and daemon cleanup only removes socket/pid files it owns (a live foreign owner's files are left alone). The idle-capture daemon got the same child-side guard against duplicate loops.
+- **`gpu_guard(timeout=...)` actually times out across processes.** The deadline only covered the in-process RLock; the cross-process file lock was a plain blocking `flock`, so one stuck MLX pass wedged every other memo process (recall daemon, CLI, MCP) machine-wide with no `TimeoutError`. The flock acquisition is now bounded by the same deadline.
+- **Token ledger survives concurrent Stop hooks.** `write_ledger` used a fixed tmp filename, so two sessions rolling up simultaneously could replace the ledger with a half-written file — `read_ledger` then silently reset to empty and historic days beyond the grounding-log window were permanently lost. Writers now use unique temp files and the read-merge-write runs under a sidecar flock, matching the repo's dashboard-logs pattern.
+- `memo release bump`/`sync` now edit `packaging/mcpb/manifest.json` (version + pinned `mlx-memo` spec) — `release check` validated it but `bump` never wrote it, so every release tripped the check.
+- **`device_id` first-run mint is atomic.** Concurrent first sessions could mint divergent machine ids (phantom attribution in history events) or read an empty id mid-write; the id is now published via an exclusive atomic link and losers adopt the winner's id.
+
+## [2.9.7] - 2026-07-01
+
 ### Fixed
 - Release version alignment now includes the internal Codex plugin bundle, with `memo release sync` to realign drifted manifests to `pyproject.toml` and `memo update` refreshing installed static agent artifacts for Claude Code, Codex, and Devin after a successful runtime update.
 - The retired desktop-agent surface was removed from CLI, docs, tests, and installer flows; use Devin Desktop via `--client/--agent devin-desktop`, `DEVIN_DESKTOP_MCP_CONFIG`, and `~/.devin/mcp.json`.
@@ -21,6 +36,109 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 - The HTTP API's lazy `Memory` init is thread-safe — concurrent first requests no longer construct duplicate `Memory` instances (duplicate sqlite connections + embedder load).
 - Historical CHANGELOG entries no longer retroactively claim Devin Desktop support for releases that actually shipped the retired client's paths.
 - Test hygiene: runtime-isolation tests run against a sandboxed `$HOME` (they wrote real `~/.memo/bin` shims and `~/.zshrc` PATH snippets on every run) and no longer depend on the developer machine's live index for `MEMO_EMBEDDER_DIMS`; the agent-artifact "skip" test is hermetic and uses recording stubs that can actually fail.
+
+## [2.9.6] - 2026-07-01
+
+### Fixed
+- **`install-mcp` now merges JSONC agent configs.** Comments (`//`, `/* */`) and trailing commas are tolerated when merging an existing config (Zed `settings.json`, VS Code, Cursor). Previously these raised "not valid JSON". Comments are not preserved on rewrite; the config data is.
+
+## [2.9.5] - 2026-07-01
+
+### Fixed
+- **CI `mypy` step is green again.** `fastapi` / `uvicorn` are optional (`[http]`) dependencies not installed in the default `[dev]` CI runtime, but `server_http.py` / `cli_http.py` import them at module level — so `mypy src/memo` failed with `import-not-found` (a pre-existing gap, unrelated to the 2.9.4 changes). Added them to the `[[tool.mypy.overrides]]` `ignore_missing_imports` list, matching how the `[cpu]`/MLX optional extras are already handled. No runtime change.
+
+## [2.9.4] - 2026-07-01
+
+### Added
+- **MCP server surface is now under test.** 21 new `tests/test_server_*.py` files cover the previously-untested `server_*` domains (analytics, asof, backup, cache, collaborative, contextual, contradict, core_history, entities, episodes, feedback, graph, import_export, links, multimodal, query, reflect, repo, sync, temporal, version) — each mocks `Memory`, invokes every tool through its `register()`, and asserts the returned envelope. Measured suite coverage rose ~60% → 67%, and the coverage floor (`fail_under`) is ratcheted **58 → 64**.
+
+### Fixed
+- **`delete()` rollback no longer drops the sqlite-only dedup keys.** `topic_key` / `normalized_hash` live only in the sqlite index (never in the `.md` frontmatter), and `store.get()` omits them — so a failed-final-unlink rollback restored the row *without* them, and a later same-topic save would then create a **duplicate** instead of updating in place. A new `VecStore.get_dedup_keys()` (mirroring `get_embedding_blob` / `get_fts_body`) pre-fetches them so the rollback restores the row faithfully.
+- **`delete()` mutates derived/audit state only after the authoritative unlink.** History logging, graph-edge drop, and receipt/event emission now run strictly *after* the canonical `.md` is removed. A failed unlink therefore rolls back cleanly with **no spurious `delete` audit event** and no dropped graph edges for a memory that actually survives the failure.
+
+### Changed
+- **`cli_dream.py` god-file thinned** (1228 → 1142 LOC): five extractable helpers (`_state_path`, `_older_id`, `_corpus_fingerprint`, `_make_progress`, `_render_run_summary`) moved into `cli_dream_passes.py` and re-exported, so existing imports keep resolving. Behaviour-preserving; the CLI file stays wiring-only per the repo convention.
+
+## [2.9.3] - 2026-07-01
+
+### Fixed
+- **`memo dream run` no longer emits misleading warnings for by-design behavior.** Two `WARNING`-level log lines fired on every manual dream run despite the run succeeding (`receipt["errors"]` stayed empty):
+  - *Near-duplicate save nag.* The save-time dedup advisory (`consider `memo update` instead`) is only actionable for an interactive human, but dream's signal-gather/synthesize passes save near-duplicates by construction (the same run's consolidate pass merges them). A new `derived_save_scope()` (a `ContextVar` in `memory/record.py`) marks batch/derived saves; `dream run` wraps its whole pipeline and `apply_merge` wraps its merged save, so the nag drops to `DEBUG` in those paths. A human's direct `memo save` still gets the warning.
+  - *Consolidation merge-proposal JSON unparseable.* The retry only flipped decode temperature (0.0→0.3), which cannot recover a proposal truncated by too small a token budget. The retry now escalates **both** temperature and `max_tokens` (1536→3072) so a long merged body completes instead of being cut mid-value; skipping the cluster remains the safe final fallback (originals untouched, retried next night).
+
+## [2.9.2] - 2026-07-01
+
+### Fixed
+- Recover `transcript_path` by `session_id` when hook payloads omit it — since 2026-06-27 some Stop/UserPromptSubmit hook payloads stopped carrying `transcript_path` while `session_id` kept arriving, silently starving `capture-stop`'s grounding scoring (and therefore the token-savings ledger `memo tokens` reads), session autosave's payload persistence, and session checkpoint's snapshot fields. Recovered via a `~/.claude/projects/*/<session_id>.jsonl` glob fallback.
+
+## [2.9.1] - 2026-07-01
+
+### Changed
+- The nightly `memo dream run` LaunchAgent template now enables the self-improving recall tuner by default (`MEMO_DREAM_TUNE_ENABLED` + `MEMO_DREAM_TUNE_BOOST_ENABLED`). Every applied change is verified against real grounding by the online proof loop and reverted if it regresses, so on-by-default is safe. Reversible by removing the flags from the plist.
+
+## [2.9.0] - 2026-07-01
+
+### Added
+- **F4 consolidate-reuse metric** (`memo dream consolidate-reuse`): read-only report of whether the `type=synthesis` memories the episodic-consolidation pass creates actually get grounded/reused in real recall (n_consolidated / n_reused / reuse_fraction). Measures the value of consolidation with real data.
+- **Online-only project-boost explorer** (`MEMO_DREAM_TUNE_BOOST_ENABLED`, OFF by default): nudges `MEMO_RECALL_PROJECT_BOOST` and lets the online proof loop confirm/revert it against real grounding. Boosts are not offline-measurable (the label eval has no project context), so this knob is tuned purely by real outcomes — no offline gate. Rides the generic proof loop (generic per-knob revert). Direction is hill-climbed from the ledger (repeat confirmed, reverse reverted).
+
+### Fixed
+- Online proof-loop revert self-heals the overlay's `_meta.prev` so the offline rollback-guard cannot resurrect a just-reverted config under index drift.
+
+## [2.8.2] - 2026-07-01
+
+### Fixed
+- Online proof-loop revert now self-heals the tuned-params overlay's one-step `_meta.prev`, so a later offline rollback-guard can no longer resurrect the config the online loop just reverted away under index drift. (Gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default.)
+
+## [2.8.1] - 2026-07-01
+
+### Fixed
+- Proof-loop deferral is now checked BEFORE the (expensive) MLX search in the graph tuner passes: when a min_sim change is being proven or a revert cooldown is active, the graph passes skip the search entirely instead of grid-searching and only then deferring. Surfaced by end-to-end empirical testing of the proof loop. (Still gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default.)
+
+## [2.8.0] - 2026-07-01
+
+### Added
+- **Generic online proof loop** for the recall self-tuner — out-of-sample grounding verification now covers any tuned knob, not just `min_sim`. The graph-proximity-weight tuner joins the proof loop: each applied change is confirmed or reverted by real grounding under its new params version, with a knob-generic revert that restores the correct per-knob offline baseline. A one-cycle revert cooldown stops a co-gated pass from re-applying a just-reverted value the same night. (All gated behind `MEMO_DREAM_TUNE_ENABLED`, OFF by default — no default behavior change.)
+- Proof-loop ledger, `memo dream status`, and `memo dream timeline` now label each entry by the tuned knob (`min_sim` / `graph_proximity_weight`).
+
+## [2.7.0] - 2026-07-01
+
+### Added
+- **Self-improvement proof loop** for the recall self-tuner — all gated behind `MEMO_DREAM_TUNE_ENABLED` (OFF by default), no default behavior change. Each nightly `min_sim` change the tuner applies is now judged out-of-sample by the real grounding accumulated under its new tuned-params version, reverted if that regresses, and recorded in a durable ledger.
+  - `params_version` attribution stamped on every grounding row; `memo eval baseline` snapshots offline precision/noise + online grounded/tokens (7d/30d) + the active params version.
+  - Online-guarded confirm/revert/wait/expire verdicts (`resolve_pending`), with a self-contained revert that restores the pre-apply floor and offline baseline.
+  - One overlay change per proof cycle: the graph tuner passes defer (`deferred_pending`) while a `min_sim` change is being proven, so its grounding cohort is never orphaned.
+  - Graduation-readiness checker surfaced in `memo dream status`; `memo dream timeline` renders the proof-loop history with realized online impact.
+- Flags: `MEMO_DREAM_TUNE_MIN_COHORT` (20), `MEMO_DREAM_TUNE_ONLINE_EPS` (0.02), `MEMO_DREAM_TUNE_GRADUATION_K` (5).
+
+## [2.6.11] - 2026-06-30
+
+### Fixed
+- `memo init` now exits cleanly with guidance on a non-TTY / non-interactive shell instead of crashing inside the interactive picker.
+- LLM features (`ask` / `synthesize` / `dream`) on the CPU (non-MLX) backend now print the "requires the MLX runtime" guidance as a clean error instead of an uncaught traceback.
+- MCP `serverInfo.version` now reports memo's own version instead of the FastMCP framework version.
+
+### Changed
+- README: corrected the CLI command count (95 → 105) and the full MCP surface count (123 → 126).
+
+## [2.6.10] - 2026-06-30
+
+### Fixed
+- Dashboard historic tokens-saved now reads from the durable per-day ledger (`token_ledger`) instead of the capped `grounding.log`, so the gerencial headline keeps growing like `memo tokens` instead of plateauing once old grounded rows rotate out of the log.
+
+### Performance
+- Reranker: reverted the batched cross-encoder forward (it regressed the configured 4B model) while keeping the per-pair head-slice in `score()` — projecting only the last token through the LM head.
+
+## [2.6.9] - 2026-06-30
+
+### Added
+- `memo tokens` — TUI showing how many tokens memo saved today / this month / all-time, with big-number panels (HOY/MES/HISTÓRICO) plus daily and monthly bar charts and a month-over-month growth indicator (`--json` for machine output). Savings are attributable to memo alone: it counts *grounded* recalls — surfaced memories the answer actually used (re-derivations memo prevented) — times `MEMO_ROI_TOKENS_PER_GROUNDED`, so the total rises as memo accumulates more useful memories.
+- Durable token-savings ledger (`token_ledger.py`, `state_dir/token_savings_daily.json`). `grounding.log` is capped (~12 days) and rotates, so an all-time total read from it alone would plateau; the ledger folds grounded events into a monotonic per-day file before they evict, giving `memo tokens` a durable, ever-growing historic total. Rolled up on the Stop hook and on demand.
+
+## [2.6.8] - 2026-06-30
+
+### Added
+- `[Memo <ver>]` badge in opencode. opencode has no native statusline/tagline slot for custom text (plugin status-bar widgets are an open feature request), so `startup-banner --agent opencode` now stamps the live memo version into opencode's `username` config (`<base> · [Memo <ver>]`), shown next to each user message. Idempotent upsert into the pure-JSON `opencode.json` (merges with `opencode.jsonc`); no-op when opencode is absent.
 
 ## [2.6.7] - 2026-06-30
 

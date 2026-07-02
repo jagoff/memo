@@ -8,9 +8,35 @@ from typing import TYPE_CHECKING, Any
 _log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from fastmcp import FastMCP
 
     from memo.memory import Memory
+
+
+def _acquire_start_lock(state_dir: Path) -> int | None:
+    """Take the idle daemon's non-blocking exclusive startup flock.
+
+    `idle-daemon start` is check-then-spawn with no child-side guard, and
+    `_ensure_idle_daemon` runs it on every memo-mcp startup — so concurrent
+    starts would leave a duplicate capture loop running untracked (maint/ingest
+    daemons guard their start the same way). Returns the lock fd, held for the
+    process lifetime (released by the OS on exit), or None when another
+    instance already holds it — the loser must exit at once.
+    """
+    import fcntl
+    import os
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir / "idle-daemon.pid.lock"
+    lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock_fd)
+        return None
+    return lock_fd
 
 
 def register(server: FastMCP, memory: Memory) -> None:
@@ -219,6 +245,12 @@ def run_idle_capture_loop() -> None:
         _log.addHandler(h)
 
     cfg = Config.from_env()
+
+    lock_fd = _acquire_start_lock(cfg.state_dir)
+    if lock_fd is None:
+        _log.info("idle daemon: another instance is running, exiting")
+        return
+
     delay_secs = flag_int("MEMO_SESSION_IDLE_CAPTURE_SECS") or 10
 
     _log.info("idle daemon: starting (delay=%ds)", delay_secs)

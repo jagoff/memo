@@ -2,7 +2,7 @@
 
 Thin wrapper over the shared ``consciousness_contracts.agent_install`` contract
 (the same one memflow uses), so memo is installable into Codex, Claude Code,
-Claude Desktop, Devin Desktop, Gemini, Cursor, opencode, Devin — and any future agent
+Claude Desktop, Windsurf, Gemini, Cursor, opencode, Devin — and any future agent
 via ``--config-path``. MCP-only and idempotent; for the heavier skill+plugin+MCP
 flow use ``memo install-slash``.
 
@@ -40,49 +40,6 @@ from memo.runtime.mcp import (
 )
 
 
-def _seed_install_memory() -> None:
-    """First-run seed: save one REAL memory recording the install, so the
-    first briefing can demonstrate recall on something the user just did.
-    Idempotent via ``state_dir/.install_seed.json``; never fails the install
-    (no embedder / no MLX on this box → silently skipped)."""
-    import json as _json
-    import socket
-    from datetime import date as _date
-
-    try:
-        from memo.config import Config
-
-        cfg = Config.from_env()
-        stamp = cfg.state_dir / ".install_seed.json"
-        if stamp.exists():
-            return
-        try:
-            from importlib.metadata import version as _pkg_version
-
-            ver = _pkg_version("mlx-memo")
-        except Exception:
-            ver = "unknown"
-        from memo.memory import Memory
-
-        rec = Memory(cfg).save(
-            content=(
-                f"Installed memo {ver} on {_date.today().isoformat()} on "
-                f"{socket.gethostname()}. memo now recalls relevant memories "
-                "on every prompt and briefs at session start."
-            ),
-            title=f"memo {ver} installed",
-            type_="note",
-            tags=["memo-install-seed"],
-        )
-        cfg.state_dir.mkdir(parents=True, exist_ok=True)
-        stamp.write_text(
-            _json.dumps({"id": rec.id, "ts": _date.today().isoformat(), "shown": False}),
-            encoding="utf-8",
-        )
-    except Exception:  # noqa: S110  # onboarding decoration — never fail an install
-        pass
-
-
 def _claude_desktop_config_path() -> Path:
     """Per-OS Claude Desktop MCP config path."""
     if sys.platform == "darwin":
@@ -108,9 +65,9 @@ _FALLBACK_SUPPORTED_AGENTS: tuple[str, ...] = (
     "codex",
     "cursor",
     "devin",
-    "devin-desktop",
     "gemini",
     "opencode",
+    "windsurf",
 )
 
 
@@ -226,16 +183,11 @@ def _fallback_register_agent_mcp(
         config_targets: dict[str, tuple[Path, bool]] = {
             "claude-desktop": (_claude_desktop_config_path(), False),
             "cursor": (Path.home() / ".cursor" / "mcp.json", True),
-            "devin-desktop": (Path.home() / ".devin" / "mcp.json", True),
             "gemini": (Path.home() / ".gemini" / "settings.json", True),
+            "windsurf": (Path.home() / ".codeium" / "windsurf" / "mcp_config.json", False),
         }
         if agent in config_targets:
             path, include_type = config_targets[agent]
-            target_server = server
-            if agent == "devin-desktop":
-                target_server = dataclasses.replace(
-                    server, env={**server.env, "MEMO_SOURCE": "devin-desktop"}
-                )
             if not write:
                 return {
                     "ok": True,
@@ -244,9 +196,7 @@ def _fallback_register_agent_mcp(
                     "would": "write",
                     "path": str(path),
                 }
-            action = _write_mcp_json(
-                path, target_server, json_key="mcpServers", include_type=include_type
-            )
+            action = _write_mcp_json(path, server, json_key="mcpServers", include_type=include_type)
             return {"ok": True, "agent": agent, "action": action, "path": str(path)}
 
         return {"ok": False, "agent": agent, "skipped": True, "error": "unsupported agent"}
@@ -344,10 +294,10 @@ def install_mcp(
     """Register the memo MCP server into one or more agents."""
     try:
         from consciousness_contracts import (
+            SUPPORTED_AGENTS,
             generic_preset,
             register_agent_mcp,
         )
-        SUPPORTED_AGENTS = _FALLBACK_SUPPORTED_AGENTS
     except ImportError:
         SUPPORTED_AGENTS = _FALLBACK_SUPPORTED_AGENTS
         generic_preset = _generic_preset
@@ -401,6 +351,3 @@ def install_mcp(
             target_agents = list(_CLIENT_FILES)
         for rel, status in write_mandates_for_clients(target_agents, dry_run=not write):
             click.echo(f"  {rel:<28} {status}")
-
-    if write:
-        _seed_install_memory()

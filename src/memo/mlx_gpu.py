@@ -38,8 +38,10 @@ it stays safe under the deferred-MLX-import invariant.
 
 from __future__ import annotations
 
+import errno
 import os
 import threading
+import time
 import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -113,25 +115,56 @@ def _xproc_lock_enabled() -> bool:
     return os.environ.get("MEMO_GPU_XPROC_LOCK", "").strip().lower() not in _FALSE
 
 
-def _acquire_flock() -> None:
-    """Take the exclusive cross-process lock (outermost entry only)."""
+_FLOCK_POLL_INTERVAL_S = 0.025
+
+
+def _acquire_flock(timeout: float | None = None) -> bool:
+    """Take the exclusive cross-process lock (outermost entry only).
+
+    With no ``timeout``, blocks until other processes release (historical
+    behavior). With a ``timeout`` (seconds remaining on the caller's deadline),
+    polls with ``LOCK_NB`` and returns ``False`` if the deadline passes — so
+    one stuck MLX process (e.g. an abandoned `chat_with_timeout` worker still
+    generating) cannot wedge every other memo process on the machine. Open or
+    unexpected flock failures degrade to intra-process-only (return ``True``
+    without the lock) rather than block every MLX call — correctness-best-effort.
+    """
     global _lock_fd
     path = _lock_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o644)
     except OSError:
-        # If we can't even open the lock file, degrade to intra-process only
-        # rather than block every MLX call — correctness-best-effort.
+        # If we can't even open the lock file, degrade to intra-process only.
         _lock_fd = None
-        return
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)  # blocks until other processes release
-    except OSError:
-        os.close(fd)
-        _lock_fd = None
-        return
-    _lock_fd = fd
+        return True
+    if timeout is None:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)  # blocks until other processes release
+        except OSError:
+            os.close(fd)
+            _lock_fd = None
+            return True
+        _lock_fd = fd
+        return True
+    deadline = time.monotonic() + max(timeout, 0.0)
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                os.close(fd)
+                _lock_fd = None
+                return True  # unexpected failure — degrade, don't block
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                os.close(fd)
+                _lock_fd = None
+                return False  # deadline exceeded — caller raises TimeoutError
+            time.sleep(min(_FLOCK_POLL_INTERVAL_S, remaining))
+        else:
+            _lock_fd = fd
+            return True
 
 
 def _release_flock() -> None:
@@ -159,12 +192,15 @@ def gpu_guard(timeout: float | None = None) -> Iterator[None]:
 
     ``timeout`` may be passed explicitly or inherited from ``_gpu_tl.timeout``
     (a thread-local set by ``chat_with_timeout`` in the submitted worker).
-    When set, a finite deadline is imposed on the lock acquire: if an abandoned
-    thread from a prior timed-out call still holds the lock, subsequent calls
-    raise ``TimeoutError`` after this many seconds rather than blocking forever.
+    When set, a finite deadline is imposed on the lock acquire — covering BOTH
+    the intra-process RLock and the cross-process file lock: if an abandoned
+    thread (or another memo process stuck in an MLX pass) still holds a lock,
+    subsequent calls raise ``TimeoutError`` after this many seconds rather than
+    blocking forever.
     """
     global _depth
     effective_timeout: float | None = timeout if timeout is not None else getattr(_gpu_tl, "timeout", None)
+    start = time.monotonic()
     acquired = _GPU_LOCK.acquire(timeout=effective_timeout if effective_timeout is not None else -1.0)
     if not acquired:
         raise TimeoutError(
@@ -173,7 +209,15 @@ def gpu_guard(timeout: float | None = None) -> Iterator[None]:
         )
     try:
         if _depth == 0 and _xproc_lock_enabled():
-            _acquire_flock()
+            remaining: float | None = None
+            if effective_timeout is not None:
+                remaining = effective_timeout - (time.monotonic() - start)
+            if not _acquire_flock(timeout=remaining):
+                raise TimeoutError(
+                    f"GPU cross-process lock not acquired within {effective_timeout}s — "
+                    "another memo process (possibly a stuck MLX pass) still holds it; "
+                    "this cluster will be skipped"
+                )
         _depth += 1
         try:
             yield

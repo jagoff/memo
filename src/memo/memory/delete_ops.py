@@ -97,6 +97,10 @@ class _DeleteOpsMixin(_MemoryBase):
         elif isinstance(blob, (list, tuple)):
             stored_embedding = list(blob)
         stored_body_text = self.store.get_fts_body(id_)
+        # topic_key + normalized_hash live ONLY in the sqlite index (not in the
+        # .md), and store.get() omits them — pre-fetch so the rollback restores
+        # them, else a later same-topic save would duplicate instead of update.
+        stored_topic_key, stored_normalized_hash = self.store.get_dedup_keys(id_)
 
         # Step 1: drop the derived index row + edges first (reversible via reindex)
         existed = self.store.delete(id_)
@@ -104,7 +108,53 @@ class _DeleteOpsMixin(_MemoryBase):
             self._write_gen += 1
             return False
 
-        # Step 2: log history (before file delete for audit trail)
+        # Step 2 (final, authoritative): remove the canonical .md FIRST, before
+        # touching any other derived/audit state. Until the delete is known to
+        # have succeeded, only the store index (rolled back below) and the .md
+        # are mutated — so a failed unlink leaves history, graph edges, and
+        # receipts untouched (no spurious 'delete' audit event, no dropped graph
+        # edges for a memory that actually survives the failure).
+        md_path = self._resolve_existing(r["path"])
+        try:
+            md_path.unlink(missing_ok=True)
+        except OSError as exc:
+            # File deletion failed but the store index was already dropped.
+            # Roll the index back so the memory is recoverable; the reverse
+            # (file gone, store intact) would cause permanent data loss.
+            from memo.errors import StorageError
+
+            try:
+                self.store.upsert(
+                    id_=id_,
+                    path=r["path"],
+                    title=r["title"],
+                    type_=r["type"],
+                    tags=r.get("tags") or [],
+                    created=r["created"],
+                    updated=r["updated"],
+                    body_hash=r.get("body_hash") or "",
+                    embedding=stored_embedding,
+                    extra=r.get("extra"),
+                    body_text=stored_body_text,
+                    topic_key=stored_topic_key,
+                    normalized_hash=stored_normalized_hash,
+                )
+            except Exception as restore_exc:
+                raise StorageError(
+                    f"delete partially failed AND rollback failed: {restore_exc}. "
+                    "Run 'memo reindex' to recover."
+                ) from restore_exc
+
+            raise StorageError(
+                f"delete partially failed: store operations succeeded but could not remove "
+                f"canonical .md {md_path}: {exc}. Store record restored where possible. "
+                "Manual cleanup may be needed."
+            ) from exc
+
+        # Delete is now authoritative (index dropped + .md gone). Only now mutate
+        # the derived/audit state — these run strictly after the point of no
+        # return, so they never need rolling back on a failed delete.
+        # Step 3: log history (audit trail of a *completed* delete)
         self.history.log_delete(
             ts=_now_iso(),
             record_id=id_,
@@ -112,15 +162,15 @@ class _DeleteOpsMixin(_MemoryBase):
             type_=r["type"],
         )
 
-        # Step 3: drop graph edges
+        # Step 4: drop graph edges (derived; rebuildable via reindex)
         self.graph.drop_for_memoria(id_)
 
-        # Step 4: drop contradiction pairs (non-critical, suppress errors)
+        # Step 5: drop contradiction pairs (non-critical, suppress errors)
         if self._contradict_store is not None:
             with contextlib.suppress(Exception):
                 self._contradict_store.drop_for_memoria(id_)
 
-        # Step 5: emit receipts/events (non-critical, suppress errors)
+        # Step 6: emit receipts/events (non-critical, suppress errors)
         try:
             from memo.receipts import emit_receipt
 
@@ -156,44 +206,6 @@ class _DeleteOpsMixin(_MemoryBase):
             )
         except Exception:  # noqa: S110
             pass  # non-critical: file deletion is the authoritative step
-
-        # Step 6 (final, authoritative): remove the canonical .md
-        # Only after all store operations succeed to prevent data loss
-        md_path = self._resolve_existing(r["path"])
-        try:
-            md_path.unlink(missing_ok=True)
-        except OSError as exc:
-            # File deletion failed but store operations succeeded.
-            # The record is now orphaned in the store (file exists but marked deleted).
-            # This is recoverable via reindex, whereas the reverse (file gone, store intact)
-            # would cause permanent data loss.
-            from memo.errors import StorageError
-
-            try:
-                self.store.upsert(
-                    id_=id_,
-                    path=r["path"],
-                    title=r["title"],
-                    type_=r["type"],
-                    tags=r.get("tags") or [],
-                    created=r["created"],
-                    updated=r["updated"],
-                    body_hash=r.get("body_hash") or "",
-                    embedding=stored_embedding,
-                    extra=r.get("extra"),
-                    body_text=stored_body_text,
-                )
-            except Exception as restore_exc:
-                raise StorageError(
-                    f"delete partially failed AND rollback failed: {restore_exc}. "
-                    "Run 'memo reindex' to recover."
-                ) from restore_exc
-
-            raise StorageError(
-                f"delete partially failed: store operations succeeded but could not remove "
-                f"canonical .md {md_path}: {exc}. Store record restored where possible. "
-                "Manual cleanup may be needed."
-            ) from exc
 
         self._write_gen += 1
         return True

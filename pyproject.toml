@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "2.6.7"
+version = "2.9.8"
 description = "Local-first semantic memory for AI agents — MLX (Apple Silicon) or CPU sentence-transformers (Linux/Ubuntu) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -140,7 +140,10 @@ module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
           "fastapi", "fastapi.*", "uvicorn", "uvicorn.*",
           # sentence-transformers (+torch) — optional [cpu] extra, absent on the
           # default macOS/CI runtime; the ST embedder import is deferred.
-          "sentence_transformers", "sentence_transformers.*", "torch", "torch.*"]
+          "sentence_transformers", "sentence_transformers.*", "torch", "torch.*",
+          # fastapi + uvicorn — optional [http] extra for the standalone HTTP API
+          # (server_http/cli_http), not installed in the default [dev] CI runtime.
+          "fastapi", "fastapi.*", "uvicorn", "uvicorn.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -164,10 +167,10 @@ source = ["memo"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-# Floor is current measured coverage (~60%) minus a small buffer so a
+# Floor is current measured coverage (~67%) minus a small buffer so a
 # one-line dip doesn't redden CI. Ratchet upward as untested modules
 # (embedder, llm, recall_server, graph, …) get backfilled.
-fail_under = 58
+fail_under = 64
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

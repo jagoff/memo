@@ -68,8 +68,13 @@ def test_owned_config_vars_not_flagged_unknown() -> None:
     assert flags.unknown_memo_vars(env=env) == []
 
 
-def test_runtime_shim_sentinels_not_flagged_unknown() -> None:
-    env = {"MEMO_STARTUP_BANNER_SHOWN": "1", "MEMO_CODEX_BADGE_SHOWN": "1"}
+def test_internal_shim_state_vars_not_flagged_unknown() -> None:
+    env = {
+        "MEMO_STARTUP_BANNER_SHOWN": "1",
+        "MEMO_CODEX_BADGE_SHOWN": "1",
+        "MEMO_AGENT_TTY": "/dev/ttys001",
+    }
+    assert flags.unknown_memo_vars(env=env) == []
     assert flags.validate(env=env) == []
 
 

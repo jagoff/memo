@@ -474,6 +474,16 @@ class _WriteOpsMixin(_MemoryBase):
                 existing_path if existing_path else self._build_rel_path(title, now_iso, norm_tags)
             )
             abs_path = self.cfg.memory_dir / rel_path
+            # Containment guard: the canonical .md must land INSIDE memory_dir.
+            # A traversal-shaped rel_path (e.g. from a `project:../..` tag or a
+            # poisoned index path) must never write outside the vault.
+            if not abs_path.resolve().is_relative_to(self.cfg.memory_dir.resolve()):
+                from memo.errors import StorageError
+
+                raise StorageError(
+                    f"refusing to write memory outside memory_dir: {rel_path!r} "
+                    f"resolves out of {self.cfg.memory_dir}"
+                )
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 

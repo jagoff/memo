@@ -383,16 +383,37 @@ class Config(BaseModel):
         id_path = self.state_dir / ".device_id"
         if id_path.is_file():
             try:
-                return id_path.read_text(encoding="utf-8").strip()
+                existing = id_path.read_text(encoding="utf-8").strip()
+                if existing:
+                    return existing
             except Exception as exc:
                 _log.debug("config: failed to read device_id from %s: %s", id_path, exc)
 
+        import time
         import uuid
 
         new_id = str(uuid.uuid4()).replace("-", "")[:12]
         try:
             self.state_dir.mkdir(parents=True, exist_ok=True)
-            id_path.write_text(new_id, encoding="utf-8")
+            # Atomic exclusive publish: write a unique tmp file, then hard-link
+            # it to the final path. A plain write_text was check-then-write —
+            # concurrent first runs minted divergent ids (last write wins) and
+            # readers in the truncate window saw ''. os.link fails with
+            # FileExistsError when another process won the race; adopt its id.
+            tmp_path = id_path.with_name(f".device_id.{os.getpid()}-{new_id}.tmp")
+            tmp_path.write_text(new_id, encoding="utf-8")
+            try:
+                os.link(tmp_path, id_path)
+            except FileExistsError:
+                # Lost the mint race — the other process's id is canonical.
+                for _ in range(2):
+                    existing = id_path.read_text(encoding="utf-8").strip()
+                    if existing:
+                        return existing
+                    time.sleep(0.05)
+                raise  # unreadable/empty winner — fall through to transient
+            finally:
+                tmp_path.unlink(missing_ok=True)
         except Exception:
             # If we can't write, return a transient ID
             device_id = f"transient-{new_id}"

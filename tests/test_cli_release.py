@@ -42,11 +42,40 @@ def _fake_repo(root: Path, version: str) -> Path:
         f'{{\n  "version": "{version}",\n  "packages": [\n    {{\n      "version": "{version}"\n    }}\n  ]\n}}\n',
         encoding="utf-8",
     )
+    (root / "packaging" / "mcpb").mkdir(parents=True)
+    (root / "packaging" / "mcpb" / "manifest.json").write_text(
+        f'{{\n  "manifest_version": "0.3",\n  "version": "{version}",\n'
+        f'  "server": {{\n    "mcp_config": {{\n'
+        f'      "args": ["--from", "mlx-memo>={version}", "memo-mcp"]\n'
+        f"    }}\n  }}\n}}\n",
+        encoding="utf-8",
+    )
     (root / "CHANGELOG.md").write_text(
         f"# Changelog\n\n## [Unreleased]\n\n## [{version}] - 2026-01-01\n\n- prior\n",
         encoding="utf-8",
     )
     return root
+
+
+def test_plan_release_edits_bumps_mcpb_manifest(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    edits = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")
+
+    manifest = edits[repo / "packaging" / "mcpb" / "manifest.json"]
+    assert '"version": "1.2.4"' in manifest
+    assert "mlx-memo>=1.2.4" in manifest
+    # manifest_version is a schema version, not a release version.
+    assert '"manifest_version": "0.3"' in manifest
+
+
+def test_plan_release_edits_tolerates_missing_mcpb_manifest(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "packaging" / "mcpb" / "manifest.json").unlink()
+
+    edits = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")
+
+    assert repo / "packaging" / "mcpb" / "manifest.json" not in edits
+    assert 'version = "1.2.4"' in edits[repo / "pyproject.toml"]
 
 
 def test_plan_release_edits_syncs_versioned_release_files(tmp_path: Path) -> None:
@@ -183,6 +212,20 @@ def test_release_check_report_rejects_codex_plugin_bundle_drift(tmp_path: Path) 
 
     assert report.ok is False
     assert any("plugins/memo/.codex-plugin/plugin.json" in issue for issue in report.issues)
+
+
+def test_release_check_report_rejects_mcpb_manifest_drift(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    manifest = repo / "packaging" / "mcpb" / "manifest.json"
+    manifest.write_text(
+        '{"version":"1.2.2","server":{"mcp_config":{"args":["--from","mlx-memo>=1.2.2","memo-mcp"]}}}\n',
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any("packaging/mcpb/manifest.json" in issue for issue in report.issues)
 
 
 def test_release_check_report_rejects_changelog_todo(tmp_path: Path) -> None:

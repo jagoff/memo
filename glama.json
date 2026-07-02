@@ -1,0 +1,25 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "jagoff"
+  ],
+  "name": "memo",
+  "description": "Local-first long-term memory for coding agents. Hybrid vector + BM25 retrieval, markdown files as source of truth, time-machine queries, contradiction detection, and nightly synthesis.",
+  "type": "mcp_server",
+  "status": "production",
+  "framework": "FastMCP",
+  "transport": [
+    "stdio",
+    "http"
+  ],
+  "keywords": [
+    "memory",
+    "mcp",
+    "coding-agents",
+    "local-first",
+    "rag",
+    "mlx",
+    "sqlite-vec",
+    "bm25"
+  ]
+}

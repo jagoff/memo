@@ -109,6 +109,94 @@ def test_roll_up_accumulates_new_days(tmp_path: Path) -> None:
     assert _historic_grounded(ledger) == 3
 
 
+def test_roll_up_does_not_regress_higher_stored_count(tmp_path: Path) -> None:
+    """A day already stored with a HIGHER grounded count must survive a roll_up
+    that observes fewer rows for it (monotonic max-merge contract)."""
+    import json
+
+    token_ledger.write_ledger(
+        tmp_path,
+        {"schema": token_ledger.LEDGER_SCHEMA, "days": {"2026-06-09": {"grounded": 5}}},
+    )
+    log = dashboard.grounding_log_path(tmp_path)
+    log.write_text(
+        "\n".join(json.dumps(_g(f"2026-06-09T{h}:00:00+00:00")) for h in (12, 13)) + "\n",
+        encoding="utf-8",
+    )
+    ledger = token_ledger.roll_up(tmp_path)
+    assert ledger["days"]["2026-06-09"]["grounded"] == 5
+
+
+# --- concurrency (flock serialization + atomic unique-tmp writes) -----------
+
+
+def test_roll_up_serializes_under_flock(tmp_path: Path) -> None:
+    """A concurrent roll_up must wait behind the holder's flock instead of
+    interleaving its read-merge-write (last-writer-wins lost-update)."""
+    import fcntl
+    import json
+    import threading
+
+    log = dashboard.grounding_log_path(tmp_path)
+    log.write_text(json.dumps(_g("2026-06-09T12:00:00+00:00")) + "\n", encoding="utf-8")
+
+    done = threading.Event()
+    result: dict = {}
+
+    def run() -> None:
+        result["ledger"] = token_ledger.roll_up(tmp_path)
+        done.set()
+
+    with token_ledger._ledger_lock_path(tmp_path).open("a+", encoding="utf-8") as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        assert not done.wait(timeout=0.3)  # blocked behind the holder's lock
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+    assert done.wait(timeout=2.0)  # proceeds once the lock is released
+    t.join(timeout=2.0)
+    assert _historic_grounded(result["ledger"]) == 1
+
+
+def test_write_ledger_uses_unique_tmp_names(tmp_path: Path, monkeypatch) -> None:
+    """Each writer gets its own tmp file — a fixed tmp name would let one
+    concurrent writer publish another's half-written tmp via os.replace."""
+    import os
+
+    seen: list[str] = []
+    real_replace = os.replace
+
+    def recording_replace(src, dst):
+        seen.append(str(src))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(token_ledger.os, "replace", recording_replace)
+    _seed_ledger(tmp_path, {"2026-06-01": 1})
+    _seed_ledger(tmp_path, {"2026-06-02": 2})
+    assert len(seen) == 2
+    assert seen[0] != seen[1]
+
+
+def test_write_ledger_failed_replace_cleans_tmp_and_keeps_ledger(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import pytest
+
+    _seed_ledger(tmp_path, {"2026-06-01": 2})
+
+    def boom(src, dst):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(token_ledger.os, "replace", boom)
+    with pytest.raises(OSError):
+        _seed_ledger(tmp_path, {"2026-06-02": 9})
+    monkeypatch.undo()
+    # No leftover tmp lingers to clobber a concurrent writer...
+    assert list(tmp_path.glob("*.tmp")) == []
+    # ...and the previously-persisted ledger is intact.
+    assert token_ledger.read_ledger(tmp_path)["days"] == {"2026-06-01": {"grounded": 2}}
+
+
 # --- summarize (day / month / historic + chart series) ---------------------
 
 

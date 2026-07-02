@@ -114,6 +114,8 @@ def _bucket_by_project(cfg: Config) -> int:
         bucket = project_bucket(tags)
         dest_dir = md_root / bucket
         dest = dest_dir / md.name
+        if not dest.resolve().is_relative_to(md_root.resolve()):
+            continue  # traversal-shaped bucket — leave the file in place
         if dest.resolve() == md.resolve():
             continue
         dest_dir.mkdir(parents=True, exist_ok=True)

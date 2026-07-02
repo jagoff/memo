@@ -38,6 +38,7 @@ class VersionTarget:
     replacements: int
     flags: int = 0
     json_paths: tuple[VersionJsonPath, ...] = ()
+    optional: bool = False
 
 
 _VERSION_TARGETS = (
@@ -67,6 +68,15 @@ _VERSION_TARGETS = (
             VersionJsonPath(("version",)),
             VersionJsonPath(("packages", 0, "version"), "server.json packages[0]"),
         ),
+    ),
+    VersionTarget(
+        # Checked by _check_mcpb_manifest (which also parses the uvx args), so
+        # no json_paths here — this target only makes `bump`/`sync` edit it.
+        # Optional to match the check's exists() tolerance (older checkouts).
+        Path("packaging/mcpb/manifest.json"),
+        r'("version"\s*:\s*"|"mlx-memo(?:==|>=))([^"]+)(")',
+        2,
+        optional=True,
     ),
 )
 
@@ -187,6 +197,46 @@ def _add_doc_drift(
     destination.append(f"{path.name} references {found}, expected {expected}")
 
 
+def _check_mcpb_manifest(
+    repo: Path, *, expected: str, versions: dict[str, str], issues: list[str]
+) -> None:
+    manifest = repo / "packaging" / "mcpb" / "manifest.json"
+    if not manifest.exists():
+        return
+    key = manifest.relative_to(repo).as_posix()
+    try:
+        raw = _json_file(manifest)
+    except ValueError as exc:
+        issues.append(f"{key}: {exc}")
+        return
+
+    found = str(raw.get("version") or "")
+    versions[key] = found
+    if found != expected:
+        issues.append(f"{key} version {found!r} != pyproject {expected!r}")
+
+    try:
+        args = _json_path_value(raw, ("server", "mcp_config", "args"), label=key)
+    except ValueError as exc:
+        issues.append(str(exc))
+        return
+    if not isinstance(args, list):
+        issues.append(f"{key} server.mcp_config.args must be a list")
+        return
+
+    for arg in args:
+        if not isinstance(arg, str):
+            continue
+        match = re.fullmatch(r"mlx-memo(?:==|>=)([^,\s]+)", arg)
+        if match is None:
+            continue
+        package_key = f"{key} mlx-memo"
+        package_version = match.group(1)
+        versions[package_key] = package_version
+        if package_version != expected:
+            issues.append(f"{package_key} version {package_version!r} != pyproject {expected!r}")
+
+
 def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseCheckReport:
     """Validate that the checkout is release-ready.
 
@@ -227,6 +277,8 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
                 versions[key] = found
                 if found != version:
                     issues.append(f"{key} version {found!r} != pyproject {version!r}")
+
+    _check_mcpb_manifest(repo, expected=version, versions=versions, issues=issues)
 
     changelog = repo / "CHANGELOG.md"
     try:
@@ -311,6 +363,8 @@ def plan_release_edits(repo: Path, old: str, new: str, date: str) -> dict[Path, 
 
     for target in _VERSION_TARGETS:
         path = repo / target.rel_path
+        if target.optional and not path.exists():
+            continue
         edits[path] = _replace_target_version(path.read_text(encoding="utf-8"), target, new)
 
     changelog = repo / "CHANGELOG.md"
@@ -332,6 +386,8 @@ def plan_release_sync_edits(repo: Path, version: str) -> dict[Path, str]:
     edits: dict[Path, str] = {}
     for target in _VERSION_TARGETS:
         path = repo / target.rel_path
+        if target.optional and not path.exists():
+            continue
         current = path.read_text(encoding="utf-8")
         updated = _replace_target_version(current, target, version)
         if updated != current:

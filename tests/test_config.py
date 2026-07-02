@@ -313,3 +313,54 @@ def test_frozen():
     cfg = Config()
     with pytest.raises(ValidationError):
         cfg.embedder_dims = 99  # type: ignore[misc]
+
+
+def test_device_id_first_run_mints_and_persists(tmp_path: Path):
+    cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "s")
+    first = cfg.device_id
+    assert first
+    assert not first.startswith("transient-")
+    assert (tmp_path / "s" / ".device_id").read_text(encoding="utf-8").strip() == first
+    # second access re-reads the same persisted id
+    assert cfg.device_id == first
+    # no leftover tmp files from the atomic publish
+    assert list((tmp_path / "s").glob(".device_id.*.tmp")) == []
+
+
+def test_device_id_lost_mint_race_adopts_winner(tmp_path: Path, monkeypatch):
+    """If another first-run process publishes between our is_file() check
+    and our link attempt, the FILE's id wins — not our fresh mint."""
+    import os as _os
+
+    cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "s")
+    id_path = tmp_path / "s" / ".device_id"
+
+    def racing_link(src, dst, *a, **kw):
+        id_path.write_text("winner123456", encoding="utf-8")
+        raise FileExistsError(dst)
+
+    monkeypatch.setattr(_os, "link", racing_link)
+    assert cfg.device_id == "winner123456"
+    # the loser's mint was never published
+    assert id_path.read_text(encoding="utf-8").strip() == "winner123456"
+
+
+def test_device_id_lost_race_empty_winner_falls_back_transient(
+    tmp_path: Path, monkeypatch, caplog
+):
+    """A lost race against an unreadable/empty winner keeps the existing
+    transient fallback (never returns '')."""
+    import logging
+    import os as _os
+
+    cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "s")
+    id_path = tmp_path / "s" / ".device_id"
+
+    def racing_link(src, dst, *a, **kw):
+        id_path.write_text("", encoding="utf-8")
+        raise FileExistsError(dst)
+
+    monkeypatch.setattr(_os, "link", racing_link)
+    with caplog.at_level(logging.WARNING, logger="memo.config"):
+        device_id = cfg.device_id
+    assert device_id.startswith("transient-")

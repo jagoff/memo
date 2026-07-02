@@ -145,13 +145,109 @@ def _config_path(raw: str) -> Path:
     return p if p.is_absolute() else Path.home() / p
 
 
+def _strip_jsonc_comments(text: str) -> str:
+    """Drop ``//`` line and ``/* */`` block comments, respecting string literals.
+
+    A char-level scanner, so a ``//`` or ``/*`` inside a JSON string (e.g. a URL)
+    is never mistaken for a comment. Trailing commas are handled separately by
+    :func:`_strip_trailing_commas`.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = escape = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_str = False
+            i += 1
+        elif c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            i += 2
+            while i < n and text[i] not in "\r\n":
+                i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """Drop trailing commas before ``}`` / ``]``, respecting string literals.
+
+    JSONC (VS Code, Zed) allows a comma before a closing brace/bracket, which
+    ``json.loads`` rejects. String-aware so a comma inside a value is untouched.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = escape = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_str = False
+            i += 1
+        elif c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+        elif c == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] in "}]":
+                i += 1  # drop the trailing comma
+            else:
+                out.append(c)
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _loads_jsonc(text: str, path: Path) -> Any:
+    """Parse JSON, tolerating JSONC (comments) on fallback.
+
+    Editor MCP configs (VS Code, Zed, Cursor) are commonly JSONC. Strict JSON is
+    tried first so valid files stay untouched; only on failure are comments
+    stripped and the text reparsed. Re-serialization writes plain JSON — the
+    config data is preserved, but comments are not.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            return json.loads(_strip_trailing_commas(_strip_jsonc_comments(text)))
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(
+                f"MCP config is not valid JSON/JSONC: {path} ({exc})"
+            ) from exc
+
+
 def _write_mcp_json(path: Path, server: Any, *, json_key: str, include_type: bool) -> str:
     data: dict[str, Any]
-    if path.is_file() and path.read_text(encoding="utf-8").strip():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise click.ClickException(f"MCP config is not valid JSON: {path} ({exc})") from exc
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    if text.strip():
+        loaded = _loads_jsonc(text, path)
         if not isinstance(loaded, dict):
             raise click.ClickException(f"MCP config must be a JSON object: {path}")
         data = loaded
@@ -196,7 +292,6 @@ def _agent_asset_root(repo: Path | None = None) -> Path:
             (root / ".claude-plugin" / "plugin.json").is_file()
             and (root / "commands" / "memo.md").is_file()
             and (root / "plugins" / "memo" / ".codex-plugin" / "plugin.json").is_file()
-            and (root / "plugins" / "memo" / "skills" / "memo" / "SKILL.md").is_file()
             and (root / "skills" / "memo" / "SKILL.md").is_file()
         ):
             return root

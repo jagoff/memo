@@ -95,6 +95,13 @@ def test_repo_index_does_not_write_memflow_receipts() -> None:
     assert "--no-memflow-receipt" not in source
 
 
+def test_supported_windsurf_project_files_are_ignored() -> None:
+    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+
+    assert ".windsurf/" in gitignore
+    assert ".windsurfrules" in gitignore
+
+
 @pytest.mark.parametrize("module", FOUNDATION_MODULES)
 def test_foundation_modules_import_no_other_memo_module(module: str) -> None:
     """Foundation modules stay leaf-level — no memo->memo imports, no cycles."""

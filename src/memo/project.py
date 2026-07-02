@@ -35,14 +35,17 @@ GLOBAL_BUCKET = "_global"
 def project_bucket(tags: list[str]) -> str:
     """On-disk folder bucket for a memory: the project slug, or `_global`.
 
-    Derived from the first `project:` tag (already slugified at save time).
-    Memories with no project tag share the `_global` bucket. This is the one
-    mapping used by both the save path and `memo migrate --bucket-by-project`,
-    so on-disk layout never diverges from the tag.
+    Derived from the first `project:` tag. The value is re-slugified here
+    (idempotent for already-clean slugs) because user-supplied tags reach
+    this point verbatim — a tag like `project:../../evil` must never become
+    a path component. Memories with no project tag share the `_global`
+    bucket. This is the one mapping used by both the save path and
+    `memo migrate --bucket-by-project`, so on-disk layout never diverges
+    from the tag.
     """
     for tag in tags:
         if tag.startswith(_PROJECT_PREFIX):
-            slug = tag[len(_PROJECT_PREFIX) :]
+            slug = slugify_project(tag[len(_PROJECT_PREFIX) :])
             return slug or GLOBAL_BUCKET
     return GLOBAL_BUCKET
 

@@ -134,19 +134,63 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Recall & Hooks",
-        ["recall", "recall-hook", "briefing", "continuity", "prewarm", "capture-tick", "capture-stop"],
+        [
+            "recall",
+            "recall-hook",
+            "briefing",
+            "continuity",
+            "prewarm",
+            "capture-tick",
+            "capture-stop",
+        ],
     ),
     (
         "Session & History",
-        ["history", "as-of", "diff", "record-history", "session", "resume", "reflect", "mine-history", "episodes"],
+        [
+            "history",
+            "as-of",
+            "diff",
+            "record-history",
+            "session",
+            "resume",
+            "reflect",
+            "mine-history",
+            "episodes",
+        ],
     ),
     (
         "Maintenance",
-        ["reindex", "maintain", "dream", "consolidate", "synthesize", "dedupe", "cross-dedup", "retier", "contradict", "temporal", "compress-context"],
+        [
+            "reindex",
+            "maintain",
+            "dream",
+            "consolidate",
+            "synthesize",
+            "dedupe",
+            "cross-dedup",
+            "retier",
+            "contradict",
+            "temporal",
+            "compress-context",
+        ],
     ),
     (
         "Analysis & Quality",
-        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "tokens", "token-savings", "usefulness", "gaps", "outcome", "profile"],
+        [
+            "health",
+            "stats",
+            "doctor",
+            "lint",
+            "analytics",
+            "eval",
+            "roi",
+            "tokens",
+            "token-savings",
+            "usefulness",
+            "gaps",
+            "outcome",
+            "profile",
+        ],
     ),
     (
         "Knowledge Graph",
@@ -167,10 +211,22 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
         "Setup & Config",
         [
-            "init", "config", "install-mcp", "install-watcher", "uninstall-watcher",
-            "install-slash", "install-statusline", "install-recall-hook",
-            "install-shell-wrapper", "install-shims",
-            "startup-banner", "migrate", "migrate-vault", "update", "watch", "release",
+            "init",
+            "config",
+            "install-mcp",
+            "install-watcher",
+            "uninstall-watcher",
+            "install-slash",
+            "install-statusline",
+            "install-recall-hook",
+            "install-shell-wrapper",
+            "install-shims",
+            "startup-banner",
+            "migrate",
+            "migrate-vault",
+            "update",
+            "watch",
+            "release",
         ],
     ),
     (
@@ -180,8 +236,15 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
         "Other",
         [
-            "backend-native", "collaborative", "feedback", "query",
-            "mandate", "sleep-cycle", "ocr-image", "provenance", "mcp-command",
+            "backend-native",
+            "collaborative",
+            "feedback",
+            "query",
+            "mandate",
+            "sleep-cycle",
+            "ocr-image",
+            "provenance",
+            "mcp-command",
         ],
     ),
 ]
@@ -231,9 +294,7 @@ class SurfaceGroup(click.Group):
 
         for section_title, cmd_names in sections:
             cmds_in_section = [
-                (name, self.get_command(ctx, name))
-                for name in cmd_names
-                if name in visible
+                (name, self.get_command(ctx, name)) for name in cmd_names if name in visible
             ]
             cmds_in_section = [(n, c) for n, c in cmds_in_section if c is not None]
             if not cmds_in_section:
@@ -492,7 +553,15 @@ def _run_picker_and_save() -> None:
 
 
 def main() -> None:
-    cli()
+    # Present memo's own domain errors (e.g. "LLM features require MLX" on the
+    # CPU backend) as a clean message instead of an uncaught traceback.
+    from memo.errors import MemoError
+
+    try:
+        cli()
+    except MemoError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

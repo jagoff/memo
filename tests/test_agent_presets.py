@@ -129,3 +129,28 @@ def test_goose_rejects_malformed_yaml(monkeypatch, tmp_path):
     path.write_text("extensions: [unclosed\n")
     with pytest.raises(click.ClickException):
         ap.install_from_preset(ap.AGENT_PRESETS["goose"], _server(tmp_path / "memo-mcp"), write=True)
+
+
+def test_zed_merges_jsonc_settings_with_comments(monkeypatch, tmp_path):
+    """A JSONC config (comments) merges without raising; a // inside a string survives."""
+    import json
+
+    monkeypatch.setattr(ap.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(ap.sys, "platform", "linux")
+    path = ap.resolve_preset_path(ap.AGENT_PRESETS["zed"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "// Zed settings\n"
+        "{\n"
+        '  "theme": "One Dark",  // user comment\n'
+        '  "docs": "https://zed.dev/docs",\n'
+        '  /* block */ "vim_mode": false,\n'  # trailing comma (JSONC)
+        "}\n"
+    )
+    res = ap.install_from_preset(ap.AGENT_PRESETS["zed"], _server(tmp_path / "memo-mcp"), write=True)
+    assert res["ok"]
+    data = json.loads(path.read_text())  # rewritten as strict JSON now
+    assert data["theme"] == "One Dark"  # existing data preserved
+    assert data["docs"] == "https://zed.dev/docs"  # // inside a string NOT stripped
+    assert data["vim_mode"] is False
+    assert data["context_servers"]["memo"]["command"].endswith("memo-mcp")

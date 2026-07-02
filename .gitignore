@@ -31,6 +31,7 @@ venv/
 # Editor / IDE / OS
 .DS_Store
 .claude/
+.windsurf/
 .idea/
 .vscode/
 
@@ -54,6 +55,9 @@ web/health.html
 
 # Local backup archives
 memo-backup-*.zip
+
+# Generated MCPB bundles (source lives under packaging/mcpb/)
+packaging/*.mcpb
 
 # devswarm temp workspace
 .devswarm-temp/
@@ -79,6 +83,9 @@ docs/superpowers/
 docs/distribution.md
 docs/registry-submission.md
 
+# Obsolete IDE client rules (product renamed: Windsurf retired → Devin Desktop)
+.windsurfrules
+
 # Agent instruction files kept local, not versioned (CLAUDE.md stays tracked)
 /AGENTS.md
 /GEMINI.md
@@ -86,4 +93,7 @@ docs/registry-submission.md
 # scratch/debug output
 *.log
 err_synth*.txt
+
+# dogfood/audit harness scratch (never committed)
+audit/
 uv.lock

@@ -504,3 +504,241 @@ def test_sync_push_commit_carries_identity_label(remote: Path, tmp_path: Path, m
         assert "[" in subject and "]" in subject
     finally:
         mem.close()
+
+
+def _stuck_rebase(clone: Path) -> None:
+    """Leave `clone` mid-rebase (stale .git/rebase-merge, unmerged paths) — the
+    state a SIGKILL'd/slept prior sync leaves behind."""
+    _git(clone, "fetch", "origin", "main")
+    stuck = subprocess.run(
+        ["git", "-C", str(clone), "rebase", "origin/main"], capture_output=True, text=True
+    )
+    assert stuck.returncode != 0, "expected the rebase to stop on a conflict"
+    assert (clone / ".git" / "rebase-merge").exists() or (clone / ".git" / "rebase-apply").exists()
+
+
+def test_sync_once_stale_rebase_never_skipped_local_commit_survives(
+    remote: Path, tmp_path: Path, monkeypatch
+):
+    """Regression (stale-rebase `--skip` false positive): a rebase interrupted
+    mid-conflict left .git/rebase-merge; the next sync_once then (a) committed
+    raw conflict markers via `add -A` and (b) matched '--skip' in the 'already a
+    rebase-merge directory' fatal → `rebase --skip` finished the STALE rebase,
+    dropping the local commit. Now: the stale rebase is aborted, `--skip` never
+    runs, no conflict markers are committed, and the local commit survives."""
+    clone_a = _make_clone(remote, tmp_path / "A")
+    clone_b = _make_clone(remote, tmp_path / "B")
+
+    # A creates the memoria and pushes
+    (clone_a / "memorias" / "note.md").write_text("---\nid: x\n---\nA version\n")
+    _git(clone_a, "add", "-A")
+    _git(clone_a, "commit", "-m", "A note")
+    _git(clone_a, "push", "origin", "main")
+
+    # B commits a divergent version of the same path, then a rebase gets
+    # interrupted mid-conflict (stale rebase-merge dir + unmerged note.md)
+    (clone_b / "memorias" / "note.md").write_text("---\nid: x\n---\nB version\n")
+    _git(clone_b, "add", "-A")
+    _git(clone_b, "commit", "-m", "B note")
+    _stuck_rebase(clone_b)
+
+    # spy on every git invocation to prove `rebase --skip` never runs
+    import memo.sync_git as sync_git_mod
+
+    calls: list[tuple[str, ...]] = []
+    real_git = sync_git_mod._git
+
+    def spy(root, *args, **kwargs):
+        calls.append(args)
+        return real_git(root, *args, **kwargs)
+
+    monkeypatch.setattr("memo.sync_git._git", spy)
+
+    mem_b = _mem_for(clone_b, tmp_path / "stateB", monkeypatch)
+    try:
+        res = sync_once(mem_b.cfg, mem_b.store, mem_b)
+        # never resumed the stale rebase
+        assert ("rebase", "--skip") not in calls
+        # stale state cleaned up, not left mid-rebase
+        assert not (clone_b / ".git" / "rebase-merge").exists()
+        assert not (clone_b / ".git" / "rebase-apply").exists()
+        # commit-over-conflict-markers refused; real conflict reported, not guessed
+        assert "unmerged" in res.get("commit_error", "")
+        assert "manual resolution" in res.get("pull_error", "")
+        # the local commit survived (not dropped by resuming the stale rebase)
+        subjects = subprocess.run(
+            ["git", "-C", str(clone_b), "log", "--format=%s"], capture_output=True, text=True
+        ).stdout
+        assert "B note" in subjects
+        # no conflict markers ever committed
+        committed = subprocess.run(
+            ["git", "-C", str(clone_b), "show", "HEAD:memorias/note.md"],
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "<<<<<<<" not in committed
+        assert "B version" in committed
+    finally:
+        mem_b.close()
+
+
+def test_sync_pull_aborts_stale_rebase_then_recovers(remote: Path, tmp_path: Path, monkeypatch):
+    """A stale rebase over signal-only divergence: sync_pull must abort the
+    stale state, restart its OWN rebase, auto-resolve, and finish — reporting
+    the recovery in the summary."""
+    clone_a = _make_clone(remote, tmp_path / "A")
+    clone_b = _make_clone(remote, tmp_path / "B")
+
+    (clone_a / "signal").mkdir(exist_ok=True)
+    (clone_a / "signal" / "access.json").write_text('{"v": "A"}\n')
+    _git(clone_a, "add", "-A")
+    _git(clone_a, "commit", "-m", "A signal")
+    _git(clone_a, "push", "origin", "main")
+
+    (clone_b / "signal").mkdir(exist_ok=True)
+    (clone_b / "signal" / "access.json").write_text('{"v": "B"}\n')
+    _git(clone_b, "add", "-A")
+    _git(clone_b, "commit", "-m", "B signal")
+    _stuck_rebase(clone_b)
+
+    mem_b = _mem_for(clone_b, tmp_path / "stateB", monkeypatch)
+    try:
+        res = sync_pull(mem_b.cfg, mem_b.store, mem_b)
+        assert res["pulled"] is True
+        assert res["stale_rebase_aborted"] is True
+        assert not (clone_b / ".git" / "rebase-merge").exists()
+        assert not (clone_b / ".git" / "rebase-apply").exists()
+    finally:
+        mem_b.close()
+
+
+def test_commit_local_refuses_unmerged_paths(remote: Path, tmp_path: Path, monkeypatch):
+    """_commit_local must refuse (SyncGitError) when the tree has unmerged
+    entries — never `add -A` conflict markers into a commit."""
+    from memo.sync_git import _commit_local
+
+    clone = _make_clone(remote, tmp_path / "A")
+    note = clone / "memorias" / "note.md"
+    note.write_text("base\n")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "checkout", "-b", "side")
+    note.write_text("side\n")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "side")
+    _git(clone, "checkout", "main")
+    note.write_text("main\n")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "main edit")
+    merge = subprocess.run(
+        ["git", "-C", str(clone), "merge", "side"], capture_output=True, text=True
+    )
+    assert merge.returncode != 0  # unmerged note.md with conflict markers
+
+    def porcelain() -> str:
+        return subprocess.run(
+            ["git", "-C", str(clone), "status", "--porcelain"], capture_output=True, text=True
+        ).stdout
+
+    status_before = porcelain()
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        with pytest.raises(SyncGitError, match="unmerged"):
+            _commit_local(mem.cfg, mem.store)
+        # index/tree untouched (still the pre-existing merge state), no commit made
+        assert porcelain() == status_before
+        subjects = subprocess.run(
+            ["git", "-C", str(clone), "log", "--format=%s"], capture_output=True, text=True
+        ).stdout
+        assert "sync:" not in subjects
+        assert "<<<<<<<" in note.read_text()  # conflict markers stay in the working tree
+    finally:
+        mem.close()
+
+
+def test_git_timeout_raises_sync_git_error(tmp_path: Path, monkeypatch):
+    """A >timeout git call must surface as SyncGitError (the domain error every
+    sync caller handles), not subprocess.TimeoutExpired — for check=False too."""
+    from memo.sync_git import _git as _sync_git
+
+    def fake_run(cmd, *args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=120)
+
+    monkeypatch.setattr("memo.sync_git.subprocess.run", fake_run)
+    with pytest.raises(SyncGitError, match="timed out"):
+        _sync_git(tmp_path, "status")
+    with pytest.raises(SyncGitError, match="timed out"):
+        _sync_git(tmp_path, "status", check=False)
+
+
+def test_sync_once_survives_git_timeout(remote: Path, tmp_path: Path, monkeypatch):
+    """The Stop hook runs `memo sync once --quiet`: a hung `git fetch` must land
+    in the status dict (pull_error), never escape as a raw traceback."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and "fetch" in cmd:
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=120)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("memo.sync_git.subprocess.run", fake_run)
+    try:
+        res = sync_once(mem.cfg, mem.store, mem)  # must not raise
+        assert "timed out" in res.get("pull_error", "")
+        assert res["pulled"] is False
+    finally:
+        mem.close()
+
+
+def test_cli_sync_pull_and_push_respect_machine_lock(remote: Path, tmp_path: Path):
+    """Regression: `memo sync pull` / `memo sync push` bypassed the machine
+    flock, so a hook-fired pull could drive a sibling's in-flight rebase. Both
+    must now soft-skip (exit 0, no git mutation) while the lock is held."""
+    import fcntl
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    clone = _make_clone(remote, tmp_path / "A")
+    state = tmp_path / "stateA"
+    state.mkdir()
+    env = {
+        "MEMO_CONFIG_FILE": str(tmp_path / "memo-config.toml"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(clone / "memorias"),
+        "MEMO_STATE_DIR": str(state),
+        "MEMO_EMBEDDER_DIMS": "4",
+        "MEMO_EMBEDDER_MODEL": "stub",
+    }
+    head_before = subprocess.run(
+        ["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout
+
+    fh = (state / ".sync.lock").open("w")
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        r = CliRunner().invoke(cli, ["sync", "pull", "--json"], env=env)
+        assert r.exit_code == 0, r.output
+        assert '"skipped": "locked"' in r.output
+        r2 = CliRunner().invoke(cli, ["sync", "push", "--json"], env=env)
+        assert r2.exit_code == 0, r2.output
+        assert '"skipped": "locked"' in r2.output
+        # no git mutation happened under the lock
+        head_after = subprocess.run(
+            ["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True
+        ).stdout
+        assert head_after == head_before
+        assert not (clone / "signal").exists()
+    finally:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        fh.close()
+
+    # lock released → the same commands run for real (output contract intact)
+    r3 = CliRunner().invoke(cli, ["sync", "pull", "--json"], env=env)
+    assert r3.exit_code == 0, r3.output
+    assert '"pulled": true' in r3.output
+    assert '"branch": "main"' in r3.output

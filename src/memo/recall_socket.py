@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -377,6 +378,21 @@ def run_server(state_dir: Path | None = None) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     sock_path = _socket_path(state_dir)
     pid_file = _pid_file(state_dir)
+
+    # Guard the start critical section. Without it, two concurrent starts can
+    # both pass the dead-PID check below, then race sock_path.unlink + bind (one
+    # unlinks the socket the other just bound, orphaning a live daemon). A
+    # non-blocking exclusive flock on a dedicated lock file admits exactly one
+    # starter; a loser exits at once. The fd is held for the process lifetime
+    # (released by the OS on exit).
+    lock_path = pid_file.with_name(pid_file.name + ".lock")
+    lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock_fd)
+        print("recall-daemon: another instance is starting", file=sys.stderr)
+        sys.exit(0)
 
     existing_pid = _read_pid(state_dir)
     if existing_pid is not None and is_pid_alive(existing_pid):

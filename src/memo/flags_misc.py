@@ -79,17 +79,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "~/.claude/settings.json, coexisting with foreign hooks. Makes recall "
         "survive a de-registered/clobbered plugin. Default on; set =0 to opt out.",
     ),
-    _spec(
-        "MEMO_STATUSLINE_ACTIVITY",
-        "bool",
-        True,
-        "update",
-        "Show today's activity (🧠 recalls · 💾 saves · ~tokens saved) in the "
-        "[Memo <ver>] statusline badge, read from presence_today.json. The "
-        "bash statusline reads the env var directly; this spec documents it "
-        "for `memo config validate`. Default on; set =0 to opt out.",
-        opt_out=True,
-    ),
     # MCP transport
     _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
     _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),
@@ -315,20 +304,6 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_PROJECT_TAG", "str", "", "misc", "Pin a project tag (overrides cwd detection)."),
     _spec("MEMO_MODEL_PROFILE", "str", "", "misc", "Model profile: light | balanced | quality."),
     _spec("MEMO_NONINTERACTIVE", "bool", False, "misc", "Suppress interactive prompts (hooks/CI)."),
-    _spec(
-        "MEMO_STARTUP_BANNER_SHOWN",
-        "bool",
-        False,
-        "runtime",
-        "Runtime sentinel exported by agent shims after the startup banner path runs.",
-    ),
-    _spec(
-        "MEMO_CODEX_BADGE_SHOWN",
-        "bool",
-        False,
-        "runtime",
-        "Runtime sentinel exported by the Codex shim after scheduling the Codex badge.",
-    ),
     _spec(
         "MEMO_SUPPRESS_LEGACY_WARN",
         "bool",
