@@ -44,6 +44,41 @@ def test_cleanup_unlinks_missing_ok(tmp_path: Path) -> None:
     assert not b.exists()
 
 
+def test_cleanup_removes_both_when_pid_file_is_ours(tmp_path: Path) -> None:
+    sock = tmp_path / "d.sock"
+    pid_file = tmp_path / "d.pid"
+    sock.write_text("")
+    pid_file.write_text(str(os.getpid()))
+    cleanup(sock, pid_file)
+    assert not sock.exists()
+    assert not pid_file.exists()
+
+
+def test_cleanup_leaves_files_owned_by_live_other_process(tmp_path: Path) -> None:
+    # After a lost startup race the pid file records the SURVIVING daemon,
+    # whose socket lives at the same path — the orphan's shutdown must not
+    # unlink the survivor's socket/pid.
+    sock = tmp_path / "d.sock"
+    pid_file = tmp_path / "d.pid"
+    sock.write_text("")
+    pid_file.write_text(str(os.getppid()))  # a live pid that is not ours
+    cleanup(sock, pid_file)
+    assert sock.exists()
+    assert pid_file.exists()
+
+
+def test_cleanup_sweeps_files_of_dead_owner(tmp_path: Path) -> None:
+    # Stale leftovers (e.g. a SIGKILLed daemon) stay sweepable — the CLI
+    # `stop` fallback relies on this.
+    sock = tmp_path / "d.sock"
+    pid_file = tmp_path / "d.pid"
+    sock.write_text("")
+    pid_file.write_text("2000000000")  # very high unlikely PID → dead
+    cleanup(sock, pid_file)
+    assert not sock.exists()
+    assert not pid_file.exists()
+
+
 def test_daemon_paths_keep_pid_in_state_dir_for_short_paths(tmp_path: Path) -> None:
     state_dir = Path("/tmp") / f"memo-daemon-common-{os.getpid()}"
     sock, pid = daemon_paths(state_dir, "recall")

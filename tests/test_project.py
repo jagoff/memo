@@ -83,5 +83,18 @@ def test_project_bucket_empty_tags_is_global() -> None:
     assert project_bucket([]) == "_global"
 
 
+def test_project_bucket_sanitizes_traversal_tag() -> None:
+    # A user-supplied tag reaches project_bucket verbatim — the derived
+    # folder must never contain path separators or '..'.
+    bucket = project_bucket(["project:../../../../tmp/evil"])
+    assert bucket == "tmp-evil"
+    assert "/" not in bucket
+    assert ".." not in bucket
+
+
+def test_project_bucket_fully_invalid_slug_falls_back_to_global() -> None:
+    assert project_bucket(["project:../.."]) == GLOBAL_BUCKET
+
+
 def test_global_bucket_constant_value() -> None:
     assert GLOBAL_BUCKET == "_global"

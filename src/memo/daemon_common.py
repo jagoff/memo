@@ -67,10 +67,20 @@ def read_pid(pid_file: Path) -> int | None:
         return None
 
 
-def cleanup(*paths: Path) -> None:
-    """Unlink each path, ignoring files that are already gone."""
-    for p in paths:
-        p.unlink(missing_ok=True)
+def cleanup(sock_path: Path, pid_file: Path) -> None:
+    """Unlink the daemon's socket + pid file, unless a live OTHER process owns them.
+
+    After a lost startup race the pid file records the SURVIVING daemon, whose
+    socket lives at the same path — an orphan's shutdown must not unlink the
+    survivor's files. Unlink only when the pid file records OUR pid (normal
+    daemon shutdown), a dead pid, or nothing readable at all (stale leftovers,
+    safe to sweep — the CLI ``stop`` fallback relies on this).
+    """
+    owner = read_pid(pid_file)
+    if owner is not None and owner != os.getpid() and is_pid_alive(owner):
+        return
+    sock_path.unlink(missing_ok=True)
+    pid_file.unlink(missing_ok=True)
 
 
 def serve_until_shutdown(

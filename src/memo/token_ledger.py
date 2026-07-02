@@ -25,8 +25,11 @@ Pure stdlib + `memo.dashboard` (leaf log readers) + `memo.flags` — no MLX, no
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -40,6 +43,16 @@ _DEFAULT_TOKENS_PER_GROUNDED = 350
 
 def ledger_path(state_dir: Path) -> Path:
     return state_dir / "token_savings_daily.json"
+
+
+def _ledger_lock_path(state_dir: Path) -> Path:
+    """Sidecar lock file for the roll_up read-merge-write.
+
+    A sidecar (not the ledger itself) because write_ledger publishes via
+    os.replace — an flock on the ledger would ride the OLD inode and stop
+    excluding the moment a writer replaced the file.
+    """
+    return state_dir / "token_savings_daily.json.lock"
 
 
 def _tokens_per_grounded() -> int:
@@ -79,12 +92,24 @@ def read_ledger(state_dir: Path) -> dict:
 
 
 def write_ledger(state_dir: Path, ledger: dict) -> None:
-    """Atomically persist the ledger (tmp file + os.replace)."""
+    """Atomically persist the ledger (unique tmp file + os.replace).
+
+    The tmp name is unique per writer (mkstemp) — a fixed tmp name would let
+    one concurrent writer os.replace another's half-written tmp into place,
+    truncating the ledger and (via read_ledger's corruption fallback) silently
+    resetting the durable history. The tmp is unlinked on failure.
+    """
     path = ledger_path(state_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(ledger, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(ledger, ensure_ascii=False, indent=2))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def grounded_by_day(
@@ -113,16 +138,24 @@ def roll_up(state_dir: Path, *, limit: int = 4000) -> dict:
     so eviction from the rolling grounding.log can never shrink a day already
     captured, while a still-in-window day keeps climbing as new rows land.
     Returns the updated ledger.
+
+    Roll-ups run from every session's Stop hook plus `memo tokens`, so an
+    exclusive flock around the whole read-merge-write (same pattern as
+    dashboard's daily_trend) serializes concurrent writers — otherwise the
+    last writer's snapshot clobbers the other's merged days (lost-update).
     """
-    ledger = read_ledger(state_dir)
-    days: dict = ledger.setdefault("days", {})
-    observed = grounded_by_day(read_grounding_log(state_dir, limit=limit))
-    for day, n in observed.items():
-        prev = int(days.get(day, {}).get("grounded", 0))
-        if n >= prev:
-            days[day] = {"grounded": n}
-    if observed:
-        write_ledger(state_dir, ledger)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with _ledger_lock_path(state_dir).open("a+", encoding="utf-8") as lock_f:
+        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+        ledger = read_ledger(state_dir)
+        days: dict = ledger.setdefault("days", {})
+        observed = grounded_by_day(read_grounding_log(state_dir, limit=limit))
+        for day, n in observed.items():
+            prev = int(days.get(day, {}).get("grounded", 0))
+            if n >= prev:
+                days[day] = {"grounded": n}
+        if observed:
+            write_ledger(state_dir, ledger)
     return ledger
 
 

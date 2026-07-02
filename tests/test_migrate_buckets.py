@@ -27,3 +27,24 @@ def test_bucket_by_project_is_idempotent(tmp_cfg):
     moved_again = _bucket_by_project(tmp_cfg)  # already bucketed -> 0
     assert moved_again == 0
     assert (md / "memo" / "a.md").is_file()
+
+
+def test_bucket_by_project_traversal_tag_stays_inside_root(tmp_cfg):
+    md = tmp_cfg.memory_dir
+    _write_flat(md, "a", ["project:../../evil"])
+    _bucket_by_project(tmp_cfg)
+    # sanitized bucket, never renamed outside md_root
+    assert (md / "evil" / "a.md").is_file()
+    assert not (md / ".." / ".." / "evil" / "a.md").resolve().exists()
+
+
+def test_bucket_by_project_skips_dest_outside_root(tmp_cfg, monkeypatch):
+    # Defense in depth: even if the bucket were traversal-shaped, the file
+    # is left in place instead of renamed out of md_root.
+    md = tmp_cfg.memory_dir
+    _write_flat(md, "a", ["project:whatever"])
+    monkeypatch.setattr("memo.project.project_bucket", lambda tags: "../evil")
+    moved = _bucket_by_project(tmp_cfg)
+    assert moved == 0
+    assert (md / "a.md").is_file()  # left in place
+    assert not (md / ".." / "evil" / "a.md").resolve().exists()

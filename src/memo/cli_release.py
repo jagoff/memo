@@ -38,6 +38,7 @@ class VersionTarget:
     replacements: int
     flags: int = 0
     json_paths: tuple[VersionJsonPath, ...] = ()
+    optional: bool = False
 
 
 _VERSION_TARGETS = (
@@ -67,6 +68,15 @@ _VERSION_TARGETS = (
             VersionJsonPath(("version",)),
             VersionJsonPath(("packages", 0, "version"), "server.json packages[0]"),
         ),
+    ),
+    VersionTarget(
+        # Checked by _check_mcpb_manifest (which also parses the uvx args), so
+        # no json_paths here — this target only makes `bump`/`sync` edit it.
+        # Optional to match the check's exists() tolerance (older checkouts).
+        Path("packaging/mcpb/manifest.json"),
+        r'("version"\s*:\s*"|"mlx-memo(?:==|>=))([^"]+)(")',
+        2,
+        optional=True,
     ),
 )
 
@@ -353,6 +363,8 @@ def plan_release_edits(repo: Path, old: str, new: str, date: str) -> dict[Path, 
 
     for target in _VERSION_TARGETS:
         path = repo / target.rel_path
+        if target.optional and not path.exists():
+            continue
         edits[path] = _replace_target_version(path.read_text(encoding="utf-8"), target, new)
 
     changelog = repo / "CHANGELOG.md"
@@ -374,6 +386,8 @@ def plan_release_sync_edits(repo: Path, version: str) -> dict[Path, str]:
     edits: dict[Path, str] = {}
     for target in _VERSION_TARGETS:
         path = repo / target.rel_path
+        if target.optional and not path.exists():
+            continue
         current = path.read_text(encoding="utf-8")
         updated = _replace_target_version(current, target, version)
         if updated != current:

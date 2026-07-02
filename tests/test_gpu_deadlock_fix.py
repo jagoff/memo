@@ -58,6 +58,69 @@ class TestGpuTlTimeout:
         assert entered
 
 
+class TestFlockTimeout:
+    """gpu_guard()'s timeout also bounds the cross-process flock acquire."""
+
+    def test_gpu_guard_raises_when_other_process_holds_flock(self, tmp_path, monkeypatch):
+        # A fresh fd on the lock file has the same flock semantics as a foreign
+        # process (per open-file-description) — simulates a stuck MLX process.
+        import fcntl
+        import os
+        import time
+
+        import pytest
+
+        monkeypatch.setenv("MEMO_GPU_LOCK_PATH", str(tmp_path / "gpu.lock"))
+        import memo.mlx_gpu as mlx_gpu
+        from memo.mlx_gpu import gpu_guard
+
+        fd = os.open(str(tmp_path / "gpu.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            start = time.monotonic()
+            with pytest.raises(TimeoutError), gpu_guard(timeout=0.5):
+                pass
+            assert time.monotonic() - start < 2.0  # bounded, not the holder's 6s
+            # Lock state fully restored: no leaked depth/fd...
+            assert mlx_gpu._depth == 0
+            assert mlx_gpu._lock_fd is None
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        # ...and a subsequent uncontended guard succeeds (RLock not wedged).
+        entered = False
+        with gpu_guard(timeout=0.5):
+            entered = True
+        assert entered
+
+    def test_gpu_guard_no_timeout_blocks_until_flock_released(self, tmp_path, monkeypatch):
+        # With NO timeout, the historical behavior is preserved: the waiter
+        # blocks on the flock and proceeds once the holder releases.
+        import fcntl
+        import os
+
+        monkeypatch.setenv("MEMO_GPU_LOCK_PATH", str(tmp_path / "gpu.lock"))
+        from memo.mlx_gpu import gpu_guard
+
+        fd = os.open(str(tmp_path / "gpu.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        entered = threading.Event()
+
+        def waiter():
+            with gpu_guard():
+                entered.set()
+
+        t = threading.Thread(target=waiter, daemon=True)
+        t.start()
+        try:
+            assert not entered.wait(timeout=0.3)  # still blocked on the flock
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        assert entered.wait(timeout=2.0)  # unblocks after release
+        t.join(timeout=2.0)
+
+
 class TestChatWithTimeoutSetsThreadLocal:
     """chat_with_timeout sets _gpu_tl.timeout in the worker thread."""
 

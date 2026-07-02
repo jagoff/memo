@@ -55,17 +55,23 @@ def git_root_for(cfg: Config) -> Path:
 
 
 def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    cp = subprocess.run(
-        ["git", "-C", str(root), *args],
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT,
-        # memo drives git non-interactively (daemon / hook / SSH session): a
-        # `rebase --continue` after auto-resolving a signal conflict otherwise
-        # tries to open an editor and dies with "Terminal is dumb, EDITOR unset",
-        # which sync_once swallows → silent perpetual cross-Mac divergence.
-        env={**os.environ, "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"},
-    )
+    try:
+        cp = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+            # memo drives git non-interactively (daemon / hook / SSH session): a
+            # `rebase --continue` after auto-resolving a signal conflict otherwise
+            # tries to open an editor and dies with "Terminal is dumb, EDITOR unset",
+            # which sync_once swallows → silent perpetual cross-Mac divergence.
+            env={**os.environ, "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"},
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A hung git call must surface as the domain error every sync caller
+        # already handles (sync_once / --quiet hooks), not a raw traceback.
+        # Applies to check=False too: there is no CompletedProcess to return.
+        raise SyncGitError(f"git {' '.join(args)} timed out after {_GIT_TIMEOUT}s") from exc
     if check and cp.returncode != 0:
         raise SyncGitError(f"git {' '.join(args)} failed: {cp.stderr.strip() or cp.stdout.strip()}")
     return cp
@@ -73,6 +79,31 @@ def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
 
 def _current_branch(root: Path) -> str:
     return _git(root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() or "main"
+
+
+def _git_dir(root: Path) -> Path:
+    """Resolve the actual git dir (worktrees have an indirect `.git` file)."""
+    out = _git(root, "rev-parse", "--absolute-git-dir", check=False).stdout.strip()
+    return Path(out) if out else root / ".git"
+
+
+def _abort_stale_rebase(root: Path) -> bool:
+    """Abort a rebase a PREVIOUS process left mid-flight (SIGKILL on the git
+    subprocess timeout, machine sleep, killed Stop hook).
+
+    Resuming someone else's rebase is never safe: git's "already a rebase-merge
+    directory" fatal contains the literal `--skip`, which used to false-positive
+    the empty-commit recovery in ``sync_pull`` and finish the stale rebase —
+    silently dropping local commits. ``--abort`` restores the pre-rebase branch;
+    ``--quit`` (drops the state without touching the tree) is the fallback when
+    abort itself fails. Returns True if stale state was found and cleared.
+    """
+    gd = _git_dir(root)
+    if not (gd / "rebase-merge").exists() and not (gd / "rebase-apply").exists():
+        return False
+    if _git(root, "rebase", "--abort", check=False).returncode != 0:
+        _git(root, "rebase", "--quit", check=False)
+    return True
 
 
 def _corpus_subdir(root: Path) -> Path:
@@ -244,12 +275,14 @@ def sync_once(
             try:
                 pull_out = sync_pull(cfg, store, mem, remote=remote)
                 result["pulled"] = bool(pull_out.get("pulled"))
+                result["pull"] = pull_out
             except SyncGitError as exc:
                 result["pull_error"] = str(exc)
         if do_push:
             try:
                 push_out = sync_push(cfg, store, remote=remote)
                 result["pushed"] = bool(push_out.get("pushed"))
+                result["push"] = push_out
             except SyncGitError as exc:
                 result["push_error"] = str(exc)
         return result
@@ -325,6 +358,20 @@ def _commit_local(cfg: Config, store: VecStore) -> tuple[Path, str, int]:
     """
     root = git_root_for(cfg)
     branch = _current_branch(root)
+    # An interrupted merge/rebase leaves unmerged paths whose working-tree
+    # files hold raw conflict markers — `add -A` would stage and commit that
+    # garbage (and then push it to every machine). Refuse; the module contract
+    # is "abort and report rather than guessing".
+    unmerged = [
+        line
+        for line in _git(root, "status", "--porcelain", check=False).stdout.splitlines()
+        if line[:2] in ("DD", "AU", "UD", "UA", "DU", "AA", "UU")
+    ]
+    if unmerged:
+        raise SyncGitError(
+            "unmerged paths in sync repo (interrupted merge/rebase) — refusing to "
+            "commit conflict markers: " + ", ".join(line[3:] for line in unmerged)
+        )
     export_signal(store, signal_dir_for(cfg))
     _git(root, "add", "-A")
     staged = _git(root, "diff", "--cached", "--name-only").stdout.strip()
@@ -408,6 +455,13 @@ def _merge_remote_signal_from_git(root: Path, store: VecStore, ref: str) -> None
 def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origin") -> dict:
     """Fetch + rebase + merge remote signal into the DB + reindex. Returns summary."""
     root = git_root_for(cfg)
+
+    # 0) clean up a rebase a crashed prior sync left mid-flight — BEFORE reading
+    # the branch (mid-rebase HEAD is detached) and before starting our own rebase
+    # (git would refuse with the '--skip'-bearing fatal that used to false-
+    # positive the recovery loop below).
+    stale_rebase_aborted = _abort_stale_rebase(root)
+
     branch = _current_branch(root)
 
     _git(root, "fetch", remote, branch)
@@ -426,6 +480,15 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     # only the first stop left multi-commit divergence stuck and behind forever.)
     rebase = _git(root, "rebase", "--autostash", remote_ref, check=False)
     while rebase.returncode != 0:
+        # A pre-existing rebase state must NEVER be "recovered" with --skip: its
+        # fatal mentions `--skip`, but resuming it finishes the STALE rebase and
+        # drops local commits. Unreachable after the abort in step 0 — kept as a
+        # hard guard so the recovery below only ever touches OUR rebase.
+        if "already a rebase" in rebase.stderr or "rebase-merge directory" in rebase.stderr:
+            raise SyncGitError(
+                "a rebase was already in progress (stale state from an interrupted "
+                "sync) — not resuming it: " + rebase.stderr.strip()
+            )
         conflicts = _git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
         non_signal = [c for c in conflicts if not c.startswith("signal/")]
         if non_signal or not conflicts:
@@ -466,7 +529,10 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     # 4) re-export the merged signal so the next push carries the union
     export_signal(store, signal_dir_for(cfg))
 
-    return {"pulled": True, "branch": branch, "reindexed": reindexed, "pruned": len(pruned)}
+    out = {"pulled": True, "branch": branch, "reindexed": reindexed, "pruned": len(pruned)}
+    if stale_rebase_aborted:
+        out["stale_rebase_aborted"] = True
+    return out
 
 
 def sync_init_home(cfg: Config, private: bool = True) -> dict:
@@ -481,12 +547,9 @@ def sync_init_home(cfg: Config, private: bool = True) -> dict:
     root_candidate = cfg.memory_dir.parent
     if not (root_candidate / ".git").exists():
         # First-time setup: initialize the local git repo so git_root_for() works
-        # and gh repo create --source can push.
-        subprocess.run(
-            ["git", "-C", str(root_candidate), "init"],
-            capture_output=True,
-            check=True,
-        )
+        # and gh repo create --source can push. Via _git so a failure/timeout
+        # raises SyncGitError instead of CalledProcessError/TimeoutExpired.
+        _git(root_candidate, "init")
 
     root = git_root_for(cfg)
 

@@ -112,19 +112,30 @@ def sync_push(as_json: bool, quiet: bool) -> None:
 
     Requires the memories dir to live inside a git clone (see `memo sync clone`).
     """
-    from memo.sync_git import SyncGitError
-    from memo.sync_git import sync_push as _git_push
+    from memo.sync_git import SyncGitError, git_root_for, sync_once
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
     try:
-        out = _git_push(cfg, mem.store)
+        git_root_for(cfg)  # not a clone → SyncGitError (quiet soft-fails, else raises)
+        # Route through the lock-guarded machine coordinator: an unlocked push
+        # from a hook must not race a sibling session's in-flight git step.
+        once = sync_once(cfg, mem.store, mem, do_pull=False, do_push=True)
+        if once.get("push_error"):
+            raise SyncGitError(once["push_error"])
     except SyncGitError as e:
         if quiet:
             console.print(f"[dim]sync push skipped: {e}[/dim]")
             return
         raise
+    if once.get("skipped"):
+        if as_json:
+            click.echo(json.dumps(once, indent=2))
+            return
+        console.print(f"[dim]sync push skipped: {once['skipped']}[/dim]")
+        return
 
+    out = once.get("push") or {}
     if as_json:
         click.echo(json.dumps(out, indent=2))
         return
@@ -162,17 +173,28 @@ def sync_pull(remote: str | None, as_json: bool, quiet: bool) -> None:
         console.print(f"Errors: {diff.errors}")
         return
 
-    from memo.sync_git import SyncGitError
-    from memo.sync_git import sync_pull as _git_pull
+    from memo.sync_git import SyncGitError, git_root_for, sync_once
 
     try:
-        out = _git_pull(cfg, mem.store, mem)
+        git_root_for(cfg)  # not a clone → SyncGitError (quiet soft-fails, else raises)
+        # Route through the lock-guarded machine coordinator: an unlocked
+        # SessionStart pull must not drive/abort a sibling's in-flight rebase.
+        once = sync_once(cfg, mem.store, mem, do_pull=True, do_push=False)
+        if once.get("pull_error"):
+            raise SyncGitError(once["pull_error"])
     except SyncGitError as e:
         if quiet:
             console.print(f"[dim]sync pull skipped: {e}[/dim]")
             return
         raise
+    if once.get("skipped"):
+        if as_json:
+            click.echo(json.dumps(once, indent=2))
+            return
+        console.print(f"[dim]sync pull skipped: {once['skipped']}[/dim]")
+        return
 
+    out = once.get("pull") or {}
     if as_json:
         click.echo(json.dumps(out, indent=2))
         return

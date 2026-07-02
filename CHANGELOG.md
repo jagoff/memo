@@ -9,6 +9,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.9.8] - 2026-07-02
+
+### Fixed
+
+- **Sync can no longer destroy memories through a stale interrupted rebase.** A rebase killed mid-conflict (git timeout, machine sleep, session teardown) left `.git/rebase-merge` behind; the next sync matched `--skip` in git's "already a rebase in progress" error and ran `git rebase --skip` — silently dropping the local memories commit and committing raw conflict markers into `.md` files, which then pushed to every other machine. Sync now aborts a stale rebase before pulling (reported as `stale_rebase_aborted`), `_commit_local` refuses to commit unmerged paths, and the recovery loop treats "already a rebase" as a hard error instead of a skippable conflict.
+- **`memo sync pull` / `memo sync push` now take the machine sync lock.** Both called the git layer directly, bypassing the `.sync.lock` flock that `memo sync once` holds — a SessionStart pull could drive or abort a concurrent Stop-hook rebase mid-flight. They now route through the same locked coordinator and soft-skip when another sync owns the lock. Git subprocess timeouts (`subprocess.TimeoutExpired`) are wrapped as `SyncGitError`, so `sync_once`'s "never raises" contract and the `--quiet` hook paths hold under a blackholed network.
+- **Path traversal via `project:` tags is closed.** A tag like `project:../../evil` was used verbatim as the on-disk bucket, letting `memo save`/`memo_save` create directories and plant `.md` files outside the vault (and `memo migrate --bucket-by-project` rename memories out of it — data loss on the next reindex). The derived folder is now slugified (the tag itself is stored unchanged), and both the save and migrate paths enforce a containment check against `memory_dir`.
+- **Recall daemon startup is race-free.** `recall-daemon start` fired concurrently (SessionStart hooks, launchd respawns) could orphan a live MLX daemon on an unlinked socket and later have the orphan's shutdown unlink the survivor's socket, silently killing warm recall. `run_server` now takes the same non-blocking startup flock as the maint/ingest daemons, and daemon cleanup only removes socket/pid files it owns (a live foreign owner's files are left alone). The idle-capture daemon got the same child-side guard against duplicate loops.
+- **`gpu_guard(timeout=...)` actually times out across processes.** The deadline only covered the in-process RLock; the cross-process file lock was a plain blocking `flock`, so one stuck MLX pass wedged every other memo process (recall daemon, CLI, MCP) machine-wide with no `TimeoutError`. The flock acquisition is now bounded by the same deadline.
+- **Token ledger survives concurrent Stop hooks.** `write_ledger` used a fixed tmp filename, so two sessions rolling up simultaneously could replace the ledger with a half-written file — `read_ledger` then silently reset to empty and historic days beyond the grounding-log window were permanently lost. Writers now use unique temp files and the read-merge-write runs under a sidecar flock, matching the repo's dashboard-logs pattern.
+- `memo release bump`/`sync` now edit `packaging/mcpb/manifest.json` (version + pinned `mlx-memo` spec) — `release check` validated it but `bump` never wrote it, so every release tripped the check.
+- **`device_id` first-run mint is atomic.** Concurrent first sessions could mint divergent machine ids (phantom attribution in history events) or read an empty id mid-write; the id is now published via an exclusive atomic link and losers adopt the winner's id.
+
 ## [2.9.7] - 2026-07-01
 
 ### Fixed
