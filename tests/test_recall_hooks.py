@@ -167,7 +167,13 @@ def test_recall_logic_caps_total_context_and_logs_exact_cost(monkeypatch, tmp_pa
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
 
     assert "Long fact" in context
-    assert len(context) <= 160 * 4
+    # CITE_INSTRUCTION is budget-exempt (appended after capping); strip it before
+    # asserting the budget so the cap is measured on the core content only.
+    from memo.recall_logic import CITE_INSTRUCTION
+
+    cite_suffix = f"\n{CITE_INSTRUCTION}"
+    core_context = context.removesuffix(cite_suffix)
+    assert len(core_context) <= 160 * 4
     assert log_result is not None
     log_result()
     costs = dashboard_logs.read_context_cost_log(tmp_path)

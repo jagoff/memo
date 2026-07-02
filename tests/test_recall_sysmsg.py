@@ -212,3 +212,83 @@ def test_daemon_path_omits_system_message_when_flag_off(monkeypatch, tmp_path) -
     payload = json.loads(result)
     assert "systemMessage" not in payload
     assert payload["hookSpecificOutput"]["additionalContext"]
+
+
+# --- Daemon-path CITE_INSTRUCTION parity -----------------------------------
+
+
+def test_daemon_path_emits_cite_instruction_when_flag_on(monkeypatch, tmp_path) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from memo.recall_logic import CITE_INSTRUCTION, _recall_logic
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.delenv("MEMO_RECALL_CITE_INSTRUCTION", raising=False)  # default on
+
+    mem, _ = _daemon_stub_memory("deployment decision")
+    result, _log = _recall_logic(
+        "deployment orchestration",
+        cwd=None,
+        mem=mem,
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    payload = json.loads(result)
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+    assert CITE_INSTRUCTION in ctx
+
+
+def test_daemon_path_omits_cite_instruction_when_flag_off(monkeypatch, tmp_path) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from memo.recall_logic import CITE_INSTRUCTION, _recall_logic
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_CITE_INSTRUCTION", "0")
+
+    mem, _ = _daemon_stub_memory("deployment decision")
+    result, _log = _recall_logic(
+        "deployment orchestration",
+        cwd=None,
+        mem=mem,
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    payload = json.loads(result)
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+    assert CITE_INSTRUCTION not in ctx
+    # Context still present (memories rendered)
+    assert ctx
+
+
+# --- Daemon-path presence-recalls bump ------------------------------------
+
+
+def test_daemon_path_bumps_presence_recalls(monkeypatch, tmp_path) -> None:
+    """_recall_logic must bump presence recalls when it returns hits."""
+    import json
+    from types import SimpleNamespace
+
+    from memo import presence
+    from memo.recall_logic import _recall_logic
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+
+    before = presence.read_today(tmp_path)["recalls"]
+    mem, _ = _daemon_stub_memory("sync tier decision")
+    result, _log = _recall_logic(
+        "sync tier",
+        cwd=None,
+        mem=mem,
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    payload = json.loads(result)
+    assert payload["hookSpecificOutput"]["additionalContext"]  # sanity: got hits
+    after = presence.read_today(tmp_path)["recalls"]
+    assert after == before + 1

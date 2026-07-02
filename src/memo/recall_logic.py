@@ -669,6 +669,11 @@ def _recall_logic(
         if _assoc:
             context = render_associative_line(context, _assoc, token_budget=token_budget)
 
+    # Cite instruction — budget-exempt (~30 tokens), appended after any token-cap.
+    # Mirror the subprocess path (cli_recall_hook): gated, never counts against budget.
+    if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
+        context = f"{context}\n{CITE_INSTRUCTION}"
+
     hits_snapshot = [
         {"id": h.id, "score": h.score, "title": h.title, "snippet": (h.body or "")[:240]}
         for h in relevant
@@ -718,4 +723,12 @@ def _recall_logic(
                 output["systemMessage"] = _sysmsg
         except Exception as exc:
             _logger.debug("recall system-message build failed: %s", exc)
+    # Presence bump — mirror the subprocess path (cli_recall_hook). Degrade silently.
+    # _recall_logic is daemon-only (cli_recall_hook has its own path), so no double-bump.
+    try:
+        from memo import presence as _presence_mod
+
+        _presence_mod.bump(cfg.state_dir, recalls=len(relevant))
+    except Exception as exc:
+        _logger.debug("presence bump failed: %s", exc)
     return json.dumps(output, ensure_ascii=False), _log
