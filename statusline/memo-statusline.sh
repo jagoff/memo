@@ -39,6 +39,31 @@ MEMO_VER=$(printf '%s' "$MEMO_VER" | tr -cd '0-9A-Za-z.+-')
 MEMO_BADGE=""
 [ -n "$MEMO_VER" ] && MEMO_BADGE="[Memo $MEMO_VER]"
 
+# ── Today's activity (presence_today.json, written by memo hooks) ─────────────
+# Digits-only extraction (grep -o '[0-9]*$') doubles as sanitization.
+if [ "${MEMO_STATUSLINE_ACTIVITY:-1}" != "0" ] && [ -n "$MEMO_BADGE" ]; then
+  PRESENCE_FILE="${MEMO_STATE_DIR:-$HOME/.local/share/memo}/presence_today.json"
+  if [ -f "$PRESENCE_FILE" ] && [ ! -L "$PRESENCE_FILE" ]; then
+    P=$(head -c 512 "$PRESENCE_FILE" 2>/dev/null)
+    _pnum() {
+      printf '%s' "$P" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*[0-9]*" | tail -1 | grep -o '[0-9]*$'
+    }
+    PDATE=$(printf '%s' "$P" | grep -o '"date"[[:space:]]*:[[:space:]]*"[0-9-]*"' | tail -1 | grep -o '[0-9-]*' | tail -1)
+    if [ "$PDATE" = "$(date +%Y-%m-%d)" ]; then
+      R=$(_pnum recalls); S=$(_pnum saves); T=$(_pnum tokens_saved)
+      ACT=""
+      [ -n "$R" ] && [ "$R" != "0" ] && ACT="🧠$R"
+      [ -n "$S" ] && [ "$S" != "0" ] && ACT="${ACT:+$ACT · }💾$S"
+      if [ -n "$T" ] && [ "$T" -ge 1000 ] 2>/dev/null; then
+        ACT="${ACT:+$ACT · }~$((T / 1000))k tok"
+      elif [ -n "$T" ] && [ "$T" != "0" ]; then
+        ACT="${ACT:+$ACT · }~$T tok"
+      fi
+      [ -n "$ACT" ] && MEMO_BADGE="[Memo $MEMO_VER · $ACT]"
+    fi
+  fi
+fi
+
 # ── Wrap mode: prepend the badge to the inner statusline's output and exit ────
 if [ -n "$WRAP_CMD" ]; then
   INNER=$(printf '%s' "$INPUT" | eval "$WRAP_CMD" 2>/dev/null)

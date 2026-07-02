@@ -189,3 +189,72 @@ def test_script_standalone_still_emits_badge(tmp_path):
     assert "[Memo 9.9.9]" in proc.stdout
     assert "[MEMO " not in proc.stdout
     assert "Opus" in proc.stdout
+
+
+# ── activity badge (presence_today.json) ─────────────────────────────────────
+
+
+def _run_statusline(input_json: dict, env: dict) -> str:
+    script = _bundled_script()
+    merged = {**os.environ, **env}
+    proc = subprocess.run(
+        ["bash", str(script)],
+        input=json.dumps(input_json),
+        capture_output=True,
+        text=True,
+        env=merged,
+    )
+    return proc.stdout
+
+
+def test_activity_badge_from_presence_file(tmp_path) -> None:
+    from datetime import date as _date
+
+    (tmp_path / ".memo-version").write_text("9.9.9", encoding="utf-8")
+    (tmp_path / "presence_today.json").write_text(
+        json.dumps(
+            {"date": _date.today().isoformat(), "recalls": 12, "saves": 3, "tokens_saved": 8200}
+        ),
+        encoding="utf-8",
+    )
+    out = _run_statusline(
+        {"model": {"display_name": "X"}},
+        env={"MEMO_STATE_DIR": str(tmp_path), "CLAUDE_CONFIG_DIR": str(tmp_path)},
+    )
+    assert "🧠12" in out
+    assert "💾3" in out
+    assert "~8k tok" in out
+
+
+def test_activity_badge_skips_stale_date(tmp_path) -> None:
+    (tmp_path / ".memo-version").write_text("9.9.9", encoding="utf-8")
+    (tmp_path / "presence_today.json").write_text(
+        json.dumps({"date": "2020-01-01", "recalls": 12, "saves": 3, "tokens_saved": 8200}),
+        encoding="utf-8",
+    )
+    out = _run_statusline(
+        {"model": {"display_name": "X"}},
+        env={"MEMO_STATE_DIR": str(tmp_path), "CLAUDE_CONFIG_DIR": str(tmp_path)},
+    )
+    assert "🧠" not in out
+
+
+def test_activity_badge_disabled_by_env(tmp_path) -> None:
+    from datetime import date as _date
+
+    (tmp_path / ".memo-version").write_text("9.9.9", encoding="utf-8")
+    (tmp_path / "presence_today.json").write_text(
+        json.dumps(
+            {"date": _date.today().isoformat(), "recalls": 12, "saves": 0, "tokens_saved": 0}
+        ),
+        encoding="utf-8",
+    )
+    out = _run_statusline(
+        {"model": {"display_name": "X"}},
+        env={
+            "MEMO_STATE_DIR": str(tmp_path),
+            "CLAUDE_CONFIG_DIR": str(tmp_path),
+            "MEMO_STATUSLINE_ACTIVITY": "0",
+        },
+    )
+    assert "🧠" not in out
