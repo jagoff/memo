@@ -347,11 +347,15 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
         answer_tokens = _salient_tokens(answer)
         # Explicit citations — validated against this session's recalled ids.
         cited_full: set[str] = set()
+        cited8: set[str] = set()
         try:
             from memo import session as _session_cited
 
             _session_map = _session_cited.get_recalled_ids(state_dir, session_id)
             cited_full = match_cited(cited_ids(answer), _session_map.keys())
+            # recall_hook.log truncates hit ids to 8 chars; normalise to 8-char
+            # prefixes for comparison so the in-turn upgrade is never dead code.
+            cited8 = {f[:8] for f in cited_full}
         except Exception as exc:
             import logging
 
@@ -407,7 +411,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
             emb = entry["embed"]
             used = max(lex, float(emb)) if isinstance(emb, (int, float)) else lex
             method = str(entry["method"])
-            if rid and rid in cited_full:
+            if rid and rid[:8] in cited8:
                 used = 1.0
                 method = "cited"
             spec = entry["specific"]
@@ -428,8 +432,12 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                 action_evidence=action["action_evidence"] if action else None,
             )
             written += 1
-        _scored_ids = {str(e["m"].get("id") or "") for e in scored if isinstance(e["m"], dict)}
-        for fid in cited_full - _scored_ids:
+        _scored8 = {
+            s
+            for s in (str(e["m"].get("id") or "")[:8] for e in scored if isinstance(e["m"], dict))
+            if s
+        }
+        for fid in (f for f in cited_full if f[:8] not in _scored8):
             append_grounding_log(
                 state_dir,
                 session_id=session_id,

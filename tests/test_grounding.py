@@ -256,3 +256,126 @@ def test_match_cited_empty_inputs() -> None:
 
     assert match_cited(set(), ["a1b2c3d4e5f60789"]) == set()
     assert match_cited({"a1b2c3d4"}, []) == set()
+
+
+# ── score_turn cited-id integration (8-char vs full-id mismatch fix) ─────────
+
+
+def _write_transcript_citing(tmp_path: Path, prefix: str) -> Path:
+    """Transcript whose last assistant message cites a memory by its 8-char prefix."""
+    tp = tmp_path / "transcript.jsonl"
+    lines = [
+        {"type": "user", "message": {"role": "user", "content": "what do you know?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": f"See memory [{prefix}] for the confirmed decision."}],
+            },
+        },
+    ]
+    tp.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+    return tp
+
+
+def test_cited_upgrade_no_duplicate_when_recall_log_has_8char_ids(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """In-turn cited upgrade: recall_hook.log stores ids truncated to 8 chars,
+    but the session recalled-ids map holds full ids. The cited memory must be
+    upgraded to method='cited'/used_score=1.0 with NO duplicate standalone row.
+
+    Pre-fix behaviour (bug): rid (8-char) not in cited_full (full ids) so the
+    upgrade branch is dead code → the write loop emits a lexical/embed row, then
+    the standalone loop emits a second cited row for the same memory (2 rows
+    total, neither correctly upgraded in the write loop).
+    Post-fix: exactly 1 row with method='cited' and used_score=1.0.
+    """
+    # Embed returns nothing → forces lexical-only (no cosine inflation)
+    monkeypatch.setattr("memo.embedder_client.embed", lambda texts, state_dir=None: [])
+
+    full_id = "a1b2c3d4e5f60789"
+    short_prefix = full_id[:8]  # "a1b2c3d4" — what recall_hook.log stores
+
+    sid = "cited-integ-1"
+    turn = session.next_turn(tmp_path, sid)  # 1
+    session.stamp_recall_turn(tmp_path, sid, turn)
+
+    # append_recall_log truncates hit ids to 8 chars in recall_hook.log
+    dashboard.append_recall_log(
+        tmp_path,
+        prompt="what do you know?",
+        via="subprocess",
+        session_id=sid,
+        turn=turn,
+        client="claude-code",
+        hits=[{"id": full_id, "score": 0.85, "title": "strategy", "snippet": "zqz qqq www"}],
+    )
+    # Session map holds the FULL id (as mark_ids_recalled writes it)
+    session.mark_ids_recalled(tmp_path, sid, {full_id: turn})
+
+    tp = _write_transcript_citing(tmp_path, short_prefix)
+    summary = grounding.score_turn(tmp_path, {"session_id": sid, "transcript_path": str(tp)})
+
+    assert summary is not None and not summary.get("bailed"), f"score_turn bailed: {summary}"
+
+    g = dashboard.read_grounding_log(tmp_path)
+    # grounding.log also truncates recall_id to 8 chars; so the short prefix is
+    # what we find in both the in-turn and the standalone rows
+    matching = [r for r in g if r.get("recall_id") == short_prefix]
+    assert len(matching) == 1, (
+        f"Expected exactly 1 grounding row for {short_prefix!r}, got {len(matching)}: {matching}"
+    )
+    assert matching[0]["method"] == "cited", (
+        f"Expected method='cited', got {matching[0]['method']!r}"
+    )
+    assert matching[0]["used_score"] == 1.0, (
+        f"Expected used_score=1.0, got {matching[0]['used_score']}"
+    )
+
+
+def test_cited_standalone_for_earlier_turn_memory(tmp_path: Path, monkeypatch) -> None:
+    """Earlier-turn cited standalone: a memory present in the session recalled-ids
+    map (recalled in a previous turn) but NOT among the current turn's recall hits
+    should produce a standalone cited row when the answer cites its prefix.
+    """
+    monkeypatch.setattr("memo.embedder_client.embed", lambda texts, state_dir=None: [])
+
+    earlier_full_id = "aaa1bbb2cccc3333"
+    earlier_prefix = earlier_full_id[:8]   # "aaa1bbb2"
+    current_full_id = "memcurrent0000bb"   # not cited in the answer
+
+    sid = "cited-integ-2"
+    # Earlier memory: add to session map before the current turn
+    session.mark_ids_recalled(tmp_path, sid, {earlier_full_id: 0})
+
+    # Current turn: different memory in the recall hits
+    turn = session.next_turn(tmp_path, sid)  # 1
+    session.stamp_recall_turn(tmp_path, sid, turn)
+    dashboard.append_recall_log(
+        tmp_path,
+        prompt="what do you know?",
+        via="subprocess",
+        session_id=sid,
+        turn=turn,
+        client="claude-code",
+        hits=[{"id": current_full_id, "score": 0.7, "title": "current", "snippet": "current memory content"}],
+    )
+    session.mark_ids_recalled(tmp_path, sid, {current_full_id: turn})
+
+    # Answer cites the EARLIER memory, not the current-turn one
+    tp = _write_transcript_citing(tmp_path, earlier_prefix)
+    summary = grounding.score_turn(tmp_path, {"session_id": sid, "transcript_path": str(tp)})
+
+    assert summary is not None and not summary.get("bailed"), f"score_turn bailed: {summary}"
+
+    g = dashboard.read_grounding_log(tmp_path)
+    # Should have a standalone cited row for the earlier-turn memory
+    cited_rows = [r for r in g if r.get("method") == "cited"]
+    assert len(cited_rows) == 1, (
+        f"Expected 1 standalone cited row, got {len(cited_rows)}: {cited_rows}"
+    )
+    assert cited_rows[0]["recall_id"] == earlier_prefix, (
+        f"Expected recall_id={earlier_prefix!r}, got {cited_rows[0]['recall_id']!r}"
+    )
+    assert cited_rows[0]["used_score"] == 1.0
