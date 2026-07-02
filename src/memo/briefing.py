@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from memo import synapse_client
@@ -159,6 +160,66 @@ def entity_graph_lines(mem: Any, *, top: int = 5, max_scan: int = 40) -> list[st
     return lines
 
 
+def dream_digest_lines(state_dir: Path, *, max_age_h: float = 24.0) -> list[str]:
+    """'☾ Last night' — one-shot digest of the last nightly dream run.
+
+    Reads ``state_dir/dream/last.json`` (receipt from ``memo dream run``,
+    ``{"ts": epoch, **receipt}``). Shown once per receipt:
+    ``state_dir/dream/last_shown`` stores the shown receipt's ``ts``.
+    Empty list on anything — missing, stale, corrupt, already shown.
+    """
+    import json as _json
+    import time as _time
+
+    try:
+        last = state_dir / "dream" / "last.json"
+        if not last.is_file():
+            return []
+        data = _json.loads(last.read_text(encoding="utf-8"))
+        ts = data.get("ts")
+        if not isinstance(ts, (int, float)) or (_time.time() - ts) > max_age_h * 3600:
+            return []
+        stamp = state_dir / "dream" / "last_shown"
+        if stamp.is_file() and stamp.read_text(encoding="utf-8").strip() == repr(ts):
+            return []
+
+        def _count(key: str) -> int:
+            v = data.get(key)
+            return len(v) if isinstance(v, list) else 0
+
+        parts: list[str] = []
+        for key, label in (
+            ("superseded", "contradictions superseded"),
+            ("merged", "duplicates merged"),
+            ("archived_stale", "stale archived"),
+            ("synthesized", "synthesis"),
+        ):
+            n = _count(key)
+            if n:
+                parts.append(f"{n} {label}")
+        sg = data.get("signal_gathered") or {}
+        mined = int(sg.get("memories_saved", 0) or 0) if isinstance(sg, dict) else 0
+        if mined:
+            parts.append(f"{mined} memories mined")
+        tuner = data.get("tuner") or {}
+        if isinstance(tuner, dict) and tuner.get("status"):
+            parts.append(f"tuner: {tuner['status']}")
+        errors = data.get("errors") or []
+        if errors:
+            parts.append(f"{len(errors)} errors (`memo dream status`)")
+        if not parts:
+            parts.append("ran clean — nothing to change")
+
+        try:
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+            stamp.write_text(repr(ts), encoding="utf-8")
+        except Exception:  # noqa: S110  # stamp failure just means it may show twice
+            pass
+        return [f"**☾ Last night** (memo dream): {' · '.join(parts)}", ""]
+    except Exception:
+        return []
+
+
 def memo_native_briefing_lines(
     mem: Any,
     *,
@@ -279,4 +340,9 @@ def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-__all__ = ["compact_text", "memo_native_briefing_lines", "synapse_briefing_lines"]
+__all__ = [
+    "compact_text",
+    "dream_digest_lines",
+    "memo_native_briefing_lines",
+    "synapse_briefing_lines",
+]

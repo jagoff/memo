@@ -175,6 +175,16 @@ def briefing(*, compact: bool) -> None:
             if debug:
                 print(f"# memo briefing: synapse lookup failed: {exc}", file=_sys.stderr)
 
+    # ── 1c. Dream digest (last nightly run — shown once per receipt) ──────
+    if flag_bool("MEMO_BRIEFING_DREAM_DIGEST"):
+        try:
+            from memo.briefing import dream_digest_lines
+
+            lines.extend(dream_digest_lines(cfg.state_dir))
+        except Exception as exc:
+            if debug:
+                print(f"# memo briefing: dream digest failed: {exc}", file=_sys.stderr)
+
     # ── 2+3. Open loops + memory of the day (memo's own corpus) ───────────
     # Shared with the memo_unified_briefing MCP tool so both surfaces compose
     # identical memo-native sections.

@@ -65,6 +65,15 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_BRIEFING_LOOPS_DAYS", "int", 7, "briefing", "Look-back window (days) for open loops."
     ),
+    _spec(
+        "MEMO_BRIEFING_DREAM_DIGEST",
+        "bool",
+        True,
+        "briefing",
+        "Show a one-shot '☾ Last night' digest of the nightly dream run in "
+        "the SessionStart briefing (first session after each run). Default on.",
+        opt_out=True,
+    ),
     # repo indexing
     _spec(
         "MEMO_REPO_MAX_FILE_BYTES", "int", None, "repo", "Skip repo files larger than this (bytes)."
