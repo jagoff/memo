@@ -357,39 +357,43 @@ def install_mcp(
 
 
 def _seed_install_memory() -> None:
-    """Save a one-shot install proof memory and stamp the date.
+    """First-run seed: save one REAL memory recording the install, so the
+    first briefing can demonstrate recall on something the user just did.
+    Idempotent via ``state_dir/.install_seed.json``; never fails the install
+    (no embedder / no MLX on this box → silently skipped)."""
+    import json as _json
+    import socket
+    from datetime import date as _date
 
-    The stamp (state_dir/.install_seed.json) is checked by `memo briefing`
-    (SessionStart hook), which surfaces the memory once and marks it shown.
-    Early exit if stamp already exists (idempotent).
-    """
-    import json
-    from datetime import date
+    try:
+        from memo.config import Config
 
-    from memo.config import Config
-    from memo.memory import Memory
+        cfg = Config.from_env()
+        stamp = cfg.state_dir / ".install_seed.json"
+        if stamp.exists():
+            return
+        try:
+            from importlib.metadata import version as _pkg_version
 
-    cfg = Config.from_env()
-    stamp_path = cfg.state_dir / ".install_seed.json"
+            ver = _pkg_version("mlx-memo")
+        except Exception:
+            ver = "unknown"
+        from memo.memory import Memory
 
-    # Idempotent: early exit if stamp exists.
-    if stamp_path.exists():
-        return
-
-    # Ensure state_dir exists BEFORE saving.
-    cfg.state_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save the seed memory.
-    memory = Memory(cfg)
-    rec = memory.save(
-        content="You installed memo — this memory is the proof.",
-        title="memo installed",
-        type_="note",
-        tags=["onboarding"],
-    )
-
-    # Write the stamp with the memory id and today's date.
-    stamp_path.write_text(
-        json.dumps({"id": rec.id, "ts": date.today().isoformat(), "shown": False}),
-        encoding="utf-8",
-    )
+        cfg.state_dir.mkdir(parents=True, exist_ok=True)
+        rec = Memory(cfg).save(
+            content=(
+                f"Installed memo {ver} on {_date.today().isoformat()} on "
+                f"{socket.gethostname()}. memo now recalls relevant memories "
+                "on every prompt and briefs at session start."
+            ),
+            title=f"memo {ver} installed",
+            type_="note",
+            tags=["memo-install-seed"],
+        )
+        stamp.write_text(
+            _json.dumps({"id": rec.id, "ts": _date.today().isoformat(), "shown": False}),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: S110  # onboarding decoration — never fail an install
+        pass

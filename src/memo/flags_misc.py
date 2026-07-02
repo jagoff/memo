@@ -79,6 +79,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "~/.claude/settings.json, coexisting with foreign hooks. Makes recall "
         "survive a de-registered/clobbered plugin. Default on; set =0 to opt out.",
     ),
+    _spec(
+        "MEMO_STATUSLINE_ACTIVITY",
+        "bool",
+        True,
+        "update",
+        "Show today's activity (🧠 recalls · 💾 saves · ~tokens saved) in the "
+        "[Memo <ver>] statusline badge, read from presence_today.json. The "
+        "bash statusline reads the env var directly; this spec documents it "
+        "for `memo config validate`. Default on; set =0 to opt out.",
+        opt_out=True,
+    ),
     # MCP transport
     _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
     _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),
