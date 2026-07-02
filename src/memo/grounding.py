@@ -30,6 +30,7 @@ import json
 import math
 import re
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +93,30 @@ def _lexical_containment(snippet: str, answer_tokens: set[str]) -> float:
     if not snip:
         return 0.0
     return len(snip & answer_tokens) / len(snip)
+
+
+_CITE_RE = re.compile(r"\[([0-9a-f]{6,8})\]")
+
+
+def cited_ids(answer: str) -> set[str]:
+    """Short-id prefixes the assistant explicitly cited, e.g. ``[a1b2c3d4]``.
+
+    Explicit citations are the strongest grounding signal — the model *told*
+    us it used the memory (see CITE_INSTRUCTION in recall_logic).
+    """
+    return set(_CITE_RE.findall(answer or ""))
+
+
+def match_cited(cited: set[str], session_ids: Iterable[str]) -> set[str]:
+    """Full memory ids (recalled this session) matching a cited prefix.
+
+    Membership in the session-recall set is the anti-false-positive gate:
+    a random hex token in the answer never matches unless that exact memory
+    was actually injected this session.
+    """
+    if not cited:
+        return set()
+    return {fid for fid in session_ids if any(fid.startswith(p) for p in cited)}
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -320,6 +345,17 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
         if not answer:
             return _bail("no_answer", session_id=session_id, turn=turn)
         answer_tokens = _salient_tokens(answer)
+        # Explicit citations — validated against this session's recalled ids.
+        cited_full: set[str] = set()
+        try:
+            from memo import session as _session_cited
+
+            _session_map = _session_cited.get_recalled_ids(state_dir, session_id)
+            cited_full = match_cited(cited_ids(answer), _session_map.keys())
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).debug("grounding: cited-id match failed: %s", exc)
         _snap = locals().get("snap") or {}
         client = _snap.get("client") or "claude-code"
         question = _prompt_for_turn(state_dir, session_id, turn)
@@ -370,6 +406,10 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
             lex = float(lex_v) if isinstance(lex_v, (int, float)) else 0.0
             emb = entry["embed"]
             used = max(lex, float(emb)) if isinstance(emb, (int, float)) else lex
+            method = str(entry["method"])
+            if rid and rid in cited_full:
+                used = 1.0
+                method = "cited"
             spec = entry["specific"]
             snippet = rec.get("snippet") if isinstance(rec, dict) else ""
             action = _action_for_snippet(str(snippet or ""), tool_targets)
@@ -379,13 +419,26 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                 turn=turn,
                 recall_id=rid,
                 used_score=used,
-                method=str(entry["method"]),
+                method=method,
                 client=str(client),
                 answer_len=len(answer),
                 recall_top_score=float(top) if isinstance(top, (int, float)) else None,
                 specific_score=float(spec) if isinstance(spec, (int, float)) else None,
                 downstream_action=action["downstream_action"] if action else None,
                 action_evidence=action["action_evidence"] if action else None,
+            )
+            written += 1
+        _scored_ids = {str(e["m"].get("id") or "") for e in scored if isinstance(e["m"], dict)}
+        for fid in cited_full - _scored_ids:
+            append_grounding_log(
+                state_dir,
+                session_id=session_id,
+                turn=turn,
+                recall_id=fid,
+                used_score=1.0,
+                method="cited",
+                client=str(client),
+                answer_len=len(answer),
             )
             written += 1
         return {"session_id": session_id, "turn": turn, "scored": written}

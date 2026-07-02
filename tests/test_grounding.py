@@ -219,3 +219,40 @@ def test_grounding_noop_writes_diagnostic(tmp_path: Path) -> None:
     rows = dashboard.read_grounding_diag_log(tmp_path)
     assert rows[0]["reason"] == "missing_transcript_path"
     assert rows[0]["session_id"] == "x"
+
+
+# ── cited-id parsing (F1c: visible attribution → grounding signal) ──────────
+
+
+def test_cited_ids_extracts_hex_prefixes() -> None:
+    from memo.grounding import cited_ids
+
+    answer = "Per your memory [a1b2c3d4] the sync tier is local; also [f6e5d4] applies."
+    assert cited_ids(answer) == {"a1b2c3d4", "f6e5d4"}
+
+
+def test_cited_ids_ignores_non_hex_and_wrong_length() -> None:
+    from memo.grounding import cited_ids
+
+    assert cited_ids("[zzzz] [a1b2] [a1b2c3d4e5f6g7h8] plain text") == set()
+
+
+def test_cited_ids_empty_answer() -> None:
+    from memo.grounding import cited_ids
+
+    assert cited_ids("") == set()
+
+
+def test_match_cited_requires_session_membership() -> None:
+    from memo.grounding import match_cited
+
+    session_ids = ["a1b2c3d4e5f60789", "0123456789abcdef"]
+    # a1b2c3d4 was recalled this session → matches. deadbeef was not → dropped.
+    assert match_cited({"a1b2c3d4", "deadbeef"}, session_ids) == {"a1b2c3d4e5f60789"}
+
+
+def test_match_cited_empty_inputs() -> None:
+    from memo.grounding import match_cited
+
+    assert match_cited(set(), ["a1b2c3d4e5f60789"]) == set()
+    assert match_cited({"a1b2c3d4"}, []) == set()
