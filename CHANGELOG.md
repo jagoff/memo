@@ -9,6 +9,35 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-07-02
+
+### Added
+
+- **Presence program** — memo's background work is now visible to the human:
+  - Recall hook emits a human-visible `systemMessage` line (`🧠 memo · N: titles`)
+    on every prompt with recall hits, on both the subprocess and warm-daemon
+    paths (`MEMO_RECALL_SYSTEM_MESSAGE`, default on).
+  - Injected recall block asks the model to cite used memories inline by short
+    id (`MEMO_RECALL_CITE_INSTRUCTION`, default on); cited `[id8]` references
+    are validated against session-recalled ids and logged as the strongest
+    grounding signal (`method="cited"`, used_score=1.0), feeding roi/usefulness.
+  - Statusline badge shows today's live activity —
+    `[Memo <ver> · 🧠recalls · 💾saves · ~tokens saved]` — from a new
+    `presence_today.json` state file written by the recall hook, `Memory.save()`,
+    and capture-stop (`MEMO_STATUSLINE_ACTIVITY`, default on).
+  - SessionStart briefing gains a one-shot "☾ Last night" digest of the nightly
+    dream receipt (`MEMO_BRIEFING_DREAM_DIGEST`, default on).
+  - `memo install-mcp --write` seeds one real memory recording the install and
+    the first briefing surfaces it once ("🧠 memo remembers…") — onboarding
+    proof powered by the real recall mechanism.
+
+### Fixed
+
+- Cited-id grounding matches the 8-char truncated ids stored in
+  `recall_hook.log` (prefix-normalized) — no dead comparisons, no duplicate
+  grounding rows.
+- Install-seed side effect is isolated from the shared test state dir.
+
 ## [2.9.8] - 2026-07-02
 
 ### Fixed
