@@ -9,6 +9,12 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.10.2] - 2026-07-02
+
+### Changed
+
+- Test suite: `ruff format` pass across all 143 test files (style-only, no logic changes).
+
 ## [2.10.1] - 2026-07-02
 
 ### Fixed
