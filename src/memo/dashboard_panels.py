@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -431,6 +432,137 @@ def _panel_verdict(state_dir: Path) -> Panel:
         body.append("NOT reading:  ", style="dim")
         body.append("  ".join(f"{n} ❌" for n in silent), style="bold red")
     return Panel(body, title="[bold]DOES memo WORK?[/bold]", border_style=border, padding=(0, 1))
+
+
+_recall_trend_cache: _TTLCache = _TTLCache(ttl_s=30.0)
+
+
+def _read_eval_history(state_dir: Path, limit: int = 7) -> list[dict[str, Any]]:
+    """Last `limit` valid entries of state_dir/eval/history.jsonl (oldest→newest).
+
+    Lines look like {"ts": ..., "prec_at_k": float, "noise_at_k": float, "k": int,
+    "labels": int, "source": "dream"}. Corrupt lines are skipped; a missing or
+    unreadable file degrades to [].
+    """
+    path = state_dir / "eval" / "history.jsonl"
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        _log.debug("dashboard: eval history read failed: %s", exc)
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out[-limit:]
+
+
+def _grounding_citation_stats(state_dir: Path, limit: int = 2000) -> dict[str, Any]:
+    """Citation ground truth from grounding.log: top-cited ids + never-cited count."""
+    cited: Counter[str] = Counter()
+    seen: set[str] = set()
+    for r in read_grounding_log(state_dir, limit=limit):
+        rid = str(r.get("recall_id") or "").strip()[:8]
+        if not rid:
+            continue
+        seen.add(rid)
+        if r.get("method") == "cited":
+            cited[rid] += 1
+    return {
+        "top_cited": cited.most_common(5),
+        "never_cited": len(seen - set(cited)),
+        "seen": len(seen),
+    }
+
+
+def _panel_recall_trend(state_dir: Path) -> Panel:
+    """'Recall Quality' — prec@5 eval trend + citation ground truth from grounding.log."""
+    key = str(state_dir)
+    data = _recall_trend_cache.get(key)
+    if data is None:
+        prec: list[float] = []
+        try:
+            for row in _read_eval_history(state_dir, limit=7):
+                v = row.get("prec_at_k")
+                if isinstance(v, (int, float)):
+                    prec.append(float(v))
+        except Exception as exc:
+            _log.debug("dashboard: eval history parse failed: %s", exc)
+            prec = []
+        try:
+            cites = _grounding_citation_stats(state_dir)
+        except Exception as exc:
+            _log.debug("dashboard: grounding citation stats failed: %s", exc)
+            cites = {"top_cited": [], "never_cited": 0, "seen": 0}
+        data = {"prec": prec, "cites": cites}
+        _recall_trend_cache.set(data, key)
+
+    prec = data.get("prec") or []
+    cites = data.get("cites") or {}
+    top_cited = cites.get("top_cited") or []
+    seen = int(cites.get("seen") or 0)
+    never_cited = int(cites.get("never_cited") or 0)
+
+    title = "[bold magenta]recall quality[/bold magenta]"
+    if not prec and not seen:
+        return Panel(
+            Text("sin datos aún", style="dim italic"),
+            title=title,
+            border_style="magenta",
+            padding=(0, 1),
+        )
+
+    tbl = Table.grid(padding=(0, 1))
+    tbl.add_column(style="dim", width=12)
+    tbl.add_column()
+
+    if prec:
+        # Absolute 0..1 scale (precision metric) — no max-normalization,
+        # so a flat 0.2 trend doesn't render as full-height blocks.
+        spark = "".join(_SPARK[round(max(0.0, min(1.0, v)) * (len(_SPARK) - 1))] for v in prec)
+        tbl.add_row(
+            "prec@5",
+            Text.assemble(
+                (spark, "magenta"),
+                ("  ", ""),
+                (f"{prec[-1]:.2f}", "bold"),
+                (f"  ({len(prec)} runs)", "dim"),
+            ),
+        )
+    else:
+        tbl.add_row("prec@5", Text("sin datos aún", style="dim italic"))
+
+    if top_cited:
+        label = "top cited"
+        for rid, n in top_cited:
+            tbl.add_row(
+                label,
+                Text.assemble((f"[{rid}]", "bold yellow"), (f" ×{n}", "cyan")),  # noqa: RUF001
+            )
+            label = ""
+    else:
+        tbl.add_row("top cited", Text("sin datos aún", style="dim italic"))
+
+    if seen:
+        tbl.add_row(
+            "never cited",
+            Text.assemble(
+                (str(never_cited), "bold"),
+                (f" of {seen} recalled", "dim"),
+            ),
+        )
+    else:
+        tbl.add_row("never cited", Text("sin datos aún", style="dim italic"))
+    return Panel(tbl, title=title, border_style="magenta", padding=(0, 1))
 
 
 def _memflow_bin() -> str | None:

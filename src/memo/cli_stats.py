@@ -86,6 +86,24 @@ def stats() -> None:
     except Exception as e:
         console.print(f"  [dim](error: {e})[/dim]")
 
+    try:
+        from memo.recall_metrics import summarize as _latency_summary
+
+        latency = _latency_summary(state_dir, days=7)
+    except Exception as exc:
+        _log.debug("recall metrics summary failed: %s", exc)
+        latency = {}
+    if latency:
+        console.print("\n[bold]⏱ Recall Latency (last 7 days)[/bold]")
+        for path_name in ("daemon", "subprocess"):
+            s = latency.get(path_name)
+            if not s:
+                continue
+            console.print(
+                f"  {path_name:<11} p50 {s['p50']:.0f}ms  p95 {s['p95']:.0f}ms  "
+                f"p99 {s['p99']:.0f}ms  n={s['count']}"
+            )
+
     console.print("\n[bold]👥 Consumers[/bold]")
     try:
         cb = consult_breakdown(state_dir)

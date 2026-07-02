@@ -18,6 +18,7 @@ from rich.text import Text
 from memo.dashboard_panels import (
     _panel_consumers,
     _panel_corpus,
+    _panel_recall_trend,
     _panel_utility,
     _panel_verdict,
 )
@@ -32,11 +33,13 @@ def render(memory: Any, state_dir: Path) -> Layout:
         Layout(name="footer", size=1),
     )
     layout["header"].split_row(Layout(name="utility"), Layout(name="verdict"))
-    layout["mid"].split_row(Layout(name="stats"), Layout(name="consumers"))
+    layout["mid"].split_row(Layout(name="left"), Layout(name="consumers"))
+    layout["left"].split_column(Layout(name="stats", size=3), Layout(name="quality"))
 
     layout["utility"].update(_panel_utility(state_dir))
     layout["verdict"].update(_panel_verdict(state_dir))
     layout["stats"].update(_panel_corpus(memory))
+    layout["quality"].update(_panel_recall_trend(state_dir))
     layout["consumers"].update(_panel_consumers(state_dir))
     now = datetime.now().strftime("%H:%M:%S")
     footer = Text.from_markup(

@@ -34,7 +34,9 @@ from memo.cli_dream_passes import (
     _older_id,
     _render_run_summary,
     _run_compress,
+    _run_eval_recall,
     _run_eviction,
+    _run_harvest_labels,
     _run_presynthesis,
     _run_prewarm_queries,
     _run_prune_floor,
@@ -833,6 +835,43 @@ def dream_run(
         else:
             progress.update(step, description="[11] pre-synthesis [dim]skip[/dim]")
 
+        # 12. Observability — label harvest + nightly retrieval eval ----------
+        if flag_bool("MEMO_DREAM_EVAL_ENABLED") and not dry_run:
+            progress.update(step, description="[12] harvest labels — mining grounding.log...")
+            try:
+                receipt["harvest_labels"] = _run_harvest_labels(cfg)
+                _hl = receipt["harvest_labels"]
+                progress.update(
+                    step,
+                    description=(
+                        f"[12] harvest labels [green]✓[/green]  "
+                        f"+{_hl['new']} (total {_hl['total']})"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"harvest_labels: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[12] harvest labels [yellow]warn[/yellow]")
+
+            progress.update(step, description="[13] eval recall — retrieval-only eval...")
+            try:
+                receipt["eval_recall"] = _run_eval_recall(
+                    cfg, mem, max_labels=flag_int("MEMO_DREAM_EVAL_MAX_LABELS") or 200
+                )
+                _ev = receipt["eval_recall"]
+                progress.update(
+                    step,
+                    description=(
+                        f"[13] eval recall [green]✓[/green]  "
+                        f"prec@{_ev['k']} {_ev['prec_at_k']} · noise@{_ev['k']} "
+                        f"{_ev['noise_at_k']} ({_ev['labels_total']} labels)"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"eval_recall: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[13] eval recall [yellow]warn[/yellow]")
+        else:
+            progress.update(step, description="[12] harvest+eval [dim]skip[/dim]")
+
         # Mark step task complete so spinner stops
         progress.update(step, total=1, completed=1)
 
@@ -927,6 +966,16 @@ def dream_status() -> None:
         ce = data["consolidated_episodes"]
         saved = sum(1 for d in ce.get("consolidated", []) if d.get("status") == "saved")
         console.print(f"  consolidate: {ce.get('status')} — {saved} cross-session memo(s)")
+    if data.get("harvest_labels"):
+        hl = data["harvest_labels"]
+        console.print(f"  labels harvested: +{hl.get('new', 0)} (total {hl.get('total', 0)})")
+    if data.get("eval_recall"):
+        ev = data["eval_recall"]
+        console.print(
+            f"  eval recall: prec@{ev.get('k')} {ev.get('prec_at_k')} · "
+            f"noise@{ev.get('k')} {ev.get('noise_at_k')} · {ev.get('labels_total')} labels "
+            f"({ev.get('harvested')} harvested + {ev.get('curated')} curated)"
+        )
     if data.get("errors"):
         for e in data["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")

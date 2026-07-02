@@ -211,7 +211,10 @@ def build_system_message(relevant: list[Any], *, max_chars: int = 140) -> str:
     if not relevant:
         return ""
     titles = ", ".join(
-        ((getattr(h, "title", "") or "").strip().replace("\n", " ") or str(getattr(h, "id", ""))[:8])
+        (
+            (getattr(h, "title", "") or "").strip().replace("\n", " ")
+            or str(getattr(h, "id", ""))[:8]
+        )
         for h in relevant
     )
     line = f"🧠 memo · {len(relevant)}: {titles}"
@@ -390,6 +393,62 @@ def make_vec_cosine(mem: Any, prompt: str) -> Callable[[Any], float | None]:
     return _cos
 
 
+def _explain_stage(explain: dict[str, dict[str, Any]], hits: list[Any], stage: str) -> None:
+    """Record per-hit score deltas for one boost stage into ``explain``.
+
+    Debug-only helper for ``rank_hits(explain=...)`` — never runs on the hook
+    path (``explain`` is ``None`` there)."""
+    for h in hits:
+        entry = explain.get(getattr(h, "id", ""))
+        if entry is None:
+            continue
+        prev = entry.get("_score")
+        cur = h.score
+        if prev is not None and cur is not None and abs(cur - prev) > 1e-12:
+            entry[stage] = round(cur - prev, 6)
+        entry["_score"] = cur
+
+
+def _explain_finalize(
+    explain: dict[str, dict[str, Any]],
+    raw: list[Any],
+    deduped: list[Any],
+    gated: list[Any],
+    result: list[Any],
+    knobs: RankKnobs,
+    vec_cosine: Callable[[Any], float | None] | None,
+) -> None:
+    """Stamp gate values, drop reasons and final ranks into ``explain``."""
+    deduped_ids = {getattr(h, "id", "") for h in deduped}
+    gated_ids = {getattr(h, "id", "") for h in gated}
+    result_ids = {getattr(h, "id", "") for h in result}
+    for h in raw:
+        hid = getattr(h, "id", "")
+        entry = explain.get(hid)
+        if entry is None or "final_score" in entry:
+            continue
+        entry["final_score"] = entry.pop("_score", None)
+        gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
+        entry["gate_value"] = gate
+        entry["passed_min_sim"] = not (gate is not None and gate < knobs.min_sim)
+        entry["passed_min_body"] = not (
+            knobs.min_body_chars > 0
+            and len((getattr(h, "body", "") or "").strip()) < knobs.min_body_chars
+        )
+        if hid in result_ids:
+            entry["dropped"] = None
+        elif hid not in deduped_ids:
+            entry["dropped"] = "dedup"
+        elif hid not in gated_ids:
+            entry["dropped"] = "min_sim" if not entry["passed_min_sim"] else "min_body"
+        else:
+            entry["dropped"] = "synthesis_covered"
+    for rank, h in enumerate(result, start=1):
+        entry = explain.get(getattr(h, "id", ""))
+        if entry is not None:
+            entry["rank"] = rank
+
+
 def rank_hits(
     hits: list[Any],
     knobs: RankKnobs,
@@ -397,6 +456,7 @@ def rank_hits(
     vec_cosine: Callable[[Any], float | None] | None = None,
     preferences: Any | None = None,
     graph_boost: Callable[[list[Any]], list[Any]] | None = None,
+    explain: dict[str, dict[str, Any]] | None = None,
 ) -> list[Any]:
     """The daemon's post-search ranking core, pure + reusable.
 
@@ -404,16 +464,30 @@ def rank_hits(
     min_sim/cosine + min_body gate -> synthesis-dedup. Returns the gated,
     deduped, ordered candidate list (caller splits top_k vs nudge). Used by both
     ``_recall_logic`` and the eval harness so they cannot diverge; Phase 2's
-    graph-proximity term plugs into ``graph_boost``."""
+    graph-proximity term plugs into ``graph_boost``.
+
+    ``explain`` (debug only — ``memo debug-recall``): pass a dict and it is
+    filled per hit id with the score breakdown (raw_score, per-stage boost
+    deltas, final_score, gate_value, passed_min_sim/min_body, dropped reason,
+    final rank). Default ``None`` keeps behavior and cost identical."""
     raw = hits
+    if explain is not None:
+        for h in hits:
+            explain[getattr(h, "id", "")] = {"raw_score": h.score, "_score": h.score}
     if knobs.project_tag:
         raw = _apply_project_tiers(raw, knobs.project_tag, knobs.project_boost, knobs.global_boost)
+        if explain is not None:
+            _explain_stage(explain, raw, "tier_boost")
     if knobs.contextual and preferences is not None:
         with contextlib.suppress(Exception):
             raw = _apply_preference_boost(raw, preferences)
+        if explain is not None:
+            _explain_stage(explain, raw, "preference_boost")
     if graph_boost is not None:
         with contextlib.suppress(Exception):
             raw = graph_boost(raw)
+        if explain is not None:
+            _explain_stage(explain, raw, "graph_boost")
 
     def _passes(h: Any) -> bool:
         gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
@@ -421,7 +495,14 @@ def rank_hits(
             return False
         return not (knobs.min_body_chars > 0 and len((h.body or "").strip()) < knobs.min_body_chars)
 
-    return _deduplicate_synthesis([h for h in dedup_hits(raw) if _passes(h)])
+    if explain is None:
+        return _deduplicate_synthesis([h for h in dedup_hits(raw) if _passes(h)])
+
+    deduped = dedup_hits(raw)
+    gated = [h for h in deduped if _passes(h)]
+    result = _deduplicate_synthesis(gated)
+    _explain_finalize(explain, raw, deduped, gated, result, knobs, vec_cosine)
+    return result
 
 
 def _recall_logic(

@@ -44,6 +44,7 @@ from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
 from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_dashboard import dashboard_cmd
+from memo.cli_debug_recall import debug_recall_cmd
 from memo.cli_dedupe import dedupe_cmd
 from memo.cli_diag import (
     _recall_daemon_health,  # noqa: F401 — re-exported for test: tests/test_logs_and_doctor.py imports from memo.cli
@@ -327,6 +328,7 @@ def cli(ctx: click.Context) -> None:
 cli.add_command(graph_group)
 cli.add_command(related)
 cli.add_command(eval_group)
+cli.add_command(debug_recall_cmd)
 cli.add_command(dream_cmd)
 cli.add_command(maintain_cmd)
 cli.add_command(synthesize_cmd)

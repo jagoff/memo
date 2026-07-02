@@ -9,7 +9,9 @@ read-only pre-mutation inventory. All are imported (and re-exported) by
 
 from __future__ import annotations
 
+import json
 import logging as _logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rich.progress import (
@@ -308,6 +310,140 @@ def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[
         return all_results
     except Exception as exc:
         return [{"error": str(exc)}]
+
+
+def _iso_now() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _harvested_labels_path(cfg: Config) -> Path:
+    return cfg.state_dir / "eval" / "harvested_labels.json"
+
+
+def _run_harvest_labels(cfg: Config) -> dict:
+    """Mine ground-truth recall labels from grounding.log and merge them into
+    ``state_dir/eval/harvested_labels.json``.
+
+    Dedup is by prompt (token-Jaccard, via ``merge_label_prompts``): a
+    re-harvested prompt unions its ``expect_ids`` into the existing entry
+    instead of duplicating it. New entries are stamped ``harvested_ts`` so the
+    eval pass can cap to the most recent N. Returns ``{"new", "total"}``;
+    raises on failure (the cli_dream caller records it in receipt["errors"]).
+    """
+    from memo.eval_recall import LABELS_SCHEMA, harvest_labels, merge_label_prompts
+
+    path = _harvested_labels_path(cfg)
+    existing: list[dict] = []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and isinstance(raw.get("prompts"), list):
+            existing = [p for p in raw["prompts"] if isinstance(p, dict) and p.get("text")]
+    except (OSError, json.JSONDecodeError):
+        existing = []
+
+    harvested = harvest_labels(cfg.state_dir)
+    merged = merge_label_prompts(existing, harvested)
+    now = _iso_now()
+    for p in merged:
+        p.setdefault("harvested_ts", now)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"schema": LABELS_SCHEMA, "prompts": merged}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return {"new": len(merged) - len(existing), "total": len(merged)}
+
+
+def _run_eval_recall(cfg: Config, mem: Memory, *, k: int = 5, max_labels: int = 200) -> dict:
+    """Nightly retrieval-only eval (vec mode, no reranker — the same fast path
+    ``memo eval recall`` uses) over curated + harvested labels.
+
+    Curated labels (``regression_labels.json``: state_dir first, repo checkout
+    second) are always included; the most recently harvested labels fill the
+    remaining room up to ``max_labels``. Appends one trend line to
+    ``state_dir/eval/history.jsonl`` (skipped when there are no labels, so an
+    empty run never pollutes the trend) and returns the receipt fragment.
+    Raises on failure (the cli_dream caller records it in receipt["errors"]).
+    """
+    from memo.eval_recall import Cfg as EvalCfg
+    from memo.eval_recall import LabelSet, Prompt, evaluate, gate_metrics, load_labels
+    from memo.flags import flag_float
+
+    curated = None
+    for cp in (
+        cfg.state_dir / "eval" / "regression_labels.json",
+        Path(__file__).resolve().parent.parent.parent / "eval" / "regression_labels.json",
+    ):
+        try:
+            curated = load_labels(cp)
+            break
+        except ValueError:
+            continue
+
+    harvested_raw: list[dict] = []
+    try:
+        raw = json.loads(_harvested_labels_path(cfg).read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and isinstance(raw.get("prompts"), list):
+            harvested_raw = [p for p in raw["prompts"] if isinstance(p, dict) and p.get("text")]
+    except (OSError, json.JSONDecodeError):
+        harvested_raw = []
+    harvested_raw.sort(key=lambda p: str(p.get("harvested_ts") or ""), reverse=True)
+
+    curated_used = list(curated.prompts)[:max_labels] if curated else []
+    room = max(0, max_labels - len(curated_used))
+    harvested_used = [
+        Prompt(
+            text=str(p["text"]),
+            relevant=bool(p.get("relevant", False)),
+            expect_ids=[str(x) for x in (p.get("expect_ids") or [])],
+        )
+        for p in harvested_raw[:room]
+    ]
+    prompts = curated_used + harvested_used
+    fragment = {
+        "prec_at_k": 0.0,
+        "noise_at_k": 0.0,
+        "k": k,
+        "labels_total": len(prompts),
+        "harvested": len(harvested_used),
+        "curated": len(curated_used),
+    }
+    if not prompts:
+        return fragment
+
+    labels = LabelSet(
+        prompts=prompts,
+        relevant_terms=set(curated.relevant_terms) if curated else set(),
+        noise_tags=set(curated.noise_tags) if curated else set(),
+        noise_path_fragments=tuple(curated.noise_path_fragments) if curated else (),
+    )
+    floor = flag_float("MEMO_RECALL_MIN_SIM")
+    floor = 0.5 if floor is None else floor
+    rows = evaluate(
+        mem,
+        k=k,
+        labels=labels,
+        configs=[EvalCfg(name="vec", mode="vec", floor=floor, exclude_archived=True)],
+    )
+    metrics = gate_metrics(rows)
+    fragment["prec_at_k"] = metrics["precision_at_k"]
+    fragment["noise_at_k"] = metrics["noise_at_k"]
+
+    hist = cfg.state_dir / "eval" / "history.jsonl"
+    hist.parent.mkdir(parents=True, exist_ok=True)
+    line = {
+        "ts": _iso_now(),
+        "prec_at_k": fragment["prec_at_k"],
+        "noise_at_k": fragment["noise_at_k"],
+        "k": k,
+        "labels": len(prompts),
+        "source": "dream",
+    }
+    with hist.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+    return fragment
 
 
 def _state_path(cfg: Config):

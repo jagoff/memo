@@ -684,6 +684,28 @@ SPECS: tuple[FlagSpec, ...] = (
         "0 disables the pass.",
         min_val=0,
     ),
+    # dream — recall observability: label harvest + nightly retrieval eval
+    _spec(
+        "MEMO_DREAM_EVAL_ENABLED",
+        "bool",
+        True,
+        "dream",
+        "Enable the nightly observability passes in `memo dream run`: harvest eval "
+        "labels from grounding.log into state_dir/eval/harvested_labels.json, then "
+        "run a retrieval-only eval (vec mode, no reranker) over harvested + curated "
+        "labels, appending the prec@K/noise@K trend to state_dir/eval/history.jsonl. "
+        "Read-only + cheap; default on. Set =0 to opt out.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_DREAM_EVAL_MAX_LABELS",
+        "int",
+        200,
+        "dream",
+        "Max labels per nightly eval pass (curated always included; the most "
+        "recently harvested labels fill the remaining room).",
+        min_val=1,
+    ),
     # graph co-recall
     _spec(
         "MEMO_GRAPH_CO_RECALL",

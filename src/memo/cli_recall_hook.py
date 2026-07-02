@@ -186,6 +186,17 @@ def recall_hook() -> None:
             if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: daemon hit ({_latency_ms} ms)", file=sys.stderr)
             print(_daemon_result)
+            try:
+                from memo import recall_metrics
+
+                recall_metrics.stamp(
+                    cfg.state_dir,
+                    total_ms=(time.time() - _t0) * 1000.0,
+                    path="daemon",
+                    hits=recall_metrics.count_hits(_daemon_result),
+                )
+            except Exception as exc:
+                _log.debug("recall metrics stamp failed: %s", exc)
             sys.exit(0)
     except Exception as _daemon_exc:
         try:
@@ -392,6 +403,18 @@ def recall_hook() -> None:
         )
     except Exception as exc:
         _log.debug("subprocess recall-log write failed: %s", exc)
+
+    try:
+        from memo import recall_metrics
+
+        recall_metrics.stamp(
+            cfg.state_dir,
+            total_ms=(time.time() - _t0) * 1000.0,
+            path="subprocess",
+            hits=len(relevant),
+        )
+    except Exception as exc:
+        _log.debug("recall metrics stamp failed: %s", exc)
 
     if not relevant:
         _bail(f"no hits above min_sim={min_sim}")

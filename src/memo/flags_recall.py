@@ -8,6 +8,17 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_DEBUG", "bool", False, "recall", "Verbose recall-hook diagnostics to stderr."
     ),
+    _spec(
+        "MEMO_RECALL_METRICS",
+        "bool",
+        True,
+        "recall",
+        "Stamp one JSON line per recall-hook run ({ts, total_ms, path daemon|subprocess, hits}) "
+        "to state_dir/recall_metrics.jsonl — latency percentile tracking surfaced by "
+        "`memo stats`. Cheap append, auto-rotated at ~5000 lines. Opt-out with "
+        "MEMO_RECALL_METRICS=0.",
+        opt_out=True,
+    ),
     _spec("MEMO_RECALL_MODE", "str", "vec", "recall", "Retrieval mode: vec | hybrid | bm25."),
     _spec(
         "MEMO_RECALL_FORCE_MODE",
