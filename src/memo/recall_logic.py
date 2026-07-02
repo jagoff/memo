@@ -196,6 +196,25 @@ def render_recall_balanced(relevant: list[Any], *, token_budget: int) -> str:
     return body + footer
 
 
+def build_system_message(relevant: list[Any], *, max_chars: int = 140) -> str:
+    """One-line, human-visible presence note for the Claude Code transcript.
+
+    ``🧠 memo · 3: title-a, title-b, title-c`` — hard-truncated with an
+    ellipsis so the line stays under ``max_chars``. Empty string when there
+    are no hits (caller then omits the ``systemMessage`` field entirely).
+    """
+    if not relevant:
+        return ""
+    titles = ", ".join(
+        ((getattr(h, "title", "") or "").strip() or str(getattr(h, "id", ""))[:8])
+        for h in relevant
+    )
+    line = f"🧠 memo · {len(relevant)}: {titles}"
+    if len(line) > max_chars:
+        line = line[: max_chars - 1].rstrip() + "…"
+    return line
+
+
 def _apply_project_boost(
     hits: list[Any], project_tag: str | None, project_boost: float
 ) -> list[Any]:

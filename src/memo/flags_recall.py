@@ -57,6 +57,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "walking the entity+codegraph graph from the top-K seeds. Default on.",
         opt_out=True,
     ),
+    _spec(
+        "MEMO_RECALL_SYSTEM_MESSAGE",
+        "bool",
+        True,
+        "recall",
+        "Emit a human-visible one-liner (top-level systemMessage in the hook "
+        "JSON) listing what was recalled — 🧠 memo · N: titles. Claude Code "
+        "shows it to the user; presence, not context. Default on.",
+        opt_out=True,
+    ),
     _spec("MEMO_ASSOCIATIVE_HOPS", "int", 2, "recall",
           "Graph hops to expand from recall seeds.", min_val=1, max_val=3),
     _spec("MEMO_ASSOCIATIVE_LIMIT", "int", 2, "recall",

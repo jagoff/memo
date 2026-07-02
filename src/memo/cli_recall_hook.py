@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+from typing import Any
 
 import click
 
@@ -469,12 +470,22 @@ def recall_hook() -> None:
     except Exception as exc:
         _log.debug("context-cost log write failed: %s", exc)
 
-    output = {
+    output: dict[str, Any] = {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
             "additionalContext": context,
         }
     }
+    # Human-visible presence line — decoration only, never blocks the recall.
+    if flag_bool("MEMO_RECALL_SYSTEM_MESSAGE"):
+        try:
+            from memo.recall_logic import build_system_message
+
+            _sysmsg = build_system_message(relevant)
+            if _sysmsg:
+                output["systemMessage"] = _sysmsg
+        except Exception as exc:
+            _log.debug("recall system-message build failed: %s", exc)
     print(json.dumps(output, ensure_ascii=False))
 
     # Persist newly recalled IDs so future turns can dedup them
