@@ -32,6 +32,14 @@ def test_untitled_hit_falls_back_to_short_id() -> None:
     assert "a1b2c3d4" in msg
 
 
+def test_newline_in_title_renders_single_line() -> None:
+    """A hit whose title contains \\n must not produce a multi-line systemMessage."""
+    msg = build_system_message([_hit("a1b2c3d4e5", "line one\nline two")])
+    assert "\n" not in msg
+    assert "line one" in msg
+    assert "line two" in msg
+
+
 def test_flag_default_is_on(monkeypatch) -> None:
     from memo.flags import flag_bool
 
@@ -122,6 +130,74 @@ def test_cite_instruction_flag_gating(tmp_cfg, monkeypatch) -> None:
     data = json.loads(result.output.strip())
     ctx = data.get("hookSpecificOutput", {}).get("additionalContext", "")
     assert CITE_INSTRUCTION not in ctx
+
+
+def test_system_message_flag_gating(tmp_cfg, monkeypatch) -> None:
+    """Full-hook: top-level systemMessage present when flag on; absent when =0.
+
+    Uses the same CliRunner + Memory.search-stub approach as
+    test_cite_instruction_flag_gating.  monkeypatch.setenv is used for all
+    env vars (not env= on runner.invoke) because Config.from_env() is called
+    in-process inside the Click command and must see the vars at call time;
+    the two sequential invocations also share storage-path state set before
+    the first call.
+    """
+    import json
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+    from memo.memory import MemoryRecord
+
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0]] * len(inputs),
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed_query",
+        lambda self, q: [1.0, 0.0, 0.0, 0.0],
+    )
+
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_cfg.data_dir))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_cfg.state_dir))
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_cfg.vault_path))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+
+    _fake = MemoryRecord(
+        id="a1b2c3d4e5f6a7b8",
+        path="notes/deployment-decision.md",
+        title="deployment decision",
+        type="decision",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="deployment orchestration decision about container systems " * 5,
+        extra={},
+        score=0.9,
+    )
+    monkeypatch.setattr("memo.memory.Memory.search", lambda self, q, **kw: [_fake])
+
+    runner = CliRunner()
+    payload = json.dumps({"prompt": "deployment orchestration container decision systems"})
+
+    # Flag ON (default): systemMessage must be present and start with 🧠 memo ·
+    monkeypatch.delenv("MEMO_RECALL_SYSTEM_MESSAGE", raising=False)
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, f"exit={result.exit_code} output={result.output}"
+    data = json.loads(result.output.strip())
+    assert "systemMessage" in data, "hook returned no systemMessage with flag on"
+    assert data["systemMessage"].startswith("🧠 memo ·"), (
+        f"unexpected systemMessage: {data['systemMessage']!r}"
+    )
+
+    # Flag OFF: systemMessage must NOT be present
+    monkeypatch.setenv("MEMO_RECALL_SYSTEM_MESSAGE", "0")
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, f"exit={result.exit_code} output={result.output}"
+    data = json.loads(result.output.strip())
+    assert "systemMessage" not in data, (
+        f"systemMessage unexpectedly present: {data.get('systemMessage')!r}"
+    )
 
 
 def test_cite_instruction_constant() -> None:

@@ -414,6 +414,7 @@ def recall_hook() -> None:
         return
 
     from memo.recall_logic import (
+        CITE_INSTRUCTION,
         render_recall_balanced,
         render_recall_compact,
         render_recall_context,
@@ -453,8 +454,6 @@ def recall_hook() -> None:
         )
     context = render_associative_line(context, _nudge, token_budget=token_budget)
     if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
-        from memo.recall_logic import CITE_INSTRUCTION
-
         context = f"{context}\n{CITE_INSTRUCTION}"
     if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
         approx = _est_tokens(context)

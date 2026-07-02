@@ -51,6 +51,18 @@ def test_writers_never_raise_on_unwritable_dir(tmp_path: Path) -> None:
     presence.set_tokens(target / "sub", 5)  # must swallow
 
 
+def test_rollover_then_bump_resets_counter(tmp_path: Path) -> None:
+    """Stale-date file is discarded; new bump starts from 0, not stale+new."""
+    presence.presence_path(tmp_path).write_text(
+        json.dumps({"date": "2020-01-01", "recalls": 99, "saves": 9, "tokens_saved": 999}),
+        encoding="utf-8",
+    )
+    presence.bump(tmp_path, recalls=1)
+    data = presence.read_today(tmp_path)
+    assert data["date"] == date.today().isoformat()
+    assert data["recalls"] == 1  # not 100 (rollover discarded the stale data)
+
+
 def test_save_bumps_presence_counter(mock_memory) -> None:
     """Memory.save() → saves counter +1 (choke point for CLI/MCP/capture)."""
     mock_memory.save(content="presence counter smoke test — durable fact", title="presence smoke")

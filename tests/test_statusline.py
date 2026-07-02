@@ -253,6 +253,46 @@ def test_activity_badge_skips_stale_date(tmp_path) -> None:
     assert "🧠" not in out
 
 
+def test_activity_badge_sub_1000_tokens(tmp_path) -> None:
+    """tokens_saved below 1000 renders as ~N tok (not ~Nk tok)."""
+    from datetime import date as _date
+
+    (tmp_path / ".memo-version").write_text("9.9.9", encoding="utf-8")
+    (tmp_path / "presence_today.json").write_text(
+        json.dumps(
+            {"date": _date.today().isoformat(), "recalls": 0, "saves": 0, "tokens_saved": 42}
+        ),
+        encoding="utf-8",
+    )
+    out = _run_statusline(
+        {"model": {"display_name": "X"}},
+        env={"MEMO_STATE_DIR": str(tmp_path), "CLAUDE_CONFIG_DIR": str(tmp_path)},
+    )
+    assert "~42 tok" in out
+    assert "~0k tok" not in out
+
+
+def test_activity_badge_all_zero_counters_plain_badge(tmp_path) -> None:
+    """All-zero counters (recalls=0, saves=0, tokens_saved=0) leave the badge
+    as plain [Memo <ver>] with no 🧠/💾/tok segment."""
+    from datetime import date as _date
+
+    (tmp_path / "presence_today.json").write_text(
+        json.dumps(
+            {"date": _date.today().isoformat(), "recalls": 0, "saves": 0, "tokens_saved": 0}
+        ),
+        encoding="utf-8",
+    )
+    out = _run_statusline(
+        {"model": {"display_name": "X"}},
+        env={"MEMO_STATE_DIR": str(tmp_path), "CLAUDE_CONFIG_DIR": str(tmp_path)},
+    )
+    assert "[Memo " in out   # badge present in some form
+    assert "🧠" not in out
+    assert "💾" not in out
+    assert "tok" not in out
+
+
 def test_activity_badge_disabled_by_env(tmp_path) -> None:
     from datetime import date as _date
 

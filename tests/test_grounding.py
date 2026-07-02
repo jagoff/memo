@@ -231,6 +231,19 @@ def test_cited_ids_extracts_hex_prefixes() -> None:
     assert cited_ids(answer) == {"a1b2c3d4", "f6e5d4"}
 
 
+def test_cited_ids_uppercase_normalized() -> None:
+    from memo.grounding import cited_ids
+
+    result = cited_ids("[A1B2C3D4] other text")
+    assert result == {"a1b2c3d4"}
+
+
+def test_cited_ids_five_chars_ignored() -> None:
+    from memo.grounding import cited_ids
+
+    assert cited_ids("[a1b2c]") == set()  # 5 hex chars → below minimum of 6
+
+
 def test_cited_ids_ignores_non_hex_and_wrong_length() -> None:
     from memo.grounding import cited_ids
 
@@ -332,6 +345,41 @@ def test_cited_upgrade_no_duplicate_when_recall_log_has_8char_ids(
     assert matching[0]["used_score"] == 1.0, (
         f"Expected used_score=1.0, got {matching[0]['used_score']}"
     )
+
+
+def test_cited_no_current_hits_uses_earlier_turn_memory(tmp_path: Path, monkeypatch) -> None:
+    """Earlier-turn cited path: current turn has NO recall hits at all, but the
+    answer cites a memory from a prior turn → exactly one cited grounding row,
+    no bail on 'no_recalled_hits'.
+    """
+    monkeypatch.setattr("memo.embedder_client.embed", lambda texts, state_dir=None: [])
+
+    earlier_full_id = "eee1fff2ggg3hh44"
+    earlier_prefix = earlier_full_id[:8]  # "eee1fff2"
+
+    sid = "cited-no-current-hits"
+    # Mark the earlier memory as recalled in a prior turn (turn 0, before this session)
+    session.mark_ids_recalled(tmp_path, sid, {earlier_full_id: 0})
+
+    # Stamp a current turn — no recall_hook.log entries for this turn
+    turn = session.next_turn(tmp_path, sid)  # 1
+    session.stamp_recall_turn(tmp_path, sid, turn)
+
+    # Answer cites the earlier memory's 8-char prefix
+    tp = _write_transcript_citing(tmp_path, earlier_prefix)
+    summary = grounding.score_turn(tmp_path, {"session_id": sid, "transcript_path": str(tp)})
+
+    assert summary is not None and not summary.get("bailed"), f"score_turn bailed: {summary}"
+
+    g = dashboard.read_grounding_log(tmp_path)
+    cited_rows = [r for r in g if r.get("method") == "cited"]
+    assert len(cited_rows) == 1, (
+        f"Expected 1 cited row for early-turn memory, got {len(cited_rows)}: {cited_rows}"
+    )
+    assert cited_rows[0]["recall_id"] == earlier_prefix, (
+        f"Expected recall_id={earlier_prefix!r}, got {cited_rows[0]['recall_id']!r}"
+    )
+    assert cited_rows[0]["used_score"] == 1.0
 
 
 def test_cited_standalone_for_earlier_turn_memory(tmp_path: Path, monkeypatch) -> None:

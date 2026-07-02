@@ -95,7 +95,7 @@ def _lexical_containment(snippet: str, answer_tokens: set[str]) -> float:
     return len(snip & answer_tokens) / len(snip)
 
 
-_CITE_RE = re.compile(r"\[([0-9a-f]{6,8})\]")
+_CITE_RE = re.compile(r"\[([0-9a-fA-F]{6,8})\]")
 
 
 def cited_ids(answer: str) -> set[str]:
@@ -103,8 +103,10 @@ def cited_ids(answer: str) -> set[str]:
 
     Explicit citations are the strongest grounding signal — the model *told*
     us it used the memory (see CITE_INSTRUCTION in recall_logic).
+    Matches are normalised to lowercase so ``[A1B2C3D4]`` and ``[a1b2c3d4]``
+    both produce ``"a1b2c3d4"``.
     """
-    return set(_CITE_RE.findall(answer or ""))
+    return {m.lower() for m in _CITE_RE.findall(answer or "")}
 
 
 def match_cited(cited: set[str], session_ids: Iterable[str]) -> set[str]:
@@ -338,6 +340,36 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
 
         recalled = _recalled_for_turn(state_dir, session_id, turn)
         if not recalled:
+            # Earlier-turn cited path: a memory recalled in a prior turn may have
+            # been cited in this answer even though the current turn has no recall
+            # hits.  Check the session recalled-ids map before giving up.
+            try:
+                from memo import session as _session_early
+
+                _sm_early = _session_early.get_recalled_ids(state_dir, session_id)
+                if _sm_early:
+                    _ans_early = read_last_assistant_text(transcript_path)
+                    if _ans_early:
+                        _cited_early = match_cited(cited_ids(_ans_early), _sm_early.keys())
+                        if _cited_early:
+                            for _fid in _cited_early:
+                                append_grounding_log(
+                                    state_dir,
+                                    session_id=session_id,
+                                    turn=turn,
+                                    recall_id=_fid,
+                                    used_score=1.0,
+                                    method="cited",
+                                    client="claude-code",
+                                    answer_len=len(_ans_early),
+                                )
+                            return {"session_id": session_id, "turn": turn, "scored": len(_cited_early)}
+            except Exception as _exc_early:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "grounding: early-cited path failed: %s", _exc_early
+                )
             return _bail("no_recalled_hits", session_id=session_id, turn=turn)
         recalled = recalled[:_MAX_SNIPPETS]
 

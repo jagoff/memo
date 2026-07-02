@@ -211,7 +211,7 @@ def build_system_message(relevant: list[Any], *, max_chars: int = 140) -> str:
     if not relevant:
         return ""
     titles = ", ".join(
-        ((getattr(h, "title", "") or "").strip() or str(getattr(h, "id", ""))[:8])
+        ((getattr(h, "title", "") or "").strip().replace("\n", " ") or str(getattr(h, "id", ""))[:8])
         for h in relevant
     )
     line = f"🧠 memo · {len(relevant)}: {titles}"

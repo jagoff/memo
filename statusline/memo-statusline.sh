@@ -48,7 +48,7 @@ if [ "${MEMO_STATUSLINE_ACTIVITY:-1}" != "0" ] && [ -n "$MEMO_BADGE" ]; then
     _pnum() {
       printf '%s' "$P" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*[0-9]*" | tail -1 | grep -o '[0-9]*$'
     }
-    PDATE=$(printf '%s' "$P" | grep -o '"date"[[:space:]]*:[[:space:]]*"[0-9-]*"' | tail -1 | grep -o '[0-9-]*' | tail -1)
+    PDATE=$(printf '%s' "$P" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
     if [ "$PDATE" = "$(date +%Y-%m-%d)" ]; then
       R=$(_pnum recalls); S=$(_pnum saves); T=$(_pnum tokens_saved)
       ACT=""

@@ -224,7 +224,7 @@ def dream_digest_lines(state_dir: Path, *, max_age_h: float = 24.0) -> list[str]
         for key, label in (
             ("superseded", "contradictions superseded"),
             ("merged", "duplicates merged"),
-            ("archived_stale", "stale archived"),
+            ("archived_stale", "stale memories archived"),
             ("synthesized", "synthesis"),
         ):
             n = _count(key)
