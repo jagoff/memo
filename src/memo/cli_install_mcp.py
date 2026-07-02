@@ -40,6 +40,49 @@ from memo.runtime.mcp import (
 )
 
 
+def _seed_install_memory() -> None:
+    """First-run seed: save one REAL memory recording the install, so the
+    first briefing can demonstrate recall on something the user just did.
+    Idempotent via ``state_dir/.install_seed.json``; never fails the install
+    (no embedder / no MLX on this box → silently skipped)."""
+    import json as _json
+    import socket
+    from datetime import date as _date
+
+    try:
+        from memo.config import Config
+
+        cfg = Config.from_env()
+        stamp = cfg.state_dir / ".install_seed.json"
+        if stamp.exists():
+            return
+        try:
+            from importlib.metadata import version as _pkg_version
+
+            ver = _pkg_version("mlx-memo")
+        except Exception:
+            ver = "unknown"
+        from memo.memory import Memory
+
+        rec = Memory(cfg).save(
+            content=(
+                f"Installed memo {ver} on {_date.today().isoformat()} on "
+                f"{socket.gethostname()}. memo now recalls relevant memories "
+                "on every prompt and briefs at session start."
+            ),
+            title=f"memo {ver} installed",
+            type_="note",
+            tags=["memo-install-seed"],
+        )
+        cfg.state_dir.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(
+            _json.dumps({"id": rec.id, "ts": _date.today().isoformat(), "shown": False}),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: S110  # onboarding decoration — never fail an install
+        pass
+
+
 def _claude_desktop_config_path() -> Path:
     """Per-OS Claude Desktop MCP config path."""
     if sys.platform == "darwin":
@@ -358,3 +401,6 @@ def install_mcp(
             target_agents = list(_CLIENT_FILES)
         for rel, status in write_mandates_for_clients(target_agents, dry_run=not write):
             click.echo(f"  {rel:<28} {status}")
+
+    if write:
+        _seed_install_memory()

@@ -160,6 +160,39 @@ def entity_graph_lines(mem: Any, *, top: int = 5, max_scan: int = 40) -> list[st
     return lines
 
 
+def install_seed_lines(state_dir: Path, *, max_age_days: int = 7) -> list[str]:
+    """One-shot onboarding proof: surface the install-seed memory in the
+    first briefing after install, then mark it shown.
+
+    Reads ``state_dir/.install_seed.json`` (written by `memo install-mcp`).
+    Empty list when missing / shown / stale / corrupt.
+    """
+    import json as _json
+    from datetime import date as _date
+
+    try:
+        stamp = state_dir / ".install_seed.json"
+        if not stamp.is_file():
+            return []
+        data = _json.loads(stamp.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("shown"):
+            return []
+        saved = _date.fromisoformat(str(data.get("ts") or ""))
+        if (_date.today() - saved).days > max_age_days:
+            return []
+        data["shown"] = True
+        stamp.write_text(_json.dumps(data), encoding="utf-8")
+        sid = str(data.get("id") or "")[:8]
+        return [
+            f"🧠 **memo remembers**: you installed memo on {saved.isoformat()} "
+            f"[{sid}] — this line is that memory, recalled. Every durable fact "
+            "you save comes back like this.",
+            "",
+        ]
+    except Exception:
+        return []
+
+
 def dream_digest_lines(state_dir: Path, *, max_age_h: float = 24.0) -> list[str]:
     """'☾ Last night' — one-shot digest of the last nightly dream run.
 
@@ -343,6 +376,7 @@ def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
 __all__ = [
     "compact_text",
     "dream_digest_lines",
+    "install_seed_lines",
     "memo_native_briefing_lines",
     "synapse_briefing_lines",
 ]

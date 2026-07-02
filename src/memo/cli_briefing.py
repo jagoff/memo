@@ -156,6 +156,15 @@ def briefing(*, compact: bool) -> None:
             lines.append("## Briefing")
             lines.append("")
 
+    # ── 1a. Onboarding proof (install seed — shown once) ──────────────────
+    try:
+        from memo.briefing import install_seed_lines
+
+        lines.extend(install_seed_lines(cfg.state_dir))
+    except Exception as exc:
+        if debug:
+            print(f"# memo briefing: install seed failed: {exc}", file=_sys.stderr)
+
     # ── 1b. Unified consciousness (Synapse) ───────────────────────────────
     # Pulls present_state (memflow handoffs/focus) + reality_conflicts from
     # `synapse packet`. No-op when synapse is not installed or unreachable —
