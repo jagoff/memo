@@ -23,6 +23,11 @@ RECALL_DIRECTIVE = (
 RECALL_FOOTER_FULL = "_Full: `/memo get <id>`._"
 RECALL_FOOTER_SHORT = "_: `/memo get <id>`._"
 # Short/no footer saves ~15 tokens
+CITE_INSTRUCTION = (
+    "_If any of these memories informs your answer, cite it inline by short "
+    "id — e.g. `per your memory [a1b2c3d4]` — so the user sees where it came "
+    "from._"
+)
 
 
 def _render_footer() -> str:

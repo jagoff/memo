@@ -39,3 +39,11 @@ def test_flag_default_is_on(monkeypatch) -> None:
     assert flag_bool("MEMO_RECALL_SYSTEM_MESSAGE") is True
     monkeypatch.setenv("MEMO_RECALL_SYSTEM_MESSAGE", "0")
     assert flag_bool("MEMO_RECALL_SYSTEM_MESSAGE") is False
+
+
+def test_cite_instruction_constant() -> None:
+    from memo.recall_logic import CITE_INSTRUCTION
+
+    # Task 3's parser depends on the [hex8] cite format this line teaches.
+    assert "[a1b2c3d4]" in CITE_INSTRUCTION
+    assert CITE_INSTRUCTION.startswith("_") and CITE_INSTRUCTION.endswith("_")

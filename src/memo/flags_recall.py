@@ -67,6 +67,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "shows it to the user; presence, not context. Default on.",
         opt_out=True,
     ),
+    _spec(
+        "MEMO_RECALL_CITE_INSTRUCTION",
+        "bool",
+        True,
+        "recall",
+        "Append an instruction to the injected recall block asking the model "
+        "to cite used memories inline by short id ([a1b2c3d4]) — visible "
+        "attribution; cited ids also feed grounding. Default on.",
+        opt_out=True,
+    ),
     _spec("MEMO_ASSOCIATIVE_HOPS", "int", 2, "recall",
           "Graph hops to expand from recall seeds.", min_val=1, max_val=3),
     _spec("MEMO_ASSOCIATIVE_LIMIT", "int", 2, "recall",
