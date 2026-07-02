@@ -130,3 +130,85 @@ def test_cite_instruction_constant() -> None:
     # Task 3's parser depends on the [hex8] cite format this line teaches.
     assert "[a1b2c3d4]" in CITE_INSTRUCTION
     assert CITE_INSTRUCTION.startswith("_") and CITE_INSTRUCTION.endswith("_")
+
+
+# --- Daemon-path (warm recall daemon) systemMessage parity ------------------
+# The warm recall daemon short-circuits the hook: it returns a pre-built JSON
+# string from _recall_logic and the hook prints it and exits, never reaching
+# the subprocess-path systemMessage injection. So the daemon's own response
+# builder (_recall_logic) must emit systemMessage itself — otherwise the
+# NORMAL production config silently drops it. These exercise the REAL builder.
+
+
+def _daemon_stub_memory(title: str):
+    """Minimal Memory double for _recall_logic (vec mode never calls embed)."""
+    from types import SimpleNamespace
+
+    from memo.memory import MemoryRecord
+
+    hit = MemoryRecord(
+        id="a1b2c3d4e5f6a7b8",
+        path="notes/x.md",
+        title=title,
+        type="decision",
+        tags=[],
+        created="2026-05-21T00:00:00+00:00",
+        updated="2026-05-21T00:00:00+00:00",
+        body="body " * 20,
+        extra={},
+        score=0.9,
+    )
+
+    class StubMemory:
+        def search(self, query, limit, mode, recency=False, exclude_types=None):
+            return [hit]
+
+    return StubMemory(), SimpleNamespace(state_dir=None)
+
+
+def test_daemon_path_emits_system_message_when_flag_on(monkeypatch, tmp_path) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from memo.recall_logic import _recall_logic
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.delenv("MEMO_RECALL_SYSTEM_MESSAGE", raising=False)  # default on
+
+    mem, _ = _daemon_stub_memory("sync tier decision")
+    result, _log = _recall_logic(
+        "que decidimos sobre el sync tier",
+        cwd=None,
+        mem=mem,
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    payload = json.loads(result)
+    assert payload["systemMessage"].startswith("🧠 memo · 1: ")
+    assert "sync tier decision" in payload["systemMessage"]
+    # additionalContext still present and independent of the presence line.
+    assert payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_daemon_path_omits_system_message_when_flag_off(monkeypatch, tmp_path) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from memo.recall_logic import _recall_logic
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_SYSTEM_MESSAGE", "0")
+
+    mem, _ = _daemon_stub_memory("sync tier decision")
+    result, _log = _recall_logic(
+        "que decidimos sobre el sync tier",
+        cwd=None,
+        mem=mem,
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    payload = json.loads(result)
+    assert "systemMessage" not in payload
+    assert payload["hookSpecificOutput"]["additionalContext"]

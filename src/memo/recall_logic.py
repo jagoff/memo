@@ -701,10 +701,21 @@ def _recall_logic(
         except Exception as exc:
             _logger.debug("recall log append failed: %s", exc)
 
-    output = {
+    output: dict[str, Any] = {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
             "additionalContext": context,
         }
     }
+    # Human-visible presence line — mirror the subprocess path (cli_recall_hook)
+    # so the daemon (production) path emits it too. Decoration only: degrade to
+    # omit on any error, never block recall. build_system_message + the flag gate
+    # live in this module, so no extra imports touch the hot path.
+    if flag_bool("MEMO_RECALL_SYSTEM_MESSAGE"):
+        try:
+            _sysmsg = build_system_message(relevant)
+            if _sysmsg:
+                output["systemMessage"] = _sysmsg
+        except Exception as exc:
+            _logger.debug("recall system-message build failed: %s", exc)
     return json.dumps(output, ensure_ascii=False), _log
