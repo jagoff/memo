@@ -13,6 +13,20 @@ from memo import cli_install_mcp
 from memo.cli import cli
 
 
+@pytest.fixture(autouse=True)
+def _no_seed_install_memory(monkeypatch):
+    """Neutralize the ``--write`` install-seed side effect for this module.
+
+    ``install-mcp --write`` calls ``_seed_install_memory()``, which does a real
+    ``Memory.save()`` resolved via ``Config.from_env()`` — i.e. into conftest's
+    SHARED ``MEMO_STATE_DIR``. That leaks ``presence_today.json`` (saves:1),
+    which the statusline exact-badge tests inherit and break on. The seed keeps
+    its own coverage in ``tests/test_install_seed.py``; here it is irrelevant, so
+    stub it to a no-op rather than isolate every invocation's env.
+    """
+    monkeypatch.setattr(cli_install_mcp, "_seed_install_memory", lambda: None)
+
+
 def test_resolve_isolated_rejects_venv(monkeypatch, tmp_path):
     """A .venv memo-mcp must never be chosen — it's the documented footgun."""
     # No isolated candidate exists; PATH + fallback both point at a .venv.

@@ -137,7 +137,14 @@ def test_script_wrap_prepends_memo_badge(tmp_path):
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     (cfg / ".memo-version").write_text("9.9.9")
-    env = {**os.environ, "HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    # Pin activity off: ambient presence (recalls/saves) must never alter the
+    # exact ``[Memo <ver>]`` bracket this test asserts.
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CLAUDE_CONFIG_DIR": str(cfg),
+        "MEMO_STATUSLINE_ACTIVITY": "0",
+    }
     proc = subprocess.run(
         ["bash", str(script), "--wrap", "echo INNER_LINE"],
         input='{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"}}',
@@ -178,7 +185,14 @@ def test_script_standalone_still_emits_badge(tmp_path):
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     (cfg / ".memo-version").write_text("9.9.9")
-    env = {**os.environ, "HOME": str(home), "CLAUDE_CONFIG_DIR": str(cfg)}
+    # Pin activity off: ambient presence (recalls/saves) must never alter the
+    # exact ``[Memo <ver>]`` bracket this test asserts.
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CLAUDE_CONFIG_DIR": str(cfg),
+        "MEMO_STATUSLINE_ACTIVITY": "0",
+    }
     proc = subprocess.run(
         ["bash", str(script)],
         input='{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"}}',
