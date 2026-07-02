@@ -502,4 +502,11 @@ def recall_hook() -> None:
         except Exception as e:
             _log.debug("mark_ids_recalled failed: %s", e)
 
+    try:
+        from memo import presence
+
+        presence.bump(cfg.state_dir, recalls=len(relevant))
+    except Exception as e:
+        _log.debug("presence bump failed: %s", e)
+
     sys.exit(0)

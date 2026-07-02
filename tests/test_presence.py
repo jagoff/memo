@@ -49,3 +49,9 @@ def test_writers_never_raise_on_unwritable_dir(tmp_path: Path) -> None:
     target.write_text("file, not dir", encoding="utf-8")  # mkdir will fail under it
     presence.bump(target / "sub", recalls=1)  # must swallow
     presence.set_tokens(target / "sub", 5)  # must swallow
+
+
+def test_save_bumps_presence_counter(mock_memory) -> None:
+    """Memory.save() → saves counter +1 (choke point for CLI/MCP/capture)."""
+    mock_memory.save(content="presence counter smoke test — durable fact", title="presence smoke")
+    assert presence.read_today(mock_memory.cfg.state_dir)["saves"] == 1

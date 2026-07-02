@@ -116,6 +116,14 @@ def _graph_entities_from_extra(extra: dict[str, Any]) -> list[dict[str, str]]:
 class _WriteOpsMixin(_MemoryBase):
     # -- save ---------------------------------------------------------------
 
+    def _presence_bump_save(self) -> None:
+        try:
+            from memo import presence
+
+            presence.bump(self.cfg.state_dir, saves=1)
+        except Exception:  # noqa: S110  # decoration — never break a save
+            pass
+
     def _record_graph_entities_from_extra(
         self,
         *,
@@ -512,6 +520,7 @@ class _WriteOpsMixin(_MemoryBase):
                 deferred=True,
                 disabled=skip_memflow_receipt,
             )
+            self._presence_bump_save()
             return deferred_rec
 
         # Embed `title + body`: the title carries the highest-density
@@ -567,6 +576,7 @@ class _WriteOpsMixin(_MemoryBase):
             abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
             raise
         except Exception as exc:
+            self._presence_bump_save()
             return self._save_index_pending(
                 exc=exc,
                 record_id=record_id,
@@ -615,6 +625,7 @@ class _WriteOpsMixin(_MemoryBase):
                 self.cache.evict_if_needed()
             except Exception as exc:
                 _log.warning("cache eviction skipped after save: %s", exc)
+        self._presence_bump_save()
         self._write_gen += 1
         return rec
 
