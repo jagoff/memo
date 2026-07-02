@@ -9,6 +9,18 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.10.1] - 2026-07-02
+
+### Fixed
+
+- Presence polish pass: per-process tmp file for `presence_today.json` writes
+  (no lost updates between concurrent writers); `systemMessage` titles are
+  forced single-line; cited-id parsing accepts uppercase hex (normalized);
+  memories cited from earlier turns are grounded even when the current turn
+  had no recall hits; statusline date extraction is GNU/BSD-portable;
+  "stale memories archived" label; broader statusline + full-hook test
+  coverage.
+
 ## [2.10.0] - 2026-07-02
 
 ### Added
