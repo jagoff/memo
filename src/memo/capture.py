@@ -357,6 +357,242 @@ def _passes_prefilter(text: str, min_chars: int = 200) -> bool:
     return any(p in lower for p in _TRIGGER_PATTERNS)
 
 
+# ── Meta-commentary filter (capture hygiene) ─────────────────────────────────
+#
+# Process narration ("voy a…", "let me…", "I'll…") and LLM filler are the
+# highest-volume junk class in ambient capture: they describe what the
+# assistant is ABOUT to do, not anything durable. Regex at segment start —
+# cheap, no LLM call. Gated by MEMO_CAPTURE_META_FILTER (default on).
+
+_META_COMMENTARY_RE = _re.compile(
+    r"^(?:"
+    # Spanish process narration
+    r"voy\s+a\b|d[eé]jame\b|primero\s+voy\b|ahora\s+voy\b|"
+    r"vamos\s+a\s+(?:ver|revisar|empezar|chequear)\b|"
+    # English process narration. Note: "i'll" requires the apostrophe
+    # (straight or curly, ’ — "Ill-formed inputs" is substance) and bare
+    # "i will" is NOT narration ("I will always use X" is a preference) —
+    # only "i will <process verb>".
+    r"let\s+me\b|i[\u2019']ll\b|i\s+am\s+going\s+to\b|i[\u2019']m\s+going\s+to\b|"
+    r"i\s+will\s+(?:now|start|begin|check)\b|"
+    r"first,?\s+(?:let\s+me|i[\u2019']ll)\b|now\s+(?:i[\u2019']ll|let\s+me)\b|"
+    r"next,?\s+(?:let\s+me|i[\u2019']ll)\b"
+    r")",
+    _re.IGNORECASE,
+)
+
+# LLM filler OPENERS: only the opener is junk, not the sentence — "Okay, the
+# fix is to use flock" keeps "the fix is to use flock". "sure/okay" need the
+# comma — "Sure enough, the bug was…" is a discovery, not filler.
+_FILLER_OPENER_RE = _re.compile(
+    r"^(?:(?:sure|okay|ok)[,!]\s+|(?:certainly|absolutely)[,!.]?(?:\s+|$)|"
+    r"(?:great|good)\s+question[,!.:]?(?:\s+|$))",
+    _re.IGNORECASE,
+)
+
+_SENTENCE_SPLIT_RE = _re.compile(r"(?<=[.!?])\s+")
+
+
+def is_meta_commentary(text: str) -> bool:
+    """True when `text` opens with process narration (not mere filler)."""
+    return bool(_META_COMMENTARY_RE.match(text.strip()))
+
+
+def strip_meta_commentary(text: str) -> str:
+    """Drop process-narration segments from `text`, keeping the substance.
+
+    A segment is a line or a sentence within a line. A segment opening with
+    process narration (`_META_COMMENTARY_RE`) is removed whole; a segment
+    opening with an LLM filler (`_FILLER_OPENER_RE`) keeps everything after
+    the opener ("Okay, the fix is X" → "the fix is X"). Text with no
+    narration is returned byte-identical (no re-joining side effects).
+    Returns '' when nothing substantive survives — the caller drops the
+    candidate entirely.
+    """
+    lines = text.splitlines()
+    changed = False
+    out_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            out_lines.append(line)
+            continue
+        segments = [s for s in _SENTENCE_SPLIT_RE.split(stripped) if s.strip()]
+        kept: list[str] = []
+        line_changed = False
+        for seg in segments:
+            seg_stripped = seg.strip()
+            if _META_COMMENTARY_RE.match(seg_stripped):
+                line_changed = True  # narration: the whole segment is junk
+                continue
+            opener = _FILLER_OPENER_RE.match(seg_stripped)
+            if opener:
+                line_changed = True  # filler: junk is the opener, not the rest
+                rest = seg_stripped[opener.end() :].strip()
+                if rest:
+                    kept.append(rest)
+                continue
+            kept.append(seg)
+        if not line_changed:
+            out_lines.append(line)  # untouched lines round-trip verbatim
+        else:
+            changed = True
+            if kept:
+                out_lines.append(" ".join(kept))
+    return "\n".join(out_lines).strip() if changed else text
+
+
+# ── Type-classification confidence (capture hygiene) ─────────────────────────
+
+
+def score_type_confidence(type_: str, text: str) -> float:
+    """Heuristic 0-1 confidence that `type_` is the right classification.
+
+    Marker-count based (no LLM call): the type patterns in
+    `memo.memory.write_ops._TYPE_PATTERNS` are the corroborating evidence.
+    Matches of the claimed type's own markers raise confidence; markers of a
+    DIFFERENT type lower it. Types without marker patterns (e.g. 'note') have
+    nothing to corroborate → neutral default, docked when another type's
+    markers are present. LLM-classified candidates with zero markers land at
+    the 0.5 mid default.
+    """
+    from memo.memory.write_ops import _TYPE_PATTERNS
+
+    snippet = text[:600]
+    own = 0
+    others = 0
+    has_pattern = False
+    for t, pattern in _TYPE_PATTERNS:
+        n = len(pattern.findall(snippet))
+        if t == type_:
+            has_pattern = True
+            own = n
+        else:
+            others += n
+    if not has_pattern:
+        # 'note' & friends: no markers of their own to check against.
+        return 0.6 if others == 0 else 0.4
+    if own >= 2:
+        return 0.95
+    if own == 1:
+        return 0.85 if others == 0 else 0.7
+    return 0.5 if others == 0 else 0.35
+
+
+def reweight_ambiguous_type(type_: str, text: str, weights: dict[str, float]) -> str:
+    """Citation-weight tie-break at capture's genuine type-ambiguity point.
+
+    The capture classifier is the extractor LLM's single type claim; the only
+    corroborating evidence is the `write_ops._TYPE_PATTERNS` markers (the same
+    signal `score_type_confidence` uses) — there is no scored candidate list to
+    multiply. The genuinely AMBIGUOUS case is therefore a claim with zero own
+    markers while another type's markers are present in the text (the <0.5
+    confidence branches: fallback-to-note with contradicting markers, or a
+    marked type claimed without its own evidence). Only there the marker-backed
+    contenders are ranked by their citation weight, and the candidate is
+    re-typed only when the winner's weight STRICTLY exceeds the claimed type's
+    — so empty/neutral weights (no nightly signal) change nothing, and a
+    corroborated or marker-less classification is never touched.
+    """
+    if not weights:
+        return type_
+    from memo.memory.write_ops import _TYPE_PATTERNS
+
+    snippet = text[:600]
+    counts = {t: len(p.findall(snippet)) for t, p in _TYPE_PATTERNS}
+    if counts.get(type_, 0) > 0:
+        return type_  # claim corroborated by its own markers — not ambiguous
+    marked = [t for t, _ in _TYPE_PATTERNS if counts[t] > 0]
+    if not marked:
+        return type_  # no marker evidence at all — nothing to break the tie with
+    top = max(counts[t] for t in marked)
+    contenders = [t for t in marked if counts[t] == top]
+    # Highest citation weight wins; pattern order breaks exact weight ties.
+    winner = max(contenders, key=lambda t: weights.get(t, 1.0))
+    if weights.get(winner, 1.0) > weights.get(type_, 1.0):
+        return winner
+    return type_
+
+
+# ── Intra-batch near-dup window (capture hygiene) ────────────────────────────
+#
+# The store-level dedup (`find_near_duplicate`) only compares a candidate
+# against ALREADY-SAVED memories. Within one capture run, prompt retries
+# yield 2-3 candidates for the same fact: the first survivor gets saved,
+# and its siblings then land in the 0.85-0.97 "reconcile" band against it
+# and are admitted as bogus "evolutions". This pass collapses the batch
+# FIRST, keeping the best (higher-confidence, then longer) of each group.
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    num = sum(x * y for x, y in zip(a, b, strict=False))
+    da = sum(x * x for x in a) ** 0.5
+    db = sum(x * x for x in b) ** 0.5
+    if da == 0.0 or db == 0.0:
+        return 0.0
+    return num / (da * db)
+
+
+def _jaccard(a: str, b: str) -> float:
+    ta = set(_re.findall(r"\w+", a.lower()))
+    tb = set(_re.findall(r"\w+", b.lower()))
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def dedupe_batch(
+    candidates: list[dict[str, Any]],
+    mem: Any,
+    threshold: float,
+) -> tuple[list[dict[str, Any]], int]:
+    """Collapse near-duplicate candidates within one capture batch.
+
+    Similarity is embedder cosine when available — the embedder is already
+    loaded on this path (each survivor gets embedded by `find_near_duplicate`
+    anyway), so no new MLX cost class is added. When embedding fails, degrade
+    to token-set Jaccard: stricter than cosine, so the fallback only
+    under-collapses, never over-collapses. Returns (kept, dropped_count);
+    original batch order is preserved.
+    """
+    if len(candidates) < 2:
+        return list(candidates), 0
+    texts = [f"{c['title']}\n\n{c['body']}" for c in candidates]
+    vecs: list[list[float]] | None
+    try:
+        vecs = [mem.embedder.embed_query(t) for t in texts]
+    except Exception as exc:
+        _log.debug("capture: batch-dedup embed failed, Jaccard fallback: %s", exc)
+        vecs = None
+
+    def _sim(i: int, j: int) -> float:
+        if vecs is not None:
+            return _cosine(vecs[i], vecs[j])
+        return _jaccard(texts[i], texts[j])
+
+    def _quality(i: int) -> tuple[float, int]:
+        c = candidates[i]
+        return (
+            score_type_confidence(str(c.get("type") or "note"), texts[i]),
+            len(c.get("body") or ""),
+        )
+
+    kept: list[int] = []
+    dropped = 0
+    for i in range(len(candidates)):
+        merged = False
+        for pos, k in enumerate(kept):
+            if _sim(i, k) >= threshold:
+                if _quality(i) > _quality(k):
+                    kept[pos] = i  # keep the better twin
+                dropped += 1
+                merged = True
+                break
+        if not merged:
+            kept.append(i)
+    return [candidates[i] for i in sorted(kept)], dropped
+
+
 # Generic openers that produce low-value, session-scoped memories.
 _GENERIC_PREFIXES = (
     # Session-narrative openers — produce low-value "what happened today" summaries
@@ -521,6 +757,36 @@ def _extract_and_save(
     )
     if debug:
         print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
+    # `candidates` reports the EXTRACTED count (pre-hygiene) — it feeds
+    # extract_and_save_text's verbatim fallback (candidates == 0 means the
+    # extractor produced nothing, not that hygiene filtered everything) and
+    # keeps the debug/telemetry meaning stable.
+    n_extracted = len(insights)
+
+    from memo.flags import flag_bool, flag_float
+
+    # Meta-commentary filter: process narration never reaches the vault.
+    # Segment-level — a mixed candidate keeps its substantive sentences; a
+    # candidate that is ALL narration (or whose title is narration-shaped)
+    # is dropped whole. Dropped candidates are logged (debug trail), never saved.
+    skipped_meta = 0
+    if flag_bool("MEMO_CAPTURE_META_FILTER"):
+        hygienic: list[dict[str, Any]] = []
+        for cand in insights:
+            cleaned = strip_meta_commentary(cand["body"])
+            if not cleaned or is_meta_commentary(cand["title"]):
+                skipped_meta += 1
+                _log.debug("capture: drop meta-commentary %r", cand["title"])
+                if debug:
+                    print(
+                        f"# memo capture: drop meta-commentary '{cand['title']}'",
+                        file=sys.stderr,
+                    )
+                continue
+            if cleaned != cand["body"]:
+                cand = {**cand, "body": cleaned}
+            hygienic.append(cand)
+        insights = hygienic
 
     # Dedup → reconcile band. The corpus's highest-value memories are evolving
     # decisions on hot topics — exactly the candidates MOST similar (0.85–0.97)
@@ -531,16 +797,39 @@ def _extract_and_save(
     # near-IDENTICAL paraphrases (>= drop_threshold) are dropped; a same-topic
     # candidate below that is ADMITTED as new so the nightly contradiction/
     # evolution pass (which demotes the superseded side) can do its job.
-    from memo.flags import flag_float
-
     near_threshold = flag_float("MEMO_CAPTURE_DUP_THRESHOLD") or 0.85
     drop_threshold = flag_float("MEMO_CAPTURE_DUP_DROP_THRESHOLD") or 0.97
+
+    # Intra-batch near-dup window (prompt-retry pattern): collapse candidates
+    # that duplicate EACH OTHER before the store-level check — the store check
+    # only sees already-saved memories, so batch twins would slip through as
+    # bogus same-run "evolutions". Keeps the higher-confidence/longer twin.
+    skipped_batch_dup = 0
+    if flag_bool("MEMO_CAPTURE_BATCH_DEDUP") and len(insights) > 1:
+        insights, skipped_batch_dup = dedupe_batch(insights, mem, near_threshold)
+        if debug and skipped_batch_dup:
+            print(
+                f"# memo capture: collapsed {skipped_batch_dup} intra-batch near-dup(s)",
+                file=sys.stderr,
+            )
+
+    min_confidence = flag_float("MEMO_CAPTURE_MIN_CONFIDENCE") or 0.0
+
+    # Citation-type feedback (default OFF): weights from the nightly dream
+    # capture_weights pass, consulted only at the ambiguous-classification
+    # branch inside the loop. Empty weights ⇒ identical behavior to flag off.
+    type_weights: dict[str, float] = {}
+    if flag_bool("MEMO_CAPTURE_TYPE_FEEDBACK"):
+        from memo.capture_weights import load_type_weights
+
+        type_weights = load_type_weights(cfg)
 
     saved: list[str] = []
     saved_titles: list[str] = []
     skipped_dup = 0
     reconciled = 0
     skipped_quality = 0
+    uncertain = 0
     for cand in insights:
         # Quality gate: skip low-specificity memories before hitting the
         # embedder or disk. Threshold controlled by MEMO_CAPTURE_MIN_WORDS.
@@ -574,12 +863,48 @@ def _extract_and_save(
                     "admitting so supersede pass can run",
                     file=sys.stderr,
                 )
+        # Citation-type feedback: at a genuinely ambiguous classification
+        # (claimed type uncorroborated while another type's markers are
+        # present) re-type to the marker-backed type the grounding data cites
+        # most. No-op unless MEMO_CAPTURE_TYPE_FEEDBACK is on AND weights exist.
+        if type_weights:
+            _new_type = reweight_ambiguous_type(
+                str(cand.get("type") or "note"), body_for_quality, type_weights
+            )
+            if _new_type != cand.get("type"):
+                if debug:
+                    print(
+                        f"# memo capture: retype '{cand['title']}' "
+                        f"{cand.get('type')}→{_new_type} (citation-type feedback)",
+                        file=sys.stderr,
+                    )
+                cand = {**cand, "type": _new_type}
+        # Confidence scoring: how strongly the content's own markers back the
+        # type classification. Always stamped in extra (observability); below
+        # MEMO_CAPTURE_MIN_CONFIDENCE (default 0.0 = gating off) the candidate
+        # is still saved but tagged '_uncertain' for later review. (A true
+        # pre-archived save isn't supported: lifecycle archival moves the .md
+        # to inactive/ and DROPS the index rows — the memory would become
+        # unsearchable, not merely recall-excluded — so the tag is the gate.)
+        confidence = score_type_confidence(str(cand.get("type") or "note"), body_for_quality)
+        tags = [*cand["tags"], *merge_tags] if merge_tags else list(cand["tags"])
+        if min_confidence > 0.0 and confidence < min_confidence:
+            uncertain += 1
+            if "_uncertain" not in tags:
+                tags.append("_uncertain")
+            if debug:
+                print(
+                    f"# memo capture: low-confidence type '{cand['title']}' "
+                    f"({confidence:.2f} < {min_confidence:.2f}) — tagged _uncertain",
+                    file=sys.stderr,
+                )
         try:
             rec = mem.save(
                 content=cand["body"],
                 title=cand["title"],
                 type_=cand["type"],
-                tags=[*cand["tags"], *merge_tags] if merge_tags else cand["tags"],
+                tags=tags,
+                extra={"capture_confidence": round(confidence, 3)},
             )
             saved.append(rec.id)
             saved_titles.append(rec.title)
@@ -590,12 +915,15 @@ def _extract_and_save(
                 print(f"# memo capture: save failed: {exc}", file=sys.stderr)
 
     return {
-        "candidates": len(insights),
+        "candidates": n_extracted,
         "saved": saved,
         "saved_titles": saved_titles,
         "skipped_dup": skipped_dup,
         "reconciled": reconciled,
         "skipped_quality": skipped_quality,
+        "skipped_meta": skipped_meta,
+        "skipped_batch_dup": skipped_batch_dup,
+        "uncertain": uncertain,
     }
 
 
@@ -646,6 +974,9 @@ def extract_and_save_text(
             "skipped_dup": 0,
             "reconciled": 0,
             "skipped_quality": 0,
+            "skipped_meta": 0,
+            "skipped_batch_dup": 0,
+            "uncertain": 0,
         }
     return {"status": "extracted", **result}
 

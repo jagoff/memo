@@ -295,6 +295,72 @@ def _apply_preference_boost(hits: list[Any], prefs: Any) -> list[Any]:
     return boosted
 
 
+def _apply_synthesis_boost(hits: list[Any], boost: float) -> list[Any]:
+    """Additive boost for type=synthesis hits — distilled cross-cluster
+    insights should surface above their raw sources. Composes like the
+    project/global tier boosts: additive + soft, re-sorted by boosted score."""
+    boosted: list[Any] = []
+    for h in hits:
+        if h.score is not None and getattr(h, "type", "") == "synthesis":
+            boosted.append(replace(h, score=h.score + boost))
+        else:
+            boosted.append(h)
+    boosted.sort(key=lambda h: h.score or 0.0, reverse=True)
+    return boosted
+
+
+def _mmr_token_set(hit: Any) -> frozenset[str]:
+    text = f"{getattr(hit, 'title', '') or ''} {getattr(hit, 'body', '') or ''}"
+    return frozenset(text.lower().split())
+
+
+def _apply_mmr(
+    hits: list[Any],
+    lam: float,
+    explain: dict[str, dict[str, Any]] | None = None,
+) -> list[Any]:
+    """Maximal-marginal-relevance re-ORDERING of the final gated pool.
+
+    Greedy selection: score' = lam*relevance - (1-lam)*max_sim_to_already_
+    selected, where relevance is the (boosted) hit score and similarity is
+    token-set Jaccard over title+body — doc-doc vectors are not available
+    here, and Jaccard needs no embed calls, no store round-trips: O(K^2)
+    over the candidate pool only, hook-budget safe. Hit scores are NOT
+    mutated — only the order changes. The first pick is always the
+    max-relevance hit, so skip-below floors on the top hit are unaffected."""
+    if len(hits) <= 1:
+        return list(hits)
+    tokens = [_mmr_token_set(h) for h in hits]
+
+    def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+        if not a or not b:
+            return 0.0
+        return len(a & b) / len(a | b)
+
+    remaining = list(range(len(hits)))
+    selected: list[int] = []
+    while remaining:
+        best_i = remaining[0]
+        best_score = float("-inf")
+        best_pen = 0.0
+        for i in remaining:
+            rel = hits[i].score or 0.0
+            pen = max((_jaccard(tokens[i], tokens[j]) for j in selected), default=0.0)
+            score = lam * rel - (1.0 - lam) * pen
+            if score > best_score:
+                best_i, best_score, best_pen = i, score, pen
+        remaining.remove(best_i)
+        selected.append(best_i)
+        if explain is not None:
+            entry = explain.get(getattr(hits[best_i], "id", ""))
+            if entry is not None:
+                entry["mmr"] = {
+                    "mmr_score": round(best_score, 6),
+                    "max_sim_to_selected": round(best_pen, 6),
+                }
+    return [hits[i] for i in selected]
+
+
 def _session_context(mem: Any, exclude_types: set[str] | None, *, max_titles: int = 5) -> str:
     try:
         rows = mem.store.list_recent(limit=max_titles * 2, exclude_types=exclude_types)
@@ -358,6 +424,9 @@ class RankKnobs:
     project_boost: float = 0.25
     global_boost: float = 0.10
     contextual: bool = False
+    # M3 diversity/quality knobs — both default 0.0 = OFF (ranking identical).
+    mmr_lambda: float = 0.0
+    synthesis_boost: float = 0.0
 
 
 def make_vec_cosine(mem: Any, prompt: str) -> Callable[[Any], float | None]:
@@ -460,8 +529,9 @@ def rank_hits(
 ) -> list[Any]:
     """The daemon's post-search ranking core, pure + reusable.
 
-    project-tiers -> preference-boost -> [graph_boost seam] -> dedup_hits ->
-    min_sim/cosine + min_body gate -> synthesis-dedup. Returns the gated,
+    project-tiers -> preference-boost -> synthesis-boost -> [graph_boost seam]
+    -> dedup_hits -> min_sim/cosine + min_body gate -> synthesis-dedup ->
+    [MMR diversity reorder]. Returns the gated,
     deduped, ordered candidate list (caller splits top_k vs nudge). Used by both
     ``_recall_logic`` and the eval harness so they cannot diverge; Phase 2's
     graph-proximity term plugs into ``graph_boost``.
@@ -483,6 +553,10 @@ def rank_hits(
             raw = _apply_preference_boost(raw, preferences)
         if explain is not None:
             _explain_stage(explain, raw, "preference_boost")
+    if knobs.synthesis_boost > 0:
+        raw = _apply_synthesis_boost(raw, knobs.synthesis_boost)
+        if explain is not None:
+            _explain_stage(explain, raw, "synthesis_boost")
     if graph_boost is not None:
         with contextlib.suppress(Exception):
             raw = graph_boost(raw)
@@ -496,11 +570,16 @@ def rank_hits(
         return not (knobs.min_body_chars > 0 and len((h.body or "").strip()) < knobs.min_body_chars)
 
     if explain is None:
-        return _deduplicate_synthesis([h for h in dedup_hits(raw) if _passes(h)])
+        result = _deduplicate_synthesis([h for h in dedup_hits(raw) if _passes(h)])
+        if knobs.mmr_lambda > 0:
+            result = _apply_mmr(result, knobs.mmr_lambda)
+        return result
 
     deduped = dedup_hits(raw)
     gated = [h for h in deduped if _passes(h)]
     result = _deduplicate_synthesis(gated)
+    if knobs.mmr_lambda > 0:
+        result = _apply_mmr(result, knobs.mmr_lambda, explain=explain)
     _explain_finalize(explain, raw, deduped, gated, result, knobs, vec_cosine)
     return result
 
@@ -533,6 +612,12 @@ def _recall_logic(
     mode = _flag_str("MEMO_RECALL_MODE") or "vec"
     _mbc = _flag_int("MEMO_RECALL_MIN_BODY_CHARS")
     min_body_chars = 40 if _mbc is None else _mbc
+    # M3 knobs — both default 0.0 = OFF, ranking identical to today.
+    # NOTE: like preference/graph boosts, these apply only on this (daemon)
+    # path — the cli_recall_hook subprocess fallback ranks inline and skips
+    # every rank_hits knob. Flipping these ON makes recall path-dependent.
+    mmr_lambda = _flag_float("MEMO_RECALL_MMR_LAMBDA") or 0.0
+    synthesis_boost = _flag_float("MEMO_RECALL_SYNTHESIS_BOOST") or 0.0
 
     project_tag = None
     if project_boost > 0 and cwd:
@@ -586,6 +671,8 @@ def _recall_logic(
         project_boost=project_boost,
         global_boost=global_boost,
         contextual=contextual,
+        mmr_lambda=mmr_lambda,
+        synthesis_boost=synthesis_boost,
     )
 
     # Phase 2 graph-proximity boost (default OFF): nudge candidates whose entities

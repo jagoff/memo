@@ -404,19 +404,24 @@ def recall_hook() -> None:
     except Exception as exc:
         _log.debug("subprocess recall-log write failed: %s", exc)
 
-    try:
-        from memo import recall_metrics
+    def _stamp_metrics(n_hits: int) -> None:
+        # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
+        # the subprocess line is comparable with the daemon path, which counts
+        # the final rendered output. ``total_ms`` stays end-to-end from _t0.
+        try:
+            from memo import recall_metrics
 
-        recall_metrics.stamp(
-            cfg.state_dir,
-            total_ms=(time.time() - _t0) * 1000.0,
-            path="subprocess",
-            hits=len(relevant),
-        )
-    except Exception as exc:
-        _log.debug("recall metrics stamp failed: %s", exc)
+            recall_metrics.stamp(
+                cfg.state_dir,
+                total_ms=(time.time() - _t0) * 1000.0,
+                path="subprocess",
+                hits=n_hits,
+            )
+        except Exception as exc:
+            _log.debug("recall metrics stamp failed: %s", exc)
 
     if not relevant:
+        _stamp_metrics(0)
         _bail(f"no hits above min_sim={min_sim}")
         return
 
@@ -432,6 +437,7 @@ def recall_hook() -> None:
             _prev_recalled = {}
     if _prev_recalled:
         relevant = [h for h in relevant if h.id not in _prev_recalled]
+    _stamp_metrics(len(relevant))
     if not relevant:
         _bail("all hits already recalled this session")
         return

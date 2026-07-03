@@ -24,6 +24,7 @@ from memo.memory.record import (
     _rrf_fuse,
 )
 from memo.perf import timer
+from memo.tiers import REFERENCE_TYPES
 
 
 class _SearchOpsMixin(_MemoryBase):
@@ -465,6 +466,27 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._apply_co_recall_boost(out)
             _add_trace("co_recall_boost", input_count=before, output_count=len(out))
+        # Reference-tier noise floor: in EXPLICIT retrieval (search/ask/chat)
+        # bulk vault chunks compete with durable memories — the recall hook
+        # SQL-excludes them (MEMO_RECALL_EXCLUDE_REFERENCE) but the explicit
+        # paths don't. When MEMO_REFERENCE_SEARCH_FLOOR > 0, a reference-tier
+        # hit must clear the floor on its FINAL (post-boost, mode-dependent)
+        # score to stay; durable-tier hits are untouched. Skipped when the
+        # caller explicitly asked for the reference tier (type_="reference")
+        # — the tier is "searchable on demand" and an explicit ask wins.
+        # Applied before _record_access so dropped hits don't log an access.
+        _ref_floor = flag_float("MEMO_REFERENCE_SEARCH_FLOOR") or 0.0
+        if out and _ref_floor > 0 and type_ not in REFERENCE_TYPES:
+            before = len(out)
+            out = [
+                r for r in out if r.type not in REFERENCE_TYPES or (r.score or 0.0) >= _ref_floor
+            ]
+            _add_trace(
+                "reference_floor",
+                input_count=before,
+                output_count=len(out),
+                floor=_ref_floor,
+            )
         self._record_access([r.id for r in out])
         # Co-recall graph edges: record which memories surface together.
         # Gated by flag so the graph DB write stays opt-in (off by default).

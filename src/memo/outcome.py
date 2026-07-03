@@ -30,12 +30,14 @@ _log = logging.getLogger(__name__)
 _DEFAULT_PRIOR_N = 3.0
 _DEFAULT_ROI_FLOOR = 0.6
 _DEFAULT_ROI_CAP = 1.5
+_DEFAULT_CITED_WEIGHT = 2.0
 
 
 def compute_utilities(
     state_dir: Path,
     *,
     prior_n: float = _DEFAULT_PRIOR_N,
+    cited_weight: float | None = None,
     recall_limit: int = 2000,
     grounding_limit: int = 4000,
 ) -> dict[str, Any]:
@@ -46,9 +48,23 @@ def compute_utilities(
     so utility never exceeds 1). ``utility`` is Bayesian-smoothed toward the
     global grounded rate so a memory seen once isn't judged on one data point::
 
-        utility = (grounded + prior_mean * prior_n) / (surfaced + prior_n)
+        utility = (grounded_w + prior_mean * prior_n) / (surfaced + prior_n)
+
+    where ``grounded_w`` counts a turn the answer explicitly CITED the memory
+    (grounding ``method == "cited"``, i.e. a literal ``[id]`` reference) as
+    ``cited_weight`` grounded observations instead of 1 — a citation is
+    stronger evidence of usefulness than lexical/embedding overlap. Utility is
+    clamped at 1.0 so the weight sharpens ranking without overflowing the roi
+    [floor, cap] range. ``cited_weight=None`` reads ``MEMO_OUTCOME_CITED_WEIGHT``
+    (default 2.0); 1.0 restores exact unweighted parity. ``prior_mean`` and the
+    reported ``surfaced``/``grounded``/``cited`` counts stay raw (unweighted).
     """
     from memo.dashboard import grounding_used, read_grounding_log, read_recall_log
+    from memo.flags import flag_float
+
+    if cited_weight is None:
+        _cw = flag_float("MEMO_OUTCOME_CITED_WEIGHT")
+        cited_weight = _cw if _cw is not None else _DEFAULT_CITED_WEIGHT
 
     surfaced: dict[str, set[tuple[str, int]]] = defaultdict(set)
     for r in read_recall_log(state_dir, limit=recall_limit):
@@ -61,6 +77,7 @@ def compute_utilities(
                 surfaced[pid].add((sid, turn))
 
     grounded: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    cited: dict[str, set[tuple[str, int]]] = defaultdict(set)
     for g in read_grounding_log(state_dir, limit=grounding_limit):
         sid, turn = g.get("session_id"), g.get("turn")
         pid = (g.get("recall_id") or "")[:8]
@@ -68,6 +85,8 @@ def compute_utilities(
             continue
         if grounding_used(g):
             grounded[pid].add((sid, turn))
+            if g.get("method") == "cited":
+                cited[pid].add((sid, turn))
 
     total_surf = sum(len(v) for v in surfaced.values())
     total_grnd = sum(len(grounded.get(p, set()) & s) for p, s in surfaced.items())
@@ -77,8 +96,15 @@ def compute_utilities(
     for pid, sset in surfaced.items():
         s = len(sset)
         g_count = len(grounded.get(pid, set()) & sset)
-        utility = (g_count + prior_mean * prior_n) / (s + prior_n)
-        by_prefix[pid] = {"surfaced": s, "grounded": g_count, "utility": round(utility, 4)}
+        c_count = len(cited.get(pid, set()) & sset)
+        g_weighted = g_count + (cited_weight - 1.0) * c_count
+        utility = min(1.0, (g_weighted + prior_mean * prior_n) / (s + prior_n))
+        by_prefix[pid] = {
+            "surfaced": s,
+            "grounded": g_count,
+            "cited": c_count,
+            "utility": round(utility, 4),
+        }
     return {
         "prior_mean": round(prior_mean, 4),
         "surfaced_total": total_surf,
@@ -100,12 +126,15 @@ def reconcile_roi(
     prior_n: float | None = None,
     floor: float | None = None,
     cap: float | None = None,
+    cited_weight: float | None = None,
 ) -> dict[str, Any]:
     """Recompute ``roi_score`` from grounding outcomes and write it.
 
     ``roi_score = floor + utility * (cap - floor)`` — utility 0 (surfaced, never
     grounded) → floor; utility 1 → cap; no-data memories stay near neutral via
     the Bayesian prior. Authoritative absolute write (overwrites access drift).
+    ``cited_weight`` passes through to :func:`compute_utilities` (``None`` →
+    ``MEMO_OUTCOME_CITED_WEIGHT``).
     """
     from memo.flags import flag_float
 
@@ -116,7 +145,7 @@ def reconcile_roi(
     cap = cap if cap is not None else (flag_float("MEMO_OUTCOME_ROI_CAP") or _DEFAULT_ROI_CAP)
     span = max(0.0, cap - floor)
 
-    u = compute_utilities(memory.cfg.state_dir, prior_n=prior_n)
+    u = compute_utilities(memory.cfg.state_dir, prior_n=prior_n, cited_weight=cited_weight)
     by_prefix = u["by_prefix"]
     if not by_prefix:
         return {"updated": 0, "scored": 0, "prior_mean": u["prior_mean"]}

@@ -168,6 +168,10 @@ def _cli_env(tmp_cfg: Config) -> dict[str, str]:
         "MEMO_RERANKER_ENABLED": "0",
         # cwd-independent test: 0 disables project-tag resolution + tier boosts
         "MEMO_RECALL_PROJECT_BOOST": "0",
+        # Pin the post-rank output filters to their shipped defaults so a
+        # developer shell's exported values can't change the injected verdict.
+        "MEMO_RECALL_SKIP_BELOW": "0.45",
+        "MEMO_RECALL_GAP_THRESHOLD": "0.10",
     }
 
 
@@ -225,6 +229,99 @@ def test_debug_recall_table_renders(tmp_cfg: Config, monkeypatch: pytest.MonkeyP
     assert alpha_id[:8] in plain
     assert beta_id[:8] in plain
     assert "candidates" in plain
+
+
+def test_debug_recall_config_echoes_skip_below_and_gap(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MEMO_RECALL_SKIP_BELOW / MEMO_RECALL_GAP_THRESHOLD are echoed in both
+    the --json config dict and the rendered thresholds header."""
+    _install_keyword_stub(monkeypatch)
+    _seed(tmp_cfg)
+    env = {**_cli_env(tmp_cfg), "MEMO_RECALL_SKIP_BELOW": "0.3", "MEMO_RECALL_GAP_THRESHOLD": "0.2"}
+
+    result = CliRunner().invoke(debug_recall_cmd, [_PROMPT, "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    cfg = json.loads(result.output)["config"]
+    assert cfg["skip_below"] == pytest.approx(0.3)
+    assert cfg["gap_threshold"] == pytest.approx(0.2)
+    assert cfg["skip_below_triggered"] is False  # alpha scores well above 0.3
+
+    result = CliRunner().invoke(debug_recall_cmd, [_PROMPT], env=env)
+    assert result.exit_code == 0, result.output
+    plain = _strip_ansi(result.output)
+    assert "skip_below=0.3" in plain
+    assert "gap_threshold=0.2" in plain
+
+
+def test_debug_recall_injected_honors_skip_below(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hook skips recall entirely when the best score is under
+    MEMO_RECALL_SKIP_BELOW — debug-recall must not show '● injected' then."""
+    _install_keyword_stub(monkeypatch)
+    _seed(tmp_cfg)
+    # Gamma prompt: both memories score ~0.0; min_sim=0 lets them RANK, but the
+    # real hook's skip_below floor (0.45) suppresses the whole injection.
+    prompt = "anything about gamma at all?"
+    env = {
+        **_cli_env(tmp_cfg),
+        "MEMO_RECALL_MIN_SIM": "0.0",
+        "MEMO_RECALL_SKIP_BELOW": "0.45",
+        "MEMO_RECALL_GAP_THRESHOLD": "0",
+    }
+
+    result = CliRunner().invoke(debug_recall_cmd, [prompt, "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["config"]["skip_below_triggered"] is True
+    ranked = [h for h in payload["hits"] if h["rank"] is not None]
+    assert ranked  # hits DID rank — pre-fix they showed as injected
+    assert all(h["injected"] is False for h in payload["hits"])
+
+    # Same run with the floor disabled: rank 1 is injected again.
+    result = CliRunner().invoke(
+        debug_recall_cmd, [prompt, "--json"], env={**env, "MEMO_RECALL_SKIP_BELOW": "0"}
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["config"]["skip_below_triggered"] is False
+    by_rank = {h["rank"]: h for h in payload["hits"] if h["rank"] is not None}
+    assert by_rank[1]["injected"] is True
+
+
+def test_debug_recall_injected_honors_gap_threshold(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rank-1/rank-2 score gap over MEMO_RECALL_GAP_THRESHOLD truncates the
+    real hook's injection to top-1 — rank 2 must not show as injected."""
+    _install_keyword_stub(monkeypatch)
+    alpha_id, beta_id = _seed(tmp_cfg)
+    # Alpha prompt: alpha ~1.0, beta ~0.0; min_sim=0 keeps beta ranked at 2.
+    env = {
+        **_cli_env(tmp_cfg),
+        "MEMO_RECALL_MIN_SIM": "0.0",
+        "MEMO_RECALL_SKIP_BELOW": "0",
+        "MEMO_RECALL_GAP_THRESHOLD": "0.5",
+    }
+
+    result = CliRunner().invoke(debug_recall_cmd, [_PROMPT, "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    by_id = {h["id"]: h for h in payload["hits"]}
+    assert by_id[alpha_id]["rank"] == 1
+    assert by_id[alpha_id]["injected"] is True
+    assert by_id[beta_id]["rank"] == 2
+    assert by_id[beta_id]["injected"] is False  # gap-truncated, hook injects top-1 only
+
+    # Gap disabled: rank 2 is injected again (top_k=3 covers it).
+    result = CliRunner().invoke(
+        debug_recall_cmd, [_PROMPT, "--json"], env={**env, "MEMO_RECALL_GAP_THRESHOLD": "0"}
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    by_id = {h["id"]: h for h in payload["hits"]}
+    assert by_id[beta_id]["injected"] is True
 
 
 def test_debug_recall_empty_index(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:

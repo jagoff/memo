@@ -28,6 +28,16 @@ def stats() -> None:
 
     console.print("\n[bold]📚 Corpus[/bold]")
     console.print(f"  total       {mem.store.count():,}")
+    try:
+        row = mem.store._conn.execute(
+            "SELECT COUNT(*) FROM meta WHERE tags LIKE ? ESCAPE '\\'",
+            ('%"\\_uncertain"%',),
+        ).fetchone()
+        n_uncertain = int(row[0]) if row else 0
+        if n_uncertain:
+            console.print(f"  uncertain   {n_uncertain:,} (low-confidence capture, tag _uncertain)")
+    except Exception as exc:
+        _log.debug("uncertain-tag count failed: %s", exc)
     console.print(f"  data_dir   {mem.cfg.data_dir}")
 
     console.print("\n[bold]🧠 Models[/bold]")

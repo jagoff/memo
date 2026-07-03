@@ -422,6 +422,20 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
     ),
     _spec(
+        "MEMO_OUTCOME_CITED_WEIGHT",
+        "float",
+        2.0,
+        "roi",
+        "How many grounded observations an explicitly CITED memory (the answer "
+        "referenced [id]; grounding method='cited') counts as in the per-memory "
+        "utility, vs 1 for mere lexical/embedding overlap — a citation is "
+        "stronger evidence the recall was actually useful. 1.0 restores "
+        "unweighted parity. Only read inside the outcome loop (`memo outcome` / "
+        "reconcile), which ranking consumes only when "
+        "MEMO_OUTCOME_RANKING_ENABLED is on.",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_OUTCOME_ROI_FLOOR",
         "float",
         0.6,

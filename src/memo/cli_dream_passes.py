@@ -361,14 +361,23 @@ def _run_eval_recall(cfg: Config, mem: Memory, *, k: int = 5, max_labels: int = 
     ``memo eval recall`` uses) over curated + harvested labels.
 
     Curated labels (``regression_labels.json``: state_dir first, repo checkout
-    second) are always included; the most recently harvested labels fill the
-    remaining room up to ``max_labels``. Appends one trend line to
+    second) are always included; harvested labels are cross-deduped against
+    them (token-Jaccard >= 0.6, curated absorbs the duplicate's expect_ids) and
+    the most recent survivors fill the remaining room up to ``max_labels``.
+    Appends one trend line to
     ``state_dir/eval/history.jsonl`` (skipped when there are no labels, so an
     empty run never pollutes the trend) and returns the receipt fragment.
     Raises on failure (the cli_dream caller records it in receipt["errors"]).
     """
     from memo.eval_recall import Cfg as EvalCfg
-    from memo.eval_recall import LabelSet, Prompt, evaluate, gate_metrics, load_labels
+    from memo.eval_recall import (
+        LabelSet,
+        Prompt,
+        evaluate,
+        gate_metrics,
+        load_labels,
+        merge_label_prompts,
+    )
     from memo.flags import flag_float
 
     curated = None
@@ -392,23 +401,61 @@ def _run_eval_recall(cfg: Config, mem: Memory, *, k: int = 5, max_labels: int = 
     harvested_raw.sort(key=lambda p: str(p.get("harvested_ts") or ""), reverse=True)
 
     curated_used = list(curated.prompts)[:max_labels] if curated else []
-    room = max(0, max_labels - len(curated_used))
+
+    # Cross-dedup harvested AGAINST curated (curated wins/absorbs): a harvested
+    # prompt token-Jaccard-similar (>=0.6) to a curated one would otherwise be
+    # counted twice in prec@K/noise@K. ``merge_label_prompts`` unions its
+    # expect_ids into the curated entry and drops the duplicate; only the
+    # surviving (genuinely new) harvested prompts fill the remaining room, so
+    # the receipt's ``harvested`` count is post-dedup.
+    curated_dicts = [
+        {
+            "text": p.text,
+            "relevant": p.relevant,
+            "expect_ids": [str(x) for x in p.expect_ids],
+            "expect_associative_ids": list(p.expect_associative_ids),
+        }
+        for p in curated_used
+    ]
+    harvested_dicts = [
+        {
+            "text": str(p["text"]),
+            "relevant": bool(p.get("relevant", False)),
+            "expect_ids": [str(x) for x in (p.get("expect_ids") or [])],
+        }
+        for p in harvested_raw
+    ]
+    merged = merge_label_prompts(curated_dicts, harvested_dicts)
+    survivors = merged[len(curated_dicts) :]
+    deduped_out = len(harvested_dicts) - len(survivors)
+
+    curated_prompts = [
+        Prompt(
+            text=str(d["text"]),
+            relevant=bool(d.get("relevant", False)),
+            expect_ids=[str(x) for x in (d.get("expect_ids") or [])],
+            expect_associative_ids=tuple(str(x) for x in (d.get("expect_associative_ids") or ())),
+        )
+        for d in merged[: len(curated_dicts)]
+    ]
+    room = max(0, max_labels - len(curated_prompts))
     harvested_used = [
         Prompt(
             text=str(p["text"]),
             relevant=bool(p.get("relevant", False)),
             expect_ids=[str(x) for x in (p.get("expect_ids") or [])],
         )
-        for p in harvested_raw[:room]
+        for p in survivors[:room]
     ]
-    prompts = curated_used + harvested_used
+    prompts = curated_prompts + harvested_used
     fragment = {
         "prec_at_k": 0.0,
         "noise_at_k": 0.0,
         "k": k,
         "labels_total": len(prompts),
         "harvested": len(harvested_used),
-        "curated": len(curated_used),
+        "harvested_deduped_out": deduped_out,
+        "curated": len(curated_prompts),
     }
     if not prompts:
         return fragment
@@ -444,6 +491,24 @@ def _run_eval_recall(cfg: Config, mem: Memory, *, k: int = 5, max_labels: int = 
     with hist.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(line, ensure_ascii=False) + "\n")
     return fragment
+
+
+def _run_capture_weights(cfg: Config, mem: Memory) -> dict:
+    """Nightly citation-type feedback: join grounding.log citations to memory
+    types and refresh ``state_dir/capture/type_weights.json`` (consumed at
+    capture time when MEMO_CAPTURE_TYPE_FEEDBACK is on — see
+    ``memo.capture_weights``). Returns the receipt fragment
+    ``{"types", "top"}``; raises on failure (the cli_dream caller records it
+    in receipt["errors"])."""
+    from memo.capture_weights import compute_type_citation_stats
+
+    payload = compute_type_citation_stats(cfg, mem)
+    weights: dict[str, float] = payload.get("weights") or {}
+    top = None
+    if weights:
+        t, w = max(weights.items(), key=lambda kv: kv[1])
+        top = f"{t}:{w:g}"
+    return {"types": len(weights), "top": top}
 
 
 def _state_path(cfg: Config):

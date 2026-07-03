@@ -33,6 +33,7 @@ from memo.cli_dream_passes import (
     _make_progress,
     _older_id,
     _render_run_summary,
+    _run_capture_weights,
     _run_compress,
     _run_eval_recall,
     _run_eviction,
@@ -869,6 +870,21 @@ def dream_run(
             except Exception as exc:
                 receipt["errors"].append(f"eval_recall: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[13] eval recall [yellow]warn[/yellow]")
+
+            progress.update(step, description="[14] capture weights — citation-type feedback...")
+            try:
+                receipt["capture_weights"] = _run_capture_weights(cfg, mem)
+                _cw = receipt["capture_weights"]
+                _cw_top = f" · top {_cw['top']}" if _cw.get("top") else ""
+                progress.update(
+                    step,
+                    description=(
+                        f"[14] capture weights [green]✓[/green]  {_cw['types']} type(s){_cw_top}"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"capture_weights: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[14] capture weights [yellow]warn[/yellow]")
         else:
             progress.update(step, description="[12] harvest+eval [dim]skip[/dim]")
 

@@ -88,8 +88,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         50,
         "session",
-        "Top-k sessions the `memo resume` picker pulls from the episodic index "
-        "per semantic query.",
+        "Top-k sessions the `memo resume` picker pulls from the episodic index per semantic query.",
     ),
     _spec(
         "MEMO_RESUME_INDEX_BATCH",
@@ -170,6 +169,55 @@ SPECS: tuple[FlagSpec, ...] = (
         "instead of the new fact being silently lost.",
         min_val=0.0,
         max_val=1.0,
+    ),
+    _spec(
+        "MEMO_CAPTURE_META_FILTER",
+        "bool",
+        True,
+        "capture",
+        "Drop process-narration segments ('voy a…', 'let me…', \"I'll…\") and "
+        "LLM filler from capture candidates before save. Regex-based, no LLM "
+        "call. A candidate that is ALL narration is dropped (logged in debug); "
+        "mixed candidates keep their substantive segments. Set 0 to disable.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_CAPTURE_BATCH_DEDUP",
+        "bool",
+        True,
+        "capture",
+        "Intra-batch near-dup window: within one capture run, collapse "
+        "candidates that are near-duplicates of EACH OTHER (the prompt-retry "
+        "pattern — same fact extracted 2-3x), keeping the higher-confidence/"
+        "longer one. Uses MEMO_CAPTURE_DUP_THRESHOLD; the store-level dedup "
+        "only sees already-saved memories, so it can't catch these. Set 0 to "
+        "disable.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_CAPTURE_MIN_CONFIDENCE",
+        "float",
+        0.0,
+        "capture",
+        "Type-classification confidence floor (0-1). Candidates scoring below "
+        "it are still saved but tagged '_uncertain' for later review. The "
+        "score itself is always stamped in extra['capture_confidence']. "
+        "Default 0.0 = gating off (conservative rollout).",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_CAPTURE_TYPE_FEEDBACK",
+        "bool",
+        False,
+        "capture",
+        "Citation-type feedback: at capture's genuinely ambiguous type "
+        "classifications (claimed type has no corroborating markers while "
+        "another type's markers are present), re-type the candidate to the "
+        "marker-backed type with the highest citation weight from "
+        "state_dir/capture/type_weights.json (computed nightly by the dream "
+        "capture_weights pass from grounding.log). Off (default) or no "
+        "weights file = classification untouched.",
     ),
     # corpus maintenance (memo maintain)
     _spec(

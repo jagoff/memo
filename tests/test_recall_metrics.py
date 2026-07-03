@@ -252,6 +252,89 @@ def test_hook_subprocess_path_stamps(recall_env: Config) -> None:
     assert entry["total_ms"] >= 0.0
 
 
+def test_hook_subprocess_hits_are_post_session_dedup(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Subprocess ``hits`` counts the POST-session-dedup injected memories —
+    comparable with the daemon path — including 0 on the 'all hits already
+    recalled' bail (pre-dedup counting would report 1/2/2)."""
+    from memo.memory import MemoryRecord
+
+    def _hit(hid: str, title: str) -> MemoryRecord:
+        return MemoryRecord(
+            id=hid,
+            path=f"notes/{hid}.md",
+            title=title,
+            type="note",
+            tags=[],
+            created="2026-01-01T00:00:00+00:00",
+            updated="2026-01-01T00:00:00+00:00",
+            body=f"distinct body for {title}, long enough to pass the min-body gate.",
+            extra={},
+            score=0.8,
+        )
+
+    hit_a = _hit("aabbccdd11223344", "Memory Alpha")
+    hit_b = _hit("eeff001122334455", "Memory Beta")
+    # Turn 1 surfaces A; turns 2 and 3 surface A+B — session dedup must strip
+    # the already-injected ids, so the stamped hits are 1, 1, 0.
+    per_turn = [[hit_a], [hit_a, hit_b], [hit_a, hit_b]]
+    calls = {"n": 0}
+
+    class StubMemory:
+        def __init__(self, cfg: object) -> None:
+            pass
+
+        def search(
+            self,
+            query: str,
+            limit: int = 5,
+            mode: str = "bm25",
+            recency: bool = False,
+            exclude_types: object = None,
+        ) -> list[MemoryRecord]:
+            hits = per_turn[min(calls["n"], len(per_turn) - 1)]
+            calls["n"] += 1
+            return hits
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", StubMemory)
+
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+        "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        "MEMO_RECALL_METRICS": "1",
+        "MEMO_RECALL_MIN_SIM": "0.0",
+        "MEMO_RECALL_MIN_BODY_CHARS": "0",
+        "MEMO_RECALL_TOKEN_BUDGET": "0",
+        "MEMO_RECALL_EXPAND_CONTEXT": "0",
+        "MEMO_RECALL_ADAPTIVE_CONTEXT": "0",
+        "MEMO_RECALL_CONTEXTUAL": "0",
+    }
+    payload = json.dumps(
+        {
+            "prompt": "what do you know about this recurring topic",
+            "session_id": "metrics-dedup-session-001",
+            "cwd": str(tmp_cfg.data_dir),
+        }
+    )
+    runner = CliRunner()
+    for _ in range(3):
+        result = runner.invoke(cli, ["recall-hook"], input=payload, env=env, catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+
+    lines = recall_metrics.metrics_path(tmp_cfg.state_dir).read_text().splitlines()
+    assert len(lines) == 3  # exactly one stamp per hook run
+    entries = [json.loads(ln) for ln in lines]
+    assert [e["path"] for e in entries] == ["subprocess"] * 3
+    # Turn 1: A injected. Turn 2: A deduped, only B injected (pre-dedup = 2).
+    # Turn 3: both already recalled -> dedup bail stamps 0 (pre-dedup = 2).
+    assert [e["hits"] for e in entries] == [1, 1, 0]
+
+
 def test_hook_daemon_path_stamps(recall_env: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     """Daemon socket answer → one line with path=daemon and parsed hit count."""
     daemon_result = json.dumps(

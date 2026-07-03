@@ -121,10 +121,19 @@ def test_eval_recall_receipt_shape_and_history_append(tmp_cfg):
         encoding="utf-8",
     )
     frag = _run_eval_recall(tmp_cfg, _StubMem(), k=3, max_labels=200)
-    assert set(frag) == {"prec_at_k", "noise_at_k", "k", "labels_total", "harvested", "curated"}
+    assert set(frag) == {
+        "prec_at_k",
+        "noise_at_k",
+        "k",
+        "labels_total",
+        "harvested",
+        "harvested_deduped_out",
+        "curated",
+    }
     assert frag["k"] == 3
     assert frag["labels_total"] == 2
     assert frag["harvested"] == 1
+    assert frag["harvested_deduped_out"] == 0  # prompts are dissimilar — nothing absorbed
     assert frag["curated"] == 1
     assert frag["prec_at_k"] > 0
     assert frag["noise_at_k"] == 0.0
@@ -178,6 +187,102 @@ def test_eval_recall_caps_to_most_recent_harvested(tmp_cfg):
     assert frag["curated"] == 1
     assert frag["harvested"] == 1
     assert frag["prec_at_k"] > 0  # the newest (matching) label was the one kept
+
+
+def test_eval_recall_cross_dedups_harvested_against_curated(tmp_cfg):
+    """A harvested prompt token-Jaccard-similar (>=0.6) to a curated one is
+    absorbed (counted ONCE, not double-weighted in prec@K/noise@K); the
+    receipt reports the post-dedup harvested count + how many were absorbed."""
+    _write_curated(
+        tmp_cfg.state_dir,
+        [
+            {
+                "text": "how does memo sync work exactly",
+                "relevant": True,
+                "expect_ids": ["aaaa1111"],
+            }
+        ],
+    )
+    hp = tmp_cfg.state_dir / "eval" / "harvested_labels.json"
+    hp.write_text(
+        json.dumps(
+            {
+                "prompts": [
+                    {
+                        # Near-dup of the curated prompt (Jaccard 5/6 >= 0.6).
+                        "text": "how does memo sync work",
+                        "relevant": True,
+                        "expect_ids": ["bbbb2222"],
+                        "harvested_ts": "2026-07-02T00:00:00+00:00",
+                    },
+                    {
+                        # Genuinely new prompt — must survive the cross-dedup.
+                        "text": "where does the recall daemon socket live",
+                        "relevant": True,
+                        "expect_ids": ["cccc3333"],
+                        "harvested_ts": "2026-07-01T00:00:00+00:00",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    frag = _run_eval_recall(tmp_cfg, _StubMem(), k=3, max_labels=200)
+    assert frag["curated"] == 1
+    assert frag["harvested"] == 1  # post-dedup: only the dissimilar survivor
+    assert frag["harvested_deduped_out"] == 1  # the near-dup was absorbed
+    assert frag["labels_total"] == 2  # counted once, not three prompts
+
+    hist = tmp_cfg.state_dir / "eval" / "history.jsonl"
+    entry = json.loads(hist.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["labels"] == 2
+
+
+def test_eval_recall_dedup_does_not_waste_room(tmp_cfg):
+    """Cross-dedup runs BEFORE the max_labels cap: an absorbed harvested
+    prompt must not consume a slot a genuinely new prompt could fill."""
+    _write_curated(
+        tmp_cfg.state_dir,
+        [
+            {
+                "text": "how does memo sync work exactly",
+                "relevant": True,
+                "expect_ids": ["aaaa1111"],
+            }
+        ],
+    )
+    hp = tmp_cfg.state_dir / "eval" / "harvested_labels.json"
+    hp.write_text(
+        json.dumps(
+            {
+                "prompts": [
+                    {
+                        # Newest, but a near-dup of curated — absorbed.
+                        "text": "how does memo sync work",
+                        "relevant": True,
+                        "expect_ids": ["bbbb2222"],
+                        "harvested_ts": "2026-07-02T00:00:00+00:00",
+                    },
+                    {
+                        # Older and distinct: with max_labels=2 there is room
+                        # for exactly one harvested label — it must be this one.
+                        "text": "where does the recall daemon socket live",
+                        "relevant": True,
+                        "expect_ids": ["aaaa1111"],
+                        "harvested_ts": "2026-07-01T00:00:00+00:00",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    frag = _run_eval_recall(tmp_cfg, _StubMem(), k=3, max_labels=2)
+    assert frag["labels_total"] == 2
+    assert frag["harvested"] == 1
+    assert frag["harvested_deduped_out"] == 1
+    # The surviving harvested label expects aaaa1111 (which _StubMem returns),
+    # so precision proves the dedup didn't burn the room on the absorbed dup.
+    assert frag["prec_at_k"] > 0
 
 
 def test_eval_recall_no_labels_skips_history(tmp_cfg, monkeypatch):

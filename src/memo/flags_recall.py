@@ -139,6 +139,31 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    _spec(
+        "MEMO_RECALL_MMR_LAMBDA",
+        "float",
+        0.0,
+        "recall",
+        "Maximal-marginal-relevance diversity re-ordering of the gated recall "
+        "pool: score' = lambda*relevance - (1-lambda)*max_sim_to_already_selected, "
+        "similarity = token-set Jaccard over title+body (no extra embeds/IO, "
+        "O(K^2) over the candidate pool only). Default 0.0 = OFF (ranking "
+        "identical to today); 1.0 = pure relevance, no diversity penalty.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_RECALL_SYNTHESIS_BOOST",
+        "float",
+        0.0,
+        "recall",
+        "Additive score boost for type=synthesis hits (auto-generated "
+        "cross-cluster insights) so distilled knowledge surfaces above its raw "
+        "sources. Composes like the project/global tier boosts. Default 0.0 = "
+        "OFF (ranking identical to today).",
+        min_val=0.0,
+        max_val=1.0,
+    ),
     _spec("MEMO_RECALL_RERANK_INPUT_K", "int", 10, "recall", "Candidates fed to the reranker."),
     _spec(
         "MEMO_RECALL_STALENESS_DAYS",

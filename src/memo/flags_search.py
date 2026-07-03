@@ -259,6 +259,21 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_REFERENCE_SEARCH_FLOOR",
+        "float",
+        0.0,
+        "search",
+        "Noise floor for the bulk `reference` tier in EXPLICIT retrieval "
+        "(search/ask/chat — the recall hook already SQL-excludes reference via "
+        "MEMO_RECALL_EXCLUDE_REFERENCE). When > 0, a reference-tier hit must "
+        "have a final score >= this floor to stay in results; durable-tier "
+        "hits are never affected. Compared against the final mode-dependent "
+        "score (cosine in vec mode, RRF-fused in hybrid, BM25 in bm25). "
+        "Skipped when the caller explicitly filters type='reference' so "
+        "on-demand reference search stays intact. 0.0 (default) = off.",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_HYDE_ENABLED",
         "bool",
         False,

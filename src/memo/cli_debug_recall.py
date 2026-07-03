@@ -48,6 +48,8 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
         _mbc = flag_int("MEMO_RECALL_MIN_BODY_CHARS")
         min_body_chars = 40 if _mbc is None else _mbc
         contextual = flag_bool("MEMO_RECALL_CONTEXTUAL")
+        mmr_lambda = flag_float("MEMO_RECALL_MMR_LAMBDA") or 0.0
+        synthesis_boost = flag_float("MEMO_RECALL_SYNTHESIS_BOOST") or 0.0
 
         project_tag = None
         if project_boost > 0 and cwd:
@@ -68,6 +70,8 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             project_boost=project_boost,
             global_boost=global_boost,
             contextual=contextual,
+            mmr_lambda=mmr_lambda,
+            synthesis_boost=synthesis_boost,
         )
 
         prefs: Any | None = None
@@ -102,6 +106,29 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             explain=explain,
         )
 
+        # Post-rank_hits output filters — the hook path (recall_logic._recall_logic)
+        # applies MEMO_RECALL_SKIP_BELOW / MEMO_RECALL_GAP_THRESHOLD AFTER
+        # rank_hits, so `injected` must honor them or debug-recall shows
+        # "● injected" for a hit the real hook suppressed. Same resolution
+        # (`or 0.0`) and same checks as _recall_logic.
+        skip_below = flag_float("MEMO_RECALL_SKIP_BELOW") or 0.0
+        gap_threshold = flag_float("MEMO_RECALL_GAP_THRESHOLD") or 0.0
+        qualifying = list(ranked)
+        skip_below_triggered = bool(
+            skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below
+        )
+        if skip_below_triggered:
+            qualifying = []
+        elif (
+            gap_threshold > 0
+            and len(qualifying) > 1
+            and qualifying[0].score is not None
+            and qualifying[1].score is not None
+            and (qualifying[0].score - qualifying[1].score) > gap_threshold
+        ):
+            qualifying = qualifying[:1]
+        injected_ids = {h.id for h in qualifying[:top_k]}
+
         # Supplementary display columns (never affect ranking): BM25 leg score
         # per hit when a keyword leg ran.
         bm25_scores: dict[str, float | None] = {}
@@ -132,7 +159,7 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
                     "passed_min_body": e.get("passed_min_body"),
                     "dropped": e.get("dropped"),
                     "rank": e.get("rank"),
-                    "injected": e.get("rank") is not None and e["rank"] <= top_k,
+                    "injected": h.id in injected_ids,
                 }
             )
         hits_out.sort(
@@ -148,6 +175,9 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             "top_k": top_k,
             "mode": mode,
             "search_k": search_k,
+            "skip_below": skip_below,
+            "gap_threshold": gap_threshold,
+            "skip_below_triggered": skip_below_triggered,
             "reranker_enabled": bool(cfg.reranker_enabled),
             "reranker_ran": reranker_ran,
             "min_body_chars": min_body_chars,
@@ -155,6 +185,8 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             "project_boost": project_boost,
             "global_boost": global_boost,
             "graph_proximity_weight": gpw if graph_boost is not None else 0.0,
+            "mmr_lambda": mmr_lambda,
+            "synthesis_boost": synthesis_boost,
             "contextual": contextual,
             "exclude_reference": exclude_types is not None,
             "candidates": len(candidates),
@@ -204,8 +236,15 @@ def _render(result: dict[str, Any], prompt: str) -> None:
         f"{'on' if cfg['reranker_enabled'] else 'off'}"
         f"{' (ran)' if cfg['reranker_ran'] else ''}"
         f" · min_body_chars={cfg['min_body_chars']} · project_tag={cfg['project_tag'] or '—'}"
-        f" · boosts proj+{cfg['project_boost']}/glob+{cfg['global_boost']}[/dim]"
+        f" · boosts proj+{cfg['project_boost']}/glob+{cfg['global_boost']}"
+        f"/synth+{cfg['synthesis_boost']} · mmr_lambda={cfg['mmr_lambda']}"
+        f" · skip_below={cfg['skip_below']} · gap_threshold={cfg['gap_threshold']}[/dim]"
     )
+    if cfg.get("skip_below_triggered"):
+        console.print(
+            f"[yellow]skip_below triggered — best score < {cfg['skip_below']}, "
+            "the real hook injects nothing[/yellow]"
+        )
     hits = result["hits"]
     if not hits:
         console.print("[yellow]no candidates returned by search[/yellow]")
