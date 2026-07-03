@@ -9,6 +9,58 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-07-02
+
+### Added
+
+- **Recall observability pipeline (Q3 Mes 1).** Two nightly dream passes:
+  `harvest_labels` mines eval labels from real citations in `grounding.log`,
+  `eval_recall` runs a retrieval-only eval (prec@K / noise@K) against
+  curated + harvested labels, recording to the dream receipt and
+  `state_dir/eval/history.jsonl` (`MEMO_DREAM_EVAL_ENABLED`, default on;
+  `MEMO_DREAM_EVAL_MAX_LABELS`, default 200).
+- **Recall-hook latency metrics.** Both hook paths (warm daemon and
+  subprocess fallback) stamp `total_ms`/`path`/`hits` to
+  `state_dir/recall_metrics.jsonl` (`MEMO_RECALL_METRICS`, default on);
+  `memo stats` shows p50/p95/p99 per path over the last 7 days.
+- **`memo debug-recall <prompt>`.** Diagnostic command reproducing the
+  recall pipeline outside a session: per-hit vec / BM25 / rerank-fused
+  scores, boost deltas, floor verdicts, and active thresholds
+  (including `skip_below` / `gap_threshold`); `--json` for scripting.
+- **TUI recall-quality panel.** prec@5 trend sparkline, top cited
+  memories, and recalled-but-never-cited count in `memo tui`.
+- **Capture hygiene (Q3 Mes 2).** Meta-commentary filter drops process
+  narration and trims filler openers keeping the substance
+  (`MEMO_CAPTURE_META_FILTER`, default on); intra-batch near-dup window
+  collapses retry twins before the store check
+  (`MEMO_CAPTURE_BATCH_DEDUP`, default on); type-classification
+  confidence stamped in `extra.capture_confidence`, low-confidence
+  captures tagged `_uncertain` below `MEMO_CAPTURE_MIN_CONFIDENCE`
+  (default 0.0 = off).
+- **Citation-type feedback.** Nightly `capture_weights` dream pass
+  computes per-type citation rates into
+  `state_dir/capture/type_weights.json`; the capture classifier consults
+  them as a tie-breaker in ambiguous classifications
+  (`MEMO_CAPTURE_TYPE_FEEDBACK`, default off).
+- **Reference-tier search floor.** `MEMO_REFERENCE_SEARCH_FLOOR` (default
+  0.0 = off) keeps bulk-ingested reference chunks out of
+  search/ask results unless they clear a higher score bar; durable
+  memories unaffected.
+- **Ranking knobs, evidence-gated (Q3 Mes 3), all default off.** MMR
+  diversity re-rank (`MEMO_RECALL_MMR_LAMBDA`), synthesis-type boost
+  (`MEMO_RECALL_SYNTHESIS_BOOST`), and cited-weighted outcome utility
+  (`MEMO_OUTCOME_CITED_WEIGHT`, active only inside the
+  `MEMO_OUTCOME_RANKING_ENABLED`-gated path).
+
+### Fixed
+
+- `packaging/mcpb/manifest.json` was left at 2.10.1 by the v2.10.2
+  release; version-sync test now green.
+- Recall-metrics `hits` now counts the post-dedup injected hits on both
+  hook paths (comparable daemon vs subprocess).
+- Nightly eval cross-dedups harvested labels against the curated set so
+  a prompt never double-weights prec@K.
+
 ## [2.10.2] - 2026-07-02
 
 ### Changed
