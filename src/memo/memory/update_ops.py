@@ -199,3 +199,24 @@ class _UpdateOpsMixin(_MemoryBase):
             self._emit_ledger("update", updated_rec, new_prov)
         self._write_gen += 1
         return updated_rec
+
+    # -- last saved ----------------------------------------------------------
+
+    def last_saved_id(self, *, limit: int = 20) -> str | None:
+        """Id of the most recent memory saved on this device that still exists.
+
+        Scans the audit log's `save` events (newest first, this device only —
+        synced events from other machines don't count as "just saved here")
+        and returns the first record_id not deleted since. Backs the
+        "rename what I just saved" flows (`memo rename`, MCP `memo_rename`).
+        """
+        events = self.history.list_recent(
+            limit=limit,
+            op="save",
+            device_id=self.history.device_id,
+        )
+        for ev in events:
+            rid = ev.get("record_id")
+            if rid and self.get(rid) is not None:
+                return str(rid)
+        return None

@@ -145,3 +145,37 @@ def test_memory_chat_ask_no_hits_returns_unavailable(mem: Memory):
     assert "couldn't find" in out["answer"].lower()
     assert out["sources"] == []
     assert out["citations"] == []
+
+
+def test_rename_without_id_targets_last_save(mem: Memory):
+    server = build_server(memory=mem)
+    save = _tool(server, "memo_save")
+    rename = _tool(server, "memo_rename")
+    save(content="primero", title="A")
+    second = save(content="segundo", title="B")
+
+    out = rename(title="Nuevo título")
+
+    assert out["id"] == second["id"]
+    assert out["title"] == "Nuevo título"
+
+
+def test_rename_with_explicit_id_prefix(mem: Memory):
+    rec = mem.save(content="uno", title="Uno")
+    mem.save(content="dos", title="Dos")
+    server = build_server(memory=mem)
+    rename = _tool(server, "memo_rename")
+
+    out = rename(title="Renombrado", id=rec.id[:8])
+
+    assert out["id"] == rec.id
+    assert out["title"] == "Renombrado"
+
+
+def test_rename_without_saves_returns_error(mem: Memory):
+    server = build_server(memory=mem)
+    rename = _tool(server, "memo_rename")
+
+    out = rename(title="X")
+
+    assert out["error"] == "no_recent_save"

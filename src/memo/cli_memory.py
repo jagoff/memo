@@ -3,8 +3,8 @@
 Extracted from cli.py (top-level command grouping); retrieval moved to
 cli_search.py and knowledge-graph verbs to cli_entities.py. Each command is a
 standalone @click.command registered onto the root group in cli.py.
-Commands: save, list, get, update, reindex, delete, history, ocr-image,
-provenance, lint, restore.
+Commands: save, list, get, update, rename, reindex, delete, history,
+ocr-image, provenance, lint, restore.
 """
 
 from __future__ import annotations
@@ -278,6 +278,39 @@ def update(
             f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
             f"[dim]updated:[/dim] {rec.updated}",
             title="✓ updated",
+            border_style="yellow",
+        )
+    )
+
+
+@click.command()
+@click.argument("title")
+@click.argument("id_", required=False, default=None)
+@click.option("--json", "as_json", is_flag=True)
+def rename(title: str, id_: str | None, as_json: bool) -> None:
+    """Rename a memory's title. Without ID, renames the memory most
+    recently saved on this machine — e.g. right after a `memo save`.
+    """
+
+    mem = _get_memory(Config.from_env())
+    if id_ is None:
+        id_ = mem.last_saved_id()
+        if id_ is None:
+            console.print("[red]no recent save found[/red] — pass an ID explicitly")
+            sys.exit(1)
+    rec = _resolved(lambda: mem.update(id_, title=title))
+    if rec is None:
+        console.print(f"[red]not found:[/red] {id_}")
+        sys.exit(1)
+    if as_json:
+        click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
+        return
+    console.print(
+        Panel.fit(
+            f"[bold]{rec.title}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
+            f"[dim]updated:[/dim] {rec.updated}",
+            title="✓ renamed",
             border_style="yellow",
         )
     )

@@ -79,6 +79,7 @@ from memo.cli_memory import (
     ocr_image,
     provenance,
     reindex,
+    rename,
     restore,
     save,
     update,
@@ -131,7 +132,7 @@ from memo.setup import run_picker, write_config_file
 _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
         "Core",
-        ["save", "search", "ask", "get", "edit", "delete", "list"],
+        ["save", "search", "ask", "get", "edit", "rename", "delete", "list"],
     ),
     (
         "Recall & Hooks",
@@ -403,6 +404,7 @@ cli.add_command(rerank_cmd)
 cli.add_command(list_cmd)
 cli.add_command(get)
 cli.add_command(update)
+cli.add_command(rename)
 cli.add_command(reindex)
 cli.add_command(delete)
 cli.add_command(history)

@@ -48,3 +48,39 @@ def test_save_empty_content_clean_error(tmp_path: Path) -> None:
     assert result.exit_code != 0
     assert "non-empty" in result.output
     assert not isinstance(result.exception, ValueError)
+
+
+# rename without ID resolves to the last save on this machine
+def test_rename_without_id_renames_last_save(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_EMBEDDER_DIMS": "4",
+    }
+    runner = CliRunner()
+    result = runner.invoke(cli, ["save", "contenido", "--title", "Viejo"], env=env)
+    assert result.exit_code == 0, result.output
+
+    result = runner.invoke(cli, ["rename", "Nuevo título", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    import json
+
+    payload = json.loads(result.output)
+    assert payload["title"] == "Nuevo título"
+
+
+# rename with no prior saves exits non-zero with a clear message
+def test_rename_without_saves_exits_nonzero(tmp_path: Path) -> None:
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    result = CliRunner().invoke(cli, ["rename", "Nuevo"], env=env)
+    assert result.exit_code == 1, result.output
+    assert "no recent save" in result.output

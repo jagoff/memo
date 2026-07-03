@@ -172,3 +172,43 @@ def test_update_and_delete_accept_prefix(mem_with_stub: Memory):
     assert updated is not None
     assert updated.title == "X2"
     assert mem_with_stub.delete(short) is True
+
+
+# ---------------------------------------------------------------------------
+# last_saved_id — "rename what I just saved" resolution
+# ---------------------------------------------------------------------------
+
+
+def test_last_saved_id_returns_most_recent_save(mem_with_stub: Memory):
+    mem_with_stub.save(content="primero", title="A")
+    b = mem_with_stub.save(content="segundo", title="B")
+    assert mem_with_stub.last_saved_id() == b.id
+
+
+def test_last_saved_id_skips_deleted(mem_with_stub: Memory):
+    a = mem_with_stub.save(content="primero", title="A")
+    b = mem_with_stub.save(content="segundo", title="B")
+    mem_with_stub.delete(b.id)
+    assert mem_with_stub.last_saved_id() == a.id
+
+
+def test_last_saved_id_none_when_no_saves(mem_with_stub: Memory):
+    assert mem_with_stub.last_saved_id() is None
+
+
+def test_last_saved_id_ignores_other_device_events(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="local", title="Local")
+    # Simulate a synced save event from another machine, newer than ours.
+    other = mem_with_stub.history
+    own_device = other.device_id
+    other.device_id = "other-device"
+    try:
+        other.log_save(
+            ts="2099-01-01T00:00:00+00:00",
+            record_id="deadbeefdeadbeefdeadbeefdeadbeef",
+            title="Remote",
+            type_="note",
+        )
+    finally:
+        other.device_id = own_device
+    assert mem_with_stub.last_saved_id() == rec.id

@@ -96,6 +96,23 @@ def register(server: Any, memory: Memory) -> None:
         return rec.to_dict() if rec else None
 
     @server.tool()
+    def memo_rename(title: str, id: str | None = None) -> dict[str, Any] | None:
+        """Rename a memory's title. Without `id`, renames the memory most
+        recently saved on this machine — e.g. right after a `memo_save`.
+        """
+        target = id or memory.last_saved_id()
+        if target is None:
+            return {
+                "error": "no_recent_save",
+                "message": "no recent save on this machine; pass `id` explicitly",
+            }
+        try:
+            rec = memory.update(target, title=title)
+        except AmbiguousIdError as exc:
+            return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        return rec.to_dict() if rec else None
+
+    @server.tool()
     def memo_reindex(force: bool = False) -> dict[str, int]:
         return memory.reindex(force=force)
 
