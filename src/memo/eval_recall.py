@@ -403,6 +403,15 @@ def run_config(
         mode=cfg.mode,
         overrides=cfg.knob_overrides,
     )
+    # Recall-faithful candidate pool: the hook SQL-excludes the bulk
+    # `reference` tier (MEMO_RECALL_EXCLUDE_REFERENCE, default on) but the
+    # explicit mem.search() path does not — without mirroring the exclusion
+    # here, ingested vault chunks the hook never surfaces crowd top-K and
+    # depress measured precision (seen live: WhatsApp reference chunks).
+    from memo.flags import flag_bool
+    from memo.tiers import REFERENCE_TYPES
+
+    exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
     for index, prompt in enumerate(labels.prompts, start=1):
         if progress is not None:
             progress(cfg, index, len(labels.prompts))
@@ -413,7 +422,7 @@ def run_config(
             else prompt.text
         )
         t0 = time.time()
-        hits = mem.search(query, limit=k * 4, mode=cfg.mode)
+        hits = mem.search(query, limit=k * 4, mode=cfg.mode, exclude_types=exclude_types)
         lat.append((time.time() - t0) * 1000)
         # Rank exactly as the daemon does (shared rank_hits): dedup + the hybrid
         # true-cosine gate + the Phase-2 graph_boost seam — so the eval measures

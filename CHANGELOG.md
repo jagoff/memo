@@ -9,6 +9,17 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.5] - 2026-07-03
+
+### Fixed
+
+- eval recall now mirrors the hook's reference-tier SQL exclusion
+  (`MEMO_RECALL_EXCLUDE_REFERENCE`): the eval's explicit `mem.search()` pool
+  included bulk `reference` chunks the live hook never surfaces, so ingested
+  vault content (e.g. WhatsApp conversations) crowded top-K and false-failed
+  the regression gate (prec@5 0.884 → 0.845 with zero production impact).
+  With the exclusion mirrored the gate passes at 0.903.
+
 ## [2.12.4] - 2026-07-03
 
 ### Fixed
