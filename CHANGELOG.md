@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.1] - 2026-07-03
+
+### Fixed
+
+- **Cited-grounding was dead on the daemon (production) recall path.** Only
+  the subprocess fallback marked session `recalled_ids`; the warm daemon —
+  which serves virtually every recall — never did, so `match_cited` always
+  compared against an empty map and not one `method="cited"` grounding row
+  existed (409/409 recalled-never-cited). `_recall_logic` now mirrors the
+  subprocess path exactly: session dedup (already-recalled hits are not
+  re-injected — also a token saving every turn) + `mark_ids_recalled`.
+  End-to-end regression test covers daemon recall → citing answer →
+  `method=cited` row.
+
 ## [2.12.0] - 2026-07-02
 
 ### Added

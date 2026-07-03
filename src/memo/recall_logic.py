@@ -864,6 +864,31 @@ def _recall_logic(
     if not relevant:
         return "{}", None
 
+    # Session dedup + recalled-id marking — mirror the subprocess path
+    # (cli_recall_hook) exactly. Without this the daemon (production) path
+    # never populates session recalled_ids, so cited-grounding can never
+    # match ([id8] cites validate against this map) and the same hits are
+    # re-injected every turn.
+    if session_id:
+        _prev_recalled: dict[str, int] = {}
+        with contextlib.suppress(Exception):
+            from memo import session as _session_mod
+
+            _prev_recalled = _session_mod.get_recalled_ids(cfg.state_dir, session_id)
+        if _prev_recalled:
+            relevant = [h for h in relevant if h.id not in _prev_recalled]
+        if not relevant:
+            return "{}", None
+        if turn is not None:
+            with contextlib.suppress(Exception):
+                from memo import session as _session_mod
+
+                _session_mod.mark_ids_recalled(
+                    cfg.state_dir,
+                    session_id,
+                    {h.id: turn for h in relevant},
+                )
+
     if contextual:
         with contextlib.suppress(Exception):
             mem.contextual.record_search(prompt, [h.id for h in relevant])
