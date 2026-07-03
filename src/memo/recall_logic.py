@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from memo.flags import flag_bool, flag_str
+from memo.flags import flag_bool, flag_float, flag_int, flag_str
 
 _logger = logging.getLogger(__name__)
 
@@ -429,6 +429,72 @@ class RankKnobs:
     synthesis_boost: float = 0.0
 
 
+def knobs_from_flags(
+    *,
+    top_k: int | None = None,
+    mode: str | None = None,
+    project_tag: str | None = None,
+    min_sim: float | None = None,
+    min_body_chars: int | None = None,
+    cwd: str | None = None,
+    overrides: dict[str, Any] | None = None,
+) -> RankKnobs:
+    """Resolve ``RankKnobs`` from the live MEMO_* flags (env > tuned overlay >
+    built-in default) — the SINGLE source of knob resolution.
+
+    ``_recall_logic`` (the hook/daemon path) and the eval harness
+    (``eval_recall.run_config``) both build their knobs here so they cannot
+    diverge. Explicit kwargs win over flags; ``overrides`` (RankKnobs field
+    name -> value) wins over everything, letting eval grid configs pin e.g.
+    ``mmr_lambda`` without touching the environment.
+
+    ``project_tag`` resolves from ``cwd`` (``current_project_tag``) only when
+    not passed explicitly, gated on ``project_boost > 0`` — exactly the hook's
+    behavior; with neither ``project_tag`` nor ``cwd`` it stays ``None``.
+
+    NOTE (path-dependence, from the M3 knobs): like preference/graph boosts,
+    ``mmr_lambda``/``synthesis_boost`` apply only where ``rank_hits`` runs —
+    the ``cli_recall_hook`` subprocess fallback ranks inline and skips every
+    rank_hits knob. Flipping these ON makes recall path-dependent."""
+    if top_k is None:
+        top_k = flag_int("MEMO_RECALL_TOP_K") or 3
+    if min_sim is None:
+        _ms = flag_float("MEMO_RECALL_MIN_SIM")
+        min_sim = 0.5 if _ms is None else _ms
+    if min_body_chars is None:
+        _mbc = flag_int("MEMO_RECALL_MIN_BODY_CHARS")
+        min_body_chars = 40 if _mbc is None else _mbc
+    if mode is None:
+        mode = flag_str("MEMO_RECALL_MODE") or "vec"
+    _pb = flag_float("MEMO_RECALL_PROJECT_BOOST")
+    project_boost = 0.25 if _pb is None else _pb
+    _gb = flag_float("MEMO_RECALL_GLOBAL_BOOST")
+    global_boost = 0.10 if _gb is None else _gb
+    if project_tag is None and project_boost > 0 and cwd:
+        try:
+            from memo.project import current_project_tag
+
+            project_tag = current_project_tag(cwd)
+        except Exception as exc:
+            _logger.debug("project_tag resolution failed: %s", exc)
+            project_tag = None
+    knobs = RankKnobs(
+        top_k=top_k,
+        min_sim=min_sim,
+        min_body_chars=min_body_chars,
+        mode=mode,
+        project_tag=project_tag,
+        project_boost=project_boost,
+        global_boost=global_boost,
+        contextual=flag_bool("MEMO_RECALL_CONTEXTUAL"),
+        mmr_lambda=flag_float("MEMO_RECALL_MMR_LAMBDA") or 0.0,
+        synthesis_boost=flag_float("MEMO_RECALL_SYNTHESIS_BOOST") or 0.0,
+    )
+    if overrides:
+        knobs = replace(knobs, **overrides)
+    return knobs
+
+
 def make_vec_cosine(mem: Any, prompt: str) -> Callable[[Any], float | None]:
     """Build the hybrid-gate cosine fn: true query·doc cosine (both L2-norm),
     lazily embedding the query once and caching per hit. An uncomputable cosine
@@ -584,6 +650,33 @@ def rank_hits(
     return result
 
 
+def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
+    """The hook's post-rank injection filters, flag-resolved (env > overlay).
+
+    * skip-below floor (``MEMO_RECALL_SKIP_BELOW``): if the TOP hit scores
+      under the floor, nothing is injected → ``[]``.
+    * gap trim (``MEMO_RECALL_GAP_THRESHOLD``): a large score gap after the
+      top hit trims the list to that single hit.
+
+    Shared by ``_recall_logic`` and the eval harness's injection-fidelity
+    mode so the two cannot diverge. Registry defaults: skip_below 0.45,
+    gap_threshold 0.10 (set either to 0 to disable that filter).
+    """
+    skip_below = flag_float("MEMO_RECALL_SKIP_BELOW") or 0.0
+    if skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below:
+        return []
+    gap_threshold = flag_float("MEMO_RECALL_GAP_THRESHOLD") or 0.0
+    if (
+        gap_threshold > 0
+        and len(qualifying) > 1
+        and qualifying[0].score is not None
+        and qualifying[1].score is not None
+        and (qualifying[0].score - qualifying[1].score) > gap_threshold
+    ):
+        return qualifying[:1]
+    return qualifying
+
+
 def _recall_logic(
     prompt: str,
     cwd: str | None,
@@ -598,38 +691,18 @@ def _recall_logic(
 ) -> tuple[str, Callable[[], None] | None]:
     from memo.flags import flag_float as _flag_float
     from memo.flags import flag_int as _flag_int
-    from memo.flags import flag_str as _flag_str
 
-    top_k = _flag_int("MEMO_RECALL_TOP_K") or 3
-    _ms = _flag_float("MEMO_RECALL_MIN_SIM")
-    min_sim = 0.5 if _ms is None else _ms
+    # Single-source knob resolution — knobs_from_flags mirrors the historical
+    # inline block exactly (same flag names, defaults, overlay resolution,
+    # project_tag gating on project_boost > 0 and cwd).
+    knobs = knobs_from_flags(cwd=cwd)
+    top_k = knobs.top_k
+    mode = knobs.mode
+    project_tag = knobs.project_tag
+    contextual = knobs.contextual
     body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
     token_budget = _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
-    _pb = _flag_float("MEMO_RECALL_PROJECT_BOOST")
-    project_boost = 0.25 if _pb is None else _pb
-    _gb = _flag_float("MEMO_RECALL_GLOBAL_BOOST")
-    global_boost = 0.10 if _gb is None else _gb
-    mode = _flag_str("MEMO_RECALL_MODE") or "vec"
-    _mbc = _flag_int("MEMO_RECALL_MIN_BODY_CHARS")
-    min_body_chars = 40 if _mbc is None else _mbc
-    # M3 knobs — both default 0.0 = OFF, ranking identical to today.
-    # NOTE: like preference/graph boosts, these apply only on this (daemon)
-    # path — the cli_recall_hook subprocess fallback ranks inline and skips
-    # every rank_hits knob. Flipping these ON makes recall path-dependent.
-    mmr_lambda = _flag_float("MEMO_RECALL_MMR_LAMBDA") or 0.0
-    synthesis_boost = _flag_float("MEMO_RECALL_SYNTHESIS_BOOST") or 0.0
 
-    project_tag = None
-    if project_boost > 0 and cwd:
-        try:
-            from memo.project import current_project_tag
-
-            project_tag = current_project_tag(cwd)
-        except Exception as exc:
-            _logger.debug("project_tag resolution failed: %s", exc)
-            project_tag = None
-
-    contextual = flag_bool("MEMO_RECALL_CONTEXTUAL")
     search_k = top_k * 3 if (project_tag or contextual) else top_k
 
     from memo.tiers import REFERENCE_TYPES
@@ -646,6 +719,7 @@ def _recall_logic(
                 _logger.warning("recall-daemon: main embedder cold, using micro-embedder")
         elif not flag_bool("MEMO_RECALL_FORCE_MODE"):
             mode = "bm25"
+            knobs = replace(knobs, mode=mode)
             if debug:
                 _logger.warning("recall-daemon: main embedder cold, falling back to BM25")
 
@@ -661,19 +735,6 @@ def _recall_logic(
     if contextual:
         with contextlib.suppress(Exception):
             _prefs = mem.contextual.context.get_preferences()
-
-    knobs = RankKnobs(
-        top_k=top_k,
-        min_sim=min_sim,
-        min_body_chars=min_body_chars,
-        mode=mode,
-        project_tag=project_tag,
-        project_boost=project_boost,
-        global_boost=global_boost,
-        contextual=contextual,
-        mmr_lambda=mmr_lambda,
-        synthesis_boost=synthesis_boost,
-    )
 
     # Phase 2 graph-proximity boost (default OFF): nudge candidates whose entities
     # neighbour the query's entities in the materialized entity graph. Pure graph
@@ -796,19 +857,7 @@ def _recall_logic(
                     file=sys.stderr,
                 )
 
-    skip_below = _flag_float("MEMO_RECALL_SKIP_BELOW") or 0.0
-    if skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below:
-        return "{}", None
-
-    gap_threshold = _flag_float("MEMO_RECALL_GAP_THRESHOLD") or 0.0
-    if (
-        gap_threshold > 0
-        and len(qualifying) > 1
-        and qualifying[0].score is not None
-        and qualifying[1].score is not None
-        and (qualifying[0].score - qualifying[1].score) > gap_threshold
-    ):
-        qualifying = qualifying[:1]
+    qualifying = apply_injection_filters(qualifying)
 
     relevant = qualifying[:top_k]
     nudge = qualifying[top_k : top_k + 2]

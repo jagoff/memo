@@ -444,3 +444,513 @@ def test_run_config_uses_faithful_ranking_dedup() -> None:
     # 'a' (deduped to one) + 'b' = two top hits, not three
     assert len(row.detail[0]["top"]) == 2
     assert row.precision_at_k <= 1.0
+
+
+# --- recall-faithful knobs (knobs_from_flags) in run_config ------------------
+
+
+def _capture_run_config_knobs(monkeypatch, cfg, k: int = 4):
+    """Run run_config with a stubbed rank_hits; return the knobs it was given."""
+    import memo.recall_logic as rl
+
+    captured: dict = {}
+
+    def fake_rank_hits(hits, knobs, **kw):
+        captured["knobs"] = knobs
+        return []
+
+    monkeypatch.setattr(rl, "rank_hits", fake_rank_hits)
+    mem = SimpleNamespace(search=lambda *a, **kw: [])
+    labels = LabelSet(prompts=[Prompt("q", relevant=True)])
+    eval_recall.run_config(mem, cfg, k, labels)
+    return captured["knobs"]
+
+
+def test_run_config_pins_eval_fields_and_inherits_live_flags(monkeypatch):
+    monkeypatch.setenv("MEMO_RECALL_MMR_LAMBDA", "0.4")
+    monkeypatch.setenv("MEMO_RECALL_SYNTHESIS_BOOST", "0.07")
+    cfg = eval_recall.Cfg("X vec/0.33/keep", "vec", 0.33, exclude_archived=False)
+
+    knobs = _capture_run_config_knobs(monkeypatch, cfg, k=4)
+
+    # eval-specific pins
+    assert knobs.top_k == 4
+    assert knobs.min_sim == 0.33
+    assert knobs.min_body_chars == 0
+    assert knobs.mode == "vec"
+    assert knobs.project_tag is None  # labels carry no project yet
+    # everything else inherits the LIVE flag/overlay resolution
+    assert knobs.mmr_lambda == 0.4
+    assert knobs.synthesis_boost == 0.07
+
+
+def test_run_config_knob_overrides_beat_env(monkeypatch):
+    monkeypatch.setenv("MEMO_RECALL_MMR_LAMBDA", "0.4")
+    cfg = eval_recall.Cfg(
+        "X vec/0.33/keep",
+        "vec",
+        0.33,
+        exclude_archived=False,
+        knob_overrides={"mmr_lambda": 0.7, "synthesis_boost": 0.2},
+    )
+
+    knobs = _capture_run_config_knobs(monkeypatch, cfg)
+
+    assert knobs.mmr_lambda == 0.7  # override wins over env flag
+    assert knobs.synthesis_boost == 0.2
+
+
+# --- grid: MMR / synthesis variants ------------------------------------------
+
+
+def test_default_configs_include_mmr_and_synth_variants():
+    cfgs = eval_recall.default_configs()
+    names = [c.name for c in cfgs]
+    # existing configs intact, in order
+    assert names[:4] == [
+        "A vec/0.60/keep",
+        "B vec/0.72/excl",
+        "C hyb/0.40/excl",
+        "D hyb/0.40/ctx",
+    ]
+    by_name = {c.name: c for c in cfgs}
+    assert by_name["E mmr/0.3"].knob_overrides == {"mmr_lambda": 0.3}
+    assert by_name["F mmr/0.5"].knob_overrides == {"mmr_lambda": 0.5}
+    assert by_name["G mmr/0.7"].knob_overrides == {"mmr_lambda": 0.7}
+    assert by_name["H synth/0.05"].knob_overrides == {"synthesis_boost": 0.05}
+    assert by_name["I synth/0.10"].knob_overrides == {"synthesis_boost": 0.10}
+    # variants mirror the A baseline so the delta is attributable to the knob
+    for n in ("E mmr/0.3", "F mmr/0.5", "G mmr/0.7", "H synth/0.05", "I synth/0.10"):
+        assert by_name[n].mode == "vec"
+        assert by_name[n].floor == 0.60
+        assert by_name[n].exclude_archived is False
+        assert by_name[n].injection_fidelity is False
+
+
+def test_select_configs_accepts_new_letters():
+    rows = eval_recall.select_configs(["G", "I"])
+    assert [c.name for c in rows] == ["G mmr/0.7", "I synth/0.10"]
+
+
+def _redundant_mem():
+    """Synthetic corpus: two near-duplicate top hits + one diverse relevant hit."""
+    from dataclasses import dataclass as _dc
+    from dataclasses import field as _field
+
+    @_dc
+    class _Hit:
+        id: str
+        score: float | None
+        title: str = ""
+        body: str = ""
+        type: str = "note"
+        tags: list = _field(default_factory=list)
+        path: str = "p.md"
+        extra: dict = _field(default_factory=dict)
+
+    shared = "sqlite vec store thread local connections wal busy timeout float32 blobs"
+
+    class _Mem:
+        def search(self, *a, **kw):
+            return [
+                _Hit("aaaaaaaa", 0.90, title="vec store notes", body=f"{shared} variant alpha"),
+                _Hit("bbbbbbbb", 0.85, title="vec store notes bis", body=f"{shared} variant beta"),
+                _Hit(
+                    "cccccccc",
+                    0.80,
+                    title="release workflow",
+                    body="bump tag push five manifests changelog keepachangelog",
+                ),
+            ]
+
+    return _Mem()
+
+
+def test_mmr_config_differs_from_baseline_on_redundant_corpus():
+    labels = LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["cccccccc"])])
+    base = eval_recall.Cfg("base vec/0.0/keep", "vec", 0.0, exclude_archived=False)
+    mmr = eval_recall.Cfg(
+        "mmr vec/0.0/keep",
+        "vec",
+        0.0,
+        exclude_archived=False,
+        knob_overrides={"mmr_lambda": 0.7},
+    )
+
+    base_row = eval_recall.run_config(_redundant_mem(), base, 2, labels)
+    mmr_row = eval_recall.run_config(_redundant_mem(), mmr, 2, labels)
+
+    base_top = [t["title"] for t in base_row.detail[0]["top"]]
+    mmr_top = [t["title"] for t in mmr_row.detail[0]["top"]]
+    # baseline keeps the redundant near-duplicate; MMR promotes the diverse hit
+    assert base_top == ["vec store notes", "vec store notes bis"]
+    assert mmr_top == ["vec store notes", "release workflow"]
+    assert mmr_row.precision_at_k > base_row.precision_at_k
+
+
+# --- injection fidelity (hook's post-rank skip/gap filters) -------------------
+
+
+def test_injection_fidelity_defaults_off_and_applies_when_on(monkeypatch):
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0.95")  # every hit scores below
+    labels = LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["cccccccc"])])
+    plain = eval_recall.Cfg("plain vec/0.0/keep", "vec", 0.0, exclude_archived=False)
+    faithful = eval_recall.Cfg(
+        "faith vec/0.0/keep", "vec", 0.0, exclude_archived=False, injection_fidelity=True
+    )
+    assert plain.injection_fidelity is False  # Cfg default is OFF
+
+    plain_row = eval_recall.run_config(_redundant_mem(), plain, 2, labels)
+    faithful_row = eval_recall.run_config(_redundant_mem(), faithful, 2, labels)
+
+    assert len(plain_row.detail[0]["top"]) == 2  # default: filters NOT applied
+    assert faithful_row.detail[0]["top"] == []  # skip-below floor wiped the injection
+
+
+def test_injection_fidelity_gap_trims_to_top_hit(monkeypatch):
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+    monkeypatch.setenv("MEMO_RECALL_GAP_THRESHOLD", "0.04")  # 0.90 - 0.85 > 0.04
+    labels = LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["aaaaaaaa"])])
+    faithful = eval_recall.Cfg(
+        "faith vec/0.0/keep", "vec", 0.0, exclude_archived=False, injection_fidelity=True
+    )
+
+    row = eval_recall.run_config(_redundant_mem(), faithful, 2, labels)
+
+    assert [t["title"] for t in row.detail[0]["top"]] == ["vec store notes"]
+
+
+# --- recommend maps knob_overrides to env exports -----------------------------
+
+
+def test_recommend_maps_mmr_winner_to_knob_export():
+    rows = [
+        eval_recall.Row(config="A vec/0.60/keep", precision_at_k=0.4, noise_at_k=0.3),
+        eval_recall.Row(config="F mmr/0.5", precision_at_k=0.8, noise_at_k=0.1),
+    ]
+    out = eval_recall.recommend(rows)
+    assert "F mmr/0.5" in out
+    assert "MEMO_RECALL_MODE=vec" in out
+    assert "MEMO_RECALL_MIN_SIM=0.6" in out
+    assert "MEMO_RECALL_MMR_LAMBDA=0.5" in out
+
+
+# --- per-label project (Fase 2 reader side) -----------------------------------
+
+
+def test_project_tag_for_normalizes_formats():
+    # stored format (what current_project_tag produces) passes through verbatim
+    assert eval_recall._project_tag_for("project:memo") == "project:memo"
+    # bare hand-written name gets slugified + prefixed
+    assert eval_recall._project_tag_for("My Repo") == "project:my-repo"
+    assert eval_recall._project_tag_for(None) is None
+    assert eval_recall._project_tag_for("   ") is None
+
+
+def test_load_labels_parses_project_and_old_files_keep_working(tmp_path: Path):
+    # New-style file: schema marker + one prompt carrying `project`.
+    new = tmp_path / "new.json"
+    new.write_text(
+        json.dumps(
+            {
+                "schema": eval_recall.LABELS_SCHEMA,
+                "prompts": [
+                    {"text": "how does sync work", "relevant": True, "project": "project:memo"},
+                    {"text": "where is the socket", "relevant": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    labels = eval_recall.load_labels(new)
+    assert labels.prompts[0].project == "project:memo"
+    assert labels.prompts[1].project is None
+
+    # Old-style file (no schema key, no project anywhere) still loads.
+    old = tmp_path / "old.json"
+    old.write_text(
+        json.dumps({"prompts": [{"text": "where is the stack", "relevant": True}]}),
+        encoding="utf-8",
+    )
+    old_labels = eval_recall.load_labels(old)
+    assert len(old_labels.prompts) == 1
+    assert old_labels.prompts[0].project is None
+
+
+def test_fingerprint_sensitive_to_project():
+    a = LabelSet(prompts=[Prompt("x", relevant=True)])
+    b = LabelSet(prompts=[Prompt("x", relevant=True, project="project:memo")])
+    c = LabelSet(prompts=[Prompt("x", relevant=True, project="project:memo")])
+    assert a.fingerprint() != b.fingerprint()
+    assert b.fingerprint() == c.fingerprint()
+
+
+def test_harvest_labels_propagates_project(tmp_path: Path):
+    from memo.dashboard import append_grounding_log, append_recall_log
+
+    sd = tmp_path / "state"
+    sd.mkdir(parents=True, exist_ok=True)
+    append_recall_log(
+        sd,
+        prompt="cómo configuro el daemon de recall warm",
+        hits=[{"id": "deadbeef" + "0" * 24, "score": 0.9, "title": "T"}],
+        session_id="s1",
+        turn=3,
+    )
+    append_recall_log(
+        sd,
+        prompt="dónde vive el socket del recall daemon",
+        hits=[{"id": "cafe1234" + "0" * 24, "score": 0.9, "title": "S"}],
+        session_id="s1",
+        turn=5,
+    )
+    # Row with a project context → label carries it.
+    append_grounding_log(
+        sd,
+        session_id="s1",
+        turn=3,
+        recall_id="deadbeef",
+        used_score=0.9,
+        method="both",
+        project="project:memo",
+    )
+    # Row without one → key stays absent (schema-additive).
+    append_grounding_log(
+        sd, session_id="s1", turn=5, recall_id="cafe1234", used_score=0.9, method="both"
+    )
+
+    labels = eval_recall.harvest_labels(sd, strong=0.5)
+    by_text = {lab["text"]: lab for lab in labels}
+    assert by_text["cómo configuro el daemon de recall warm"]["project"] == "project:memo"
+    assert "project" not in by_text["dónde vive el socket del recall daemon"]
+
+
+def test_harvest_labels_cluster_project_first_non_null_wins(tmp_path: Path):
+    from memo.dashboard import append_grounding_log, append_recall_log
+
+    sd = tmp_path / "state"
+    sd.mkdir(parents=True, exist_ok=True)
+    append_recall_log(
+        sd,
+        prompt="cómo configuro el daemon de recall warm",
+        hits=[{"id": "deadbeef" + "0" * 24, "score": 0.9, "title": "T"}],
+        session_id="s1",
+        turn=3,
+    )
+    # Same cluster: first row has no project, second sets it, third differs.
+    append_grounding_log(
+        sd, session_id="s1", turn=3, recall_id="deadbeef", used_score=0.9, method="both"
+    )
+    append_grounding_log(
+        sd,
+        session_id="s1",
+        turn=3,
+        recall_id="aaaa1111",
+        used_score=0.9,
+        method="both",
+        project="project:memo",
+    )
+    append_grounding_log(
+        sd,
+        session_id="s1",
+        turn=3,
+        recall_id="bbbb2222",
+        used_score=0.9,
+        method="both",
+        project="project:otro",
+    )
+
+    labels = eval_recall.harvest_labels(sd, strong=0.5)
+    assert len(labels) == 1
+    assert labels[0]["project"] == "project:memo"  # first non-null, later one doesn't clobber
+
+
+def test_merge_label_prompts_project_first_non_null_wins():
+    existing = [
+        {
+            "text": "cómo configuro el daemon de recall",
+            "relevant": True,
+            "expect_ids": ["aaaa1111"],
+        },
+        {
+            "text": "dónde vive el socket del daemon",
+            "relevant": True,
+            "expect_ids": ["cccc3333"],
+            "project": "project:memo",
+        },
+    ]
+    harvested = [
+        {
+            "text": "cómo configuro el daemon de recall warm",
+            "relevant": True,
+            "expect_ids": ["bbbb2222"],
+            "project": "project:memo",
+        },
+        {
+            "text": "dónde vive el socket del daemon warm",
+            "relevant": True,
+            "expect_ids": ["dddd4444"],
+            "project": "project:otro",
+        },
+        {
+            "text": "algo totalmente nuevo sobre synthesis nocturna",
+            "relevant": True,
+            "expect_ids": ["eeee5555"],
+            "project": "project:nuevo",
+        },
+    ]
+    merged = eval_recall.merge_label_prompts(existing, harvested)
+    assert len(merged) == 3
+    # existing without project adopts the harvested one
+    assert merged[0]["project"] == "project:memo"
+    # existing WITH project keeps its own (first non-null wins)
+    assert merged[1]["project"] == "project:memo"
+    # appended new label keeps its harvested project
+    assert merged[2]["project"] == "project:nuevo"
+
+
+def _capture_run_config_knobs_per_prompt(monkeypatch, cfg, labels, k: int = 3):
+    """Run run_config with a stubbed rank_hits; return the knobs per prompt."""
+    import memo.recall_logic as rl
+
+    captured: list = []
+
+    def fake_rank_hits(hits, knobs, **kw):
+        captured.append(knobs)
+        return []
+
+    monkeypatch.setattr(rl, "rank_hits", fake_rank_hits)
+    mem = SimpleNamespace(search=lambda *a, **kw: [])
+    eval_recall.run_config(mem, cfg, k, labels)
+    return captured
+
+
+def test_run_config_per_label_project_tag_reaches_rank_hits(monkeypatch):
+    cfg = eval_recall.Cfg("X vec/0.33/keep", "vec", 0.33, exclude_archived=False)
+    labels = LabelSet(
+        prompts=[
+            Prompt("q with project", relevant=True, project="project:memo"),
+            Prompt("q without project", relevant=True),
+        ]
+    )
+
+    knobs = _capture_run_config_knobs_per_prompt(monkeypatch, cfg, labels)
+
+    assert knobs[0].project_tag == "project:memo"
+    assert knobs[1].project_tag is None
+    # only project_tag differs — everything else stays the base resolution
+    from dataclasses import replace as _replace
+
+    assert _replace(knobs[0], project_tag=None) == knobs[1]
+
+
+def test_run_config_projectless_labels_share_base_knobs(monkeypatch):
+    """Aggregation unchanged for project-less sets: every prompt ranks with the
+    SAME base knobs object (project_tag=None) — no per-label divergence."""
+    cfg = eval_recall.Cfg("X vec/0.33/keep", "vec", 0.33, exclude_archived=False)
+    labels = LabelSet(prompts=[Prompt("a", relevant=True), Prompt("b", relevant=True)])
+
+    knobs = _capture_run_config_knobs_per_prompt(monkeypatch, cfg, labels)
+
+    assert knobs[0] is knobs[1]  # identical object: the base knobs
+    assert knobs[0].project_tag is None
+
+
+def test_run_config_knob_override_project_tag_beats_label(monkeypatch):
+    cfg = eval_recall.Cfg(
+        "X vec/0.33/keep",
+        "vec",
+        0.33,
+        exclude_archived=False,
+        knob_overrides={"project_tag": "project:pinned"},
+    )
+    labels = LabelSet(prompts=[Prompt("q", relevant=True, project="project:memo")])
+
+    knobs = _capture_run_config_knobs_per_prompt(monkeypatch, cfg, labels)
+
+    assert knobs[0].project_tag == "project:pinned"  # overrides beat the label
+
+
+def test_run_config_label_project_gated_on_project_boost(monkeypatch):
+    """Hook-faithful gating: project_boost <= 0 means no project tiers at all,
+    so the label's project must NOT set project_tag (same as cwd resolution)."""
+    cfg = eval_recall.Cfg(
+        "X vec/0.33/keep",
+        "vec",
+        0.33,
+        exclude_archived=False,
+        knob_overrides={"project_boost": 0.0},
+    )
+    labels = LabelSet(prompts=[Prompt("q", relevant=True, project="project:memo")])
+
+    knobs = _capture_run_config_knobs_per_prompt(monkeypatch, cfg, labels)
+
+    assert knobs[0].project_tag is None
+
+
+def _project_corpus_mem():
+    """Synthetic corpus: the project:alpha hit trails a project:beta hit on raw
+    score, so only the project boost of a matching-project label flips the order."""
+    from dataclasses import dataclass as _dc
+    from dataclasses import field as _field
+
+    @_dc
+    class _Hit:
+        id: str
+        score: float | None
+        title: str = ""
+        body: str = ""
+        type: str = "note"
+        tags: list = _field(default_factory=list)
+        path: str = "p.md"
+        extra: dict = _field(default_factory=dict)
+
+    class _Mem:
+        def search(self, *a, **kw):
+            return [
+                _Hit(
+                    "bbbbbbbb",
+                    0.90,
+                    title="beta note",
+                    body="beta project body",
+                    tags=["project:beta"],
+                ),
+                _Hit(
+                    "aaaaaaaa",
+                    0.80,
+                    title="alpha note",
+                    body="alpha project body",
+                    tags=["project:alpha"],
+                ),
+            ]
+
+    return _Mem()
+
+
+def test_run_config_project_boost_applied_only_for_matching_label():
+    # Pin the boosts via knob_overrides so the test is env-independent.
+    def _cfg(name):
+        return eval_recall.Cfg(
+            name,
+            "vec",
+            0.0,
+            exclude_archived=False,
+            knob_overrides={"project_boost": 0.25, "global_boost": 0.10},
+        )
+
+    with_project = LabelSet(
+        prompts=[Prompt("q", relevant=True, expect_ids=["aaaaaaaa"], project="project:alpha")]
+    )
+    without_project = LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["aaaaaaaa"])])
+
+    row_p = eval_recall.run_config(_project_corpus_mem(), _cfg("P vec/0.0/keep"), 1, with_project)
+    row_n = eval_recall.run_config(
+        _project_corpus_mem(), _cfg("N vec/0.0/keep"), 1, without_project
+    )
+
+    # Matching-project label: alpha gets +0.25 (0.80 → 1.05) and outranks beta.
+    assert [t["title"] for t in row_p.detail[0]["top"]] == ["alpha note"]
+    assert row_p.precision_at_k == 1.0
+    # Project-less label: raw score order — beta stays on top, alpha misses @1.
+    assert [t["title"] for t in row_n.detail[0]["top"]] == ["beta note"]
+    assert row_n.precision_at_k == 0.0

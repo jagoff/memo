@@ -48,17 +48,18 @@ def _write_history(state_dir: Path, precs: list[float]) -> None:
     (eval_dir / "history.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _grounding_row(recall_id: str, method: str, turn: int = 1) -> str:
-    return json.dumps(
-        {
-            "ts": "2026-07-02T10:00:00+00:00",
-            "session_id": "sess-1",
-            "turn": turn,
-            "recall_id": recall_id,
-            "used_score": 1.0 if method == "cited" else 0.3,
-            "method": method,
-        }
-    )
+def _grounding_row(recall_id: str, method: str, turn: int = 1, project: str | None = None) -> str:
+    row = {
+        "ts": "2026-07-02T10:00:00+00:00",
+        "session_id": "sess-1",
+        "turn": turn,
+        "recall_id": recall_id,
+        "used_score": 1.0 if method == "cited" else 0.3,
+        "method": method,
+    }
+    if project is not None:
+        row["project"] = project
+    return json.dumps(row)
 
 
 def _write_grounding(state_dir: Path, rows: list[str]) -> None:
@@ -174,6 +175,30 @@ def test_corrupt_grounding_lines_are_skipped(tmp_path: Path) -> None:
     out = _render(_panel_recall_trend(state_dir))
     assert "[aaaaaaaa]" in out
     assert "1 of 2 recalled" in out
+
+
+def test_project_bearing_rows_are_tolerated(tmp_path: Path) -> None:
+    # Fase 2 writer stamps a `project` field on grounding rows — the citation
+    # stats reader (dict-based) must count them exactly like project-less rows.
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    _write_grounding(
+        state_dir,
+        [
+            _grounding_row("aaaaaaaa", "cited", project="project:memo"),
+            _grounding_row("aaaaaaaa", "cited", turn=2, project="project:memo"),
+            _grounding_row("bbbbbbbb", "lexical", project="project:synapse"),
+            _grounding_row("cccccccc", "embed"),  # legacy row, no project
+        ],
+    )
+
+    stats = _grounding_citation_stats(state_dir)
+    assert stats["top_cited"] == [("aaaaaaaa", 2)]
+    assert stats["never_cited"] == 2
+    assert stats["seen"] == 3
+
+    out = _render(_panel_recall_trend(state_dir))
+    assert "[aaaaaaaa]" in out
 
 
 def test_grounding_only_shows_partial_data(tmp_path: Path) -> None:

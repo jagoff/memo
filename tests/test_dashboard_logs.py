@@ -22,3 +22,27 @@ def test_grounding_row_stamped_with_active_overlay(tmp_path):
     expected = params_version(tmp_path)
     assert expected != "base"
     assert rows[0]["params_version"] == expected
+
+
+def test_grounding_row_carries_project_when_passed(tmp_path):
+    append_grounding_log(
+        tmp_path,
+        session_id="s1",
+        turn=1,
+        recall_id="abc1234567",
+        used_score=0.9,
+        method="lexical",
+        project="project:memo",
+    )
+    rows = read_grounding_log(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["project"] == "project:memo"
+
+
+def test_grounding_row_omits_project_when_none(tmp_path):
+    append_grounding_log(
+        tmp_path, session_id="s1", turn=1, recall_id="abc1234567", used_score=0.9, method="lexical"
+    )
+    rows = read_grounding_log(tmp_path)
+    assert len(rows) == 1
+    assert "project" not in rows[0]

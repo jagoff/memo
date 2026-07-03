@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import re
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 import click
@@ -38,24 +41,6 @@ _TRIVIAL_WORDS: frozenset[str] = frozenset(
         "cool",
         "perfect",
     }
-)
-
-_RECALL_CONTEXTS: tuple[tuple[str, re.Pattern[str], set[str]], ...] = (
-    (
-        "code",
-        re.compile(r"\b(implement|fix|debug|test|refactor|deploy|build|install)\b", re.I),
-        {"decision", "bug", "preference"},
-    ),
-    (
-        "decision",
-        re.compile(r"\b(should i|which|choose|decide|recommend|tradeoff|vs\.?|versus)\b", re.I),
-        {"decision", "fact"},
-    ),
-    (
-        "write",
-        re.compile(r"\b(write|document|explain|describe|summarize|draft)\b", re.I),
-        {"note", "fact", "reference"},
-    ),
 )
 
 
@@ -212,10 +197,30 @@ def recall_hook() -> None:
         except Exception as exc:
             _log.debug("daemon-error recall-log write failed: %s", exc)
 
-    _tk = flag_int("MEMO_RECALL_TOP_K")
-    top_k = 3 if _tk is None else _tk
-    _ms = flag_float("MEMO_RECALL_MIN_SIM")
-    min_sim = 0.5 if _ms is None else _ms
+    payload_cwd = payload.get("cwd")
+
+    from memo.recall_logic import (
+        apply_injection_filters,
+        knobs_from_flags,
+        make_vec_cosine,
+        rank_hits,
+    )
+
+    # Single-source knob resolution — the SAME builder the daemon path
+    # (_recall_logic) uses, so the two paths cannot diverge on ranking
+    # (project tiers, preference/graph/mmr/synthesis knobs included).
+    knobs = knobs_from_flags(cwd=payload_cwd)
+
+    # Session-mode adjustments (subprocess-only: MEMFLOW_SESSION_MODE is a
+    # per-session env var the long-lived daemon process cannot see).
+    _session_mode = os.environ.get("MEMFLOW_SESSION_MODE", "").strip().lower()
+    if _session_mode == "focus":
+        knobs = replace(knobs, top_k=min(knobs.top_k, 2), min_sim=max(knobs.min_sim, 0.65))
+    elif _session_mode == "explore":
+        knobs = replace(knobs, top_k=max(knobs.top_k, 5), min_sim=min(knobs.min_sim, 0.4))
+    elif _session_mode == "maintenance":
+        knobs = replace(knobs, top_k=1, min_sim=max(knobs.min_sim, 0.70))
+
     _bc = flag_int("MEMO_RECALL_BODY_CHARS")
     body_chars = 400 if _bc is None else _bc
     _tb = flag_int("MEMO_RECALL_TOKEN_BUDGET")
@@ -231,54 +236,31 @@ def recall_hook() -> None:
             token_budget = int(max(token_budget * 0.6, 200))
         # Mid-range stays as-is
 
-    _pb = flag_float("MEMO_RECALL_PROJECT_BOOST")
-    project_boost = 0.25 if _pb is None else _pb
-    _gb = flag_float("MEMO_RECALL_GLOBAL_BOOST")
-    global_boost = 0.10 if _gb is None else _gb
-
-    _session_mode = os.environ.get("MEMFLOW_SESSION_MODE", "").strip().lower()
-    if _session_mode == "focus":
-        top_k = min(top_k, 2)
-        min_sim = max(min_sim, 0.65)
-    elif _session_mode == "explore":
-        top_k = max(top_k, 5)
-        min_sim = min(min_sim, 0.4)
-    elif _session_mode == "maintenance":
-        top_k = 1
-        min_sim = max(min_sim, 0.70)
-
-    payload_cwd = payload.get("cwd")
-
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
-    mode = flag_str("MEMO_RECALL_MODE") or "vec"
-    if mode == "hybrid":
+    if knobs.mode == "hybrid":
         os.environ.setdefault(
             "MEMO_RERANK_INPUT_K",
             str(flag_int("MEMO_RECALL_RERANK_INPUT_K") or 10),
         )
 
-    if mode in ("vec", "hybrid") and not flag_bool("MEMO_RECALL_FORCE_MODE"):
+    if knobs.mode in ("vec", "hybrid") and not flag_bool("MEMO_RECALL_FORCE_MODE"):
+        # Cold-start downgrade — the subprocess equivalent of the daemon's
+        # embedder-warm check (a cold MLX load would blow the 5s hook budget).
         try:
             _signal = cfg.state_dir / ".prewarm_ts"
             _warm = _signal.exists() and (time.time() - float(_signal.read_text().strip())) < 3600
             if not _warm:
                 if flag_bool("MEMO_RECALL_DEBUG"):
                     print("# memo recall-hook: cold start — downgrading to bm25", file=sys.stderr)
-                mode = "bm25"
+                knobs = replace(knobs, mode="bm25")
         except Exception as exc:
-            _log.debug("warm-signal read failed, staying in %s mode: %s", mode, exc)
+            _log.debug("warm-signal read failed, staying in %s mode: %s", knobs.mode, exc)
 
-    project_tag = None
-    if project_boost > 0:
-        try:
-            from memo.project import current_project_tag
-
-            project_tag = current_project_tag(payload_cwd)
-        except Exception:
-            project_tag = None
-    search_k = top_k * 3 if project_tag else top_k
+    top_k = knobs.top_k
+    mode = knobs.mode
+    search_k = top_k * 3 if (knobs.project_tag or knobs.contextual) else top_k
     from memo.tiers import REFERENCE_TYPES
 
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
@@ -290,11 +272,27 @@ def recall_hook() -> None:
         _bail(f"search failed: {exc}")
         return
 
-    _mbc = flag_int("MEMO_RECALL_MIN_BODY_CHARS")
-    min_body_chars = 40 if _mbc is None else _mbc
-    staleness_days = flag_int("MEMO_RECALL_STALENESS_DAYS") or 0
+    # Ranking pipeline — identical to the daemon path (_recall_logic):
+    # rank_hits with the hybrid cosine gate, preference boost and the graph
+    # seam, then the shared skip-below/gap injection filters.
+    _vec_cosine = make_vec_cosine(mem, prompt)
 
-    def _search_filter(query_text: str) -> list:
+    _prefs: Any | None = None
+    if knobs.contextual:
+        with contextlib.suppress(Exception):
+            _prefs = mem.contextual.context.get_preferences()
+
+    _graph_boost: Callable[[list[Any]], list[Any]] | None = None
+    _gpw = flag_float("MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT") or 0.0
+    if flag_bool("MEMO_RECALL_GRAPH_PROXIMITY") and _gpw > 0:
+        with contextlib.suppress(Exception):
+            from memo.graph_proximity import extract_query_entities, graph_boost_factory
+
+            _graph_boost = graph_boost_factory(
+                mem.graph, extract_query_entities(prompt, mem.graph), weight=_gpw
+            )
+
+    def _rank(query_text: str) -> list:
         try:
             hits = mem.search(
                 query_text, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
@@ -303,85 +301,33 @@ def recall_hook() -> None:
             if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: search failed: {exc}", file=sys.stderr)
             return []
-        if project_tag or global_boost > 0:
-            from memo.recall_server import _apply_project_tiers
+        return rank_hits(
+            hits, knobs, vec_cosine=_vec_cosine, preferences=_prefs, graph_boost=_graph_boost
+        )
 
-            hits = _apply_project_tiers(hits, project_tag, project_boost, global_boost)
-        hits = hits[:top_k]
-        rel = [h for h in hits if h.score is None or h.score >= min_sim]
-        if min_body_chars > 0:
-            rel = [h for h in rel if len((h.body or "").strip()) >= min_body_chars]
-        if staleness_days > 0:
-            from datetime import UTC as _UTC
-            from datetime import datetime as _dt
+    qualifying = _rank(prompt)
 
-            _now = _dt.now(_UTC)
-            stale_threshold = min_sim * 1.5
-            filtered: list = []
-            for h in rel:
-                try:
-                    updated = _dt.fromisoformat(h.updated)
-                    if updated.tzinfo is None:
-                        updated = updated.replace(tzinfo=_UTC)
-                    days = (_now - updated).total_seconds() / 86400
-                    if days > staleness_days and (h.score or 0.0) < stale_threshold:
-                        continue
-                except Exception:
-                    # Unknown/unparseable age — treat as non-stale and keep the
-                    # hit rather than silently dropping it.
-                    _log.debug(
-                        "recall hook: keeping hit %s (unparseable updated date)",
-                        h.id[:8],
-                        exc_info=True,
-                    )
-                filtered.append(h)
-            rel = filtered
-        from memo.recall_server import dedup_hits
-
-        return dedup_hits(rel)
-
-    try:
-        from memo.recall_logic import _deduplicate_synthesis as _ds
-
-        relevant = _ds(_search_filter(prompt))
-    except Exception as e:
-        _log.debug("deduplicate synthesis failed: %s", e)
-        relevant = _search_filter(prompt)
-
-    if not relevant and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
-        from memo.recall_server import _session_context
+    if not qualifying and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
+        from memo.recall_logic import _session_context
 
         _ctx = _session_context(mem, exclude_types)
         if _ctx:
-            try:
-                from memo.recall_logic import _deduplicate_synthesis as _ds
-
-                relevant = _ds(_search_filter(f"{_ctx}\n{prompt}"))
-            except Exception:
-                relevant = _search_filter(f"{_ctx}\n{prompt}")
-            if relevant and flag_bool("MEMO_RECALL_DEBUG"):
+            qualifying = _rank(f"{_ctx}\n{prompt}")
+            if qualifying and flag_bool("MEMO_RECALL_DEBUG"):
                 print(
-                    f"# memo recall-hook: query expansion recovered {len(relevant)} hits",
+                    f"# memo recall-hook: query expansion recovered {len(qualifying)} hits",
                     file=sys.stderr,
                 )
 
-    if relevant and flag_bool("MEMO_RECALL_ADAPTIVE_CONTEXT"):
-        _boost_types: set[str] = set()
-        for _ctx_name, _ctx_pat, _ctx_types in _RECALL_CONTEXTS:
-            if _ctx_pat.search(prompt):
-                _boost_types |= _ctx_types
-                break
-        if _boost_types:
-            from dataclasses import replace as _dc_replace
+    qualifying = apply_injection_filters(qualifying)
+    relevant = qualifying[:top_k]
+    # Rank-overflow nudge (the hits just below the top-K cut) — same split the
+    # daemon path renders, distinct from the graph-associative nudge below.
+    nudge = qualifying[top_k : top_k + 2]
 
-            _boosted = [
-                _dc_replace(h, score=round((h.score or 0.0) * 1.25, 6))
-                if h.type in _boost_types
-                else h
-                for h in relevant
-            ]
-            _boosted.sort(key=lambda h: h.score or 0.0, reverse=True)
-            relevant = _boosted
+    if relevant and knobs.contextual:
+        with contextlib.suppress(Exception):
+            mem.contextual.record_search(prompt, [h.id for h in relevant])
 
     _latency_ms_subprocess = int((time.time() - _t0) * 1000)
     try:
@@ -422,7 +368,7 @@ def recall_hook() -> None:
 
     if not relevant:
         _stamp_metrics(0)
-        _bail(f"no hits above min_sim={min_sim}")
+        _bail(f"no hits above min_sim={knobs.min_sim}")
         return
 
     # Session dedup: filter IDs already injected in earlier turns (already in context window).
@@ -476,7 +422,7 @@ def recall_hook() -> None:
     else:
         context = render_recall_context(
             relevant,
-            [],  # nudge rendered below, format-agnostic via render_associative_line
+            nudge,  # rank-overflow nudge — mirrors the daemon path's top_k split
             turn=_turn,
             body_chars=body_chars,
             token_budget=token_budget,

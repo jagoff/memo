@@ -26,10 +26,12 @@ import json
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+# v1 is additive: the optional per-prompt `project` field (harvested from
+# grounding.log) is part of v1 — old label files without it keep loading.
 LABELS_SCHEMA = "memo.eval_recall.labels.v1"
 
 _ID_RE = re.compile(r"[0-9a-f]{8,64}")
@@ -41,6 +43,11 @@ class Prompt:
     relevant: bool = False  # contributes to precision@K when True
     expect_ids: list[str] = field(default_factory=list)
     expect_associative_ids: tuple[str, ...] = ()  # ids reachable via graph hop, not pure vec/BM25
+    # Project context the prompt was asked from — harvested from grounding.log's
+    # `project` field (the `project:<slug>` tag `current_project_tag` produced)
+    # or hand-written (a bare name also works). None = no project context;
+    # schema-additive: old label files simply lack the key.
+    project: str | None = None
 
 
 # Alias so tests/code can import `Label` as the per-prompt record type.
@@ -60,6 +67,7 @@ def _label_from_dict(d: dict) -> Label:
         relevant=bool(d.get("relevant", False)),
         expect_ids=[str(x) for x in (d.get("expect_ids") or [])],
         expect_associative_ids=tuple(str(x) for x in (d.get("expect_associative_ids") or ())),
+        project=str(d["project"]) if d.get("project") else None,
     )
 
 
@@ -77,7 +85,16 @@ class LabelSet:
 
         payload = json.dumps(
             {
-                "prompts": [(p.text, p.relevant, sorted(p.expect_ids), sorted(p.expect_associative_ids)) for p in self.prompts],
+                "prompts": [
+                    (
+                        p.text,
+                        p.relevant,
+                        sorted(p.expect_ids),
+                        sorted(p.expect_associative_ids),
+                        p.project,
+                    )
+                    for p in self.prompts
+                ],
                 "relevant_terms": sorted(self.relevant_terms),
                 "noise_tags": sorted(self.noise_tags),
                 "noise_path_fragments": list(self.noise_path_fragments),
@@ -173,6 +190,14 @@ class Cfg:
     floor: float
     exclude_archived: bool
     context: bool = False
+    # RankKnobs field -> value pins, applied ON TOP of the live flag/overlay
+    # resolution (knobs_from_flags(overrides=...)). Grid configs use this to
+    # probe MMR/synthesis variants without touching the environment.
+    knob_overrides: dict[str, Any] | None = None
+    # Apply the hook's post-rank injection filters (MEMO_RECALL_SKIP_BELOW
+    # floor + MEMO_RECALL_GAP_THRESHOLD trim) to the ranked list before
+    # scoring. Default False keeps the nightly trend comparable.
+    injection_fidelity: bool = False
 
 
 def default_configs() -> list[Cfg]:
@@ -181,10 +206,31 @@ def default_configs() -> list[Cfg]:
         Cfg("B vec/0.72/excl", "vec", 0.72, exclude_archived=True),
         Cfg("C hyb/0.40/excl", "hybrid", 0.40, exclude_archived=True),
         Cfg("D hyb/0.40/ctx", "hybrid", 0.40, exclude_archived=True, context=True),
+        # MMR / synthesis-boost variants vs the A baseline (same mode/floor/keep,
+        # only the knob differs — the delta is attributable to the knob).
+        Cfg("E mmr/0.3", "vec", 0.60, exclude_archived=False, knob_overrides={"mmr_lambda": 0.3}),
+        Cfg("F mmr/0.5", "vec", 0.60, exclude_archived=False, knob_overrides={"mmr_lambda": 0.5}),
+        Cfg("G mmr/0.7", "vec", 0.60, exclude_archived=False, knob_overrides={"mmr_lambda": 0.7}),
+        Cfg(
+            "H synth/0.05",
+            "vec",
+            0.60,
+            exclude_archived=False,
+            knob_overrides={"synthesis_boost": 0.05},
+        ),
+        Cfg(
+            "I synth/0.10",
+            "vec",
+            0.60,
+            exclude_archived=False,
+            knob_overrides={"synthesis_boost": 0.10},
+        ),
     ]
 
 
-def select_configs(names: list[str] | tuple[str, ...] | None = None, *, quick: bool = False) -> list[Cfg]:
+def select_configs(
+    names: list[str] | tuple[str, ...] | None = None, *, quick: bool = False
+) -> list[Cfg]:
     """Return the eval configs requested by CLI/user input.
 
     Names accept either the short letter (``A``/``B``/``C``/``D``) or the full
@@ -288,6 +334,24 @@ def _scored_prompts(labels: LabelSet) -> int:
     return sum(1 for p in labels.prompts if p.relevant or p.expect_ids)
 
 
+def _project_tag_for(project: str | None) -> str | None:
+    """Normalize a label's ``project`` field to the stored tag format.
+
+    Harvested labels already carry the exact tag ``current_project_tag``
+    produced (``project:<slug>`` — grounding.log stores it verbatim), so a
+    prefixed value passes through unchanged; a hand-written bare name is
+    slugified and prefixed the same way ``current_project_tag`` would."""
+    p = (project or "").strip()
+    if not p:
+        return None
+    if p.startswith("project:"):
+        return p
+    from memo.project import slugify_project
+
+    slug = slugify_project(p)
+    return f"project:{slug}" if slug else None
+
+
 ProgressCallback = Callable[[Cfg, int, int], None]
 
 
@@ -311,6 +375,12 @@ def run_config(
     # surfaces from the top-K seeds, not whether vector search already found the
     # graph-neighbor ids. Load the codegraph layer once (degrades to None).
     from memo.associative import associate
+    from memo.recall_logic import (
+        apply_injection_filters,
+        knobs_from_flags,
+        make_vec_cosine,
+        rank_hits,
+    )
 
     try:
         from memo import codegraph_loader
@@ -318,6 +388,21 @@ def run_config(
         _assoc_cg = codegraph_loader.load()[0]
     except Exception:
         _assoc_cg = None
+    # Recall-faithful knobs: pin only the eval-specific fields (top_k=k,
+    # min_sim=cfg.floor, min_body_chars=0, mode); every OTHER knob
+    # (mmr_lambda, synthesis_boost, project/global boosts, contextual)
+    # inherits the LIVE flag/overlay resolution — same as the hook — and
+    # cfg.knob_overrides pins individual fields on top for grid variants.
+    # No base project_tag/cwd: per-label project (when a label carries one)
+    # is applied per prompt inside the loop; project-less labels rank with
+    # project_tag=None (tiers stay inert).
+    knobs = knobs_from_flags(
+        top_k=k,
+        min_sim=cfg.floor,
+        min_body_chars=0,
+        mode=cfg.mode,
+        overrides=cfg.knob_overrides,
+    )
     for index, prompt in enumerate(labels.prompts, start=1):
         if progress is not None:
             progress(cfg, index, len(labels.prompts))
@@ -333,14 +418,22 @@ def run_config(
         # Rank exactly as the daemon does (shared rank_hits): dedup + the hybrid
         # true-cosine gate + the Phase-2 graph_boost seam — so the eval measures
         # the real ranking, not a hand-rolled floor filter. cfg.floor -> min_sim.
-        from memo.recall_logic import RankKnobs, make_vec_cosine, rank_hits
-
         vc = make_vec_cosine(mem, query) if cfg.mode == "hybrid" else None
-        ranked = rank_hits(
-            hits,
-            RankKnobs(top_k=k, min_sim=cfg.floor, min_body_chars=0, mode=cfg.mode),
-            vec_cosine=vc,
-        )
+        # Per-label project fidelity: a label harvested with a project context
+        # ranks with project_tag set — the same 3-tier boosts the hook applies
+        # from cwd — gated on project_boost > 0 exactly like knobs_from_flags'
+        # cwd resolution. A cfg.knob_overrides pin of project_tag wins over the
+        # label (overrides beat everything); project-less labels keep the base
+        # knobs (project_tag=None).
+        prompt_knobs = knobs
+        p_tag = _project_tag_for(prompt.project)
+        if p_tag and knobs.project_boost > 0 and "project_tag" not in (cfg.knob_overrides or {}):
+            prompt_knobs = replace(knobs, project_tag=p_tag)
+        ranked = rank_hits(hits, prompt_knobs, vec_cosine=vc)
+        if cfg.injection_fidelity:
+            # Hook-faithful injection: the same post-rank skip-below/gap
+            # filters _recall_logic applies before injecting (shared helper).
+            ranked = apply_injection_filters(ranked)
         if cfg.exclude_archived:
             ranked = [h for h in ranked if not _is_noise(h, labels)]
         top = ranked[:k]
@@ -438,6 +531,21 @@ def best_row(rows: list[Row]) -> Row:
     return max(rows, key=lambda r: (r.precision_at_k, -r.noise_at_k))
 
 
+# RankKnobs field -> MEMO_* flag, so `recommend` can map a winning config's
+# knob_overrides to the env exports that reproduce it.
+_KNOB_FIELD_TO_FLAG = {
+    "top_k": "MEMO_RECALL_TOP_K",
+    "min_sim": "MEMO_RECALL_MIN_SIM",
+    "min_body_chars": "MEMO_RECALL_MIN_BODY_CHARS",
+    "mode": "MEMO_RECALL_MODE",
+    "project_boost": "MEMO_RECALL_PROJECT_BOOST",
+    "global_boost": "MEMO_RECALL_GLOBAL_BOOST",
+    "contextual": "MEMO_RECALL_CONTEXTUAL",
+    "mmr_lambda": "MEMO_RECALL_MMR_LAMBDA",
+    "synthesis_boost": "MEMO_RECALL_SYNTHESIS_BOOST",
+}
+
+
 def recommend(rows: list[Row]) -> str:
     """Concrete next-step suggestion: pick the config with the best
     precision (tie-break: lower noise), and if it beats the baseline, map it
@@ -455,6 +563,10 @@ def recommend(rows: list[Row]) -> str:
     knobs = ""
     if cfg is not None:
         knobs = f"  export MEMO_RECALL_MODE={cfg.mode}\n  export MEMO_RECALL_MIN_SIM={cfg.floor}"
+        for field_name, value in (cfg.knob_overrides or {}).items():
+            flag_name = _KNOB_FIELD_TO_FLAG.get(field_name)
+            if flag_name:
+                knobs += f"\n  export {flag_name}={value}"
         if cfg.exclude_archived:
             knobs += "\n  (and keep archive exclusion on in the recall hook)"
     out = f"Best config: {best.config} (prec {dp:+.3f}, noise {dn:+.3f} vs baseline).\n{knobs}"
@@ -548,6 +660,12 @@ def harvest_labels(
     ``{text, relevant: True, expect_ids:[<8-hex recall id>]}``. Re-asks of the
     same question collapse by prompt token-Jaccard, unioning their grounded
     ids, so the set grows from what actually mattered instead of by hand.
+
+    Schema-additive ``project``: a grounding row's ``project`` field (the
+    ``project:<slug>`` tag the hook resolved from cwd) propagates into the
+    label — first non-null wins within a cluster; rows without one leave the
+    key absent — so the eval can replay the label with the same project
+    boosts the original recall ranked under.
     """
     from memo.dashboard import read_grounding_log
     from memo.dashboard_metrics import _jaccard, _reask_tokens
@@ -575,20 +693,32 @@ def harvest_labels(
             continue
         tok = _reask_tokens(prompt)
         ts = r.get("ts") or ""
+        proj = str(r.get("project") or "").strip() or None
         for c in clusters:
             if _jaccard(tok, c["tokens"]) >= sim_threshold:
                 c["expect_ids"].add(rid)
+                if proj and not c.get("project"):
+                    c["project"] = proj  # first non-null wins
                 if ts > c["ts"]:
                     c["ts"] = ts
                     c["text"] = prompt
                 break
         else:
-            clusters.append({"tokens": tok, "text": prompt, "expect_ids": {rid}, "ts": ts})
+            clusters.append(
+                {"tokens": tok, "text": prompt, "expect_ids": {rid}, "ts": ts, "project": proj}
+            )
     clusters.sort(key=lambda c: c["ts"], reverse=True)
-    return [
-        {"text": c["text"], "relevant": True, "expect_ids": sorted(c["expect_ids"])}
-        for c in clusters[:max_labels]
-    ]
+    out: list[dict[str, Any]] = []
+    for c in clusters[:max_labels]:
+        label: dict[str, Any] = {
+            "text": c["text"],
+            "relevant": True,
+            "expect_ids": sorted(c["expect_ids"]),
+        }
+        if c.get("project"):
+            label["project"] = c["project"]
+        out.append(label)
+    return out
 
 
 def merge_label_prompts(
@@ -599,7 +729,9 @@ def merge_label_prompts(
 ) -> list[dict[str, Any]]:
     """Merge harvested labels into an existing prompt list. A harvested label
     Jaccard-similar to an existing one unions its ``expect_ids`` into that
-    entry instead of adding a duplicate; otherwise it is appended."""
+    entry instead of adding a duplicate; otherwise it is appended. The
+    optional ``project`` field merges first-non-null-wins: an existing entry
+    keeps its own, an entry without one adopts the harvested label's."""
     from memo.dashboard_metrics import _jaccard, _reask_tokens
 
     merged = [dict(p) for p in existing]
@@ -612,6 +744,8 @@ def merge_label_prompts(
                 p["expect_ids"] = sorted(ids)
                 if h["expect_ids"]:
                     p["relevant"] = True
+                if not p.get("project") and h.get("project"):
+                    p["project"] = h["project"]
                 break
         else:
             merged.append(h)

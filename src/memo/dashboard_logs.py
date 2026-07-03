@@ -268,6 +268,7 @@ def append_grounding_log(
     downstream_action: str | None = None,
     action_evidence: str | None = None,
     specific_score: float | None = None,
+    project: str | None = None,
     cap: int = 1000,
 ) -> None:
     entry: dict[str, Any] = {
@@ -296,6 +297,8 @@ def append_grounding_log(
         entry["downstream_action"] = downstream_action
     if action_evidence is not None:
         entry["action_evidence"] = action_evidence[:200]
+    if project is not None:
+        entry["project"] = project
     _write_jsonl_entry(grounding_log_path(state_dir), entry, cap=cap, size_limit=1024 * 200)
 
 

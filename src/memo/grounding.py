@@ -314,6 +314,17 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
         if not transcript_path:
             return _bail("missing_transcript_path", session_id=session_id)
 
+        # Project context for the grounding row (cheap: env pin or .git walk
+        # from the hook payload's cwd — no store lookups). None when
+        # underivable; best-effort, never blocks scoring.
+        project: str | None = None
+        try:
+            from memo.project import current_project_tag
+
+            project = current_project_tag(payload.get("cwd"))
+        except Exception:
+            project = None
+
         # Resolve the turn the recall-hook stamped for this exchange.
         # Primary: recall_hook.log (written synchronously by the recall-hook,
         # never subject to the async-checkpoint race that leaves last_recall_turn=null
@@ -362,6 +373,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                                     method="cited",
                                     client="claude-code",
                                     answer_len=len(_ans_early),
+                                    project=project,
                                 )
                             return {"session_id": session_id, "turn": turn, "scored": len(_cited_early)}
             except Exception as _exc_early:
@@ -462,6 +474,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                 specific_score=float(spec) if isinstance(spec, (int, float)) else None,
                 downstream_action=action["downstream_action"] if action else None,
                 action_evidence=action["action_evidence"] if action else None,
+                project=project,
             )
             written += 1
         _scored8 = {
@@ -479,6 +492,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                 method="cited",
                 client=str(client),
                 answer_len=len(answer),
+                project=project,
             )
             written += 1
         return {"session_id": session_id, "turn": turn, "scored": written}

@@ -170,7 +170,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         0,
         "recall",
-        "Down-rank memories older than N days (0 = off).",
+        "DEPRECATED/inert since the hook paths unified on rank_hits — no consumer. Kept registered so set values still validate.",
     ),
     _spec(
         "MEMO_RECALL_SKIP_SLASH",
@@ -344,7 +344,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "recall",
-        "Re-weight recall results by detected prompt intent (code/decision/write → boost matching memory types). Zero extra search cost — pure score boost on returned hits.",
+        "DEPRECATED/inert since the hook paths unified on rank_hits (the daemon path never applied intent boosts). Kept registered so set values still validate.",
         opt_out=True,
     ),
     _spec(

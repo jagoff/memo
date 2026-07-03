@@ -233,6 +233,52 @@ def test_grounding_uses_hook_log_when_recall_log_is_flooded(tmp_path: Path, monk
     assert g[0]["recall_id"] == "memaaaa1"
 
 
+# ---------------- project context in grounding rows (Fase 2 writer side) ----
+
+
+def test_score_turn_stamps_derived_project_tag(tmp_path: Path, monkeypatch) -> None:
+    # cwd in the Stop-hook payload points inside a git repo → the grounding
+    # rows carry the derived `project:<slug>` tag.
+    monkeypatch.delenv("MEMO_PROJECT_TAG", raising=False)
+
+    def _boom(*a, **k):  # lexical is high → embedder must not run
+        raise AssertionError("embedder should not be called when lexical is high")
+
+    monkeypatch.setattr("memo.embedder_client.embed", _boom)
+    repo = tmp_path / "myproj"
+    (repo / ".git").mkdir(parents=True)
+    payload = _setup_turn(
+        tmp_path,
+        snippet="kubernetes deployment rollout strategy",
+        assistant_text="Use the kubernetes deployment rollout strategy described earlier.",
+    )
+    payload["cwd"] = str(repo)
+    summary = grounding.score_turn(tmp_path, payload)
+    assert summary and summary["scored"] == 1
+    g = dashboard.read_grounding_log(tmp_path)
+    assert len(g) == 1
+    assert g[0]["project"] == "project:myproj"
+
+
+def test_score_turn_omits_project_when_underivable(tmp_path: Path, monkeypatch) -> None:
+    # cwd with no .git anywhere up the chain → no project field on the row.
+    monkeypatch.delenv("MEMO_PROJECT_TAG", raising=False)
+    monkeypatch.setattr("memo.embedder_client.embed", lambda texts, state_dir=None: [])
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    payload = _setup_turn(
+        tmp_path,
+        snippet="kubernetes deployment rollout strategy",
+        assistant_text="Use the kubernetes deployment rollout strategy described earlier.",
+    )
+    payload["cwd"] = str(plain)
+    summary = grounding.score_turn(tmp_path, payload)
+    assert summary and summary["scored"] == 1
+    g = dashboard.read_grounding_log(tmp_path)
+    assert len(g) == 1
+    assert "project" not in g[0]
+
+
 def test_grounding_no_stamp_is_noop(tmp_path: Path) -> None:
     # No last_recall_turn stamped → nothing to correlate.
     tp = _write_transcript(tmp_path, "some answer")
