@@ -9,6 +9,42 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-07-02
+
+### Added
+
+- **Recall-faithful eval for boosts.** `knobs_from_flags()` is the single
+  source of `RankKnobs` resolution (env > tuned overlay > registry default),
+  shared by the daemon recall path, the eval harness, and the hook; the
+  extracted `apply_injection_filters()` (skip-below / gap trim) is shared by
+  hook and eval so injection semantics cannot diverge. The eval grid gains
+  MMR / synthesis variants (`E mmr/0.3` … `I synth/0.10`) and
+  `Cfg.knob_overrides`, so any ranking knob is measurable offline.
+- **Project-aware grounding and labels.** `grounding.log` entries record the
+  session's `project` tag; harvested eval labels carry it through, and the
+  eval ranks project-carrying labels with the hook-faithful `project_tag` —
+  project/global boosts are now measurable offline per-label.
+- **Nightly tuner searches the new knobs.** `MEMO_RECALL_MMR_LAMBDA`
+  (0/0.3/0.5/0.7) and `MEMO_RECALL_SYNTHESIS_BOOST` (0/0.05/0.10) join the
+  line-search under `MEMO_DREAM_TUNE_ENABLED`, with a curated no-regression
+  gate, a latency gate (candidate p50 must stay within +25% of baseline),
+  the single-apply guard (one knob change per night across all knobs),
+  per-knob baselines, and the knob-generic online revert.
+
+### Changed
+
+- **Recall-hook subprocess fallback unified onto `rank_hits`.** The inline
+  ranking chain that predated `rank_hits` is gone; daemon and subprocess
+  paths now produce identical injections for identical inputs (parity-tested,
+  including with MMR/synthesis/preference knobs on).
+  `MEMO_RECALL_STALENESS_DAYS` and `MEMO_RECALL_ADAPTIVE_CONTEXT` had no
+  daemon-path consumer and are now inert — marked deprecated in the registry.
+
+### Fixed
+
+- Tuner online-revert now merges into the scalar overlay, so bool/str levers
+  (e.g. `MEMO_RECALL_MODE`) survive a revert instead of being dropped.
+
 ## [2.11.0] - 2026-07-02
 
 ### Added
