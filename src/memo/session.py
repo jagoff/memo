@@ -247,6 +247,10 @@ def stamp_recall_turn(state_dir: Path, session_id: str, turn: int) -> None:
         existing = _load(state_dir, session_id) or {}
         existing["session_id"] = session_id
         existing["last_recall_turn"] = int(turn)
+        # Refresh `updated` — the session GC evicts oldest-by-updated, and a
+        # session that only ever got hook stamps would sort first and lose its
+        # recalled_ids (cited-grounding depends on them).
+        existing["updated"] = _now_iso()
         _write(state_dir, session_id, existing)
     except (OSError, ValueError, TypeError) as exc:
         _log.debug("session: failed to checkpoint recall turn: %s", exc)
@@ -580,6 +584,7 @@ def mark_ids_recalled(
             if mid not in recalled:
                 recalled[mid] = turn
         existing["recalled_ids"] = recalled
+        existing["updated"] = _now_iso()
         _write(state_dir, session_id, existing)
     except Exception:  # noqa: S110
         pass

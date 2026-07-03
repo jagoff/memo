@@ -9,6 +9,15 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.2] - 2026-07-03
+
+### Fixed
+
+- Hook-side session writers (`stamp_recall_turn`, `mark_ids_recalled`) now
+  refresh the snapshot's `updated` timestamp — a session that only ever got
+  hook stamps sorted oldest-by-`updated` and the session-cap GC evicted it,
+  wiping its `recalled_ids` before Stop-hook cited-grounding could match.
+
 ## [2.12.1] - 2026-07-03
 
 ### Fixed
