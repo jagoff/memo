@@ -869,10 +869,9 @@ def _extract_and_save(
         # present) re-type to the marker-backed type the grounding data cites
         # most. No-op unless MEMO_CAPTURE_TYPE_FEEDBACK is on AND weights exist.
         if type_weights:
-            _new_type = reweight_ambiguous_type(
-                str(cand.get("type") or "note"), body_for_quality, type_weights
-            )
-            if _new_type != cand.get("type"):
+            _claimed_type = str(cand.get("type") or "note").strip() or "note"
+            _new_type = reweight_ambiguous_type(_claimed_type, body_for_quality, type_weights)
+            if _new_type != _claimed_type:
                 retyped += 1
                 if debug:
                     print(

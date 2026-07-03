@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.4] - 2026-07-03
+
+### Fixed
+
+- `build_labels()` (tuner objective) now passes the curated document's
+  `noise_tags`/`noise_path_fragments` into the LabelSet — same fix as the
+  curated gate: the knob line-searches' noise@K was a vacuous 0.0.
+- Capture `retyped` counter compares against the normalized claimed type —
+  a whitespace-only extractor type no longer counts as a spurious retype.
+
+### Changed
+
+- Coverage floor ratcheted 64 → 68 (measured 70% after the Q3 programs).
+
 ## [2.12.3] - 2026-07-03
 
 ### Fixed

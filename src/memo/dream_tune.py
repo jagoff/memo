@@ -173,7 +173,14 @@ def build_labels(
         for p in merged
         if p.get("text")
     ]
-    return LabelSet(prompts=prompts), bool(curated)
+    # Same noise pass-through as _curated_label_set — without it the tuner's
+    # noise@K objective is a vacuous 0.0 (see the curated-gate fix).
+    raw = _curated_raw(cfg.state_dir) if curated else {}
+    return LabelSet(
+        prompts=prompts,
+        noise_tags={str(t).lower() for t in (raw.get("noise_tags") or [])},
+        noise_path_fragments=tuple(str(f) for f in (raw.get("noise_path_fragments") or [])),
+    ), bool(curated)
 
 
 # --- tuning ------------------------------------------------------------------
