@@ -15,7 +15,7 @@ class _Hit:
 class _StubMem:
     """One relevant hit (aaaa1111 @0.9), one weaker non-relevant (bbbb2222 @0.5)."""
 
-    def search(self, query, limit, mode="vec"):
+    def search(self, query, limit, mode="vec", exclude_types=None):
         return [_Hit("aaaa1111", 0.9), _Hit("bbbb2222", 0.5)]
 
 
