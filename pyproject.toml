@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "2.12.5"
+version = "2.12.6"
 description = "Local-first semantic memory for AI agents — MLX (Apple Silicon) or CPU sentence-transformers (Linux/Ubuntu) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -44,6 +44,10 @@ dependencies = [
     # MLX runtime — Apple Silicon only. Cap at <1 to avoid silent breakage.
     "mlx>=0.18,<1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.18; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # transformers 5.13 broke AutoTokenizer.register(str) which mlx-lm (<=0.31.3)
+    # still calls at import — fresh installs crash on any embed. Lift the cap
+    # once mlx-lm ships a release compatible with transformers >=5.13.
+    "transformers<5.13; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [project.urls]

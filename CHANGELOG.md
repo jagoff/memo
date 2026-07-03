@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.6] - 2026-07-03
+
+### Fixed
+
+- Pin `transformers<5.13` on the Apple Silicon install: transformers 5.13
+  broke `AutoTokenizer.register(str)` which mlx-lm (≤0.31.3) still calls at
+  import, so any fresh `mlx-memo` install crashed on the first embed
+  (`AttributeError: 'str' object has no attribute '__module__'`). 5.12 and
+  below verified working; lift the cap when mlx-lm ships a compatible release.
+
 ## [2.12.5] - 2026-07-03
 
 ### Fixed
