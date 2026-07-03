@@ -9,6 +9,31 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.3] - 2026-07-03
+
+### Fixed
+
+- **Recall daemon latency tail.** Two real causes fixed: (1) priority drift —
+  the `embed_query` branch acquired the daemon lock at priority 1 (same as
+  interactive recall) with a 60s timeout, so an embed burst (memflow vec
+  indexing, eval runs, grounding scoring) queued at recall's own priority and
+  burned the hook's 2.5s budget; `embed_query`/`search`/`embed_batch` now run
+  at priority 0 and interactive recall genuinely outranks them. (2) Cold MLX
+  load no longer counts against queued recalls: the model warms in a
+  background thread at daemon start; while warming, recall ops bail `{}` fast
+  (hook falls back to subprocess, same as socket-absent) and non-latency-bound
+  ops wait the event out. The socket still binds immediately, so
+  `memo recall-daemon start`'s probe succeeds on cold starts. Observability: a
+  recall waiting >500ms or bailing on lock-busy emits one structured stderr
+  line (`recall_lock_wait`/`recall_lock_bail`/`recall_warming` with `held_by`).
+  A timed-out high-priority waiter now wakes re-slept priority-0 waiters
+  (liveness gap).
+- `memo dream status` renders the `capture_weights` fragment; `memo
+  debug-recall` renders the `synthesis_boost`/`mmr` explain stages; capture
+  gains a `retyped` counter; `type_weights.json` staging file is pid-suffixed;
+  the tuner's curated gate now measures real noise@K (document-level
+  `noise_tags`/`noise_path_fragments` reach the LabelSet).
+
 ## [2.12.2] - 2026-07-03
 
 ### Fixed

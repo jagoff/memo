@@ -312,6 +312,53 @@ def test_curated_gate_vacuous_without_curated_labels(tmp_path, monkeypatch):
     assert gate["reason"] == "no_curated_labels"
 
 
+def _write_curated_with_noise(state_dir):
+    eval_dir = state_dir / "eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    (eval_dir / "regression_labels.json").write_text(
+        json.dumps(
+            {
+                "schema": "memo.eval_recall.labels.v1",
+                "prompts": [{"text": "curated-q", "relevant": True, "expect_ids": ["cccc3333"]}],
+                "noise_tags": ["Screenshot", "garbled-ocr"],
+                "noise_path_fragments": ["inactive/", "/old/"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_curated_label_set_passes_noise_fields_through(tmp_path):
+    """The document-level noise_tags/noise_path_fragments must reach the
+    LabelSet (same parsing as eval_recall.load_labels) — otherwise the gate's
+    noise@K dimension is a vacuous 0.0."""
+    _write_curated_with_noise(tmp_path)
+    labels = dt._curated_label_set(tmp_path)
+    assert labels is not None
+    assert labels.prompts[0].text == "curated-q"
+    assert labels.noise_tags == {"screenshot", "garbled-ocr"}  # lowercased like load_labels
+    assert labels.noise_path_fragments == ("inactive/", "/old/")
+
+
+def test_curated_gate_rejects_noise_raising_candidate(tmp_path, monkeypatch):
+    """Equal curated precision but HIGHER curated noise ⇒ gate rejects."""
+    _write_curated_with_noise(tmp_path)
+
+    def _fake_measure(mem, labels, *, k, floor, knob, value):
+        # The gate's label set must carry the noise fields through to the
+        # measurement — the noise dimension is only real if they arrive here.
+        assert labels.noise_tags == {"screenshot", "garbled-ocr"}
+        assert labels.noise_path_fragments == ("inactive/", "/old/")
+        return _metrics(0.5, noise=0.0 if value == 0.0 else 0.2)
+
+    monkeypatch.setattr(dt, "measure_rank_knob", _fake_measure)
+    gate = dt.curated_gate(
+        _StubMem(), tmp_path, k=5, floor=0.5, knob=_MMR, value_before=0.0, value_after=0.5
+    )
+    assert gate["ok"] is False
+    assert gate["after"]["noise_at_k"] > gate["before"]["noise_at_k"]
+
+
 # --- overlay round-trip: write -> flag() -> knobs_from_flags --------------------
 
 

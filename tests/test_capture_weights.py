@@ -323,8 +323,52 @@ def test_capture_flag_on_corroborated_claim_untouched(mem_with_stub, monkeypatch
     _write_weights(mem_with_stub.cfg, {"bug": 2.0, "decision": 0.5})
     _wire(monkeypatch, [_cand("Sync locking approach", _AMBIG_BODY, type_="decision")])
     saves = _spy_saves(monkeypatch, mem_with_stub)
-    capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "u", "a")
+    out = capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "u", "a")
     assert saves[0]["type_"] == "decision"
+    assert out["retyped"] == 0  # corroborated claim: consult ran but changed nothing
+
+
+def test_capture_retyped_counter_counts_actual_type_changes(mem_with_stub, monkeypatch):
+    monkeypatch.setenv("MEMO_CAPTURE_TYPE_FEEDBACK", "1")
+    _write_weights(mem_with_stub.cfg, {"decision": 1.5, "note": 0.8})
+    _wire(monkeypatch, [_cand("Sync locking approach", _AMBIG_BODY, type_="note")])
+    out = capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "u", "a")
+    assert out["retyped"] == 1
+
+
+def test_capture_retyped_zero_when_flag_off(mem_with_stub, monkeypatch):
+    # Weights file exists and favors decision — but the flag (default OFF)
+    # means the consult never runs and the counter stays 0.
+    _write_weights(mem_with_stub.cfg, {"decision": 1.5, "note": 0.8})
+    _wire(monkeypatch, [_cand("Sync locking approach", _AMBIG_BODY, type_="note")])
+    out = capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "u", "a")
+    assert out["retyped"] == 0
+
+
+# ── atomic write: tmp name unique per writer ──────────────────────────────────
+
+
+def test_compute_stats_tmp_name_is_pid_suffixed(mem_with_stub, monkeypatch):
+    """Two concurrent dream runs must not interleave writes into one tmp file —
+    the staging name carries the writer's pid (same pattern as presence.py)."""
+    import os
+
+    mem = mem_with_stub
+    dec = mem.save(content="decision body here", title="d", type_="decision")
+    _write_grounding(mem.cfg.state_dir, _rows(dec.id[:8], 6, 0.9))
+
+    seen: list[str] = []
+    real_replace = os.replace
+
+    def _spy(src, dst):
+        seen.append(str(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr("memo.capture_weights.os.replace", _spy)
+    compute_type_citation_stats(mem.cfg, mem)
+    assert seen, "atomic replace never ran"
+    assert seen[0].endswith(f".{os.getpid()}.tmp")
+    assert weights_path(mem.cfg).is_file()
 
 
 # ── dream pass: _run_capture_weights + `memo dream run` wiring ────────────────

@@ -61,7 +61,9 @@ def test_embed_batch_chunks_and_releases_lock_between_chunks(monkeypatch) -> Non
         def __init__(self, lk: threading.Lock) -> None:
             self._lk = lk
 
-        def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
+        def acquire(
+            self, priority: int = 0, timeout: float | None = None, label: str | None = None
+        ) -> bool:
             return self._lk.acquire(timeout=timeout if timeout is not None else -1)
 
         def release(self) -> None:

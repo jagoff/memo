@@ -153,6 +153,8 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
                     "tier_boost": e.get("tier_boost"),
                     "preference_boost": e.get("preference_boost"),
                     "graph_boost": e.get("graph_boost"),
+                    "synthesis_boost": e.get("synthesis_boost"),
+                    "mmr": e.get("mmr"),
                     "final_score": e.get("final_score"),
                     "gate_value": e.get("gate_value"),
                     "passed_min_sim": e.get("passed_min_sim"),
@@ -207,10 +209,16 @@ def _boosts_cell(row: dict[str, Any]) -> str:
         ("tier_boost", "tier"),
         ("preference_boost", "pref"),
         ("graph_boost", "graph"),
+        ("synthesis_boost", "synth"),
     ):
         v = row.get(key)
         if v:
             parts.append(f"{label}{v:+.2f}")
+    # MMR is a diversity re-ORDER, not a score delta — show the greedy
+    # selection score so the reordering is visible in the breakdown.
+    mmr = row.get("mmr")
+    if isinstance(mmr, dict) and isinstance(mmr.get("mmr_score"), int | float):
+        parts.append(f"mmr={mmr['mmr_score']:.2f}")
     return " ".join(parts) or "—"
 
 

@@ -342,7 +342,8 @@ def dream_run(
                     k=flag_int("MEMO_DREAM_TUNE_K") or 5,
                     min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
                     dry_run=dry_run,
-                    latency_budget_ms=flag_float("MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS") or 2500.0,
+                    latency_budget_ms=flag_float("MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS")
+                    or 2500.0,
                 )
                 progress.update(
                     step,
@@ -353,7 +354,9 @@ def dream_run(
                 )
             except Exception as exc:
                 receipt["errors"].append(f"retrieval_tuner: {type(exc).__name__}: {exc}")
-                progress.update(step, description="[tune] graph-injection tuner [yellow]warn[/yellow]")
+                progress.update(
+                    step, description="[tune] graph-injection tuner [yellow]warn[/yellow]"
+                )
 
         # Online-only project-boost explorer (separate opt-in; no offline gate).
         if flag_bool("MEMO_DREAM_TUNE_BOOST_ENABLED"):
@@ -956,7 +959,11 @@ def dream_status() -> None:
     if _proof:
         console.print("  [bold]proof loop[/bold] (realized online impact):")
         for e in _proof:
-            mark = "[green]✓ confirmed[/green]" if e.get("verdict") == "confirmed" else "[red]✗ reverted[/red]"
+            mark = (
+                "[green]✓ confirmed[/green]"
+                if e.get("verdict") == "confirmed"
+                else "[red]✗ reverted[/red]"
+            )
             _d = e.get("realized_delta")
             _ds = f"{_d:+g}" if isinstance(_d, (int, float)) else "—"
             _knob = (e.get("knob") or "MEMO_RECALL_MIN_SIM").replace("MEMO_RECALL_", "").lower()
@@ -972,7 +979,9 @@ def dream_status() -> None:
         from memo.dream_tune_online import graduation_streak
 
         _streak = graduation_streak(_grad)
-        _verdict = "[green]✓ ready to enable by default[/green]" if _streak >= _gk else "accumulating"
+        _verdict = (
+            "[green]✓ ready to enable by default[/green]" if _streak >= _gk else "accumulating"
+        )
         console.print(f"  graduation: {_streak}/{_gk} confirmed nights — {_verdict}")
     if data.get("anticipated"):
         from memo.dream_anticipate import briefing_line
@@ -992,13 +1001,19 @@ def dream_status() -> None:
             f"noise@{ev.get('k')} {ev.get('noise_at_k')} · {ev.get('labels_total')} labels "
             f"({ev.get('harvested')} harvested + {ev.get('curated')} curated)"
         )
+    if data.get("capture_weights"):
+        cw = data["capture_weights"]
+        _cw_top = f" · top {cw.get('top')}" if cw.get("top") else ""
+        console.print(f"  capture weights: {cw.get('types', 0)} type(s){_cw_top}")
     if data.get("errors"):
         for e in data["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")
 
 
 @dream_cmd.command(name="timeline")
-@click.option("--limit", type=int, default=20, help="Most recent proof-loop entries to show (default: 20).")
+@click.option(
+    "--limit", type=int, default=20, help="Most recent proof-loop entries to show (default: 20)."
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit the ledger entries as raw JSON.")
 def dream_timeline(limit: int, as_json: bool) -> None:
     """Proof-loop timeline: how the recall self-tuner changed over time and
@@ -1012,7 +1027,9 @@ def dream_timeline(limit: int, as_json: bool) -> None:
         click.echo(json.dumps(entries, ensure_ascii=False, indent=2))
         return
     if not entries:
-        console.print("[dim]no proof-loop history yet (the recall self-tuner has applied no change)[/dim]")
+        console.print(
+            "[dim]no proof-loop history yet (the recall self-tuner has applied no change)[/dim]"
+        )
         return
 
     console.print("[bold]recall self-tuner — proof-loop timeline[/bold]")
@@ -1036,7 +1053,8 @@ def dream_timeline(limit: int, as_json: bool) -> None:
     reverted = sum(1 for e in entries if e.get("verdict") == "reverted")
     expired = sum(1 for e in entries if e.get("verdict") == "expired")
     net = sum(
-        e["realized_delta"] for e in entries
+        e["realized_delta"]
+        for e in entries
         if e.get("verdict") == "confirmed" and isinstance(e.get("realized_delta"), (int, float))
     )
     console.print(
@@ -1046,7 +1064,9 @@ def dream_timeline(limit: int, as_json: bool) -> None:
 
 
 @dream_cmd.command(name="anticipate")
-@click.option("--json", "as_json", is_flag=True, help="Emit the anticipated-needs fragment as JSON.")
+@click.option(
+    "--json", "as_json", is_flag=True, help="Emit the anticipated-needs fragment as JSON."
+)
 def dream_anticipate_cmd(as_json: bool) -> None:
     """Anticipatory pass — surface recurring unmet gaps + hot queries (no fabrication)."""
     from memo import dream_anticipate

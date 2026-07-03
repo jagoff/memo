@@ -830,6 +830,7 @@ def _extract_and_save(
     reconciled = 0
     skipped_quality = 0
     uncertain = 0
+    retyped = 0
     for cand in insights:
         # Quality gate: skip low-specificity memories before hitting the
         # embedder or disk. Threshold controlled by MEMO_CAPTURE_MIN_WORDS.
@@ -872,6 +873,7 @@ def _extract_and_save(
                 str(cand.get("type") or "note"), body_for_quality, type_weights
             )
             if _new_type != cand.get("type"):
+                retyped += 1
                 if debug:
                     print(
                         f"# memo capture: retype '{cand['title']}' "
@@ -924,6 +926,7 @@ def _extract_and_save(
         "skipped_meta": skipped_meta,
         "skipped_batch_dup": skipped_batch_dup,
         "uncertain": uncertain,
+        "retyped": retyped,
     }
 
 
@@ -977,6 +980,7 @@ def extract_and_save_text(
             "skipped_meta": 0,
             "skipped_batch_dup": 0,
             "uncertain": 0,
+            "retyped": 0,
         }
     return {"status": "extracted", **result}
 

@@ -324,6 +324,66 @@ def test_debug_recall_injected_honors_gap_threshold(
     assert by_id[beta_id]["injected"] is True
 
 
+def test_debug_recall_renders_synthesis_boost_and_mmr(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The newer explain stages surface in the breakdown: synthesis_boost is a
+    score delta in the boosts cell; mmr is a re-ORDER (not a delta) shown as a
+    compact mmr=<greedy score> indicator."""
+    _install_keyword_stub(monkeypatch)
+    from memo.memory import Memory
+
+    cfg = Config(
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_model=_STUB_MODEL,
+        embedder_dims=4,
+        reranker_enabled=False,
+    )
+    mem = Memory(cfg)
+    try:
+        syn = mem.save(
+            content="alpha rollout synthesis distilled from the gating deliberations",
+            title="alpha rollout synthesis",
+            type_="synthesis",
+            auto_project=False,
+        )
+        mem.save(
+            content="the alpha rollout decision was made after deliberation about the gates",
+            title="alpha rollout decision",
+            auto_project=False,
+        )
+    finally:
+        mem.close()
+
+    env = {
+        **_cli_env(tmp_cfg),
+        "MEMO_RECALL_MIN_SIM": "0.0",
+        "MEMO_RECALL_SKIP_BELOW": "0",
+        "MEMO_RECALL_GAP_THRESHOLD": "0",
+        "MEMO_RECALL_SYNTHESIS_BOOST": "0.05",
+        "MEMO_RECALL_MMR_LAMBDA": "0.7",
+        "COLUMNS": "200",  # keep the boosts cell unwrapped for the substring asserts
+    }
+
+    result = CliRunner().invoke(debug_recall_cmd, [_PROMPT, "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    by_id = {h["id"]: h for h in payload["hits"]}
+    assert by_id[syn.id]["synthesis_boost"] == pytest.approx(0.05)
+    mmr_entries = [h["mmr"] for h in payload["hits"] if h.get("mmr")]
+    assert mmr_entries
+    assert {"mmr_score", "max_sim_to_selected"} <= set(mmr_entries[0])
+
+    result = CliRunner().invoke(debug_recall_cmd, [_PROMPT], env=env)
+    assert result.exit_code == 0, result.output
+    plain = _strip_ansi(result.output)
+    # The header echoes "synth+0.05" once; the boosts cell adds a second one.
+    assert plain.count("synth+0.05") >= 2
+    assert "mmr=" in plain  # boosts-cell indicator (header says "mmr_lambda=")
+
+
 def test_debug_recall_empty_index(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     _install_keyword_stub(monkeypatch)
     result = CliRunner().invoke(

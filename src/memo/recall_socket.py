@@ -23,6 +23,23 @@ _log = logging.getLogger(__name__)
 # Same cap on both ends of the wire — see ``embed_protocol.MAX_LINE_BYTES``.
 _MAX_LINE_BYTES = MAX_LINE_BYTES
 
+# A recall that waits longer than this for the priority lock gets one
+# structured stderr line (`recall_lock_wait` / `recall_lock_bail`) so the
+# next latency tail is diagnosable from the daemon log alone.
+_LOCK_WAIT_LOG_MS = 500.0
+
+
+def _log_lock_contention(event: str, wait_ms: float, held_by: str | None) -> None:
+    """One structured line per contended recall — grep the daemon stderr log
+    for ``recall_lock`` to see who a slow/bailed recall waited behind."""
+    print(
+        json.dumps(
+            {"event": event, "op": "recall", "wait_ms": round(wait_ms, 1), "held_by": held_by},
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+    )
+
 
 def _socket_path(state_dir: Path) -> Path:
     return daemon_paths(state_dir, "recall")[0]
@@ -84,7 +101,12 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         client = req.get("client") or None
         t0 = time.time()
         timeout_s = max(0.1, (flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS") or 2500) / 1000.0)
-        if not self.server._priority_lock.acquire(priority=1, timeout=timeout_s):
+        _we = getattr(self.server, "_warm_event", None)
+        if _we is not None:
+            _we.wait(timeout=timeout_s)
+        # priority=0: only the interactive `recall` op (5s hook budget) outranks
+        # the queue — the memflow bridge degrades gracefully on a bail.
+        if not self.server._priority_lock.acquire(priority=0, timeout=timeout_s, label="search"):
             return json.dumps({"error": "search: timeout acquiring lock", "results": []})
         try:
             # No cross-encoder rerank: it adds ~6s and a fallback bridge wants a
@@ -128,9 +150,12 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         from memo.flags import flag_int
 
         chunk = max(1, flag_int("MEMO_EMBED_BATCH_CHUNK") or 32)
+        _we = getattr(self.server, "_warm_event", None)
+        if _we is not None:
+            _we.wait(timeout=60.0)
         vectors: list[Any] = []
         for i in range(0, len(texts), chunk):
-            if self.server._priority_lock.acquire(priority=0, timeout=60.0):
+            if self.server._priority_lock.acquire(priority=0, timeout=60.0, label="embed_batch"):
                 try:
                     vectors.extend(self.server._mem.embedder.embed(texts[i : i + chunk]))
                 finally:
@@ -196,6 +221,15 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             log_fn: Callable[[], None] | None = None
             try:
                 if op == "recall":
+                    # Warming up: bail "{}" fast — the hook client falls back
+                    # to the subprocess path instead of queueing behind the
+                    # cold MLX load. getattr: embedded/test servers without
+                    # the event are treated as warm.
+                    _we = getattr(self.server, "_warm_event", None)
+                    if _we is not None and not _we.is_set():
+                        _log_lock_contention("recall_warming", 0.0, "warmup")
+                        self._write_response("{}", debug=debug)
+                        return
                     prompt = (req.get("prompt") or "").strip()
                     cwd = req.get("cwd") or None
                     _sid = req.get("session_id") or None
@@ -208,7 +242,20 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     from memo.flags import flag_int
 
                     timeout_s = max(0.1, (flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS") or 2500) / 1000.0)
-                    if not self.server._priority_lock.acquire(priority=priority, timeout=timeout_s):
+                    lock = self.server._priority_lock
+                    # Snapshot the current holder BEFORE waiting: after a
+                    # successful acquire the holder is us, so this is the only
+                    # cheap record of what a slow recall waited behind.
+                    held_by = getattr(lock, "holder", None)
+                    wait_t0 = time.monotonic()
+                    acquired = lock.acquire(priority=priority, timeout=timeout_s, label="recall")
+                    wait_ms = (time.monotonic() - wait_t0) * 1000.0
+                    if not acquired:
+                        _log_lock_contention(
+                            "recall_lock_bail",
+                            wait_ms,
+                            getattr(lock, "holder", None) or held_by,
+                        )
                         if debug:
                             print(
                                 f"# recall-daemon: lock busy >{timeout_s:.1f}s, bailing empty",
@@ -216,6 +263,8 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                             )
                         self._write_response("{}", debug=debug)
                         return
+                    if wait_ms > _LOCK_WAIT_LOG_MS:
+                        _log_lock_contention("recall_lock_wait", wait_ms, held_by)
                     try:
                         result, log_fn = _recall_logic(
                             prompt,
@@ -237,7 +286,20 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     _embed_timeout_s = max(
                         0.1, (flag_int("MEMO_EMBED_LOCK_TIMEOUT_MS") or 60000) / 1000.0
                     )
-                    if self.server._priority_lock.acquire(priority=1, timeout=_embed_timeout_s):
+                    # Not latency-bound: wait out the warmup instead of racing
+                    # the background model load.
+                    _we = getattr(self.server, "_warm_event", None)
+                    if _we is not None:
+                        _we.wait(timeout=_embed_timeout_s)
+                    # priority=0: embed_query callers (save dedup, memflow vec
+                    # indexing, dream/eval passes) are not latency-bound — see
+                    # MEMO_EMBED_LOCK_TIMEOUT_MS. At priority=1 a burst of these
+                    # queued AT recall's priority with a 60s timeout, so an
+                    # interactive recall burned its whole 2500ms budget behind
+                    # them and bailed empty (the p95 tail).
+                    if self.server._priority_lock.acquire(
+                        priority=0, timeout=_embed_timeout_s, label="embed_query"
+                    ):
                         try:
                             result = self._embed_query(req)
                         finally:
@@ -292,8 +354,11 @@ class PriorityLock:
         self._cond = threading.Condition(self._lock)
         self._high_priority_waiters = 0
         self._busy = False
+        self._holder_label: str | None = None
 
-    def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
+    def acquire(
+        self, priority: int = 0, timeout: float | None = None, label: str | None = None
+    ) -> bool:
         end_time = (time.time() + timeout) if timeout is not None else None
         with self._lock:
             if priority > 0:
@@ -308,15 +373,30 @@ class PriorityLock:
                     if not self._cond.wait(timeout=wait_timeout):
                         return False
                 self._busy = True
+                self._holder_label = label
                 return True
             finally:
                 if priority > 0:
                     self._high_priority_waiters -= 1
+                    # Wake priority-0 waiters that re-slept on the
+                    # high-priority gate — a timed-out high waiter must not
+                    # leave them sleeping until their own timeout.
+                    self._cond.notify_all()
 
     def release(self) -> None:
         with self._lock:
             self._busy = False
+            self._holder_label = None
             self._cond.notify_all()
+
+    @property
+    def holder(self) -> str | None:
+        """Label of the op currently holding the lock (None when free).
+
+        Observability only — the value can go stale the moment it is read.
+        """
+        with self._lock:
+            return self._holder_label
 
 
 class _SimpleLockWrapper:
@@ -324,13 +404,25 @@ class _SimpleLockWrapper:
 
     def __init__(self, lock: threading.Lock) -> None:
         self._lock = lock
+        self._holder_label: str | None = None
 
-    def acquire(self, priority: int = 0, timeout: float | None = None) -> bool:
+    def acquire(
+        self, priority: int = 0, timeout: float | None = None, label: str | None = None
+    ) -> bool:
         # Ignores priority parameter for simple lock
-        return self._lock.acquire(timeout=timeout if timeout is not None else -1.0)
+        acquired = self._lock.acquire(timeout=timeout if timeout is not None else -1.0)
+        if acquired:
+            self._holder_label = label
+        return acquired
 
     def release(self) -> None:
+        self._holder_label = None
         self._lock.release()
+
+    @property
+    def holder(self) -> str | None:
+        """Best-effort label of the current holder (unsynchronised read)."""
+        return self._holder_label
 
 
 class _RecallServer(socketserver.ThreadingUnixStreamServer):
@@ -344,6 +436,10 @@ class _RecallServer(socketserver.ThreadingUnixStreamServer):
         else:
             # Simple lock fallback when priority disabled
             self._priority_lock = _SimpleLockWrapper(threading.Lock())
+        # Pre-set: only run_server's background warmup replaces this with an
+        # unset event; embedded/test servers stay warm-by-default.
+        self._warm_event = threading.Event()
+        self._warm_event.set()
 
         self._micro_embedder = None
         micro_model = flag_str("MEMO_MICRO_EMBEDDER_MODEL")
@@ -366,6 +462,36 @@ class _RecallServer(socketserver.ThreadingUnixStreamServer):
 
 def _cleanup(state_dir: Path) -> None:
     cleanup(_socket_path(state_dir), _pid_file(state_dir))
+
+
+def _warmup_embedder(mem: Any) -> float | None:
+    """Force the embedder's cold model load BEFORE the socket is bound.
+
+    The embedder loads lazily on first use (``MLXEmbedder._ensure_loaded``).
+    Without this warm-up, the first request after a daemon (re)start paid the
+    multi-second MLX load while HOLDING the priority lock, so every queued
+    recall either waited behind it or hit its 2500ms bail and returned empty —
+    the post-restart p95 tail. Running the load here, before ``_RecallServer``
+    binds the socket, means no client can even connect during the load: a cold
+    start never counts against a queued recall's budget (clients fall back to
+    the subprocess path exactly as when the daemon is down).
+
+    MLX imports stay deferred (they happen inside the embed call). Failure is
+    non-fatal: the first request falls back to the old lazy load.
+
+    Returns the warm-up duration in ms, or None on failure.
+    """
+    t0 = time.monotonic()
+    try:
+        mem.embedder.embed(["memo recall-daemon warm-up"])
+    except Exception as exc:
+        print(
+            f"# recall-daemon: warm-up failed ({type(exc).__name__}: {exc}); "
+            "first request will lazy-load",
+            file=sys.stderr,
+        )
+        return None
+    return (time.monotonic() - t0) * 1000.0
 
 
 def run_server(state_dir: Path | None = None) -> None:
@@ -406,11 +532,30 @@ def run_server(state_dir: Path | None = None) -> None:
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
     mem = Memory(cfg)
 
+    # Bind FIRST (so `memo recall-daemon start`'s socket probe succeeds on a
+    # cold start), then warm the model in a background thread. Until the warm
+    # event is set, recall ops bail "{}" fast (client falls back to the
+    # subprocess path — same behavior as socket-absent, without paying the
+    # cold load inside the priority lock) and embed/search ops wait on it.
     try:
         server = _RecallServer(str(sock_path), cfg, mem)
     except OSError as exc:
         print(f"recall-daemon: bind failed ({exc}), exiting", file=sys.stderr)
         sys.exit(0)
+
+    warm_event = threading.Event()
+    server._warm_event = warm_event
+
+    def _warm_bg() -> None:
+        try:
+            warm_ms = _warmup_embedder(mem)
+            if warm_ms is not None:
+                print(f"# recall-daemon: embedder warm in {warm_ms:.0f}ms", file=sys.stderr)
+        finally:
+            # Set even on failure — handlers fall back to the lazy load.
+            warm_event.set()
+
+    threading.Thread(target=_warm_bg, name="embedder-warmup", daemon=True).start()
 
     pid_file.write_text(str(os.getpid()))
     shutdown_event = threading.Event()

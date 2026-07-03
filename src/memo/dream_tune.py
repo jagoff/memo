@@ -127,9 +127,10 @@ def save_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
 # --- labels ------------------------------------------------------------------
 
 
-def _curated_prompts(state_dir: Path) -> list[dict[str, Any]]:
-    """Curated regression prompts — state_dir first (where the daemon reaches),
-    repo-committed file second (dev). [] when neither is present."""
+def _curated_raw(state_dir: Path) -> dict[str, Any]:
+    """Parsed curated regression-labels document — state_dir first (where the
+    daemon reaches), repo-committed file second (dev). {} when neither has
+    prompts."""
     candidates = [
         Path(state_dir) / "eval" / "regression_labels.json",
         Path(__file__).resolve().parent.parent.parent / "eval" / "regression_labels.json",
@@ -139,10 +140,17 @@ def _curated_prompts(state_dir: Path) -> list[dict[str, Any]]:
             raw = json.loads(cp.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        if not isinstance(raw, dict):
+            continue
         prompts = raw.get("prompts")
         if isinstance(prompts, list) and prompts:
-            return list(prompts)
-    return []
+            return raw
+    return {}
+
+
+def _curated_prompts(state_dir: Path) -> list[dict[str, Any]]:
+    """Curated regression prompts — [] when no curated document is present."""
+    return list(_curated_raw(state_dir).get("prompts") or [])
 
 
 def build_labels(
@@ -531,7 +539,12 @@ def search_rank_knob(
 
 def _curated_label_set(state_dir: Path) -> LabelSet | None:
     """The curated regression prompts as a LabelSet (same resolution as
-    ``build_labels``: state_dir first, repo file second). None when absent."""
+    ``build_labels``: state_dir first, repo file second). None when absent.
+
+    The document-level ``noise_tags``/``noise_path_fragments`` are passed
+    through (same parsing as ``eval_recall.load_labels``) so the gate's
+    noise@K dimension measures real noise instead of a vacuous 0.0 —
+    ``_regressed`` then rejects a candidate that RAISES curated noise."""
     prompts = [
         Prompt(
             text=str(p["text"]),
@@ -541,7 +554,14 @@ def _curated_label_set(state_dir: Path) -> LabelSet | None:
         for p in _curated_prompts(state_dir)
         if p.get("text")
     ]
-    return LabelSet(prompts=prompts) if prompts else None
+    if not prompts:
+        return None
+    raw = _curated_raw(state_dir)
+    return LabelSet(
+        prompts=prompts,
+        noise_tags={str(t).lower() for t in (raw.get("noise_tags") or [])},
+        noise_path_fragments=tuple(str(f) for f in (raw.get("noise_path_fragments") or [])),
+    )
 
 
 def curated_gate(

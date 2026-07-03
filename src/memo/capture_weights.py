@@ -119,8 +119,10 @@ def compute_type_citation_stats(cfg: Config, mem: Any) -> dict[str, Any]:
     }
     dest = weights_path(cfg)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write — capture reads this file concurrently with the nightly pass.
-    tmp = dest.with_suffix(".json.tmp")
+    # Atomic write — capture reads this file concurrently with the nightly
+    # pass. The tmp name is pid-suffixed so two concurrent dream runs can't
+    # interleave writes into one tmp file (same pattern as presence.py).
+    tmp = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, dest)
     return payload
