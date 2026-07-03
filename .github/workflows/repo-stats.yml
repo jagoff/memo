@@ -1,0 +1,20 @@
+name: repo-stats
+
+# Snapshots traffic (views/clones/referrers), stars and forks daily to the
+# `github-repo-stats` data branch — GitHub only retains traffic for 14 days.
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+jobs:
+  ghrs:
+    name: github-repo-stats
+    runs-on: ubuntu-latest
+    steps:
+      - name: run-ghrs
+        uses: jgehrcke/github-repo-stats@v1.4.2
+        with:
+          # Needs a PAT with push + traffic access — the default GITHUB_TOKEN
+          # cannot read the traffic API (repo secret GHRS_GITHUB_API_TOKEN).
+          ghtoken: ${{ secrets.GHRS_GITHUB_API_TOKEN }}
