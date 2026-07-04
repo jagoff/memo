@@ -322,6 +322,7 @@ def ingest(
         `#chunk-N` to the store_path so each chunk is its own row.
         """
         nonlocal errors, chunks_emitted
+        body, tags = _redact_secrets_for_index(body, tags)
         # Universal text-quality gate: down-weight garbled records (mojibake from
         # any source — pdftotext, broken encodings, future OCR) so they rank below
         # clean notes. Combined with any per-source signal already passed (e.g.
@@ -525,6 +526,7 @@ def ingest(
                     referenced_images.update(resolved)
                     body = enriched
 
+                body, tags = _redact_secrets_for_index(body, tags)
                 body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
                 _, existing = _resolve_ingest_row(store, store_path)
                 if existing and existing["body_hash"] == body_hash and not force:
@@ -712,6 +714,28 @@ _HIGH_SIGNAL_TAGS = frozenset(
 # punctuation cases without dragging adjacent text in.
 
 _URL_RE = re.compile(r"https?://[^\s)>\]\"]+")
+
+
+def _redact_secrets_for_index(body: str, tags: list[str]) -> tuple[str, list[str]]:
+    """Mask secrets in the text that goes INTO THE INDEX (embedding + fts +
+    body_hash). The vault `.md` on disk is never rewritten — markdown stays
+    the source of truth; the index is derived, and redaction is deterministic
+    so reindex/re-ingest reproduce the same masked rows. Returns the (possibly
+    masked) body and a NEW tags list with `_redacted` appended on a hit.
+    No-op unless MEMO_REDACT_SECRETS (default on)."""
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_REDACT_SECRETS"):
+        return body, tags
+    from memo.redact import redact_secrets
+
+    res = redact_secrets(body, entropy=flag_bool("MEMO_REDACT_ENTROPY"))
+    if not res.found:
+        return body, tags
+    out_tags = list(tags)
+    if "_redacted" not in out_tags:
+        out_tags.append("_redacted")
+    return res.text, out_tags
 
 
 def _is_high_signal(body: str, fm_tags: Any) -> bool:

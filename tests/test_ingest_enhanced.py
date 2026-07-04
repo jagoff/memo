@@ -631,3 +631,85 @@ def test_dedup_strips_chunk_suffix(mock_memory):
     # Both sides normalise identically — what matters for dedup is that
     # `path` and `path#chunk-N` collapse to the same key.
     assert _norm_dedup_path("Notes/foo.md") == _norm_dedup_path("Notes/foo.md#chunk-5")
+
+
+# ── secret masking at ingest (A1) ─────────────────────────────────────────────
+
+
+def test_ingest_masks_secrets_and_tags_redacted(tmp_path: Path, runner_env):
+    """A vault note containing an API key is indexed MASKED (****last4) and
+    tagged _redacted; the vault file on disk is never rewritten."""
+    tok = "ghp_" + "a" * 32 + "WXYZ"
+    raw = f"# Creds Note\n\nthe deploy token is {tok} for origin pushes."
+    vault = _build_vault(tmp_path / "vault", {"creds.md": raw})
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+        ],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+
+    rows = _all_rows(_open_store(runner_env))
+    assert len(rows) == 1
+    assert tok not in (rows[0]["body"] or "")
+    assert "****WXYZ" in rows[0]["body"]
+    assert "_redacted" in rows[0]["tags"]
+    # markdown-is-truth: the vault file is untouched
+    assert tok in (vault / "creds.md").read_text(encoding="utf-8")
+
+
+def test_ingest_redaction_can_be_disabled(tmp_path: Path, runner_env):
+    tok = "ghp_" + "b" * 32 + "QRST"
+    vault = _build_vault(tmp_path / "vault", {"n.md": f"# N\n\ntoken {tok} here."})
+    env = {**runner_env, "MEMO_REDACT_SECRETS": "0"}
+    result = CliRunner().invoke(
+        cli,
+        [
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    rows = _all_rows(_open_store(env))
+    assert tok in (rows[0]["body"] or "")
+    assert "_redacted" not in rows[0]["tags"]
+
+
+def test_ingest_redaction_rerun_is_idempotent(tmp_path: Path, runner_env):
+    """Second run over an unchanged secret-bearing note skips it (the
+    skip-unchanged hash is computed over the SAME masked body that was
+    stored), so nightly re-ingest doesn't re-embed redacted notes."""
+    tok = "ghp_" + "c" * 32 + "MNOP"
+    vault = _build_vault(tmp_path / "vault", {"c.md": f"# C\n\ntoken {tok} stays."})
+    args = [
+        "ingest",
+        str(vault),
+        "--name",
+        "v",
+        "--no-include-pdf",
+        "--no-include-orphan-images",
+        "--no-ocr",
+    ]
+    first = CliRunner().invoke(cli, args, env=runner_env)
+    assert first.exit_code == 0, first.output
+    rows_before = _all_rows(_open_store(runner_env))
+    second = CliRunner().invoke(cli, args, env=runner_env)
+    assert second.exit_code == 0, second.output
+    rows_after = _all_rows(_open_store(runner_env))
+    assert len(rows_after) == len(rows_before) == 1
+    assert "****MNOP" in (rows_after[0]["body"] or "")
