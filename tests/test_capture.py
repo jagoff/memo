@@ -541,3 +541,64 @@ def test_miner_iter_exchanges_honors_private_spans(tmp_path: Path, monkeypatch):
     assert len(pairs) == 1
     assert "ghp_secret" not in pairs[0][1]
     assert "committed the config" in pairs[0][1]
+
+
+# ── secret masking in capture (A1) ────────────────────────────────────────────
+
+
+class _SecretChat:
+    """Helper-LLM stub whose extraction output carries a GitHub token."""
+
+    def chat(self, model, messages, options=None):
+        tok = "ghp_" + "a" * 32 + "WXYZ"
+        return {
+            "message": {
+                "content": json.dumps(
+                    [
+                        {
+                            "title": "deploy token configured",
+                            "type": "fact",
+                            "body": f"the deploy uses {tok} against origin",
+                            "tags": ["deploy"],
+                        }
+                    ]
+                )
+            }
+        }
+
+
+def test_extract_insights_masks_secrets_and_tags_redacted(monkeypatch):
+    monkeypatch.delenv("MEMO_REDACT_SECRETS", raising=False)
+    out = extract_insights(_SecretChat(), "m", "u", "a")
+    assert len(out) == 1
+    assert "ghp_" not in out[0]["body"]
+    assert "****WXYZ" in out[0]["body"]
+    assert "_redacted" in out[0]["tags"]
+
+
+def test_extract_insights_redaction_flag_off_keeps_raw(monkeypatch):
+    monkeypatch.setenv("MEMO_REDACT_SECRETS", "0")
+    out = extract_insights(_SecretChat(), "m", "u", "a")
+    assert "ghp_" in out[0]["body"]
+    assert "_redacted" not in out[0]["tags"]
+
+
+def test_extract_and_save_text_verbatim_fallback_redacts(mem_with_stub, monkeypatch):
+    """The verbatim fallback (extractor yields zero candidates) is the one
+    save that bypasses extract_insights — it must mask too."""
+    import memo.capture as capture_mod
+
+    monkeypatch.delenv("MEMO_REDACT_SECRETS", raising=False)
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *a, **kw: [])
+    tok = "sk-ant-" + "k" * 24 + "1234"
+    out = capture_mod.extract_and_save_text(
+        mem_with_stub,
+        mem_with_stub.cfg,
+        f"api key rotated to {tok} today",
+        title="rotation",
+    )
+    assert out["status"] == "verbatim"
+    rec = mem_with_stub.get(out["saved"][0])
+    assert tok not in rec.body
+    assert "****1234" in rec.body
+    assert "_redacted" in rec.tags

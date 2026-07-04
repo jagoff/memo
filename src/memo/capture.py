@@ -691,6 +691,10 @@ def extract_insights(
         return []
     if not isinstance(data, list):
         return []
+    from memo.flags import flag_bool
+
+    do_redact = flag_bool("MEMO_REDACT_SECRETS")
+    entropy = flag_bool("MEMO_REDACT_ENTROPY")
     out: list[dict[str, Any]] = []
     for item in data:
         if not isinstance(item, dict):
@@ -703,12 +707,22 @@ def extract_insights(
             continue
         if not isinstance(tags, list):
             tags = []
+        norm_tags = [str(t).lower().strip() for t in tags if t]
+        if do_redact:
+            from memo.redact import redact_secrets
+
+            r_title = redact_secrets(title, entropy=entropy)
+            r_body = redact_secrets(body, entropy=entropy)
+            if r_title.found or r_body.found:
+                title, body = r_title.text, r_body.text
+                if "_redacted" not in norm_tags:
+                    norm_tags.append("_redacted")
         out.append(
             {
                 "title": title[:80],
                 "type": type_,
                 "body": body,
-                "tags": [str(t).lower().strip() for t in tags if t],
+                "tags": norm_tags,
             }
         )
     return out
@@ -978,11 +992,22 @@ def extract_and_save_text(
     """
     result = _extract_and_save(mem, cfg, "", text, debug=debug, merge_tags=merge_tags)
     if result["candidates"] == 0:
+        from memo.flags import flag_bool
+
+        vb_text = text
+        vb_tags = list(merge_tags) if merge_tags else []
+        if flag_bool("MEMO_REDACT_SECRETS"):
+            from memo.redact import redact_secrets
+
+            res = redact_secrets(text, entropy=flag_bool("MEMO_REDACT_ENTROPY"))
+            if res.found:
+                vb_text = res.text
+                vb_tags.append("_redacted")
         rec = mem.save(
-            content=text,
+            content=vb_text,
             title=title,
             type_=type_,
-            tags=list(merge_tags) if merge_tags else None,
+            tags=vb_tags or None,
         )
         return {
             "status": "verbatim",
