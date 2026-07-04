@@ -71,6 +71,7 @@ def mem_stub(tmp_cfg: Config, monkeypatch) -> Memory:
         "memo.embedder.MLXEmbedder.embed",
         lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
     )
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
     m = Memory(cfg)
     yield m
     m.close()
