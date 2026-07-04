@@ -280,8 +280,12 @@ class LifecycleManager:
             acted.append({"id": rec.id, "reason": reason})
         return acted
 
-    def archive_memory(self, memory_id: str) -> bool:
+    def archive_memory(self, memory_id: str, *, superseded_by: str | None = None) -> bool:
         """Archive a memory by moving it to the inactive/ subdirectory.
+
+        `superseded_by` (C6): stamp the WINNING memory id + a close-date into
+        the archived file's extra bag, so the supersede provenance lives in
+        the markdown (portable; the contradict sidecar DB is machine-local).
 
         Returns True if successful.
         """
@@ -318,6 +322,23 @@ class LifecycleManager:
         # reindex. Going through Memory.delete() here would unlink the moved
         # file's original path (harmlessly) but is also heavier than needed.
         self.memory.store.delete(memory_id)
+
+        # C6: validity-window stamp — best-effort, never un-archives on failure.
+        if superseded_by:
+            try:
+                import frontmatter
+
+                post = frontmatter.loads(target_path.read_text(encoding="utf-8"))
+                _raw = post.get("extra")
+                extra: dict[str, object] = dict(_raw) if isinstance(_raw, dict) else {}
+                extra["superseded_by"] = superseded_by
+                extra["superseded_at"] = datetime.now(UTC).isoformat()
+                post["extra"] = extra
+                target_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+            except Exception as exc:
+                _log.warning(
+                    "archive_memory: superseded_by stamp failed for %s: %s", memory_id, exc
+                )
 
         # Log action
         self._actions_log.append(

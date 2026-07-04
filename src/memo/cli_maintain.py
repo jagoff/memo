@@ -272,7 +272,11 @@ def maintain_cmd(
                         continue
                 action = "delete" if hard_delete else "archive"
                 if not dry_run:
-                    ok = mem.delete(older) if hard_delete else mem.lifecycle.archive_memory(older)
+                    ok = (
+                        mem.delete(older)
+                        if hard_delete
+                        else mem.lifecycle.archive_memory(older, superseded_by=_newer)
+                    )
                     if ok:
                         mem.contradict_store.resolve(
                             pair.pair_id, "kept_newer", note=f"auto: {action}d older {older}"
