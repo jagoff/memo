@@ -203,7 +203,23 @@ Type rules:
 Output ONLY the JSON, no markdown fences, no commentary, no preamble."""
 
 
+_ABSORB_SYSTEM_PROMPT = """You maintain one canonical memory note in a personal archive.
+
+You are given the EXISTING note body and a NEW OBSERVATION that re-asserts
+the same fact (a near-duplicate).
+
+Rewrite the note body so it reflects the current state:
+- Keep every still-valid detail from the EXISTING note.
+- Fold in anything genuinely new from the NEW OBSERVATION.
+- If the two disagree on a detail, prefer the NEW OBSERVATION.
+- Do not invent information that appears in neither text.
+- Answer in the language the notes are written in.
+
+Output ONLY the merged note body — no title, no commentary, no markdown fences."""
+
+
 __all__ = [
+    "_ABSORB_SYSTEM_PROMPT",
     "_ASK_SYSTEM_PROMPT",
     "_CONSOLIDATE_SYSTEM_PROMPT",
     "_DERIVE_SYSTEM_PROMPT",

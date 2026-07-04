@@ -374,6 +374,19 @@ class _WriteOpsMixin(_MemoryBase):
                             if flag_bool("MEMO_SUPPORT_COUNT") and _dh.get("id"):
                                 with contextlib.suppress(Exception):
                                     self.store.bump_support_batch([_dh["id"]], lift=support_lift())
+                            # C3: absorb-on-recurrence (flag-gated, default off).
+                            # Never in derived-save scope — dream/consolidation
+                            # batch saves are merged by the consolidate pass.
+                            if (
+                                flag_bool("MEMO_SAVE_ABSORB")
+                                and not in_derived_save_scope()
+                                and _dh.get("id")
+                            ):
+                                _absorbed = self._absorb_into_existing(
+                                    _dh["id"], title, content
+                                )
+                                if _absorbed is not None:
+                                    return _absorbed
                             # Demote to debug for dream/consolidation batch saves:
                             # the nudge to `memo update` is only actionable for an
                             # interactive human, and the same dream run's consolidate
@@ -826,6 +839,62 @@ class _WriteOpsMixin(_MemoryBase):
                 self._mark_dirty(rec.id)
         except Exception as exc:
             _log.warning("cache write policy skipped for %s: %s", rec.id[:8], exc)
+
+    def _absorb_into_existing(
+        self, existing_id: str, new_title: str, new_content: str
+    ) -> MemoryRecord | None:
+        """C3 absorb-on-recurrence: fold a near-duplicate save into the
+        EXISTING record. One bounded LLM call rewrites the existing body,
+        applied via the versioned update() (pre-update snapshot →
+        `memo version rollback` works) with proof_count in extra.
+
+        Returns the updated record, or None on ANY failure — the caller
+        falls back to today's warn-and-create, so a save is never lost.
+        Runs on save paths only (Stop-hook capture / MCP / dream), never
+        the 5s recall hook (which performs no saves)."""
+        try:
+            existing = self.get(existing_id)
+            if existing is None:
+                return None
+            from memo.flags import flag_int
+            from memo.memory.prompts import _ABSORB_SYSTEM_PROMPT
+            from memo.memory.record import chat_with_timeout
+
+            chat = self._ensure_chat()
+            user = (
+                f"EXISTING NOTE (title: {existing.title}):\n{existing.body}\n\n"
+                f"NEW OBSERVATION (title: {new_title}):\n{new_content}\n\n"
+                "Return ONLY the merged note body."
+            )
+            out = chat_with_timeout(
+                chat,
+                timeout=float(flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180),
+                model=self.cfg.llm_model,
+                messages=[
+                    {"role": "system", "content": _ABSORB_SYSTEM_PROMPT},
+                    {"role": "user", "content": user},
+                ],
+                options={"temperature": 0.0, "max_tokens": 1024, "thinking": False},
+            )
+            if out is None:
+                return None
+            merged = ((out.get("message") or {}).get("content") or "").strip()
+            if not merged:
+                return None
+            new_extra = dict(existing.extra or {})
+            new_extra["proof_count"] = int(new_extra.get("proof_count") or 1) + 1
+            new_extra["last_absorbed_at"] = _now_iso()
+            updated = self.update(existing_id, content=merged, extra=new_extra)
+            if updated is not None:
+                _log.info(
+                    "save: absorbed near-duplicate into %s (proof_count=%d)",
+                    existing_id[:8],
+                    new_extra["proof_count"],
+                )
+            return updated  # type: ignore[no-any-return]
+        except Exception as exc:
+            _log.warning("save: absorb failed (%s) — falling back to new record", exc)
+            return None
 
     # -- internals ----------------------------------------------------------
 

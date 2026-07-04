@@ -327,6 +327,18 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_SAVE_ABSORB",
+        "bool",
+        False,
+        "misc",
+        "Living canonical records: when a save hits a near-duplicate "
+        "(MEMO_SAVE_DEDUP_THRESHOLD), rewrite the EXISTING record via one "
+        "bounded LLM call + versioned update() (rollbackable) instead of "
+        "creating a near-copy; proof_count grows in extra. Requires "
+        "MEMO_SAVE_DEDUP_CHECK. Skipped in derived-save scope "
+        "(dream/consolidation). Never on the recall-hook path.",
+    ),
+    _spec(
         "MEMO_AUTO_PROJECT_TAG",
         "bool",
         True,
