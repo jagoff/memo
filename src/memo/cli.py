@@ -119,7 +119,7 @@ from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
 from memo.cli_token_savings import token_savings_cmd
 from memo.cli_tokens import tokens_cmd
-from memo.cli_transcripts import mine_history, reflect
+from memo.cli_transcripts import mine_git, mine_history, reflect
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd
 from memo.cli_version import version_group
@@ -347,6 +347,7 @@ cli.add_command(tui)
 cli.add_command(hook_log)
 cli.add_command(logs)
 cli.add_command(mine_history)
+cli.add_command(mine_git)
 cli.add_command(ingest)
 cli.add_command(capture_stop)
 cli.add_command(capture_tick)

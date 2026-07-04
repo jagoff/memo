@@ -134,6 +134,60 @@ def mine_history(
     console.print(Panel.fit(body, title="✓ mine-history", border_style="green"))
 
 
+@click.command(name="mine-git")
+@click.option("--repo", "repo_path", default=None, help="Repo to mine (default: cwd).")
+@click.option("--since", "since_days", type=int, default=None, help="Only commits from the last N days.")
+@click.option("--limit", type=int, default=None, help="Cap on commits mined (newest first).")
+@click.option("--dry-run", is_flag=True, help="Match + report, don't save.")
+@click.option("--debug", is_flag=True, help="Print per-commit info to stderr.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON summary instead of a panel.")
+def mine_git(
+    repo_path: str | None,
+    since_days: int | None,
+    limit: int | None,
+    dry_run: bool,
+    debug: bool,
+    as_json: bool,
+) -> None:
+    """Seed failure_pattern memories from fix/revert commits in a repo's git log.
+
+    Deterministic (no LLM): each matching commit becomes one structured
+    `failure_pattern` memory with commit-SHA provenance. Resumable per repo
+    via `state_dir/mine-git.json`. Sibling of `memo mine-history` for seeding
+    a new install from pre-memo / non-agent history.
+    """
+    from pathlib import Path as _Path
+
+    from memo.git_miner import mine_git_history
+
+    summary = mine_git_history(
+        repo=_Path(repo_path).expanduser() if repo_path else None,
+        since_days=since_days,
+        limit=limit,
+        dry_run=dry_run,
+        debug=debug,
+    )
+    if as_json:
+        click.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+    if summary["status"] == "not_a_repo":
+        console.print(f"[yellow]Not a git repo: {summary['repo']}[/yellow]")
+        return
+    saved = summary["saved"]
+    console.print(
+        Panel.fit(
+            f"[dim]repo:[/dim] {summary['repo']}\n"
+            f"[dim]fix/revert commits:[/dim] {summary['commits_matched']}\n"
+            f"[bold green]saved:[/bold green] {len(saved)}"
+            f"{' [yellow](dry-run)[/yellow]' if summary['dry_run'] else ''}\n"
+            f"[dim]skipped (already mined):[/dim] {summary['skipped_seen']}  "
+            f"[dim](near-dup):[/dim] {summary['skipped_dup']}",
+            title="✓ mine-git",
+            border_style="green",
+        )
+    )
+
+
 _REFLECT_TRANSCRIPT_WORD_BUDGET = 8000
 
 
