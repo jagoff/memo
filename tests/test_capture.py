@@ -602,3 +602,13 @@ def test_extract_and_save_text_verbatim_fallback_redacts(mem_with_stub, monkeypa
     assert tok not in rec.body
     assert "****1234" in rec.body
     assert "_redacted" in rec.tags
+
+
+def test_extract_prompt_offers_procedural_types():
+    from memo.capture import _EXTRACT_SYSTEM_PROMPT
+
+    assert '"procedure"' in _EXTRACT_SYSTEM_PROMPT
+    assert '"failure_pattern"' in _EXTRACT_SYSTEM_PROMPT
+    # Structured mistake-note template (mcp-memory-service style) is offered:
+    for label in ("Pattern:", "Context:", "Wrong:", "Right:"):
+        assert label in _EXTRACT_SYSTEM_PROMPT

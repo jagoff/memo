@@ -23,9 +23,23 @@ from collections.abc import Iterable
 REFERENCE_TYPES: frozenset[str] = frozenset({"reference"})
 
 # Durable tiers: the source-of-truth surfaced automatically. Mirrors
-# `memory._VALID_TYPES` minus the reference tier.
+# `memory._VALID_TYPES` minus the reference tier. `procedure` (how-to
+# workflows: "to do X, run Y") and `failure_pattern` (structured mistake
+# notes: Pattern/Context/Wrong/Right) are the procedural-knowledge kinds
+# mined from execution (2026-07-03 ecosystem survey, Tier2 #7).
 DURABLE_TYPES: frozenset[str] = frozenset(
-    {"decision", "fact", "bug", "feedback", "preference", "note", "manual", "synthesis"}
+    {
+        "decision",
+        "fact",
+        "bug",
+        "feedback",
+        "preference",
+        "note",
+        "manual",
+        "synthesis",
+        "procedure",
+        "failure_pattern",
+    }
 )
 
 # A chunk marker like "§54/130" in a title — the signature of a bulk vault

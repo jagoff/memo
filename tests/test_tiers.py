@@ -175,3 +175,27 @@ def test_recall_health_empty_is_safe(tmp_path):
     h = recall_health(tmp_path)
     assert h["sampled"] == 0
     assert h["hit_rate"] is None
+
+
+def test_procedural_types_are_durable():
+    assert {"procedure", "failure_pattern"} <= DURABLE_TYPES
+
+
+def test_save_accepts_procedural_types(mem_with_stub):
+    rec = mem_with_stub.save(
+        content="To rebuild the index from disk, run `memo reindex --rebuild` — never rm memvec.db.",
+        title="Rebuild index procedure",
+        type_="procedure",
+    )
+    assert rec.type == "procedure"
+    rec2 = mem_with_stub.save(
+        content=(
+            "Pattern: git add -A in the shared worktree\n"
+            "Context: concurrent agent sessions share one working tree\n"
+            "Wrong: stage everything with -A\n"
+            "Right: stage explicit paths only"
+        ),
+        title="Shared worktree staging failure",
+        type_="failure_pattern",
+    )
+    assert rec2.type == "failure_pattern"

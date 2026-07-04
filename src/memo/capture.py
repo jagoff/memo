@@ -115,7 +115,8 @@ EXTRACT:
 - Bugs found with root cause + fix (not just "fixed it")
 - Preferences expressed ("from now on, always X" / "never Y")
 - Discoveries / non-obvious facts ("X turns out to require Y")
-- Commands / config that worked ("to do X, run Y")
+- Commands / config that worked ("to do X, run Y") — type "procedure"
+- Recurring mistakes with the wrong and the right way ("doing X breaks Y; do Z instead") — type "failure_pattern"
 
 DO NOT extract:
 - Mid-process status updates ("checking…", "looking at…", "let me…")
@@ -126,8 +127,10 @@ DO NOT extract:
 
 For each insight, output a JSON object with:
 - "title": ≤80 chars, no period at end, descriptive of the insight
-- "type": one of "decision", "bug", "preference", "fact", "note"
+- "type": one of "decision", "bug", "preference", "fact", "note", "procedure", "failure_pattern"
 - "body": 2-5 sentences. INCLUDE: what the insight is, why it matters, and how to apply it. Be specific (file paths, numbers, model names) when relevant.
+  For "failure_pattern" ONLY, structure the body as four labelled lines:
+  "Pattern: <the mistake>", "Context: <when it happens>", "Wrong: <what was done>", "Right: <what to do instead>".
 - "tags": 3-6 lowercase tags (project, technology, domain)
 
 Output ONLY a JSON array. Empty array `[]` if nothing notable.
