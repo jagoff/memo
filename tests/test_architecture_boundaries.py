@@ -22,7 +22,10 @@ FOUNDATION_MODULES = ["util", "store", "embedder", "graph"]
 # depend on these (they import nothing from memo, so no cycle is possible).
 # embed_base = the shared EmbedderBase contract (collections.abc + typing only);
 # MLXEmbedder/STEmbedder inherit it, so embedder.py imports it.
-PURE_LEAF_MODULES = {"util", "mlx_gpu", "graph_canonical", "embed_base"}
+# tiers = the durable/reference/eviction-protected type registry (re + typing
+# only, imports nothing from memo); store/signal_queries reads
+# EVICTION_PROTECTED_TYPES from it, so store depends on this leaf.
+PURE_LEAF_MODULES = {"util", "mlx_gpu", "graph_canonical", "embed_base", "tiers"}
 
 
 def _memo_imports(module_file: Path) -> set[str]:
