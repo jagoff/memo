@@ -1,0 +1,49 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+#
+# memo is a local, stdio MCP server (the memories live on the user's own
+# machine), so this uses the `stdio` start command rather than a hosted
+# deployment. `uvx` fetches the `mlx-memo` package from PyPI and runs the
+# `memo-mcp` console script — no prior install needed beyond `uv`.
+
+name: memo
+displayName: memo
+description: >-
+  Local-first long-term memory for AI coding agents — MLX on Apple Silicon or
+  CPU on Linux, sqlite-vec + BM25 hybrid retrieval, markdown-on-disk as the
+  source of truth. Recall hook, knowledge graph, temporal queries. No cloud,
+  no API keys.
+author: Fernando Ferrari
+license: MIT
+repository: https://github.com/jagoff/memo
+icon: docs/logo.png
+category: Memory
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required: []
+    properties:
+      memoDataDir:
+        type: string
+        description: >-
+          Directory for memo's store and sqlite index (maps to MEMO_DATA_DIR).
+          Defaults to memo's per-user data directory.
+      memoVaultPath:
+        type: string
+        description: >-
+          Path to an Obsidian vault. When set, memories are stored under the
+          vault as markdown (maps to MEMO_VAULT_PATH + MEMO_MEMORIES_IN_VAULT).
+  commandFunction:
+    # Produces the CLI command that launches the MCP server over stdio.
+    |-
+    config => ({
+      command: 'uvx',
+      args: ['--from', 'mlx-memo', 'memo-mcp'],
+      env: {
+        ...(config.memoDataDir ? { MEMO_DATA_DIR: config.memoDataDir } : {}),
+        ...(config.memoVaultPath
+          ? { MEMO_VAULT_PATH: config.memoVaultPath, MEMO_MEMORIES_IN_VAULT: '1' }
+          : {})
+      }
+    })
