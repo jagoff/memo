@@ -664,6 +664,17 @@ def _apply_decay(
     return out
 
 
+def support_lift() -> float:
+    """Resolved MEMO_SUPPORT_CONFIDENCE_LIFT (0.0 = counting only).
+
+    Shared by the corroboration bump call sites (write_ops, consolidation)
+    so the flag is read in exactly one place."""
+    from memo.flags import flag_float
+
+    v = flag_float("MEMO_SUPPORT_CONFIDENCE_LIFT")
+    return 0.0 if v is None else v
+
+
 def _normalise_tags(tags: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()

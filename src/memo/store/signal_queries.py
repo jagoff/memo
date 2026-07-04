@@ -169,14 +169,13 @@ class _SignalQueriesMixin(_StoreBase):
 
     # -- memory health (confidence + roi_score) ----------------------------
 
-    def bump_support_batch(self, ids: list[str]) -> None:
+    def bump_support_batch(self, ids: list[str], *, lift: float = 0.0, cap: float = 1.0) -> None:
         """Increment the corroboration counter for each id (one bump per list
-        occurrence — pass an id N times to bump N). Upserts missing rows.
-
-        Called best-effort from the three corroboration-detection sites
-        (save near-dup hit, topic_key upsert, consolidation merge). Never on
-        the recall-hook hot path — save()/maintain only.
-        """
+        occurrence). `lift` > 0 additionally RESTORES confidence toward `cap`
+        — bounded evidence strength: with the 1.0 cap a re-assertion can only
+        undo prior penalties (contradiction/OCR quality), never boost a
+        memory above neutral. Upserts missing rows. Best-effort caller
+        contract; never on the recall-hook hot path."""
         if not ids:
             return
         with self._tx() as cx:
@@ -185,8 +184,9 @@ class _SignalQueriesMixin(_StoreBase):
                 "VALUES(?, 1.0, 1.0, datetime('now'), 1) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "support_count = support_count + 1, "
+                "confidence = min(?, confidence + ?), "
                 "updated_at = datetime('now')",
-                [(i,) for i in ids],
+                [(i, cap, lift) for i in ids],
             )
 
     def get_support_batch(self, ids: list[str]) -> dict[str, int]:

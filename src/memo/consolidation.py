@@ -277,9 +277,12 @@ class AdvancedConsolidator:
                 if archived:
                     try:
                         from memo.flags import flag_bool
+                        from memo.memory.record import support_lift
 
                         if flag_bool("MEMO_SUPPORT_COUNT"):
-                            self.memory.store.bump_support_batch([surviving_id] * len(archived))
+                            self.memory.store.bump_support_batch(
+                                [surviving_id] * len(archived), lift=support_lift()
+                            )
                     except Exception as exc:
                         _log.debug("apply_merge: support bump failed: %s", exc)
                 return ConsolidationResult(
@@ -334,9 +337,12 @@ class AdvancedConsolidator:
             if archived:
                 try:
                     from memo.flags import flag_bool
+                    from memo.memory.record import support_lift
 
                     if flag_bool("MEMO_SUPPORT_COUNT"):
-                        self.memory.store.bump_support_batch([merged_rec.id] * len(archived))
+                        self.memory.store.bump_support_batch(
+                            [merged_rec.id] * len(archived), lift=support_lift()
+                        )
                 except Exception as exc:
                     _log.debug("apply_merge: support bump failed: %s", exc)
 

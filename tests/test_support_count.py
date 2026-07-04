@@ -157,3 +157,32 @@ def test_apply_merge_bumps_surviving_support(mock_memory):
     assert res.merged_id == r2.id
     assert res.archived_ids == [r1.id]
     assert mock_memory.store.get_support_batch([r2.id]) == {r2.id: 1}
+
+
+# -- Task 3: bounded confidence lift from corroboration -------------------
+
+
+def test_lift_restores_penalized_confidence_bounded(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.penalize_confidence_batch(["m1"], delta=0.4)  # 1.0 -> 0.6
+    store.bump_support_batch(["m1"], lift=0.05)  # 0.6 -> 0.65
+    assert store.get_health_batch(["m1"])["m1"]["confidence"] == pytest.approx(0.65)
+    for _ in range(20):
+        store.bump_support_batch(["m1"], lift=0.05)
+    # capped at 1.0 — corroboration never boosts ABOVE neutral
+    assert store.get_health_batch(["m1"])["m1"]["confidence"] == pytest.approx(1.0)
+
+
+def test_lift_zero_default_leaves_confidence_untouched(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.penalize_confidence_batch(["m1"], delta=0.4)
+    store.bump_support_batch(["m1"])  # default lift=0.0
+    assert store.get_health_batch(["m1"])["m1"]["confidence"] == pytest.approx(0.6)
+
+
+def test_support_lift_reads_flag(monkeypatch) -> None:
+    from memo.memory.record import support_lift
+
+    assert support_lift() == 0.0  # default off
+    monkeypatch.setenv("MEMO_SUPPORT_CONFIDENCE_LIFT", "0.05")
+    assert support_lift() == pytest.approx(0.05)

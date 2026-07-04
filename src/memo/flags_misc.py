@@ -315,6 +315,18 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_SUPPORT_CONFIDENCE_LIFT",
+        "float",
+        0.0,
+        "misc",
+        "Confidence restored per corroboration bump (support_count), capped at "
+        "1.0 — re-assertion undoes prior contradiction/quality penalties but "
+        "never boosts above neutral. 0.0 (default) = counting only, no ranking "
+        "effect. Ranking change: eval-gate before enabling.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
         "MEMO_AUTO_PROJECT_TAG",
         "bool",
         True,
