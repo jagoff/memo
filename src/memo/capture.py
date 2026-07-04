@@ -317,6 +317,22 @@ def _tool_activity(content: Any) -> str:
     return "; ".join(parts).strip()
 
 
+def _strip_private(text: str) -> str:
+    """Honor <private>…</private> spans: content inside never reaches the
+    extractor. Applies to EVERY transcript read path — Stop-hook capture,
+    incremental capture-tick, and mine-history all funnel through
+    _extract_text. Gated by MEMO_PRIVATE_MARKERS (default on)."""
+    if not text or "<private>" not in text.lower():
+        return text
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_PRIVATE_MARKERS"):
+        return text
+    from memo.redact import strip_private_spans
+
+    return strip_private_spans(text)
+
+
 def _extract_text(content: Any) -> str:
     """Pull the plain text out of a Claude Code message content. Concatenates
     text/markdown blocks, and (when MEMO_CAPTURE_TOOL_EVIDENCE is on) appends a
@@ -327,7 +343,7 @@ def _extract_text(content: Any) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
-        return content.strip()
+        return _strip_private(content.strip())
     if isinstance(content, list):
         out: list[str] = []
         for block in content:
@@ -345,7 +361,7 @@ def _extract_text(content: Any) -> str:
             if activity:
                 cap = flag_int("MEMO_CAPTURE_TOOL_EVIDENCE_CHARS") or 300
                 text = (text + f"\n\nTOOL ACTIVITY: {activity[:cap]}").strip()
-        return text
+        return _strip_private(text)
     return ""
 
 

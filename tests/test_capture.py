@@ -490,3 +490,54 @@ def test_capture_stop_still_noops_when_session_id_also_missing(tmp_path: Path, m
 
     assert result.exit_code == 0
     assert not called
+
+
+# ── <private> span stripping (A2) ─────────────────────────────────────────────
+
+
+def test_extract_text_strips_private_spans(monkeypatch):
+    monkeypatch.delenv("MEMO_PRIVATE_MARKERS", raising=False)
+    from memo.capture import _extract_text
+
+    out = _extract_text("public fact <private>my api key is hunter2</private> tail")
+    assert "hunter2" not in out
+    assert "public fact" in out and "tail" in out
+
+
+def test_extract_text_private_flag_off_keeps_text(monkeypatch):
+    monkeypatch.setenv("MEMO_PRIVATE_MARKERS", "0")
+    from memo.capture import _extract_text
+
+    out = _extract_text("keep <private>visible when disabled</private>")
+    assert "visible when disabled" in out
+
+
+def test_extract_text_strips_private_in_block_content(monkeypatch):
+    monkeypatch.delenv("MEMO_PRIVATE_MARKERS", raising=False)
+    from memo.capture import _extract_text
+
+    content = [{"type": "text", "text": "decision: use X <private>token abc</private>"}]
+    assert "token abc" not in _extract_text(content)
+
+
+def test_miner_iter_exchanges_honors_private_spans(tmp_path: Path, monkeypatch):
+    """mine-history reads transcripts through the same _extract_text, so
+    <private> content must never reach the extractor from history either."""
+    monkeypatch.delenv("MEMO_PRIVATE_MARKERS", raising=False)
+    from memo.transcript_miner import iter_exchanges
+
+    t = tmp_path / "s.jsonl"
+    lines = [
+        {"type": "user", "message": {"content": "set up deploy key"}},
+        {
+            "type": "assistant",
+            "message": {
+                "content": "done. <private>the key is ghp_secret</private> committed the config"
+            },
+        },
+    ]
+    t.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+    pairs = list(iter_exchanges(t))
+    assert len(pairs) == 1
+    assert "ghp_secret" not in pairs[0][1]
+    assert "committed the config" in pairs[0][1]
