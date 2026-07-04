@@ -50,11 +50,49 @@ def project_bucket(tags: list[str]) -> str:
     return GLOBAL_BUCKET
 
 
+def _worktree_main_toplevel(dotgit_file: Path) -> Path | None:
+    """Resolve a linked-worktree `.git` FILE to the MAIN repo's toplevel.
+
+    Layout: the file is one line ``gitdir: <path>`` pointing at
+    ``<main>/.git/worktrees/<name>``; that dir carries a ``commondir`` file
+    whose (usually relative ``../..``) path leads back to the shared ``.git``
+    directory — the main toplevel is its parent. Pure file reads, no ``git``
+    subprocess: this sits on the recall-hook path (5s budget). Returns None
+    for non-worktree ``.git`` files (submodules have no ``commondir``) so the
+    caller keeps the historical basename behavior.
+    """
+    try:
+        lines = dotgit_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+    if not lines or not lines[0].startswith("gitdir:"):
+        return None
+    gitdir = Path(lines[0][len("gitdir:") :].strip())
+    if not gitdir.is_absolute():
+        gitdir = (dotgit_file.parent / gitdir).resolve()
+    try:
+        common_raw = (gitdir / "commondir").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    common = Path(common_raw)
+    if not common.is_absolute():
+        common = (gitdir / common).resolve()
+    if common.name != ".git" or not common.is_dir():
+        return None
+    return common.parent
+
+
 def _git_toplevel(start: Path) -> Path | None:
     cur = start.resolve()
     for parent in (cur, *cur.parents):
-        if (parent / ".git").exists():
+        dotgit = parent / ".git"
+        if dotgit.is_dir():
             return parent
+        if dotgit.is_file():
+            # Linked worktree: canonicalize to the MAIN repo so memories
+            # saved from e.g. `/tmp/rel` (release flow) tag as the real
+            # project instead of minting `project:rel` forever.
+            return _worktree_main_toplevel(dotgit) or parent
     return None
 
 

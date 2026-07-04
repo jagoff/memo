@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -98,3 +99,60 @@ def test_project_bucket_fully_invalid_slug_falls_back_to_global() -> None:
 
 def test_global_bucket_constant_value() -> None:
     assert GLOBAL_BUCKET == "_global"
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_worktree_resolves_to_main_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a linked worktree (`.git` FILE) must tag as the MAIN repo,
+    not as the worktree basename — the release flow's `/tmp/rel` worktree was
+    minting `project:rel` memories forever."""
+    monkeypatch.delenv("MEMO_PROJECT_TAG", raising=False)
+    main = tmp_path / "my-main-repo"
+    main.mkdir()
+    _git(main, "init", "-q")
+    _git(main, "commit", "-q", "--allow-empty", "-m", "seed")
+    wt = tmp_path / "rel"
+    _git(main, "worktree", "add", "-q", str(wt), "HEAD")
+
+    assert current_project_tag(wt) == "project:my-main-repo"
+    nested = wt / "src" / "deep"
+    nested.mkdir(parents=True)
+    assert current_project_tag(nested) == "project:my-main-repo"
+
+
+def test_dotgit_file_without_commondir_falls_back_to_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Submodule layout: `.git` file → gitdir with NO `commondir`. Keep the
+    old own-basename behavior (a submodule IS its own project)."""
+    monkeypatch.delenv("MEMO_PROJECT_TAG", raising=False)
+    host = tmp_path / "host"
+    module_gitdir = host / ".git" / "modules" / "sub"
+    module_gitdir.mkdir(parents=True)
+    sub = host / "sub-module"
+    sub.mkdir()
+    (sub / ".git").write_text(f"gitdir: {module_gitdir}\n", encoding="utf-8")
+
+    assert current_project_tag(sub) == "project:sub-module"
+
+
+def test_dotgit_file_garbage_falls_back_to_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MEMO_PROJECT_TAG", raising=False)
+    repo = tmp_path / "weird-checkout"
+    repo.mkdir()
+    (repo / ".git").write_text("not a gitdir pointer\n", encoding="utf-8")
+
+    assert current_project_tag(repo) == "project:weird-checkout"
