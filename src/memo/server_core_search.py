@@ -128,10 +128,16 @@ def register(server: Any, memory: Memory) -> None:
         body_chars: int = 280,
         mode: str = "hybrid",
         source: str = "",
+        file: str = "",
     ) -> dict[str, Any]:
         t0 = now_ms()
         out: list[dict[str, Any]] = []
-        for r in memory.search(query, limit=limit, type_=type, mode=mode):
+        records = (
+            memory.search_by_file(query, file=file, limit=limit, mode=mode, type_=type)
+            if file
+            else memory.search(query, limit=limit, type_=type, mode=mode)
+        )
+        for r in records:
             d = r.to_dict()
             body = d.get("body") or ""
             if body_chars >= 0 and len(body) > body_chars:

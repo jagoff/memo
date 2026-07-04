@@ -27,6 +27,16 @@ from memo.perf import timer
 from memo.tiers import REFERENCE_TYPES
 
 
+def _record_touches_file(record: MemoryRecord, frag: str) -> bool:
+    """True when the memory's capture-stamped tool arrays contain `frag`."""
+    extra = record.extra or {}
+    for key in ("files_read", "files_modified"):
+        vals = extra.get(key)
+        if isinstance(vals, list) and any(frag in str(v).lower() for v in vals):
+            return True
+    return False
+
+
 class _SearchOpsMixin(_MemoryBase):
     # -- search -------------------------------------------------------------
 
@@ -516,6 +526,32 @@ class _SearchOpsMixin(_MemoryBase):
         trace: list[dict[str, Any]] = []
         hits = self.search(query, _trace=trace, **kwargs)
         return {"hits": hits, "trace": trace}
+
+    def search_by_file(
+        self,
+        query: str,
+        *,
+        file: str,
+        limit: int = 10,
+        mode: str = "hybrid",
+        type_: str | None = None,
+    ) -> list[MemoryRecord]:
+        """High-precision by-file lane over the capture-stamped
+        `files_read`/`files_modified` arrays (see `capture.collect_tool_files`).
+
+        Over-fetches a wider pool via the normal `search()` — ranking, boosts
+        and tier exclusions stay identical — then keeps hits whose stamped
+        arrays contain `file` (case-insensitive substring). Falls back to a
+        plain `search()` when `file` is empty. Opt-in surface for MCP/CLI
+        callers; deliberately NOT wired into the recall hook (5s budget).
+        """
+        frag = (file or "").strip().lower()
+        if not frag:
+            return self.search(query, limit=limit, mode=mode, type_=type_)  # type: ignore[no-any-return]
+        pool: list[MemoryRecord] = self.search(
+            query or file, limit=max(limit * 5, 25), mode=mode, type_=type_
+        )
+        return [r for r in pool if _record_touches_file(r, frag)][:limit]
 
     def list(
         self,
