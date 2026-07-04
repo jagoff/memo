@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logo.png" alt="memo" width="128" height="128" />
+<img src="docs/banner.jpg" alt="memo — local memory for AI" width="100%" />
 
 # memo
 
