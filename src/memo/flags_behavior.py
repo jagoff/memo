@@ -340,4 +340,32 @@ SPECS: tuple[FlagSpec, ...] = (
         "maintain",
         "Relative or absolute path to the .memflow directory (defaults to current dir/.memflow).",
     ),
+    # privacy / redaction (consumed by capture.py, cli_ingest.py)
+    _spec(
+        "MEMO_REDACT_SECRETS",
+        "bool",
+        True,
+        "privacy",
+        "Mask secrets (AWS/GitHub/OpenAI/Anthropic/Slack/GCP keys, PEM private-key "
+        "blocks) to ****last4 before persisting capture/ingest content, tagging the "
+        "memory _redacted. Pattern tier only — near-zero false positives. Default on "
+        "(security fix); set 0 to store raw text.",
+    ),
+    _spec(
+        "MEMO_REDACT_ENTROPY",
+        "bool",
+        False,
+        "privacy",
+        "Also mask long high-entropy mixed-class tokens. Opt-in: false-positive-"
+        "prone; pure-hex hashes/ids are always exempt.",
+    ),
+    _spec(
+        "MEMO_PRIVATE_MARKERS",
+        "bool",
+        True,
+        "privacy",
+        "Strip <private>...</private> spans from transcript text before capture "
+        "extraction or mine-history ever see it. An unclosed <private> drops to "
+        "end-of-text (fail-closed). Set 0 to disable.",
+    ),
 )
