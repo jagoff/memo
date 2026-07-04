@@ -414,3 +414,48 @@ def test_run_capture_incremental_stamps_provenance(tmp_path, monkeypatch):
     assert seen["extra_base"]["session_id"] == "sess-abc"
     assert seen["extra_base"]["transcript_path"] == str(transcript)
     assert isinstance(seen["extra_base"]["turn_hash"], str) and seen["extra_base"]["turn_hash"]
+
+
+def test_run_capture_incremental_stamps_tool_files(tmp_path, monkeypatch):
+    import json as _json
+
+    from memo import capture
+
+    # Same isolation as test_run_capture_incremental_stamps_provenance:
+    # pin the vault so exported env vars can never leak Memory(cfg) writes
+    # into the developer's real vault.
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_path / "vault"))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    seen: dict = {}
+
+    def _fake_eas(mem, cfg, u, a, *, debug=False, merge_tags=None, extra_base=None):
+        seen["extra_base"] = extra_base
+        return {
+            "candidates": 0, "saved": [], "saved_titles": [], "skipped_dup": 0,
+            "reconciled": 0, "skipped_quality": 0, "skipped_meta": 0,
+            "skipped_batch_dup": 0, "uncertain": 0, "retyped": 0,
+        }
+
+    monkeypatch.setattr(capture, "_extract_and_save", _fake_eas)
+
+    assistant_blocks = [
+        {"type": "text", "text": "We decided to fix the socket path handling. " + "detail " * 40},
+        {"type": "tool_use", "name": "Edit", "input": {"file_path": "/repo/src/memo/recall_socket.py"}},
+    ]
+    rows = [
+        {"type": "user", "message": {"content": [{"type": "text", "text": "fix it"}]}},
+        {"type": "assistant", "message": {"content": assistant_blocks}},
+    ]
+    transcript = tmp_path / "sess-tf.jsonl"
+    transcript.write_text("\n".join(_json.dumps(r) for r in rows), encoding="utf-8")
+
+    out = capture.run_capture_incremental(transcript, "sess-tf")
+    assert out["status"] == "ok"
+    assert seen["extra_base"]["files_modified"] == ["/repo/src/memo/recall_socket.py"]
+    assert "files_read" not in seen["extra_base"]  # empty arrays are not stamped

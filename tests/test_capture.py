@@ -649,3 +649,57 @@ def test_extract_and_save_stamps_provenance(mock_memory, tmp_cfg, monkeypatch):
     assert rec.extra["transcript_path"] == "/tmp/x/sess-42.jsonl"
     assert rec.extra["turn_hash"] == "abc123"
     assert "capture_confidence" in rec.extra
+
+
+# ---------------------------------------------------------------------------
+# collect_tool_files — unit tests (Task E4)
+# ---------------------------------------------------------------------------
+
+
+def _write_tool_transcript(tmp_path, blocks):
+    import json as _json
+
+    rows = [{"type": "assistant", "message": {"content": blocks}}]
+    t = tmp_path / "tool-sess.jsonl"
+    t.write_text("\n".join(_json.dumps(r) for r in rows), encoding="utf-8")
+    return t
+
+
+def test_collect_tool_files_classifies_read_vs_modified(tmp_path):
+    from memo.capture import collect_tool_files
+
+    t = _write_tool_transcript(
+        tmp_path,
+        [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/src/a.py"}},
+            {"type": "tool_use", "name": "Edit", "input": {"file_path": "/repo/src/b.py"}},
+            {"type": "tool_use", "name": "Bash", "input": {"command": "ls /repo"}},
+            {"type": "tool_result", "is_error": False},
+        ],
+    )
+    out = collect_tool_files(t)
+    assert out["files_modified"] == ["/repo/src/b.py"]
+    assert "/repo/src/a.py" in out["files_read"]
+    # Bash commands are never mistaken for file paths:
+    assert all("ls " not in f for f in out["files_read"] + out["files_modified"])
+
+
+def test_collect_tool_files_caps_and_keeps_most_recent(tmp_path):
+    from memo.capture import collect_tool_files
+
+    blocks = [
+        {"type": "tool_use", "name": "Edit", "input": {"file_path": f"/r/f{i}.py"}}
+        for i in range(15)
+    ]
+    t = _write_tool_transcript(tmp_path, blocks)
+    out = collect_tool_files(t, max_files=10)
+    assert len(out["files_modified"]) == 10
+    assert out["files_modified"][-1] == "/r/f14.py"
+    assert "/r/f0.py" not in out["files_modified"]
+
+
+def test_collect_tool_files_unreadable_is_empty(tmp_path):
+    from memo.capture import collect_tool_files
+
+    out = collect_tool_files(tmp_path / "missing.jsonl")
+    assert out == {"files_read": [], "files_modified": []}

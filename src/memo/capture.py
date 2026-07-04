@@ -320,6 +320,63 @@ def _tool_activity(content: Any) -> str:
     return "; ".join(parts).strip()
 
 
+# Tool names whose `input` names a filesystem path, split by intent. Bash is
+# deliberately excluded: parsing file args out of shell commands is unreliable.
+_READ_TOOLS = frozenset({"Read", "Grep", "Glob", "NotebookRead"})
+_WRITE_TOOLS = frozenset({"Edit", "MultiEdit", "Write", "NotebookEdit"})
+
+
+def collect_tool_files(transcript_path: Path, max_files: int = 10) -> dict[str, list[str]]:
+    """Structured projection of the session's tool stream: files read vs modified.
+
+    Complements `_tool_activity` (flattened text evidence, capped at 300 chars)
+    with machine-readable arrays for the by-file retrieval lane — a retrieval
+    key vectors handle poorly (2026-07-03 survey, Tier2 #13 / claude-mem
+    findByFile). Covers the whole transcript so far, deduped, keeping the
+    MOST RECENT `max_files` distinct paths per array (re-touching a file moves
+    it to the end). Soft-fail: unreadable transcript → empty arrays.
+    """
+    files_read: dict[str, None] = {}
+    files_mod: dict[str, None] = {}
+    try:
+        lines = transcript_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return {"files_read": [], "files_modified": []}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = obj.get("message", obj)
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = str(block.get("name") or "")
+            inp = block.get("input")
+            if not isinstance(inp, dict):
+                continue
+            path = str(
+                inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or ""
+            ).strip()
+            if not path or "/" not in path:
+                continue
+            bucket = files_mod if name in _WRITE_TOOLS else files_read if name in _READ_TOOLS else None
+            if bucket is None:
+                continue
+            bucket.pop(path, None)  # re-insert → most-recent-last ordering
+            bucket[path] = None
+    return {
+        "files_read": list(files_read)[-max_files:],
+        "files_modified": list(files_mod)[-max_files:],
+    }
+
+
 def _strip_private(text: str) -> str:
     """Honor <private>…</private> spans: content inside never reaches the
     extractor. Applies to EVERY transcript read path — Stop-hook capture,
@@ -1103,6 +1160,11 @@ def run_capture(
         "transcript_path": str(transcript_path),
         "turn_hash": h,
     }
+    from memo.flags import flag_bool  # local import, consistent with module style
+
+    if flag_bool("MEMO_CAPTURE_TOOL_EVIDENCE"):
+        _tf = collect_tool_files(transcript_path)
+        provenance.update({k: v for k, v in _tf.items() if v})
     try:
         result = _extract_and_save(
             mem, cfg, user_text, assistant_text, debug=debug, extra_base=provenance
@@ -1292,6 +1354,11 @@ def run_capture_incremental(
             "transcript_path": str(transcript_path),
             "turn_hash": _hash_assistant(combined_assistant),
         }
+        from memo.flags import flag_bool  # local import, consistent with module style
+
+        if flag_bool("MEMO_CAPTURE_TOOL_EVIDENCE"):
+            _tf = collect_tool_files(transcript_path)
+            provenance.update({k: v for k, v in _tf.items() if v})
         mem = Memory(cfg)
         try:
             result = _extract_and_save(
