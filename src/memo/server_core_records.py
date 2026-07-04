@@ -16,6 +16,7 @@ def register(server: Any, memory: Memory) -> None:
         extract: bool | None = None,
         extra: dict[str, Any] | None = None,
         respect_synapse_freeze: bool | None = None,
+        scope: str | None = None,
     ) -> dict[str, Any]:
         """Persist `content` to memo.
 
@@ -25,9 +26,22 @@ def register(server: Any, memory: Memory) -> None:
         propagate to every fact. Returns an extraction summary
         (`status`, `saved` ids, `saved_titles`, counts) rather than a single
         record. If nothing extractable is found, the blob is saved verbatim.
+
+        `scope` controls the auto `project:<repo>` tag for THIS call only:
+        `"global"` skips it (the memory lands untagged → the global recall
+        tier, +0.10 boost everywhere); `"project"` or None keep the default
+        auto-detection. An explicit `project:` tag in `tags` always wins
+        either way.
         """
         from memo.flags import flag_bool
         from memo.memory import WriteRefused
+
+        if scope not in (None, "project", "global"):
+            return {
+                "error": "invalid_scope",
+                "message": f"scope must be 'project' or 'global', got {scope!r}",
+            }
+        auto_project = scope != "global"
 
         if extract is None:
             extract = flag_bool("MEMO_SAVE_EXTRACT")
@@ -41,6 +55,7 @@ def register(server: Any, memory: Memory) -> None:
                 merge_tags=tags,
                 title=title,
                 type_=type,
+                auto_project=auto_project,
             )
 
         try:
@@ -50,6 +65,7 @@ def register(server: Any, memory: Memory) -> None:
                 type_=type,
                 tags=tags,
                 auto_derive=auto_derive,
+                auto_project=auto_project,
                 extra=extra,
                 respect_synapse_freeze=respect_synapse_freeze,
             )
