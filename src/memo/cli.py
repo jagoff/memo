@@ -66,6 +66,7 @@ from memo.cli_import import import_group
 from memo.cli_ingest import ingest
 from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_install_mcp import install_mcp
+from memo.cli_invalidate import invalidate_cmd
 from memo.cli_links import links_group
 from memo.cli_maint_daemon import maint_daemon_group
 from memo.cli_maintain import maintain_cmd
@@ -172,6 +173,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
             "cross-dedup",
             "retier",
             "contradict",
+            "invalidate",
             "temporal",
             "compress-context",
         ],
@@ -332,6 +334,7 @@ cli.add_command(eval_group)
 cli.add_command(debug_recall_cmd)
 cli.add_command(dream_cmd)
 cli.add_command(maintain_cmd)
+cli.add_command(invalidate_cmd)
 cli.add_command(synthesize_cmd)
 cli.add_command(retier_cmd)
 cli.add_command(usefulness_cmd)

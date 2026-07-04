@@ -339,6 +339,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "(dream/consolidation). Never on the recall-hook path.",
     ),
     _spec(
+        "MEMO_INVALIDATE_PENALTY",
+        "float",
+        0.3,
+        "misc",
+        "Confidence penalty applied per memory by `memo invalidate` "
+        "(reversible bulk weakening; restored by `memo invalidate --undo`).",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
         "MEMO_AUTO_PROJECT_TAG",
         "bool",
         True,
