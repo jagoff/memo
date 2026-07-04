@@ -183,3 +183,36 @@ def test_cli_save_extract_default_flag(tmp_path, monkeypatch):
     summary = json.loads(r.output)
     assert summary["status"] == "verbatim"
     assert len(summary["saved"]) == 1
+
+
+# ── auto_project kwarg ────────────────────────────────────────────────────────
+
+
+def test_extract_auto_project_false_skips_project_tag(mem_with_stub, monkeypatch):
+    monkeypatch.setenv("MEMO_AUTO_PROJECT_TAG", "1")
+    monkeypatch.setenv("MEMO_PROJECT_TAG", "detected-repo")
+    cands = [{"title": "fact one", "body": "a" * 80, "type": "note", "tags": []}]
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *a, **kw: cands)
+    monkeypatch.setattr(capture_mod, "_passes_quality", lambda *a, **kw: True)
+    monkeypatch.setattr(capture_mod, "find_near_duplicate", lambda *a, **kw: None)
+
+    out = extract_and_save_text(
+        mem_with_stub, mem_with_stub.cfg, "blob", auto_project=False
+    )
+
+    rec = mem_with_stub.get(out["saved"][0])
+    assert not any(t.startswith("project:") for t in rec.tags)
+
+
+def test_extract_verbatim_fallback_honors_auto_project_false(mem_with_stub, monkeypatch):
+    monkeypatch.setenv("MEMO_AUTO_PROJECT_TAG", "1")
+    monkeypatch.setenv("MEMO_PROJECT_TAG", "detected-repo")
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *a, **kw: [])
+
+    out = extract_and_save_text(
+        mem_with_stub, mem_with_stub.cfg, "unextractable note", auto_project=False
+    )
+
+    assert out["status"] == "verbatim"
+    rec = mem_with_stub.get(out["saved"][0])
+    assert not any(t.startswith("project:") for t in rec.tags)

@@ -769,6 +769,7 @@ def _extract_and_save(
     *,
     debug: bool = False,
     merge_tags: list[str] | None = None,
+    auto_project: bool = True,
 ) -> dict[str, Any]:
     """Extract insights from one (user, assistant) blob, dedup, save.
 
@@ -935,6 +936,7 @@ def _extract_and_save(
                 title=cand["title"],
                 type_=cand["type"],
                 tags=tags,
+                auto_project=auto_project,
                 extra={"capture_confidence": round(confidence, 3)},
             )
             saved.append(rec.id)
@@ -968,6 +970,7 @@ def extract_and_save_text(
     title: str | None = None,
     type_: str = "note",
     debug: bool = False,
+    auto_project: bool = True,
 ) -> dict[str, Any]:
     """Write-time fact extraction (mem0 ADD-model) for an explicit save.
 
@@ -990,7 +993,7 @@ def extract_and_save_text(
     Returns a summary dict: ``status`` ("extracted" | "verbatim") plus the
     `_extract_and_save` counts (candidates/saved/saved_titles/...).
     """
-    result = _extract_and_save(mem, cfg, "", text, debug=debug, merge_tags=merge_tags)
+    result = _extract_and_save(mem, cfg, "", text, debug=debug, merge_tags=merge_tags, auto_project=auto_project)
     if result["candidates"] == 0:
         from memo.flags import flag_bool
 
@@ -1008,6 +1011,7 @@ def extract_and_save_text(
             title=title,
             type_=type_,
             tags=vb_tags or None,
+            auto_project=auto_project,
         )
         return {
             "status": "verbatim",
