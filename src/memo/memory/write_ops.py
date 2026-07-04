@@ -32,9 +32,9 @@ from memo.memory.record import (
     _normalise_tags,
     _now_iso,
     _slugify,
+    bump_support_if_enabled,
     in_derived_save_scope,
     is_reference_noise,
-    support_lift,
 )
 from memo.tiers import REFERENCE_TYPES
 from memo.util import sha256_short as _sha256_short
@@ -371,9 +371,8 @@ class _WriteOpsMixin(_MemoryBase):
                             # Corroboration (C1): the existing record was just
                             # re-asserted by an independent save. Count it —
                             # this signal used to be discarded with the warning.
-                            if flag_bool("MEMO_SUPPORT_COUNT") and _dh.get("id"):
-                                with contextlib.suppress(Exception):
-                                    self.store.bump_support_batch([_dh["id"]], lift=support_lift())
+                            if _dh.get("id"):
+                                bump_support_if_enabled(self.store, [_dh["id"]])
                             # C3: absorb-on-recurrence (flag-gated, default off).
                             # Never in derived-save scope — dream/consolidation
                             # batch saves are merged by the consolidate pass.
@@ -475,9 +474,7 @@ class _WriteOpsMixin(_MemoryBase):
                         )
                         # Corroboration (C1): a repeated save with the same
                         # topic_key is a re-assertion of the same fact.
-                        if flag_bool("MEMO_SUPPORT_COUNT"):
-                            with contextlib.suppress(Exception):
-                                self.store.bump_support_batch([use_existing_id], lift=support_lift())
+                        bump_support_if_enabled(self.store, [use_existing_id])
                 except Exception as exc:
                     _log.debug("topic_key lookup failed: %s", exc)
 

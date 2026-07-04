@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.9] - 2026-07-04
+
+Internal simplification of the Wave 2 code — behavior-identical (full suite,
+mypy, ruff, and the retrieval eval all unchanged: baseline prec@5, noise@5 0.0).
+
+### Changed
+
+- **Corroboration bump deduplicated.** The `if MEMO_SUPPORT_COUNT: suppress:
+  bump_support_batch(..., lift=support_lift())` block was copy-pasted at four
+  call sites (near-duplicate save, `topic_key` upsert, and both consolidation
+  merge paths). Collapsed into one `record.bump_support_if_enabled(store, ids)`
+  helper that owns the flag gate + lift resolution — the store SQL layer stays
+  flag-free and the policy lives in exactly one place.
+- **Capture provenance deduplicated.** The identical provenance-bag construction
+  in `run_capture` and `run_capture_incremental` (session/turn stamp + opt-in
+  tool-file arrays) is now one `capture._capture_provenance()` helper.
+
 ## [2.12.8] - 2026-07-04
 
 Ecosystem roadmap **Wave 2** — confidence lifecycle (workstream C) + capture

@@ -377,6 +377,25 @@ def collect_tool_files(transcript_path: Path, max_files: int = 10) -> dict[str, 
     }
 
 
+def _capture_provenance(
+    session_id: str, transcript_path: Path, turn_hash: str
+) -> dict[str, Any]:
+    """Provenance bag merged under every captured memory's extra: the source
+    session/turn (so a memory can escalate to its origin) plus, when
+    MEMO_CAPTURE_TOOL_EVIDENCE is on, the tool-file arrays. Shared by the Stop
+    and incremental capture paths."""
+    prov: dict[str, Any] = {
+        "session_id": session_id,
+        "transcript_path": str(transcript_path),
+        "turn_hash": turn_hash,
+    }
+    from memo.flags import flag_bool
+
+    if flag_bool("MEMO_CAPTURE_TOOL_EVIDENCE"):
+        prov.update({k: v for k, v in collect_tool_files(transcript_path).items() if v})
+    return prov
+
+
 def _strip_private(text: str) -> str:
     """Honor <private>…</private> spans: content inside never reaches the
     extractor. Applies to EVERY transcript read path — Stop-hook capture,
@@ -1154,17 +1173,8 @@ def run_capture(
 
     # Lazy heavy imports: only paid past pre-filter.
     mem = Memory(cfg)
-    provenance: dict[str, Any] = {
-        # Claude Code transcripts are <session_id>.jsonl — the stem IS the session id.
-        "session_id": transcript_path.stem,
-        "transcript_path": str(transcript_path),
-        "turn_hash": h,
-    }
-    from memo.flags import flag_bool  # local import, consistent with module style
-
-    if flag_bool("MEMO_CAPTURE_TOOL_EVIDENCE"):
-        _tf = collect_tool_files(transcript_path)
-        provenance.update({k: v for k, v in _tf.items() if v})
+    # Claude Code transcripts are <session_id>.jsonl — the stem IS the session id.
+    provenance = _capture_provenance(transcript_path.stem, transcript_path, h)
     try:
         result = _extract_and_save(
             mem, cfg, user_text, assistant_text, debug=debug, extra_base=provenance
@@ -1349,16 +1359,9 @@ def run_capture_incremental(
             _stamp()
             return {"status": "no_trigger", "exchange_count": total}
 
-        provenance: dict[str, Any] = {
-            "session_id": session_id,
-            "transcript_path": str(transcript_path),
-            "turn_hash": _hash_assistant(combined_assistant),
-        }
-        from memo.flags import flag_bool  # local import, consistent with module style
-
-        if flag_bool("MEMO_CAPTURE_TOOL_EVIDENCE"):
-            _tf = collect_tool_files(transcript_path)
-            provenance.update({k: v for k, v in _tf.items() if v})
+        provenance = _capture_provenance(
+            session_id, transcript_path, _hash_assistant(combined_assistant)
+        )
         mem = Memory(cfg)
         try:
             result = _extract_and_save(

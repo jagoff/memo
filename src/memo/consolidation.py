@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from memo.llm import MLXChat
-from memo.memory.record import chat_with_timeout, derived_save_scope
+from memo.memory.record import bump_support_if_enabled, chat_with_timeout, derived_save_scope
 
 _log = logging.getLogger(__name__)
 
@@ -275,16 +275,7 @@ class AdvancedConsolidator:
                 # Corroboration (C1): the surviving record just absorbed N
                 # near-duplicate assertions — count them. Best-effort.
                 if archived:
-                    try:
-                        from memo.flags import flag_bool
-                        from memo.memory.record import support_lift
-
-                        if flag_bool("MEMO_SUPPORT_COUNT"):
-                            self.memory.store.bump_support_batch(
-                                [surviving_id] * len(archived), lift=support_lift()
-                            )
-                    except Exception as exc:
-                        _log.debug("apply_merge: support bump failed: %s", exc)
+                    bump_support_if_enabled(self.memory.store, [surviving_id] * len(archived))
                 return ConsolidationResult(
                     merged_id=surviving_id,
                     archived_ids=archived,
@@ -335,16 +326,7 @@ class AdvancedConsolidator:
 
             # Corroboration (C1): same signal for LLM-merged records.
             if archived:
-                try:
-                    from memo.flags import flag_bool
-                    from memo.memory.record import support_lift
-
-                    if flag_bool("MEMO_SUPPORT_COUNT"):
-                        self.memory.store.bump_support_batch(
-                            [merged_rec.id] * len(archived), lift=support_lift()
-                        )
-                except Exception as exc:
-                    _log.debug("apply_merge: support bump failed: %s", exc)
+                bump_support_if_enabled(self.memory.store, [merged_rec.id] * len(archived))
 
             return ConsolidationResult(
                 merged_id=merged_rec.id,

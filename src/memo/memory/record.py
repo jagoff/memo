@@ -675,6 +675,20 @@ def support_lift() -> float:
     return 0.0 if v is None else v
 
 
+def bump_support_if_enabled(store: Any, ids: list[str]) -> None:
+    """Corroboration (C1): count a re-assertion of the given memories.
+
+    No-op when MEMO_SUPPORT_COUNT is off; best-effort (never raises). Reads
+    the flag + lift here so the save and consolidation call sites stay one
+    line and the corroboration policy lives in exactly one place."""
+    from memo.flags import flag_bool
+
+    if not ids or not flag_bool("MEMO_SUPPORT_COUNT"):
+        return
+    with contextlib.suppress(Exception):
+        store.bump_support_batch(ids, lift=support_lift())
+
+
 def _normalise_tags(tags: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
