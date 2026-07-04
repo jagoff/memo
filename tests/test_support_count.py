@@ -184,3 +184,100 @@ def test_support_lift_reads_flag(monkeypatch) -> None:
     assert support_lift() == 0.0  # default off
     monkeypatch.setenv("MEMO_SUPPORT_CONFIDENCE_LIFT", "0.05")
     assert support_lift() == pytest.approx(0.05)
+
+
+# -- Cross-machine confidence arbitration regression (bump_support_batch) ----
+
+
+def test_bump_existing_row_does_not_advance_updated_at(tmp_path: Path) -> None:
+    """A support bump on an existing row must NOT advance updated_at.
+
+    Cross-machine confidence arbitration in merge_signal uses newer-wins on
+    updated_at. If bump_support_batch advances the clock without a real
+    confidence change (lift=0.0), a stale bumping machine can block a peer's
+    fresher confidence demotion from merging.
+    """
+    store = _make_store(tmp_path)
+    # Seed the row via a confidence write so the row exists with a real updated_at.
+    store.penalize_confidence_batch(["m1"], delta=0.3)  # 1.0 -> 0.7
+    # Backdate the row to a known old timestamp so we can detect any clock advance.
+    OLD_TS = "2020-01-01T00:00:00"
+    store._conn.execute(
+        "UPDATE memory_health SET updated_at = ? WHERE id = 'm1'", (OLD_TS,)
+    )
+    store._conn.commit()
+
+    # Verify the row is seeded correctly.
+    row0 = store._conn.execute(
+        "SELECT updated_at, support_count FROM memory_health WHERE id = 'm1'"
+    ).fetchone()
+    assert row0["updated_at"] == OLD_TS
+    assert row0["support_count"] == 0
+
+    # Bump with default lift=0.0 — pure counter, no confidence change.
+    store.bump_support_batch(["m1"])
+
+    row1 = store._conn.execute(
+        "SELECT updated_at, support_count FROM memory_health WHERE id = 'm1'"
+    ).fetchone()
+
+    # The timestamp must NOT have advanced.
+    assert row1["updated_at"] == OLD_TS, (
+        f"updated_at advanced from {OLD_TS!r} to {row1['updated_at']!r}; "
+        "bump_support_batch must not touch updated_at on existing rows"
+    )
+    # The counter must still increment.
+    assert row1["support_count"] == 1
+
+
+def test_bump_does_not_clobber_fresher_peer_confidence_on_merge(tmp_path: Path) -> None:
+    """Regression: merging A into B must not overwrite B's fresher confidence.
+
+    Machine A has an old updated_at (stale row, then bumps support counter).
+    Machine B has a newer updated_at with a demoted confidence (0.6).
+    After the fix bump_support_batch does NOT advance A's clock, so
+    merge_signal's newer-wins guard correctly preserves B's demotion.
+    """
+    a = VecStore(tmp_path / "a.db", dims=4)
+    b = VecStore(tmp_path / "b.db", dims=4)
+
+    OLD_TS = "2020-01-01T00:00:00"
+    NEW_TS = "2020-06-01T00:00:00"
+
+    # Seed A: old timestamp, full confidence (not yet demoted).
+    a._conn.execute(
+        "INSERT INTO memory_health(id, confidence, roi_score, updated_at, support_count) "
+        "VALUES('m1', 1.0, 1.0, ?, 0)",
+        (OLD_TS,),
+    )
+    a._conn.commit()
+
+    # Seed B: newer timestamp, demoted confidence (the more-correct state).
+    b._conn.execute(
+        "INSERT INTO memory_health(id, confidence, roi_score, updated_at, support_count) "
+        "VALUES('m1', 0.6, 1.0, ?, 0)",
+        (NEW_TS,),
+    )
+    b._conn.commit()
+
+    # A bumps support (simulates MEMO_SUPPORT_COUNT=1 corroboration).
+    a.bump_support_batch(["m1"])
+
+    # After the fix, A's updated_at must remain OLD_TS (not advanced to now).
+    a_ts = a._conn.execute(
+        "SELECT updated_at FROM memory_health WHERE id = 'm1'"
+    ).fetchone()["updated_at"]
+    assert a_ts == OLD_TS, (
+        f"pre-condition: A's updated_at should be {OLD_TS!r}, got {a_ts!r}"
+    )
+
+    # Merge A into B.
+    payload = a.dump_signal()
+    b.merge_signal(payload)
+
+    # B's fresher confidence demotion must survive (0.6, not 1.0 from A).
+    b_conf = b.get_health_batch(["m1"])["m1"]["confidence"]
+    assert b_conf == pytest.approx(0.6), (
+        f"B's confidence (0.6) was clobbered by A's stale 1.0; got {b_conf}. "
+        "merge_signal newer-wins must protect B's fresher demotion."
+    )

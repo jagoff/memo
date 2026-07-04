@@ -177,7 +177,14 @@ class _SignalQueriesMixin(_StoreBase):
         — bounded evidence strength: with the 1.0 cap a re-assertion can only
         undo prior penalties (contradiction/OCR quality), never boost a
         memory above neutral. Upserts missing rows. Best-effort caller
-        contract; never on the recall-hook hot path."""
+        contract; never on the recall-hook hot path.
+
+        NOTE: the ON CONFLICT branch intentionally does NOT advance updated_at.
+        Cross-machine signal merge uses newer-wins on updated_at; a pure
+        counter bump (lift=0.0) carries no new confidence information and must
+        not move the arbitration clock, or it would silently revert a peer's
+        fresher confidence demotion. Only the INSERT (new-row) branch stamps
+        updated_at so the row is timestamped on creation."""
         if not ids:
             return
         with self._tx() as cx:
@@ -186,8 +193,7 @@ class _SignalQueriesMixin(_StoreBase):
                 "VALUES(?, 1.0, 1.0, datetime('now'), 1) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "support_count = support_count + 1, "
-                "confidence = min(?, confidence + ?), "
-                "updated_at = datetime('now')",
+                "confidence = min(?, confidence + ?)",
                 [(i, cap, lift) for i in ids],
             )
 
