@@ -300,6 +300,68 @@ def _pending_marker(cfg: Config) -> Path:
     return cfg.state_dir / "sync_pending"
 
 
+def _stamp_pending(cfg: Config, branch: str, *, reason: str | None = None) -> None:
+    """Write the sync_pending sentinel. With `reason` (secret gate) the marker
+    is JSON so status/doctor can surface WHY; plain branch text otherwise
+    (the legacy format — old markers keep parsing)."""
+    payload = json.dumps({"branch": branch, "reason": reason}) if reason else branch
+    with contextlib.suppress(OSError):
+        _pending_marker(cfg).write_text(payload, encoding="utf-8")
+
+
+def _read_pending_reason(cfg: Config) -> str | None:
+    """The block reason from a JSON sync_pending marker, else None (missing
+    marker, legacy plain-text marker, or unreadable)."""
+    marker = _pending_marker(cfg)
+    if not marker.is_file():
+        return None
+    try:
+        raw = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if raw.startswith("{"):
+        with contextlib.suppress(json.JSONDecodeError):
+            reason = json.loads(raw).get("reason")
+            return str(reason) if reason else None
+    return None
+
+
+def _scan_staged_secrets(root: Path) -> list[str]:
+    """Scan ADDED lines of staged `.md` diffs for secrets — pattern tier only
+    (never entropy: a push block must not false-positive on the hashes/ids
+    that pepper memory bodies).
+
+    Added lines are collected PER FILE and joined with newlines before the
+    scan: `_PEM_RE` requires the BEGIN and END markers in the same string, so
+    a line-at-a-time scan would let a multi-line private-key block sail
+    through (verified: 0 hits per-line vs 1 hit joined on a 4-line PEM).
+    Token patterns are single-line, so joining never hides them. Joining may
+    concatenate added lines from different hunks of one file — that can only
+    over-match (a conservative block), never under-match.
+
+    Returns human-readable findings like
+    ``memories/leak.md: github-token ****WXYZ``."""
+    from memo.redact import scan_secrets
+
+    diff = _git(root, "diff", "--cached", "--unified=0", "--no-color", "--", "*.md").stdout
+    added_by_file: dict[str, list[str]] = {}
+    current = ""
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current = line[6:]
+            continue
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        added_by_file.setdefault(current, []).append(line[1:])
+    findings: list[str] = []
+    for path, lines in added_by_file.items():
+        findings.extend(
+            f"{path}: {kind} {preview}"
+            for kind, preview in scan_secrets("\n".join(lines))
+        )
+    return findings
+
+
 def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = False) -> dict:
     """Read-only health of the git-sync repo — never raises, never mutates.
 
@@ -342,6 +404,7 @@ def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = Fal
         "behind": behind,
         "last_commit": last,
         "pending": _pending_marker(cfg).is_file(),
+        "pending_reason": _read_pending_reason(cfg),
         "remote_reachable": remote_reachable,
     }
 
@@ -377,6 +440,18 @@ def _commit_local(cfg: Config, store: VecStore) -> tuple[Path, str, int]:
     staged = _git(root, "diff", "--cached", "--name-only").stdout.strip()
     n_files = len(staged.splitlines()) if staged else 0
     if staged:
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_SYNC_SECRET_GATE"):
+            findings = _scan_staged_secrets(root)
+            if findings:
+                reason = "secret-scan blocked commit: " + "; ".join(findings[:5])
+                _stamp_pending(cfg, branch, reason=reason)
+                raise SyncGitError(
+                    f"{reason} — remove/mask the secret in the file(s) and re-run "
+                    "`memo sync once` (one-shot bypass: MEMO_SYNC_SECRET_GATE=0). "
+                    "Nothing was committed; the secret never entered git history."
+                )
         from memo.identity import current as _identity
 
         who = _identity(cfg).label
@@ -401,8 +476,7 @@ def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
 
     # Stamp pending marker BEFORE push attempt — if we crash between now and
     # the push, the retry mechanism will catch it on next trigger.
-    with contextlib.suppress(OSError):
-        _pending_marker(cfg).write_text(branch, encoding="utf-8")
+    _stamp_pending(cfg, branch)
 
     # push; set upstream on first push
     push = _git(root, "push", remote, branch, check=False)
@@ -413,8 +487,7 @@ def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
             # remote down). Stamp a pending marker so `sync status` / `doctor`
             # flag the stranded commit and the next trigger retries — the work is
             # NOT lost, just not yet shared.
-            with contextlib.suppress(OSError):
-                _pending_marker(cfg).write_text(branch, encoding="utf-8")
+            _stamp_pending(cfg, branch)
             raise SyncGitError(
                 f"git push failed (commit kept locally, will retry): {push.stderr.strip()}"
             )

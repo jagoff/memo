@@ -742,3 +742,105 @@ def test_cli_sync_pull_and_push_respect_machine_lock(remote: Path, tmp_path: Pat
     assert r3.exit_code == 0, r3.output
     assert '"pulled": true' in r3.output
     assert '"branch": "main"' in r3.output
+
+
+# ── pre-push secret gate (A3) ─────────────────────────────────────────────────
+
+
+def test_commit_gate_blocks_staged_secret_and_stamps_reason(
+    remote: Path, tmp_path: Path, monkeypatch
+):
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        tok = "ghp_" + "a" * 32 + "WXYZ"
+        (clone / "memorias" / "leak.md").write_text(
+            f"---\ntitle: leak\n---\n\ndeploy token {tok}\n", encoding="utf-8"
+        )
+        with pytest.raises(SyncGitError, match="secret-scan blocked"):
+            sync_push(mem.cfg, mem.store)
+        st = sync_status(mem.cfg)
+        assert st["pending"] is True
+        assert "github-token" in (st["pending_reason"] or "")
+        # nothing was committed: the secret never entered git history
+        head = subprocess.run(
+            ["git", "-C", str(clone), "log", "--oneline"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "sync:" not in head
+    finally:
+        mem.close()
+
+
+def test_commit_gate_blocks_multiline_pem_block(remote: Path, tmp_path: Path, monkeypatch):
+    """A PEM private-key block spans multiple diff lines. _PEM_RE only fires
+    when BEGIN and END are in the same string, so the gate must join added
+    lines per file before scanning — a per-line scan lets the key sail
+    through (the exact leak class the workstream exists to stop; direct
+    memo_save writes have NO other defense than this gate)."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        pem = (
+            "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+            "b3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n"
+            "AAAAB3NzaC1yc2EAAAADAQABAAABgQ\n"
+            "-----END OPENSSH PRIVATE KEY-----"
+        )
+        (clone / "memorias" / "key.md").write_text(
+            f"---\ntitle: deploy key\n---\n\npasted for setup:\n{pem}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SyncGitError, match="secret-scan blocked"):
+            sync_push(mem.cfg, mem.store)
+        st = sync_status(mem.cfg)
+        assert st["pending"] is True
+        assert "private-key" in (st["pending_reason"] or "")
+        head = subprocess.run(
+            ["git", "-C", str(clone), "log", "--oneline"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "sync:" not in head
+    finally:
+        mem.close()
+
+
+def test_commit_gate_clears_after_fix(remote: Path, tmp_path: Path, monkeypatch):
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        tok = "ghp_" + "c" * 32 + "AAAA"
+        leak = clone / "memorias" / "leak.md"
+        leak.write_text(f"---\ntitle: leak\n---\n\ntoken {tok}\n", encoding="utf-8")
+        with pytest.raises(SyncGitError):
+            sync_push(mem.cfg, mem.store)
+        leak.write_text(
+            "---\ntitle: leak\n---\n\ntoken rotated, moved to 1Password\n",
+            encoding="utf-8",
+        )
+        out = sync_push(mem.cfg, mem.store)
+        assert out["pushed"] is True
+        st = sync_status(mem.cfg)
+        assert st["pending"] is False
+        assert st["pending_reason"] is None
+    finally:
+        mem.close()
+
+
+def test_commit_gate_bypass_with_flag_off(remote: Path, tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MEMO_SYNC_SECRET_GATE", "0")
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        tok = "ghp_" + "d" * 32 + "BBBB"
+        (clone / "memorias" / "known.md").write_text(
+            f"---\ntitle: known\n---\n\ndocumented token {tok}\n", encoding="utf-8"
+        )
+        out = sync_push(mem.cfg, mem.store)
+        assert out["pushed"] is True
+    finally:
+        mem.close()

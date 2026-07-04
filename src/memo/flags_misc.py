@@ -510,6 +510,17 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0,
     ),
     _spec(
+        "MEMO_SYNC_SECRET_GATE",
+        "bool",
+        True,
+        "sync",
+        "Secret gate on the sync commit: scan staged .md ADDITIONS for API keys / "
+        "private-key blocks before committing; on a hit the commit+push are blocked, "
+        "sync_pending is stamped with the reason, and `memo sync status` / "
+        "`memo doctor` surface it. Pattern tier only (no entropy heuristics). "
+        "Set 0 to bypass once.",
+    ),
+    _spec(
         "MEMO_OUTCOME_SOURCE_FEEDBACK",
         "bool",
         False,
