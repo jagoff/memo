@@ -24,6 +24,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "is reported in the receipt under flagged_for_review. 0 (default) = off.",
         min_val=0,
     ),
+    _spec(
+        "MEMO_CONTRADICT_MUTABILITY",
+        "bool",
+        False,
+        "temporal",
+        "Regex mutability classes (stable/volatile/ephemeral) in the "
+        "contradiction scanner: an LLM 'contradiction' verdict between two "
+        "VOLATILE-class bodies (ports/versions/status) is downgraded to "
+        "'evolution' — a normal update, not a conflict — so maintain demotes "
+        "instead of archiving. Default off.",
+    ),
     # entity-aware retrieval + knowledge-graph expansion
     _spec(
         "MEMO_ENTITY_RETRIEVAL_ENABLED",

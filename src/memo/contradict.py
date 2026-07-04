@@ -46,18 +46,20 @@ the loop is already closed.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import threading
 import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from memo.temporal import TemporalAnalyzer
+from memo.flags import flag_bool
+from memo.temporal import Contradiction, TemporalAnalyzer
 
 _log = logging.getLogger(__name__)
 
@@ -106,6 +108,74 @@ CREATE INDEX IF NOT EXISTS idx_pairs_b ON pairs(memory_id_b);
 def _canonical_pair(a: str, b: str) -> tuple[str, str]:
     """Order a pair so the same two ids always hash to the same row."""
     return (a, b) if a <= b else (b, a)
+
+
+# -- C4: mutability classes ---------------------------------------------------
+#
+# Regex heuristic over a memory body. VOLATILE facts (ports, versions,
+# deploy/status words) churn legitimately: two volatile bodies that "contradict"
+# are an update, not a conflict. EPHEMERAL facts are now-anchored and expected
+# to expire. Everything else is STABLE (default).
+#
+# Spanish-corpus guard (review fix): the volatile word list must NOT contain
+# everyday Spanish words. 'todo' (everything/all) and bare 'estado' (state, an
+# ordinary noun) were dropped — a false volatile classification silently
+# downgrades a REAL contradiction to a confidence demotion, so this list stays
+# conservative. Only the unambiguous status idiom 'estado actual' is matched.
+
+_MUTABILITY_EPHEMERAL = re.compile(
+    r"(?ix)\b("
+    r"hoy|today|esta\s+semana|this\s+week|ahora\s+mismo|right\s+now"
+    r"|en\s+este\s+momento|esta\s+sesi[oó]n|this\s+session"
+    r")\b"
+)
+
+_MUTABILITY_VOLATILE = re.compile(
+    r"(?ix)"
+    r"\bv?\d+\.\d+(?:\.\d+)*\b"  # version strings: 2.9.5 / v1.2
+    r"|:\d{2,5}\b"  # :8765
+    r"|\b(?:puerto|port)\s+\d{2,5}\b"  # puerto 8765 / port 8080
+    r"|\b(?:status|running|corriendo|deployed|desplegado|enabled|disabled"
+    r"|activado|desactivado|pendiente|pending|blocked|bloqueado|wip)\b"
+    r"|\bestado\s+actual\b"  # bare 'estado'/'todo' deliberately excluded — see guard note
+    r"|\b(?:actualmente|currently|por\s+ahora|for\s+now|latest|[uú]ltima\s+versi[oó]n)\b"
+)
+
+
+def classify_mutability(text: str) -> str:
+    """Classify a memory body as ``stable`` | ``volatile`` | ``ephemeral``.
+
+    Pure regex, dependency-free, no MLX — cheap enough for the scan loop.
+    Ephemeral wins over volatile (more specific); stable is the default.
+    """
+    t = text or ""
+    if _MUTABILITY_EPHEMERAL.search(t):
+        return "ephemeral"
+    if _MUTABILITY_VOLATILE.search(t):
+        return "volatile"
+    return "stable"
+
+
+def downgrade_volatile_contradiction(
+    contr: Contradiction, text_a: str, text_b: str
+) -> Contradiction:
+    """C4: volatile-vs-volatile is an UPDATE, not a conflict.
+
+    When both sides of an LLM-classified *contradiction* are volatile-class,
+    reclassify as ``evolution`` so `memo maintain` demotes the older side's
+    confidence instead of archiving it. Non-contradiction verdicts and mixed
+    classes pass through untouched.
+    """
+    if contr.relationship != "contradiction":
+        return contr
+    if classify_mutability(text_a) != "volatile" or classify_mutability(text_b) != "volatile":
+        return contr
+    return replace(
+        contr,
+        relationship="evolution",
+        rationale=(contr.rationale or "")
+        + " [mutability: volatile-vs-volatile → evolution]",
+    )
 
 
 @dataclass(frozen=True)
@@ -516,6 +586,10 @@ class ContradictionScanner:
                     continue
                 if contr.confidence < confidence_threshold:
                     continue
+                if flag_bool("MEMO_CONTRADICT_MUTABILITY"):
+                    contr = downgrade_volatile_contradiction(
+                        contr, rec.body or rec.title, other.body or other.title
+                    )
                 if contr.relationship not in ("contradiction", "evolution"):
                     continue
 
