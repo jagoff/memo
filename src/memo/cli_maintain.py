@@ -196,6 +196,7 @@ def maintain_cmd(
         "dry_run": dry_run,
         "hard_delete": hard_delete,
         "superseded": [],  # contradictions acted on
+        "flagged_for_review": [],  # high-support losers held for manual triage (C2 gate)
         "evolved": [],  # contradictions marked evolution (both kept)
         "merged": [],  # duplicate clusters consolidated
         "forgotten": [],  # forget_after TTL elapsed (soft, reversible)
@@ -254,6 +255,21 @@ def maintain_cmd(
                 if "contrad" not in rel:
                     continue  # consistent / unrelated — leave open
                 older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
+                # C2 corroboration gate: a heavily re-asserted fact must not be
+                # auto-archived by ONE newer contradicting mention. Leave the
+                # pair open (status stays 'open' → triage via
+                # `memo contradict list --status open`) and record it.
+                _gate = flag_int("MEMO_SUPERSEDE_SUPPORT_GATE") or 0
+                if _gate > 0:
+                    try:
+                        _support = mem.store.get_support_batch([older]).get(older, 0)
+                    except Exception:
+                        _support = 0
+                    if _support >= _gate:
+                        receipt["flagged_for_review"].append(
+                            {"pair_id": pair.pair_id, "older": older, "support_count": _support}
+                        )
+                        continue
                 action = "delete" if hard_delete else "archive"
                 if not dry_run:
                     ok = mem.delete(older) if hard_delete else mem.lifecycle.archive_memory(older)

@@ -13,6 +13,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "Set higher for slow models, lower to stay within hook budgets.",
         min_val=1.0,
     ),
+    _spec(
+        "MEMO_SUPERSEDE_SUPPORT_GATE",
+        "int",
+        0,
+        "temporal",
+        "When > 0: `memo maintain` refuses to auto-archive the losing side of a "
+        "contradiction whose memory_health.support_count >= this gate — the pair "
+        "stays open for manual triage (`memo contradict list --status open`) and "
+        "is reported in the receipt under flagged_for_review. 0 (default) = off.",
+        min_val=0,
+    ),
     # entity-aware retrieval + knowledge-graph expansion
     _spec(
         "MEMO_ENTITY_RETRIEVAL_ENABLED",
