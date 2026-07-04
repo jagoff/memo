@@ -77,9 +77,10 @@ class _SignalQueriesMixin(_StoreBase):
                 "confidence": float(r["confidence"]),
                 "roi_score": float(r["roi_score"]),
                 "updated_at": r["updated_at"],
+                "support_count": int(r["support_count"]),
             }
             for r in self._conn.execute(
-                "SELECT id, confidence, roi_score, updated_at FROM memory_health"
+                "SELECT id, confidence, roi_score, updated_at, support_count FROM memory_health"
             ).fetchall()
         ]
         feedback = [
@@ -112,15 +113,22 @@ class _SignalQueriesMixin(_StoreBase):
                 )
             if health:
                 cx.executemany(
-                    "INSERT INTO memory_health (id, confidence, roi_score, updated_at) "
-                    "VALUES (?, ?, ?, ?) "
+                    "INSERT INTO memory_health (id, confidence, roi_score, updated_at, support_count) "
+                    "VALUES (?, ?, ?, ?, ?) "
                     "ON CONFLICT(id) DO UPDATE SET "
                     "confidence = excluded.confidence, "
                     "roi_score = excluded.roi_score, "
-                    "updated_at = excluded.updated_at "
+                    "updated_at = excluded.updated_at, "
+                    "support_count = max(memory_health.support_count, excluded.support_count) "
                     "WHERE coalesce(excluded.updated_at, '') > coalesce(memory_health.updated_at, '')",
                     [
-                        (r["id"], float(r["confidence"]), float(r["roi_score"]), r.get("updated_at"))
+                        (
+                            r["id"],
+                            float(r["confidence"]),
+                            float(r["roi_score"]),
+                            r.get("updated_at"),
+                            int(r.get("support_count", 0)),
+                        )
                         for r in health
                     ],
                 )
@@ -160,6 +168,40 @@ class _SignalQueriesMixin(_StoreBase):
         return {"access": len(access), "memory_health": len(health), "source_feedback": feedback_applied}
 
     # -- memory health (confidence + roi_score) ----------------------------
+
+    def bump_support_batch(self, ids: list[str]) -> None:
+        """Increment the corroboration counter for each id (one bump per list
+        occurrence — pass an id N times to bump N). Upserts missing rows.
+
+        Called best-effort from the three corroboration-detection sites
+        (save near-dup hit, topic_key upsert, consolidation merge). Never on
+        the recall-hook hot path — save()/maintain only.
+        """
+        if not ids:
+            return
+        with self._tx() as cx:
+            cx.executemany(
+                "INSERT INTO memory_health(id, confidence, roi_score, updated_at, support_count) "
+                "VALUES(?, 1.0, 1.0, datetime('now'), 1) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "support_count = support_count + 1, "
+                "updated_at = datetime('now')",
+                [(i,) for i in ids],
+            )
+
+    def get_support_batch(self, ids: list[str]) -> dict[str, int]:
+        """Return {id: support_count} for the given ids; missing ids are
+        absent (callers treat missing as 0). Kept SEPARATE from
+        get_health_batch so the search-scoring hot path keeps its exact
+        current query."""
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._conn.execute(
+            f"SELECT id, support_count FROM memory_health WHERE id IN ({placeholders})",  # noqa: S608
+            ids,
+        ).fetchall()
+        return {r["id"]: int(r["support_count"]) for r in rows}
 
     def get_health_batch(self, ids: list[str]) -> dict[str, dict[str, float]]:
         """Return {id: {confidence, roi_score}} for the given IDs.

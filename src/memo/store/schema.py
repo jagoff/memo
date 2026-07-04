@@ -132,10 +132,11 @@ CREATE INDEX IF NOT EXISTS idx_access_count ON access(access_count);
 CREATE INDEX IF NOT EXISTS idx_access_count_last ON access(access_count, last_accessed);
 
 CREATE TABLE IF NOT EXISTS memory_health (
-    id          TEXT PRIMARY KEY,
-    confidence  REAL NOT NULL DEFAULT 1.0,
-    roi_score   REAL NOT NULL DEFAULT 1.0,
-    updated_at  TEXT
+    id            TEXT PRIMARY KEY,
+    confidence    REAL NOT NULL DEFAULT 1.0,
+    roi_score     REAL NOT NULL DEFAULT 1.0,
+    updated_at    TEXT,
+    support_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_health_roi  ON memory_health(roi_score);
@@ -364,6 +365,22 @@ class _SchemaMixin(_StoreBase):
         # per-write PRAGMA table_info(meta). `cols` reflects the post-migration
         # column set (updated as the ALTERs above succeed).
         self._has_pattern_cols = "topic_key" in cols and "normalized_hash" in cols
+
+        # Inline migration (C1): corroboration counter on memory_health.
+        # CREATE IF NOT EXISTS skips existing tables, so pre-existing DBs
+        # need the column added here. Idempotent, no user_version dance
+        # (the fresh-DB early-return in _run_migrations would skip a v4).
+        hcols = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(memory_health)").fetchall()
+        }
+        if "support_count" not in hcols:
+            try:
+                self._conn.execute(
+                    "ALTER TABLE memory_health ADD COLUMN support_count INTEGER NOT NULL DEFAULT 0"
+                )
+            except Exception as e:
+                _log.debug("schema migration memory_health.support_count failed: %s", e)
 
         # Ensure sessions table exists (session pattern)
         self._conn.execute(
