@@ -9,6 +9,9 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
+from memo.config import Config
 from memo.store.store import VecStore
 
 
@@ -81,11 +84,6 @@ def test_merge_signal_tolerates_old_payload_without_support(tmp_path: Path) -> N
         }
     )
     assert b.get_support_batch(["m1"]) == {"m1": 0}
-
-
-import pytest
-
-from memo.config import Config
 
 
 @pytest.fixture

@@ -189,7 +189,7 @@ def test_wire_precompact_adds_group(tmp_path):
         for h in g["hooks"]
     )
     # recall wiring untouched:
-    assert "UserPromptSubmit" not in data.get("hooks", {}) or True
+    assert "UserPromptSubmit" not in data.get("hooks", {})
 
 
 def test_wire_precompact_idempotent(tmp_path):
