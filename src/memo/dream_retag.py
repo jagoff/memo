@@ -87,3 +87,66 @@ def retag_decisions(
             }
         )
     return decisions
+
+
+# --- orchestrator (guarded; wires real log + resolution + update) ------------
+
+
+def run_retag_global(
+    cfg: Any,
+    mem: Any,
+    *,
+    min_other_projects: int = 2,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Mine grounding.log for cross-project use and retag proven-general
+    memories to global. Tag-only updates (no re-embed); reversible via the
+    version snapshot ``update()`` takes. Raises on unexpected failure — the
+    cli_dream caller records it in ``receipt["errors"]``."""
+    from memo.dashboard import GROUNDED_SCORE, read_grounding_log
+    from memo.memory import AmbiguousIdError
+
+    rows = read_grounding_log(cfg.state_dir)
+    counts = cross_project_counts(rows, threshold=GROUNDED_SCORE)
+
+    def _get(prefix: str) -> dict[str, Any] | None:
+        try:
+            rid = mem.resolve_id(prefix)
+        except AmbiguousIdError:
+            _log.debug("retag: ambiguous prefix %s — skipped", prefix)
+            return None
+        if rid is None:
+            return None
+        rec = mem.get(rid)
+        if rec is None:
+            return None
+        return {"id": rec.id, "tags": list(rec.tags), "type": rec.type}
+
+    decisions = retag_decisions(
+        counts, get_record=_get, min_other_projects=min_other_projects
+    )
+    retagged: list[dict[str, Any]] = []
+    for d in decisions:
+        if not dry_run:
+            mem.update(d["id"], tags=d["new_tags"])
+        retagged.append(
+            {
+                "id": d["id"],
+                "dropped": d["drop_tags"],
+                "evidence_projects": d["evidence_projects"],
+                "status": "would_retag" if dry_run else "retagged",
+            }
+        )
+        _log.info(
+            "retag %s: %s -> global (evidence: %s)%s",
+            d["id"][:8],
+            ",".join(d["drop_tags"]),
+            ",".join(d["evidence_projects"]),
+            " [dry-run]" if dry_run else "",
+        )
+    return {
+        "status": "ok",
+        "candidates": len(counts),
+        "retagged": retagged,
+        "dry_run": dry_run,
+    }
