@@ -1,0 +1,89 @@
+{
+  "name": "memo",
+  "displayName": "memo — local memory for AI agents",
+  "description": "Registers memo — a local-first, long-term memory MCP server — in VS Code agent mode. MLX on Apple Silicon or CPU on Linux. Markdown on disk, no cloud, no API keys.",
+  "version": "0.1.0",
+  "publisher": "jagoff",
+  "license": "MIT",
+  "author": {
+    "name": "Fernando Ferrari",
+    "url": "https://github.com/jagoff"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jagoff/memo.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/jagoff/memo/issues"
+  },
+  "homepage": "https://github.com/jagoff/memo#readme",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "mcp",
+    "memory",
+    "rag",
+    "mlx",
+    "agent",
+    "copilot",
+    "obsidian",
+    "local-first"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "memo",
+        "label": "memo"
+      }
+    ],
+    "commands": [
+      {
+        "command": "memo.setup",
+        "title": "memo: Setup & Requirements"
+      }
+    ],
+    "configuration": {
+      "title": "memo",
+      "properties": {
+        "memo.useInstalledBinary": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Run the already-installed `memo-mcp` binary directly instead of fetching it with `uvx --from mlx-memo`. Enable this if you installed memo with `pipx install mlx-memo` or `uv tool install mlx-memo`."
+        },
+        "memo.dataDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory for memo's store and SQLite index (sets `MEMO_DATA_DIR`). Leave empty to use memo's default per-user directory."
+        },
+        "memo.vaultPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to an Obsidian vault. When set, memories are stored under the vault as markdown (sets `MEMO_VAULT_PATH` and `MEMO_MEMORIES_IN_VAULT`)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/vscode": "^1.101.0",
+    "typescript": "^5.9.2"
+  }
+}
