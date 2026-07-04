@@ -9,6 +9,43 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.7] - 2026-07-04
+
+### Added
+
+- **Privacy layer (default-on secret redaction).** A new pure `memo.redact`
+  module masks provider-prefixed API keys (AWS, GitHub, OpenAI, Anthropic,
+  Slack, GCP) and PEM private-key blocks to `****<last4>` and strips
+  `<private>…</private>` spans. Redaction runs before persisting on every
+  capture path (Stop-hook capture, `capture-tick`, `mine-history`) and on
+  `memo ingest` index rows — the vault `.md` on disk is never rewritten, and
+  redaction is deterministic so `reindex` reproduces identical masked rows.
+  Redacted memories carry a `_redacted` tag. Flags: `MEMO_REDACT_SECRETS`
+  (on), `MEMO_PRIVATE_MARKERS` (on), `MEMO_REDACT_ENTROPY` (off, opt-in
+  high-entropy tier; hex hashes/ids always exempt).
+- **Pre-push secret gate for git sync (`MEMO_SYNC_SECRET_GATE`, on).** Before
+  the sync commit, staged `.md` additions are scanned (pattern tier only);
+  on a hit the commit+push are blocked, `sync_pending` is stamped with the
+  reason, and `memo sync status` / `memo doctor` surface it. Blocks the
+  commit (not just the push) so a secret never enters git history.
+- **Per-call write scope on `memo_save` (MCP).** New `scope` param:
+  `"global"` skips the auto `project:<repo>` tag (memory lands in the global
+  recall tier); `"project"`/omitted keep auto-detection; an explicit
+  `project:` tag always wins.
+- **Project→global retag dream pass (`memo dream retag`, default-off).**
+  `MEMO_DREAM_RETAG_GLOBAL_ENABLED` promotes memories that were grounded from
+  ≥ `MEMO_DREAM_RETAG_MIN_PROJECTS` other projects to global via the
+  tag-only update path (no re-embed, reversible with `memo version rollback`).
+
+### Fixed
+
+- **Git worktrees no longer mint a bogus project tag.** `project.py` now
+  canonicalizes a linked-worktree `.git` file to the main repo's toplevel, so
+  memories saved from a release worktree (e.g. `/tmp/rel`) tag as the real
+  project instead of `project:rel` forever. Pure file reads — the 5s
+  recall-hook budget is untouched. Submodule and non-worktree `.git` files
+  keep their own-basename behavior.
+
 ## [2.12.6] - 2026-07-03
 
 ### Fixed
