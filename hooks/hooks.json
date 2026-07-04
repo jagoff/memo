@@ -54,7 +54,7 @@
         ]
       },
       {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|compact",
         "hooks": [
           {
             "type": "command",
@@ -139,6 +139,19 @@
             "timeout": 300,
             "async": true,
             "comment": "Daily body compression: LLM-compresses memorias > 2000 chars to 2-3 sentences (MEMO_DREAM_COMPRESS_THRESHOLD). Shorter stored bodies \u2192 more signal-dense recall injections. No-op unless > 24h since last dream run. Async + soft-fail."
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MEMO_NONINTERACTIVE=1 memo capture-tick --force",
+            "timeout": 60,
+            "async": true,
+            "comment": "Force-flush the capture throttle window at the compaction boundary so a long session's insight reaches .md before early-session texture is destroyed. Idempotent vs the settings.json copy: run_capture_incremental holds a per-session flock and the watermark makes the second firing a no_new no-op. The transcript JSONL survives compaction, so async is safe."
           }
         ]
       }

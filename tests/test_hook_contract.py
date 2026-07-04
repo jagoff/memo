@@ -75,3 +75,28 @@ def test_recall_hook_has_small_context_defaults() -> None:
     assert "MEMO_RECALL_TOP_K=1" in cmd
     assert "MEMO_RECALL_TOKEN_BUDGET=160" in cmd
     assert "MEMO_RECALL_MIN_SIM" not in cmd
+
+
+def _load_plugin_hooks() -> dict:
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "hooks" / "hooks.json"
+    return json.loads(path.read_text(encoding="utf-8"))["hooks"]
+
+
+def test_precompact_force_flushes_capture() -> None:
+    pre = _load_plugin_hooks().get("PreCompact")
+    assert pre, "PreCompact hook missing from plugin hooks.json"
+    cmds = [h["command"] for g in pre for h in g["hooks"]]
+    assert any("capture-tick --force" in c for c in cmds)
+
+
+def test_sessionstart_briefing_rebriefs_after_compact() -> None:
+    groups = _load_plugin_hooks()["SessionStart"]
+    briefing_matchers = [
+        g.get("matcher", "")
+        for g in groups
+        if any("briefing" in h["command"] for h in g["hooks"])
+    ]
+    assert briefing_matchers and all("compact" in m for m in briefing_matchers)

@@ -178,7 +178,13 @@ def capture_stop() -> None:
     default=None,
     help="Override transcript path (default: read from the hook stdin payload).",
 )
-def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Bypass the per-session throttle (PreCompact force-flush at the compaction boundary).",
+)
+def capture_tick(session_id: str | None, transcript_path: str | None, force: bool) -> None:
     """UserPromptSubmit hook — incremental mid-session ambient capture.
 
     The Stop hook (`memo capture-stop`) only fires at session end, so a long
@@ -209,6 +215,8 @@ def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
       MEMO_CAPTURE_INTERVAL_S  — min seconds between ticks per session
                                  (default 600; 0 = every prompt, no throttle).
       MEMO_CAPTURE_DEBUG       — "1" → print progress to stderr.
+      PreCompact wiring passes --force so the last throttle window is flushed
+      before context is destroyed.
 
     Failure modes are absorbed: the hook never blocks or breaks the session.
     """
@@ -248,7 +256,7 @@ def capture_tick(session_id: str | None, transcript_path: str | None) -> None:
         if interval_s is None:
             interval_s = 600
 
-        if not incremental_tick_due(cfg.state_dir, sid, interval_s):
+        if not force and not incremental_tick_due(cfg.state_dir, sid, interval_s):
             if debug:
                 print("# memo capture-tick: throttled (not due)", file=_sys.stderr)
         else:

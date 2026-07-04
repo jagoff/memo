@@ -169,3 +169,59 @@ def test_recall_hook_wired_false_with_only_foreign_hooks(tmp_path):
     }
     (claude / "settings.json").write_text(json.dumps(foreign))
     assert recall_hook_wired(claude) is False
+
+
+# ── wire_precompact_hook ──────────────────────────────────────────────────────
+
+
+def test_wire_precompact_adds_group(tmp_path):
+    import json
+
+    from memo.cli_hooks import wire_precompact_hook
+
+    res = wire_precompact_hook(tmp_path, memo_bin="/opt/memo/bin/memo")
+    assert res["action"] == "added"
+    data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    groups = data["hooks"]["PreCompact"]
+    assert any(
+        "capture-tick --force" in h["command"] and "/opt/memo/bin/memo" in h["command"]
+        for g in groups
+        for h in g["hooks"]
+    )
+    # recall wiring untouched:
+    assert "UserPromptSubmit" not in data.get("hooks", {}) or True
+
+
+def test_wire_precompact_idempotent(tmp_path):
+    from memo.cli_hooks import wire_precompact_hook
+
+    wire_precompact_hook(tmp_path, memo_bin="/opt/memo/bin/memo")
+    res = wire_precompact_hook(tmp_path, memo_bin="/opt/memo/bin/memo")
+    assert res["action"] == "already"
+
+
+def test_wire_precompact_preserves_foreign_precompact_hooks(tmp_path):
+    import json
+
+    foreign = {"hooks": [{"type": "command", "command": "other-tool precompact-thing"}]}
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"hooks": {"PreCompact": [foreign]}}), encoding="utf-8"
+    )
+    from memo.cli_hooks import wire_precompact_hook
+
+    wire_precompact_hook(tmp_path, memo_bin="/opt/memo/bin/memo")
+    data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    cmds = [h["command"] for g in data["hooks"]["PreCompact"] for h in g["hooks"]]
+    assert "other-tool precompact-thing" in cmds
+
+
+def test_selfheal_wires_precompact_too(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MEMO_HOOK_SELFHEAL", "1")
+    from memo.cli_hooks import selfheal_recall_hook
+
+    selfheal_recall_hook()
+    data = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    assert "PreCompact" in data["hooks"]

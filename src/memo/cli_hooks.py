@@ -83,18 +83,77 @@ def _canonical_group(memo_bin: str | None = None) -> dict[str, object]:
     }
 
 
-def _is_memo_group(group: object) -> bool:
-    """True if a UserPromptSubmit group is memo's own recall group.
+_PRECOMPACT_VERB = "capture-tick"
 
-    ``recall-hook`` is a memo-only verb, so its presence in any inner command
-    uniquely marks a memo-owned group — foreign hooks never contain it.
+
+def _precompact_command(memo_bin: str | None = None) -> str:
+    return f"MEMO_NONINTERACTIVE=1 {memo_bin or _resolve_memo_bin()} capture-tick --force"
+
+
+def _precompact_group(memo_bin: str | None = None) -> dict[str, object]:
+    return {
+        "hooks": [
+            {"type": "command", "command": _precompact_command(memo_bin), "timeout": 60}
+        ]
+    }
+
+
+def wire_precompact_hook(
+    claude_dir: Path | None = None, *, memo_bin: str | None = None
+) -> dict[str, str]:
+    """Idempotently wire the memo PreCompact force-flush into ``settings.json``.
+
+    Parity with `wire_recall_hook`: memo-owned, self-healing, coexists with
+    foreign PreCompact hooks. Double-fire with the plugin copy is a cheap
+    no-op (per-session flock + watermark in `run_capture_incremental`).
+    """
+    claude_dir = claude_dir or _claude_dir()
+    settings_path = claude_dir / "settings.json"
+
+    settings: dict[str, object] = {}
+    if settings_path.is_file():
+        loaded = json.loads(settings_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            settings = loaded
+
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    pre = hooks.get("PreCompact")
+    if not isinstance(pre, list):
+        pre = []
+
+    canonical = _precompact_group(memo_bin)
+    memo_groups = [g for g in pre if _is_memo_group(g, verb=_PRECOMPACT_VERB)]
+    foreign = [g for g in pre if not _is_memo_group(g, verb=_PRECOMPACT_VERB)]
+    command = str(canonical["hooks"][0]["command"])  # type: ignore[index]
+
+    if len(memo_groups) == 1 and memo_groups[0] == canonical:
+        return {"action": "already", "command": command}
+
+    action = "added" if not memo_groups else "updated"
+    hooks["PreCompact"] = [*foreign, canonical]
+    settings["hooks"] = hooks
+
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    tmp = settings_path.with_suffix(settings_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, settings_path)
+    return {"action": action, "command": command}
+
+
+def _is_memo_group(group: object, verb: str = _RECALL_VERB) -> bool:
+    """True if a hook group is memo's own group for `verb`.
+
+    memo-only verbs (``recall-hook``, ``capture-tick``) uniquely mark memo-owned
+    groups — foreign hooks never contain them.
     """
     if not isinstance(group, dict):
         return False
     return any(
         isinstance(h, dict)
         and isinstance(h.get("command"), str)
-        and _RECALL_VERB in h["command"]
+        and verb in h["command"]
         for h in group.get("hooks", [])
     )
 
@@ -170,13 +229,14 @@ def recall_hook_wired(claude_dir: Path | None = None) -> bool:
 
 
 def selfheal_recall_hook() -> None:
-    """Best-effort recall-hook re-assert for memo-mcp start. Never raises."""
+    """Best-effort recall + precompact hook re-assert for memo-mcp start. Never raises."""
     try:
         from memo.flags import flag_bool
 
         if not flag_bool("MEMO_HOOK_SELFHEAL"):
             return
         wire_recall_hook()
+        wire_precompact_hook()
     except Exception:  # noqa: S110 — best-effort self-heal must never break mcp start
         pass
 
@@ -198,4 +258,8 @@ def install_recall_hook() -> None:
     else:
         verb = "wired" if result["action"] == "added" else "updated"
         console.print(f"[green]✓[/green] {verb} memo recall hook → {result['command']}")
+
+    pre = wire_precompact_hook(claude_dir)
+    if pre["action"] != "already":
+        console.print(f"[green]✓[/green] wired memo PreCompact force-flush → {pre['command']}")
     console.print("[dim]Open a new Claude Code session for recall to take effect.[/dim]")

@@ -459,3 +459,36 @@ def test_run_capture_incremental_stamps_tool_files(tmp_path, monkeypatch):
     assert out["status"] == "ok"
     assert seen["extra_base"]["files_modified"] == ["/repo/src/memo/recall_socket.py"]
     assert "files_read" not in seen["extra_base"]  # empty arrays are not stamped
+
+
+# ── --force flag bypasses throttle ─────────────────────────────────────────
+
+
+def test_capture_tick_force_bypasses_throttle(tmp_path, monkeypatch):
+    import json as _json
+
+    from click.testing import CliRunner
+
+    calls: dict = {}
+    monkeypatch.setattr("memo.capture.incremental_tick_due", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "memo.capture.run_capture_incremental",
+        lambda p, sid, debug=False: calls.setdefault("ran", (str(p), sid)) or {"status": "ok"},
+    )
+    from memo.cli_capture import capture_tick
+
+    payload = _json.dumps(
+        {"session_id": "sess-1", "transcript_path": str(tmp_path / "t.jsonl")}
+    )
+    res = CliRunner().invoke(
+        capture_tick,
+        ["--force"],
+        input=payload,
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+            "MEMO_STATE_DIR": str(tmp_path / "state"),
+        },
+    )
+    assert res.exit_code == 0, res.output
+    assert calls["ran"][1] == "sess-1"  # ran despite throttle saying "not due"
