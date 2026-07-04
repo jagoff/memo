@@ -305,6 +305,16 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_SUPPORT_COUNT",
+        "bool",
+        True,
+        "misc",
+        "Bump memory_health.support_count when an existing memory is re-asserted "
+        "(save near-dup hit, topic_key upsert, consolidation merge). Pure counter "
+        "by default — no ranking effect until MEMO_SUPPORT_CONFIDENCE_LIFT > 0.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_AUTO_PROJECT_TAG",
         "bool",
         True,

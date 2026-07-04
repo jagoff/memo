@@ -272,6 +272,16 @@ class AdvancedConsolidator:
                 for mid in proposal.archived_ids:
                     if self._archive_memory(mid, surviving_id):
                         archived.append(mid)
+                # Corroboration (C1): the surviving record just absorbed N
+                # near-duplicate assertions — count them. Best-effort.
+                if archived:
+                    try:
+                        from memo.flags import flag_bool
+
+                        if flag_bool("MEMO_SUPPORT_COUNT"):
+                            self.memory.store.bump_support_batch([surviving_id] * len(archived))
+                    except Exception as exc:
+                        _log.debug("apply_merge: support bump failed: %s", exc)
                 return ConsolidationResult(
                     merged_id=surviving_id,
                     archived_ids=archived,
@@ -319,6 +329,16 @@ class AdvancedConsolidator:
             for mid in proposal.archived_ids:
                 if self._archive_memory(mid, merged_rec.id):
                     archived.append(mid)
+
+            # Corroboration (C1): same signal for LLM-merged records.
+            if archived:
+                try:
+                    from memo.flags import flag_bool
+
+                    if flag_bool("MEMO_SUPPORT_COUNT"):
+                        self.memory.store.bump_support_batch([merged_rec.id] * len(archived))
+                except Exception as exc:
+                    _log.debug("apply_merge: support bump failed: %s", exc)
 
             return ConsolidationResult(
                 merged_id=merged_rec.id,

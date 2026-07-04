@@ -367,6 +367,12 @@ class _WriteOpsMixin(_MemoryBase):
                             _dup_title = _dh.get("title") or (_dh.get("id") or "")[:8]
                             _dup_score = _dh.get("score", 0.0)
                             _dup_id = (_dh.get("id") or "")[:8]
+                            # Corroboration (C1): the existing record was just
+                            # re-asserted by an independent save. Count it —
+                            # this signal used to be discarded with the warning.
+                            if flag_bool("MEMO_SUPPORT_COUNT") and _dh.get("id"):
+                                with contextlib.suppress(Exception):
+                                    self.store.bump_support_batch([_dh["id"]])
                             # Demote to debug for dream/consolidation batch saves:
                             # the nudge to `memo update` is only actionable for an
                             # interactive human, and the same dream run's consolidate
@@ -453,6 +459,11 @@ class _WriteOpsMixin(_MemoryBase):
                             use_existing_id[:8],
                             existing_path,
                         )
+                        # Corroboration (C1): a repeated save with the same
+                        # topic_key is a re-assertion of the same fact.
+                        if flag_bool("MEMO_SUPPORT_COUNT"):
+                            with contextlib.suppress(Exception):
+                                self.store.bump_support_batch([use_existing_id])
                 except Exception as exc:
                     _log.debug("topic_key lookup failed: %s", exc)
 

@@ -81,3 +81,79 @@ def test_merge_signal_tolerates_old_payload_without_support(tmp_path: Path) -> N
         }
     )
     assert b.get_support_batch(["m1"]) == {"m1": 0}
+
+
+import pytest
+
+from memo.config import Config
+
+
+@pytest.fixture
+def mem_const(tmp_cfg, monkeypatch):
+    """Memory with a constant-vector embedder: every text embeds to the same
+    unit vector, so ANY two records are cosine-1.0 near-duplicates — the
+    near-dup path (threshold 0.88) fires deterministically. Dims pinned to
+    the stub's output via Config(embedder_dims=4)."""
+    from memo.memory import Memory
+
+    cfg = Config(
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+        reranker_enabled=False,
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    mem = Memory(cfg)
+    yield mem
+    mem.close()
+
+
+def test_near_dup_save_bumps_existing_support(mem_const):
+    r1 = mem_const.save(content="El dashboard corre en el puerto 8765", title="Dashboard port")
+    r2 = mem_const.save(content="El dashboard escucha en 8765", title="Dashboard listens")
+    assert r2.id != r1.id  # near-dup still only warns; record is created
+    assert mem_const.store.get_support_batch([r1.id]) == {r1.id: 1}
+
+
+def test_near_dup_bump_disabled_by_flag(mem_const, monkeypatch):
+    monkeypatch.setenv("MEMO_SUPPORT_COUNT", "0")
+    r1 = mem_const.save(content="El dashboard corre en el puerto 8765", title="Dashboard port")
+    mem_const.save(content="El dashboard escucha en 8765", title="Dashboard listens")
+    # Store auto-creates a memory_health row (support_count=0) on index; assert no bump occurred.
+    assert mem_const.store.get_support_batch([r1.id]).get(r1.id, 0) == 0
+
+
+def test_topic_key_upsert_bumps_support(mock_memory):
+    r1 = mock_memory.save(
+        content="El dashboard corre en :8765", title="Dashboard", topic_key="dashboard-port"
+    )
+    r2 = mock_memory.save(
+        content="Confirmado: :8765", title="Dashboard", topic_key="dashboard-port"
+    )
+    assert r2.id == r1.id  # upsert reused the record
+    assert mock_memory.store.get_support_batch([r1.id]) == {r1.id: 1}
+
+
+def test_apply_merge_bumps_surviving_support(mock_memory):
+    from memo.consolidation import AdvancedConsolidator, MergeProposal
+
+    r1 = mock_memory.save(content="dato sobre puertos A", title="A")
+    r2 = mock_memory.save(content="dato sobre puertos A bis", title="A bis")
+    cons = AdvancedConsolidator(mock_memory)
+    proposal = MergeProposal(
+        cluster_id=0,
+        memory_ids=[r1.id, r2.id],
+        merged_title="",
+        merged_body="",
+        merge_strategy="keep_latest",
+        rationale="dup",
+        archived_ids=[r1.id],
+    )
+    res = cons.apply_merge(proposal)
+    assert res.merged_id == r2.id
+    assert res.archived_ids == [r1.id]
+    assert mock_memory.store.get_support_batch([r2.id]) == {r2.id: 1}
