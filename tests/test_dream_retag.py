@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
+from click.testing import CliRunner
 
 from memo import dream_retag as dr
+from memo.cli import cli
 from memo.config import Config
 from memo.dashboard_logs import append_grounding_log
 from memo.memory import Memory
@@ -143,3 +147,28 @@ def test_run_retag_global_dry_run_writes_nothing(mem_stub: Memory):
 
     assert res["retagged"][0]["status"] == "would_retag"
     assert "project:memo" in mem_stub.get(rec.id).tags
+
+
+def test_retag_flags_registered_and_default_off():
+    from memo.flags import flag_bool, flag_int
+
+    assert flag_bool("MEMO_DREAM_RETAG_GLOBAL_ENABLED") is False
+    assert flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS") == 2
+
+
+def test_cli_dream_retag_dry_run_empty_log(tmp_path):
+    runner = CliRunner()
+    res = runner.invoke(
+        cli,
+        ["dream", "retag", "--dry-run", "--json"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+            "MEMO_STATE_DIR": str(tmp_path / "state"),
+        },
+    )
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["status"] == "ok"
+    assert payload["retagged"] == []
+    assert payload["dry_run"] is True

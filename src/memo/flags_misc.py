@@ -931,4 +931,26 @@ SPECS: tuple[FlagSpec, ...] = (
         "Min distinct sessions on a project before it is consolidated cross-session.",
         min_val=2,
     ),
+    # dream v2 — scope: project→global promotion (retag memories proven general)
+    _spec(
+        "MEMO_DREAM_RETAG_GLOBAL_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly project→global retag pass in `memo dream run`. OFF by "
+        "default. Strips the `project:` tag from memories grounded (used_score >= "
+        "0.6 in grounding.log) from sessions in >= MEMO_DREAM_RETAG_MIN_PROJECTS "
+        "OTHER projects, via the pure-retag update path (no re-embed; reversible "
+        "with `memo version rollback`). To run under the nightly LaunchAgent, add "
+        "this var to its EnvironmentVariables (launchd does not inherit the shell).",
+    ),
+    _spec(
+        "MEMO_DREAM_RETAG_MIN_PROJECTS",
+        "int",
+        2,
+        "misc",
+        "Min distinct OTHER projects whose sessions grounded a memory before the "
+        "retag pass promotes it to global.",
+        min_val=1,
+    ),
 )

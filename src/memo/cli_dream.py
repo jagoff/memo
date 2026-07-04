@@ -414,6 +414,30 @@ def dream_run(
                 receipt["errors"].append(f"consolidate_episodes: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[consolidate] [yellow]warn[/yellow]")
 
+        # Scope — project→global promotion: retag memories proven general ----
+        if flag_bool("MEMO_DREAM_RETAG_GLOBAL_ENABLED"):
+            progress.update(step, description="[retag] project→global...")
+            try:
+                from memo import dream_retag
+
+                receipt["retagged_global"] = dream_retag.run_retag_global(
+                    cfg,
+                    mem,
+                    min_other_projects=flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS") or 2,
+                    dry_run=dry_run,
+                )
+                _rg = receipt["retagged_global"]
+                progress.update(
+                    step,
+                    description=(
+                        f"[retag] [green]✓[/green]  "
+                        f"{len(_rg.get('retagged', []))} promoted to global"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"retag_global: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[retag] [yellow]warn[/yellow]")
+
         # Phase 2 — graph→semantic: community synthesis (spec 3) -------------
         if flag_bool("MEMO_DREAM_COMMUNITIES_ENABLED"):
             progress.update(step, description="[communities] graph clusters...")
@@ -1131,6 +1155,36 @@ def dream_communities_cmd(dry_run: bool, as_json: bool) -> None:
     for d in res.get("synthesized", []):
         rep = d.get("representative") or ""
         console.print(f"  [{d['status']}] {rep}: {d.get('title', '')}")
+
+
+@dream_cmd.command(name="retag")
+@click.option("--dry-run", is_flag=True, help="Decide + preview promotions, write nothing.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the retag fragment as JSON.")
+def dream_retag_cmd(dry_run: bool, as_json: bool) -> None:
+    """Scope — retag project memories proven general (cross-project grounding) to global."""
+    from memo import dream_retag
+    from memo.flags import flag_int
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    res = dream_retag.run_retag_global(
+        cfg,
+        mem,
+        min_other_projects=flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS") or 2,
+        dry_run=dry_run,
+    )
+    if as_json:
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+    console.print(
+        f"[bold]retag:[/bold] {res.get('status')} "
+        f"({len(res.get('retagged', []))} promoted, {res.get('candidates', 0)} candidates)"
+    )
+    for d in res.get("retagged", []):
+        console.print(
+            f"  [{d['status']}] {d['id'][:8]} -{','.join(d['dropped'])} "
+            f"← {','.join(d['evidence_projects'])}"
+        )
 
 
 @dream_cmd.command(name="tune")
