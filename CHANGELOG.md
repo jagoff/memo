@@ -9,6 +9,69 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.8] - 2026-07-04
+
+Ecosystem roadmap **Wave 2** — confidence lifecycle (workstream C) + capture
+depth (workstream E). Every new flag is **default-OFF** except the signed-off
+pure counter `MEMO_SUPPORT_COUNT`; nothing changes retrieval ranking at the
+shipped defaults.
+
+### Added
+
+- **Corroboration counter (`support_count`).** A re-asserted memory now
+  *counts* instead of discarding the signal: a new `support_count` column in
+  `memory_health` (survives `reindex --rebuild`, syncs cross-machine via
+  `dump_signal`/`merge_signal` with `max()` merge) is bumped at the three
+  existing corroboration sites — near-duplicate save, `topic_key` upsert, and
+  consolidation merge. Gated by `MEMO_SUPPORT_COUNT` (default on, pure counter).
+- **Bounded confidence lift from corroboration.** `MEMO_SUPPORT_CONFIDENCE_LIFT`
+  (default `0.0` = off) lets a re-assertion restore confidence toward — never
+  past — neutral `1.0`, so a repeatedly-confirmed fact recovers from an earlier
+  contradiction/quality penalty. A ranking input only when enabled.
+- **Supersede gate.** `MEMO_SUPERSEDE_SUPPORT_GATE` (default `0` = off): when
+  set, `memo maintain` refuses to auto-archive the losing side of a
+  contradiction whose `support_count` meets the gate — the pair stays open for
+  triage and is reported under `flagged_for_review` in the receipt.
+- **Supersede provenance.** Archiving a contradiction loser now stamps
+  `superseded_by` + `superseded_at` into the archived `.md`'s `extra` bag
+  (portable, best-effort — a stamp failure never un-archives).
+- **Mutability classes.** `MEMO_CONTRADICT_MUTABILITY` (default off): an LLM
+  "contradiction" verdict between two volatile-class bodies (ports, versions,
+  status) is downgraded to an `evolution` (a normal update, not a conflict).
+  The volatile regex is deliberately conservative on Spanish text.
+- **Absorb-on-recurrence.** `MEMO_SAVE_ABSORB` (default off): a near-duplicate
+  save folds into the *existing* record via one bounded LLM call routed through
+  the versioned `update()` (rollbackable), growing `proof_count` — instead of
+  creating a near-copy. Best-effort; any failure falls back to warn-and-create.
+- **`memo invalidate <pattern> --reason`.** Reversible bulk confidence
+  weakening: one event (a stack migration, a port change) weakens every
+  matching memory (confidence penalty + `_invalidated` tag/stamp), writes a
+  receipt of prior confidences, and `memo invalidate --undo` restores them.
+  Preview-only without `--yes`. Flag `MEMO_INVALIDATE_PENALTY` (default `0.3`).
+- **Procedural memory types.** New durable types `procedure` (how-to workflows)
+  and `failure_pattern` (structured Pattern/Context/Wrong/Right mistake notes);
+  the capture extractor now mines both.
+- **Capture provenance.** Every capture- and mine-extracted memory is stamped
+  with `session_id` / `transcript_path` / `turn_hash`, plus structured
+  `files_read` / `files_modified` arrays from the session's tool stream (gated
+  by the existing `MEMO_CAPTURE_TOOL_EVIDENCE`).
+- **By-file search lane.** `Memory.search_by_file` + a `file=` parameter on the
+  MCP `memo_search` tool: a high-precision post-filter over the captured
+  file arrays. `search()` itself is unchanged.
+- **`memo mine-git`.** A deterministic (no LLM) miner that turns a repo's
+  fix/revert commits into `failure_pattern` seed memories with commit-SHA
+  provenance; resumable per repo.
+- **PreCompact capture flush.** A `PreCompact` hook runs `capture-tick --force`
+  at the compaction boundary so a long session's insight reaches `.md` before
+  early context is destroyed, and the briefing re-fires after a compaction.
+  Wired in the plugin and self-healed into `settings.json`.
+
+### Changed
+
+- `bug` memories now join `failure_pattern` and `procedure` in
+  `EVICTION_PROTECTED_TYPES` — hard-won failure/how-to knowledge is exempt from
+  the nightly prune-floor and LFU-eviction passes even when rarely accessed.
+
 ## [2.12.7] - 2026-07-04
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "memo",
-  "version": "2.12.7",
+  "version": "2.12.8",
   "description": "Slash skill and MCP wiring for memo, the local MLX-native memory system.",
   "author": {
     "name": "Fernando Ferrari",
