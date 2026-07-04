@@ -7,6 +7,7 @@ No network, no MLX (embedder stubbed to 4-dim).
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -844,3 +845,53 @@ def test_commit_gate_bypass_with_flag_off(remote: Path, tmp_path: Path, monkeypa
         assert out["pushed"] is True
     finally:
         mem.close()
+
+
+# ── CLI surfacing of the gate block reason ────────────────────────────────────
+
+
+def _stamped_env(clone: Path, tmp_path: Path) -> dict[str, str]:
+    """Isolated CLI env with a JSON sync_pending marker already stamped."""
+    state = tmp_path / "cli-state"
+    state.mkdir(exist_ok=True)
+    (state / "sync_pending").write_text(
+        json.dumps(
+            {
+                "branch": "main",
+                "reason": "secret-scan blocked commit: memorias/leak.md: github-token ****WXYZ",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_CONFIG_FILE": str(tmp_path / "missing.toml"),
+        "MEMO_DATA_DIR": str(clone / "memorias"),
+        "MEMO_STATE_DIR": str(state),
+        "MEMO_EMBEDDER_DIMS": "4",
+    }
+
+
+def test_cli_sync_status_shows_block_reason(remote: Path, tmp_path: Path):
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    clone = _make_clone(remote, tmp_path / "A")
+    result = CliRunner().invoke(cli, ["sync", "status"], env=_stamped_env(clone, tmp_path))
+    assert result.exit_code == 0, result.output
+    assert "STRANDED" in result.output
+    assert "secret-scan" in result.output
+
+
+def test_cli_doctor_shows_block_reason(remote: Path, tmp_path: Path):
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    clone = _make_clone(remote, tmp_path / "A")
+    result = CliRunner().invoke(cli, ["doctor"], env=_stamped_env(clone, tmp_path))
+    # doctor may report other checks failed (no MLX on CI, etc.) — only the
+    # sync line matters here, so no exit-code assertion (same stance as
+    # tests/test_cli_init.py::test_doctor_doesnt_trigger_picker).
+    assert "secret-scan" in result.output

@@ -247,9 +247,11 @@ def doctor(
             "[dim](data_dir not a git clone — `memo sync bootstrap <url>` to enable)[/dim]"
         )
     elif sync.get("pending"):
+        _reason = sync.get("pending_reason")
+        _hint = f" — {_reason}" if _reason else "; offline/auth? next `memo sync push` retries"
         console.print(
             f"[red]✗[/red] github sync: STRANDED — local commit(s) not pushed "
-            f"(ahead {sync['ahead']}); offline/auth? next `memo sync push` retries"
+            f"(ahead {sync['ahead']}){_hint}"
         )
     elif sync.get("ahead") or sync.get("dirty_files"):
         console.print(

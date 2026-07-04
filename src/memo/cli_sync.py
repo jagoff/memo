@@ -325,6 +325,8 @@ def sync_status(check_remote: bool, as_json: bool) -> None:
     else:
         verdict, color = "up to date with GitHub", "green"
     console.print(f"[bold {color}]{verdict}[/bold {color}]")
+    if st.get("pending_reason"):
+        console.print(f"  [red]blocked:[/red] {st['pending_reason']}")
     console.print(f"  repo:   {st['root']}  ({st['branch']})")
     console.print(f"  remote: {st['remote'] or '—'}")
     console.print(f"  ahead {ahead} · behind {behind} · dirty {dirty} · last {st['last_commit'] or '—'}")
