@@ -121,3 +121,64 @@ def test_find_transcripts_since_days(tmp_path: Path) -> None:
 
 def test_find_transcripts_missing_root_returns_empty(tmp_path: Path) -> None:
     assert find_transcripts(tmp_path / "nope") == []
+
+
+def test_mine_transcripts_stamps_provenance(tmp_path: Path, monkeypatch) -> None:
+    """mine_transcripts stamps session_id/transcript_path/turn_hash in extra."""
+    from memo.transcript_miner import mine_transcripts
+
+    # Pin env so a shell with MEMO_VAULT_PATH/MEMO_MEMORIES_IN_VAULT exported
+    # can never route Memory(cfg) into the real vault.
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_path / "vault"))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+
+    monkeypatch.setattr(
+        "memo.transcript_miner.extract_insights",
+        lambda *a, **k: [
+            {
+                "title": "Pin transformers below 5.13",
+                "type": "decision",
+                "body": (
+                    "We decided to pin transformers<5.13 because 5.13 breaks the "
+                    "mlx-lm import on Apple Silicon and every fresh macOS install."
+                ),
+                "tags": ["memo", "deps"],
+            }
+        ],
+    )
+
+    transcript = tmp_path / "my-session-id.jsonl"
+    assistant = (
+        "We decided to pin transformers below 5.13 because the newer release "
+        "breaks the mlx-lm import chain on Apple Silicon. " + "detail " * 40
+    )
+    _write_jsonl(
+        transcript,
+        [
+            {"type": "user", "message": {"content": "pin it?"}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": assistant}]}},
+        ],
+    )
+
+    result = mine_transcripts(root=tmp_path)
+    assert result["status"] == "ok"
+    assert len(result["saved"]) == 1
+
+    from memo.config import Config
+    from memo.memory import Memory
+
+    cfg = Config.from_env()
+    mem = Memory(cfg)
+    try:
+        rec = mem.get(result["saved"][0])
+        assert rec.extra["transcript_path"].endswith(transcript.name)
+        assert rec.extra["session_id"] == transcript.stem
+        assert isinstance(rec.extra["turn_hash"], str) and rec.extra["turn_hash"]
+    finally:
+        mem.close()

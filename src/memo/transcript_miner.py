@@ -220,6 +220,11 @@ def mine_transcripts(
                         type_=cand["type"],
                         tags=cand["tags"],
                         auto_project=False,  # historical: project context unreliable
+                        extra={
+                            "session_id": f.stem,
+                            "transcript_path": str(f),
+                            "turn_hash": h,
+                        },
                     )
                     total_saved.append(rec.id)
                 except Exception as exc:

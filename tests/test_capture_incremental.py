@@ -367,3 +367,50 @@ def test_capture_tick_cli_no_session_is_noop(tmp_path: Path, monkeypatch):
     )
     assert result.exit_code == 0
     assert result.output.strip() == "{}"
+
+
+def test_run_capture_incremental_stamps_provenance(tmp_path, monkeypatch):
+    import json as _json
+
+    from memo import capture
+
+    # conftest neutralizes the config FILE, not exported env vars — pin the
+    # vault too so a shell with MEMO_VAULT_PATH/MEMO_MEMORIES_IN_VAULT
+    # exported can never route Memory(cfg) into the real vault.
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_path / "vault"))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+
+    seen: dict = {}
+
+    def _fake_eas(mem, cfg, u, a, *, debug=False, merge_tags=None, extra_base=None):
+        seen["extra_base"] = extra_base
+        return {
+            "candidates": 0, "saved": [], "saved_titles": [], "skipped_dup": 0,
+            "reconciled": 0, "skipped_quality": 0, "skipped_meta": 0,
+            "skipped_batch_dup": 0, "uncertain": 0, "retyped": 0,
+        }
+
+    monkeypatch.setattr(capture, "_extract_and_save", _fake_eas)
+
+    transcript = tmp_path / "sess-abc.jsonl"
+    assistant = (
+        "We decided to pin transformers below 5.13 because the newer release "
+        "breaks the mlx-lm import chain on Apple Silicon. " + "detail " * 40
+    )
+    rows = [
+        {"type": "user", "message": {"content": [{"type": "text", "text": "pin it?"}]}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": assistant}]}},
+    ]
+    transcript.write_text("\n".join(_json.dumps(r) for r in rows), encoding="utf-8")
+
+    out = capture.run_capture_incremental(transcript, "sess-abc")
+    assert out["status"] == "ok"
+    assert seen["extra_base"]["session_id"] == "sess-abc"
+    assert seen["extra_base"]["transcript_path"] == str(transcript)
+    assert isinstance(seen["extra_base"]["turn_hash"], str) and seen["extra_base"]["turn_hash"]

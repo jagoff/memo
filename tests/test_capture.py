@@ -612,3 +612,40 @@ def test_extract_prompt_offers_procedural_types():
     # Structured mistake-note template (mcp-memory-service style) is offered:
     for label in ("Pattern:", "Context:", "Wrong:", "Right:"):
         assert label in _EXTRACT_SYSTEM_PROMPT
+
+
+def test_extract_and_save_stamps_provenance(mock_memory, tmp_cfg, monkeypatch):
+    from memo import capture
+
+    monkeypatch.setattr(
+        capture,
+        "extract_insights",
+        lambda *a, **k: [
+            {
+                "title": "Pin transformers below 5.13",
+                "type": "decision",
+                "body": (
+                    "We decided to pin transformers<5.13 because 5.13 breaks the "
+                    "mlx-lm import on Apple Silicon and every fresh macOS install."
+                ),
+                "tags": ["memo", "deps"],
+            }
+        ],
+    )
+    result = capture._extract_and_save(
+        mock_memory,
+        tmp_cfg,
+        "user text",
+        "assistant text",
+        extra_base={
+            "session_id": "sess-42",
+            "transcript_path": "/tmp/x/sess-42.jsonl",
+            "turn_hash": "abc123",
+        },
+    )
+    assert result["saved"], result
+    rec = mock_memory.get(result["saved"][0])
+    assert rec.extra["session_id"] == "sess-42"
+    assert rec.extra["transcript_path"] == "/tmp/x/sess-42.jsonl"
+    assert rec.extra["turn_hash"] == "abc123"
+    assert "capture_confidence" in rec.extra

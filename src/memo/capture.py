@@ -773,6 +773,7 @@ def _extract_and_save(
     debug: bool = False,
     merge_tags: list[str] | None = None,
     auto_project: bool = True,
+    extra_base: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Extract insights from one (user, assistant) blob, dedup, save.
 
@@ -781,8 +782,11 @@ def _extract_and_save(
     (`extract_and_save_text`) paths so all apply the same quality gate,
     near-duplicate check, and save metadata. `merge_tags` (e.g. a caller's
     `project:` tag) is appended to every saved fact's tags; default None keeps
-    the hook paths unchanged. Returns counts; every per-candidate failure is
-    absorbed (logged only in debug)."""
+    the hook paths unchanged. `extra_base` is merged under every saved fact's
+    `extra` (provenance: session_id/transcript_path/turn_hash and, later,
+    tool-file arrays) so a memory can always escalate to its source turn;
+    default None keeps all callers unchanged. Returns counts; every
+    per-candidate failure is absorbed (logged only in debug)."""
     insights = extract_insights(
         mem._ensure_chat(),
         cfg.helper_model,
@@ -940,7 +944,7 @@ def _extract_and_save(
                 type_=cand["type"],
                 tags=tags,
                 auto_project=auto_project,
-                extra={"capture_confidence": round(confidence, 3)},
+                extra={**(extra_base or {}), "capture_confidence": round(confidence, 3)},
             )
             saved.append(rec.id)
             saved_titles.append(rec.title)
@@ -1093,8 +1097,16 @@ def run_capture(
 
     # Lazy heavy imports: only paid past pre-filter.
     mem = Memory(cfg)
+    provenance: dict[str, Any] = {
+        # Claude Code transcripts are <session_id>.jsonl — the stem IS the session id.
+        "session_id": transcript_path.stem,
+        "transcript_path": str(transcript_path),
+        "turn_hash": h,
+    }
     try:
-        result = _extract_and_save(mem, cfg, user_text, assistant_text, debug=debug)
+        result = _extract_and_save(
+            mem, cfg, user_text, assistant_text, debug=debug, extra_base=provenance
+        )
     finally:
         mem.close()
 
@@ -1275,9 +1287,16 @@ def run_capture_incremental(
             _stamp()
             return {"status": "no_trigger", "exchange_count": total}
 
+        provenance: dict[str, Any] = {
+            "session_id": session_id,
+            "transcript_path": str(transcript_path),
+            "turn_hash": _hash_assistant(combined_assistant),
+        }
         mem = Memory(cfg)
         try:
-            result = _extract_and_save(mem, cfg, combined_user, combined_assistant, debug=debug)
+            result = _extract_and_save(
+                mem, cfg, combined_user, combined_assistant, debug=debug, extra_base=provenance
+            )
         finally:
             mem.close()
         _stamp()
