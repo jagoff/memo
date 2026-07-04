@@ -4,6 +4,8 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from memo.tiers import EVICTION_PROTECTED_TYPES
+
 from ._base import _StoreBase
 
 
@@ -343,12 +345,13 @@ class _SignalQueriesMixin(_StoreBase):
     ) -> list[dict[str, Any]]:
         """Return memories below roi_floor, never accessed, and older than min_age_days.
 
-        Always excludes 'synthesis' and 'reference' types. Uses INNER JOIN
+        Always excludes 'synthesis', 'reference', and EVICTION_PROTECTED_TYPES
+        (bug/failure_pattern/procedure — see memo.tiers). Uses INNER JOIN
         because every meta row now has guaranteed access + memory_health rows
         (seeded on upsert since v2, backfilled for legacy rows). Returns list
         of {id, roi_score, days_old}.
         """
-        excluded = (exclude_types or set()) | {"synthesis", "reference"}
+        excluded = (exclude_types or set()) | {"synthesis", "reference"} | EVICTION_PROTECTED_TYPES
         placeholders = ",".join("?" for _ in excluded)
         try:
             rows = self._conn.execute(

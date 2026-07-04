@@ -71,8 +71,16 @@ def is_reference_candidate(
     return bool(title and _CHUNK_TITLE_RE.search(title))
 
 
+# Types the dream prune-floor / LFU-eviction passes must never auto-archive:
+# hard-won failure + how-to knowledge stays valuable even when rarely
+# accessed. synthesis/reference are excluded separately at the query sites.
+# (2026-07-03 ecosystem survey, Tier2 #7 — mcp-memory-service decay-protects
+# structured mistake notes.)
+EVICTION_PROTECTED_TYPES: frozenset[str] = frozenset({"bug", "failure_pattern", "procedure"})
+
 __all__ = [
     "DURABLE_TYPES",
+    "EVICTION_PROTECTED_TYPES",
     "REFERENCE_TYPES",
     "is_reference_candidate",
 ]

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from memo.store.store import VecStore
+from memo.tiers import EVICTION_PROTECTED_TYPES
 
 
 def _make_store(tmp_path: Path) -> VecStore:
@@ -126,3 +128,30 @@ def test_prune_floor_dry_run_does_not_archive(tmp_path: Path) -> None:
     result = _run_prune_floor(mem, roi_floor=0.15, min_age_days=90, dry_run=True)
     assert any(r["id"] == "yyy" for r in result)
     mem.lifecycle.archive_memory.assert_not_called()
+
+
+def test_protected_types_constant():
+    assert {"bug", "failure_pattern", "procedure"} == EVICTION_PROTECTED_TYPES
+
+
+def test_prune_floor_excludes_protected_failure_knowledge(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    _insert_memoria(store, "bug1", "bug", days_old=400, roi_score=0.05, access_count=0)
+    _insert_memoria(store, "fp1", "failure_pattern", days_old=400, roi_score=0.05, access_count=0)
+    _insert_memoria(store, "pr1", "procedure", days_old=400, roi_score=0.05, access_count=0)
+    _insert_memoria(store, "note1", "note", days_old=400, roi_score=0.05, access_count=0)
+    ids = [c["id"] for c in store.prune_floor_candidates(roi_floor=0.15, min_age_days=90)]
+    assert "note1" in ids  # unprotected control still prunable
+    assert not {"bug1", "fp1", "pr1"} & set(ids)
+
+
+def test_run_eviction_never_selects_protected_types(tmp_path: Path) -> None:
+    from memo.cli_dream_passes import _run_eviction
+
+    store = _make_store(tmp_path)
+    for i in range(3):
+        _insert_memoria(store, f"bug{i}", "bug", days_old=200, roi_score=0.5, access_count=0)
+    _insert_memoria(store, "note1", "note", days_old=200, roi_score=0.5, access_count=0)
+    mem = SimpleNamespace(store=store, lifecycle=MagicMock())
+    out = _run_eviction(mem, max_count=1, dry_run=True)  # 4 non-reference rows, excess=3
+    assert [c["id"] for c in out] == ["note1"]

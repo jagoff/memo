@@ -24,6 +24,7 @@ from rich.progress import (
 )
 
 from memo.cli_common import console
+from memo.tiers import EVICTION_PROTECTED_TYPES
 from memo.transcript_miner import mine_transcripts
 
 if TYPE_CHECKING:
@@ -159,7 +160,7 @@ def _run_eviction(mem: Memory, max_count: int, dry_run: bool) -> list[dict]:
     candidates = mem.store.eviction_candidates(
         policy="lfu",
         limit=excess,
-        exclude_types={"reference", "synthesis"},
+        exclude_types={"reference", "synthesis"} | EVICTION_PROTECTED_TYPES,
     )
     if not dry_run:
         for c in candidates:
