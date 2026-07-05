@@ -9,6 +9,29 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.11] - 2026-07-05
+
+### Fixed
+
+- **Recall daemon starvation on the GPU flock.** The daemon's embed thread
+  could block indefinitely in `flock()` on the machine-global GPU lock behind
+  batch MLX jobs (capture-stop, refresh-summary, idle-daemon, test suites)
+  while holding its internal PriorityLock — every recall bailed at 2.5s
+  (`recall_lock_bail` storms) and hooks degraded to subprocess+bm25. The
+  daemon now takes a priority lane (`memo-mlx-gpu.prio.lock`): it holds the
+  priority flock while waiting for / holding the main GPU lock, and
+  non-priority processes probe it and back off, yielding at their next chunk
+  boundary. Liveness is kernel-managed (flock drops on process death).
+- New `mlx_gpu.gpu_deadline(seconds)` context manager; the daemon wraps all
+  MLX work in it so a busy GPU raises `TimeoutError` instead of wedging the
+  PriorityLock indefinitely.
+- **Reindex `UNIQUE constraint failed: meta.path` skips.** With soft delete
+  enabled, a deleted memory's tombstone row still occupies the
+  `UNIQUE(meta.path)` index; when a new file (new id) reclaimed the same
+  path, the path-collision guard could not see the tombstone and the INSERT
+  failed. The guard now looks up stale rows with `include_deleted=True` and
+  purges them with `hard_delete`.
+
 ## [2.12.10] - 2026-07-05
 
 Ecosystem roadmap **Wave 3** — retrieval UX (workstream F, 13 tasks) + feedback
