@@ -134,3 +134,124 @@ def session_usage(transcript_path: Path) -> SessionUsage | None:
     answer = sum(t.answer_tok for t in turns)
     tool = sum(t.tool_tok for t in turns)
     return SessionUsage(sid, len(turns), answer, tool, answer + tool)
+
+
+from memo.dashboard_logs import read_context_cost_log, read_grounding_log  # noqa: E402
+from memo.dashboard_metrics import GROUNDED_SCORE  # noqa: E402
+
+_CHARS_PER_TOKEN = 4
+
+
+def ledger_path(state_dir: Path) -> Path:
+    return state_dir / "token_meter.json"
+
+
+def _lock_path(state_dir: Path) -> Path:
+    return state_dir / "token_meter.json.lock"
+
+
+def _read_ledger(state_dir: Path) -> dict:
+    path = ledger_path(state_dir)
+    if not path.is_file():
+        return {"schema": LEDGER_SCHEMA, "sessions": {}}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"schema": LEDGER_SCHEMA, "sessions": {}}
+    if not isinstance(doc, dict) or not isinstance(doc.get("sessions"), dict):
+        return {"schema": LEDGER_SCHEMA, "sessions": {}}
+    return doc
+
+
+def _write_ledger(state_dir: Path, ledger: dict) -> None:
+    path = ledger_path(state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(ledger, ensure_ascii=False, indent=2))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+def _injected_chars_for(state_dir: Path, session_id: str) -> int:
+    return sum(
+        int(e.get("chars") or 0)
+        for e in read_context_cost_log(state_dir)
+        if e.get("kind") == "recall" and e.get("session_id") == session_id
+    )
+
+
+def _grounded_for(state_dir: Path, session_id: str) -> int:
+    seen: set[tuple] = set()
+    for r in read_grounding_log(state_dir):
+        if r.get("session_id") != session_id:
+            continue
+        score = r.get("used_score")
+        if isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
+            seen.add((r.get("turn"), r.get("recall_id")))
+    return len(seen)
+
+
+def roll(state_dir: Path, session_id: str, transcript_path: str | Path | None) -> dict:
+    """Fold this session's measured usage into the durable per-session ledger."""
+    if not session_id or not transcript_path:
+        return _read_ledger(state_dir)
+    su = session_usage(Path(transcript_path))
+    if su is None:
+        return _read_ledger(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with _lock_path(state_dir).open("a+", encoding="utf-8") as lock_f:
+        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+        ledger = _read_ledger(state_dir)
+        from datetime import UTC, datetime
+
+        ledger.setdefault("sessions", {})[session_id] = {
+            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+            "n_turns": su.n_turns,
+            "answer_tok": su.answer_tok,
+            "tool_tok": su.tool_tok,
+            "injected_chars": _injected_chars_for(state_dir, session_id),
+            "grounded": _grounded_for(state_dir, session_id),
+        }
+        _write_ledger(state_dir, ledger)
+    return ledger
+
+
+def summarize(state_dir: Path) -> dict:
+    ledger = _read_ledger(state_dir)
+    rows = list(ledger.get("sessions", {}).values())
+    answer = sum(int(r.get("answer_tok", 0)) for r in rows)
+    tool = sum(int(r.get("tool_tok", 0)) for r in rows)
+    injected_chars = sum(int(r.get("injected_chars", 0)) for r in rows)
+    grounded = sum(int(r.get("grounded", 0)) for r in rows)
+
+    def _rate(subset: list[dict]) -> float | None:
+        turns = sum(int(r.get("n_turns", 0)) for r in subset)
+        tk = sum(int(r.get("tool_tok", 0)) for r in subset)
+        return round(tk / turns, 2) if turns else None
+
+    grounded_ss = [r for r in rows if int(r.get("grounded", 0)) > 0]
+    ungrounded_ss = [
+        r for r in rows if int(r.get("grounded", 0)) == 0 and int(r.get("injected_chars", 0)) > 0
+    ]
+    g_rate = _rate(grounded_ss)
+    u_rate = _rate(ungrounded_ss)
+    delta = round(u_rate - g_rate, 2) if (g_rate is not None and u_rate is not None) else None
+    return {
+        "schema": LEDGER_SCHEMA,
+        "sessions": len(rows),
+        "answer_tok": answer,
+        "tool_tok": tool,
+        "injected_tokens": (injected_chars + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN,
+        "grounded": grounded,
+        "proxy": {
+            "grounded_tool_tok_per_turn": g_rate,
+            "ungrounded_tool_tok_per_turn": u_rate,
+            "delta": delta,
+        },
+        "ledger_path": str(ledger_path(state_dir)),
+    }

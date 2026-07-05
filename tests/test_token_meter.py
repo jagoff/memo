@@ -1,4 +1,4 @@
-from pathlib import Path
+import json as _json
 
 from memo import token_meter as tm
 
@@ -53,3 +53,72 @@ def test_iter_prompt_turns_skips_sidechain_rows():
     assert len(turns) == 1
     assert turns[0].answer_tok == 50
     assert turns[0].tool_tok == 0  # sidechain 999 ignored
+
+
+def _write_jsonl(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+def _transcript(tmp_path, sid, turns):
+    """turns = list of (tool_out, answer_out); build a minimal JSONL transcript."""
+    rows = []
+    for i, (tool_out, ans_out) in enumerate(turns):
+        rows.append({"type": "user", "sessionId": sid,
+                     "message": {"role": "user", "content": f"prompt {i}"}})
+        if tool_out:
+            rows.append({"type": "assistant", "sessionId": sid,
+                         "message": {"role": "assistant", "id": f"{sid}-t{i}",
+                                     "usage": {"output_tokens": tool_out},
+                                     "content": [{"type": "tool_use", "name": "Read", "input": {}}]}})
+        rows.append({"type": "assistant", "sessionId": sid,
+                     "message": {"role": "assistant", "id": f"{sid}-a{i}",
+                                 "usage": {"output_tokens": ans_out},
+                                 "content": [{"type": "text", "text": "answer"}]}})
+    p = tmp_path / f"{sid}.jsonl"
+    p.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return p
+
+
+def test_roll_joins_injection_and_grounding(tmp_path):
+    from memo.dashboard_logs import context_cost_log_path, grounding_log_path
+
+    state = tmp_path / "state"
+    state.mkdir()
+    # session S1: 2 turns, tool loop 200 in turn 0
+    tp = _transcript(tmp_path, "S1", [(200, 40), (0, 30)])
+    _write_jsonl(context_cost_log_path(state),
+                 [{"kind": "recall", "session_id": "S1", "turn": 1, "chars": 400}])
+    _write_jsonl(grounding_log_path(state),
+                 [{"session_id": "S1", "turn": 1, "recall_id": "abc", "used_score": 0.9}])
+
+    tm.roll(state, "S1", tp)
+    s = tm.summarize(state)
+    assert s["sessions"] == 1
+    assert s["tool_tok"] == 200
+    assert s["answer_tok"] == 70
+    assert s["injected_tokens"] == 100        # 400 chars / 4
+    assert s["grounded"] == 1
+
+
+def test_summarize_proxy_grounded_vs_ungrounded(tmp_path):
+    from memo.dashboard_logs import context_cost_log_path, grounding_log_path
+
+    state = tmp_path / "state"
+    state.mkdir()
+    # grounded session: low tool spend; ungrounded-but-injected: high tool spend
+    tg = _transcript(tmp_path, "G", [(50, 20)])          # 1 turn, tool 50
+    tu = _transcript(tmp_path, "U", [(500, 20)])         # 1 turn, tool 500
+    _write_jsonl(context_cost_log_path(state), [
+        {"kind": "recall", "session_id": "G", "turn": 1, "chars": 100},
+        {"kind": "recall", "session_id": "U", "turn": 1, "chars": 100},
+    ])
+    _write_jsonl(grounding_log_path(state),
+                 [{"session_id": "G", "turn": 1, "recall_id": "x", "used_score": 0.9}])
+    tm.roll(state, "G", tg)
+    tm.roll(state, "U", tu)
+    s = tm.summarize(state)
+    p = s["proxy"]
+    assert p["grounded_tool_tok_per_turn"] == 50.0
+    assert p["ungrounded_tool_tok_per_turn"] == 500.0
+    assert p["delta"] == 450.0  # ungrounded − grounded (positive ⇒ memo correlates with less tool spend)
