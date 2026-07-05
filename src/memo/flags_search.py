@@ -299,4 +299,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "hits, id-deduped). Never runs in the 5s recall hook. Default off — "
         "flip only after the eval gate + synapse eval-chat measure a win.",
     ),
+    _spec(
+        "MEMO_SEARCH_ADAPTIVE_LEXICAL_WEIGHT",
+        "bool",
+        False,
+        "search",
+        "Hybrid fusion: queries of <=2 tokens (identifier/tag lookups) tilt the "
+        "RRF weights lexical (vec 0.35 / bm25 0.65). Explicitly-set "
+        "MEMO_SEARCH_VEC_WEIGHT/BM25_WEIGHT always win. Hybrid mode only — the "
+        "recall hook's default vec mode is untouched. Default off; eval-gated.",
+    ),
 )

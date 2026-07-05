@@ -268,6 +268,16 @@ class _SearchOpsMixin(_MemoryBase):
                         "MEMO_SEARCH_VEC_WEIGHT + MEMO_SEARCH_BM25_WEIGHT = %.2f (expected 1.0)",
                         _weight_sum,
                     )
+            # Query-length-adaptive lexical weight (default off): a 1-2 token
+            # query is usually an identifier/tag lookup where BM25 is the
+            # stronger signal. Explicit user weights always win.
+            if (
+                flag_bool("MEMO_SEARCH_ADAPTIVE_LEXICAL_WEIGHT")
+                and not _vec_set
+                and not _bm25_set
+                and len(query.split()) <= 2
+            ):
+                w_vec, w_bm25 = 0.35, 0.65
             # Build weight list aligned with the lists passed to _rrf_fuse:
             # [vec_hits, bm_hits, exact_hits, graph_hits] → [w_vec, w_bm25, w_bm25, 1.0]
             rrf_weights = [w_vec, w_bm25, w_bm25, 1.0]
