@@ -697,6 +697,44 @@ def uncertain_exclusion() -> set[str] | None:
     return {"_uncertain"} if flag_bool("MEMO_RECALL_EXCLUDE_UNCERTAIN") else None
 
 
+def fetch_recency_band(
+    mem: Any,
+    *,
+    days: int,
+    exclude_types: set[str] | None,
+    floor: float,
+    cap: int = 3,
+) -> list[Any]:
+    """Newest durable memories (< days old) as extra recall candidates, scored
+    AT the min_sim floor (they pass the gate — `< min_sim` drops — but rank
+    behind genuine matches). One indexed SQL query + <=cap body reads; no
+    embedder/MLX — hook-budget safe. Never raises."""
+    import datetime as _dt
+
+    from memo.memory.record import record_from_row
+
+    try:
+        cutoff = (_dt.datetime.now() - _dt.timedelta(days=days)).isoformat(timespec="seconds")
+        rows = mem.store.list_recent(limit=cap, exclude_types=exclude_types, updated_since=cutoff)
+        out: list[Any] = []
+        for r in rows:
+            body = ""
+            with contextlib.suppress(Exception):
+                body = mem._read_body(r["path"])
+            out.append(replace(record_from_row(r, body=body), score=floor))
+        return out
+    except Exception as exc:
+        _logger.debug("recency band skipped: %s", exc)
+        return []
+
+
+def apply_recency_band(hits: list[Any], band: list[Any]) -> list[Any]:
+    """Union band candidates not already in the pool (id-dedup), appended after
+    the semantic hits — the band can only ADD candidates, never reorder."""
+    seen = {getattr(h, "id", "") for h in hits}
+    return [*hits, *[b for b in band if b.id not in seen]]
+
+
 def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
     """The hook's post-rank injection filters, flag-resolved (env > overlay).
 
@@ -865,15 +903,20 @@ def _recall_logic(
                         graph_boost=_graph_boost,
                     )
         else:
+            hits = mem.search(
+                prompt, limit=search_k, mode=mode, recency=True,
+                exclude_types=exclude_types, exclude_tags=exclude_tags,
+            )
+            _band_days = _flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
+            if _band_days > 0:
+                hits = apply_recency_band(
+                    hits,
+                    fetch_recency_band(
+                        mem, days=_band_days, exclude_types=exclude_types, floor=knobs.min_sim
+                    ),
+                )
             qualifying = rank_hits(
-                mem.search(
-                    prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types,
-                    exclude_tags=exclude_tags,
-                ),
-                knobs,
-                vec_cosine=_vec_cosine,
-                preferences=_prefs,
-                graph_boost=_graph_boost,
+                hits, knobs, vec_cosine=_vec_cosine, preferences=_prefs, graph_boost=_graph_boost
             )
     except Exception as exc:
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)

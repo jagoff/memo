@@ -377,6 +377,8 @@ def run_config(
     from memo.associative import associate
     from memo.recall_logic import (
         apply_injection_filters,
+        apply_recency_band,
+        fetch_recency_band,
         knobs_from_flags,
         make_vec_cosine,
         rank_hits,
@@ -409,7 +411,7 @@ def run_config(
     # explicit mem.search() path does not — without mirroring the exclusion
     # here, ingested vault chunks the hook never surfaces crowd top-K and
     # depress measured precision (seen live: WhatsApp reference chunks).
-    from memo.flags import flag_bool
+    from memo.flags import flag_bool, flag_int
     from memo.tiers import REFERENCE_TYPES
 
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
@@ -427,6 +429,14 @@ def run_config(
         hits = mem.search(query, limit=k * 4, mode=cfg.mode, exclude_types=exclude_types,
                           exclude_tags=exclude_tags)
         lat.append((time.time() - t0) * 1000)
+        band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
+        if band_days > 0:
+            hits = apply_recency_band(
+                hits,
+                fetch_recency_band(
+                    mem, days=band_days, exclude_types=exclude_types, floor=knobs.min_sim
+                ),
+            )
         # Rank exactly as the daemon does (shared rank_hits): dedup + the hybrid
         # true-cosine gate + the Phase-2 graph_boost seam — so the eval measures
         # the real ranking, not a hand-rolled floor filter. cfg.floor -> min_sim.

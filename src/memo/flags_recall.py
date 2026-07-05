@@ -420,4 +420,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "or reorder hits — but it IS a new output line, so it ships opt-in "
         "(default off), same class as MEMO_RECALL_EPISTEMIC_LABELS.",
     ),
+    _spec(
+        "MEMO_RECALL_RECENCY_BAND_DAYS",
+        "int",
+        0,
+        "recall",
+        "khoj-style recency band: unconditionally union the newest durable "
+        "memories (< N days, cap 3) into the recall candidate pool, scored at "
+        "the min_sim floor so they survive the gate but never outrank genuine "
+        "semantic matches. Cheap indexed SQL, no embedder. 0 = off (default); "
+        "flip only after the eval gate measures a win.",
+        min_val=0,
+    ),
 )
