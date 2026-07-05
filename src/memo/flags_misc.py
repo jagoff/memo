@@ -997,6 +997,52 @@ SPECS: tuple[FlagSpec, ...] = (
         "Min distinct sessions on a project before it is consolidated cross-session.",
         min_val=2,
     ),
+    # Tier-1 #1 (+ Tier-2 #24) — profile distillation + directive graduation
+    _spec(
+        "MEMO_DREAM_PROFILE_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly profile-distillation pass in `memo dream run`. "
+        "OFF by default; distills preference/feedback/decision/synthesis "
+        "memories into char-budgeted, rewritten-in-place profile.md files "
+        "(global + per-project) under memory_dir/_profile/ with memory-id "
+        "provenance, plus a Standing-rules block graduated from grounding.log.",
+    ),
+    _spec(
+        "MEMO_DREAM_PROFILE_CHAR_BUDGET",
+        "int",
+        4000,
+        "misc",
+        "Character budget per profile document (frontmatter exempt).",
+        min_val=200,
+    ),
+    _spec(
+        "MEMO_DREAM_PROFILE_MAX_PROJECTS",
+        "int",
+        5,
+        "misc",
+        "Max per-project profile documents rewritten per pass.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_DREAM_PROFILE_DIRECTIVE_K",
+        "int",
+        3,
+        "misc",
+        "Standing-rule graduation: min DISTINCT sessions in grounding.log "
+        "that must cite a memory before it renders as a standing rule.",
+        min_val=2,
+    ),
+    _spec(
+        "MEMO_DREAM_PROFILE_DIRECTIVE_MIN_USED",
+        "float",
+        0.5,
+        "misc",
+        "Standing-rule graduation: min grounding used_score for a citation to count.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
     # dream v2 — scope: project→global promotion (retag memories proven general)
     _spec(
         "MEMO_DREAM_RETAG_GLOBAL_ENABLED",

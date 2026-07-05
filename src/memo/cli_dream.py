@@ -441,6 +441,40 @@ def dream_run(
                 receipt["errors"].append(f"consolidate_episodes: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[consolidate] [yellow]warn[/yellow]")
 
+        # Tier-1 #1 — profile distillation: rewrite-in-place profile.md files -
+        if flag_bool("MEMO_DREAM_PROFILE_ENABLED"):
+            progress.update(step, description="[profile] distilling profile.md...")
+            try:
+                from memo import dream_profile
+                from memo.flags import flag_float as _pf_float
+
+                receipt["profile"] = dream_profile.run_profile_pass(
+                    cfg,
+                    mem,
+                    char_budget=flag_int("MEMO_DREAM_PROFILE_CHAR_BUDGET") or 4000,
+                    max_projects=flag_int("MEMO_DREAM_PROFILE_MAX_PROJECTS") or 5,
+                    directive_k=flag_int("MEMO_DREAM_PROFILE_DIRECTIVE_K") or 3,
+                    directive_min_used=(
+                        _pf_float("MEMO_DREAM_PROFILE_DIRECTIVE_MIN_USED") or 0.5
+                    ),
+                    dry_run=dry_run,
+                )
+                if receipt["profile"].get("status") == "error":
+                    # run_profile_pass never raises — surface its error here so
+                    # failures land in receipt["errors"], never silently swallowed
+                    receipt["errors"].append(f"profile: {receipt['profile'].get('error')}")
+                _pr = receipt["profile"]
+                progress.update(
+                    step,
+                    description=(
+                        f"[profile] [green]✓[/green]  "
+                        f"{_pr.get('status')} ({len(_pr.get('written', []))} files)"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"profile: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[profile] [yellow]warn[/yellow]")
+
         if flag_bool("MEMO_DREAM_GRADUATION_ENABLED"):
             progress.update(step, description="[graduate] quarantined captures...")
             try:
