@@ -130,3 +130,41 @@ def test_summarize_proxy_grounded_vs_ungrounded(tmp_path):
     assert p["grounded_tool_tok_per_turn"] == 50.0
     assert p["ungrounded_tool_tok_per_turn"] == 500.0
     assert p["delta"] == 450.0  # ungrounded − grounded (positive ⇒ memo correlates with less tool spend)
+
+
+# ---------------------------------------------------------------------------
+# Task-4: additive measured panel in `memo tokens`
+# ---------------------------------------------------------------------------
+
+from click.testing import CliRunner
+
+
+def _cli_env(tmp_path):
+    return {"MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+            "MEMO_STATE_DIR": str(tmp_path / "state")}
+
+
+def test_tokens_cmd_shows_measured_block(tmp_path):
+    from memo.cli import cli
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    tp = _transcript(tmp_path, "S1", [(120, 40)])
+    tm.roll(state, "S1", tp)  # populate the measured ledger
+    runner = CliRunner()
+    res = runner.invoke(cli, ["tokens"], env=_cli_env(tmp_path))
+    assert res.exit_code == 0
+    assert "medido" in res.output.lower() or "measured" in res.output.lower()
+
+
+def test_tokens_json_preserves_ledger_schema(tmp_path):
+    from memo.cli import cli
+
+    runner = CliRunner()
+    res = runner.invoke(cli, ["tokens", "--json"], env=_cli_env(tmp_path))
+    assert res.exit_code == 0
+    payload = _json.loads(res.output)
+    # frozen token_ledger keys must all remain present
+    for key in ("today", "month", "historic", "daily", "monthly", "growth", "tpg", "ledger_path"):
+        assert key in payload

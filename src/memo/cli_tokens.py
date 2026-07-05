@@ -116,13 +116,42 @@ def _growth_text(s: dict) -> Text:
 @click.option("--json", "as_json", is_flag=True, help="Salida machine-readable.")
 def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> None:
     """Mostrar cuántos tokens ahorró memo: hoy, este mes y total histórico."""
+    from memo import token_meter
+
     cfg = Config.from_env()
     token_ledger.roll_up(cfg.state_dir)
     s = token_ledger.summarize(cfg.state_dir, days_back=days, months_back=months)
 
+    # Measured surface (additive; the token_ledger schema above stays frozen).
+    measured = token_meter.summarize(cfg.state_dir)
+
     if as_json:
+        s["measured"] = measured          # additive key; existing keys untouched
         click.echo(_json.dumps(s, ensure_ascii=False, indent=2))
         return
+
+    # Print measured panel BEFORE the early-return guard so it shows even when
+    # token_ledger is empty (no grounding yet).
+    if measured["sessions"]:
+        p = measured["proxy"]
+        delta = p["delta"]
+        proxy_line = (
+            f"tool-spend grounded {p['grounded_tool_tok_per_turn']} vs "
+            f"no-grounded {p['ungrounded_tool_tok_per_turn']} tok/turno"
+            + (f"  (Δ {delta:+.0f})" if delta is not None else "")
+            if p["grounded_tool_tok_per_turn"] is not None
+            else "proxy: aún sin sesiones grounded+no-grounded para comparar"
+        )
+        console.print(Panel(
+            Text.from_markup(
+                f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok respuesta · "
+                f"[bold]{_fmt_tokens(measured['tool_tok'])}[/bold] tok tool-loops · "
+                f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok inyectados "
+                f"([dim]{measured['sessions']} sesiones medidas[/dim])\n[dim]{proxy_line}[/dim]"
+            ),
+            title="[bold]memo · medido (transcript real)[/bold]",
+            border_style="green", padding=(0, 2),
+        ))
 
     if s["historic"]["grounded"] == 0:
         console.print(
