@@ -142,6 +142,32 @@ def test_feedback_record_extra_passthrough(mem_with_stub: Memory):
     assert ex["signal"] == "ignore"  # canonical signal preserved
 
 
+def test_record_verdicts_does_not_clobber_manual_vote(mem_with_stub: Memory):
+    """A manual 👍 on (source, query) must survive a later implicit verdict
+    write for the same pair. `record_verdicts` passes `only_if_absent=True`,
+    so the store skips the write and the manual rating stands."""
+    from memo.dashboard import append_recall_log
+    from memo.verdict import record_verdicts
+
+    rec = mem_with_stub.save(content="sync remoto usa flock", title="Sync")
+    query = "cómo configuro el sync remoto?"
+    # Human casts an explicit up-vote for this (source, query).
+    mem_with_stub.feedback_record(rec.id, query_text=query, rating="up")
+
+    sd = mem_with_stub.cfg.state_dir
+    append_recall_log(sd, prompt=query, hits=[{"id": rec.id, "score": 0.9}],
+                      via="subprocess", session_id="s9", turn=1)
+    append_recall_log(sd, prompt="no funciona, tira el mismo error", hits=[],
+                      via="subprocess", session_id="s9", turn=2)
+    # Implicit negative verdict would write rating="ignore" (-1) — but only if absent.
+    out = record_verdicts(mem_with_stub.cfg, {"session_id": "s9"}, memory=mem_with_stub)
+    assert out is not None and out["verdict"] == "negative"
+
+    rows = mem_with_stub.feedback_list(source_id=rec.id)
+    assert len(rows) == 1
+    assert int(rows[0]["rating"]) == 1, "manual up-vote must not be clobbered"
+
+
 def test_rebuild_feedback_vecs_uses_embed_query_signature(mem_with_stub: Memory):
     """`rebuild_feedback_vecs` must call `embed_fn(text: str)` per row, NOT
     `embed_fn(list[str])`. All call sites pass `embedder.embed_query`, which

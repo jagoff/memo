@@ -176,6 +176,34 @@ def test_capture_stop_calls_verdicts_when_enabled(tmp_cfg, monkeypatch) -> None:
     assert called["payload"]["session_id"] == "s1"
 
 
+def test_capture_stop_skips_verdicts_when_flag_off(tmp_cfg, monkeypatch) -> None:
+    import json as _json
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    called: dict = {}
+    monkeypatch.setattr("memo.capture.run_capture", lambda *a, **k: {"saved_titles": []})
+    monkeypatch.setattr("memo.grounding.score_turn", lambda *a, **k: None)
+    monkeypatch.setattr("memo.token_ledger.roll_up", lambda *a, **k: {})
+    monkeypatch.setattr("memo.verdict.record_verdicts",
+                        lambda cfg, payload, **k: called.setdefault("payload", payload))
+    transcript = tmp_cfg.state_dir / "t.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["capture-stop"],
+        input=_json.dumps({"transcript_path": str(transcript), "session_id": "s1"}),
+        env={"MEMO_NONINTERACTIVE": "1",  # MEMO_VERDICT_ENABLED intentionally unset
+             "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+             "MEMO_STATE_DIR": str(tmp_cfg.state_dir)},
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert called == {}, "flag off must not call record_verdicts"
+
+
 def test_verdict_log_roundtrip(tmp_path) -> None:
     append_verdict_log(tmp_path, session_id="s1", turn=4, prior_turn=3,
                        verdict="negative", prompt="q", reaction="no funciona",

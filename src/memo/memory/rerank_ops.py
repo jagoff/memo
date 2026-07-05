@@ -81,7 +81,7 @@ class _RerankOpsMixin(_MemoryBase):
             query_text=query_text,
             query_emb=list(emb),
             rating=rating_norm,
-            extra={"signal": signal, **(extra or {})},
+            extra={**(extra or {}), "signal": signal},
             only_if_absent=only_if_absent,
         )
         return {
