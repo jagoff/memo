@@ -599,7 +599,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         ex_sql = ""
         ex_params: list[Any] = []
         if exclude_types:
-            ex_sql = " AND type NOT IN (%s)" % ",".join("?" for _ in exclude_types)
+            _ph = ",".join("?" for _ in exclude_types)
+            ex_sql = f" AND type NOT IN ({_ph})"
             ex_params = sorted(exclude_types)
         cols = "id, path, title, type, tags, created, updated, body_hash, extra_json"
         older = self._conn.execute(

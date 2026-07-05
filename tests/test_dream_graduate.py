@@ -18,7 +18,7 @@ def test_grounded_candidate_is_promoted(mock_memory, tmp_cfg, monkeypatch):
 def test_corroborated_candidate_is_promoted(mock_memory, tmp_cfg, monkeypatch):
     from memo import dream_graduate
 
-    rec = mock_memory.save(
+    mock_memory.save(
         content="insight repetido en varias sesiones sobre mypy cache " * 2,
         title="Corroborated", tags=["_uncertain"],
     )

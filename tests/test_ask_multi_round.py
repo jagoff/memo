@@ -28,7 +28,7 @@ def test_multi_round_adds_round2_hits(mock_memory, monkeypatch):
             "message": {"content": '{"sufficient": false, "queries": ["beta refined"]}'}
         },
     )
-    _, sources, _, hits = mock_memory._build_ask_context(
+    _, _sources, _, hits = mock_memory._build_ask_context(
         "what about alpha?", k=5, type_=None, snippet_chars=200, include_repos=False
     )
     assert calls == ["what about alpha?", "beta refined"]
