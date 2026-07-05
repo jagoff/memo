@@ -144,6 +144,12 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
         console.print(_chart(monthly_rows, "magenta", "por mes · tokens/mes"))
 
     console.print(_growth_text(s))
+    abl = s.get("ablation") or {}
+    if abl.get("turns_off"):
+        console.print(
+            f"[dim]ablación: {abl['turns_on']} turnos con memo · "
+            f"{abl['turns_off']} sin memo (MEMO_RECALL_DISABLE) — ver `memo roi`[/dim]"
+        )
     console.print(
         f"[dim]est: {s['tpg']} tok/recuerdo-usado (MEMO_ROI_TOKENS_PER_GROUNDED) · "
         f"más memorias útiles ⇒ más recuerdos usados ⇒ más ahorro[/dim]"

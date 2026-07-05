@@ -725,6 +725,70 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return inter / union if union else 0.0
 
 
+def ablation_stats(
+    state_dir, *, limit: int = 2000, window_turns: int = 4
+) -> dict[str, Any]:
+    """With-vs-without-recall cohort comparison over the live logs.
+
+    Cohorts come from recall_hook.log ``via``: "disabled" (the instrumented
+    MEMO_RECALL_DISABLE short-circuit) vs daemon/subprocess. Same cohort
+    pattern as dream_tune_online.cohort_fraction, keyed on ``via`` instead of
+    ``params_version``. Reports per-cohort turn counts, the grounded-per-turn
+    rate for the ON cohort (OFF is 0 by construction), and a same-session
+    re-ask rate per cohort — the honest live with-vs-without delta."""
+    from memo.dashboard import read_grounding_log, read_recall_hook_log
+
+    rows = read_recall_hook_log(state_dir, limit=limit)
+    on_rows = [r for r in rows if r.get("via") in ("daemon", "subprocess")]
+    off_rows = [r for r in rows if r.get("via") == "disabled"]
+
+    grounded_turns: set[tuple[str, int]] = set()
+    for g in read_grounding_log(state_dir, limit=4000):
+        s = g.get("used_score")
+        if (
+            isinstance(s, (int, float))
+            and float(s) >= GROUNDED_SCORE
+            and g.get("session_id")
+            and isinstance(g.get("turn"), int)
+        ):
+            grounded_turns.add((str(g["session_id"]), int(g["turn"])))
+    on_turns = {
+        (str(r["session_id"]), int(r["turn"]))
+        for r in on_rows
+        if r.get("session_id") and isinstance(r.get("turn"), int)
+    }
+    grounded_on = len(on_turns & grounded_turns)
+
+    def _reask_rate(cohort_rows: list[dict[str, Any]]) -> float | None:
+        """Fraction of prompts that re-ask (token-Jaccard >= 0.6) an earlier
+        prompt of the same session within ``window_turns`` turns."""
+        seen: dict[str, list[tuple[int, set[str]]]] = {}
+        considered = reasked = 0
+        for r in cohort_rows:
+            sid, turn = r.get("session_id"), r.get("turn")
+            prompt = str(r.get("prompt") or "")
+            if not sid or not isinstance(turn, int) or len(prompt) < 8:
+                continue
+            tok = _reask_tokens(prompt)
+            considered += 1
+            if any(
+                0 < turn - pt <= window_turns and _jaccard(tok, ptok) >= 0.6
+                for pt, ptok in seen.get(str(sid), [])
+            ):
+                reasked += 1
+            seen.setdefault(str(sid), []).append((turn, tok))
+        return round(reasked / considered, 3) if considered else None
+
+    return {
+        "turns_on": len(on_rows),
+        "turns_off": len(off_rows),
+        "grounded_turns_on": grounded_on,
+        "grounded_per_turn_on": round(grounded_on / len(on_turns), 3) if on_turns else None,
+        "reask_rate_on": _reask_rate(on_rows),
+        "reask_rate_off": _reask_rate(off_rows),
+    }
+
+
 def reask_stats(
     state_dir,
     *,

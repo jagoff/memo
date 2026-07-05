@@ -347,3 +347,14 @@ def test_tokens_cmd_renders_numbers_and_bars(tmp_path: Path) -> None:
     assert r.exit_code == 0, r.output
     assert "HISTÓRICO" in r.output
     assert "tokens ahorrados" in r.output
+
+
+def test_summarize_exposes_ablation_totals(tmp_path) -> None:
+    from memo import token_ledger
+    from memo.dashboard import append_recall_log
+
+    append_recall_log(tmp_path, prompt="q", hits=[], via="disabled",
+                      session_id="s1", turn=1)
+    token_ledger.roll_up(tmp_path)
+    s = token_ledger.summarize(tmp_path)
+    assert s["ablation"] == {"turns_on": 0, "turns_off": 1}

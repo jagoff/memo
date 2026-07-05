@@ -265,6 +265,11 @@ def summarize(
         "up": up,
     }
 
+    ablation = {
+        "turns_on": sum(int(d.get("turns_on", 0)) for d in days.values()),
+        "turns_off": sum(int(d.get("turns_off", 0)) for d in days.values()),
+    }
+
     return {
         "tpg": tpg,
         "today": {"date": today_key, **_bucket(today_g)},
@@ -273,5 +278,6 @@ def summarize(
         "daily": daily,
         "monthly": monthly,
         "growth": growth,
+        "ablation": ablation,
         "ledger_path": str(ledger_path(state_dir)),
     }

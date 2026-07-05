@@ -18,6 +18,7 @@ import click
 
 from .config import Config
 from .dashboard import (
+    ablation_stats,
     consult_breakdown,
     grounding_log_path,
     read_grounding_log,
@@ -115,6 +116,7 @@ def compute_roi(state_dir, *, limit: int = 500, window_turns: int = 4) -> dict:
         "silent": breakdown["silent"],
         "actions_by_client": actions,
         "sampled": breakdown["sampled"],
+        "ablation": ablation_stats(state_dir, limit=limit),
     }
 
 
@@ -177,6 +179,20 @@ def roi(*, limit: int = 500, window_turns: int = 4, as_json: bool = False) -> No
             f"  {name:<16} {c['consults']:>8} {hit:>6} {grnd:>6} {act_s:>5}  "
             f"{_human_age(c.get('last_seen'))}"
         )
+
+    abl = data.get("ablation") or {}
+    if abl.get("turns_off"):
+        click.echo("\n  ablation (MEMO_RECALL_DISABLE cohorts, live sessions)")
+        click.echo(f"    turns           on {abl['turns_on']} · off {abl['turns_off']}")
+        gpt = abl.get("grounded_per_turn_on")
+        click.echo(f"    grounded/turn   on {gpt if gpt is not None else '—'} · off 0.0 (by construction)")
+        r_on, r_off = abl.get("reask_rate_on"), abl.get("reask_rate_off")
+        if r_on is not None and r_off is not None:
+            delta_pp = round((r_off - r_on) * 100)
+            click.echo(
+                f"    re-ask rate     on {r_on * 100:.0f}% · off {r_off * 100:.0f}%"
+                f"  (Δ {delta_pp:+d}pp without memo)"
+            )
 
     if data["silent"]:
         click.echo(f"\n  ⚠ wired but silent (not reading memo): {', '.join(data['silent'])}")
