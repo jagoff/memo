@@ -98,7 +98,25 @@ def register(server: Any, memory: Memory) -> None:
         type: str | None = None,
         tags: list[str] | None = None,
         content: str | None = None,
+        replace_old: str | None = None,
+        replace_new: str | None = None,
+        append: str | None = None,
     ) -> dict[str, Any] | None:
+        """Patch fields on a memory. `content` replaces the whole body;
+        `replace_old`+`replace_new` is a surgical exact-string edit (old must
+        occur exactly once — unchanged text stays byte-identical); `append`
+        adds a paragraph. All three are versioned (memo_version_rollback).
+        """
+        if (replace_old is None) != (replace_new is None):
+            return {
+                "error": "replace_incomplete",
+                "message": "pass replace_old and replace_new together",
+            }
+        replace = (
+            (replace_old, replace_new)
+            if replace_old is not None and replace_new is not None
+            else None
+        )
         try:
             rec = memory.update(
                 id,
@@ -106,9 +124,13 @@ def register(server: Any, memory: Memory) -> None:
                 type_=type,
                 tags=tags,
                 content=content,
+                replace=replace,
+                append=append,
             )
         except AmbiguousIdError as exc:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        except ValueError as exc:
+            return {"error": "edit_failed", "message": str(exc)}
         return rec.to_dict() if rec else None
 
     @server.tool()

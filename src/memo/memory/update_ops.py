@@ -36,6 +36,8 @@ class _UpdateOpsMixin(_MemoryBase):
         type_: str | None = None,
         tags: builtins.list[str] | None = None,
         content: str | None = None,
+        replace: tuple[str, str] | None = None,
+        append: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> MemoryRecord | None:
         """Patch one or more fields on an existing record.
@@ -44,6 +46,11 @@ class _UpdateOpsMixin(_MemoryBase):
         Re-embed only if `content` changed (body_hash check). The file
         path stays stable — renaming the slug after the fact would break
         wikilinks the user may have created in their vault.
+
+        `replace=(old, new)` is an exact-string surgical edit — old must occur
+        exactly once (ValueError otherwise) so unchanged content stays
+        byte-identical; `append` adds a paragraph. Both route through the same
+        versioned path as `content`.
         """
         resolved = self.resolve_id(id_)
         if resolved is None:
@@ -56,6 +63,8 @@ class _UpdateOpsMixin(_MemoryBase):
             raise ValueError(
                 f"`type_={type_!r}` not in valid set {sorted(_VALID_TYPES)}",
             )
+        if sum(x is not None for x in (content, replace, append)) > 1:
+            raise ValueError("update: pass at most one of content=, replace=, append=")
 
         new_title = (title.strip() if title else r["title"]) or r["title"]
         new_type = type_ or r["type"]
@@ -65,6 +74,24 @@ class _UpdateOpsMixin(_MemoryBase):
 
         # Body resolution: provided > on-disk > empty.
         old_body = self._read_body(r["path"])
+        if replace is not None:
+            old_str, new_str = replace
+            if not old_str:
+                raise ValueError("replace: old string must be non-empty")
+            occurrences = old_body.count(old_str)
+            if occurrences == 0:
+                raise ValueError(f"replace: old string not found in body of {id_[:8]}")
+            if occurrences > 1:
+                raise ValueError(
+                    f"replace: old string occurs {occurrences} times in {id_[:8]}; must be unique"
+                )
+            content = old_body.replace(old_str, new_str, 1)
+        elif append is not None:
+            content = (
+                old_body.rstrip("\n") + "\n\n" + append.strip()
+                if old_body.strip()
+                else append.strip()
+            )
         new_body = content if content is not None else old_body
         new_body = new_body[: self.cfg.max_content_chars]
         new_body_hash = _sha256_short(new_body)

@@ -212,3 +212,57 @@ def test_last_saved_id_ignores_other_device_events(mem_with_stub: Memory):
     finally:
         other.device_id = own_device
     assert mem_with_stub.last_saved_id() == rec.id
+
+
+def test_update_replace_exact_unique(mock_memory):
+    rec = mock_memory.save(content="port is 8080 and host is local", title="Cfg")
+    out = mock_memory.update(rec.id, replace=("8080", "9090"))
+    assert "port is 9090" in out.body
+    assert "host is local" in out.body  # untouched text preserved byte-identical
+
+
+def test_update_replace_not_found_raises(mock_memory):
+    rec = mock_memory.save(content="alpha", title="R1")
+    with pytest.raises(ValueError, match="not found"):
+        mock_memory.update(rec.id, replace=("beta", "gamma"))
+
+
+def test_update_replace_ambiguous_raises(mock_memory):
+    rec = mock_memory.save(content="x y x", title="R2")
+    with pytest.raises(ValueError, match="2 times"):
+        mock_memory.update(rec.id, replace=("x", "z"))
+
+
+def test_update_append_adds_paragraph(mock_memory):
+    rec = mock_memory.save(content="first", title="R3")
+    out = mock_memory.update(rec.id, append="second")
+    assert out.body == "first\n\nsecond"
+
+
+def test_update_content_and_replace_mutually_exclusive(mock_memory):
+    rec = mock_memory.save(content="a", title="R4")
+    with pytest.raises(ValueError, match="at most one"):
+        mock_memory.update(rec.id, content="b", replace=("a", "c"))
+
+
+def test_memo_update_replace_params(mock_memory):
+    from memo.server_core_records import register
+
+    tools: dict = {}
+
+    class _Srv:
+        def tool(self, *a, **k):
+            def wrap(fn):
+                tools[fn.__name__] = fn
+                return fn
+
+            return wrap
+
+    register(_Srv(), mock_memory)
+    rec = mock_memory.save(content="version 1 of the fact", title="F")
+    out = tools["memo_update"](id=rec.id, replace_old="version 1", replace_new="version 2")
+    assert "version 2" in out["body"]
+    bad = tools["memo_update"](id=rec.id, replace_old="missing", replace_new="x")
+    assert bad["error"] == "edit_failed"
+    half = tools["memo_update"](id=rec.id, replace_old="x")
+    assert half["error"] == "replace_incomplete"
