@@ -17,6 +17,7 @@ from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     MemoryRecord,
     _extract_provenance,
+    _log,
     _now_iso,
 )
 
@@ -206,6 +207,15 @@ class _DeleteOpsMixin(_MemoryBase):
             )
         except Exception:  # noqa: S110
             pass  # non-critical: file deletion is the authoritative step
+
+        # Drop crossref rows for the deleted memory (flag-gated, best-effort).
+        from memo.flags import flag_bool as _flag_bool
+
+        if _flag_bool("MEMO_CROSSREF_INDEX"):
+            try:
+                self.crossref.remove_memoria(id_)
+            except Exception as exc:
+                _log.debug("delete(%s): crossref cleanup skipped — %s", id_[:8], exc)
 
         self._write_gen += 1
         return True

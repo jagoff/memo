@@ -674,6 +674,17 @@ class _WriteOpsMixin(_MemoryBase):
                 self.cache.evict_if_needed()
             except Exception as exc:
                 _log.warning("cache eviction skipped after save: %s", exc)
+        # Crossref edges (flag-gated, default off): index [[wikilinks]] and
+        # typed '- relation [[target]]' lines so reverse traversal can warn
+        # before cascade-affecting supersede/delete. Best-effort — a crossref
+        # failure must never fail the save. Not on the recall-hook path.
+        from memo.flags import flag_bool as _flag_bool
+
+        if _flag_bool("MEMO_CROSSREF_INDEX"):
+            try:
+                self.crossref.index_source(record_id, content)
+            except Exception as exc:
+                _log.debug("save(%s): crossref index skipped — %s", record_id[:8], exc)
         self._presence_bump_save()
         self._write_gen += 1
         return rec

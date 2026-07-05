@@ -280,3 +280,32 @@ def test_referencing_sources_matches_id_prefix(tmp_path):
     assert [r.source_id for r in refs] == ["src11111"]
     assert refs[0].link_type == "supersedes"
     idx.close()
+
+
+def test_save_indexes_typed_links_when_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CROSSREF_INDEX", "1")
+    target = mock_memory.save(content="target body", title="Target")
+    src = mock_memory.save(
+        content=f"decision text\n- supersedes [[{target.id}]]", title="Source"
+    )
+    refs = mock_memory.crossref.referencing_sources(target.id)
+    assert [r.source_id for r in refs] == [src.id]
+    assert refs[0].link_type == "supersedes"
+
+
+def test_save_does_not_index_links_by_default(mock_memory):
+    target = mock_memory.save(content="t", title="T-default")
+    mock_memory.save(content=f"[[{target.id}]]", title="S-default")
+    assert mock_memory.crossref.referencing_sources(target.id) == []
+
+
+def test_update_reindexes_links_and_delete_removes_them(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CROSSREF_INDEX", "1")
+    t1 = mock_memory.save(content="one", title="T1")
+    t2 = mock_memory.save(content="two", title="T2")
+    src = mock_memory.save(content=f"- relates_to [[{t1.id}]]", title="Src")
+    mock_memory.update(src.id, content=f"- relates_to [[{t2.id}]]")
+    assert mock_memory.crossref.referencing_sources(t1.id) == []
+    assert [r.source_id for r in mock_memory.crossref.referencing_sources(t2.id)] == [src.id]
+    mock_memory.delete(src.id)
+    assert mock_memory.crossref.referencing_sources(t2.id) == []

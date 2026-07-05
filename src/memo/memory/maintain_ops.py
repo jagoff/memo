@@ -449,6 +449,19 @@ class _MaintainOpsMixin(_MemoryBase):
                     "force": force,
                 },
             )
+        # Rebuild crossref edges from disk (flag-gated) — markdown is truth,
+        # so hand-edited '- relation [[target]]' lines win on reindex.
+        from memo.flags import flag_bool as _flag_bool
+
+        if _flag_bool("MEMO_CROSSREF_INDEX"):
+            try:
+                self.crossref.reset()
+                for rec in self.list(limit=100_000):  # type: ignore[attr-defined]
+                    if rec.body:
+                        self.crossref.index_source(rec.id, rec.body)
+            except Exception as exc:
+                _log.debug("reindex: crossref rebuild skipped — %s", exc)
+
         return counts
 
     def _reindex_emit_chunks(

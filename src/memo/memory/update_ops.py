@@ -140,6 +140,16 @@ class _UpdateOpsMixin(_MemoryBase):
                     extra=new_extra,
                 )
 
+        # Crossref edges (flag-gated): body edits can add/remove typed links.
+        if body_changed:
+            from memo.flags import flag_bool as _flag_bool
+
+            if _flag_bool("MEMO_CROSSREF_INDEX"):
+                try:
+                    self.crossref.index_source(id_, new_body)
+                except Exception as exc:
+                    _log.debug("update(%s): crossref index skipped — %s", id_[:8], exc)
+
         # Audit log: build a delta of just the fields that changed.
         delta: dict[str, tuple[Any, Any]] = {}
         if title_changed:

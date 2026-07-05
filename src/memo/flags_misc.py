@@ -1085,4 +1085,13 @@ SPECS: tuple[FlagSpec, ...] = (
         "to promote an '_uncertain' capture without grounding evidence.",
         min_val=1,
     ),
+    _spec(
+        "MEMO_CROSSREF_INDEX",
+        "bool",
+        False,
+        "links",
+        "Index [[wikilinks]] and typed '- relation [[target]]' edges into the "
+        "crossref backlinks table at save/update/delete/reindex, enabling "
+        "cascade-aware supersede/delete warnings. Default off.",
+    ),
 )
