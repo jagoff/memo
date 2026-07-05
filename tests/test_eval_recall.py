@@ -1023,3 +1023,34 @@ def test_merge_expect_ids_beat_avoid_ids() -> None:
     assert len(merged) == 1
     assert merged[0]["expect_ids"] == ["aaaabbbb"]
     assert merged[0]["avoid_ids"] == ["eeeeffff"]  # grounded evidence wins
+
+
+def test_hyde_config_is_named_only_not_default() -> None:
+    names = [c.name for c in eval_recall.default_configs()]
+    assert not any("hyde" in n.lower() for n in names)  # default grid stays no-MLX
+    sel = eval_recall.select_configs(["J"])
+    assert sel[0].mode == "hybrid"
+    assert sel[0].flag_overrides == {"MEMO_HYDE_ENABLED": "1"}
+    # default selection (no names) still returns exactly the default grid
+    assert [c.name for c in eval_recall.select_configs(None)] == names
+
+
+def test_run_config_pins_and_restores_flag_overrides(monkeypatch) -> None:
+    import os
+
+    seen: dict = {}
+
+    class _Mem:
+        def search(self, *a, **k):
+            seen["hyde"] = os.environ.get("MEMO_HYDE_ENABLED")
+            return []
+
+    monkeypatch.delenv("MEMO_HYDE_ENABLED", raising=False)
+    cfg = eval_recall.Cfg(
+        "X vec/0.4/pin", "vec", 0.4, exclude_archived=False,
+        flag_overrides={"MEMO_HYDE_ENABLED": "1"},
+    )
+    labels = LabelSet(prompts=[Prompt("some query", relevant=True)])
+    eval_recall.run_config(_Mem(), cfg, 3, labels)
+    assert seen["hyde"] == "1"          # pinned during the run
+    assert "MEMO_HYDE_ENABLED" not in os.environ  # restored after

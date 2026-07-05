@@ -22,13 +22,34 @@ example tuned to the author's stack corpus — replace it with your own via
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+
+@contextlib.contextmanager
+def _pinned_flags(overrides: dict[str, str] | None):
+    """Pin MEMO_* env flags for one eval config run; restore prior values."""
+    if not overrides:
+        yield
+        return
+    prev = {k: os.environ.get(k) for k in overrides}
+    try:
+        os.environ.update(overrides)
+        yield
+    finally:
+        for key, val in prev.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
+
 
 # v1 is additive: the optional per-prompt `project` field (harvested from
 # grounding.log) is part of v1 — old label files without it keep loading.
@@ -204,6 +225,10 @@ class Cfg:
     # floor + MEMO_RECALL_GAP_THRESHOLD trim) to the ranked list before
     # scoring. Default False keeps the nightly trend comparable.
     injection_fidelity: bool = False
+    # MEMO_* env pins applied for the duration of this config's run. The seam
+    # for flags read INSIDE Memory.search at call time (e.g. MEMO_HYDE_ENABLED)
+    # that RankKnobs/knob_overrides cannot reach. None = no pins.
+    flag_overrides: dict[str, str] | None = None
 
 
 def default_configs() -> list[Cfg]:
@@ -234,6 +259,21 @@ def default_configs() -> list[Cfg]:
     ]
 
 
+def extra_configs() -> list[Cfg]:
+    """Named-only configs — selectable via --config, NEVER in the default
+    grid. J needs MLX chat (HyDE = +1 LLM call per search), and the no-args
+    `memo eval recall` grid must stay fast/retrieval-only (no MLX)."""
+    return [
+        Cfg(
+            "J hyb/0.40/hyde",
+            "hybrid",
+            0.40,
+            exclude_archived=True,
+            flag_overrides={"MEMO_HYDE_ENABLED": "1"},
+        ),
+    ]
+
+
 def select_configs(
     names: list[str] | tuple[str, ...] | None = None, *, quick: bool = False
 ) -> list[Cfg]:
@@ -250,8 +290,9 @@ def select_configs(
     if not requested:
         return configs
 
+    all_configs = [*configs, *extra_configs()]
     by_key: dict[str, Cfg] = {}
-    for cfg in configs:
+    for cfg in all_configs:
         short = cfg.name.split(" ", 1)[0].lower()
         by_key[short] = cfg
         by_key[cfg.name.lower()] = cfg
@@ -262,7 +303,7 @@ def select_configs(
         key = raw.strip().lower()
         selected_cfg = by_key.get(key)
         if selected_cfg is None:
-            valid = ", ".join(c.name.split(" ", 1)[0] for c in configs)
+            valid = ", ".join(c.name.split(" ", 1)[0] for c in all_configs)
             raise ValueError(f"unknown recall eval config {raw!r}; valid: {valid}")
         if selected_cfg.name not in seen:
             selected.append(selected_cfg)
@@ -361,7 +402,7 @@ def _project_tag_for(project: str | None) -> str | None:
 ProgressCallback = Callable[[Cfg, int, int], None]
 
 
-def run_config(
+def _run_config_inner(
     mem: Any,
     cfg: Cfg,
     k: int,
@@ -520,6 +561,18 @@ def run_config(
     )
 
 
+def run_config(
+    mem: Any,
+    cfg: Cfg,
+    k: int,
+    labels: LabelSet,
+    *,
+    progress: ProgressCallback | None = None,
+) -> Row:
+    with _pinned_flags(cfg.flag_overrides):
+        return _run_config_inner(mem, cfg, k, labels, progress=progress)
+
+
 def evaluate(
     mem: Any,
     *,
@@ -594,7 +647,7 @@ def recommend(rows: list[Row]) -> str:
         return "Baseline config already wins — no knob change recommended."
     dp = best.precision_at_k - baseline.precision_at_k
     dn = best.noise_at_k - baseline.noise_at_k
-    cfg = next((c for c in default_configs() if c.name == best.config), None)
+    cfg = next((c for c in [*default_configs(), *extra_configs()] if c.name == best.config), None)
     knobs = ""
     if cfg is not None:
         knobs = f"  export MEMO_RECALL_MODE={cfg.mode}\n  export MEMO_RECALL_MIN_SIM={cfg.floor}"
@@ -602,6 +655,8 @@ def recommend(rows: list[Row]) -> str:
             flag_name = _KNOB_FIELD_TO_FLAG.get(field_name)
             if flag_name:
                 knobs += f"\n  export {flag_name}={value}"
+        for flag_name, value in (cfg.flag_overrides or {}).items():
+            knobs += f"\n  export {flag_name}={value}"
         if cfg.exclude_archived:
             knobs += "\n  (and keep archive exclusion on in the recall hook)"
     out = f"Best config: {best.config} (prec {dp:+.3f}, noise {dn:+.3f} vs baseline).\n{knobs}"
