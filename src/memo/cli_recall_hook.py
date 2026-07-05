@@ -321,6 +321,11 @@ def recall_hook() -> None:
 
     qualifying = apply_injection_filters(qualifying)
     relevant = qualifying[:top_k]
+    if flag_bool("MEMO_RECALL_INTRA_DEDUP") and len(relevant) > 1:
+        from memo.recall_logic import collapse_near_dups
+
+        _thr = flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD")
+        relevant = collapse_near_dups(relevant, threshold=0.8 if _thr is None else _thr)
     # Rank-overflow nudge (the hits just below the top-K cut) — same split the
     # daemon path renders, distinct from the graph-associative nudge below.
     nudge = qualifying[top_k : top_k + 2]

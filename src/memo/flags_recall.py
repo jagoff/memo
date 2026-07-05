@@ -394,4 +394,20 @@ SPECS: tuple[FlagSpec, ...] = (
         "pure confirmation turns. Opt-out with MEMO_RECALL_TRIVIAL_BAIL=0.",
         opt_out=True,
     ),
+    _spec(
+        "MEMO_RECALL_INTRA_DEDUP",
+        "bool",
+        False,
+        "recall",
+        "Collapse near-duplicate hits within a single injection (lexical Jaccard).",
+    ),
+    _spec(
+        "MEMO_RECALL_INTRA_DEDUP_THRESHOLD",
+        "float",
+        0.8,
+        "recall",
+        "Jaccard threshold for intra-injection near-dup collapse.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
 )

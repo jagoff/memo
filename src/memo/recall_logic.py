@@ -47,6 +47,33 @@ def _render_footer(turn: int | None = None) -> str:
     return RECALL_FOOTER_FULL + "\n</memo-recall>"
 
 
+def _dedup_tokens(text: str) -> set[str]:
+    import re
+
+    return {t for t in re.findall(r"\w+", (text or "").lower()) if len(t) > 2}
+
+
+def collapse_near_dups(relevant: list[Any], *, threshold: float) -> list[Any]:
+    """Drop hits whose title+body token-Jaccard with a kept, higher-scored hit
+    exceeds ``threshold``. Lexical only — safe for the 5s recall hook (no MLX)."""
+    kept: list[Any] = []
+    kept_sets: list[set[str]] = []
+    for h in sorted(relevant, key=lambda x: (x.score or 0.0), reverse=True):
+        toks = _dedup_tokens(f"{h.title} {h.body or ''}")
+        dup = False
+        for ks in kept_sets:
+            union = toks | ks
+            if union and len(toks & ks) / len(union) >= threshold:
+                dup = True
+                break
+        if not dup:
+            kept.append(h)
+            kept_sets.append(toks)
+    # preserve the caller's original ordering among survivors
+    survivors = {id(h) for h in kept}
+    return [h for h in relevant if id(h) in survivors]
+
+
 def render_recall_context(
     relevant: list[Any],
     nudge: list[Any],
