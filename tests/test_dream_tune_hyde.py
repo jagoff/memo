@@ -68,3 +68,6 @@ def test_hyde_pass_dry_run_does_not_write_overlay(tmp_cfg, monkeypatch) -> None:
     )
     res = dream_tune.run_hyde_pass(tmp_cfg, mem=object(), dry_run=True)
     assert res["status"] == "would_apply"
+    from memo.tuned_overlay import read_overlay
+
+    assert "MEMO_HYDE_ENABLED" not in read_overlay(tmp_cfg.state_dir)
