@@ -9,6 +9,52 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.10] - 2026-07-05
+
+Ecosystem roadmap **Wave 3** — retrieval UX (workstream F, 13 tasks) + feedback
+& eval instrumentation (workstream D, 9 tasks). Every new flag is **default-OFF
+or opt-out**; retrieval ranking is unchanged at the shipped defaults (full suite
+2813 passed, mypy clean, retrieval eval baseline prec@5 / noise@5 0.0). This
+release also carries concurrent default-off recall/token-metering levers already
+merged to master (precision-gate, intra-injection dedup, per-session budget
+decay, token-meter).
+
+### Added
+
+- **Temporal retrieval.** `save()` can normalize relative dates
+  (`MEMO_SAVE_NORMALIZE_DATES`); `store.search` / `Memory.search` gain
+  `date_from` / `date_to` filters; `memo_search` accepts a natural-language
+  `when` range (new leaf `nl_dates.py`).
+- **Timeline primitives + `memo_around`.** `chunks_adjacent` /
+  `records_around_created` + `Memory.around()` and an MCP `memo_around` tool for
+  neighbor/around-a-memory navigation (`idx_meta_created` now back-fills on
+  existing DBs).
+- **Epistemic recall labels** (`MEMO_RECALL_EPISTEMIC_LABELS`) — presentation-only
+  `⟨type · YYYY-MM⟩` / `⟨~inferred⟩` / `⟨?unverified⟩` prefixes; ranking untouched.
+- **Omissions tail** (`MEMO_RECALL_OMISSIONS_TAIL`) — a budget-checked `+N more`
+  line so agents don't read budget-trimmed hits as absent.
+- **Recency band** (`MEMO_RECALL_RECENCY_BAND_DAYS`) — khoj-style union of the
+  newest durable memories at the min_sim floor (eval-gated, default 0/off).
+- **Unmatched-term honest-empty gate** (`MEMO_RECALL_UNMATCHED_TERM_GATE`) —
+  inject nothing when the top score is weak and no distinctive term matches.
+- **Multi-round ask** (`MEMO_ASK_MULTI_ROUND`) — one flag-gated extra retrieval
+  round in `_build_ask_context` (recall hook untouched).
+- **Next-turn verdicts → implicit feedback.** A heuristic ES+EN reaction
+  classifier correlates the user's next turn to the prior recall and, behind
+  `MEMO_VERDICT_ENABLED` (Stop-hook only), writes implicit `source_feedback`
+  (never clobbers a manual vote).
+- **Ablation instrumentation.** `MEMO_RECALL_DISABLE` turns are now stamped as a
+  `via="disabled"` cohort; `memo roi` / `memo tokens` report with-vs-without
+  cohort deltas (per-cohort turns, grounded-per-turn, re-ask rate).
+- **Eval/tuner depth.** Negative labels (`avoid_ids` + `harvest_negative_labels`
+  from verdict.log, `memo eval harvest --negatives`); a HyDE eval seam
+  (`Cfg.flag_overrides` env-pin + named config `J`); a nightly HyDE A/B pass
+  (`MEMO_DREAM_HYDE_TUNE_ENABLED`, overlay-applied, hybrid-hook vetoed); and an
+  MLX paraphrase label expander (`memo eval expand-labels`).
+- **Quarantine + graduation.** `_uncertain` captures are recall-excluded
+  (`MEMO_RECALL_EXCLUDE_UNCERTAIN`, opt-out) and a nightly graduation pass
+  (`MEMO_DREAM_GRADUATION_ENABLED`) promotes corroborated ones.
+
 ## [2.12.9] - 2026-07-04
 
 Internal simplification of the Wave 2 code — behavior-identical (full suite,
