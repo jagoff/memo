@@ -47,6 +47,17 @@ def _render_footer(turn: int | None = None) -> str:
     return RECALL_FOOTER_FULL + "\n</memo-recall>"
 
 
+_SESSION_BUDGET_FLOOR = 150
+
+
+def session_budget_scale(cumulative: int, session_budget: int, base_budget: int) -> int:
+    """Decay the per-turn token budget once a session's cumulative recall spend
+    passes ``session_budget``. Conservative: halve, floored — never zero/bail."""
+    if session_budget <= 0 or cumulative < session_budget:
+        return base_budget
+    return max(_SESSION_BUDGET_FLOOR, base_budget // 2)
+
+
 def _dedup_tokens(text: str) -> set[str]:
     import re
 
@@ -738,6 +749,23 @@ def _recall_logic(
     body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
     token_budget = _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
 
+    # Session cumulative budget decay: once the session has consumed more than
+    # MEMO_RECALL_SESSION_TOKEN_BUDGET tokens of recall context, halve the
+    # per-turn budget (floored at _SESSION_BUDGET_FLOOR). Default OFF (0).
+    _sess_budget = _flag_int("MEMO_RECALL_SESSION_TOKEN_BUDGET") or 0
+    if _sess_budget > 0 and token_budget > 0 and session_id:
+        try:
+            from memo.dashboard import read_context_cost_log
+
+            _cum = sum(
+                (int(e.get("chars") or 0) + 3) // 4
+                for e in read_context_cost_log(cfg.state_dir)
+                if e.get("kind") == "recall" and e.get("session_id") == session_id
+            )
+            token_budget = session_budget_scale(_cum, _sess_budget, token_budget)
+        except Exception as _exc:
+            _logger.debug("session budget scale failed: %s", _exc)
+
     search_k = top_k * 3 if (project_tag or contextual) else top_k
 
     from memo.tiers import REFERENCE_TYPES
@@ -895,6 +923,27 @@ def _recall_logic(
     qualifying = apply_injection_filters(qualifying)
 
     relevant = qualifying[:top_k]
+
+    # Precision-gate: suppress injection when the top score falls in a learned
+    # zero-grounding band. Default OFF (flag unset). Absorb load errors silently.
+    if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
+        try:
+            from memo.token_meter import load_precision_bands, suppress_score as _pg_suppress
+
+            _pg_bands = load_precision_bands(cfg.state_dir)
+            if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
+                return "{}", None
+        except Exception as _pg_exc:
+            _logger.debug("precision gate check failed: %s", _pg_exc)
+
+    # Intra-session dedup: collapse near-duplicate hits before delivery.
+    # Default OFF (flag unset). collapse_near_dups is defined in this module.
+    if flag_bool("MEMO_RECALL_INTRA_DEDUP") and len(relevant) > 1:
+        relevant = collapse_near_dups(
+            relevant,
+            threshold=_flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8,
+        )
+
     nudge = qualifying[top_k : top_k + 2]
     if not relevant:
         return "{}", None

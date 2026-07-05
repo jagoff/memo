@@ -18,15 +18,7 @@ from memo.flags import flag_bool, flag_float, flag_int, flag_str
 
 _log = logging.getLogger("memo.cli_recall_hook")
 
-_SESSION_BUDGET_FLOOR = 150
-
-
-def session_budget_scale(cumulative: int, session_budget: int, base_budget: int) -> int:
-    """Decay the per-turn token budget once a session's cumulative recall spend
-    passes ``session_budget``. Conservative: halve, floored — never zero/bail."""
-    if session_budget <= 0 or cumulative < session_budget:
-        return base_budget
-    return max(_SESSION_BUDGET_FLOOR, base_budget // 2)
+from memo.recall_logic import session_budget_scale  # re-export for tests + local use
 
 
 _TRIVIAL_WORDS: frozenset[str] = frozenset(
