@@ -650,6 +650,13 @@ def rank_hits(
     return result
 
 
+def uncertain_exclusion() -> set[str] | None:
+    """Quarantine driver: '_uncertain' auto-captures are recall-excluded
+    (MEMO_RECALL_EXCLUDE_UNCERTAIN, default on) but stay searchable on demand.
+    Shared by _recall_logic and the eval harness so they cannot diverge."""
+    return {"_uncertain"} if flag_bool("MEMO_RECALL_EXCLUDE_UNCERTAIN") else None
+
+
 def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
     """The hook's post-rank injection filters, flag-resolved (env > overlay).
 
@@ -708,6 +715,7 @@ def _recall_logic(
     from memo.tiers import REFERENCE_TYPES
 
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
+    exclude_tags = uncertain_exclusion()
 
     use_fallback = False
     _embedder = getattr(mem, "embedder", None)
@@ -753,7 +761,8 @@ def _recall_logic(
     try:
         if use_fallback and micro_embedder:
             candidates = mem.search(
-                prompt, limit=top_k * 5, mode="bm25", recency=True, exclude_types=exclude_types
+                prompt, limit=top_k * 5, mode="bm25", recency=True, exclude_types=exclude_types,
+                exclude_tags=exclude_tags,
             )
             if not candidates:
                 qualifying = []
@@ -808,6 +817,7 @@ def _recall_logic(
                             mode=mode,
                             recency=True,
                             exclude_types=exclude_types,
+                            exclude_tags=exclude_tags,
                         ),
                         knobs,
                         vec_cosine=_vec_cosine,
@@ -817,7 +827,8 @@ def _recall_logic(
         else:
             qualifying = rank_hits(
                 mem.search(
-                    prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
+                    prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types,
+                    exclude_tags=exclude_tags,
                 ),
                 knobs,
                 vec_cosine=_vec_cosine,
@@ -838,6 +849,7 @@ def _recall_logic(
                     mode=mode,
                     recency=True,
                     exclude_types=exclude_types,
+                    exclude_tags=exclude_tags,
                 )
                 qualifying = rank_hits(
                     expanded,

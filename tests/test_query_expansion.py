@@ -58,6 +58,7 @@ class _ExpandMemory:
         mode: str,
         recency: bool = False,
         exclude_types: set[str] | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[MemoryRecord]:
         self.queries.append(query)
         if _CTX_MARKER in query:

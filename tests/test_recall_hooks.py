@@ -48,7 +48,7 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
 
     class StubMemory:
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
         ) -> list[MemoryRecord]:
             return [global_hit, project_hit]
 
@@ -89,7 +89,7 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
 
     class StubMemory:
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
         ) -> list[MemoryRecord]:
             return [hit]
 
@@ -112,7 +112,7 @@ def test_recall_logic_emits_directive_only_on_first_turn(monkeypatch, tmp_path) 
     hit = _rec("once0001", "One fact", 0.90)
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None):
+        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -145,7 +145,7 @@ def test_recall_logic_caps_total_context_and_logs_exact_cost(monkeypatch, tmp_pa
     object.__setattr__(hit, "body", "substantial context " * 200)
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None):
+        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -186,7 +186,7 @@ def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:
 
     class StubMemory:
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
         ) -> list[MemoryRecord]:
             seen["recency"] = recency
             return [_rec("r0000001", "Fresh", 0.9)]
@@ -232,7 +232,7 @@ def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
         contextual = FakeContextual()
 
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
         ) -> list[MemoryRecord]:
             return [_rec("surf0001", "surfaced", 0.9)]
 
@@ -254,7 +254,7 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
 
     class StubMemory:
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None
+            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
         ) -> list[MemoryRecord]:
             return hits
 
@@ -317,7 +317,7 @@ def test_fallback_scoring_does_not_mutate_shared_hits(monkeypatch, tmp_path) -> 
         # 2-dim stub vectors (the guard reads mem.cfg.embedder_dims).
         cfg = SimpleNamespace(embedder_dims=2)
 
-        def search(self, query, limit, mode, recency=False, exclude_types=None):
+        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
             return candidates
 
         def _read_body(self, path):
@@ -361,7 +361,7 @@ def test_project_tag_failure_is_logged_not_silent(monkeypatch, tmp_path, caplog)
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None):
+        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
             return [_rec("ok000001", "Surfaced", 0.9)]
 
     with caplog.at_level("DEBUG", logger=rl._logger.name):

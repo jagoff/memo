@@ -380,6 +380,7 @@ def run_config(
         knobs_from_flags,
         make_vec_cosine,
         rank_hits,
+        uncertain_exclusion,
     )
 
     try:
@@ -412,6 +413,7 @@ def run_config(
     from memo.tiers import REFERENCE_TYPES
 
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
+    exclude_tags = uncertain_exclusion()
     for index, prompt in enumerate(labels.prompts, start=1):
         if progress is not None:
             progress(cfg, index, len(labels.prompts))
@@ -422,7 +424,8 @@ def run_config(
             else prompt.text
         )
         t0 = time.time()
-        hits = mem.search(query, limit=k * 4, mode=cfg.mode, exclude_types=exclude_types)
+        hits = mem.search(query, limit=k * 4, mode=cfg.mode, exclude_types=exclude_types,
+                          exclude_tags=exclude_tags)
         lat.append((time.time() - t0) * 1000)
         # Rank exactly as the daemon does (shared rank_hits): dedup + the hybrid
         # true-cosine gate + the Phase-2 graph_boost seam — so the eval measures

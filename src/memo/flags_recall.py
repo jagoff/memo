@@ -217,6 +217,18 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_RECALL_EXCLUDE_UNCERTAIN",
+        "bool",
+        True,
+        "recall",
+        "Exclude memories tagged '_uncertain' (low-confidence auto-captures, see "
+        "MEMO_CAPTURE_MIN_CONFIDENCE) from the auto-recall hook — mirroring the "
+        "reference-tier exclusion. They stay searchable on demand via "
+        "memo_search/memo_ask. No-op on corpora where the capture confidence "
+        "gate never tagged anything.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_RECALL_EXPAND_CONTEXT",
         "bool",
         True,

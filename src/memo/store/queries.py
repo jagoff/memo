@@ -612,6 +612,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         exclude_types: set[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Top-k by cosine. Returns metadata dicts with a `score` field
         added (1 - distance, so higher = more similar).
@@ -650,7 +651,15 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         if date_to:
             date_clauses.append("meta.updated <= ?")
             date_params.append(date_to)
-        k_fetch = limit * 4 if date_clauses else limit
+        tag_clauses: list[str] = []
+        tag_params: list[Any] = []
+        for tag in sorted(exclude_tags or ()):
+            # tags column stores json.dumps(list[str]); the quoted token is an
+            # exact-tag match (mirrors reference-tier exclusion, but tags can't
+            # be pushed into vec0 so this filters on the joined meta row).
+            tag_clauses.append("meta.tags NOT LIKE ?")
+            tag_params.append(f'%"{tag}"%')
+        k_fetch = limit * 4 if (date_clauses or tag_clauses) else limit
 
         # Check for deleted_at column and build filter
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
@@ -672,6 +681,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         for clause in date_clauses:
             sql += f"AND {clause} "
         params.extend(date_params)
+        for clause in tag_clauses:
+            sql += f"AND {clause} "
+        params.extend(tag_params)
         sql += "ORDER BY distance ASC LIMIT ?"
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()

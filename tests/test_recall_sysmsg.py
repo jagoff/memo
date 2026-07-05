@@ -238,7 +238,7 @@ def _daemon_stub_memory(title: str):
     )
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None):
+        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
             return [hit]
 
     return StubMemory(), SimpleNamespace(state_dir=None)

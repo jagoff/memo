@@ -52,6 +52,7 @@ class _SearchOpsMixin(_MemoryBase):
         disable_reranker: bool = False,
         recency: bool = False,
         exclude_types: set[str] | None = None,
+        exclude_tags: set[str] | None = None,
         include_forgotten: bool = False,
         read_through: bool = False,
         entity_boost: bool | None = None,
@@ -146,6 +147,7 @@ class _SearchOpsMixin(_MemoryBase):
                 exclude_types=exclude_types,
                 date_from=date_from,
                 date_to=date_to,
+                exclude_tags=exclude_tags,
             )
             _add_trace(
                 "candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows)
@@ -180,6 +182,7 @@ class _SearchOpsMixin(_MemoryBase):
                     exclude_types=exclude_types,
                     date_from=date_from,
                     date_to=date_to,
+                    exclude_tags=exclude_tags,
                 )
             except Exception as exc:
                 _log.warning(
@@ -296,6 +299,11 @@ class _SearchOpsMixin(_MemoryBase):
                 return not (date_to and u > date_to)
 
             rows = [r for r in rows if _date_ok(r)]
+        if exclude_tags:
+            rows = [
+                r for r in rows
+                if not (exclude_tags & {str(t) for t in (r.get("tags") or [])})
+            ]
         out: list[MemoryRecord] = []
         # In hybrid mode the candidate pool can grow large (up to _POOL_CAP) and
         # the reranker trims it to `limit`. Loading every candidate body from
