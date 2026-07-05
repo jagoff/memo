@@ -101,6 +101,14 @@ def test_roll_joins_injection_and_grounding(tmp_path):
     assert s["grounded"] == 1
 
 
+def test_meter_flag_declared_and_default_on(monkeypatch):
+    monkeypatch.delenv("MEMO_TOKEN_METER_ENABLED", raising=False)
+    from memo.flags import flag_bool, REGISTRY
+
+    assert "MEMO_TOKEN_METER_ENABLED" in REGISTRY
+    assert flag_bool("MEMO_TOKEN_METER_ENABLED") is True  # opt-out default-on
+
+
 def test_summarize_proxy_grounded_vs_ungrounded(tmp_path):
     from memo.dashboard_logs import context_cost_log_path, grounding_log_path
 

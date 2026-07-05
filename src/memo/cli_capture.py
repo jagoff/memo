@@ -138,6 +138,24 @@ def capture_stop() -> None:
         if debug:
             print(f"# memo token-ledger rollup failed: {exc}", file=_sys.stderr)
 
+    # Measured token meter: real per-turn usage from the transcript, joined with
+    # injection cost + grounding. Stop-hook only (never the 5s recall hook).
+    try:
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_TOKEN_METER_ENABLED"):
+            from memo import token_meter
+            from memo.config import Config
+
+            token_meter.roll(
+                Config.from_env().state_dir,
+                str(payload.get("session_id") or ""),
+                payload.get("transcript_path"),
+            )
+    except Exception as exc:
+        if debug:
+            print(f"# memo token-meter rollup failed: {exc}", file=_sys.stderr)
+
     try:
         from memo import presence
         from memo import token_ledger as _tl
