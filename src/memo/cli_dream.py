@@ -359,6 +359,32 @@ def dream_run(
                     step, description="[tune] graph-injection tuner [yellow]warn[/yellow]"
                 )
 
+        # Phase 2c — HyDE A/B (separate opt-in; +1 MLX chat call per prompt,
+        # prompt count capped inside the pass).
+        if flag_bool("MEMO_DREAM_HYDE_TUNE_ENABLED"):
+            progress.update(step, description="[tune] hyde A/B...")
+            try:
+                from memo import dream_tune
+                from memo.flags import flag_float
+
+                receipt["hyde_tuner"] = dream_tune.run_hyde_pass(
+                    cfg,
+                    mem,
+                    k=flag_int("MEMO_DREAM_TUNE_K") or 5,
+                    min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+                    dry_run=dry_run,
+                )
+                progress.update(
+                    step,
+                    description=(
+                        f"[tune] hyde A/B [green]✓[/green]  "
+                        f"{receipt['hyde_tuner'].get('status')}"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"hyde_tuner: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[tune] hyde A/B [yellow]warn[/yellow]")
+
         # Online-only project-boost explorer (separate opt-in; no offline gate).
         if flag_bool("MEMO_DREAM_TUNE_BOOST_ENABLED"):
             try:

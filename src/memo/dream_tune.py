@@ -43,6 +43,7 @@ from memo.eval_recall import (
     gate_metrics,
     harvest_labels,
     harvest_negative_labels,
+    limit_label_set,
     merge_label_prompts,
 )
 from memo.tuned_overlay import (
@@ -599,6 +600,91 @@ def curated_gate(
     return {"ok": not _regressed(cur_after, cur_before), "before": cur_before, "after": cur_after}
 
 
+# --- HyDE A/B (MEMO_HYDE_ENABLED — shipped default-off, never measured) ------
+
+_HYDE_FLAG = "MEMO_HYDE_ENABLED"
+_HYDE_FLOOR = 0.40        # same floor as grid configs C/J (hybrid)
+_HYDE_MAX_PROMPTS = 40    # cap: HyDE costs one MLX chat call PER PROMPT
+# HyDE adds an LLM call by construction; it is ask-path-only (never the vec
+# hook), so the headroom is looser than RANK_KNOB_LATENCY_HEADROOM.
+HYDE_LATENCY_HEADROOM = 3.0
+
+
+def measure_hyde(mem: Any, labels: LabelSet, *, k: int, enabled: bool) -> dict[str, float]:
+    """prec@K / noise@K / p50 for hybrid retrieval with HyDE pinned on/off,
+    through the Cfg.flag_overrides env-pin seam (HyDE is read by flag_bool
+    inside Memory.search — RankKnobs can't reach it)."""
+    cfg = Cfg(
+        name=f"hyde={'on' if enabled else 'off'}",
+        mode="hybrid",
+        floor=_HYDE_FLOOR,
+        exclude_archived=True,
+        flag_overrides={_HYDE_FLAG: "1" if enabled else "0"},
+    )
+    rows = evaluate(mem, k=k, labels=labels, configs=[cfg])
+    metrics = gate_metrics(rows)
+    metrics["latency_ms_p50"] = round(rows[0].latency_ms_p50, 1) if rows else 0.0
+    return metrics
+
+
+def run_hyde_pass(
+    cfg: Any,
+    mem: Any,
+    *,
+    k: int = 5,
+    min_used_score: float = 0.5,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """One nightly HyDE on/off A/B. Applies MEMO_HYDE_ENABLED=1 to the tuned
+    overlay only when ALL gates pass. Returns a receipt fragment; never raises
+    past its caller's try (cli_dream catches into receipt["errors"])."""
+    from memo.flags import flag_bool, flag_str
+
+    res: dict[str, Any] = {"status": "noop", "knob": _HYDE_FLAG}
+    if flag_bool(_HYDE_FLAG):
+        res["status"] = "already_on"
+        return res
+    live_mode = (flag_str("MEMO_RECALL_MODE") or "vec").strip().lower()
+    if live_mode == "hybrid":
+        # Overlay-applied HyDE would inject an MLX chat call into the recall
+        # hook's hybrid search — never risk the 5s budget. Hard veto.
+        res["status"] = "skipped_hook_mode_hybrid"
+        return res
+    labels, curated_used = build_labels(cfg, min_used_score=min_used_score)
+    labels = limit_label_set(labels, _HYDE_MAX_PROMPTS)
+    if not labels.prompts:
+        res["status"] = "no_labels"
+        return res
+    off = measure_hyde(mem, labels, k=k, enabled=False)
+    on = measure_hyde(mem, labels, k=k, enabled=True)
+    res.update({"off": off, "on": on, "curated_used": curated_used})
+    wins = (on["precision_at_k"], -on["noise_at_k"]) > (
+        off["precision_at_k"], -off["noise_at_k"]
+    )
+    if not wins:
+        res["status"] = "hyde_loses"
+        return res
+    budget = off.get("latency_ms_p50", 0.0) * HYDE_LATENCY_HEADROOM
+    if budget > 0 and on.get("latency_ms_p50", 0.0) > budget:
+        res["status"] = "rejected_latency"
+        return res
+    curated = _curated_label_set(cfg.state_dir)
+    if curated is not None:
+        c_off = measure_hyde(mem, curated, k=k, enabled=False)
+        c_on = measure_hyde(mem, curated, k=k, enabled=True)
+        res["curated"] = {"off": c_off, "on": c_on}
+        if _regressed(c_on, c_off):
+            res["status"] = "rejected_curated"
+            return res
+    if dry_run:
+        res["status"] = "would_apply"
+        return res
+    params = {**_scalar_overlay(cfg.state_dir), _HYDE_FLAG: True}
+    write_overlay(cfg.state_dir, params, {"set_by": "dream-hyde"})
+    res["status"] = "applied"
+    return res
+
+
 # --- graph-proximity weight tuning -------------------------------------------
 
 
@@ -1142,6 +1228,7 @@ __all__ = [
     "run_boost_pass",
     "run_graph_retrieval_pass",
     "run_graph_weight_pass",
+    "run_hyde_pass",
     "run_tuning_pass",
     "save_baseline",
     "save_graph_baseline",

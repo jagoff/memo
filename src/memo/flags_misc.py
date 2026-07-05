@@ -868,6 +868,20 @@ SPECS: tuple[FlagSpec, ...] = (
         "Nudge size for the online project-boost explorer (MEMO_DREAM_TUNE_BOOST_ENABLED).",
     ),
     _spec(
+        "MEMO_DREAM_HYDE_TUNE_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Nightly A/B of the default-off, never-measured MEMO_HYDE_ENABLED: "
+        "measures hybrid retrieval with vs without HyDE on the mined+curated "
+        "labels (costs one MLX chat call per prompt — prompt count capped). "
+        "Applies MEMO_HYDE_ENABLED=1 via the tuned overlay only when it wins "
+        "precision without raising noise, passes the curated gate, stays within "
+        "the latency headroom, AND the live recall mode is not hybrid (HyDE in "
+        "the hook path would blow the 5s budget). Reversible via `memo dream "
+        "tune --rollback`. Default off.",
+    ),
+    _spec(
         "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
         "bool",
         False,
