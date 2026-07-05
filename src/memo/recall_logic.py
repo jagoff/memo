@@ -30,8 +30,16 @@ CITE_INSTRUCTION = (
 )
 
 
-def _render_footer() -> str:
-    style = flag_str("MEMO_RECALL_FOOTER") or "full"
+def _render_footer(turn: int | None = None) -> str:
+    from memo.flags import active_flags
+
+    explicit_set = "MEMO_RECALL_FOOTER" in active_flags()  # user override wins for ALL turns
+    if explicit_set:
+        style = flag_str("MEMO_RECALL_FOOTER")
+    elif turn is not None and turn > 1:
+        style = flag_str("MEMO_RECALL_FOOTER_AFTER") or "short"
+    else:
+        style = flag_str("MEMO_RECALL_FOOTER") or "full"
     if style == "none":
         return ""
     if style == "short":
@@ -57,7 +65,7 @@ def render_recall_context(
     max_chars = token_budget * 4 if token_budget > 0 else None
 
     def _render(extra: list[str] | None = None) -> str:
-        return "\n".join([*lines, *(extra or []), _render_footer()])
+        return "\n".join([*lines, *(extra or []), _render_footer(turn)])
 
     def _sentence_truncate(text: str, max_len: int) -> str:
         """Truncate at sentence boundary near max_len."""
@@ -128,7 +136,7 @@ def render_recall_context(
     context = _render()
     if max_chars is not None and len(context) > max_chars:
         # Tiny budgets may not fit even the safety envelope; preserve its closing tag.
-        footer = _render_footer()
+        footer = _render_footer(turn)
         context = context[: max(0, max_chars - len(footer) - 1)].rstrip() + "…" + footer
     return context
 
@@ -164,7 +172,7 @@ def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
     return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
 
 
-def render_recall_balanced(relevant: list[Any], *, token_budget: int) -> str:
+def render_recall_balanced(relevant: list[Any], *, token_budget: int, turn: int | None = None) -> str:
     """Balanced recall format: title + short bullets, ~40% savings vs full.
 
     Format::
@@ -191,7 +199,7 @@ def render_recall_balanced(relevant: list[Any], *, token_budget: int) -> str:
             if i < len(lines):
                 lines[i] = lines[i] + "\n  • " + indent
 
-    footer = _render_footer()
+    footer = _render_footer(turn)
     body = "<memo-recall readonly>\n## Memory\n" + "\n".join(lines) + "\n"
 
     if max_chars is not None and len(body) + len(footer) > max_chars:

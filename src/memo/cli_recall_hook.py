@@ -418,7 +418,7 @@ def recall_hook() -> None:
     if _recall_format == "compact":
         context = render_recall_compact(relevant, token_budget=token_budget)
     elif _recall_format == "balanced":
-        context = render_recall_balanced(relevant, token_budget=token_budget)
+        context = render_recall_balanced(relevant, token_budget=token_budget, turn=_turn)
     else:
         context = render_recall_context(
             relevant,

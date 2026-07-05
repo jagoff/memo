@@ -317,6 +317,13 @@ SPECS: tuple[FlagSpec, ...] = (
         "Footer style: 'full' (default, includes get command), 'short' (minimal), or 'none' (no footer). Short saves ~15 tokens.",
     ),
     _spec(
+        "MEMO_RECALL_FOOTER_AFTER",
+        "str",
+        "short",
+        "recall",
+        "Footer style used past turn 1 when MEMO_RECALL_FOOTER is unset: full|short|none.",
+    ),
+    _spec(
         "MEMO_RECALL_FORMAT",
         "str",
         "auto",
