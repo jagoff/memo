@@ -128,6 +128,20 @@ def test_clear_removes_all_rows(mem_with_stub: Memory):
     assert mem_with_stub.feedback_list(source_id=rec.id) == []
 
 
+def test_feedback_record_extra_passthrough(mem_with_stub: Memory):
+    import json as _json
+
+    rec = mem_with_stub.save(content="sync remoto usa flock", title="Sync")
+    mem_with_stub.feedback_record(
+        rec.id, query_text="cómo va el sync", rating="ignore",
+        extra={"origin": "next_turn_verdict", "verdict": "negative"},
+    )
+    rows = mem_with_stub.feedback_list(source_id=rec.id)
+    ex = _json.loads(rows[0]["extra_json"])
+    assert ex["origin"] == "next_turn_verdict"
+    assert ex["signal"] == "ignore"  # canonical signal preserved
+
+
 def test_rebuild_feedback_vecs_uses_embed_query_signature(mem_with_stub: Memory):
     """`rebuild_feedback_vecs` must call `embed_fn(text: str)` per row, NOT
     `embed_fn(list[str])`. All call sites pass `embedder.embed_query`, which

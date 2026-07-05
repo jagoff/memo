@@ -148,6 +148,73 @@ def score_next_turn(
         return None
 
 
+_VERDICT_RATING = {"positive": "click", "negative": "ignore", "correction": "ignore"}
+
+_LLM_PROMPT = (
+    "Classify the user's reply to an assistant answer.\n"
+    "Reply with exactly one word: positive, negative, correction, or none.\n"
+    "positive = the user confirms it worked / accepts the answer.\n"
+    "negative = the user reports it did not work.\n"
+    "correction = the user says the answer was wrong and corrects it.\n"
+    "none = anything else (a new request, a question, neutral).\n\n"
+    "User reply: {reply}\n\nOne word:"
+)
+
+
+def _llm_classify(reaction: str) -> str | None:
+    """One bounded MLX chat call. Deferred imports (MLX invariant #4)."""
+    try:
+        from memo.config import Config
+        from memo.llm import MLXChat
+
+        resp = MLXChat().chat(
+            model=Config.from_env().llm_model,
+            messages=[{"role": "user", "content": _LLM_PROMPT.format(reply=reaction[:400])}],
+            options={"temperature": 0.0, "max_tokens": 4},
+        )
+        word = (((resp.get("message") or {}).get("content")) or "").strip().lower()
+        return word if word in ("positive", "negative", "correction") else None
+    except Exception:
+        return None
+
+
+def record_verdicts(
+    cfg: Any, payload: dict[str, Any], *, memory: Any | None = None
+) -> dict[str, Any] | None:
+    """Stop-hook entry point: score the next-turn verdict and write implicit
+    source_feedback on the prior turn's recalled ids. Best-effort — a failure
+    never fails the turn. ``memory`` is injectable for tests."""
+    from memo.flags import flag_bool
+
+    llm = _llm_classify if flag_bool("MEMO_VERDICT_MLX") else None
+    rec = score_next_turn(cfg.state_dir, payload, llm_classify=llm)
+    if rec is None:
+        return None
+    query = (rec["prompt"] or "").strip()
+    if len(query) < 8:
+        return rec  # verdict logged; too little query text for feedback kNN
+    rating = _VERDICT_RATING[rec["verdict"]]
+    try:
+        if memory is None:
+            from memo.memory import Memory
+
+            memory = Memory(cfg)
+        for rid in rec["recall_ids"]:
+            try:
+                memory.feedback_record(
+                    rid,
+                    query_text=query,
+                    rating=rating,
+                    only_if_absent=True,
+                    extra={"origin": "next_turn_verdict", "verdict": rec["verdict"]},
+                )
+            except Exception:  # noqa: S112
+                continue  # ambiguous/deleted prefix — skip this id only
+    except Exception:  # noqa: S110
+        pass
+    return rec
+
+
 def classify_reaction(text: str) -> str | None:
     """Classify a user message as a reaction to the previous answer.
 

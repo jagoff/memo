@@ -170,6 +170,27 @@ SPECS: tuple[FlagSpec, ...] = (
         "command output from swamping the extractor context).",
     ),
     _spec(
+        "MEMO_VERDICT_ENABLED",
+        "bool",
+        False,
+        "capture",
+        "Classify the user's NEXT turn (heuristic regex ES+EN) as a "
+        "positive/negative/correction reaction to the PRIOR turn's recalled "
+        "memories, from the Stop hook. Writes implicit source_feedback "
+        "(click/ignore, never thumbs_down; only_if_absent — a manual vote "
+        "always wins) + verdict.log for negative tuner labels. Never runs in "
+        "the 5s recall hook. Default off.",
+    ),
+    _spec(
+        "MEMO_VERDICT_MLX",
+        "bool",
+        False,
+        "capture",
+        "When the heuristic returns no verdict, run ONE bounded MLX chat "
+        "call (max_tokens=4) to classify the reaction. Stop-hook only; "
+        "requires MEMO_VERDICT_ENABLED. Default off.",
+    ),
+    _spec(
         "MEMO_CAPTURE_DUP_THRESHOLD",
         "float",
         0.85,

@@ -52,6 +52,7 @@ class _RerankOpsMixin(_MemoryBase):
         query_text: str,
         rating: str,
         only_if_absent: bool = False,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Public wrapper around store.record_source_feedback.
 
@@ -80,7 +81,7 @@ class _RerankOpsMixin(_MemoryBase):
             query_text=query_text,
             query_emb=list(emb),
             rating=rating_norm,
-            extra={"signal": signal},
+            extra={"signal": signal, **(extra or {})},
             only_if_absent=only_if_absent,
         )
         return {

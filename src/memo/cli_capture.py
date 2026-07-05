@@ -125,6 +125,23 @@ def capture_stop() -> None:
         if debug:
             print(f"# memo grounding failed: {exc}", file=_sys.stderr)
 
+    # Next-turn verdict (opt-in): classify THIS user turn as a reaction to the
+    # PRIOR turn's recalled memories → implicit source_feedback + verdict.log.
+    # Stop hook only — never the 5s recall hook. Best-effort.
+    try:
+        from memo.flags import flag_bool as _flag_bool
+
+        if _flag_bool("MEMO_VERDICT_ENABLED"):
+            from memo import verdict
+            from memo.config import Config
+
+            v = verdict.record_verdicts(Config.from_env(), payload)
+            if debug and v:
+                print(f"# memo verdict: {v['verdict']} → {v['recall_ids']}", file=_sys.stderr)
+    except Exception as exc:
+        if debug:
+            print(f"# memo verdict failed: {exc}", file=_sys.stderr)
+
     # Token-savings ledger: fold the (just-updated) grounded events into the
     # durable per-day file before grounding.log rotates them out, so `memo
     # tokens` keeps a monotonic all-time total. Trivial JSON I/O, never fails
