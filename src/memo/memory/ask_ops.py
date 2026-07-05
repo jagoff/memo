@@ -25,6 +25,7 @@ from memo.memory.record import (
     _norm_dedup_path,
     _recency_key,
     _vault_dedup_keys,
+    record_from_row,
 )
 
 
@@ -221,19 +222,7 @@ class _AskOpsMixin(_MemoryBase):
                     if row["id"] in seen_ids:
                         continue
                     seen_ids.add(row["id"])
-                    hits.append(
-                        MemoryRecord(
-                            id=row["id"],
-                            path=row["path"],
-                            title=row["title"],
-                            type=row["type"],
-                            tags=row["tags"],
-                            created=row["created"],
-                            updated=row["updated"],
-                            body=self._read_body(row["path"]),
-                            extra=row.get("extra") or {},
-                        )
-                    )
+                    hits.append(record_from_row(row, body=self._read_body(row["path"])))
 
         # Recency/conversation re-ranking: float WhatsApp transcripts above a
         # same-named contact/profile card, preferring a 1:1 chat over a same-

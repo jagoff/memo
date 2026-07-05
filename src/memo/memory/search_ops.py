@@ -7,6 +7,7 @@ the former `memory.py` god-file.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from typing import Any
 
@@ -663,6 +664,49 @@ class _SearchOpsMixin(_MemoryBase):
             body=self._read_body(r["path"]),
             extra=r.get("extra") or {},
         )
+
+    def around(self, id_: str, *, before: int = 2, after: int = 2) -> dict[str, Any]:
+        """Timeline neighbourhood of one memory — 'what was happening around this'.
+
+        Reference chunks (extra carries parent_path + chunk_seq) expand to
+        seq-adjacent siblings of the same source note; durable memories expand
+        to created-time neighbours (reference tier excluded so bulk chunks
+        don't drown the timeline). Deliberate path only (MCP/CLI) — never
+        called from the 5s recall hook."""
+        from memo.tiers import REFERENCE_TYPES
+
+        resolved = self.resolve_id(id_)
+        row = self.store.get(resolved) if resolved else None
+        if row is None:
+            return {"anchor": None, "mode": None, "neighbors": []}
+        extra = row.get("extra") or {}
+        try:
+            seq = int(extra["chunk_seq"]) if extra.get("chunk_seq") is not None else None
+        except (TypeError, ValueError):
+            seq = None
+        parent = extra.get("parent_path")
+        if parent and seq is not None:
+            rows = self.store.chunks_adjacent(str(parent), seq, before=before, after=after)
+            mode = "chunk_seq"
+        else:
+            rows = self.store.records_around_created(
+                str(row["created"]), before=before, after=after,
+                exclude_types=set(REFERENCE_TYPES),
+            )
+            mode = "created"
+        neighbors: list[dict[str, Any]] = []
+        for r in rows:
+            if r["id"] == resolved:
+                continue
+            body = ""
+            with contextlib.suppress(Exception):
+                body = self._read_body(r["path"])
+            neighbors.append({**r, "body_snippet": (body or "")[:400]})
+        return {
+            "anchor": {"id": resolved, "title": row["title"], "created": row["created"]},
+            "mode": mode,
+            "neighbors": neighbors,
+        }
 
     def _generate_hyde_document(self, query: str) -> str | None:
         """Generate a hypothetical answer document for HyDE query expansion."""

@@ -400,6 +400,15 @@ class MemoryRecord:
         }
 
 
+def record_from_row(row: dict[str, Any], *, body: str = "") -> MemoryRecord:
+    """Build a MemoryRecord from a store row dict (the `_row_to_dict` shape)."""
+    return MemoryRecord(
+        id=row["id"], path=row["path"], title=row["title"], type=row["type"],
+        tags=row["tags"], created=row["created"], updated=row["updated"],
+        body=body, extra=row.get("extra") or {},
+    )
+
+
 @dataclass(frozen=True)
 class RRFConfidenceDecision:
     skip: bool

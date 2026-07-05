@@ -569,6 +569,49 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def chunks_adjacent(
+        self, parent_path: str, seq: int, *, before: int = 2, after: int = 2
+    ) -> list[dict[str, Any]]:
+        """Seq-window of sibling chunks of one ingested note: chunk_seq in
+        [seq-before, seq+after], anchor row included, ordered by chunk_seq ASC.
+        Cheap SQL over extra_json — no embedder, no MLX."""
+        rows = self._conn.execute(
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            "FROM meta "
+            "WHERE json_extract(extra_json, '$.parent_path') = ? "
+            "AND CAST(json_extract(extra_json, '$.chunk_seq') AS INTEGER) BETWEEN ? AND ? "
+            "ORDER BY CAST(json_extract(extra_json, '$.chunk_seq') AS INTEGER) ASC",
+            (parent_path, seq - before, seq + after),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+    def records_around_created(
+        self,
+        created: str,
+        *,
+        before: int = 2,
+        after: int = 2,
+        exclude_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Chronological neighbourhood by `created`: up to `before` strictly
+        earlier rows + `after` strictly later rows (ISO strings compare
+        chronologically). Returned oldest -> newest, anchor excluded."""
+        ex_sql = ""
+        ex_params: list[Any] = []
+        if exclude_types:
+            ex_sql = " AND type NOT IN (%s)" % ",".join("?" for _ in exclude_types)
+            ex_params = sorted(exclude_types)
+        cols = "id, path, title, type, tags, created, updated, body_hash, extra_json"
+        older = self._conn.execute(
+            f"SELECT {cols} FROM meta WHERE created < ?{ex_sql} ORDER BY created DESC LIMIT ?",
+            (created, *ex_params, before),
+        ).fetchall()
+        newer = self._conn.execute(
+            f"SELECT {cols} FROM meta WHERE created > ?{ex_sql} ORDER BY created ASC LIMIT ?",
+            (created, *ex_params, after),
+        ).fetchall()
+        return [_row_to_dict(r) for r in [*reversed(older), *newer]]
+
     def list_by_tag(self, tag: str, limit: int = 500) -> list[dict[str, Any]]:
         """Rows whose JSON tags array contains `tag` exactly (tags are stored as
         json.dumps(list), so the quoted token is an exact-tag match)."""
