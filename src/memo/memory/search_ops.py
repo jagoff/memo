@@ -55,6 +55,8 @@ class _SearchOpsMixin(_MemoryBase):
         include_forgotten: bool = False,
         read_through: bool = False,
         entity_boost: bool | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
         _trace: list[dict[str, Any]] | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
@@ -99,6 +101,8 @@ class _SearchOpsMixin(_MemoryBase):
             _add_trace("final", output_count=0)
             return []
         limit = limit or self.cfg.search_default_limit
+        if date_to and len(date_to) == 10:
+            date_to = date_to + "T23:59:59"  # bare date = whole day inclusive
         emb = None  # set in vec/hybrid branches; consumed by feedback boost below
 
         if mode == "bm25":
@@ -135,7 +139,14 @@ class _SearchOpsMixin(_MemoryBase):
             # `save()` / `update()`). See `_QUERY_INSTRUCTION_PREFIX`
             # in `embedder.py` for the why.
             emb = self.embedder.embed_query(query)
-            rows = self.store.search(emb, limit=limit, type_=type_, exclude_types=exclude_types)
+            rows = self.store.search(
+                emb,
+                limit=limit,
+                type_=type_,
+                exclude_types=exclude_types,
+                date_from=date_from,
+                date_to=date_to,
+            )
             _add_trace(
                 "candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows)
             )
@@ -163,7 +174,12 @@ class _SearchOpsMixin(_MemoryBase):
                         _log.warning("HyDE returned empty doc, falling back to original query")
                 emb = self.embedder.embed_query(_query_for_embed)
                 vec_hits = self.store.search(
-                    emb, limit=k_each, type_=type_, exclude_types=exclude_types
+                    emb,
+                    limit=k_each,
+                    type_=type_,
+                    exclude_types=exclude_types,
+                    date_from=date_from,
+                    date_to=date_to,
                 )
             except Exception as exc:
                 _log.warning(
@@ -272,6 +288,14 @@ class _SearchOpsMixin(_MemoryBase):
                 rrf_k=rrf_k,
                 input_k=input_k,
             )
+        if date_from or date_to:
+            def _date_ok(r: dict[str, Any]) -> bool:
+                u = str(r.get("updated") or "")
+                if date_from and u < date_from:
+                    return False
+                return not (date_to and u > date_to)
+
+            rows = [r for r in rows if _date_ok(r)]
         out: list[MemoryRecord] = []
         # In hybrid mode the candidate pool can grow large (up to _POOL_CAP) and
         # the reranker trims it to `limit`. Loading every candidate body from

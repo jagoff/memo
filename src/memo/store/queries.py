@@ -610,6 +610,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         limit: int = 10,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> list[dict[str, Any]]:
         """Top-k by cosine. Returns metadata dicts with a `score` field
         added (1 - distance, so higher = more similar).
@@ -637,6 +639,19 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             for ex_type in sorted(exclude_types):
                 push_clauses.append("vec.type != ?")
                 push_params.append(ex_type)
+        # Hard date window on meta.updated (ISO strings compare chronologically,
+        # same as list_recent's `updated >= ?`). These filter AFTER the kNN
+        # selects rows, so over-fetch the kNN pool to avoid underfilling.
+        date_clauses: list[str] = []
+        date_params: list[Any] = []
+        if date_from:
+            date_clauses.append("meta.updated >= ?")
+            date_params.append(date_from)
+        if date_to:
+            date_clauses.append("meta.updated <= ?")
+            date_params.append(date_to)
+        k_fetch = limit * 4 if date_clauses else limit
+
         # Check for deleted_at column and build filter
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
         has_deleted = "deleted_at" in cols
@@ -650,10 +665,13 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             f"FROM vec JOIN meta ON vec.id = meta.id AND {deleted_filter} "
             "WHERE vec.embedding MATCH ? AND vec.k = ? "
         )
-        params: list[Any] = [serialize_float32(embedding), limit]
+        params: list[Any] = [serialize_float32(embedding), k_fetch]
         for clause in push_clauses:
             sql += f"AND {clause} "
         params.extend(push_params)
+        for clause in date_clauses:
+            sql += f"AND {clause} "
+        params.extend(date_params)
         sql += "ORDER BY distance ASC LIMIT ?"
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
