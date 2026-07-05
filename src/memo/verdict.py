@@ -16,6 +16,8 @@ memo.memory / memo.llm imports stay deferred inside functions.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from typing import Any
 
 # Only the head of the message carries the reaction; a long follow-up prompt
 # may mention "gracias" or "error" deep inside for unrelated reasons.
@@ -74,6 +76,76 @@ _POSITIVE_RE = _compile(
         r"\bworking now\b",
     )
 )
+
+
+def score_next_turn(
+    state_dir: Any,
+    payload: dict[str, Any],
+    *,
+    llm_classify: Callable[[str], str | None] | None = None,
+) -> dict[str, Any] | None:
+    """Classify the latest user turn as a reaction to the PRIOR turn's
+    recalled memories; persist to verdict.log. Returns the record or None
+    (nothing to score / no verdict / already scored). Never raises."""
+    try:
+        from memo.dashboard import (
+            append_verdict_log,
+            read_recall_hook_log,
+            read_verdict_log,
+        )
+
+        session_id = (payload.get("session_id") or "").strip()
+        if not session_id:
+            return None
+        rows = [
+            r
+            for r in read_recall_hook_log(state_dir, limit=2000)
+            if r.get("session_id") == session_id and isinstance(r.get("turn"), int)
+        ]
+        if len(rows) < 2:
+            return None
+        latest = rows[-1]
+        turn = int(latest["turn"])
+        reaction = str(latest.get("prompt") or "")
+        if not reaction:
+            return None
+        # Idempotent across repeated Stop events for the same turn.
+        if any(
+            v.get("session_id") == session_id and v.get("turn") == turn
+            for v in read_verdict_log(state_dir, limit=200)
+        ):
+            return None
+        verdict = classify_reaction(reaction)
+        method = "heuristic"
+        if verdict is None and llm_classify is not None:
+            verdict = llm_classify(reaction)
+            method = "llm"
+        if verdict not in ("positive", "negative", "correction"):
+            return None
+        prior = None
+        for r in reversed(rows[:-1]):
+            if int(r["turn"]) < turn and (r.get("hits") or []):
+                prior = r
+                break
+        if prior is None or (turn - int(prior["turn"])) > _MAX_TURN_GAP:
+            return None
+        recall_ids = [h.get("id") for h in (prior.get("hits") or []) if h.get("id")]
+        if not recall_ids:
+            return None
+        record: dict[str, Any] = {
+            "session_id": session_id,
+            "turn": turn,
+            "prior_turn": int(prior["turn"]),
+            "verdict": verdict,
+            "prompt": str(prior.get("prompt") or ""),
+            "reaction": reaction,
+            "recall_ids": recall_ids,
+            "method": method,
+        }
+        append_verdict_log(state_dir, **record)
+        return record
+    except Exception:
+        return None
 
 
 def classify_reaction(text: str) -> str | None:

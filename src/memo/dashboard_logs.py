@@ -306,6 +306,44 @@ def read_grounding_log(state_dir: Path, *, limit: int = 4000) -> list[dict[str, 
     return _read_jsonl(grounding_log_path(state_dir), limit=limit)
 
 
+def verdict_log_path(state_dir: Path) -> Path:
+    return state_dir / "verdict.log"
+
+
+def append_verdict_log(
+    state_dir: Path,
+    *,
+    session_id: str,
+    turn: int,
+    prior_turn: int,
+    verdict: str,
+    prompt: str,
+    reaction: str,
+    recall_ids: list[str],
+    method: str = "heuristic",
+    cap: int = 500,
+) -> None:
+    """One row per next-turn user verdict (see memo.verdict). ``prompt`` is
+    the PRIOR turn's prompt (the query the recall served); ``reaction`` is the
+    user's next message that carried the verdict."""
+    entry: dict[str, Any] = {
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+        "session_id": session_id,
+        "turn": int(turn),
+        "prior_turn": int(prior_turn),
+        "verdict": verdict,
+        "prompt": prompt[:200],
+        "reaction": reaction[:200],
+        "recall_ids": [(r or "")[:8] for r in recall_ids][:5],
+        "method": method,
+    }
+    _write_jsonl_entry(verdict_log_path(state_dir), entry, cap=cap, size_limit=1024 * 200)
+
+
+def read_verdict_log(state_dir: Path, *, limit: int = 1000) -> list[dict[str, Any]]:
+    return _read_jsonl(verdict_log_path(state_dir), limit=limit)
+
+
 def grounding_diag_log_path(state_dir: Path) -> Path:
     return state_dir / "grounding_diag.log"
 

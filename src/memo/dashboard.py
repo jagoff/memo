@@ -14,6 +14,7 @@ from memo.dashboard_logs import (
     append_grounding_log,
     append_recall_log,
     append_usage_log,
+    append_verdict_log,
     context_cost_log_path,
     grounding_diag_log_path,
     grounding_log_path,
@@ -25,9 +26,11 @@ from memo.dashboard_logs import (
     read_recall_hook_log,
     read_recall_log,
     read_usage_log,
+    read_verdict_log,
     recall_hook_log_path,
     recall_log_path,
     usage_log_path,
+    verdict_log_path,
 )
 from memo.dashboard_metrics import (
     EXPECTED_CONSUMERS,
@@ -68,6 +71,7 @@ __all__ = [
     "append_grounding_log",
     "append_recall_log",
     "append_usage_log",
+    "append_verdict_log",
     "consult_breakdown",
     "consumer_label",
     "context_cost_log_path",
@@ -84,6 +88,7 @@ __all__ = [
     "read_recall_hook_log",
     "read_recall_log",
     "read_usage_log",
+    "read_verdict_log",
     "reask_stats",
     "recall_health",
     "recall_hook_log_path",
@@ -94,4 +99,5 @@ __all__ = [
     "sparkline",
     "usage_log_path",
     "verdict",
+    "verdict_log_path",
 ]
