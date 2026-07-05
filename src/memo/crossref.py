@@ -1,25 +1,31 @@
-"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
-
-Cross-reference and backlink system for memories.
+"""Cross-reference and backlink system for memories (typed edges + backlinks).
 
 Detects and manages wikilinks between memories, enabling:
 - Automatic detection of [[wikilinks]] in memory content
+- Typed `- relation_type [[target]]` edges (basic-memory style grammar)
 - Backlink queries (what memories reference this one)
+- Prefix-aware reverse traversal (hand-authored short prefixes match full IDs)
 - Link suggestions when saving (suggest linking to related memories)
-- Link graph visualization
 
-## Wikilink Detection
+## Typed Link Grammar
 
-Parses memory content for Obsidian-style wikilinks [[memory-id]] or
-[[memory-id|alias]]. Stores these in a separate index for fast backlink
-queries.
+In addition to bare ``[[wikilinks]]``, content may contain typed list items::
+
+    - supersedes [[aaaaaaaa1111000000000000000000ff]]
+    - caused_by [[bbbbbbbb2222000000000000000000ff|the OOM bug]]
+
+``relation_type`` must be a lowercase snake_case word (2–32 chars, starting with
+a letter).  Typed lines win the de-dup: the ``[[target]]`` inside them is NOT
+double-counted as a bare ``wikilink``.  Hand-edited typed edges in the markdown
+survive a reindex because ``index_source()`` does a delete-then-insert on the
+source's rows.
 
 ## Backlink Index
 
-A separate table in the vec store (or a new DB) that tracks:
+A separate table tracks:
 - source_id: memory that contains the link
-- target_id: memory being referenced
-- link_type: wikilink, entity mention, etc.
+- target_id: memory being referenced (stored as-is, may be a short prefix)
+- link_type: 'wikilink' or a typed relation (supersedes, caused_by, …)
 
 ## Link Suggestions
 
@@ -42,6 +48,13 @@ from typing import Any
 
 _WIKILINK_PATTERN = re.compile(r"\[\[([^\]]+)\]\]")
 
+# Typed link grammar (basic-memory style): a list item whose whole content is
+# `- relation_type [[target]]`. relation_type: lowercase snake_case, 2-32 chars.
+_TYPED_LINK_PATTERN = re.compile(
+    r"^\s{0,3}[-*]\s+([a-z][a-z0-9_]{1,31})\s+\[\[([^\]]+)\]\]\s*$",
+    re.MULTILINE,
+)
+
 
 @dataclass
 class Wikilink:
@@ -50,6 +63,7 @@ class Wikilink:
     target: str  # The memory ID or name being linked to
     alias: str | None  # Optional display alias
     position: int  # Character position in content
+    link_type: str = "wikilink"  # 'wikilink' or a typed relation (supersedes, caused_by, ...)
 
 
 @dataclass
@@ -71,6 +85,35 @@ class LinkSuggestion:
     title: str
     similarity: float
     reason: str  # Why this link is suggested
+
+
+def _split_alias(target_raw: str) -> tuple[str, str | None]:
+    if "|" in target_raw:
+        target, alias = target_raw.split("|", 1)
+        return target.strip(), alias.strip()
+    return target_raw.strip(), None
+
+
+def parse_links(content: str) -> list[Wikilink]:
+    """Parse typed `- relation_type [[target]]` lines plus bare [[wikilinks]].
+
+    Typed lines win: their [[target]] is not double-counted as a bare link.
+    Hand-edited edges in the markdown survive reindex (markdown is truth).
+    """
+    links: list[Wikilink] = []
+    typed_spans: list[tuple[int, int]] = []
+    for m in _TYPED_LINK_PATTERN.finditer(content):
+        target, alias = _split_alias(m.group(2))
+        links.append(
+            Wikilink(target=target, alias=alias, position=m.start(2), link_type=m.group(1))
+        )
+        typed_spans.append(m.span())
+    for m in _WIKILINK_PATTERN.finditer(content):
+        if any(start <= m.start() < end for start, end in typed_spans):
+            continue
+        target, alias = _split_alias(m.group(1))
+        links.append(Wikilink(target=target, alias=alias, position=m.start()))
+    return links
 
 
 class CrossReferenceIndex:
@@ -181,6 +224,57 @@ class CrossReferenceIndex:
 
         return wikilinks
 
+    def index_source(self, memory_id: str, content: str) -> list[Wikilink]:
+        """Re-index all links for one source memory (delete-then-insert).
+
+        Unlike `index_wikilinks` (append-only, legacy), this REPLACES the
+        source's rows so links removed from the markdown disappear from the
+        index — required by the save/update/reindex wiring.
+        """
+        links = parse_links(content)
+        with self._tx() as conn:
+            conn.execute("DELETE FROM backlinks WHERE source_id = ?", (memory_id,))
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO backlinks
+                (source_id, target_id, link_type, context, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                """,
+                [
+                    (
+                        memory_id,
+                        link.target,
+                        link.link_type,
+                        content[max(0, link.position - 50) : link.position + 50],
+                    )
+                    for link in links
+                ],
+            )
+        return links
+
+    def referencing_sources(self, memory_id: str) -> list[Backlink]:
+        """Reverse traversal: sources whose stored target is this id or a
+        >=8-char prefix of it (hand-authored links use short prefixes)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            SELECT source_id, target_id, link_type, context FROM backlinks
+            WHERE target_id = ?
+               OR (length(target_id) >= 8 AND ? LIKE (target_id || '%'))
+            """,
+            (memory_id, memory_id),
+        ).fetchall()
+        return [
+            Backlink(
+                source_id=row["source_id"],
+                source_title="",
+                target_id=row["target_id"],
+                link_type=row["link_type"],
+                context=row["context"] or "",
+            )
+            for row in rows
+        ]
+
     def get_backlinks(self, memory_id: str) -> list[Backlink]:
         """Get all memories that reference this one.
 
@@ -232,6 +326,7 @@ class CrossReferenceIndex:
                     target=row["target_id"],
                     alias=None,
                     position=0,
+                    link_type=row["link_type"],
                 )
             )
 
@@ -347,4 +442,5 @@ __all__ = [
     "LinkSuggester",
     "LinkSuggestion",
     "Wikilink",
+    "parse_links",
 ]

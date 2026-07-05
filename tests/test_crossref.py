@@ -237,3 +237,46 @@ def test_wikilink_pattern():
     content = "[[a]] and [[b|B]] and [[c]]"
     matches = list(_WIKILINK_PATTERN.finditer(content))
     assert len(matches) == 3
+
+
+def test_parse_links_typed_grammar():
+    from memo.crossref import parse_links
+
+    content = (
+        "Decided to use sqlite-vec.\n"
+        "- supersedes [[aaaaaaaa1111000000000000000000ff]]\n"
+        "- caused_by [[bbbbbbbb2222000000000000000000ff|the OOM bug]]\n"
+        "See also [[cccccccc3333000000000000000000ff]].\n"
+    )
+    links = parse_links(content)
+    by_type = {(link.link_type, link.target) for link in links}
+    assert ("supersedes", "aaaaaaaa1111000000000000000000ff") in by_type
+    assert ("caused_by", "bbbbbbbb2222000000000000000000ff") in by_type
+    assert ("wikilink", "cccccccc3333000000000000000000ff") in by_type
+    # typed lines must NOT be double-counted as bare wikilinks
+    assert len(links) == 3
+
+
+def test_index_source_replaces_stale_rows(tmp_path):
+    from memo.crossref import CrossReferenceIndex
+
+    idx = CrossReferenceIndex(tmp_path / "crossref.db")
+    idx.index_source("src11111", "- supersedes [[tgt11111aaaaaaaaaaaaaaaaaaaaaaaa]]")
+    idx.index_source("src11111", "now links elsewhere [[tgt22222bbbbbbbbbbbbbbbbbbbbbbbb]]")
+    outlinks = idx.get_outlinks("src11111")
+    assert [o.target for o in outlinks] == ["tgt22222bbbbbbbbbbbbbbbbbbbbbbbb"]
+    assert outlinks[0].link_type == "wikilink"
+    idx.close()
+
+
+def test_referencing_sources_matches_id_prefix(tmp_path):
+    from memo.crossref import CrossReferenceIndex
+
+    idx = CrossReferenceIndex(tmp_path / "crossref.db")
+    full_id = "deadbeefcafe000000000000000000ff"
+    # hand-authored links usually use a short prefix, not the full 32-char id
+    idx.index_source("src11111", f"- supersedes [[{full_id[:12]}]]")
+    refs = idx.referencing_sources(full_id)
+    assert [r.source_id for r in refs] == ["src11111"]
+    assert refs[0].link_type == "supersedes"
+    idx.close()
