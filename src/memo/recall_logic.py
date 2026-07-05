@@ -39,6 +39,20 @@ def _render_footer() -> str:
     return RECALL_FOOTER_FULL + "\n</memo-recall>"
 
 
+def epistemic_label(hit: Any) -> str:
+    """Presentation-only epistemic prefix from metadata already on the hit:
+    '?unverified' (quarantine tag), '~inferred · YYYY-MM' (synthesis), else
+    'type · YYYY-MM'. Render layer only — never touches ranking or the store."""
+    tags = {str(t) for t in (getattr(hit, "tags", None) or [])}
+    if "_uncertain" in tags:
+        return "?unverified"
+    month = str(getattr(hit, "updated", "") or "")[:7]
+    kind = "~inferred" if getattr(hit, "type", "") == "synthesis" else (
+        getattr(hit, "type", "") or "note"
+    )
+    return f"{kind} · {month}" if month else kind
+
+
 def render_recall_context(
     relevant: list[Any],
     nudge: list[Any],
@@ -83,9 +97,11 @@ def render_recall_context(
             return max(80, body_chars // 2)
         return body_chars
 
+    use_labels = flag_bool("MEMO_RECALL_EPISTEMIC_LABELS")
     for hit in relevant:
         score_tag = f" (score {hit.score:.2f})" if hit.score is not None else ""
-        title_line = f"**[{hit.id[:8]}] {hit.title}**{score_tag}"
+        label = f" ⟨{epistemic_label(hit)}⟩" if use_labels else ""
+        title_line = f"**[{hit.id[:8]}] {hit.title}**{label}{score_tag}"
         tags_line = f"_tags_: {', '.join(hit.tags)}" if hit.tags else ""
         body = (hit.body or "").strip().replace("\n", " ")
         limit = _effective_body_chars(hit.score)
@@ -147,11 +163,13 @@ def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     hit_lines: list[str] = []
+    use_labels = flag_bool("MEMO_RECALL_EPISTEMIC_LABELS")
 
     for hit in relevant:
         body = (hit.body or "").strip().replace("\n", " ")
         short_body = body[:60].rstrip() if body else ""
-        line = f"[{hit.id[:8]}] {hit.title}" + (f" · {short_body}" if short_body else "")
+        label = f" ⟨{epistemic_label(hit)}⟩" if use_labels else ""
+        line = f"[{hit.id[:8]}]{label} {hit.title}" + (f" · {short_body}" if short_body else "")
 
         candidate_lines = [*hit_lines, line]
         candidate = "<memo-recall readonly>\n" + "\n".join(candidate_lines) + "\n</memo-recall>"

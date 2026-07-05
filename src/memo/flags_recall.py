@@ -399,4 +399,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "pure confirmation turns. Opt-out with MEMO_RECALL_TRIVIAL_BAIL=0.",
         opt_out=True,
     ),
+    _spec(
+        "MEMO_RECALL_EPISTEMIC_LABELS",
+        "bool",
+        False,
+        "recall",
+        "Prefix each injected recall hit with its epistemic status derived from "
+        "existing metadata: '⟨type · YYYY-MM⟩', '⟨~inferred · YYYY-MM⟩' for "
+        "synthesis, '⟨?unverified⟩' for _uncertain captures. Pure render-layer "
+        "(~5-10 tok/hit, inside the token budget); ranking untouched.",
+    ),
 )
