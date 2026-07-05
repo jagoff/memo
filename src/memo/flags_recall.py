@@ -413,4 +413,14 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_RECALL_SESSION_TOKEN_BUDGET", "int", 0, "recall",
           "Cumulative recall-token budget per session; past it, per-turn budget decays "
           "(0 = off). Conservative: only scales down, never hard-bails.", min_val=0),
+    _spec(
+        "MEMO_RECALL_PRECISION_GATE",
+        "bool",
+        False,
+        "recall",
+        "Suppress recall when the top-hit score falls in a score band that has "
+        "historically never been grounded (learned from grounding.log + recall.log; "
+        "bands cached to state_dir/precision_bands.json by the Stop hook). "
+        "Default OFF: with this unset, recall behavior is unchanged.",
+    ),
 )

@@ -347,7 +347,40 @@ def recall_hook() -> None:
                 )
 
     qualifying = apply_injection_filters(qualifying)
+
+    def _stamp_metrics(n_hits: int) -> None:
+        # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
+        # the subprocess line is comparable with the daemon path, which counts
+        # the final rendered output. ``total_ms`` stays end-to-end from _t0.
+        try:
+            from memo import recall_metrics
+
+            recall_metrics.stamp(
+                cfg.state_dir,
+                total_ms=(time.time() - _t0) * 1000.0,
+                path="subprocess",
+                hits=n_hits,
+            )
+        except Exception as exc:
+            _log.debug("recall metrics stamp failed: %s", exc)
+
     relevant = qualifying[:top_k]
+
+    # Precision gate (Lever 3): suppress when the top hit's score falls in a
+    # band that has historically never been grounded.  Reads a small cached
+    # JSON — cheap for the 5 s recall-hook budget.  Default OFF.
+    if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
+        try:
+            from memo.token_meter import load_precision_bands, suppress_score as _pg_suppress
+
+            _pg_bands = load_precision_bands(cfg.state_dir)
+            if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
+                _stamp_metrics(0)
+                _bail("precision-gated (learned zero-grounding band)")
+                return
+        except Exception as _pg_exc:
+            _log.debug("precision gate check failed: %s", _pg_exc)
+
     if flag_bool("MEMO_RECALL_INTRA_DEDUP") and len(relevant) > 1:
         from memo.recall_logic import collapse_near_dups
 
@@ -381,22 +414,6 @@ def recall_hook() -> None:
         )
     except Exception as exc:
         _log.debug("subprocess recall-log write failed: %s", exc)
-
-    def _stamp_metrics(n_hits: int) -> None:
-        # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
-        # the subprocess line is comparable with the daemon path, which counts
-        # the final rendered output. ``total_ms`` stays end-to-end from _t0.
-        try:
-            from memo import recall_metrics
-
-            recall_metrics.stamp(
-                cfg.state_dir,
-                total_ms=(time.time() - _t0) * 1000.0,
-                path="subprocess",
-                hits=n_hits,
-            )
-        except Exception as exc:
-            _log.debug("recall metrics stamp failed: %s", exc)
 
     if not relevant:
         _stamp_metrics(0)

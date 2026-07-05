@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import math
 import os
 import tempfile
 from dataclasses import dataclass
@@ -136,10 +137,115 @@ def session_usage(transcript_path: Path) -> SessionUsage | None:
     return SessionUsage(sid, len(turns), answer, tool, answer + tool)
 
 
-from memo.dashboard_logs import read_context_cost_log, read_grounding_log  # noqa: E402
+from memo.dashboard_logs import read_context_cost_log, read_grounding_log, read_recall_log  # noqa: E402
 from memo.dashboard_metrics import GROUNDED_SCORE  # noqa: E402
 
 _CHARS_PER_TOKEN = 4
+
+# ---------------------------------------------------------------------------
+# Precision bands — learned score-band suppression (Task 9 / Lever 3)
+# ---------------------------------------------------------------------------
+
+
+def _band_key(score: float) -> str:
+    """0.05-wide bucket key for a recall top-score. E.g. 0.63 → '0.60', 0.65 → '0.65'.
+
+    Uses a small epsilon before floor to absorb FP rounding artifacts like
+    ``0.55 / 0.05 == 10.999…`` which would otherwise mis-bucket an exact boundary.
+    """
+    idx = math.floor(score / 0.05 + 1e-9)
+    return f"{round(idx * 0.05, 2):.2f}"
+
+
+def suppress_score(top_score: float, bands: dict) -> bool:
+    """Return True if the score's band is marked suppress=True in *bands*."""
+    band = bands.get(_band_key(top_score))
+    if band is None:
+        return False
+    return bool(band.get("suppress"))
+
+
+def _precision_bands_path(state_dir: Path) -> Path:
+    return state_dir / "precision_bands.json"
+
+
+def load_precision_bands(state_dir: Path) -> dict:
+    """Load the cached precision-bands dict (cheap read for the 5 s recall hook)."""
+    p = _precision_bands_path(state_dir)
+    if not p.is_file():
+        return {}
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def learn_precision_bands(state_dir: Path, *, min_samples: int = 20) -> dict:
+    """Bucket historical recall top-scores; flag bands with zero grounding.
+
+    Runs in the Stop hook (reads capped JSONL logs).  Writes the result to
+    ``state_dir/precision_bands.json`` so the recall hook can read it cheaply.
+    Returns the bands dict.
+
+    A band is marked ``suppress=True`` when it has ≥ *min_samples* recall
+    events and zero of them were ever grounded (used_score ≥ GROUNDED_SCORE).
+    """
+    # Build the set of (session_id, turn) pairs that had a grounding event.
+    grounded_turns: set[tuple] = set()
+    for r in read_grounding_log(state_dir, limit=4000):
+        sid = r.get("session_id")
+        turn = r.get("turn")
+        raw = r.get("used_score")
+        if sid and turn is not None and isinstance(raw, (int, float)) and float(raw) >= GROUNDED_SCORE:
+            grounded_turns.add((sid, turn))
+
+    # Bucket recall log entries by score band.
+    # read_recall_log default limit=10 is for UI; use 200 (the log cap) here.
+    band_total: dict[str, int] = {}
+    band_grounded_count: dict[str, int] = {}
+
+    for entry in read_recall_log(state_dir, limit=200):
+        hits = entry.get("hits")
+        if not hits:
+            continue  # bail entries have hits=[]
+        top_score = hits[0].get("score")
+        if top_score is None or not isinstance(top_score, (int, float)):
+            continue
+        sid = entry.get("session_id")
+        turn = entry.get("turn")
+        if sid is None or turn is None:
+            continue
+        key = _band_key(float(top_score))
+        band_total[key] = band_total.get(key, 0) + 1
+        if (sid, turn) in grounded_turns:
+            band_grounded_count[key] = band_grounded_count.get(key, 0) + 1
+
+    # Build the result dict.
+    bands: dict[str, dict] = {}
+    for key in sorted(set(band_total) | set(band_grounded_count)):
+        total = band_total.get(key, 0)
+        grounded = band_grounded_count.get(key, 0)
+        bands[key] = {
+            "total": total,
+            "grounded": grounded,
+            "suppress": total >= min_samples and grounded == 0,
+        }
+
+    # Persist to cache (atomic replace).
+    path = _precision_bands_path(state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(bands, ensure_ascii=False, indent=2))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+    return bands
 
 
 def ledger_path(state_dir: Path) -> Path:
@@ -218,6 +324,8 @@ def roll(state_dir: Path, session_id: str, transcript_path: str | Path | None) -
             "grounded": _grounded_for(state_dir, session_id),
         }
         _write_ledger(state_dir, ledger)
+        with contextlib.suppress(Exception):
+            learn_precision_bands(state_dir)
     return ledger
 
 
