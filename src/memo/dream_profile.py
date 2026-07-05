@@ -22,6 +22,7 @@ records failures in ``receipt["errors"]``).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -135,3 +136,70 @@ def render_profile(
         parts += [body, ""]
     parts += rule_lines
     return "\n".join(parts).rstrip() + "\n"
+
+
+# --- directive graduation (Tier-2 #24) ----------------------------------------
+
+_RETIRED_STATUSES = frozenset({"kept_newer", "kept_older", "evolved", "fused"})
+
+
+def standing_rule_ids(
+    grounding_rows: list[dict[str, Any]], *, k: int = 3, min_used: float = 0.5
+) -> list[str]:
+    """recall_id prefixes cited in >= k DISTINCT sessions (used_score >= min_used).
+
+    grounding.log rows carry 8-char ``recall_id`` prefixes. Ordering is by
+    distinct-session count desc, then prefix — fully deterministic, no LLM.
+    """
+    sessions: dict[str, set[str]] = {}
+    for row in grounding_rows:
+        rid = str(row.get("recall_id") or "")
+        sid = str(row.get("session_id") or "")
+        try:
+            used = float(row.get("used_score") or 0.0)
+        except (TypeError, ValueError):
+            used = 0.0
+        if not rid or not sid or used < min_used:
+            continue
+        sessions.setdefault(rid, set()).add(sid)
+    ranked = sorted(
+        ((len(s), rid) for rid, s in sessions.items() if len(s) >= k),
+        key=lambda t: (-t[0], t[1]),
+    )
+    return [rid for _, rid in ranked]
+
+
+def losing_ids(
+    pairs: list[dict[str, Any]],
+    updated_of: Callable[[str], str | None],
+) -> set[str]:
+    """Ids retired by resolved contradiction pairs (retire-on-supersede).
+
+    Per contradict.VALID_STATUSES semantics: ``kept_newer`` / ``evolved``
+    retire the OLDER side; ``kept_older`` (older side won — explicit user
+    choice) retires the NEWER side; ``fused`` (both merged into a new
+    memory) retires BOTH sides. Age is by ``updated_of(id)`` — ISO
+    timestamps compare lexicographically, same rule as
+    cli_maintain._older_id. A side whose record is gone (``updated_of`` →
+    None, e.g. already archived by the supersede pass) is retired outright.
+    Open/dismissed pairs retire nothing.
+    """
+    out: set[str] = set()
+    for p in pairs:
+        status = str(p.get("status") or "")
+        if status not in _RETIRED_STATUSES:
+            continue
+        a = str(p.get("memory_id_a") or "")
+        b = str(p.get("memory_id_b") or "")
+        if status == "fused":
+            out.update(x for x in (a, b) if x)
+            continue
+        ua, ub = updated_of(a), updated_of(b)
+        if ua is None and a:
+            out.add(a)
+        if ub is None and b:
+            out.add(b)
+        if ua is not None and ub is not None:
+            older, newer = (a, b) if ua <= ub else (b, a)
+            out.add(newer if status == "kept_older" else older)
+    return out

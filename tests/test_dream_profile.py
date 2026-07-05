@@ -87,3 +87,75 @@ def test_render_profile_budget_trims_narrative_keeps_rules():
     assert "## Standing rules" in doc
     assert "always run pytest before commit" in doc  # rules survive the cut
     assert "x" * 500 not in doc  # narrative trimmed to fit
+
+
+# --- directive graduation (B3) -------------------------------------------------
+
+
+def test_standing_rule_ids_requires_k_distinct_sessions():
+    rows = [
+        {"recall_id": "aaaaaaaa", "session_id": "s1", "used_score": 0.9},
+        {"recall_id": "aaaaaaaa", "session_id": "s2", "used_score": 0.8},
+        {"recall_id": "aaaaaaaa", "session_id": "s2", "used_score": 0.8},  # same session
+        {"recall_id": "bbbbbbbb", "session_id": "s1", "used_score": 0.9},  # 1 session
+    ]
+    assert dp.standing_rule_ids(rows, k=2, min_used=0.5) == ["aaaaaaaa"]
+
+
+def test_standing_rule_ids_ignores_low_used_score():
+    rows = [
+        {"recall_id": "aaaaaaaa", "session_id": "s1", "used_score": 0.2},
+        {"recall_id": "aaaaaaaa", "session_id": "s2", "used_score": 0.9},
+    ]
+    assert dp.standing_rule_ids(rows, k=2, min_used=0.5) == []
+
+
+def test_standing_rule_ids_orders_by_session_count_then_prefix():
+    rows = [
+        {"recall_id": "cccccccc", "session_id": s, "used_score": 1.0}
+        for s in ("s1", "s2", "s3")
+    ] + [
+        {"recall_id": "aaaaaaaa", "session_id": s, "used_score": 1.0}
+        for s in ("s1", "s2")
+    ]
+    assert dp.standing_rule_ids(rows, k=2) == ["cccccccc", "aaaaaaaa"]
+
+
+def test_standing_rule_ids_tolerates_malformed_rows():
+    rows = [
+        {"recall_id": "", "session_id": "s1", "used_score": 1.0},
+        {"recall_id": "dddddddd", "session_id": "", "used_score": 1.0},
+        {"recall_id": "dddddddd", "session_id": "s1", "used_score": "not-a-number"},
+    ]
+    assert dp.standing_rule_ids(rows, k=1) == []
+
+
+def test_losing_ids_retires_older_side_of_resolved_pairs():
+    pairs = [
+        {"status": "kept_newer", "memory_id_a": "old", "memory_id_b": "new"},
+        {"status": "open", "memory_id_a": "x", "memory_id_b": "y"},  # unresolved
+        {"status": "dismissed", "memory_id_a": "p", "memory_id_b": "q"},  # false pos
+    ]
+    updated = {"old": "2026-01-01", "new": "2026-06-01", "x": "1", "y": "2", "p": "1", "q": "2"}
+    assert dp.losing_ids(pairs, updated.get) == {"old"}
+
+
+def test_losing_ids_kept_older_retires_newer_side():
+    # kept_older = older side won (explicit user choice) → the NEWER side loses
+    pairs = [{"status": "kept_older", "memory_id_a": "old", "memory_id_b": "new"}]
+    updated = {"old": "2026-01-01", "new": "2026-06-01"}
+    assert dp.losing_ids(pairs, updated.get) == {"new"}
+
+
+def test_losing_ids_fused_retires_both_sides():
+    # fused = both merged into a NEW memory → both original sides retire,
+    # even when one of them is still live (not yet archived)
+    pairs = [{"status": "fused", "memory_id_a": "left", "memory_id_b": "right"}]
+    updated = {"left": "2026-01-01", "right": "2026-06-01"}
+    assert dp.losing_ids(pairs, updated.get) == {"left", "right"}
+
+
+def test_losing_ids_retires_missing_record_outright():
+    # archived (superseded) records resolve to None — retired without comparison
+    pairs = [{"status": "evolved", "memory_id_a": "gone", "memory_id_b": "live"}]
+    assert dp.losing_ids(pairs, {"live": "2026-06-01"}.get) == {"gone"}
