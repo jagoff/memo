@@ -77,6 +77,54 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     return id_a, id_b
 
 
+def _undo_targets(receipt: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """(archived_ids, soft_forgotten_ids) recorded in a maintain receipt."""
+    archived: list[str] = []
+    for s in receipt.get("superseded", []):
+        if isinstance(s, dict) and s.get("action") == "archive" and s.get("older"):
+            archived.append(s["older"])
+    for m in receipt.get("merged", []):
+        if isinstance(m, dict):
+            archived.extend(m.get("archived_ids") or [])
+    for a in receipt.get("archived_stale", []):
+        if isinstance(a, dict) and a.get("id"):
+            archived.append(a["id"])
+    forgotten: list[str] = [x for x in receipt.get("dead_archived", []) if isinstance(x, str)]
+    for f in receipt.get("forgotten", []):
+        if isinstance(f, dict) and f.get("id"):
+            forgotten.append(f["id"])
+    return archived, forgotten
+
+
+def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[str], list[str]]:
+    """Move receipt-listed .md files back out of inactive/ (matched by
+    frontmatter id — the receipt stores ids, not filenames). Returns
+    (restored_ids, missing_ids). Caller runs `mem.reindex()` afterwards."""
+    import shutil
+
+    import frontmatter
+
+    inactive_dir = mem.cfg.memory_dir / "inactive"
+    wanted = set(ids)
+    restored: list[str] = []
+    if inactive_dir.is_dir():
+        for p in sorted(inactive_dir.glob("*.md")):
+            try:
+                fid = str(frontmatter.load(p).get("id") or "")
+            except Exception:  # noqa: S112 — a corrupt archived file must not sink the restore
+                continue
+            if fid not in wanted:
+                continue
+            dest = mem.cfg.memory_dir / p.name
+            if dest.exists():
+                _log.warning("maintain undo: %s exists; skipping restore of %s", dest, fid[:8])
+                continue
+            if not dry_run:
+                shutil.move(str(p), str(dest))
+            restored.append(fid)
+    return restored, sorted(wanted - set(restored))
+
+
 @click.group(name="maintain", invoke_without_command=True)
 @click.option("--dry-run", is_flag=True, help="Preview actions; change nothing.")
 @click.option(
@@ -478,3 +526,61 @@ def maintain_cmd(
     if receipt["errors"]:
         for e in receipt["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")
+
+
+@maintain_cmd.command(name="undo")
+@click.option(
+    "--run",
+    "run_stamp",
+    default=None,
+    help="Receipt stamp under <state>/maintain/runs/<STAMP>.json (default: last run).",
+)
+@click.option("--dry-run", is_flag=True, help="Preview the restore; move nothing.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the undo receipt as JSON.")
+def maintain_undo_cmd(run_stamp: str | None, dry_run: bool, as_json: bool) -> None:
+    """Batch-restore a maintain run from its receipt.
+
+    Moves receipt-listed .md files back out of inactive/, unforgets
+    soft-forgotten ids, then reindexes. The merged record a consolidation
+    created is NOT deleted — sources are restored alongside it (restore-only).
+    """
+    cfg = Config.from_env()
+    d = _state_path(cfg)
+    receipt_path = (d / "runs" / f"{run_stamp}.json") if run_stamp else (d / "last.json")
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]no readable receipt at {receipt_path}: {exc}[/red]")
+        raise SystemExit(1) from exc
+    mem = _get_memory(cfg)
+    archived_ids, forgotten_ids = _undo_targets(receipt)
+    restored, missing = _restore_archived(mem, archived_ids, dry_run=dry_run)
+    unforgotten: list[str] = []
+    for fid in forgotten_ids:
+        if dry_run or mem.unforget(fid) is not None:
+            unforgotten.append(fid)
+    if restored and not dry_run:
+        mem.reindex()
+    undo_receipt = {
+        "dry_run": dry_run,
+        "source_receipt": str(receipt_path),
+        "restored": restored,
+        "unforgotten": unforgotten,
+        "missing": missing,
+    }
+    if not dry_run:
+        try:
+            (d / "undo-last.json").write_text(
+                json.dumps({"ts": time.time(), **undo_receipt}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            console.print(f"[yellow]warn: undo receipt not persisted: {exc}[/yellow]")
+    if as_json:
+        click.echo(json.dumps(undo_receipt, ensure_ascii=False, indent=2))
+        return
+    tag = "[dim](dry-run)[/dim] " if dry_run else ""
+    console.print(
+        f"{tag}[bold]memo maintain undo[/bold] — restored {len(restored)}, "
+        f"unforgotten {len(unforgotten)}, missing {len(missing)}"
+    )

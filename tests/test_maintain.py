@@ -250,3 +250,67 @@ def test_maintain_writes_timestamped_run_receipt(tmp_cfg):
     assert receipt["run"] == runs[0].stem
     # last.json still written (daily guard + undo default read it)
     assert (tmp_cfg.state_dir / "maintain" / "last.json").is_file()
+
+
+def test_undo_targets_and_restore_from_inactive(mock_memory):
+    from memo.cli_maintain import _restore_archived, _undo_targets
+
+    a = mock_memory.save(content="stale one", title="Stale")
+    f = mock_memory.save(content="dead weight", title="Dead")
+    assert mock_memory.lifecycle.archive_memory(a.id) is True
+    assert mock_memory.get(a.id) is None
+    mock_memory.forget(f.id, reason="test")
+
+    receipt = {
+        "superseded": [],
+        "merged": [],
+        "archived_stale": [{"id": a.id, "days": 400}],
+        "dead_archived": [f.id],
+        "forgotten": [],
+    }
+    archived, forgotten = _undo_targets(receipt)
+    assert archived == [a.id] and forgotten == [f.id]
+
+    restored, missing = _restore_archived(mock_memory, archived, dry_run=False)
+    assert restored == [a.id] and missing == []
+    mock_memory.reindex()
+    assert mock_memory.get(a.id) is not None
+    assert mock_memory.unforget(f.id) is not None
+
+
+def test_maintain_undo_cli_dry_run_reads_receipt(tmp_cfg):
+    import json as _json
+
+    from click.testing import CliRunner
+
+    from memo.cli_maintain import maintain_cmd
+
+    d = tmp_cfg.state_dir / "maintain"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "last.json").write_text(
+        _json.dumps(
+            {
+                "ts": 1.0,
+                "superseded": [{"older": "a" * 32, "action": "archive"}],
+                "merged": [],
+                "archived_stale": [],
+                "dead_archived": [],
+                "forgotten": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    res = runner.invoke(
+        maintain_cmd,
+        ["undo", "--dry-run", "--json"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        },
+    )
+    assert res.exit_code == 0, res.output
+    out = _json.loads(res.output)
+    assert out["dry_run"] is True
+    assert out["missing"] == ["a" * 32]  # nothing in inactive/ to restore
