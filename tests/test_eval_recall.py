@@ -1054,3 +1054,36 @@ def test_run_config_pins_and_restores_flag_overrides(monkeypatch) -> None:
     eval_recall.run_config(_Mem(), cfg, 3, labels)
     assert seen["hyde"] == "1"          # pinned during the run
     assert "MEMO_HYDE_ENABLED" not in os.environ  # restored after
+
+
+def test_expand_labels_copies_expect_ids_and_project() -> None:
+    from memo.eval_recall import expand_labels
+
+    prompts = [
+        {"text": "cómo configuro el sync remoto?", "relevant": True,
+         "expect_ids": ["aaaabbbb"], "project": "project:memo"},
+        {"text": "prompt sin respuesta conocida", "relevant": False},
+    ]
+
+    def _gen(text: str, n: int) -> list[str]:
+        return [f"paráfrasis {i} de: {text}" for i in range(n)]
+
+    out = expand_labels(prompts, generate=_gen, per_prompt=2)
+    assert len(out) == 2  # only the expect_ids prompt expands
+    assert all(o["expect_ids"] == ["aaaabbbb"] for o in out)
+    assert all(o["project"] == "project:memo" for o in out)
+    assert all(o["relevant"] is True for o in out)
+    assert out[0]["expanded_from"].startswith("cómo configuro")
+
+
+def test_expand_labels_drops_duplicates_and_short() -> None:
+    from memo.eval_recall import expand_labels
+
+    prompts = [{"text": "cómo configuro el sync remoto?", "relevant": True,
+                "expect_ids": ["aaaabbbb"]}]
+    out = expand_labels(
+        prompts,
+        generate=lambda t, n: [t, "corto", "cómo seteo el sync remoto de memo?"],
+        per_prompt=3,
+    )
+    assert [o["text"] for o in out] == ["cómo seteo el sync remoto de memo?"]

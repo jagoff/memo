@@ -885,3 +885,44 @@ def merge_label_prompts(
             merged.append(h)
             toks.append(h_tok)
     return merged
+
+
+def expand_labels(
+    prompts: list[dict[str, Any]],
+    *,
+    generate: Callable[[str, int], list[str]],
+    per_prompt: int = 2,
+    max_prompts: int | None = None,
+) -> list[dict[str, Any]]:
+    """Paraphrase-expand labeled prompts: each prompt WITH expect_ids gains up
+    to ``per_prompt`` paraphrases carrying the SAME expect_ids/project — so
+    precision@K is exercised on phrasings the grounding log never produced.
+
+    ``generate(text, n) -> list[str]`` is injected: the CLI passes an MLX chat
+    closure; tests pass a stub (this module stays MLX-free). Duplicates of any
+    existing prompt (case-folded) and paraphrases under 8 chars are dropped.
+    Returns ONLY the new labels."""
+    existing = {str(p.get("text") or "").strip().lower() for p in prompts}
+    todo = [p for p in prompts if p.get("expect_ids")]
+    if max_prompts is not None:
+        todo = todo[:max_prompts]
+    out: list[dict[str, Any]] = []
+    for p in todo:
+        text = str(p.get("text") or "").strip()
+        if len(text) < 8:
+            continue
+        for para in list(generate(text, per_prompt))[:per_prompt]:
+            para = (para or "").strip()
+            if len(para) < 8 or para.lower() in existing:
+                continue
+            existing.add(para.lower())
+            label: dict[str, Any] = {
+                "text": para,
+                "relevant": True,
+                "expect_ids": [str(x) for x in p["expect_ids"]],
+                "expanded_from": text[:80],
+            }
+            if p.get("project"):
+                label["project"] = p["project"]
+            out.append(label)
+    return out

@@ -14,6 +14,7 @@ eval-chat`, `SYNAPSE_*` knobs, Ollama) — it belongs in synapse, not memo.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -400,6 +401,72 @@ def harvest_cmd(
         f"[green]✓[/green] harvested {len(harvested)} grounded label(s); "
         f"{len(prompts)} total ({answerable} with expect_ids) → {out_path}"
     )
+
+
+@eval_group.command(name="expand-labels")
+@click.option(
+    "--labels", "labels_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True,
+    help="Source label set (schema memo.eval_recall.labels.v1).",
+)
+@click.option(
+    "--out", "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("eval/expanded_labels.json"), show_default=True,
+    help="Where to write source prompts + paraphrases (never edits the source file).",
+)
+@click.option("--per-prompt", type=int, default=2, show_default=True)
+@click.option(
+    "--max-prompts", type=int, default=40, show_default=True,
+    help="Cap on source prompts (each costs one MLX chat call).",
+)
+def expand_labels_cmd(
+    labels_path: Path, out_path: Path, per_prompt: int, max_prompts: int
+) -> None:
+    """Grow the eval label set with MLX paraphrases of expect_ids prompts.
+
+    Offline batch (one local MLX chat call per source prompt, capped by
+    --max-prompts) — never the recall hook. Paraphrases inherit the source
+    prompt's expect_ids/project, so prec@K gets coverage on rephrasings."""
+    try:
+        raw = json.loads(labels_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"labels: {exc}") from exc
+    prompts = [p for p in (raw.get("prompts") or []) if isinstance(p, dict)]
+    cfg = Config.from_env()
+
+    def _generate(text: str, n: int) -> list[str]:
+        from memo.llm import MLXChat  # deferred — MLX invariant
+
+        ask = (
+            f"Reescribí la siguiente pregunta de {n} formas distintas, en el "
+            f"mismo idioma y con el mismo significado. Una por línea, sin "
+            f"numerar ni comentar.\n\n{text}"
+        )
+        resp = MLXChat().chat(
+            model=cfg.llm_model,
+            messages=[{"role": "user", "content": ask}],
+            options={"temperature": 0.7, "max_tokens": 200},
+        )
+        content = ((resp.get("message") or {}).get("content")) or ""
+        lines = [re.sub(r"^\s*(?:\d+[.)]|[-•*])\s*", "", ln).strip() for ln in content.splitlines()]
+        return [ln for ln in lines if ln]
+
+    new = eval_recall.expand_labels(
+        prompts, generate=_generate, per_prompt=per_prompt, max_prompts=max_prompts
+    )
+    label_set = {
+        "schema": "memo.eval_recall.labels.v1",
+        "_doc": (
+            "Source prompts + MLX paraphrases (`memo eval expand-labels`). Each "
+            "paraphrase inherits its source prompt's expect_ids (expanded_from "
+            "records the source). Safe to regenerate."
+        ),
+        "prompts": prompts + new,
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(label_set, ensure_ascii=False, indent=2), encoding="utf-8")
+    console.print(f"[green]✓[/green] {len(new)} paraphrase label(s) added → {out_path}")
 
 
 @eval_group.command(name="grounding")
