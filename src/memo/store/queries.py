@@ -569,6 +569,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def list_by_tag(self, tag: str, limit: int = 500) -> list[dict[str, Any]]:
+        """Rows whose JSON tags array contains `tag` exactly (tags are stored as
+        json.dumps(list), so the quoted token is an exact-tag match)."""
+        rows = self._conn.execute(
+            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            "FROM meta WHERE tags LIKE ? ORDER BY updated DESC LIMIT ?",
+            (f'%"{tag}"%', limit),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
     def list_recent(
         self,
         limit: int = 20,

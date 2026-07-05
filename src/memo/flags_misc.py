@@ -997,4 +997,24 @@ SPECS: tuple[FlagSpec, ...] = (
         "retag pass promotes it to global.",
         min_val=1,
     ),
+    # dream v2 — quarantine graduation: promote _uncertain captures that earned trust
+    _spec(
+        "MEMO_DREAM_GRADUATION_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly quarantine-graduation pass in `memo dream run`: "
+        "'_uncertain' auto-captures proven by grounding (used in an answer) or "
+        "by corroboration (support_count) get the tag removed and re-enter "
+        "auto-recall. Reversible via memo version rollback. Default off.",
+    ),
+    _spec(
+        "MEMO_DREAM_GRADUATION_MIN_SUPPORT",
+        "int",
+        2,
+        "misc",
+        "Corroboration floor for graduation: memory_health.support_count required "
+        "to promote an '_uncertain' capture without grounding evidence.",
+        min_val=1,
+    ),
 )

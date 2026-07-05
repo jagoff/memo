@@ -162,6 +162,7 @@ def dream_run(
         "compressed": [],
         "prewarm": {},
         "presynthesis": [],
+        "graduated": {},
         "errors": [],
     }
 
@@ -413,6 +414,26 @@ def dream_run(
             except Exception as exc:
                 receipt["errors"].append(f"consolidate_episodes: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[consolidate] [yellow]warn[/yellow]")
+
+        if flag_bool("MEMO_DREAM_GRADUATION_ENABLED"):
+            progress.update(step, description="[graduate] quarantined captures...")
+            try:
+                from memo import dream_graduate
+
+                receipt["graduated"] = dream_graduate.run_graduation(
+                    cfg,
+                    mem,
+                    min_support=flag_int("MEMO_DREAM_GRADUATION_MIN_SUPPORT") or 2,
+                    dry_run=dry_run,
+                )
+                _gr = receipt["graduated"]
+                progress.update(
+                    step,
+                    description=f"[graduate] [green]✓[/green]  {len(_gr.get('promoted', []))} promoted",
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"graduate: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[graduate] [yellow]warn[/yellow]")
 
         # Scope — project→global promotion: retag memories proven general ----
         if flag_bool("MEMO_DREAM_RETAG_GLOBAL_ENABLED"):
