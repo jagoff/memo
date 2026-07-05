@@ -134,10 +134,31 @@ def register(server: Any, memory: Memory) -> None:
 
     @server.tool()
     def memo_delete(id: str) -> dict[str, Any]:
+        from memo.flags import flag_bool
+
+        referenced_by: list[str] = []
+        if flag_bool("MEMO_CROSSREF_INDEX"):
+            try:
+                rec = memory.get(id)
+                if rec is not None:
+                    referenced_by = [
+                        b.source_id for b in memory.crossref.referencing_sources(rec.id)
+                    ]
+            except AmbiguousIdError as exc:
+                return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+            except Exception:
+                referenced_by = []
         try:
-            return {"deleted": memory.delete(id)}
+            out: dict[str, Any] = {"deleted": memory.delete(id)}
         except AmbiguousIdError as exc:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        if referenced_by:
+            out["cascade_warning"] = (
+                f"{len(referenced_by)} memories link to the deleted id; "
+                "their typed edges now dangle"
+            )
+            out["referenced_by"] = referenced_by
+        return out
 
     @server.tool()
     def memo_forget(id: str, reason: str | None = None) -> dict[str, Any]:

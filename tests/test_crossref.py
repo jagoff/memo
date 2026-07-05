@@ -309,3 +309,27 @@ def test_update_reindexes_links_and_delete_removes_them(mock_memory, monkeypatch
     assert [r.source_id for r in mock_memory.crossref.referencing_sources(t2.id)] == [src.id]
     mock_memory.delete(src.id)
     assert mock_memory.crossref.referencing_sources(t2.id) == []
+
+
+def test_memo_delete_warns_on_inbound_links(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CROSSREF_INDEX", "1")
+    from memo.server_core_records import register
+
+    target = mock_memory.save(content="t", title="Cascade target")
+    src = mock_memory.save(content=f"- supersedes [[{target.id}]]", title="Cascade source")
+
+    tools: dict = {}
+
+    class _Srv:
+        def tool(self, *a, **k):
+            def wrap(fn):
+                tools[fn.__name__] = fn
+                return fn
+
+            return wrap
+
+    register(_Srv(), mock_memory)
+    out = tools["memo_delete"](id=target.id)
+    assert out["deleted"] is True
+    assert out["referenced_by"] == [src.id]
+    assert "dangle" in out["cascade_warning"]

@@ -206,6 +206,7 @@ def maintain_cmd(
         "outcome_reconciled": 0,  # memories whose roi_score was re-derived from outcomes
         "dead_archived": [],  # surfaced-never-grounded memories soft-forgotten
         "errors": [],
+        "cascade_warnings": [],
     }
 
     # 0. Explicit forget TTLs ------------------------------------------------
@@ -255,6 +256,17 @@ def maintain_cmd(
                 if "contrad" not in rel:
                     continue  # consistent / unrelated — leave open
                 older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
+                if flag_bool("MEMO_CROSSREF_INDEX"):
+                    try:
+                        _refs = [
+                            b.source_id for b in mem.crossref.referencing_sources(older)
+                        ]
+                    except Exception:
+                        _refs = []
+                    if _refs:
+                        receipt["cascade_warnings"].append(
+                            {"target": older, "action": "supersede", "referenced_by": _refs}
+                        )
                 # C2 corroboration gate: a heavily re-asserted fact must not be
                 # auto-archived by ONE newer contradicting mention. Leave the
                 # pair open (status stays 'open' → triage via
