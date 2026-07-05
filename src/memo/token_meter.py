@@ -137,7 +137,11 @@ def session_usage(transcript_path: Path) -> SessionUsage | None:
     return SessionUsage(sid, len(turns), answer, tool, answer + tool)
 
 
-from memo.dashboard_logs import read_context_cost_log, read_grounding_log, read_recall_log  # noqa: E402
+from memo.dashboard_logs import (  # noqa: E402
+    read_context_cost_log,
+    read_grounding_log,
+    read_recall_log,
+)
 from memo.dashboard_metrics import GROUNDED_SCORE  # noqa: E402
 
 _CHARS_PER_TOKEN = 4

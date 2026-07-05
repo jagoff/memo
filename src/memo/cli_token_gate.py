@@ -30,7 +30,7 @@ def gate_metrics(state_dir: Path) -> dict:
         1 for r in ledger.get("sessions", {}).values() if int(r.get("injected_chars", 0)) > 0
     )
     return {
-        "cost_per_grounded": round(injected / grounded, 2) if grounded else float(injected),
+        "cost_per_grounded": float("inf") if grounded == 0 else round(injected / grounded, 2),
         "grounded_rate": round(grounded / inj_sessions, 4) if inj_sessions else 0.0,
         "injected_tokens": injected,
         "grounded": grounded,

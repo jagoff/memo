@@ -11,15 +11,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from memo.token_meter import (
     _band_key,
     learn_precision_bands,
     load_precision_bands,
     suppress_score,
 )
-
 
 # ---------------------------------------------------------------------------
 # _band_key — bucketing

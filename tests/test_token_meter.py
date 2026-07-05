@@ -105,7 +105,7 @@ def test_roll_joins_injection_and_grounding(tmp_path):
 
 def test_meter_flag_declared_and_default_on(monkeypatch):
     monkeypatch.delenv("MEMO_TOKEN_METER_ENABLED", raising=False)
-    from memo.flags import flag_bool, REGISTRY
+    from memo.flags import REGISTRY, flag_bool
 
     assert "MEMO_TOKEN_METER_ENABLED" in REGISTRY
     assert flag_bool("MEMO_TOKEN_METER_ENABLED") is True  # opt-out default-on

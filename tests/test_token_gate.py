@@ -31,3 +31,11 @@ def test_gate_fails_when_grounding_drops(tmp_path):
     _seed(state, "S1", 3, 100, 60, injected_chars=800, grounded=1)  # grounded collapsed
     ok, _ = g.check_gate(state, update_baseline=False)
     assert not ok
+
+
+def test_cost_per_grounded_is_inf_when_grounded_is_zero(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    _seed(state, "S1", 3, 100, 60, injected_chars=800, grounded=0)
+    m = g.gate_metrics(state)
+    assert m["cost_per_grounded"] == float("inf")

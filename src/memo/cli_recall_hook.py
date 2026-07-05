@@ -371,7 +371,8 @@ def recall_hook() -> None:
     # JSON — cheap for the 5 s recall-hook budget.  Default OFF.
     if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
         try:
-            from memo.token_meter import load_precision_bands, suppress_score as _pg_suppress
+            from memo.token_meter import load_precision_bands
+            from memo.token_meter import suppress_score as _pg_suppress
 
             _pg_bands = load_precision_bands(cfg.state_dir)
             if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
