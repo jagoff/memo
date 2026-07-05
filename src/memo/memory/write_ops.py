@@ -294,6 +294,23 @@ class _WriteOpsMixin(_MemoryBase):
                 f"<{60} chars); refusing to index",
             )
 
+        # Temporal grounding (MEMO_SAVE_NORMALIZE_DATES, default off): annotate
+        # relative date expressions with absolute ISO dates so "ayer"/"last
+        # week" stay recoverable later. Anchored to `created` when the caller
+        # back-dates (imports resolve against event time); durable tiers only —
+        # reference chunks mirror vault files and must not be rewritten.
+        # _normalize_relative_dates never raises (returns input on error).
+        if flag_bool("MEMO_SAVE_NORMALIZE_DATES") and type_ not in REFERENCE_TYPES:
+            import datetime as _dt
+
+            from memo.memory.consolidate_ops import _normalize_relative_dates
+
+            try:
+                _ref = _dt.date.fromisoformat(created[:10]) if created else _dt.date.today()
+            except ValueError:
+                _ref = _dt.date.today()
+            content = _normalize_relative_dates(content, _ref)
+
         if auto_derive:
             # Only fire the LLM if at least one field looks "default-y".
             # User-provided values always win.

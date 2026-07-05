@@ -390,4 +390,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "extraction or mine-history ever see it. An unclosed <private> drops to "
         "end-of-text (fail-closed). Set 0 to disable.",
     ),
+    _spec(
+        "MEMO_SAVE_NORMALIZE_DATES",
+        "bool",
+        False,
+        "behavior",
+        "Annotate relative date expressions in saved content with absolute ISO "
+        "dates ('ayer' -> 'ayer (2026-07-02)') using the ES+EN patterns of "
+        "_normalize_relative_dates. Anchored to the `created` override when the "
+        "caller back-dates (imports); durable tiers only — reference chunks are "
+        "never rewritten. Default off.",
+    ),
 )
