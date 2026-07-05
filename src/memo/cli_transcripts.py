@@ -17,6 +17,7 @@ from rich.panel import Panel
 
 from memo.cli_common import console
 from memo.config import Config
+from memo.prompt_overrides import resolve_prompt
 
 
 @click.command(name="mine-history")
@@ -327,7 +328,10 @@ def _reflect_session(
             timeout=60,
             model=cfg.llm_model,
             messages=[
-                {"role": "system", "content": _REFLECT_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": resolve_prompt("reflect", _REFLECT_SYSTEM_PROMPT, cfg.state_dir),
+                },
                 {"role": "user", "content": prompt},
             ],
             options={"temperature": 0.0, "num_predict": 1024},

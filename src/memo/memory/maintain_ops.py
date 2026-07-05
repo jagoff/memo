@@ -32,6 +32,7 @@ from memo.memory.record import (
     chat_with_timeout,
     strip_llm_output,
 )
+from memo.prompt_overrides import resolve_prompt
 from memo.util import sha256_full as _sha256_full
 from memo.util import sha256_short as _sha256_short
 
@@ -682,7 +683,10 @@ class _MaintainOpsMixin(_MemoryBase):
                     timeout=30,
                     model=self.cfg.helper_model,
                     messages=[
-                        {"role": "system", "content": _EXTRACT_ENTITIES_SYSTEM_PROMPT},
+                        {
+                            "role": "system",
+                            "content": resolve_prompt("extract_entities", _EXTRACT_ENTITIES_SYSTEM_PROMPT, self.cfg.state_dir),
+                        },
                         {"role": "user", "content": user_msg},
                     ],
                     options={"temperature": 0.0, "max_tokens": 384, "thinking": False},

@@ -35,6 +35,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from memo.llm import MLXChat
+from memo.prompt_overrides import resolve_prompt
 
 _log = logging.getLogger(__name__)
 
@@ -224,7 +225,10 @@ Body: {(r2.body or "")[:1000]}
                 timeout=_pair_classify_timeout(),
                 model=self.memory.cfg.helper_model,
                 messages=[
-                    {"role": "system", "content": _CONTRADICTION_SYSTEM_PROMPT},
+                    {
+                        "role": "system",
+                        "content": resolve_prompt("contradiction", _CONTRADICTION_SYSTEM_PROMPT, self.memory.cfg.state_dir),
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 options={

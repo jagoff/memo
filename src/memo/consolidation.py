@@ -32,6 +32,7 @@ from typing import Any
 
 from memo.llm import MLXChat
 from memo.memory.record import bump_support_if_enabled, chat_with_timeout, derived_save_scope
+from memo.prompt_overrides import resolve_prompt
 
 _log = logging.getLogger(__name__)
 
@@ -152,7 +153,7 @@ class AdvancedConsolidator:
             prompt += f"{m.get('body_preview', '')}\n\n"
 
         messages = [
-            {"role": "system", "content": _MERGE_SYSTEM_PROMPT},
+            {"role": "system", "content": resolve_prompt("merge", _MERGE_SYSTEM_PROMPT, self.memory.cfg.state_dir)},
             {"role": "user", "content": prompt},
         ]
 

@@ -36,6 +36,7 @@ from memo.memory.record import (
     in_derived_save_scope,
     is_reference_noise,
 )
+from memo.prompt_overrides import resolve_prompt
 from memo.tiers import REFERENCE_TYPES
 from memo.util import sha256_short as _sha256_short
 
@@ -161,7 +162,10 @@ class _WriteOpsMixin(_MemoryBase):
             out = chat.chat(
                 model=self.cfg.helper_model,
                 messages=[
-                    {"role": "system", "content": _DERIVE_SYSTEM_PROMPT},
+                    {
+                        "role": "system",
+                        "content": resolve_prompt("derive", _DERIVE_SYSTEM_PROMPT, self.cfg.state_dir),
+                    },
                     # Cap input to keep the prompt cheap. The helper only
                     # needs the gist, not the full body.
                     {"role": "user", "content": content[:2000]},

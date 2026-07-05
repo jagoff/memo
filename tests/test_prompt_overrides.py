@@ -61,3 +61,27 @@ def test_extract_insights_uses_override_prompt(tmp_path: Path):
 
     extract_insights(_Chat(), "m", "user text", "assistant text", state_dir=tmp_path)
     assert seen["system"] == "CUSTOM EXTRACTOR"
+
+
+_CALL_SITES = [
+    ("src/memo/memory/ask_ops.py", "ask"),
+    ("src/memo/memory/consolidate_ops.py", "consolidate"),
+    ("src/memo/memory/consolidate_ops.py", "synthesis"),
+    ("src/memo/memory/write_ops.py", "derive"),
+    ("src/memo/memory/maintain_ops.py", "extract_entities"),
+    ("src/memo/cli_transcripts.py", "reflect"),
+    ("src/memo/temporal.py", "contradiction"),
+    ("src/memo/proactive.py", "suggestion"),
+    ("src/memo/consolidation.py", "merge"),
+]
+
+
+def test_every_llm_call_site_resolves_its_prompt():
+    """Guard: no chat() call may pass a raw prompt constant — each must route
+    through resolve_prompt("<name>", ...) so user overrides take effect."""
+    root = Path(__file__).resolve().parents[1]
+    for rel, name in _CALL_SITES:
+        text = (root / rel).read_text(encoding="utf-8")
+        assert f'resolve_prompt("{name}"' in text, (
+            f"{rel}: chat() call does not resolve prompt {name!r} via prompt_overrides"
+        )

@@ -23,6 +23,7 @@ from memo.memory.record import (
     chat_with_timeout,
     strip_llm_output,
 )
+from memo.prompt_overrides import resolve_prompt
 
 
 def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
@@ -378,7 +379,10 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     timeout=flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180,
                     model=self.cfg.helper_model,
                     messages=[
-                        {"role": "system", "content": _CONSOLIDATE_SYSTEM_PROMPT},
+                        {
+                            "role": "system",
+                            "content": resolve_prompt("consolidate", _CONSOLIDATE_SYSTEM_PROMPT, self.cfg.state_dir),
+                        },
                         {"role": "user", "content": prompt},
                     ],
                     options={"temperature": 0.0, "max_tokens": 384, "thinking": False},
@@ -545,7 +549,10 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     timeout=flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180,
                     model=self.cfg.helper_model,
                     messages=[
-                        {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},
+                        {
+                            "role": "system",
+                            "content": resolve_prompt("synthesis", _SYNTHESIS_SYSTEM_PROMPT, self.cfg.state_dir),
+                        },
                         {"role": "user", "content": prompt},
                     ],
                     options={"temperature": 0.0, "max_tokens": 512, "thinking": False},

@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from memo.llm import MLXChat
+from memo.prompt_overrides import resolve_prompt
 
 _log = logging.getLogger(__name__)
 
@@ -140,7 +141,10 @@ class ProactiveSuggester:
             out = chat.chat(
                 model=self.memory.cfg.helper_model,
                 messages=[
-                    {"role": "system", "content": _SUGGESTION_SYSTEM_PROMPT},
+                    {
+                        "role": "system",
+                        "content": resolve_prompt("suggestion", _SUGGESTION_SYSTEM_PROMPT, self.memory.cfg.state_dir),
+                    },
                     {"role": "user", "content": context},
                 ],
                 options={"temperature": 0.0, "max_tokens": 512},

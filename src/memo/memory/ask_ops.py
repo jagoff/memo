@@ -27,6 +27,7 @@ from memo.memory.record import (
     _vault_dedup_keys,
     record_from_row,
 )
+from memo.prompt_overrides import resolve_prompt
 
 
 class _AskOpsMixin(_MemoryBase):
@@ -480,7 +481,10 @@ class _AskOpsMixin(_MemoryBase):
             out = chat.chat(
                 model=self.cfg.llm_model,
                 messages=[
-                    {"role": "system", "content": _ASK_SYSTEM_PROMPT},
+                    {
+                        "role": "system",
+                        "content": resolve_prompt("ask", _ASK_SYSTEM_PROMPT, self.cfg.state_dir),
+                    },
                     {"role": "user", "content": user_msg},
                 ],
                 # Higher max_tokens than auto_derive — answers can run a
@@ -562,7 +566,10 @@ class _AskOpsMixin(_MemoryBase):
             for delta in chat.chat_stream(
                 model=self.cfg.llm_model,
                 messages=[
-                    {"role": "system", "content": _ASK_SYSTEM_PROMPT},
+                    {
+                        "role": "system",
+                        "content": resolve_prompt("ask", _ASK_SYSTEM_PROMPT, self.cfg.state_dir),
+                    },
                     {"role": "user", "content": user_msg},
                 ],
                 options={"temperature": 0.0, "max_tokens": 768},
