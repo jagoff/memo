@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS meta (
 
 CREATE INDEX IF NOT EXISTS idx_meta_type    ON meta(type);
 CREATE INDEX IF NOT EXISTS idx_meta_updated ON meta(updated);
+CREATE INDEX IF NOT EXISTS idx_meta_created ON meta(created);
 -- Exact + prefix-LIKE path lookups (queries.py filters by path) and
 -- type-filtered recency scans. Added by _ensure_secondary_indices() on
 -- existing DBs too — see that method.

@@ -13,7 +13,8 @@ def _chunk(mem, seq: int):
 
 
 def test_chunks_adjacent_returns_seq_window(mock_memory):
-    recs = {seq: _chunk(mock_memory, seq) for seq in range(1, 8)}
+    for seq in range(1, 8):
+        _chunk(mock_memory, seq)
     rows = mock_memory.store.chunks_adjacent("notes/doc.md", 4, before=2, after=2)
     assert [r["extra"]["chunk_seq"] for r in rows] == [2, 3, 4, 5, 6]
 
