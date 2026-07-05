@@ -1,5 +1,7 @@
 import json as _json
 
+from click.testing import CliRunner
+
 from memo import token_meter as tm
 
 
@@ -136,8 +138,6 @@ def test_summarize_proxy_grounded_vs_ungrounded(tmp_path):
 # Task-4: additive measured panel in `memo tokens`
 # ---------------------------------------------------------------------------
 
-from click.testing import CliRunner
-
 
 def _cli_env(tmp_path):
     return {"MEMO_NONINTERACTIVE": "1",
@@ -168,3 +168,4 @@ def test_tokens_json_preserves_ledger_schema(tmp_path):
     # frozen token_ledger keys must all remain present
     for key in ("today", "month", "historic", "daily", "monthly", "growth", "tpg", "ledger_path"):
         assert key in payload
+    assert "measured" in payload   # additive key must actually be written

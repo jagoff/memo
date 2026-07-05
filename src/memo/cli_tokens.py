@@ -139,7 +139,7 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
             f"tool-spend grounded {p['grounded_tool_tok_per_turn']} vs "
             f"no-grounded {p['ungrounded_tool_tok_per_turn']} tok/turno"
             + (f"  (Δ {delta:+.0f})" if delta is not None else "")
-            if p["grounded_tool_tok_per_turn"] is not None
+            if p["grounded_tool_tok_per_turn"] is not None and p["ungrounded_tool_tok_per_turn"] is not None
             else "proxy: aún sin sesiones grounded+no-grounded para comparar"
         )
         console.print(Panel(
