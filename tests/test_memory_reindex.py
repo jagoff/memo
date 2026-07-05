@@ -179,6 +179,45 @@ def test_reindex_adds_orphan_disk_file(mem_with_stub: Memory):
     assert fetched.title == "Restored"
 
 
+def test_reindex_reclaims_path_held_by_soft_deleted_tombstone(mem_with_stub: Memory, monkeypatch):
+    # Prod incident 2026-07-05: with MEMO_SOFT_DELETE on, a deleted memory
+    # leaves a tombstone row that still occupies UNIQUE(meta.path). When a
+    # new file (new id) reclaims the same path, reindex used to fail the
+    # INSERT ("UNIQUE constraint failed: meta.path") because the collision
+    # guard's lookup excluded soft-deleted rows and its soft delete kept
+    # the path occupied.
+    import frontmatter as fm
+
+    monkeypatch.setenv("MEMO_SOFT_DELETE", "1")
+    rec = mem_with_stub.save(content="primera encarnación", title="Reclaimable")
+    rel = rec.path
+    mem_with_stub.delete(rec.id)
+    assert mem_with_stub.get(rec.id) is None
+
+    new_id = "aabbccdd00112233445566778899ffee"
+    md = mem_with_stub.cfg.memory_dir / rel
+    md.parent.mkdir(parents=True, exist_ok=True)
+    post = fm.Post(
+        "segunda encarnación, mismo path",
+        id=new_id,
+        title="Reclaimable",
+        type="note",
+        created="2026-07-05T19:00:00-03:00",
+        updated="2026-07-05T19:00:00-03:00",
+    )
+    md.write_text(fm.dumps(post), encoding="utf-8")
+
+    counts = mem_with_stub.reindex()
+    assert counts["added"] == 1
+    assert counts["skipped"] == 0
+    fetched = mem_with_stub.get(new_id)
+    assert fetched is not None
+    assert "segunda encarnación" in fetched.body
+    # The tombstone was purged — the path now belongs to the new id only.
+    row = mem_with_stub.store.get_by_path(rel, include_deleted=True)
+    assert row is not None and row["id"] == new_id
+
+
 def test_gc_reports_and_fixes_orphans(mem_with_stub: Memory):
     a = mem_with_stub.save(content="vivo", title="A")
     b = mem_with_stub.save(content="vivo", title="B")

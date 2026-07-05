@@ -295,7 +295,11 @@ class _MaintainOpsMixin(_MemoryBase):
                 # vault-relative path stays the same. The store's
                 # UNIQUE(meta.path) constraint blocks a plain INSERT, so we
                 # drop the orphan row before re-adding under the new id.
-                stale = self.store.get_by_path(rel)
+                # include_deleted + hard_delete: a soft-deleted tombstone
+                # still holds the path in the UNIQUE index (a soft delete
+                # would leave it there and the INSERT would fail again) —
+                # the disk file reclaims the path, so the tombstone is purged.
+                stale = self.store.get_by_path(rel, include_deleted=True)
                 if stale is not None:
                     _log.warning(
                         "reindex: path %r reused with new id (%s → %s); replacing stale row",
@@ -303,7 +307,7 @@ class _MaintainOpsMixin(_MemoryBase):
                         stale["id"][:8],
                         md_id[:8],
                     )
-                    self.store.delete(stale["id"])
+                    self.store.hard_delete(stale["id"])
                 had_embed_pending = False
                 if isinstance(extra, dict):
                     extra = dict(extra)
