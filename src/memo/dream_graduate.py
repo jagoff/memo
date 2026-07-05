@@ -37,10 +37,7 @@ def _grounded_ids(state_dir: Any) -> set[str]:
 def _support_count(mem: Any, id_: str) -> int:
     """support_count from memory_health; 0 when the column doesn't exist yet."""
     try:
-        row = mem.store._conn.execute(
-            "SELECT support_count FROM memory_health WHERE id = ?", (id_,)
-        ).fetchone()
-        return int(row["support_count"]) if row and row["support_count"] else 0
+        return mem.store.get_support_batch([id_]).get(id_, 0)
     except Exception:
         return 0
 
