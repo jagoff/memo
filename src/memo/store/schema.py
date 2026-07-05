@@ -448,6 +448,10 @@ class _SchemaMixin(_StoreBase):
             "CREATE INDEX IF NOT EXISTS idx_access_count_last "
             "ON access(access_count, last_accessed)",
         ),
+        (
+            "idx_meta_created",
+            "CREATE INDEX IF NOT EXISTS idx_meta_created ON meta(created)",
+        ),
     )
 
     def _ensure_secondary_indices(self) -> None:
