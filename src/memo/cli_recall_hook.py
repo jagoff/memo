@@ -72,10 +72,6 @@ def recall_hook() -> None:
         print("{}")
         sys.exit(0)
 
-    if flag_bool("MEMO_RECALL_DISABLE"):
-        _bail("disabled via MEMO_RECALL_DISABLE")
-        return
-
     try:
         raw = sys.stdin.read()
         if not raw.strip():
@@ -88,6 +84,36 @@ def recall_hook() -> None:
 
     prompt = (payload.get("prompt") or "").strip()
     _sid = (payload.get("session_id") or "").strip() or None
+
+    if flag_bool("MEMO_RECALL_DISABLE"):
+        # Ablation cohort: recall is OFF for this turn. Stamp it (via="disabled",
+        # with prompt/session/turn) so `memo roi`/`memo tokens` can report real
+        # with-vs-without deltas. No embed/search/Memory import — this path is
+        # one JSON parse + one small file append, far inside the 5s budget.
+        _turn_off: int | None = None
+        if _sid:
+            try:
+                from memo import session as _session_mod
+
+                _turn_off = _session_mod.next_turn(cfg.state_dir, _sid)
+            except Exception as e:
+                _log.debug("next_turn (disabled path) failed: %s", e)
+        try:
+            from memo.dashboard import append_recall_log
+
+            append_recall_log(
+                cfg.state_dir,
+                prompt=prompt,
+                hits=[],
+                via="disabled",
+                session_id=_sid,
+                turn=_turn_off,
+                client=flag_str("MEMO_RECALL_CLIENT"),
+            )
+        except Exception as exc:
+            _log.debug("disabled recall-log write failed: %s", exc)
+        print("{}")
+        sys.exit(0)
     _mc = flag_int("MEMO_RECALL_MIN_PROMPT_CHARS")
     min_chars = 12 if _mc is None else _mc
 

@@ -306,6 +306,27 @@ def test_tokens_cmd_json_rolls_up_and_reports(tmp_path: Path) -> None:
     assert token_ledger.ledger_path(state).is_file()
 
 
+def test_roll_up_merges_cohort_turn_counts(tmp_path: Path) -> None:
+    from memo import token_ledger
+    from memo.dashboard import append_grounding_log, append_recall_log
+
+    append_recall_log(tmp_path, prompt="q on", hits=[], via="subprocess",
+                      session_id="s1", turn=1)
+    append_recall_log(tmp_path, prompt="q off", hits=[], via="disabled",
+                      session_id="s1", turn=2)
+    append_grounding_log(tmp_path, session_id="s1", turn=1,
+                         recall_id="aaaabbbb", used_score=0.9, method="lexical")
+    ledger = token_ledger.roll_up(tmp_path)
+    (day,) = ledger["days"].keys()
+    rec = ledger["days"][day]
+    assert rec["grounded"] == 1
+    assert rec["turns_on"] == 1
+    assert rec["turns_off"] == 1
+    # idempotent + monotonic: a second roll_up never shrinks any key
+    again = token_ledger.roll_up(tmp_path)["days"][day]
+    assert again == rec
+
+
 def test_tokens_cmd_empty_is_graceful(tmp_path: Path) -> None:
     from click.testing import CliRunner
 

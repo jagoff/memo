@@ -81,6 +81,26 @@ def test_recall_hook_returns_json_when_embedder_raises(
         json.loads(output)  # must be valid JSON if anything was printed
 
 
+def test_recall_disabled_stamps_off_cohort(recall_env: Config, monkeypatch) -> None:
+    """MEMO_RECALL_DISABLE must stamp the turn (via='disabled') into
+    recall_hook.log so `memo roi` can compare recall-on/off cohorts."""
+    from memo.dashboard import read_recall_hook_log
+
+    monkeypatch.setenv("MEMO_RECALL_DISABLE", "1")
+    runner = CliRunner()
+    payload = json.dumps(
+        {"prompt": "cómo configuro el sync remoto de memo?", "session_id": "abl-1"}
+    )
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0
+    assert result.output.strip().splitlines()[-1] == "{}"  # hook still injects nothing
+    rows = [r for r in read_recall_hook_log(recall_env.state_dir) if r.get("session_id") == "abl-1"]
+    assert len(rows) == 1
+    assert rows[0]["via"] == "disabled"
+    assert rows[0]["prompt"].startswith("cómo configuro el sync")
+    assert isinstance(rows[0]["turn"], int)
+
+
 def test_recall_hook_concurrent_invocations(recall_env: Config) -> None:
     """Multiple concurrent recall-hook CLI invocations must not deadlock or raise.
 

@@ -34,7 +34,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-from .dashboard import GROUNDED_SCORE, read_grounding_log
+from .dashboard import GROUNDED_SCORE, read_grounding_log, read_recall_hook_log
 from .flags import flag_int
 
 LEDGER_SCHEMA = "memo.token_savings.daily.v1"
@@ -131,6 +131,32 @@ def grounded_by_day(
     return out
 
 
+def turns_by_cohort(
+    rows: list[dict],
+    *,
+    to_day: Callable[[str], str | None] = _local_date,
+) -> dict[str, dict[str, int]]:
+    """Per-local-day recall-hook turn counts split by ablation cohort.
+
+    ``on`` = turns the hook served (daemon/subprocess path); ``off`` = turns
+    short-circuited by MEMO_RECALL_DISABLE (via="disabled"). Bail rows carry
+    neither and are excluded — they are not comparable turns."""
+    out: dict[str, dict[str, int]] = {}
+    for r in rows:
+        via = r.get("via")
+        if via == "disabled":
+            cohort = "off"
+        elif via in ("daemon", "subprocess"):
+            cohort = "on"
+        else:
+            continue
+        day = to_day(r.get("ts", ""))
+        if day is None:
+            continue
+        out.setdefault(day, {"on": 0, "off": 0})[cohort] += 1
+    return out
+
+
 def roll_up(state_dir: Path, *, limit: int = 4000) -> dict:
     """Fold grounded events from grounding.log into the durable ledger.
 
@@ -149,12 +175,27 @@ def roll_up(state_dir: Path, *, limit: int = 4000) -> dict:
         fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
         ledger = read_ledger(state_dir)
         days: dict = ledger.setdefault("days", {})
+        changed = False
         observed = grounded_by_day(read_grounding_log(state_dir, limit=limit))
         for day, n in observed.items():
             prev = int(days.get(day, {}).get("grounded", 0))
             if n >= prev:
-                days[day] = {"grounded": n}
-        if observed:
+                days[day] = {**days.get(day, {}), "grounded": n}
+                changed = True
+        cohorts = turns_by_cohort(read_recall_hook_log(state_dir, limit=limit))
+        for day, c in cohorts.items():
+            cur = days.get(day, {})
+            merged = {
+                "turns_on": max(int(cur.get("turns_on", 0)), c["on"]),
+                "turns_off": max(int(cur.get("turns_off", 0)), c["off"]),
+            }
+            if (merged["turns_on"], merged["turns_off"]) != (
+                int(cur.get("turns_on", 0)),
+                int(cur.get("turns_off", 0)),
+            ):
+                days[day] = {**cur, **merged}
+                changed = True
+        if changed:
             write_ledger(state_dir, ledger)
     return ledger
 
