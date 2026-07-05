@@ -410,4 +410,7 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    _spec("MEMO_RECALL_SESSION_TOKEN_BUDGET", "int", 0, "recall",
+          "Cumulative recall-token budget per session; past it, per-turn budget decays "
+          "(0 = off). Conservative: only scales down, never hard-bails.", min_val=0),
 )

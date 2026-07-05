@@ -18,6 +18,16 @@ from memo.flags import flag_bool, flag_float, flag_int, flag_str
 
 _log = logging.getLogger("memo.cli_recall_hook")
 
+_SESSION_BUDGET_FLOOR = 150
+
+
+def session_budget_scale(cumulative: int, session_budget: int, base_budget: int) -> int:
+    """Decay the per-turn token budget once a session's cumulative recall spend
+    passes ``session_budget``. Conservative: halve, floored — never zero/bail."""
+    if session_budget <= 0 or cumulative < session_budget:
+        return base_budget
+    return max(_SESSION_BUDGET_FLOOR, base_budget // 2)
+
 
 _TRIVIAL_WORDS: frozenset[str] = frozenset(
     {
@@ -235,6 +245,23 @@ def recall_hook() -> None:
         elif prompt_len > 300:
             token_budget = int(max(token_budget * 0.6, 200))
         # Mid-range stays as-is
+
+    # Session cumulative budget decay: once the session has consumed more than
+    # MEMO_RECALL_SESSION_TOKEN_BUDGET tokens of recall context, halve the
+    # per-turn budget (floored at _SESSION_BUDGET_FLOOR). Default OFF (0).
+    _sess_budget = flag_int("MEMO_RECALL_SESSION_TOKEN_BUDGET") or 0
+    if _sess_budget > 0 and token_budget > 0 and _sid:
+        try:
+            from memo.dashboard import read_context_cost_log
+
+            _cum = sum(
+                (int(e.get("chars") or 0) + 3) // 4
+                for e in read_context_cost_log(cfg.state_dir)
+                if e.get("kind") == "recall" and e.get("session_id") == _sid
+            )
+            token_budget = session_budget_scale(_cum, _sess_budget, token_budget)
+        except Exception as exc:
+            _log.debug("session budget scale failed: %s", exc)
 
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
