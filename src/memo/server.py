@@ -30,6 +30,7 @@ from typing import Any, cast
 from fastmcp import FastMCP
 
 from memo import server_analytics as _srv_analytics
+from memo import server_around as _srv_around
 from memo import server_asof as _srv_asof
 from memo import server_backup as _srv_backup
 from memo import server_cache as _srv_cache
@@ -147,6 +148,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         _srv_reflect.register(server, memory)
         _srv_graph.register(server, memory)
         _srv_related.register(server, memory)
+        _srv_around.register(server, memory)
         _srv_health.register(server, memory)
         _srv_contextual.register(server, memory)
         _srv_links.register(server, memory)
