@@ -51,6 +51,7 @@ from memo import server_idle_capture as _srv_idle_capture
 from memo import server_import_export as _srv_import_export
 from memo import server_links as _srv_links
 from memo import server_multimodal as _srv_multimodal
+from memo import server_offload as _srv_offload
 from memo import server_query as _srv_query
 from memo import server_reflect as _srv_reflect
 from memo import server_related as _srv_related
@@ -181,6 +182,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     # corpus navigation, not the nine advanced memo_graph_* tools.
     _srv_graph_tool.register(server, memory)
     _srv_core_records.register(server, memory)
+    _srv_offload.register(server, memory)
     _srv_core_search.register(server, memory)
     _srv_core_history.register(server, memory)
     _srv_idle_capture.register(server, memory)

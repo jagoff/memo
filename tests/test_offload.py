@@ -57,3 +57,20 @@ def test_offload_rejects_empty_and_oversize(mock_memory):
     assert offload(mock_memory, "  ")["error"] == "empty"
     big = "x" * (mock_memory.cfg.max_content_chars + 1)
     assert offload(mock_memory, big)["error"] == "too_large"
+
+
+def test_memo_offload_tool_registered_and_roundtrips(mock_memory):
+    import asyncio
+
+    from memo.server import build_server
+
+    server = build_server(memory=mock_memory)
+    tool = asyncio.run(server.get_tool("memo_offload"))
+    assert tool is not None, "memo_offload must be registered on the core surface"
+    out = tool.fn(content='{"a": 1}')
+    assert out["kind"] == "json"
+    got = asyncio.run(server.get_tool("memo_get")).fn(id=out["id"])
+    # Task 7's offload() prefixes a self-describing `# {label}` heading so the
+    # reference-tier noise gate accepts the payload; the raw payload round-trips
+    # verbatim as the body tail (drill-down retrievability is the contract).
+    assert got["body"].endswith('{"a": 1}')

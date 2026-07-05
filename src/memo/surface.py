@@ -48,6 +48,9 @@ AGENT_MCP_TOOLS: frozenset[str] = frozenset(
         "memo_ask",
         "memo_get",
         "memo_graph",
+        # Context-economy primitive registered always-on and never removed —
+        # present on every surface profile (incl. the minimal agent one).
+        "memo_offload",
         "memo_rename",
         "memo_save",
         "memo_search",
