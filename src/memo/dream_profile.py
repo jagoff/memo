@@ -22,6 +22,7 @@ records failures in ``receipt["errors"]``).
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -203,3 +204,168 @@ def losing_ids(
             older, newer = (a, b) if ua <= ub else (b, a)
             out.add(newer if status == "kept_older" else older)
     return out
+
+
+# --- LLM distillation + orchestrator (guarded) --------------------------------
+
+_MAX_RULES = 20
+_RULE_TEXT_CHARS = 140
+
+_SYS = (
+    "You maintain ONE bounded profile document distilled from a user's saved "
+    "memories. Rewrite the prior profile IN PLACE: keep still-true content, "
+    "fold in the new memories, drop anything superseded. State ONLY what the "
+    "memories state — never invent. Plain markdown bullet points under short "
+    "headings (identity, preferences, conventions, key decisions). "
+    "No frontmatter, no top-level title. Stay under {budget} characters."
+)
+
+
+def _llm_distill(
+    mem: Any,
+    docs: list[dict[str, str]],
+    *,
+    prior: str,
+    scope: str,
+    budget: int,
+) -> str | None:
+    """One bounded chat call → the rewritten narrative, or None (skip)."""
+    from memo.memory.record import chat_with_timeout
+
+    if not docs:
+        return None
+    mem_lines = "\n".join(
+        f"- [{d['type']}] {d['title']}: {d['body'][:400]}" for d in docs[:40]
+    )
+    prompt = (
+        f"Scope: {scope}\n\nPRIOR PROFILE (may be empty):\n{prior[:budget]}\n\n"
+        f"MEMORIES:\n{mem_lines}\n\nRewrite the profile."
+    )
+    out = chat_with_timeout(
+        mem._ensure_chat(),
+        timeout=60,
+        model=mem.cfg.helper_model,
+        messages=[
+            {"role": "system", "content": _SYS.format(budget=budget)},
+            {"role": "user", "content": prompt},
+        ],
+        options={"temperature": 0.0, "max_tokens": 1024, "thinking": False},
+    )
+    if out is None:
+        return None
+    text = ((out.get("message") or {}).get("content") or "").strip()
+    return text or None
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".md.tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _docs_for(mem: Any, rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    docs: list[dict[str, str]] = []
+    for r in rows:
+        rec = mem.get(str(r.get("id") or ""))
+        if rec is None:
+            continue
+        docs.append(
+            {
+                "id": rec.id,
+                "type": rec.type,
+                "title": rec.title or "",
+                "body": (rec.body or "").strip(),
+            }
+        )
+    return docs
+
+
+def _gather_rules(mem: Any, cfg: Any, *, k: int, min_used: float) -> list[tuple[str, str]]:
+    """Graduated standing rules: cited >= k distinct sessions, not superseded."""
+    from memo.dashboard import read_grounding_log
+
+    grounding = read_grounding_log(Path(cfg.state_dir))
+    prefixes = standing_rule_ids(grounding, k=k, min_used=min_used)
+    pairs = [
+        {"status": p.status, "memory_id_a": p.memory_id_a, "memory_id_b": p.memory_id_b}
+        for p in mem.contradict_store.list_all()
+    ]
+    retired = losing_ids(pairs, lambda mid: getattr(mem.get(mid), "updated", None))
+    rules: list[tuple[str, str]] = []
+    for prefix in prefixes:
+        rec = mem.get(prefix)  # resolves 8-char prefixes; archived → None → retired
+        if rec is None or rec.id in retired or rec.type == "reference":
+            continue
+        text = (rec.title or "").strip()
+        if not text:
+            body_lines = (rec.body or "").strip().splitlines()
+            text = body_lines[0].strip() if body_lines else ""
+        if not text:
+            continue
+        rules.append((rec.id, text[:_RULE_TEXT_CHARS]))
+        if len(rules) >= _MAX_RULES:
+            break
+    return rules
+
+
+def run_profile_pass(
+    cfg: Any,
+    mem: Any,
+    *,
+    char_budget: int = 4000,
+    max_projects: int = 5,
+    directive_k: int = 3,
+    directive_min_used: float = 0.5,
+    scan_limit: int = 500,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """One nightly profile-distillation pass. Never raises — the cli_dream
+    caller records a returned ``status="error"`` in ``receipt["errors"]``."""
+    res: dict[str, Any] = {"status": "noop", "written": [], "standing_rules": 0}
+    try:
+        from datetime import UTC, datetime
+
+        rows = mem.store.list_recent(limit=scan_limit, exclude_types={"reference"})
+        rules = _gather_rules(mem, cfg, k=directive_k, min_used=directive_min_used)
+        res["standing_rules"] = len(rules)
+        now = datetime.now(tz=UTC).isoformat(timespec="seconds")
+        scopes: list[str | None] = [None, *project_buckets(rows)[:max_projects]]
+        for scope in scopes:
+            sources = select_sources(rows, project=scope)
+            scope_rules = rules if scope is None else []  # rules render globally
+            scope_name = scope or "global"
+            if not sources and not scope_rules:
+                continue
+            path = profile_path(cfg, scope)
+            prior = path.read_text(encoding="utf-8") if path.is_file() else ""
+            docs = _docs_for(mem, sources)
+            narrative = _llm_distill(mem, docs, prior=prior, scope=scope_name,
+                                     budget=char_budget)
+            if narrative is None and not scope_rules:
+                res["written"].append({"scope": scope_name, "status": "skipped"})
+                continue
+            content = render_profile(
+                scope=scope_name,
+                narrative=narrative or "",
+                rules=scope_rules,
+                source_ids=[d["id"] for d in docs],
+                updated=now,
+                char_budget=char_budget,
+            )
+            if dry_run:
+                res["written"].append(
+                    {"scope": scope_name, "status": "would_write", "chars": len(content)}
+                )
+            else:
+                _atomic_write(path, content)
+                res["written"].append(
+                    {"scope": scope_name, "status": "written",
+                     "chars": len(content), "path": str(path)}
+                )
+        if any(w.get("status") in ("written", "would_write") for w in res["written"]):
+            res["status"] = "done"
+    except Exception as exc:  # surfaced via receipt["errors"], never silent
+        res["status"] = "error"
+        res["error"] = f"{type(exc).__name__}: {exc}"
+    return res

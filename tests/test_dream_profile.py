@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json as _json
+
 from memo import dream_profile as dp
 
 
@@ -159,3 +161,155 @@ def test_losing_ids_retires_missing_record_outright():
     # archived (superseded) records resolve to None — retired without comparison
     pairs = [{"status": "evolved", "memory_id_a": "gone", "memory_id_b": "live"}]
     assert dp.losing_ids(pairs, {"live": "2026-06-01"}.get) == {"gone"}
+
+
+# --- orchestrator (B1: rewrite-in-place; B3: rules block) ----------------------
+
+
+class _Rec:
+    def __init__(self, id_, type_="preference", title="Prefers pytest", body="body",
+                 updated="2026-06-01"):
+        self.id, self.type, self.title, self.body, self.updated = (
+            id_, type_, title, body, updated,
+        )
+
+
+class _PairStore:
+    def __init__(self, pairs=None):
+        self._pairs = pairs or []
+
+    def list_all(self, status=None, limit=200):
+        return self._pairs
+
+
+class _FakePair:
+    def __init__(self, status, a, b):
+        self.status, self.memory_id_a, self.memory_id_b = status, a, b
+
+
+class _Mem:
+    """Duck-typed Memory facade: store.list_recent + prefix-resolving get."""
+
+    def __init__(self, rows, recs, pairs=None):
+        self._rows, self._recs = rows, recs
+        self.contradict_store = _PairStore(pairs)
+        self.store = self
+
+    def list_recent(self, limit=500, exclude_types=None):
+        return self._rows
+
+    def get(self, id_):
+        for full, rec in self._recs.items():
+            if full.startswith(id_):
+                return rec
+        return None
+
+
+def _mk_cfg(tmp_path):
+    cfg = _Cfg(tmp_path)
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    return cfg
+
+
+def _write_grounding(state_dir, rid8, sessions, used=0.9):
+    lines = [
+        _json.dumps({"session_id": s, "turn": 1, "recall_id": rid8,
+                     "used_score": used, "method": "cited"})
+        for s in sessions
+    ]
+    (state_dir / "grounding.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_run_profile_pass_writes_global_profile_with_provenance(tmp_path, monkeypatch):
+    rid = "a" * 32
+    mem = _Mem([{"id": rid, "type": "preference", "tags": []}], {rid: _Rec(rid)})
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr(dp, "_llm_distill", lambda *a, **k: "- prefers pytest")
+    res = dp.run_profile_pass(cfg, mem, dry_run=False)
+    assert res["status"] == "done"
+    doc = dp.profile_path(cfg).read_text(encoding="utf-8")
+    assert "- prefers pytest" in doc
+    assert f'"{rid[:8]}"' in doc  # memory-id provenance
+
+
+def test_run_profile_pass_feeds_prior_text_for_in_place_rewrite(tmp_path, monkeypatch):
+    rid = "a" * 32
+    mem = _Mem([{"id": rid, "type": "decision", "tags": []}], {rid: _Rec(rid)})
+    cfg = _mk_cfg(tmp_path)
+    priors: list[str] = []
+
+    def _fake(mem_, docs, *, prior, scope, budget):
+        priors.append(prior)
+        return "- v2 narrative"
+
+    monkeypatch.setattr(dp, "_llm_distill", _fake)
+    dp.run_profile_pass(cfg, mem)
+    dp.run_profile_pass(cfg, mem)
+    assert priors[0] == ""  # first night: no prior
+    assert "- v2 narrative" in priors[1]  # second night rewrites IN PLACE
+
+
+def test_run_profile_pass_writes_per_project_profiles(tmp_path, monkeypatch):
+    rg, rp = "b" * 32, "c" * 32
+    rows = [
+        {"id": rg, "type": "preference", "tags": []},
+        {"id": rp, "type": "decision", "tags": ["project:memo"]},
+    ]
+    mem = _Mem(rows, {rg: _Rec(rg), rp: _Rec(rp, type_="decision")})
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr(dp, "_llm_distill", lambda *a, **k: "- distilled")
+    res = dp.run_profile_pass(cfg, mem)
+    scopes = {w["scope"] for w in res["written"]}
+    assert scopes == {"global", "memo"}
+    assert dp.profile_path(cfg, "memo").is_file()
+
+
+def test_run_profile_pass_graduates_and_retires_standing_rules(tmp_path, monkeypatch):
+    winner, loser = "d" * 32, "e" * 32
+    recs = {
+        winner: _Rec(winner, title="always pin transformers<5.13"),
+        loser: _Rec(loser, title="old superseded rule", updated="2025-01-01"),
+    }
+    # both cited in 3 distinct sessions; loser is the older side of a resolved pair
+    mem = _Mem(
+        [{"id": winner, "type": "preference", "tags": []}],
+        recs,
+        pairs=[_FakePair("kept_newer", loser, winner)],
+    )
+    cfg = _mk_cfg(tmp_path)
+    _write_grounding(cfg.state_dir, winner[:8], ["s1", "s2", "s3"])
+    with (cfg.state_dir / "grounding.log").open("a", encoding="utf-8") as fh:
+        for s in ("s1", "s2", "s3"):
+            fh.write(_json.dumps({"session_id": s, "turn": 2, "recall_id": loser[:8],
+                                  "used_score": 0.9, "method": "cited"}) + "\n")
+    monkeypatch.setattr(dp, "_llm_distill", lambda *a, **k: "- narrative")
+    res = dp.run_profile_pass(cfg, mem, directive_k=3)
+    doc = dp.profile_path(cfg).read_text(encoding="utf-8")
+    assert "## Standing rules" in doc
+    assert "always pin transformers<5.13" in doc
+    assert "old superseded rule" not in doc  # retired via contradict pair
+    assert res["standing_rules"] == 1
+
+
+def test_run_profile_pass_dry_run_writes_nothing(tmp_path, monkeypatch):
+    rid = "a" * 32
+    mem = _Mem([{"id": rid, "type": "preference", "tags": []}], {rid: _Rec(rid)})
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr(dp, "_llm_distill", lambda *a, **k: "- x")
+    res = dp.run_profile_pass(cfg, mem, dry_run=True)
+    assert res["status"] == "done"
+    assert res["written"][0]["status"] == "would_write"
+    assert not dp.profile_path(cfg).exists()
+
+
+def test_run_profile_pass_never_raises(tmp_path):
+    class _Boom:
+        contradict_store = _PairStore()
+
+        @property
+        def store(self):
+            raise RuntimeError("store exploded")
+
+    res = dp.run_profile_pass(_mk_cfg(tmp_path), _Boom())
+    assert res["status"] == "error"
+    assert "store exploded" in res["error"]
