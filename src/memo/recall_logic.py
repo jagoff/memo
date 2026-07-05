@@ -122,7 +122,7 @@ def render_recall_context(
         if max_chars is not None and len(_render([*prefix, ""])) > max_chars and tags_line:
             prefix = [title_line]
         empty_body_len = len(_render([*prefix, ""]))
-        _tail_reserve = 50 if (max_chars is not None and flag_bool("MEMO_RECALL_OMISSIONS_TAIL")) else 0
+        _tail_reserve = 50 if (max_chars is not None and flag_bool("MEMO_RECALL_OMISSIONS_TAIL") and (len(relevant) > i + 1 or bool(omitted))) else 0
         available = (max_chars - empty_body_len - 4 - _tail_reserve) if max_chars is not None else len(body)
         appended = False
         if body and available > 20:
