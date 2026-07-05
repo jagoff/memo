@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import struct
 import sys
 import time
@@ -777,16 +778,20 @@ def unmatched_term_gate(prompt: str, hits: list[Any]) -> bool:
     distinctive prompt term (>=4 chars, non-stopword) appears anywhere in the
     candidates. Pure string ops over already-loaded bodies — hook-budget safe.
     Strong semantic matches short-circuit first, so paraphrase-only recall
-    (high cosine, zero lexical overlap) is never gated."""
+    (high cosine, zero lexical overlap) is never gated.
+
+    Interaction with ranking boosts: rank_hits applies project/global boosts
+    (+0.25 / +0.10) BEFORE this gate runs, so boosted hits already have scores
+    above the gate threshold and bypass suppression entirely by design — the
+    gate only ever sees genuinely weak, un-boosted hits.
+    """
     if not hits:
         return False
     if (hits[0].score or 0.0) >= (flag_float("MEMO_RECALL_UNMATCHED_GATE_MAX_SCORE") or 0.55):
         return False
-    import re as _re
-
     terms = {
         t
-        for t in _re.findall(r"[\wáéíóúñü]{4,}", (prompt or "").lower())
+        for t in re.findall(r"[\wáéíóúñü]{4,}", (prompt or "").lower())
         if t not in _GATE_STOPWORDS
     }
     if not terms:
