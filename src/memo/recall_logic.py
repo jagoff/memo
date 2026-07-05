@@ -60,6 +60,7 @@ def render_recall_context(
     turn: int | None,
     body_chars: int,
     token_budget: int,
+    omitted: list[Any] | None = None,
 ) -> str:
     """Render recall context within a strict chars/4 token budget."""
     include_directive = turn is None or turn <= 1 or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
@@ -98,7 +99,8 @@ def render_recall_context(
         return body_chars
 
     use_labels = flag_bool("MEMO_RECALL_EPISTEMIC_LABELS")
-    for hit in relevant:
+    dropped: list[Any] = list(omitted or [])
+    for i, hit in enumerate(relevant):
         score_tag = f" (score {hit.score:.2f})" if hit.score is not None else ""
         label = f" ⟨{epistemic_label(hit)}⟩" if use_labels else ""
         title_line = f"**[{hit.id[:8]}] {hit.title}**{label}{score_tag}"
@@ -120,11 +122,18 @@ def render_recall_context(
         if max_chars is not None and len(_render([*prefix, ""])) > max_chars and tags_line:
             prefix = [title_line]
         empty_body_len = len(_render([*prefix, ""]))
-        available = (max_chars - empty_body_len - 4) if max_chars is not None else len(body)
+        _tail_reserve = 50 if (max_chars is not None and flag_bool("MEMO_RECALL_OMISSIONS_TAIL")) else 0
+        available = (max_chars - empty_body_len - 4 - _tail_reserve) if max_chars is not None else len(body)
+        appended = False
         if body and available > 20:
             lines.extend([*prefix, f"> {body[:available].rstrip()}…", ""])
+            appended = True
         elif max_chars is None or len(_render([*prefix, ""])) <= max_chars:
             lines.extend([*prefix, ""])
+            appended = True
+        # hit i counts as dropped when its block never rendered (prefix alone
+        # over budget / available <= 20 with no room for the bare prefix).
+        dropped.extend(relevant[i + 1 :] if appended else relevant[i:])
         break
 
     if nudge:
@@ -133,6 +142,11 @@ def render_recall_context(
         # just below the top-K cut) — distinct from the graph-associative nudge,
         # which has its own label via recall_assoc.render_associative_line.
         candidate = f"_Also in your memory (related): {also}._"
+        if max_chars is None or len(_render([candidate])) <= max_chars:
+            lines.append(candidate)
+    if dropped and flag_bool("MEMO_RECALL_OMISSIONS_TAIL"):
+        first_id = str(getattr(dropped[0], "id", ""))[:8]
+        candidate = f"_+{len(dropped)} more relevant — `/memo get {first_id}`._"
         if max_chars is None or len(_render([candidate])) <= max_chars:
             lines.append(candidate)
     if flag_bool("MEMO_RECALL_FEEDBACK_HINT"):
@@ -175,6 +189,14 @@ def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
         candidate = "<memo-recall readonly>\n" + "\n".join(candidate_lines) + "\n</memo-recall>"
 
         if max_chars is not None and len(candidate) > max_chars:
+            n_dropped = len(relevant) - len(hit_lines)
+            if n_dropped > 0 and flag_bool("MEMO_RECALL_OMISSIONS_TAIL"):
+                tail = f"+{n_dropped} more: /memo get {hit.id[:8]}"
+                with_tail = (
+                    "<memo-recall readonly>\n" + "\n".join([*hit_lines, tail]) + "\n</memo-recall>"
+                )
+                if len(with_tail) <= max_chars:
+                    hit_lines.append(tail)
             break
 
         hit_lines.append(line)
@@ -887,10 +909,15 @@ def _recall_logic(
                     file=sys.stderr,
                 )
 
+    pre_filter = qualifying
     qualifying = apply_injection_filters(qualifying)
 
     relevant = qualifying[:top_k]
     nudge = qualifying[top_k : top_k + 2]
+    omitted = list(qualifying[top_k + 2 :])
+    if qualifying and len(qualifying) < len(pre_filter):
+        kept = {h.id for h in qualifying}
+        omitted.extend(h for h in pre_filter if h.id not in kept)
     if not relevant:
         return "{}", None
 
@@ -929,6 +956,7 @@ def _recall_logic(
         turn=turn,
         body_chars=body_chars,
         token_budget=token_budget,
+        omitted=omitted,
     )
 
     # Graph-associative nudge (MEMO_RECALL_ASSOCIATIVE) — render it on the daemon

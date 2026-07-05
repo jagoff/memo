@@ -409,4 +409,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "synthesis, '⟨?unverified⟩' for _uncertain captures. Pure render-layer "
         "(~5-10 tok/hit, inside the token budget); ranking untouched.",
     ),
+    _spec(
+        "MEMO_RECALL_OMISSIONS_TAIL",
+        "bool",
+        False,
+        "recall",
+        "When the token budget or gap-trim filter drops hits that qualified, "
+        "append one budget-checked line '+N more relevant — /memo get <id>' so "
+        "agents don't treat omitted as absent. Presentation-only; cannot drop "
+        "or reorder hits — but it IS a new output line, so it ships opt-in "
+        "(default off), same class as MEMO_RECALL_EPISTEMIC_LABELS.",
+    ),
 )
