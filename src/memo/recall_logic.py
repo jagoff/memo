@@ -762,6 +762,43 @@ def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
     return qualifying
 
 
+_GATE_STOPWORDS = frozenset([
+    "para", "esta", "este", "esto", "estos", "estas", "that", "this", "with",
+    "what", "como", "cómo", "donde", "dónde", "cuando", "cuándo", "sobre",
+    "entre", "desde", "hasta", "the", "and", "una", "unos", "unas", "los",
+    "las", "del", "que", "qué", "cual", "cuál", "hacer", "haciendo", "have",
+    "does", "memo", "about", "tiene", "tienen",
+])
+
+
+def unmatched_term_gate(prompt: str, hits: list[Any]) -> bool:
+    """cipher-style honest-empty gate. True -> suppress the injection: recall
+    is WEAK (top score under MEMO_RECALL_UNMATCHED_GATE_MAX_SCORE) and NO
+    distinctive prompt term (>=4 chars, non-stopword) appears anywhere in the
+    candidates. Pure string ops over already-loaded bodies — hook-budget safe.
+    Strong semantic matches short-circuit first, so paraphrase-only recall
+    (high cosine, zero lexical overlap) is never gated."""
+    if not hits:
+        return False
+    if (hits[0].score or 0.0) >= (flag_float("MEMO_RECALL_UNMATCHED_GATE_MAX_SCORE") or 0.55):
+        return False
+    import re as _re
+
+    terms = {
+        t
+        for t in _re.findall(r"[\wáéíóúñü]{4,}", (prompt or "").lower())
+        if t not in _GATE_STOPWORDS
+    }
+    if not terms:
+        return False
+    hay = " ".join(
+        f"{getattr(h, 'title', '')} {' '.join(str(t) for t in (getattr(h, 'tags', None) or []))} "
+        f"{getattr(h, 'body', '') or ''}"
+        for h in hits
+    ).lower()
+    return not any(t in hay for t in terms)
+
+
 def _recall_logic(
     prompt: str,
     cwd: str | None,
@@ -954,6 +991,8 @@ def _recall_logic(
 
     pre_filter = qualifying
     qualifying = apply_injection_filters(qualifying)
+    if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and unmatched_term_gate(prompt, qualifying):
+        qualifying = []
 
     relevant = qualifying[:top_k]
     nudge = qualifying[top_k : top_k + 2]

@@ -432,4 +432,26 @@ SPECS: tuple[FlagSpec, ...] = (
         "flip only after the eval gate measures a win.",
         min_val=0,
     ),
+    _spec(
+        "MEMO_RECALL_UNMATCHED_TERM_GATE",
+        "bool",
+        False,
+        "recall",
+        "Honest-empty gate (cipher-style): when the top recall score is under "
+        "MEMO_RECALL_UNMATCHED_GATE_MAX_SCORE AND no distinctive prompt term "
+        "(>=4 chars, non-stopword) appears in any candidate, inject nothing — "
+        "an honest empty beats weak noise, and the zero-hit turn feeds "
+        "`memo gaps`. Strong semantic (paraphrase) matches are never gated. "
+        "Default off; eval-gated.",
+    ),
+    _spec(
+        "MEMO_RECALL_UNMATCHED_GATE_MAX_SCORE",
+        "float",
+        0.55,
+        "recall",
+        "Score ceiling for the unmatched-term gate: at/above this the gate never "
+        "fires (protects paraphrase-only semantic recall).",
+        min_val=0.0,
+        max_val=1.0,
+    ),
 )

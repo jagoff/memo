@@ -383,6 +383,7 @@ def run_config(
         make_vec_cosine,
         rank_hits,
         uncertain_exclusion,
+        unmatched_term_gate,
     )
 
     try:
@@ -456,6 +457,8 @@ def run_config(
             # Hook-faithful injection: the same post-rank skip-below/gap
             # filters _recall_logic applies before injecting (shared helper).
             ranked = apply_injection_filters(ranked)
+            if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and unmatched_term_gate(query, ranked):
+                ranked = []
         if cfg.exclude_archived:
             ranked = [h for h in ranked if not _is_noise(h, labels)]
         top = ranked[:k]
