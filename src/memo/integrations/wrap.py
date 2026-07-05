@@ -13,8 +13,10 @@ pre-call injection only (streamed-response capture is v2).
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
+import subprocess
 import sys
 from types import ModuleType
 from typing import Any
@@ -95,6 +97,37 @@ def _inject(kind: str, kwargs: dict[str, Any], block: str) -> None:
         kwargs["system"] = sys_prompt + "\n\n" + block
 
 
+def _response_text(kind: str, resp: Any) -> str:
+    try:
+        if kind == "openai":
+            return str(resp.choices[0].message.content or "")
+        parts = getattr(resp, "content", None) or []
+        return "\n".join(
+            getattr(b, "text", "") for b in parts if getattr(b, "type", "") == "text"
+        )
+    except Exception:
+        return ""
+
+
+def _capture_async(kind: str, user_text: str, assistant_text: str) -> None:
+    """Enqueue the exchange through memo's capture pipeline — detached
+    `memo save --extract` (same extract/quality/dedup gates as the Stop hook).
+    MLX loads in the child process, never in the caller's."""
+    if not (user_text.strip() or assistant_text.strip()):
+        return
+    text = f"USER:\n{user_text[:4000]}\n\nASSISTANT:\n{assistant_text[:8000]}"
+    try:
+        subprocess.Popen(
+            ["memo", "save", "--extract", "--tag", "sdk", "--tag", f"client:{kind}", text],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        _log.debug("memo wrap: capture skipped (%s)", exc)
+
+
 def wrap(
     client: Any,
     *,
@@ -118,9 +151,24 @@ def wrap(
         if block:
             _inject(kind, kwargs, block)
 
-    def wrapped(*args: Any, **kwargs: Any) -> Any:
-        _pre(kwargs)
-        return original(*args, **kwargs)
+    def _post(kwargs: dict[str, Any], resp: Any) -> None:
+        if capture and not kwargs.get("stream"):
+            _capture_async(kind, _last_user_text(kwargs.get("messages")), _response_text(kind, resp))
+
+    if inspect.iscoroutinefunction(original):
+
+        async def wrapped(*args: Any, **kwargs: Any) -> Any:
+            _pre(kwargs)
+            resp = await original(*args, **kwargs)
+            _post(kwargs, resp)
+            return resp
+    else:
+
+        def wrapped(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
+            _pre(kwargs)
+            resp = original(*args, **kwargs)
+            _post(kwargs, resp)
+            return resp
 
     wrapped._memo_wrapped = True  # type: ignore[attr-defined]
     holder.create = wrapped

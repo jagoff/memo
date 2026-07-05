@@ -83,3 +83,77 @@ def test_wrap_fails_open_when_daemon_down(tmp_cfg, monkeypatch):
     wrap(client, cfg=tmp_cfg, capture=False)
     client.chat.completions.create(model="m", messages=[{"role": "user", "content": "hola"}])
     assert calls[0]["messages"] == [{"role": "user", "content": "hola"}]
+
+
+def test_postcall_capture_spawns_detached_extract(tmp_cfg, monkeypatch):
+    import memo.integrations.wrap as wrap_mod
+    from memo.integrations import wrap
+
+    monkeypatch.setattr(wrap_mod, "connect_and_send", lambda *a, **k: None)
+    spawned: list = []
+    monkeypatch.setattr(wrap_mod.subprocess, "Popen", lambda *a, **k: spawned.append((a, k)))
+    client, _calls = _fake_openai()
+    wrap(client, cfg=tmp_cfg)
+    client.chat.completions.create(
+        model="m", messages=[{"role": "user", "content": "how do I X?"}]
+    )
+    assert spawned, "post-call capture must spawn a memo save --extract subprocess"
+    argv = spawned[0][0][0]
+    assert argv[:3] == ["memo", "save", "--extract"]
+    assert "USER:" in argv[-1] and "ASSISTANT:" in argv[-1]
+    assert spawned[0][1]["start_new_session"] is True
+
+
+def test_stream_calls_skip_capture(tmp_cfg, monkeypatch):
+    import memo.integrations.wrap as wrap_mod
+    from memo.integrations import wrap
+
+    monkeypatch.setattr(wrap_mod, "connect_and_send", lambda *a, **k: None)
+    spawned: list = []
+    monkeypatch.setattr(wrap_mod.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    client, _calls = _fake_openai()
+    wrap(client, cfg=tmp_cfg)
+    client.chat.completions.create(
+        model="m", messages=[{"role": "user", "content": "q"}], stream=True
+    )
+    assert spawned == []
+
+
+def test_async_client_wrapped(tmp_cfg, monkeypatch):
+    import asyncio
+
+    import memo.integrations.wrap as wrap_mod
+    from memo.integrations import wrap
+
+    monkeypatch.setattr(wrap_mod, "connect_and_send", lambda *a, **k: None)
+    monkeypatch.setattr(wrap_mod.subprocess, "Popen", lambda *a, **k: None)
+    calls: list = []
+
+    class _AsyncCompletions:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            msg = SimpleNamespace(content="ok")
+            return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=_AsyncCompletions()))
+    wrap(client, cfg=tmp_cfg)
+    resp = asyncio.run(
+        client.chat.completions.create(model="m", messages=[{"role": "user", "content": "q"}])
+    )
+    assert resp.choices[0].message.content == "ok"
+    assert len(calls) == 1
+
+
+def test_double_wrap_is_idempotent(tmp_cfg, monkeypatch):
+    import memo.integrations.wrap as wrap_mod
+    from memo.integrations import wrap
+
+    monkeypatch.setattr(wrap_mod, "connect_and_send", lambda *a, **k: None)
+    spawned: list = []
+    monkeypatch.setattr(wrap_mod.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    client, calls = _fake_openai()
+    wrap(client, cfg=tmp_cfg)
+    wrap(client, cfg=tmp_cfg)  # must not double-wrap
+    client.chat.completions.create(model="m", messages=[{"role": "user", "content": "q"}])
+    assert len(calls) == 1
+    assert len(spawned) == 1
