@@ -11,6 +11,10 @@ By default the panel composes the following, top to bottom:
 
 1. **Last session in this project** — last session-checkpoint that
    matches the current `cwd`, plus the `claude --resume` command.
+1b. **Profile** — the dream-maintained `profile.md` (global + current
+   project) injected wholesale: distilled identity/preferences/conventions
+   plus graduated Standing rules. Pure file read (zero MLX); present only
+   when `MEMO_DREAM_PROFILE_ENABLED` has produced a profile.
 2. **Current state (Synapse)** — top-3 `present_state` items from
    `synapse packet` (memflow handoffs, current focus, attention
    queue). Only present when synapse is reachable + returns data.
@@ -69,6 +73,7 @@ callers should layer their own context after.
 | `MEMO_BRIEFING_DEBUG` | unset | `1` prints failures to stderr |
 | `MEMO_SYNAPSE_EXECUTABLE` | unset | override the `synapse` binary path |
 | `MEMO_SYNAPSE_CLIENT_TIMEOUT` | `8.0` | synapse subprocess timeout |
+| `MEMO_BRIEFING_PROFILE` | `1` | `0` skips the profile.md section |
 
 ## Why this design
 

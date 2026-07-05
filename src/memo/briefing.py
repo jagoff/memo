@@ -253,6 +253,52 @@ def dream_digest_lines(state_dir: Path, *, max_age_h: float = 24.0) -> list[str]
         return []
 
 
+_PROFILE_MAX_CHARS = 6000  # defensive cap; the dream pass already budgets the file
+
+
+def _strip_frontmatter(text: str) -> str:
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            return text[end + 5 :]
+    return text
+
+
+def profile_lines(cfg: Any, *, cwd: str | None = None) -> list[str]:
+    """Inject the dream-maintained profile document(s) wholesale — the
+    "facts you would not think to search for" channel (ecosystem Tier-1 #1).
+
+    Reads ``memory_dir/_profile/profile.md`` (global) plus the current
+    project's ``project-<slug>.md``. Pure file read: zero MLX, zero DB, zero
+    LLM — SessionStart cost is at most two stat+reads. Empty list when the
+    profile pass is disabled / has never run (files absent).
+    """
+    from memo.dream_profile import profile_path
+    from memo.project import current_project_tag
+
+    paths = [profile_path(cfg)]
+    try:
+        tag = current_project_tag(cwd)
+    except Exception:
+        tag = None
+    if tag:
+        paths.append(profile_path(cfg, tag.split(":", 1)[1]))
+    lines: list[str] = []
+    for path in paths:
+        try:
+            if not path.is_file():
+                continue
+            body = _strip_frontmatter(path.read_text(encoding="utf-8")).strip()
+            if not body:
+                continue
+            if len(body) > _PROFILE_MAX_CHARS:
+                body = body[: _PROFILE_MAX_CHARS - 1].rstrip() + "…"
+            lines.extend([body, ""])
+        except Exception:  # noqa: S112 — a bad profile file must not sink the briefing
+            continue
+    return lines
+
+
 def memo_native_briefing_lines(
     mem: Any,
     *,
@@ -279,6 +325,12 @@ def memo_native_briefing_lines(
     from memo.flags import flag_bool
 
     lines: list[str] = []
+
+    # ── Profile: dream-distilled identity/conventions (wholesale, no search) ─
+    # Zero-MLX file read; absent file (pass disabled) → zero lines, zero cost.
+    if flag_bool("MEMO_BRIEFING_PROFILE"):
+        with contextlib.suppress(Exception):
+            lines.extend(profile_lines(mem.cfg))
 
     # ── 0. Knowledge map: graph hubs (entity-centric orientation) ────────
     # Guarded like every other section so a map failure never sinks the briefing.
@@ -378,5 +430,6 @@ __all__ = [
     "dream_digest_lines",
     "install_seed_lines",
     "memo_native_briefing_lines",
+    "profile_lines",
     "synapse_briefing_lines",
 ]

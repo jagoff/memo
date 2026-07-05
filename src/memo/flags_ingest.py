@@ -74,6 +74,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "the SessionStart briefing (first session after each run). Default on.",
         opt_out=True,
     ),
+    _spec(
+        "MEMO_BRIEFING_PROFILE",
+        "bool",
+        True,
+        "briefing",
+        "Inject the dream-maintained profile document(s) (global + current "
+        "project) into the SessionStart briefing, wholesale. Pure file read — "
+        "zero MLX. No-op until MEMO_DREAM_PROFILE_ENABLED has produced a profile.",
+        opt_out=True,
+    ),
     # repo indexing
     _spec(
         "MEMO_REPO_MAX_FILE_BYTES", "int", None, "repo", "Skip repo files larger than this (bytes)."
