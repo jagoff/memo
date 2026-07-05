@@ -18,6 +18,8 @@ from memo.flags import flag_bool, flag_float, flag_int, flag_str
 
 _log = logging.getLogger("memo.cli_recall_hook")
 
+from memo.recall_logic import session_budget_scale  # re-export for tests + local use
+
 
 _TRIVIAL_WORDS: frozenset[str] = frozenset(
     {
@@ -262,6 +264,23 @@ def recall_hook() -> None:
             token_budget = int(max(token_budget * 0.6, 200))
         # Mid-range stays as-is
 
+    # Session cumulative budget decay: once the session has consumed more than
+    # MEMO_RECALL_SESSION_TOKEN_BUDGET tokens of recall context, halve the
+    # per-turn budget (floored at _SESSION_BUDGET_FLOOR). Default OFF (0).
+    _sess_budget = flag_int("MEMO_RECALL_SESSION_TOKEN_BUDGET") or 0
+    if _sess_budget > 0 and token_budget > 0 and _sid:
+        try:
+            from memo.dashboard import read_context_cost_log
+
+            _cum = sum(
+                (int(e.get("chars") or 0) + 3) // 4
+                for e in read_context_cost_log(cfg.state_dir)
+                if e.get("kind") == "recall" and e.get("session_id") == _sid
+            )
+            token_budget = session_budget_scale(_cum, _sess_budget, token_budget)
+        except Exception as exc:
+            _log.debug("session budget scale failed: %s", exc)
+
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
@@ -346,7 +365,46 @@ def recall_hook() -> None:
                 )
 
     qualifying = apply_injection_filters(qualifying)
+
+    def _stamp_metrics(n_hits: int) -> None:
+        # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
+        # the subprocess line is comparable with the daemon path, which counts
+        # the final rendered output. ``total_ms`` stays end-to-end from _t0.
+        try:
+            from memo import recall_metrics
+
+            recall_metrics.stamp(
+                cfg.state_dir,
+                total_ms=(time.time() - _t0) * 1000.0,
+                path="subprocess",
+                hits=n_hits,
+            )
+        except Exception as exc:
+            _log.debug("recall metrics stamp failed: %s", exc)
+
     relevant = qualifying[:top_k]
+
+    # Precision gate (Lever 3): suppress when the top hit's score falls in a
+    # band that has historically never been grounded.  Reads a small cached
+    # JSON — cheap for the 5 s recall-hook budget.  Default OFF.
+    if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
+        try:
+            from memo.token_meter import load_precision_bands
+            from memo.token_meter import suppress_score as _pg_suppress
+
+            _pg_bands = load_precision_bands(cfg.state_dir)
+            if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
+                _stamp_metrics(0)
+                _bail("precision-gated (learned zero-grounding band)")
+                return
+        except Exception as _pg_exc:
+            _log.debug("precision gate check failed: %s", _pg_exc)
+
+    if flag_bool("MEMO_RECALL_INTRA_DEDUP") and len(relevant) > 1:
+        from memo.recall_logic import collapse_near_dups
+
+        _thr = flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD")
+        relevant = collapse_near_dups(relevant, threshold=0.8 if _thr is None else _thr)
     # Rank-overflow nudge (the hits just below the top-K cut) — same split the
     # daemon path renders, distinct from the graph-associative nudge below.
     nudge = qualifying[top_k : top_k + 2]
@@ -375,22 +433,6 @@ def recall_hook() -> None:
         )
     except Exception as exc:
         _log.debug("subprocess recall-log write failed: %s", exc)
-
-    def _stamp_metrics(n_hits: int) -> None:
-        # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
-        # the subprocess line is comparable with the daemon path, which counts
-        # the final rendered output. ``total_ms`` stays end-to-end from _t0.
-        try:
-            from memo import recall_metrics
-
-            recall_metrics.stamp(
-                cfg.state_dir,
-                total_ms=(time.time() - _t0) * 1000.0,
-                path="subprocess",
-                hits=n_hits,
-            )
-        except Exception as exc:
-            _log.debug("recall metrics stamp failed: %s", exc)
 
     if not relevant:
         _stamp_metrics(0)
@@ -444,7 +486,7 @@ def recall_hook() -> None:
     if _recall_format == "compact":
         context = render_recall_compact(relevant, token_budget=token_budget)
     elif _recall_format == "balanced":
-        context = render_recall_balanced(relevant, token_budget=token_budget)
+        context = render_recall_balanced(relevant, token_budget=token_budget, turn=_turn)
     else:
         context = render_recall_context(
             relevant,

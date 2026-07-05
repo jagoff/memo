@@ -329,6 +329,13 @@ SPECS: tuple[FlagSpec, ...] = (
         "Footer style: 'full' (default, includes get command), 'short' (minimal), or 'none' (no footer). Short saves ~15 tokens.",
     ),
     _spec(
+        "MEMO_RECALL_FOOTER_AFTER",
+        "str",
+        "short",
+        "recall",
+        "Footer style used past turn 1 when MEMO_RECALL_FOOTER is unset: full|short|none.",
+    ),
+    _spec(
         "MEMO_RECALL_FORMAT",
         "str",
         "auto",
@@ -453,5 +460,34 @@ SPECS: tuple[FlagSpec, ...] = (
         "fires (protects paraphrase-only semantic recall).",
         min_val=0.0,
         max_val=1.0,
+    ),
+    _spec(
+        "MEMO_RECALL_INTRA_DEDUP",
+        "bool",
+        False,
+        "recall",
+        "Collapse near-duplicate hits within a single injection (lexical Jaccard).",
+    ),
+    _spec(
+        "MEMO_RECALL_INTRA_DEDUP_THRESHOLD",
+        "float",
+        0.8,
+        "recall",
+        "Jaccard threshold for intra-injection near-dup collapse.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec("MEMO_RECALL_SESSION_TOKEN_BUDGET", "int", 0, "recall",
+          "Cumulative recall-token budget per session; past it, per-turn budget decays "
+          "(0 = off). Conservative: only scales down, never hard-bails.", min_val=0),
+    _spec(
+        "MEMO_RECALL_PRECISION_GATE",
+        "bool",
+        False,
+        "recall",
+        "Suppress recall when the top-hit score falls in a score band that has "
+        "historically never been grounded (learned from grounding.log + recall.log; "
+        "bands cached to state_dir/precision_bands.json by the Stop hook). "
+        "Default OFF: with this unset, recall behavior is unchanged.",
     ),
 )

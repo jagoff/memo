@@ -507,6 +507,14 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0,
     ),
     _spec(
+        "MEMO_TOKEN_METER_ENABLED",
+        "bool",
+        True,
+        "misc",
+        "Roll up measured per-session token usage from the transcript in the Stop hook.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_ROI_TOKENS_PER_GROUNDED",
         "int",
         350,

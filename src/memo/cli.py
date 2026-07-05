@@ -117,6 +117,7 @@ from memo.cli_statusline import install_statusline
 from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
+from memo.cli_token_gate import token_gate_cmd
 from memo.cli_token_savings import token_savings_cmd
 from memo.cli_tokens import tokens_cmd
 from memo.cli_transcripts import mine_git, mine_history, reflect
@@ -359,6 +360,7 @@ cli.add_command(history_cmd)
 cli.add_command(briefing)
 cli.add_command(init_cmd)
 cli.add_command(stats)
+cli.add_command(token_gate_cmd)
 cli.add_command(token_savings_cmd)
 cli.add_command(tokens_cmd)
 cli.add_command(doctor)

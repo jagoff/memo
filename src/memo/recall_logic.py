@@ -31,8 +31,16 @@ CITE_INSTRUCTION = (
 )
 
 
-def _render_footer() -> str:
-    style = flag_str("MEMO_RECALL_FOOTER") or "full"
+def _render_footer(turn: int | None = None) -> str:
+    from memo.flags import active_flags
+
+    explicit_set = "MEMO_RECALL_FOOTER" in active_flags()  # user override wins for ALL turns
+    if explicit_set:
+        style = flag_str("MEMO_RECALL_FOOTER")
+    elif turn is not None and turn > 1:
+        style = flag_str("MEMO_RECALL_FOOTER_AFTER") or "short"
+    else:
+        style = flag_str("MEMO_RECALL_FOOTER") or "full"
     if style == "none":
         return ""
     if style == "short":
@@ -54,6 +62,44 @@ def epistemic_label(hit: Any) -> str:
     return f"{kind} · {month}" if month else kind
 
 
+_SESSION_BUDGET_FLOOR = 150
+
+
+def session_budget_scale(cumulative: int, session_budget: int, base_budget: int) -> int:
+    """Decay the per-turn token budget once a session's cumulative recall spend
+    passes ``session_budget``. Conservative: halve, floored — never zero/bail."""
+    if session_budget <= 0 or cumulative < session_budget:
+        return base_budget
+    return max(_SESSION_BUDGET_FLOOR, base_budget // 2)
+
+
+def _dedup_tokens(text: str) -> set[str]:
+    import re
+
+    return {t for t in re.findall(r"\w+", (text or "").lower()) if len(t) > 2}
+
+
+def collapse_near_dups(relevant: list[Any], *, threshold: float) -> list[Any]:
+    """Drop hits whose title+body token-Jaccard with a kept, higher-scored hit
+    exceeds ``threshold``. Lexical only — safe for the 5s recall hook (no MLX)."""
+    kept: list[Any] = []
+    kept_sets: list[set[str]] = []
+    for h in sorted(relevant, key=lambda x: (x.score or 0.0), reverse=True):
+        toks = _dedup_tokens(f"{h.title} {h.body or ''}")
+        dup = False
+        for ks in kept_sets:
+            union = toks | ks
+            if union and len(toks & ks) / len(union) >= threshold:
+                dup = True
+                break
+        if not dup:
+            kept.append(h)
+            kept_sets.append(toks)
+    # preserve the caller's original ordering among survivors
+    survivors = {id(h) for h in kept}
+    return [h for h in relevant if id(h) in survivors]
+
+
 def render_recall_context(
     relevant: list[Any],
     nudge: list[Any],
@@ -73,7 +119,7 @@ def render_recall_context(
     max_chars = token_budget * 4 if token_budget > 0 else None
 
     def _render(extra: list[str] | None = None) -> str:
-        return "\n".join([*lines, *(extra or []), _render_footer()])
+        return "\n".join([*lines, *(extra or []), _render_footer(turn)])
 
     def _sentence_truncate(text: str, max_len: int) -> str:
         """Truncate at sentence boundary near max_len."""
@@ -159,7 +205,7 @@ def render_recall_context(
     context = _render()
     if max_chars is not None and len(context) > max_chars:
         # Tiny budgets may not fit even the safety envelope; preserve its closing tag.
-        footer = _render_footer()
+        footer = _render_footer(turn)
         context = context[: max(0, max_chars - len(footer) - 1)].rstrip() + "…" + footer
     return context
 
@@ -205,7 +251,7 @@ def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
     return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
 
 
-def render_recall_balanced(relevant: list[Any], *, token_budget: int) -> str:
+def render_recall_balanced(relevant: list[Any], *, token_budget: int, turn: int | None = None) -> str:
     """Balanced recall format: title + short bullets, ~40% savings vs full.
 
     Format::
@@ -232,7 +278,7 @@ def render_recall_balanced(relevant: list[Any], *, token_budget: int) -> str:
             if i < len(lines):
                 lines[i] = lines[i] + "\n  • " + indent
 
-    footer = _render_footer()
+    footer = _render_footer(turn)
     body = "<memo-recall readonly>\n## Memory\n" + "\n".join(lines) + "\n"
 
     if max_chars is not None and len(body) + len(footer) > max_chars:
@@ -830,6 +876,23 @@ def _recall_logic(
     body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
     token_budget = _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
 
+    # Session cumulative budget decay: once the session has consumed more than
+    # MEMO_RECALL_SESSION_TOKEN_BUDGET tokens of recall context, halve the
+    # per-turn budget (floored at _SESSION_BUDGET_FLOOR). Default OFF (0).
+    _sess_budget = _flag_int("MEMO_RECALL_SESSION_TOKEN_BUDGET") or 0
+    if _sess_budget > 0 and token_budget > 0 and session_id:
+        try:
+            from memo.dashboard import read_context_cost_log
+
+            _cum = sum(
+                (int(e.get("chars") or 0) + 3) // 4
+                for e in read_context_cost_log(cfg.state_dir)
+                if e.get("kind") == "recall" and e.get("session_id") == session_id
+            )
+            token_budget = session_budget_scale(_cum, _sess_budget, token_budget)
+        except Exception as _exc:
+            _logger.debug("session budget scale failed: %s", _exc)
+
     search_k = top_k * 3 if (project_tag or contextual) else top_k
 
     from memo.tiers import REFERENCE_TYPES
@@ -1000,6 +1063,27 @@ def _recall_logic(
         qualifying = []
 
     relevant = qualifying[:top_k]
+
+    # Precision-gate: suppress injection when the top score falls in a learned
+    # zero-grounding band. Default OFF (flag unset). Absorb load errors silently.
+    if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
+        try:
+            from memo.token_meter import load_precision_bands, suppress_score as _pg_suppress
+
+            _pg_bands = load_precision_bands(cfg.state_dir)
+            if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
+                return "{}", None
+        except Exception as _pg_exc:
+            _logger.debug("precision gate check failed: %s", _pg_exc)
+
+    # Intra-session dedup: collapse near-duplicate hits before delivery.
+    # Default OFF (flag unset). collapse_near_dups is defined in this module.
+    if flag_bool("MEMO_RECALL_INTRA_DEDUP") and len(relevant) > 1:
+        relevant = collapse_near_dups(
+            relevant,
+            threshold=_flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8,
+        )
+
     nudge = qualifying[top_k : top_k + 2]
     omitted = list(qualifying[top_k + 2 :])
     if qualifying and len(qualifying) < len(pre_filter):
