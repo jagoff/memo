@@ -63,3 +63,27 @@ def test_expand_labels_cmd_writes_output(tmp_cfg, tmp_path, monkeypatch) -> None
     texts = [p["text"] for p in doc["prompts"]]
     assert "cómo seteo el sync remoto?" in texts
     assert all(p.get("expect_ids") == ["aaaabbbb"] for p in doc["prompts"])
+
+
+def test_expand_labels_cmd_refuses_out_equals_labels(tmp_cfg, tmp_path) -> None:
+    import json
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    src = tmp_path / "labels.json"
+    src.write_text(json.dumps({
+        "schema": "memo.eval_recall.labels.v1",
+        "prompts": [{"text": "cómo configuro el sync remoto?",
+                     "relevant": True, "expect_ids": ["aaaabbbb"]}],
+    }), encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["eval", "expand-labels", "--labels", str(src), "--out", str(src)],
+        env={"MEMO_NONINTERACTIVE": "1",
+             "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+             "MEMO_STATE_DIR": str(tmp_cfg.state_dir)},
+    )
+    assert result.exit_code != 0
+    assert "must differ" in result.output

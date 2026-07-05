@@ -428,6 +428,10 @@ def expand_labels_cmd(
     Offline batch (one local MLX chat call per source prompt, capped by
     --max-prompts) — never the recall hook. Paraphrases inherit the source
     prompt's expect_ids/project, so prec@K gets coverage on rephrasings."""
+    if out_path.resolve() == labels_path.resolve():
+        raise click.UsageError(
+            "--out must differ from --labels (expand-labels never rewrites its source)."
+        )
     try:
         raw = json.loads(labels_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
