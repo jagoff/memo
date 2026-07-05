@@ -129,13 +129,20 @@ def register(server: Any, memory: Memory) -> None:
         mode: str = "hybrid",
         source: str = "",
         file: str = "",
+        date_from: str | None = None,
+        date_to: str | None = None,
+        when: str | None = None,
     ) -> dict[str, Any]:
+        if when and not (date_from or date_to):
+            from memo.nl_dates import parse_date_range
+
+            date_from, date_to = parse_date_range(when)
         t0 = now_ms()
         out: list[dict[str, Any]] = []
         records = (
             memory.search_by_file(query, file=file, limit=limit, mode=mode, type_=type)
             if file
-            else memory.search(query, limit=limit, type_=type, mode=mode)
+            else memory.search(query, limit=limit, type_=type, mode=mode, date_from=date_from, date_to=date_to)
         )
         for r in records:
             d = r.to_dict()
