@@ -48,6 +48,10 @@ class Prompt:
     # or hand-written (a bare name also works). None = no project context;
     # schema-additive: old label files simply lack the key.
     project: str | None = None
+    # Ids that must NOT surface for this prompt — mined from next-turn user
+    # verdicts (verdict.log). A top-K hit matching one counts as noise@K.
+    # Schema-additive on memo.eval_recall.labels.v1.
+    avoid_ids: list[str] = field(default_factory=list)
 
 
 # Alias so tests/code can import `Label` as the per-prompt record type.
@@ -68,6 +72,7 @@ def _label_from_dict(d: dict) -> Label:
         expect_ids=[str(x) for x in (d.get("expect_ids") or [])],
         expect_associative_ids=tuple(str(x) for x in (d.get("expect_associative_ids") or ())),
         project=str(d["project"]) if d.get("project") else None,
+        avoid_ids=[str(x) for x in (d.get("avoid_ids") or [])],
     )
 
 
@@ -92,6 +97,7 @@ class LabelSet:
                         sorted(p.expect_ids),
                         sorted(p.expect_associative_ids),
                         p.project,
+                        sorted(p.avoid_ids),
                     )
                     for p in self.prompts
                 ],
@@ -462,7 +468,11 @@ def run_config(
         if cfg.exclude_archived:
             ranked = [h for h in ranked if not _is_noise(h, labels)]
         top = ranked[:k]
-        noise_hits += sum(1 for h in top if _is_noise(h, labels))
+
+        def _hit_is_noise(h: Any, _avoid_ids: list[str] = prompt.avoid_ids) -> bool:
+            return _is_noise(h, labels) or _id_matches(getattr(h, "id", ""), _avoid_ids)
+
+        noise_hits += sum(1 for h in top if _hit_is_noise(h))
         if scored:
             prec_total += k
             prec_hits += sum(1 for h in top if _is_relevant(h, prompt, labels))
@@ -492,7 +502,7 @@ def run_config(
                     {
                         "title": (h.title or "")[:40],
                         "score": round(h.score or 0, 3),
-                        "noise": _is_noise(h, labels),
+                        "noise": _hit_is_noise(h),
                         "relevant": _is_relevant(h, prompt, labels),
                     }
                     for h in top
@@ -746,6 +756,41 @@ def harvest_labels(
     return out
 
 
+def harvest_negative_labels(
+    state_dir: Path,
+    *,
+    max_labels: int = 100,
+) -> list[dict[str, Any]]:
+    """Mine NEGATIVE labels from verdict.log (next-turn user verdicts).
+
+    A ``negative``/``correction`` verdict says the recalled ids did NOT serve
+    the prior prompt — those ids become ``avoid_ids``: the eval counts them as
+    noise@K when they still surface. Complements ``harvest_labels`` (positives
+    from grounding.log); together they give the tuner both label polarities."""
+    from memo.dashboard import read_verdict_log
+
+    by_text: dict[str, dict[str, Any]] = {}
+    for r in read_verdict_log(state_dir, limit=2000):
+        if r.get("verdict") not in ("negative", "correction"):
+            continue
+        text = str(r.get("prompt") or "").strip()
+        ids = [str(i) for i in (r.get("recall_ids") or []) if len(str(i)) >= 8]
+        if len(text) < 8 or not ids:
+            continue
+        entry = by_text.setdefault(
+            text, {"text": text, "avoid_ids": set(), "ts": ""}
+        )
+        entry["avoid_ids"].update(ids)
+        ts = str(r.get("ts") or "")
+        if ts > entry["ts"]:
+            entry["ts"] = ts
+    ordered = sorted(by_text.values(), key=lambda e: e["ts"], reverse=True)[:max_labels]
+    return [
+        {"text": e["text"], "relevant": False, "avoid_ids": sorted(e["avoid_ids"])}
+        for e in ordered
+    ]
+
+
 def merge_label_prompts(
     existing: list[dict[str, Any]],
     harvested: list[dict[str, Any]],
@@ -765,12 +810,21 @@ def merge_label_prompts(
         h_tok = _reask_tokens(h["text"])
         for i, p in enumerate(merged):
             if _jaccard(h_tok, toks[i]) >= sim_threshold:
-                ids = {str(x) for x in (p.get("expect_ids") or [])} | set(h["expect_ids"])
+                h_expect = {str(x) for x in (h.get("expect_ids") or [])}
+                ids = {str(x) for x in (p.get("expect_ids") or [])} | h_expect
                 p["expect_ids"] = sorted(ids)
-                if h["expect_ids"]:
+                if h_expect:
                     p["relevant"] = True
                 if not p.get("project") and h.get("project"):
                     p["project"] = h["project"]
+                if h.get("avoid_ids"):
+                    av = {str(x) for x in (p.get("avoid_ids") or [])} | {
+                        str(x) for x in h["avoid_ids"]
+                    }
+                    # Grounded positive evidence beats a heuristic verdict.
+                    p["avoid_ids"] = sorted(
+                        av - {str(x) for x in (p.get("expect_ids") or [])}
+                    )
                 break
         else:
             merged.append(h)

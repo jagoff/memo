@@ -335,6 +335,12 @@ def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
     help="Merge into an existing label file (union expect_ids) or replace it.",
 )
 @click.option("--as-json", is_flag=True, help="Emit the resulting label set as JSON.")
+@click.option(
+    "--negatives/--no-negatives",
+    default=False,
+    show_default=True,
+    help="Also mine avoid_ids labels from verdict.log (next-turn user verdicts).",
+)
 def harvest_cmd(
     out_path: Path,
     strong: float,
@@ -342,6 +348,7 @@ def harvest_cmd(
     max_labels: int,
     merge: bool,
     as_json: bool,
+    negatives: bool,
 ) -> None:
     """Grow the eval label set from grounding.log (ground truth by construction).
 
@@ -356,6 +363,10 @@ def harvest_cmd(
     harvested = eval_recall.harvest_labels(
         cfg.state_dir, strong=strong, specific_margin=margin, max_labels=max_labels
     )
+    if negatives:
+        harvested = eval_recall.merge_label_prompts(
+            harvested, eval_recall.harvest_negative_labels(cfg.state_dir)
+        )
 
     existing: list[dict] = []
     if merge and out_path.exists():

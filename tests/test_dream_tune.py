@@ -334,3 +334,17 @@ def test_retrieval_pass_preserves_existing_float_overlay(tmp_cfg, monkeypatch):
     assert overlay["MEMO_RECALL_MIN_SIM"] == 0.6  # preserved
     assert overlay["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1  # preserved
     assert overlay["MEMO_GRAPH_EXPANSION_ENABLED"] is True  # applied
+
+
+def test_build_labels_merges_negative_verdicts(tmp_cfg) -> None:
+    from types import SimpleNamespace
+
+    from memo.dashboard import append_verdict_log
+    from memo.dream_tune import build_labels
+
+    append_verdict_log(tmp_cfg.state_dir, session_id="s1", turn=4, prior_turn=3,
+                       verdict="correction", prompt="dónde vive el registro de flags?",
+                       reaction="no, eso está mal", recall_ids=["aaaabbbb11112222"])
+    labels, _ = build_labels(SimpleNamespace(state_dir=tmp_cfg.state_dir))
+    neg = [p for p in labels.prompts if p.avoid_ids]
+    assert neg and neg[0].avoid_ids == ["aaaabbbb"]

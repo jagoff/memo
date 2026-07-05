@@ -954,3 +954,72 @@ def test_run_config_project_boost_applied_only_for_matching_label():
     # Project-less label: raw score order — beta stays on top, alpha misses @1.
     assert [t["title"] for t in row_n.detail[0]["top"]] == ["beta note"]
     assert row_n.precision_at_k == 0.0
+
+
+def test_avoid_ids_count_as_noise() -> None:
+    from dataclasses import dataclass, field
+    from typing import Any
+
+    from memo.eval_recall import Cfg, LabelSet, Prompt, run_config
+
+    @dataclass
+    class _Hit:
+        id: str
+        score: float | None
+        title: str = "t"
+        body: str = "distinct body long enough for ranking"
+        type: str = "note"
+        tags: list[str] = field(default_factory=list)
+        path: str = "p.md"
+        extra: dict[str, Any] = field(default_factory=dict)
+
+    class _Mem:
+        def search(self, *a: Any, **k: Any) -> list[Any]:
+            return [_Hit("bad1234567890abc", 0.9), _Hit("good567890abcdef", 0.8)]
+
+    labels = LabelSet(prompts=[Prompt("q", relevant=False, avoid_ids=["bad12345"])])
+    row = run_config(_Mem(), Cfg("X vec/0.0/keep", "vec", 0.0, exclude_archived=False), 2, labels)
+    assert row.noise_at_k == 0.5  # 1 avoid-hit in top-2 / (1 prompt * k=2)
+
+
+def test_label_parses_avoid_ids() -> None:
+    from memo.eval_recall import _label_from_dict
+
+    lab = _label_from_dict({"text": "q", "avoid_ids": ["bad12345"]})
+    assert lab.avoid_ids == ["bad12345"]
+
+
+def test_fingerprint_changes_with_avoid_ids() -> None:
+    from memo.eval_recall import LabelSet, Prompt
+
+    a = LabelSet(prompts=[Prompt("q")])
+    b = LabelSet(prompts=[Prompt("q", avoid_ids=["bad12345"])])
+    assert a.fingerprint() != b.fingerprint()
+
+
+def test_harvest_negative_labels_from_verdict_log(tmp_path) -> None:
+    from memo.dashboard import append_verdict_log
+    from memo.eval_recall import harvest_negative_labels
+
+    append_verdict_log(tmp_path, session_id="s1", turn=4, prior_turn=3,
+                       verdict="negative", prompt="cómo configuro el sync remoto?",
+                       reaction="no funciona", recall_ids=["aaaabbbb11112222"])
+    append_verdict_log(tmp_path, session_id="s1", turn=6, prior_turn=5,
+                       verdict="positive", prompt="otra", reaction="gracias",
+                       recall_ids=["ccccdddd11112222"])
+    out = harvest_negative_labels(tmp_path)
+    assert out == [{"text": "cómo configuro el sync remoto?",
+                    "relevant": False, "avoid_ids": ["aaaabbbb"]}]
+
+
+def test_merge_expect_ids_beat_avoid_ids() -> None:
+    from memo.eval_recall import merge_label_prompts
+
+    existing = [{"text": "cómo configuro el sync remoto?", "relevant": True,
+                 "expect_ids": ["aaaabbbb"]}]
+    negatives = [{"text": "cómo configuro el sync remoto?", "relevant": False,
+                  "avoid_ids": ["aaaabbbb", "eeeeffff"]}]
+    merged = merge_label_prompts(existing, negatives)
+    assert len(merged) == 1
+    assert merged[0]["expect_ids"] == ["aaaabbbb"]
+    assert merged[0]["avoid_ids"] == ["eeeeffff"]  # grounded evidence wins

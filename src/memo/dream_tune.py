@@ -42,6 +42,7 @@ from memo.eval_recall import (
     evaluate,
     gate_metrics,
     harvest_labels,
+    harvest_negative_labels,
     merge_label_prompts,
 )
 from memo.tuned_overlay import (
@@ -164,11 +165,15 @@ def build_labels(
     mined = harvest_labels(cfg.state_dir, strong=min_used_score, max_labels=limit)
     curated = _curated_prompts(cfg.state_dir)
     merged = merge_label_prompts(curated, mined)
+    negatives = harvest_negative_labels(cfg.state_dir, max_labels=100)
+    if negatives:
+        merged = merge_label_prompts(merged, negatives)
     prompts = [
         Prompt(
             text=str(p["text"]),
             relevant=bool(p.get("relevant", False)),
             expect_ids=[str(x) for x in (p.get("expect_ids") or [])],
+            avoid_ids=[str(x) for x in (p.get("avoid_ids") or [])],
         )
         for p in merged
         if p.get("text")
