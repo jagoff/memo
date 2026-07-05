@@ -117,9 +117,8 @@ def test_intra_dedup_collapses_near_dups_when_flag_on(mem: Memory, monkeypatch):
     monkeypatch.setattr("memo.recall_logic.collapse_near_dups", _spy)
 
     out, _ = _recall_logic("deploy cutover mac-work", None, mem, mem.cfg)
-    # If search returned >1 hit, the spy must have been called.
-    if out != "{}":
-        assert calls, "collapse_near_dups must be called when MEMO_RECALL_INTRA_DEDUP=1 and len(relevant)>1"
+    assert out != "{}", "expected at least one recall hit — check stub embedder / saved memories"
+    assert calls, "collapse_near_dups must be called when MEMO_RECALL_INTRA_DEDUP=1 and len(relevant)>1"
 
 
 def test_intra_dedup_skipped_when_flag_off(mem: Memory, monkeypatch):
@@ -183,11 +182,11 @@ def test_session_budget_decay_triggers_when_over_budget(mem: Memory, monkeypatch
         session_id="sess-budget-test",
     )
 
-    if out != "{}":
-        assert captured, "render_recall_context must have been called"
-        assert captured[0] < 600, (
-            f"session budget decay must reduce token_budget below 600 (got {captured[0]})"
-        )
+    assert out != "{}", "expected at least one recall hit — check stub embedder / saved memories"
+    assert captured, "render_recall_context must have been called"
+    assert captured[0] < 600, (
+        f"session budget decay must reduce token_budget below 600 (got {captured[0]})"
+    )
 
 
 def test_session_budget_no_decay_when_flag_off(mem: Memory, monkeypatch):
@@ -222,8 +221,8 @@ def test_session_budget_no_decay_when_flag_off(mem: Memory, monkeypatch):
         session_id="sess-budget-off",
     )
 
-    if out != "{}":
-        assert captured, "render_recall_context must have been called"
-        assert captured[0] == 600, (
-            f"token_budget must stay at 600 when session budget flag is unset (got {captured[0]})"
-        )
+    assert out != "{}", "expected at least one recall hit — check stub embedder / saved memories"
+    assert captured, "render_recall_context must have been called"
+    assert captured[0] == 600, (
+        f"token_budget must stay at 600 when session budget flag is unset (got {captured[0]})"
+    )
