@@ -736,17 +736,24 @@ def extract_insights(
     helper_model: str,
     user_text: str,
     assistant_text: str,
+    *,
+    state_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the helper LLM. Returns a list of insight dicts; empty on
     parse failure or model refusal. The helper is the small Qwen2.5-3B
     so latency is bounded (~1-3s warm).
     """
+    system_prompt = _EXTRACT_SYSTEM_PROMPT
+    if state_dir is not None:
+        from memo.prompt_overrides import resolve_prompt
+
+        system_prompt = resolve_prompt("capture_extract", _EXTRACT_SYSTEM_PROMPT, state_dir)
     user_block = f"USER:\n{user_text[:4000]}\n\nASSISTANT:\n{assistant_text[:8000]}"
     try:
         resp = helper_chat.chat(
             model=helper_model,
             messages=[
-                {"role": "system", "content": _EXTRACT_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_block},
             ],
             options={"temperature": 0.0, "seed": 42, "num_predict": 800},
@@ -863,11 +870,17 @@ def _extract_and_save(
     tool-file arrays) so a memory can always escalate to its source turn;
     default None keeps all callers unchanged. Returns counts; every
     per-candidate failure is absorbed (logged only in debug)."""
+    from memo.prompt_overrides import prompt_version
+
+    _extract_prompt_version = prompt_version(
+        "capture_extract", _EXTRACT_SYSTEM_PROMPT, cfg.state_dir
+    )
     insights = extract_insights(
         mem._ensure_chat(),
         cfg.helper_model,
         user_text,
         assistant_text,
+        state_dir=cfg.state_dir,
     )
     if debug:
         print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
@@ -1020,7 +1033,11 @@ def _extract_and_save(
                 type_=cand["type"],
                 tags=tags,
                 auto_project=auto_project,
-                extra={**(extra_base or {}), "capture_confidence": round(confidence, 3)},
+                extra={
+                    **(extra_base or {}),
+                    "capture_confidence": round(confidence, 3),
+                    "prompt_version": _extract_prompt_version,
+                },
             )
             saved.append(rec.id)
             saved_titles.append(rec.title)
