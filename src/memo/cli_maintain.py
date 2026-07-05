@@ -77,7 +77,7 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     return id_a, id_b
 
 
-@click.command(name="maintain")
+@click.group(name="maintain", invoke_without_command=True)
 @click.option("--dry-run", is_flag=True, help="Preview actions; change nothing.")
 @click.option(
     "--min-confidence",
@@ -134,7 +134,9 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     "detached (safe archive-only) and return. For the daily "
     "SessionStart guard.",
 )
+@click.pass_context
 def maintain_cmd(
+    ctx: click.Context,
     dry_run: bool,
     min_confidence: float,
     hard_delete: bool,
@@ -156,6 +158,9 @@ def maintain_cmd(
     Reversible by default (archives to inactive/). Example:
       memo maintain --dry-run
     """
+    if ctx.invoked_subcommand is not None:
+        return
+
     cfg = Config.from_env()
 
     # Daily guard for the SessionStart hook: cheap, builds no Memory.
@@ -428,11 +433,16 @@ def maintain_cmd(
     if not dry_run:
         try:
             d = _state_path(cfg)
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "last.json").write_text(
-                json.dumps({"ts": time.time(), **receipt}, ensure_ascii=False, indent=2),
-                encoding="utf-8",
+            runs_dir = d / "runs"
+            runs_dir.mkdir(parents=True, exist_ok=True)
+            run_stamp = str(int(time.time()))
+            payload = json.dumps(
+                {"ts": time.time(), "run": run_stamp, **receipt},
+                ensure_ascii=False,
+                indent=2,
             )
+            (d / "last.json").write_text(payload, encoding="utf-8")
+            (runs_dir / f"{run_stamp}.json").write_text(payload, encoding="utf-8")
             (d / ".last_run_ts").write_text(str(time.time()), encoding="utf-8")
         except Exception as exc:
             receipt["errors"].append(f"receipt: {type(exc).__name__}: {exc}")

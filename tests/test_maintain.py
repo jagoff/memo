@@ -223,3 +223,30 @@ def test_maint_synthesize_non_fatal_on_error(tmp_path: Path):
             reranker_enabled=False,
         )
     ).exists()
+
+
+def test_maintain_writes_timestamped_run_receipt(tmp_cfg):
+    import json as _json
+
+    from click.testing import CliRunner
+
+    from memo.cli_maintain import maintain_cmd
+
+    runner = CliRunner()
+    res = runner.invoke(
+        maintain_cmd,
+        ["--skip-contradict", "--skip-consolidate", "--skip-stale", "--skip-synthesize", "--json"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+            "MEMO_OUTCOME_RANKING_ENABLED": "0",
+        },
+    )
+    assert res.exit_code == 0, res.output
+    runs = list((tmp_cfg.state_dir / "maintain" / "runs").glob("*.json"))
+    assert len(runs) == 1
+    receipt = _json.loads(runs[0].read_text(encoding="utf-8"))
+    assert receipt["run"] == runs[0].stem
+    # last.json still written (daily guard + undo default read it)
+    assert (tmp_cfg.state_dir / "maintain" / "last.json").is_file()
