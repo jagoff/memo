@@ -168,9 +168,12 @@ def test_session_budget_decay_triggers_when_over_budget(mem: Memory, monkeypatch
     import memo.recall_logic as _rl
     original_render = _rl.render_recall_context
 
-    def _spy(relevant, nudge, *, turn, body_chars, token_budget):
+    def _spy(relevant, nudge, *, turn, body_chars, token_budget, **kwargs):
         captured.append(token_budget)
-        return original_render(relevant, nudge, turn=turn, body_chars=body_chars, token_budget=token_budget)
+        return original_render(
+            relevant, nudge, turn=turn, body_chars=body_chars,
+            token_budget=token_budget, **kwargs,
+        )
 
     monkeypatch.setattr("memo.recall_logic.render_recall_context", _spy)
 
@@ -207,9 +210,12 @@ def test_session_budget_no_decay_when_flag_off(mem: Memory, monkeypatch):
     import memo.recall_logic as _rl
     original_render = _rl.render_recall_context
 
-    def _spy(relevant, nudge, *, turn, body_chars, token_budget):
+    def _spy(relevant, nudge, *, turn, body_chars, token_budget, **kwargs):
         captured.append(token_budget)
-        return original_render(relevant, nudge, turn=turn, body_chars=body_chars, token_budget=token_budget)
+        return original_render(
+            relevant, nudge, turn=turn, body_chars=body_chars,
+            token_budget=token_budget, **kwargs,
+        )
 
     monkeypatch.setattr("memo.recall_logic.render_recall_context", _spy)
 
