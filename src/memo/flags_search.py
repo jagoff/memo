@@ -289,4 +289,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "search",
         "Max tokens for HyDE generation (LLM call to generate hypothetical doc).",
     ),
+    _spec(
+        "MEMO_ASK_MULTI_ROUND",
+        "bool",
+        False,
+        "search",
+        "ask/chat only: after round-1 retrieval, ONE LLM sufficiency check may "
+        "emit 1-3 refined queries for a single capped round-2 (at most k added "
+        "hits, id-deduped). Never runs in the 5s recall hook. Default off — "
+        "flip only after the eval gate + synapse eval-chat measure a win.",
+    ),
 )

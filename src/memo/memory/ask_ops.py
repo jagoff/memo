@@ -31,6 +31,65 @@ from memo.memory.record import (
 class _AskOpsMixin(_MemoryBase):
     # -- chat ask -----------------------------------------------------------
 
+    _MULTI_ROUND_SYS = (
+        "You check whether retrieved snippets suffice to answer a question. "
+        'Reply with ONE line of JSON: {"sufficient": true} or '
+        '{"sufficient": false, "queries": ["...", "..."]} — 1-3 refined search '
+        "queries, each under 12 words. No other text."
+    )
+
+    def _multi_round_augment(
+        self,
+        question: str,
+        hits: list[MemoryRecord],
+        *,
+        k: int,
+        type_: str | None,
+    ) -> list[MemoryRecord]:
+        """One bounded extra retrieval round (MEMO_ASK_MULTI_ROUND, default off).
+
+        LLM inspects round-1 snippets; if insufficient it emits 1-3 refined
+        queries, each searched once; union capped at `k` NEW hits. ask/chat
+        path only — never the 5s recall hook. Never raises (degrades to
+        round-1 hits on any failure/timeout)."""
+        import json as _json
+
+        from memo.memory.record import chat_with_timeout
+
+        try:
+            snippets = "\n".join(
+                f"[{h.id[:8]}] {h.title}: {(h.body or '')[:200]}" for h in hits[:8]
+            )
+            out = chat_with_timeout(
+                self._ensure_chat(),
+                timeout=10.0,
+                model=self.cfg.llm_model,
+                messages=[
+                    {"role": "system", "content": self._MULTI_ROUND_SYS},
+                    {"role": "user", "content": f"Question:\n{question}\n\nSnippets:\n{snippets}"},
+                ],
+                options={"temperature": 0.0, "max_tokens": 120},
+            )
+            raw = ((out or {}).get("message") or {}).get("content") or ""
+            verdict = _json.loads(raw.strip().splitlines()[-1])
+            if verdict.get("sufficient", True):
+                return hits
+            queries = [str(q) for q in (verdict.get("queries") or [])[:3] if str(q).strip()]
+            seen = {h.id for h in hits}
+            added: list[MemoryRecord] = []
+            for q in queries:
+                for h in self.search(q, limit=k, type_=type_, mode="hybrid", disable_reranker=True):
+                    if h.id in seen or len(added) >= k:
+                        continue
+                    seen.add(h.id)
+                    added.append(h if h.body else replace(h, body=self._read_body(h.path)))
+            if added:
+                _log.info("ask multi-round: +%d hits via %d refined queries", len(added), len(queries))
+            return [*hits, *added]
+        except Exception as exc:
+            _log.debug("ask multi-round skipped: %s", exc)
+            return hits
+
     def _build_ask_context(
         self,
         question: str,
@@ -140,6 +199,11 @@ class _AskOpsMixin(_MemoryBase):
         # Load bodies only for the final hits that will be used.
         # MemoryRecord is frozen, so rebuild rather than mutate in place.
         hits = [h if h.body else replace(h, body=self._read_body(h.path)) for h in hits]
+
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_ASK_MULTI_ROUND") and hits:
+            hits = self._multi_round_augment(question, hits, k=k, type_=type_)
 
         # Recency augmentation: the newest chunk of a long transcript is often
         # semantically bland ("cómo te fue hoy?") and never makes the candidate
