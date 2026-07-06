@@ -347,6 +347,43 @@ def _id_matches(hit_id: str, expect_ids: list[str]) -> bool:
     return False
 
 
+# --- Ranked-retrieval metrics (R@K / NDCG@K / MRR) ----------------------------
+#
+# Standard IR metrics over the same ranked top-K list precision@K scores.
+# Relevance is binary: a hit id matches one of the prompt's expect_ids
+# (prefix match via _id_matches). Consumed by `memo eval recall` (for
+# expect_ids labels) and by the public-benchmark harness (`memo eval bench`).
+
+
+def recall_at_k(ranked_ids: list[str], expect_ids: list[str], k: int) -> float:
+    """Fraction of expect_ids present in the top-K."""
+    if not expect_ids:
+        return 0.0
+    top = ranked_ids[:k]
+    found = sum(1 for e in expect_ids if any(_id_matches(h, [e]) for h in top))
+    return found / len(expect_ids)
+
+
+def mrr_at_k(ranked_ids: list[str], expect_ids: list[str], k: int) -> float:
+    """1/rank of the first relevant hit in the top-K (0.0 if none)."""
+    for rank, hid in enumerate(ranked_ids[:k], start=1):
+        if _id_matches(hid, expect_ids):
+            return 1.0 / rank
+    return 0.0
+
+
+def ndcg_at_k(ranked_ids: list[str], expect_ids: list[str], k: int) -> float:
+    """Binary-gain NDCG@K against the ideal ranking of the expected ids."""
+    import math
+
+    if not expect_ids:
+        return 0.0
+    gains = [1.0 if _id_matches(hid, expect_ids) else 0.0 for hid in ranked_ids[:k]]
+    dcg = sum(g / math.log2(i + 2.0) for i, g in enumerate(gains))
+    ideal = sum(1.0 / math.log2(i + 2.0) for i in range(min(len(expect_ids), k)))
+    return dcg / ideal if ideal else 0.0
+
+
 def _is_relevant(rec: Any, prompt: Prompt, labels: LabelSet) -> bool:
     if prompt.expect_ids:
         return _id_matches(getattr(rec, "id", ""), prompt.expect_ids)
@@ -372,6 +409,10 @@ class Row:
     precision_at_k: float = 0.0
     noise_at_k: float = 0.0
     assoc_precision_at_k: float = 0.0  # fraction of expect_associative_ids the associative engine surfaces from the top-K seeds
+    # Ranked metrics averaged over prompts that carry expect_ids (0.0 when none do).
+    recall_at_k: float = 0.0
+    ndcg_at_k: float = 0.0
+    mrr: float = 0.0
     latency_ms_p50: float = 0.0
     detail: list[dict[str, Any]] = field(default_factory=list)
 
@@ -416,6 +457,10 @@ def _run_config_inner(
     noise_hits = 0
     assoc_hits = 0
     assoc_total = 0
+    rk_sum = 0.0
+    ndcg_sum = 0.0
+    mrr_sum = 0.0
+    ranked_total = 0
     detail: list[dict[str, Any]] = []
     n_prompts = len(labels.prompts) or 1
     # Honest associative metric: measure what the associative engine actually
@@ -509,6 +554,12 @@ def _run_config_inner(
         if cfg.exclude_archived:
             ranked = [h for h in ranked if not _is_noise(h, labels)]
         top = ranked[:k]
+        if prompt.expect_ids:
+            ranked_ids = [getattr(h, "id", "") or "" for h in top]
+            rk_sum += recall_at_k(ranked_ids, prompt.expect_ids, k)
+            ndcg_sum += ndcg_at_k(ranked_ids, prompt.expect_ids, k)
+            mrr_sum += mrr_at_k(ranked_ids, prompt.expect_ids, k)
+            ranked_total += 1
 
         def _hit_is_noise(h: Any, _avoid_ids: list[str] = prompt.avoid_ids) -> bool:
             return _is_noise(h, labels) or _id_matches(getattr(h, "id", ""), _avoid_ids)
@@ -556,6 +607,9 @@ def _run_config_inner(
         precision_at_k=round(prec_hits / prec_total, 3) if prec_total else 0.0,
         noise_at_k=round(noise_hits / (n_prompts * k), 3) if (n_prompts * k) else 0.0,
         assoc_precision_at_k=round(assoc_hits / assoc_total, 3) if assoc_total else 0.0,
+        recall_at_k=round(rk_sum / ranked_total, 3) if ranked_total else 0.0,
+        ndcg_at_k=round(ndcg_sum / ranked_total, 3) if ranked_total else 0.0,
+        mrr=round(mrr_sum / ranked_total, 3) if ranked_total else 0.0,
         latency_ms_p50=round(lat[len(lat) // 2], 1) if lat else 0.0,
         detail=detail,
     )
@@ -592,12 +646,14 @@ def evaluate(
 def rows_to_table(rows: list[Row], k: int) -> str:
     lines = [
         f"\nRecall eval — precision@{k} (answerable) / noise@{k} (all) / assoc@{k} (graph-neighbor labels)\n",
-        f"{'config':<18} {'prec@k':>7} {'noise@k':>8} {'assoc@k':>8} {'p50 ms':>8}",
-        "-" * 55,
+        f"{'config':<18} {'prec@k':>7} {'noise@k':>8} {'assoc@k':>8} {'R@k':>6} {'nDCG':>6} {'MRR':>6} {'p50 ms':>8}",
+        "-" * 76,
     ]
     for r in rows:
         lines.append(
-            f"{r.config:<18} {r.precision_at_k:>7} {r.noise_at_k:>8} {r.assoc_precision_at_k:>8} {r.latency_ms_p50:>8}"
+            f"{r.config:<18} {r.precision_at_k:>7} {r.noise_at_k:>8} "
+            f"{r.assoc_precision_at_k:>8} {r.recall_at_k:>6} {r.ndcg_at_k:>6} "
+            f"{r.mrr:>6} {r.latency_ms_p50:>8}"
         )
     lines.append("\nHigher prec@k + lower noise@k is better. Baseline = first config.")
     lines.append(

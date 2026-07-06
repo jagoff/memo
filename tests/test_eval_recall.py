@@ -8,6 +8,7 @@ not specific precision numbers (those only mean something on a real corpus).
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1087,3 +1088,43 @@ def test_expand_labels_drops_duplicates_and_short() -> None:
         per_prompt=3,
     )
     assert [o["text"] for o in out] == ["cómo seteo el sync remoto de memo?"]
+
+
+# --- ranked-retrieval metrics (R@K / NDCG@K / MRR) ---------------------------
+
+
+def test_recall_at_k_fraction_of_expected_found():
+    ranked = ["aaaaaaaa11111111", "bbbbbbbb22222222", "cccccccc33333333"]
+    assert eval_recall.recall_at_k(ranked, ["aaaaaaaa", "dddddddd"], k=3) == 0.5
+    assert eval_recall.recall_at_k(ranked, ["aaaaaaaa", "bbbbbbbb"], k=1) == 0.5
+    assert eval_recall.recall_at_k(ranked, [], k=3) == 0.0
+
+
+def test_mrr_at_k_first_relevant_rank():
+    ranked = ["ffffffff00000000", "aaaaaaaa11111111"]
+    assert eval_recall.mrr_at_k(ranked, ["aaaaaaaa"], k=5) == 0.5
+    assert eval_recall.mrr_at_k(ranked, ["ffffffff"], k=5) == 1.0
+    assert eval_recall.mrr_at_k(ranked, ["eeeeeeee"], k=5) == 0.0
+
+
+def test_ndcg_at_k_binary_gains():
+    # single expected id found at rank 2: DCG = 1/log2(3), IDCG = 1/log2(2)
+    ranked = ["ffffffff00000000", "aaaaaaaa11111111"]
+    got = eval_recall.ndcg_at_k(ranked, ["aaaaaaaa"], k=2)
+    assert got == pytest.approx(math.log(2) / math.log(3))
+    assert eval_recall.ndcg_at_k(ranked, ["ffffffff"], k=2) == pytest.approx(1.0)
+    assert eval_recall.ndcg_at_k(ranked, ["eeeeeeee"], k=2) == 0.0
+    assert eval_recall.ndcg_at_k(ranked, [], k=2) == 0.0
+
+
+def test_run_config_reports_ranked_metrics(mock_memory):
+    rec = mock_memory.save(content="the bench metric target note", title="bench target")
+    labels = LabelSet(
+        prompts=[Prompt("the bench metric target note", relevant=True, expect_ids=[rec.id])]
+    )
+    cfg = eval_recall.Cfg("t", "vec", -1.0, exclude_archived=False)
+    row = eval_recall.run_config(mock_memory, cfg, 5, labels)
+    # one record in the corpus + floor -1.0 → it must be in the top-5
+    assert row.recall_at_k == 1.0
+    assert 0.0 < row.mrr <= 1.0
+    assert 0.0 < row.ndcg_at_k <= 1.0
