@@ -1,201 +1,203 @@
-<svg viewBox="0 0 1400 800" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 1200 600" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <style>
-      .title { font-size: 24px; font-weight: bold; fill: #1a202c; }
-      .subtitle { font-size: 13px; fill: #4a5568; }
-      .phase-num { font-size: 18px; font-weight: bold; fill: #fff; }
-      .phase-title { font-size: 14px; font-weight: bold; fill: #1a202c; }
-      .phase-desc { font-size: 11px; fill: #2d3748; }
-      .arrow-line { stroke: #2d3748; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
-      .box { stroke: #2d3748; stroke-width: 2; }
-      .phase-odd { fill: #e6f3ff; }
-      .phase-even { fill: #fff5e6; }
-      .legend-box { fill: #f7fafc; stroke: #cbd5e0; stroke-width: 1; }
-      .legend-text { font-size: 10px; fill: #4a5568; }
+      .bg { fill: #ffffff; }
+      .title-main { font-size: 22px; font-weight: bold; fill: #1a202c; }
+      .title-sub { font-size: 12px; fill: #4a5568; }
+      .phase-number { font-size: 14px; font-weight: bold; fill: #2d3748; }
+      .phase-icon { font-size: 24px; }
+      .phase-label { font-size: 12px; font-weight: bold; fill: #1a202c; }
+      .phase-desc { font-size: 10px; fill: #4a5568; }
+      .arrow { stroke: #cbd5e0; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .box { stroke: #e2e8f0; stroke-width: 1.5; }
+      .footer-text { font-size: 11px; fill: #4a5568; }
+      .highlight { fill: #5a67d8; font-weight: bold; }
     </style>
-    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-      <polygon points="0 0, 10 3, 0 6" fill="#2d3748" />
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#cbd5e0" />
     </marker>
   </defs>
 
+  <!-- Background -->
+  <rect width="1200" height="600" class="bg"/>
+
   <!-- Title -->
-  <text x="700" y="35" class="title" text-anchor="middle">memo dream — Autonomous Nightly Maintenance (7 phases, ~15–45 min)</text>
-  <text x="700" y="53" class="subtitle" text-anchor="middle">Runs at 03:00 AM (launchd) to synthesize, heal, decay, and optimize the corpus</text>
+  <text x="600" y="30" class="title-main" text-anchor="middle">memo dream — Autonomous Nightly Maintenance Pipeline</text>
+  <text x="600" y="48" class="title-sub" text-anchor="middle">Runs 03:00 AM to heal, decay, synthesize, and optimize your memory corpus (~15–45 min)</text>
 
-  <!-- Phase 1: Orientation -->
-  <g>
-    <circle cx="100" cy="150" r="20" class="phase-odd" class="box" fill="#d4e6f7" stroke="#2d3748" stroke-width="2"/>
-    <text x="100" y="158" class="phase-num" text-anchor="middle" font-size="16">1</text>
+  <!-- 7-Phase Flow -->
+  <g id="phases">
+    <!-- Phase 1: Orientation -->
+    <g>
+      <rect x="10" y="80" width="85" height="140" rx="4" class="box" fill="#d4e6f7"/>
+      <text x="52" y="100" class="phase-icon" text-anchor="middle">📊</text>
+      <text x="52" y="125" class="phase-label" text-anchor="middle">Orientation</text>
+      <text x="52" y="142" class="phase-desc" text-anchor="middle" font-size="9">Read-only</text>
+      <text x="52" y="155" class="phase-desc" text-anchor="middle" font-size="9">inventory</text>
+      <text x="52" y="168" class="phase-desc" text-anchor="middle" font-size="9">(corpus size,</text>
+      <text x="52" y="181" class="phase-desc" text-anchor="middle" font-size="9">ROI, stale)</text>
+      <text x="52" y="210" class="phase-number" text-anchor="middle">1</text>
+    </g>
 
-    <rect x="40" y="180" width="120" height="100" class="phase-odd box"/>
-    <text x="100" y="205" class="phase-title" text-anchor="middle">📊 Orientation</text>
-    <text x="50" y="225" class="phase-desc">Read-only inventory:</text>
-    <text x="50" y="240" class="phase-desc">• Total memories</text>
-    <text x="50" y="255" class="phase-desc">• Low-ROI count</text>
-    <text x="50" y="270" class="phase-desc">• Stale (365d+)</text>
+    <!-- Arrow 1 -->
+    <path d="M 95 150 L 115 150" class="arrow"/>
+
+    <!-- Phase 2: Signal Gather -->
+    <g>
+      <rect x="115" y="80" width="85" height="140" rx="4" class="box" fill="#fef3e6"/>
+      <text x="157" y="100" class="phase-icon" text-anchor="middle">⛏️</text>
+      <text x="157" y="125" class="phase-label" text-anchor="middle">Signal</text>
+      <text x="157" y="141" class="phase-label" text-anchor="middle">Gather</text>
+      <text x="157" y="158" class="phase-desc" text-anchor="middle" font-size="9">Mine</text>
+      <text x="157" y="171" class="phase-desc" text-anchor="middle" font-size="9">transcripts</text>
+      <text x="157" y="184" class="phase-desc" text-anchor="middle" font-size="9">for labels</text>
+      <text x="157" y="210" class="phase-number" text-anchor="middle">2</text>
+    </g>
+
+    <!-- Arrow 2 -->
+    <path d="M 200 150 L 220 150" class="arrow"/>
+
+    <!-- Phase 3: Heal -->
+    <g>
+      <rect x="220" y="80" width="85" height="140" rx="4" class="box" fill="#d4e6f7"/>
+      <text x="262" y="100" class="phase-icon" text-anchor="middle">⚔️</text>
+      <text x="262" y="130" class="phase-label" text-anchor="middle">Heal</text>
+      <text x="262" y="150" class="phase-desc" text-anchor="middle" font-size="9">Resolve</text>
+      <text x="262" y="163" class="phase-desc" text-anchor="middle" font-size="9">conflicts</text>
+      <text x="262" y="176" class="phase-desc" text-anchor="middle" font-size="9">+ dedupe</text>
+      <text x="262" y="210" class="phase-number" text-anchor="middle">3</text>
+    </g>
+
+    <!-- Arrow 3 -->
+    <path d="M 305 150 L 325 150" class="arrow"/>
+
+    <!-- Phase 4: Prune -->
+    <g>
+      <rect x="325" y="80" width="85" height="140" rx="4" class="box" fill="#fef3e6"/>
+      <text x="367" y="100" class="phase-icon" text-anchor="middle">📉</text>
+      <text x="367" y="130" class="phase-label" text-anchor="middle">Prune</text>
+      <text x="367" y="150" class="phase-desc" text-anchor="middle" font-size="9">Archive</text>
+      <text x="367" y="163" class="phase-desc" text-anchor="middle" font-size="9">365d+, decay</text>
+      <text x="367" y="176" class="phase-desc" text-anchor="middle" font-size="9">idle >30d</text>
+      <text x="367" y="210" class="phase-number" text-anchor="middle">4</text>
+    </g>
+
+    <!-- Arrow 4 -->
+    <path d="M 410 150 L 430 150" class="arrow"/>
+
+    <!-- Phase 5: Enrich -->
+    <g>
+      <rect x="430" y="80" width="85" height="140" rx="4" class="box" fill="#d4e6f7"/>
+      <text x="472" y="100" class="phase-icon" text-anchor="middle">🔮</text>
+      <text x="472" y="130" class="phase-label" text-anchor="middle">Enrich</text>
+      <text x="472" y="150" class="phase-desc" text-anchor="middle" font-size="9">Synthesize</text>
+      <text x="472" y="163" class="phase-desc" text-anchor="middle" font-size="9">insights,</text>
+      <text x="472" y="176" class="phase-desc" text-anchor="middle" font-size="9">extract</text>
+      <text x="472" y="210" class="phase-number" text-anchor="middle">5</text>
+    </g>
+
+    <!-- Arrow 5 -->
+    <path d="M 515 150 L 535 150" class="arrow"/>
+
+    <!-- Phase 6: Optimize -->
+    <g>
+      <rect x="535" y="80" width="85" height="140" rx="4" class="box" fill="#fef3e6"/>
+      <text x="577" y="100" class="phase-icon" text-anchor="middle">📦</text>
+      <text x="577" y="130" class="phase-label" text-anchor="middle">Optimize</text>
+      <text x="577" y="150" class="phase-desc" text-anchor="middle" font-size="9">Prune, evict,</text>
+      <text x="577" y="163" class="phase-desc" text-anchor="middle" font-size="9">compress,</text>
+      <text x="577" y="176" class="phase-desc" text-anchor="middle" font-size="9">cleanup</text>
+      <text x="577" y="210" class="phase-number" text-anchor="middle">6</text>
+    </g>
+
+    <!-- Arrow 6 -->
+    <path d="M 620 150 L 640 150" class="arrow"/>
+
+    <!-- Phase 7: Prewarm -->
+    <g>
+      <rect x="640" y="80" width="85" height="140" rx="4" class="box" fill="#d4e6f7"/>
+      <text x="682" y="100" class="phase-icon" text-anchor="middle">🔥</text>
+      <text x="682" y="130" class="phase-label" text-anchor="middle">Prewarm</text>
+      <text x="682" y="150" class="phase-desc" text-anchor="middle" font-size="9">Cache top</text>
+      <text x="682" y="163" class="phase-desc" text-anchor="middle" font-size="9">queries for</text>
+      <text x="682" y="176" class="phase-desc" text-anchor="middle" font-size="9">&lt;200ms</text>
+      <text x="682" y="210" class="phase-number" text-anchor="middle">7</text>
+    </g>
   </g>
 
-  <!-- Arrow 1→2 -->
-  <path d="M 160 230 L 220 230" class="arrow-line"/>
-
-  <!-- Phase 2: Signal Gather -->
+  <!-- Receipt & Output -->
   <g>
-    <circle cx="280" cy="150" r="20" class="phase-even" class="box" fill="#fef3e6" stroke="#2d3748" stroke-width="2"/>
-    <text x="280" y="158" class="phase-num" text-anchor="middle">2</text>
-
-    <rect x="220" y="180" width="120" height="100" class="phase-even box"/>
-    <text x="280" y="205" class="phase-title" text-anchor="middle">⛏️ Signal Gather</text>
-    <text x="230" y="225" class="phase-desc">Mine transcripts:</text>
-    <text x="230" y="240" class="phase-desc">• Ground-truth labels</text>
-    <text x="230" y="255" class="phase-desc">• Knowledge gaps</text>
-    <text x="230" y="270" class="phase-desc">• Usage signals</text>
+    <rect x="10" y="250" width="715" height="100" rx="4" class="box" fill="#f7fafc"/>
+    <text x="25" y="272" class="phase-label">📋 Receipt (~/.memo-state/dream/last.json)</text>
+    <text x="25" y="295" class="footer-text">• timestamp, duration, phases executed • counts: contradictions resolved, duplicates consolidated, archived, synthesized, etc</text>
+    <text x="25" y="313" class="footer-text">• errors[] (failures NEVER silent) • fingerprint (convergence check)</text>
+    <text x="25" y="331" class="footer-text">Command: <tspan class="highlight">memo dream status</tspan></text>
   </g>
 
-  <!-- Arrow 2→3 -->
-  <path d="M 340 230 L 400 230" class="arrow-line"/>
-
-  <!-- Phase 3: Heal -->
+  <!-- Optional Self-Improvement -->
   <g>
-    <circle cx="460" cy="150" r="20" class="phase-odd" class="box" fill="#d4e6f7" stroke="#2d3748" stroke-width="2"/>
-    <text x="460" y="158" class="phase-num" text-anchor="middle">3</text>
-
-    <rect x="400" y="180" width="120" height="100" class="phase-odd box"/>
-    <text x="460" y="205" class="phase-title" text-anchor="middle">⚔️ Heal</text>
-    <text x="410" y="225" class="phase-desc">Resolve conflicts:</text>
-    <text x="410" y="240" class="phase-desc">• Contradictions</text>
-    <text x="410" y="255" class="phase-desc">• Duplicate clusters</text>
-    <text x="410" y="270" class="phase-desc">  (cosine ≥0.9)</text>
+    <rect x="10" y="380" width="230" height="100" rx="4" class="box" fill="#edf2f7" style="stroke-dasharray: 3,3;"/>
+    <text x="25" y="402" class="phase-label">🎯 Tuner (optional)</text>
+    <text x="25" y="420" class="footer-text">MEMO_DREAM_TUNE_ENABLED=1</text>
+    <text x="25" y="435" class="footer-text">• Mine real-usage labels</text>
+    <text x="25" y="450" class="footer-text">• Auto-tune recall threshold</text>
+    <text x="25" y="465" class="footer-text">• Auto-revert on regression</text>
   </g>
 
-  <!-- Arrow 3→4 -->
-  <path d="M 520 230 L 580 230" class="arrow-line"/>
-
-  <!-- Phase 4: Prune -->
   <g>
-    <circle cx="640" cy="150" r="20" class="phase-even" class="box" fill="#fef3e6" stroke="#2d3748" stroke-width="2"/>
-    <text x="640" y="158" class="phase-num" text-anchor="middle">4</text>
-
-    <rect x="580" y="180" width="120" height="100" class="phase-even box"/>
-    <text x="640" y="205" class="phase-title" text-anchor="middle">📉 Prune</text>
-    <text x="590" y="225" class="phase-desc">Decay old memories:</text>
-    <text x="590" y="240" class="phase-desc">• Archive 365d+</text>
-    <text x="590" y="255" class="phase-desc">• ROI ×= 0.98 (idle</text>
-    <text x="590" y="270" class="phase-desc">  >30d)</text>
+    <rect x="260" y="380" width="230" height="100" rx="4" class="box" fill="#edf2f7" style="stroke-dasharray: 3,3;"/>
+    <text x="275" y="402" class="phase-label">📚 Consolidate (optional)</text>
+    <text x="275" y="420" class="footer-text">MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED=1</text>
+    <text x="275" y="435" class="footer-text">• Group episodes by project</text>
+    <text x="275" y="450" class="footer-text">• Abstract patterns →</text>
+    <text x="275" y="465" class="footer-text">  type=synthesis memories</text>
   </g>
 
-  <!-- Arrow 4→5 -->
-  <path d="M 700 230 L 760 230" class="arrow-line"/>
-
-  <!-- Phase 5: Enrich -->
   <g>
-    <circle cx="820" cy="150" r="20" class="phase-odd" class="box" fill="#d4e6f7" stroke="#2d3748" stroke-width="2"/>
-    <text x="820" y="158" class="phase-num" text-anchor="middle">5</text>
-
-    <rect x="760" y="180" width="120" height="100" class="phase-odd box"/>
-    <text x="820" y="205" class="phase-title" text-anchor="middle">🔮 Enrich</text>
-    <text x="770" y="225" class="phase-desc">Synthesize & extract:</text>
-    <text x="770" y="240" class="phase-desc">• LLM cross-cluster</text>
-    <text x="770" y="255" class="phase-desc">  insights</text>
-    <text x="770" y="270" class="phase-desc">• Entity backfill</text>
+    <rect x="510" y="380" width="215" height="100" rx="4" class="box" fill="#edf2f7" style="stroke-dasharray: 3,3;"/>
+    <text x="525" y="402" class="phase-label">🔭 Anticipate (optional)</text>
+    <text x="525" y="420" class="footer-text">MEMO_DREAM_ANTICIPATE_ENABLED=1</text>
+    <text x="525" y="435" class="footer-text">• Detect knowledge gaps</text>
+    <text x="525" y="450" class="footer-text">• Surface hot queries</text>
+    <text x="525" y="465" class="footer-text">• Pre-warm embeddings</text>
   </g>
 
-  <!-- Arrow 5→6 -->
-  <path d="M 880 230 L 940 230" class="arrow-line"/>
-
-  <!-- Phase 6: Optimize -->
+  <!-- Key Insight -->
   <g>
-    <circle cx="1000" cy="150" r="20" class="phase-even" class="box" fill="#fef3e6" stroke="#2d3748" stroke-width="2"/>
-    <text x="1000" y="158" class="phase-num" text-anchor="middle">6</text>
-
-    <rect x="940" y="180" width="120" height="100" class="phase-even box"/>
-    <text x="1000" y="205" class="phase-title" text-anchor="middle">📦 Optimize</text>
-    <text x="950" y="225" class="phase-desc">Index hygiene:</text>
-    <text x="950" y="240" class="phase-desc">• Prune low-quality</text>
-    <text x="950" y="255" class="phase-desc">• Evict if full (LFU)</text>
-    <text x="950" y="270" class="phase-desc">• Compress context</text>
+    <rect x="10" y="510" width="715" height="75" rx="4" class="box" fill="#f0fff4" style="stroke: #22543d; stroke-width: 2;"/>
+    <text x="25" y="535" class="phase-label" style="fill: #22543d;">💡 Key: memo is the ONLY MCP that self-optimizes</text>
+    <text x="25" y="556" class="footer-text" style="fill: #22543d;">Nightly, autonomous, learns from real usage. No user intervention. Auto-tunes recall quality, auto-detects gaps, consolidates patterns, auto-reverts on failure. Every phase logs. No silent failures.</text>
   </g>
 
-  <!-- Arrow 6→7 -->
-  <path d="M 1060 230 L 1120 230" class="arrow-line"/>
-
-  <!-- Phase 7: Prewarm -->
+  <!-- Right side: Commands -->
   <g>
-    <circle cx="1180" cy="150" r="20" class="phase-odd" class="box" fill="#d4e6f7" stroke="#2d3748" stroke-width="2"/>
-    <text x="1180" y="158" class="phase-num" text-anchor="middle">7</text>
+    <rect x="750" y="80" width="440" height="505" rx="4" class="box" fill="#fafbfc"/>
 
-    <rect x="1120" y="180" width="120" height="100" class="phase-odd box"/>
-    <text x="1180" y="205" class="phase-title" text-anchor="middle">🔥 Prewarm</text>
-    <text x="1130" y="225" class="phase-desc">Prepare next session:</text>
-    <text x="1130" y="240" class="phase-desc">• Cache top-100</text>
-    <text x="1130" y="255" class="phase-desc">  query embeddings</text>
-    <text x="1130" y="270" class="phase-desc">→ <200 ms recall</text>
-  </g>
+    <text x="770" y="110" class="phase-label">🚀 Commands</text>
 
-  <!-- Bottom row: Optional self-improvement passes -->
-  <g>
-    <text x="50" y="380" style="font-size: 13px; font-weight: bold; fill: #5a67d8;">Optional Self-Improvement (flag-gated, all default OFF):</text>
+    <text x="770" y="145" class="footer-text" style="font-weight: bold; color: #2d3748;">Automatic (launchd):</text>
+    <text x="770" y="165" class="footer-text" style="font-family: monospace;">Runs nightly @ 03:00 AM</text>
 
-    <!-- Tuner -->
-    <rect x="50" y="400" width="280" height="120" class="box" style="fill: #edf2f7; stroke-dasharray: 4,4;"/>
-    <text x="190" y="425" class="phase-title" text-anchor="middle">🎯 Tuner</text>
-    <text x="60" y="445" class="phase-desc">MEMO_DREAM_TUNE_ENABLED=1</text>
-    <text x="60" y="460" class="phase-desc">• Mine ground-truth labels from usage</text>
-    <text x="60" y="475" class="phase-desc">• Line-search MEMO_RECALL_MIN_SIM</text>
-    <text x="60" y="490" class="phase-desc">• Auto-apply winner, auto-revert if regress</text>
-    <text x="60" y="505" class="phase-desc" style="font-style: italic;">cmd: memo dream tune</text>
-  </g>
+    <text x="770" y="200" class="footer-text" style="font-weight: bold; color: #2d3748;">Manual:</text>
+    <text x="770" y="220" class="footer-text" style="font-family: monospace;">memo dream run</text>
+    <text x="775" y="237" class="footer-text">Run once (foreground)</text>
 
-  <!-- Consolidate -->
-  <g>
-    <rect x="350" y="400" width="280" height="120" class="box" style="fill: #edf2f7; stroke-dasharray: 4,4;"/>
-    <text x="490" y="425" class="phase-title" text-anchor="middle">📚 Consolidate</text>
-    <text x="360" y="445" class="phase-desc">MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED=1</text>
-    <text x="360" y="460" class="phase-desc">• Group episodes by project</text>
-    <text x="360" y="475" class="phase-desc">• Abstract recurring work into synthesis</text>
-    <text x="360" y="490" class="phase-desc">• Distinct from per-turn signal gather</text>
-    <text x="360" y="505" class="phase-desc" style="font-style: italic;">cmd: memo dream consolidate</text>
-  </g>
+    <text x="770" y="265" class="footer-text" style="font-family: monospace;">memo dream if-due</text>
+    <text x="775" y="282" class="footer-text">No-op unless >24h (for cron)</text>
 
-  <!-- Anticipate -->
-  <g>
-    <rect x="650" y="400" width="280" height="120" class="box" style="fill: #edf2f7; stroke-dasharray: 4,4;"/>
-    <text x="790" y="425" class="phase-title" text-anchor="middle">🔭 Anticipate</text>
-    <text x="660" y="445" class="phase-desc">MEMO_DREAM_ANTICIPATE_ENABLED=1</text>
-    <text x="660" y="460" class="phase-desc">• Surface unmet gaps + hot queries</text>
-    <text x="660" y="475" class="phase-desc">• Pre-warm embeddings for next session</text>
-    <text x="660" y="490" class="phase-desc">• Never fabricates, data-driven only</text>
-    <text x="660" y="505" class="phase-desc" style="font-style: italic;">cmd: memo dream anticipate</text>
-  </g>
+    <text x="770" y="310" class="footer-text" style="font-family: monospace;">memo dream status</text>
+    <text x="775" y="327" class="footer-text">Show receipt + changes</text>
 
-  <!-- Receipt & Result -->
-  <g>
-    <rect x="950" y="400" width="400" height="120" class="box" style="fill: #fffaf0;"/>
-    <text x="1150" y="425" class="phase-title" text-anchor="middle">📋 Receipt</text>
-    <text x="960" y="445" class="phase-desc">Location: ~/.memo-state/dream/last.json</text>
-    <text x="960" y="460" class="phase-desc">• timestamp, duration, phases executed</text>
-    <text x="960" y="475" class="phase-desc">• counts (resolved, consolidated, archived, etc)</text>
-    <text x="960" y="490" class="phase-desc">• errors[] (failures never silent)</text>
-    <text x="960" y="505" class="phase-desc" style="font-weight: bold; color: #2d3748;">cmd: memo dream status</text>
-  </g>
+    <text x="770" y="355" class="footer-text" style="font-family: monospace;">memo dream tune</text>
+    <text x="775" y="372" class="footer-text">Manual tuning (if enabled)</text>
 
-  <!-- Timeline & Scheduling -->
-  <g>
-    <rect x="50" y="580" width="1300" height="80" class="legend-box"/>
-    <text x="70" y="605" style="font-size: 12px; font-weight: bold; fill: #1a202c;">⏱️ Schedule & Commands</text>
-    <text x="70" y="625" class="legend-text">• Automatic: LaunchAgent @ 03:00 AM (macOS)</text>
-    <text x="70" y="640" class="legend-text">• Manual: memo dream run (foreground) | memo dream if-due (24h guard, for cron)</text>
+    <text x="770" y="400" class="footer-text" style="font-weight: bold; color: #2d3748;">Flags (all default OFF):</text>
+    <text x="770" y="420" class="footer-text" style="font-family: monospace;">MEMO_DREAM_TUNE_ENABLED=1</text>
+    <text x="770" y="437" class="footer-text" style="font-family: monospace;">MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED=1</text>
+    <text x="770" y="454" class="footer-text" style="font-family: monospace;">MEMO_DREAM_ANTICIPATE_ENABLED=1</text>
 
-    <text x="500" y="625" class="legend-text">• Receipt: shows all phase counts, errors, duration</text>
-    <text x="500" y="640" class="legend-text">• Rollback: memo dream tune --rollback (revert auto-tuned params)</text>
-
-    <text x="1000" y="625" class="legend-text">• Failures NEVER silently swallowed; all recorded in receipt</text>
-    <text x="1000" y="640" class="legend-text">• No phase stops the pipeline if it fails — next phases run anyway</text>
-  </g>
-
-  <!-- Key insight box -->
-  <g>
-    <rect x="50" y="720" width="1300" height="60" class="box" style="fill: #f0fff4; stroke: #22543d; stroke-width: 2;"/>
-    <text x="700" y="745" class="phase-title" text-anchor="middle" style="fill: #22543d;">💡 Key Insight</text>
-    <text x="70" y="765" class="phase-desc" style="fill: #22543d; font-weight: 500;">memo dream is the ONLY MCP memory system that auto-optimizes its own retrieval quality (tuner), auto-detects knowledge gaps (anticipate), and consolidates recurring patterns (consolidate) — all without user intervention. Runs nightly, learns from real usage, auto-reverts on regression.</text>
+    <text x="770" y="485" class="footer-text" style="font-weight: bold; color: #2d3748;">Important:</text>
+    <text x="770" y="505" class="footer-text">✓ Failures never silent (in receipt)</text>
+    <text x="770" y="522" class="footer-text">✓ Failed phase doesn't stop pipeline</text>
   </g>
 </svg>
