@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 from memo.server_common import log_consult, now_ms
 
 _log = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ def _auto_capture(memory: Memory) -> None:
 
 
 def register(server: Any, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_get_embedder_profile() -> dict[str, Any]:
         cfg = memory.cfg
         try:
@@ -79,7 +80,7 @@ def register(server: Any, memory: Memory) -> None:
                 "provider": "memo",
             }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
         from memo.briefing import (
             compact_text,
@@ -120,7 +121,7 @@ def register(server: Any, memory: Memory) -> None:
             "notification": _read_notification(memory),
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_search(
         query: str,
         limit: int = 10,
@@ -164,7 +165,7 @@ def register(server: Any, memory: Memory) -> None:
             "notification": notification,
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_search_trace(
         query: str,
         limit: int = 10,
@@ -186,7 +187,7 @@ def register(server: Any, memory: Memory) -> None:
         log_consult(memory, tool="search_trace", query=query, hits=hits, t0_ms=t0, source=source)
         return {"hits": hits, "trace": envelope["trace"]}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_rerank(
         query: str,
         hits: list[dict[str, Any]],
@@ -195,14 +196,14 @@ def register(server: Any, memory: Memory) -> None:
     ) -> list[dict[str, Any]]:
         return memory.rerank_hits(query, hits, top_n=top_n, body_chars=body_chars)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_embed_query(text: str) -> dict[str, Any]:
         if not text or not text.strip():
             raise ValueError("memo_embed_query: empty text")
         vec = memory.embedder.embed_query(text)
         return {"vector": vec, "dim": len(vec), "model": memory.cfg.embedder_model}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_embed_batch(texts: list[str]) -> dict[str, Any]:
         if not texts:
             return {"vectors": [], "dim": 0, "model": memory.cfg.embedder_model}
@@ -210,7 +211,7 @@ def register(server: Any, memory: Memory) -> None:
         dim = len(vecs[0]) if vecs else 0
         return {"vectors": vecs, "dim": dim, "model": memory.cfg.embedder_model}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_ask(
         question: str,
         k: int = 5,
@@ -242,7 +243,7 @@ def register(server: Any, memory: Memory) -> None:
 
         return out
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_chat_ask(
         question: str,
         k: int = 7,

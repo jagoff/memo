@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from memo.memory import Memory
+from memo.server_annotations import WRITE_IDEMPOTENT, annotated_tool
 
 
 def register(server: Any, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_offload(content: str, title: str | None = None) -> dict[str, Any]:
         """Offload a bulky payload (tool output, log, dump) out of the context
         window: memo stores it content-addressed as a reference-tier memory

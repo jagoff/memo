@@ -3,10 +3,17 @@ from __future__ import annotations
 from typing import Any
 
 from memo.memory import AmbiguousIdError, Memory
+from memo.server_annotations import (
+    DESTRUCTIVE,
+    READ_ONLY,
+    WRITE,
+    WRITE_IDEMPOTENT,
+    annotated_tool,
+)
 
 
 def register(server: Any, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_save(
         content: str,
         title: str | None = None,
@@ -77,11 +84,11 @@ def register(server: Any, memory: Memory) -> None:
             }
         return rec.to_dict()
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_list(limit: int = 20, type: str | None = None) -> list[dict[str, Any]]:
         return [r.to_dict() for r in memory.list(limit=limit, type_=type)]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_get(id: str) -> dict[str, Any] | None:
         try:
             rec = memory.get(id)
@@ -91,7 +98,7 @@ def register(server: Any, memory: Memory) -> None:
             return None
         return rec.to_dict()
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_update(
         id: str,
         title: str | None = None,
@@ -133,7 +140,7 @@ def register(server: Any, memory: Memory) -> None:
             return {"error": "edit_failed", "message": str(exc)}
         return rec.to_dict() if rec else None
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_rename(title: str, id: str | None = None) -> dict[str, Any] | None:
         """Rename a memory's title. Without `id`, renames the memory most
         recently saved on this machine — e.g. right after a `memo_save`.
@@ -150,11 +157,11 @@ def register(server: Any, memory: Memory) -> None:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
         return rec.to_dict() if rec else None
 
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_reindex(force: bool = False) -> dict[str, int]:
         return memory.reindex(force=force)
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_delete(id: str) -> dict[str, Any]:
         from memo.flags import flag_bool
 
@@ -182,7 +189,7 @@ def register(server: Any, memory: Memory) -> None:
             out["referenced_by"] = referenced_by
         return out
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_forget(id: str, reason: str | None = None) -> dict[str, Any]:
         try:
             rec = memory.forget(id, reason=reason)
@@ -192,7 +199,7 @@ def register(server: Any, memory: Memory) -> None:
             return {"forgotten": False}
         return {"forgotten": True, "id": rec.id}
 
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_unforget(id: str) -> dict[str, Any]:
         try:
             rec = memory.unforget(id)
@@ -202,7 +209,7 @@ def register(server: Any, memory: Memory) -> None:
             return {"unforgotten": False}
         return {"unforgotten": True, "id": rec.id}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_consolidate(
         threshold: float = 0.85,
         max_clusters: int = 20,
@@ -227,6 +234,6 @@ def register(server: Any, memory: Memory) -> None:
             dry_run=True,
         )
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_lint() -> dict[str, list[dict[str, Any]]]:
         return memory.lint()
