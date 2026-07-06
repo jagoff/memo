@@ -1,7 +1,7 @@
 # memo — imagen CPU (Linux/cross-platform). Sin MLX: search/recall/save.
 # Reranker + ask/synthesize/dream son MLX-only (Apple Silicon) y quedan OFF
 # con un mensaje claro. NO es "memo completo" — es la puerta de entrada.
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
