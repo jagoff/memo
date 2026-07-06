@@ -558,6 +558,251 @@ def _make_progress() -> Progress:
     )
 
 
+def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Scan for contradictions and evolutions, resolve pairs, archive older entries.
+
+    Returns a dict with:
+    - superseded: list of {pair_id, older}
+    - evolved: list of pair_ids
+    - confidence_penalized: count of confidence-demoted ids
+    """
+    from memo.flags import flag_float
+
+    result: dict[str, Any] = {
+        "superseded": [],
+        "evolved": [],
+        "confidence_penalized": 0,
+    }
+    try:
+        def _contradict_progress(current: int, total: int, _title: str) -> None:
+            pass  # Silent progress callback
+
+        mem.contradict_scanner.scan_corpus(
+            confidence_threshold=0.9,
+            max_pairs=50,
+            progress=_contradict_progress,
+            persist=not dry_run,
+        )
+
+        _evo_conf = flag_float("MEMO_EVOLUTION_CONFIDENCE")
+        _evo_conf = 0.6 if _evo_conf is None else _evo_conf
+        contradicted_ids: list[str] = []
+
+        for pair in mem.contradict_store.list_open(min_confidence=0.9):
+            rel = (pair.relationship or "").lower()
+            if "evolu" in rel:
+                if not dry_run:
+                    older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
+                    if _evo_conf < 1.0:
+                        try:
+                            mem.store.set_confidence_batch([(older, _evo_conf)])
+                        except Exception as exc:
+                            _log.warning("evolution_confidence failed: %s", exc)
+                    mem.contradict_store.resolve(
+                        pair.pair_id,
+                        "evolved",
+                        note=f"dream: evolution, demoted older {older[:8]}",
+                    )
+                result["evolved"].append(pair.pair_id)
+                continue
+
+            if "contrad" not in rel:
+                continue
+
+            older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
+            contradicted_ids.extend([pair.memory_id_a, pair.memory_id_b])
+            if not dry_run:
+                ok = mem.lifecycle.archive_memory(older)
+                if ok:
+                    mem.contradict_store.resolve(
+                        pair.pair_id, "kept_newer", note=f"dream: archived older {older}"
+                    )
+            result["superseded"].append({"pair_id": pair.pair_id, "older": older})
+
+        if contradicted_ids and not dry_run:
+            mem.store.penalize_confidence_batch(contradicted_ids)
+            result["confidence_penalized"] = len(set(contradicted_ids))
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("contradict pass failed: %s", exc)
+
+    return result
+
+
+def _run_consolidate_dups(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Consolidate duplicate memory clusters with high similarity.
+
+    Returns a dict with:
+    - merged: list of {merged_id, archived_ids}
+    """
+    result: dict[str, Any] = {"merged": []}
+    try:
+        res = mem.consolidator.consolidate_all(
+            threshold=0.9,
+            auto_apply=True,
+            dry_run=dry_run,
+        )
+        for r in res.get("results", []):
+            result["merged"].append(
+                {"merged_id": r.get("merged_id"), "archived_ids": r.get("archived_ids", [])}
+            )
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("consolidate_dups pass failed: %s", exc)
+
+    return result
+
+
+def _run_stale(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Detect and archive stale memories (old, never accessed).
+
+    Returns a dict with:
+    - archived: list of {id, days_since_update}
+    """
+    result: dict[str, Any] = {"archived": []}
+    try:
+        stale = mem.temporal.detect_stale_memories(days_threshold=365, min_access_count=0)
+        for item in stale:
+            mid = item.get("id")
+            if not mid:
+                continue
+            if not dry_run:
+                mem.lifecycle.archive_memory(mid)
+            result["archived"].append(
+                {"id": mid, "days": item.get("days_since_update")}
+            )
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("stale pass failed: %s", exc)
+
+    return result
+
+
+def _run_synthesis(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Generate emergent cross-cluster synthesis memories.
+
+    Returns a dict with:
+    - synthesized: list of {title, confidence, saved}
+    """
+    result: dict[str, Any] = {"synthesized": []}
+    try:
+        results = mem.synthesize_cross_cluster(
+            dry_run=dry_run, min_cluster_size=5, max_clusters=8
+        )
+        for r in results:
+            result["synthesized"].append(
+                {
+                    "title": r.get("title"),
+                    "confidence": r.get("confidence"),
+                    "saved": r.get("saved", False),
+                }
+            )
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("synthesis pass failed: %s", exc)
+
+    return result
+
+
+def _run_entities(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Extract entities from unindexed memories.
+
+    Returns a dict with:
+    - extracted: count of entities extracted
+    """
+    result: dict[str, Any] = {"extracted": 0}
+    try:
+        counts = mem.extract_entities(all_=True, skip_already_indexed=True, max_batch=50)
+        result["extracted"] = counts.get("entities_extracted", 0)
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("entities pass failed: %s", exc)
+
+    return result
+
+
+def _run_roi_reconcile(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Reconcile ROI scores from grounding (outcome loop).
+
+    Must run before decay so decayed scores are outcome-derived, not flat 1.0.
+    Gated by MEMO_OUTCOME_RANKING_ENABLED.
+
+    Returns a dict with:
+    - reconciled: count of records rescored
+    - dead_archived: list of ids archived for dead weight
+    - source_feedback_mined: count (if MEMO_OUTCOME_SOURCE_FEEDBACK enabled)
+    """
+    from memo.flags import flag_bool, flag_int
+    from memo.outcome import (
+        dead_weight,
+        reconcile_roi,
+        reconcile_source_feedback,
+    )
+
+    result: dict[str, Any] = {
+        "reconciled": 0,
+        "dead_archived": [],
+        "source_feedback_mined": 0,
+    }
+    try:
+        result["reconciled"] = reconcile_roi(mem).get("updated", 0)
+
+        # Per-query learning: mine implicit feedback from grounding
+        if flag_bool("MEMO_OUTCOME_SOURCE_FEEDBACK"):
+            try:
+                fb = reconcile_source_feedback(
+                    mem,
+                    include_negatives=flag_bool("MEMO_OUTCOME_SOURCE_FEEDBACK_NEG"),
+                )
+                result["source_feedback_mined"] = fb
+            except Exception as exc:
+                _log.warning("source_feedback mining failed: %s", exc)
+
+        # Archive dead weight (surfaced but never grounded)
+        min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 0
+        for d in dead_weight(mem, min_surfaced=min_surfaced):
+            if not dry_run:
+                if (
+                    mem.forget(
+                        d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
+                    )
+                    is not None
+                ):
+                    result["dead_archived"].append(d["id"])
+            else:
+                result["dead_archived"].append(d["id"])
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("roi_reconcile pass failed: %s", exc)
+
+    return result
+
+
+def _run_roi_decay(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Apply exponential ROI decay to records older than 30 days.
+
+    Returns a dict with:
+    - decayed: count of rows updated
+    """
+    result: dict[str, Any] = {"decayed": 0}
+    try:
+        if not dry_run:
+            n = mem.store.decay_roi(factor=0.98, older_than_days=30)
+            result["decayed"] = n
+        else:
+            # In dry-run, estimate count but don't update
+            conn = mem.store._conn
+            row = conn.execute(
+                "SELECT COUNT(*) FROM memory_health WHERE updated_at < datetime('now', '-30 days')"
+            ).fetchone()
+            result["decayed"] = int(row[0]) if row else 0
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("roi_decay pass failed: %s", exc)
+
+    return result
+
+
 def _render_run_summary(receipt: dict[str, Any], dry_run: bool) -> None:
     """Human-readable summary of a dream run (the non-JSON output path)."""
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
