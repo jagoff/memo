@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_query_save(
         name: str,
         query_text: str,
@@ -56,7 +57,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
         return {"status": "saved", "name": name}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_query_list() -> list[dict[str, Any]]:
         """List all saved queries.
 
@@ -66,7 +67,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         queries = memory.query_composer.query_store.list_queries()
         return [q.__dict__ for q in queries]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_query_run(
         name: str,
     ) -> dict[str, Any]:
@@ -89,7 +90,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "results": [r.to_dict() for r in result.results],
         }
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_query_delete(
         name: str,
     ) -> dict[str, Any]:

@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_collaborative_share_connection(
         user_id: str,
         entity_a: str,
@@ -44,7 +45,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
         return conn.__dict__
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_collaborative_connections(
         entity: str,
     ) -> list[dict[str, Any]]:
@@ -59,7 +60,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         connections = memory.collaborative.get_shared_connections(entity)
         return [c.__dict__ for c in connections]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_collaborative_recommend(
         entity: str,
         limit: int = 10,
@@ -76,7 +77,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         recommendations = memory.collaborative.get_recommended_connections(entity, limit=limit)
         return [r.__dict__ for r in recommendations]
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_collaborative_share_insight(
         user_id: str,
         content: str,
@@ -93,7 +94,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         insight = memory.collaborative.share_insight(user_id, content)
         return insight.__dict__
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_collaborative_insights(
         limit: int = 10,
     ) -> list[dict[str, Any]]:

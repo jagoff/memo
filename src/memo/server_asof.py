@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_search_as_of(
         query: str,
         as_of: str,
@@ -53,7 +54,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "results": [h.to_dict() for h in hits],
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_ask_as_of(question: str, as_of: str, k: int = 5) -> dict[str, Any]:
         """RAG question against a past snapshot.
 
@@ -71,7 +72,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         snap = reconstruct(memory, as_of=as_of)
         return snap.ask(question, k=k)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_diff(from_ts: str, to_ts: str | None = None) -> dict[str, Any]:
         """Diff the corpus between two snapshots — added, removed, updated.
 

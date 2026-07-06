@@ -7,6 +7,7 @@ from typing import Any
 from memo.associative import associate
 from memo.errors import AmbiguousIdError
 from memo.flags import flag_float
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def related_for(memory: Any, query_or_id: str, hops: int = 2, limit: int = 5) -> list[dict]:
@@ -61,7 +62,7 @@ def related_for(memory: Any, query_or_id: str, hops: int = 2, limit: int = 5) ->
 
 
 def register(server: Any, memory: Any) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_related(query_or_id: str, hops: int = 2, limit: int = 5) -> list[dict]:
         """Memories structurally connected (via the entity/code graph) to a memory or query."""
         return related_for(memory, query_or_id, hops=hops, limit=limit)

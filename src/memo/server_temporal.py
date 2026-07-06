@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_temporal_contradictions(
         entity: str,
         entity_type: str | None = None,
@@ -42,7 +43,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
         return [c.__dict__ for c in contradictions]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_temporal_timeline(
         entity: str,
         entity_type: str | None = None,
@@ -71,7 +72,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "events": [e.__dict__ for e in timeline.events],
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_temporal_stale(
         days_threshold: int = 180,
         min_access_count: int = 0,
@@ -92,7 +93,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             min_access_count=min_access_count,
         )
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_temporal_patterns() -> dict[str, Any]:
         """Analyze high-level temporal patterns across the entire corpus.
 

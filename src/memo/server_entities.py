@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_extract_entities(
         ids: list[str] | None = None,
         all_: bool = False,
@@ -41,7 +42,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             skip_already_indexed=not force,
         )
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_entities(
         limit: int = 30,
         type: str | None = None,
@@ -55,7 +56,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """
         return memory.graph.top_entities(limit=limit, type_=type)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_entity(name: str, type: str | None = None) -> list[str]:
         """Memory IDs that mention `name` (and optionally a specific
         entity type). Returns a list of full UUIDs."""

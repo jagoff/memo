@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from memo.server_annotations import WRITE, annotated_tool
+
 _log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -40,7 +42,7 @@ def _acquire_start_lock(state_dir: Path) -> int | None:
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_idle_capture(dry_run: bool = False) -> dict[str, Any]:
         """Run idle capture on the current session.
 
@@ -116,7 +118,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "session_id": sid,
         }
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_pop_notification() -> str:
         """Read and dismiss pending idle-capture notification.
 
@@ -135,7 +137,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         except OSError:
             return ""
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_start_session(
         session_id: str | None = None,
         cwd: str | None = None,
@@ -181,7 +183,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "needs_cloud_setup": not is_git_clone,
         }
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_save_text(
         text: str,
         title: str | None = None,

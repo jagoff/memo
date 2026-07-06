@@ -13,10 +13,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_episodes_search(query: str, limit: int = 10) -> dict[str, Any]:
         """Find past work *sessions* by meaning — memo's episodic memory.
 

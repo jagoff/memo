@@ -13,10 +13,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_contextual_search(
         query: str,
         limit: int = 10,
@@ -40,7 +41,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
         return [dataclasses.asdict(r) for r in results]
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_contextual_record_search(
         query: str,
         memory_ids: list[str],
@@ -58,7 +59,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         memory.contextual.record_search(query, memory_ids)
         return {"status": "recorded", "count": len(memory_ids)}
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_contextual_record_click(
         memory_id: str,
     ) -> dict[str, Any]:
@@ -73,7 +74,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         memory.contextual.record_click(memory_id)
         return {"status": "recorded", "memory_id": memory_id}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_contextual_preferences() -> dict[str, Any]:
         """Show learned user preferences for memory recall.
 
@@ -84,7 +85,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         prefs = memory.contextual.context.get_preferences()
         return dataclasses.asdict(prefs)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_contextual_history(
         limit: int = 10,
     ) -> list[dict[str, Any]]:

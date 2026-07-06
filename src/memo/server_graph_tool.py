@@ -18,12 +18,13 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 _VERBS = ["path", "neighbors", "explore", "communities", "why"]
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_graph(
         verb: str,
         a: str | None = None,

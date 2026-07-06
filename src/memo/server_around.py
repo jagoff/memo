@@ -6,12 +6,13 @@ import logging
 from typing import Any
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 _log = logging.getLogger(__name__)
 
 
 def register(server: Any, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_around(id: str, before: int = 2, after: int = 2) -> dict[str, Any]:
         """Timeline context around one memory: seq-adjacent sibling chunks for
         reference-tier chunks (WhatsApp/vault docs), created-time neighbours

@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_contradict_scan(
         top_k: int = 5,
         sim_floor: float = 0.55,
@@ -64,7 +65,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "evolutions_found": result.evolutions_found,
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_contradict_list(
         status: str = "open",
         limit: int = 20,
@@ -93,7 +94,7 @@ def register(server: FastMCP, memory: Memory) -> None:
                 pairs = [p for p in pairs if p.confidence >= min_confidence]
         return [p.__dict__ for p in pairs]
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_contradict_resolve(
         pair_id: int,
         status: str,
@@ -120,7 +121,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         ok = memory.contradict_store.resolve(pair_id, status, note=note)
         return {"updated": ok, "pair_id": pair_id, "status": status}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_contradict_stats() -> dict[str, int]:
         """Return counts of contradiction pairs grouped by status."""
         return memory.contradict_store.stats()

@@ -13,6 +13,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import WRITE, WRITE_IDEMPOTENT, annotated_tool
 
 # Allowed base dirs for import/export file paths. The LLM can only read/write
 # within these directories — path traversal to /etc/shadow is blocked.
@@ -53,7 +54,7 @@ def _is_subdir(child: Path, parent: Path) -> bool:
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_import_json(
         input_path: str,
     ) -> dict[str, Any]:
@@ -70,7 +71,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         result = memory.import_export.import_from(safe, "json")
         return result.__dict__
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_import_csv(
         input_path: str,
     ) -> dict[str, Any]:
@@ -87,7 +88,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         result = memory.import_export.import_from(safe, "csv")
         return result.__dict__
 
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_export_json(
         output_path: str,
     ) -> dict[str, Any]:
@@ -103,7 +104,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         result = memory.import_export.export_to(safe, "json")
         return result.__dict__
 
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_export_csv(
         output_path: str,
     ) -> dict[str, Any]:
@@ -120,7 +121,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         result = memory.import_export.export_to(safe, "csv")
         return result.__dict__
 
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_export_markdown_bundle(
         output_path: str,
     ) -> dict[str, Any]:

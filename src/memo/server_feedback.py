@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_feedback_record(
         source_id: str,
         query: str,
@@ -39,7 +40,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """
         return memory.feedback_record(source_id, query_text=query, rating=rating)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_feedback_list(
         source_id: str | None = None,
         limit: int = 50,
@@ -53,7 +54,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         rows = memory.feedback_list(source_id=source_id, limit=limit)
         return {"rows": rows, "count": len(rows)}
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_feedback_clear(source_id: str) -> dict[str, Any]:
         """Drop all feedback rows for `source_id`. Returns count deleted."""
         n = memory.feedback_clear(source_id)

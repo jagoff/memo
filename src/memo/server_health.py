@@ -10,10 +10,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_health_summary(probe_embedder: bool = False) -> dict[str, Any]:
         """Operational health snapshot: corpus size, index dims, embedder
         profile, health-score coverage, feedback volume, and warnings.
@@ -27,7 +28,7 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         return build_health_report(memory, probe_embedder=probe_embedder)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_health_report(
         top_n: int = 10,
     ) -> dict[str, Any]:

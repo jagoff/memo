@@ -81,3 +81,14 @@ def test_mock_server_fallback_keeps_zero_arg_decorator_working():
         return {}
 
     assert "memo_fake" in tools
+
+
+def test_every_registered_tool_has_annotations(mem, monkeypatch):
+    monkeypatch.delenv("MEMO_MCP_SLIM", raising=False)  # full surface
+    server = build_server(memory=mem)
+    # This fastmcp exposes the registered tools via list_tools() (a list of
+    # Tool objects), not a name->tool dict; the contract is the same: every
+    # registered tool must carry annotations.
+    tools = asyncio.run(server.list_tools())
+    missing = sorted(t.name for t in tools if t.annotations is None)
+    assert missing == [], f"tools without annotations: {missing}"

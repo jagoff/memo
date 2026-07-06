@@ -13,10 +13,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import DESTRUCTIVE, READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_version_history(
         memory_id: str,
         limit: int = 10,
@@ -34,7 +35,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         versions = memory.versioning.get_version_history(memory_id, limit=limit)
         return [dataclasses.asdict(v) for v in versions]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_version_diff(
         memory_id: str,
         version_a: int | None = None,
@@ -53,7 +54,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         diff = memory.versioning.diff_versions(memory_id, version_a, version_b)
         return dataclasses.asdict(diff) if diff else None
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_version_rollback(
         memory_id: str,
         version_id: int,

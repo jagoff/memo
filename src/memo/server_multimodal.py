@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_ocr_image(
         image_path: str,
     ) -> dict[str, Any]:
@@ -48,7 +49,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         cached = (cache_dir / f"{sha[:32]}.{conf_tag}.json").exists()
         return {"text": text, "cached": cached}
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_multimodal_add_image(
         image_path: str,
         memory_id: str | None = None,
@@ -64,7 +65,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         content = memory.multimodal.add_image(Path(image_path), memory_id)
         return {"content_id": content.id, "modality": content.modality}
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_multimodal_add_audio(
         audio_path: str,
         memory_id: str | None = None,
@@ -80,7 +81,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         content = memory.multimodal.add_audio(Path(audio_path), memory_id)
         return {"content_id": content.id, "modality": content.modality}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_multimodal_search_images(
         query: str,
         limit: int = 10,
@@ -97,7 +98,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         results = memory.multimodal.search.search_text_find_images(query, limit=limit)
         return [r.__dict__ for r in results]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_multimodal_search_audio(
         query: str,
         limit: int = 10,
@@ -114,7 +115,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         results = memory.multimodal.search.search_text_find_audio(query, limit=limit)
         return [r.__dict__ for r in results]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_multimodal_search_all(
         query: str,
         limit: int = 10,

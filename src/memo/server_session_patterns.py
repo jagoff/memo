@@ -21,6 +21,7 @@ import pathlib
 from typing import Any
 
 from memo.identity import _session_id
+from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
 _log = logging.getLogger(__name__)
 
@@ -199,7 +200,7 @@ def _ensure_session_table(memory: Any) -> None:
 def register(server: Any, memory: Any) -> None:
     """Register session-pattern MCP tools."""
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def mem_session_start(
         directory: str | None = None,
         cwd: str | None = None,
@@ -240,7 +241,7 @@ def register(server: Any, memory: Any) -> None:
             "status": "active",
         }
 
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def mem_session_end(
         summary: str | None = None,
     ) -> dict[str, Any]:
@@ -272,7 +273,7 @@ def register(server: Any, memory: Any) -> None:
             "status": "completed",
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_context(
         project: str | None = None,
         scope: str = "project",
@@ -325,7 +326,7 @@ def register(server: Any, memory: Any) -> None:
             "sessions": [dict(row) for row in rows],
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_timeline(
         observation_id: str,
         before: int = 5,
@@ -386,7 +387,7 @@ def register(server: Any, memory: Any) -> None:
             "after": [dict(r) for r in after_rows],
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_judge(
         relation_id: int,
         relation: str,
@@ -425,7 +426,7 @@ def register(server: Any, memory: Any) -> None:
 
         return {"relation_id": relation_id, "relation": relation, "status": "judged"}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_compare(
         memory_id_a: str,
         memory_id_b: str,
@@ -482,7 +483,7 @@ def register(server: Any, memory: Any) -> None:
 
         return {"sync_id": sync_id, "status": "created"}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_suggest_topic_key(
         type: str = "note",
         title: str = "",
@@ -525,7 +526,7 @@ def register(server: Any, memory: Any) -> None:
 
         return {"topic_key": key, "type": type, "title": title}
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_current_project() -> dict[str, Any]:
         """Detect current project (5-case algorithm).
 
@@ -556,7 +557,7 @@ def register(server: Any, memory: Any) -> None:
             "available_projects": [],
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_review(
         project: str | None = None,
         limit: int = 10,
@@ -594,7 +595,7 @@ def register(server: Any, memory: Any) -> None:
             "count": len(rows),
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_doctor(
         project: str | None = None,
         check: str | None = None,
@@ -653,7 +654,7 @@ def register(server: Any, memory: Any) -> None:
             "status": "ok" if not store_issues else "issues",
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def mem_stats() -> dict[str, Any]:
         """Memory system statistics (session pattern).
 

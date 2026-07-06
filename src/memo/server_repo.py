@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_repo_index(
         url: str,
         name: str | None = None,
@@ -43,17 +44,17 @@ def register(server: FastMCP, memory: Memory) -> None:
             max_file_bytes=max_file_bytes,
         )
 
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_repo_embed(repo: str, force: bool = False) -> dict[str, Any]:
         """Embed pending repo chunks. Runs automatically during repo index by default."""
         return memory.repo_embed(repo, force=force)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_repo_status(repo: str) -> dict[str, Any] | None:
         """Return exact and semantic index counts for one repo."""
         return memory.repo_status(repo)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_repo_search(
         query: str,
         limit: int = 10,
@@ -78,7 +79,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             )
         ]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_repo_get_file(
         repo: str,
         path: str,
@@ -88,12 +89,12 @@ def register(server: FastMCP, memory: Memory) -> None:
         """Return indexed text for one repo file or line range."""
         return memory.repo_get_file(repo, path, start=start, end=end)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_repo_list(limit: int = 100) -> list[dict[str, Any]]:
         """List indexed repositories."""
         return memory.repo_list(limit=limit)
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_repo_delete(repo: str, remove_clone: bool = True) -> dict[str, bool]:
         """Delete one indexed repo and optionally remove memo's managed clone."""
         return {"deleted": memory.repo_delete(repo, remove_clone=remove_clone)}

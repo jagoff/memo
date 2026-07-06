@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import DESTRUCTIVE, READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_cache_stats() -> dict[str, Any]:
         """Cache-tier status: mode, backend, entry count, capacity, overflow.
 
@@ -24,7 +25,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         """
         return memory.cache.stats()
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_cache_evict() -> dict[str, Any]:
         """Force a capacity-bound eviction pass now (coldest-first, per
         MEMO_CACHE_EVICTION). Dirty entries are flushed to the backing store
@@ -35,7 +36,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         evicted = memory.cache.evict_if_needed()
         return {"evicted": evicted, "count": len(evicted)}
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_cache_flush() -> dict[str, Any]:
         """Push all dirty (write-back, un-persisted) memories to the backing
         store and clear their dirty flags. Returns {flushed, failed,

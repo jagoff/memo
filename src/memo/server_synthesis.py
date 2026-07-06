@@ -12,12 +12,13 @@ import frontmatter
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE, annotated_tool
 
 _log = logging.getLogger(__name__)
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_synthesize_run(
         dry_run: bool = True,
         threshold: float | None = None,
@@ -51,7 +52,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             kwargs["min_confidence"] = min_confidence
         return memory.synthesize_cross_cluster(**kwargs)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_synthesize_list(
         confidence: str | None = None,
         scan_limit: int = 100,
@@ -112,7 +113,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             results.append(entry)
         return results
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_synthesize_delete(id: str) -> dict[str, Any]:
         """Delete a synthesis memory by ID.
 

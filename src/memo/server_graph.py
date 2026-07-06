@@ -12,10 +12,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_graph_path(
         source: str,
         target: str,
@@ -34,7 +35,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         path = memory.navigator.find_shortest_path(source, target, max_length=max_length)
         return path.__dict__ if path else None
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_graph_neighbors(
         entity: str,
         max_neighbors: int = 50,
@@ -51,7 +52,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         neighbors = memory.navigator.get_neighbors(entity, max_neighbors=max_neighbors)
         return neighbors.__dict__
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_explore(
         entity: str,
         max_neighbors: int = 8,
@@ -72,7 +73,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             memory, entity, max_neighbors=max_neighbors, max_memories=max_memories
         )
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_graph_communities(
         min_size: int = 2,
     ) -> list[dict[str, Any]]:
@@ -87,7 +88,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         communities = memory.navigator.detect_communities(min_size=min_size)
         return [c.__dict__ for c in communities]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_graph_centrality(
         top: int = 20,
     ) -> dict[str, Any]:
@@ -110,7 +111,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "total_entities": len(scores.degree),
         }
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_graph_export(
         format: str = "dot",
         include_memories: bool = False,

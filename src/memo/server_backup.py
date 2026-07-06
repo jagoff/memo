@@ -13,10 +13,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_backup_create(
         compress: bool = True,
         name: str | None = None,
@@ -33,7 +34,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         metadata = memory.backup.create_backup(compress=compress, name=name)
         return dataclasses.asdict(metadata)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_backup_list() -> list[dict[str, Any]]:
         """List all available backups.
 
@@ -43,7 +44,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         backups = memory.backup.list_backups()
         return [dataclasses.asdict(b) for b in backups]
 
-    @server.tool()
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_backup_restore(
         backup_name: str,
         restore_memories: bool = True,

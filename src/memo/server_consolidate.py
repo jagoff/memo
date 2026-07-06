@@ -13,12 +13,13 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 _log = logging.getLogger(__name__)
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_consolidate_list_archived() -> list[dict[str, Any]]:
         """List all archived memories.
 

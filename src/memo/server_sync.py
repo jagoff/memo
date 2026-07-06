@@ -14,6 +14,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import NETWORK_WRITE, READ_ONLY, annotated_tool
 
 
 def _resolve_remote_history_db(remote: str | None) -> Path | None:
@@ -30,7 +31,7 @@ def _resolve_remote_history_db(remote: str | None) -> Path | None:
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_sync_diff(
         remote: str | None = None,
     ) -> dict[str, Any]:
@@ -46,7 +47,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "error": "replay sync model has no precomputed diff; use memo_sync_pull",
         }
 
-    @server.tool()
+    @annotated_tool(server, **NETWORK_WRITE)
     def memo_sync_push(
         remote: str | None = None,
     ) -> dict[str, Any]:
@@ -62,7 +63,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             "error": "replay sync model is pull-only; the remote machine pulls instead",
         }
 
-    @server.tool()
+    @annotated_tool(server, **NETWORK_WRITE)
     def memo_sync_pull(
         remote: str | None = None,
     ) -> dict[str, Any]:

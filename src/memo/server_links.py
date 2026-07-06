@@ -13,10 +13,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_links_backlinks(
         memory_id: str,
     ) -> list[dict[str, Any]]:
@@ -31,7 +32,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         backlinks = memory.crossref.get_backlinks(memory_id)
         return [dataclasses.asdict(b) for b in backlinks]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_links_outlinks(
         memory_id: str,
     ) -> list[dict[str, Any]]:
@@ -46,7 +47,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         outlinks = memory.crossref.get_outlinks(memory_id)
         return [dataclasses.asdict(o) for o in outlinks]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_links_suggest(
         content: str,
         title: str | None = None,
@@ -73,7 +74,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
         return [dataclasses.asdict(s) for s in suggestions]
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_links_format(
         memory_id: str,
         title: str | None = None,

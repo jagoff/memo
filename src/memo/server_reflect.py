@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from memo.server_annotations import WRITE, annotated_tool
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -11,7 +13,7 @@ if TYPE_CHECKING:
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **WRITE)
     def memo_reflect(
         session_id: str | None = None,
         last: bool = True,

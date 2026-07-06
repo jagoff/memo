@@ -13,10 +13,11 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_analytics_summary() -> dict[str, Any]:
         """Get analytics summary of the memory corpus.
 
@@ -26,7 +27,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         metrics = memory.analytics.compute_corpus_metrics()
         return dataclasses.asdict(metrics)
 
-    @server.tool()
+    @annotated_tool(server, **READ_ONLY)
     def memo_analytics_growth(
         days: int = 30,
     ) -> dict[str, Any]:

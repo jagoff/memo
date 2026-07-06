@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from memo.memory import Memory
+from memo.server_annotations import READ_ONLY, WRITE
 
 __all__ = [
     "Param",
@@ -107,6 +108,7 @@ class ToolSpec:
     description: str
     params: tuple[Param, ...]
     handler: Callable[[Memory, dict[str, Any]], Any]
+    annotations: dict[str, Any] | None = None
 
 
 def schema_from_spec(spec: ToolSpec) -> dict[str, Any]:
@@ -247,6 +249,7 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
             ),
         ),
         handler=_handle_entity_search,
+        annotations=READ_ONLY,
     ),
     ToolSpec(
         name="memo_feedback_implicit",
@@ -267,6 +270,7 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
             ),
         ),
         handler=_handle_feedback_implicit,
+        annotations=WRITE,
     ),
     ToolSpec(
         name="memo_version",
@@ -276,6 +280,7 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
         ),
         params=(),
         handler=_handle_version,
+        annotations=READ_ONLY,
     ),
 )
 
@@ -293,7 +298,13 @@ def _register_spec(server: Any, memory: Memory, spec: ToolSpec) -> None:
         _wrapper.__annotations__ = annotations
         return _wrapper
 
-    server.tool()(_make_wrapper(spec, sig, annotations))
+    wrapper = _make_wrapper(spec, sig, annotations)
+    if spec.annotations:
+        from memo.server_annotations import annotated_tool
+
+        annotated_tool(server, **spec.annotations)(wrapper)
+    else:
+        server.tool()(wrapper)
 
 
 def register_version(server: Any, memory: Memory) -> None:
