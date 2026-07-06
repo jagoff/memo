@@ -32,7 +32,7 @@ jobs:
       - name: Install package + dev deps
         run: |
           uv venv .venv
-          uv pip install -e '.[dev]'
+          uv pip install -e '.[dev,cpu]'
       - name: Lint (ruff)
         run: .venv/bin/ruff check src/ tests/
       - name: Type check (mypy)
@@ -75,7 +75,7 @@ jobs:
           fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           uv venv .venv
-          uv pip install -e '.[dev]'
+          uv pip install -e '.[dev,cpu]'
           uv pip install "consciousness-contracts @ git+https://x-access-token:${CONTRACTS_TOKEN}@github.com/jagoff/consciousness-contracts.git"
       - name: Verify contract API + run suite with integration path live
         if: steps.install.outputs.enabled == 'true'

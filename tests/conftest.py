@@ -232,3 +232,19 @@ def _skip_if_no_mlx(request) -> None:
             import mlx_lm  # noqa: F401
         except ImportError:
             pytest.skip("mlx_lm not importable — Apple Silicon only")
+
+
+@pytest.fixture(autouse=True)
+def _default_unit_runtime_to_mlx(monkeypatch) -> None:
+    """Make non-smoke LLM tests use the lightweight MLXChat double path.
+
+    Production still rejects helper LLM calls off Apple Silicon. Unit tests that
+    exercise helper-backed code patch `MLXChat.chat` or patch the extraction
+    function itself, so constructing the wrapper is enough and must not depend
+    on the host OS. Linux compatibility tests override this back to False.
+    """
+    import memo.embedder_select as embedder_select
+    import memo.platform_detect as platform_detect
+
+    monkeypatch.setattr(platform_detect, "mlx_available", lambda: True)
+    monkeypatch.setattr(embedder_select, "mlx_available", lambda: True)
