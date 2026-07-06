@@ -84,6 +84,13 @@ cpu = [
 tantivy = [
     "tantivy>=0.22; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+# Local multimodal ingest: mlx-vlm captions for text-free images and
+# mlx-whisper audio transcription. Apple Silicon only, ingest-time only.
+# Install: pip install "mlx-memo[multimodal]"
+multimodal = [
+    "mlx-vlm>=0.1.12; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-whisper>=0.4.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 # Shared trinity schemas (memo + memflow + synapse). Optional: enables
 # cross-agent ledger, synapse backend, replay URIs, and extended embedder
 # cache. memo works fully without it (all imports are guarded).
@@ -138,7 +145,7 @@ python_version = "3.13"
 # numpy is only pulled in by the optional consolidate path; absent in CI.
 module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
           "consciousness_contracts", "consciousness_contracts.*",
-          "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "huggingface_hub",
+          "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "mlx_vlm", "mlx_vlm.*", "huggingface_hub",
           "numpy", "tantivy",
           # Optional REST API server dependencies, absent unless [http] is used.
           "fastapi", "fastapi.*", "uvicorn", "uvicorn.*",

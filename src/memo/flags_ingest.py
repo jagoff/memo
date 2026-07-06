@@ -44,6 +44,31 @@ SPECS: tuple[FlagSpec, ...] = (
         "ingest",
         "Route batch repo indexing through the ingest worker daemon (async, returns a job_id). Falls back to in-process when the daemon is unreachable.",
     ),
+    # multimodal ingest — optional local models, ingest-time ONLY (never the
+    # recall hook). Deps: pip install "mlx-memo[multimodal]".
+    _spec(
+        "MEMO_VLM_CAPTION_ENABLED",
+        "bool",
+        False,
+        "ingest",
+        "Caption images with mlx-vlm at ingest when OCR yields little/no text "
+        "(text-free diagrams, photos, whiteboards). Requires the optional "
+        "mlx-vlm dep. Ingest-time only; default off.",
+    ),
+    _spec(
+        "MEMO_VLM_MODEL",
+        "str",
+        "mlx-community/Qwen2-VL-2B-Instruct-4bit",
+        "ingest",
+        "mlx-vlm model used for image captions at ingest.",
+    ),
+    _spec(
+        "MEMO_VLM_CAPTION_MIN_OCR_CHARS",
+        "int",
+        40,
+        "ingest",
+        "Caption an image only when its OCR text is shorter than this many chars.",
+    ),
     # briefing (SessionStart panel)
     _spec(
         "MEMO_BRIEFING_DISABLE",
