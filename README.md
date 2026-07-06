@@ -2,7 +2,7 @@
 
 <img src="docs/banner.jpg" alt="memo — local memory for AI" width="100%" />
 
-# memo
+# memo — MCP semantic memory server with MLX embeddings
 
 **Local-first semantic memory for AI agents — with time-travel, contradiction radar, and automatic synthesis.**
 
@@ -13,6 +13,19 @@
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
 
 </div>
+
+## What is memo?
+
+**memo** is an MCP server for semantic memory. It gives any AI agent (Claude Code, Devin, Cursor, Cline) a persistent, searchable knowledge base that:
+
+- Runs **100% locally** (macOS + Apple Silicon via MLX, or Linux/CPU)
+- Uses **hybrid search** (vector embeddings + full-text search)
+- Stores memories as **plain Markdown** (version-controllable, human-readable)
+- Syncs **across machines** via serverless git
+- Detects & resolves **contradictions** automatically
+- Time-travels to any date (audit trail)
+
+No Ollama, no Qdrant, no cloud APIs, no keys.
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
