@@ -78,7 +78,7 @@ def test_watermark_advances_and_bounds_reprocessing(tmp_path: Path, monkeypatch)
     state = _setup_env(tmp_path, monkeypatch)
     calls: list[tuple[str, str]] = []
 
-    def _record(chat, model, user_text, assistant_text):
+    def _record(chat, model, user_text, assistant_text, **kwargs):
         calls.append((user_text, assistant_text))
         return []  # no saves — this test asserts on the watermark + slicing
 
@@ -121,7 +121,7 @@ def test_second_immediate_pass_captures_nothing_new(tmp_path: Path, monkeypatch)
     state = _setup_env(tmp_path, monkeypatch)
     calls: list[tuple[str, str]] = []
 
-    def _record(chat, model, user_text, assistant_text):
+    def _record(chat, model, user_text, assistant_text, **kwargs):
         calls.append((user_text, assistant_text))
         return []
 
@@ -147,7 +147,7 @@ def test_incremental_saves_new_insight(tmp_path: Path, monkeypatch):
     """End-to-end: a survived insight is saved and the watermark advances."""
     _setup_env(tmp_path, monkeypatch)
 
-    def _one_insight(chat, model, user_text, assistant_text):
+    def _one_insight(chat, model, user_text, assistant_text, **kwargs):
         return [
             {
                 "title": "Reranker threshold 0.4 fix",
@@ -180,7 +180,7 @@ def test_missing_watermark_starts_from_zero(tmp_path: Path, monkeypatch):
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "memo.capture.extract_insights",
-        lambda *a: calls.append((a[2], a[3])) or [],
+        lambda *a, **k: calls.append((a[2], a[3])) or [],
     )
 
     transcript = tmp_path / "t.jsonl"
@@ -199,7 +199,7 @@ def test_corrupt_watermark_handled(tmp_path: Path, monkeypatch):
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "memo.capture.extract_insights",
-        lambda *a: calls.append((a[2], a[3])) or [],
+        lambda *a, **k: calls.append((a[2], a[3])) or [],
     )
 
     sid = "sess-corrupt"
@@ -221,7 +221,7 @@ def test_negative_watermark_resets_to_zero(tmp_path: Path, monkeypatch):
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "memo.capture.extract_insights",
-        lambda *a: calls.append((a[2], a[3])) or [],
+        lambda *a, **k: calls.append((a[2], a[3])) or [],
     )
 
     sid = "sess-oob-neg"
@@ -243,7 +243,7 @@ def test_stale_watermark_ahead_of_transcript_returns_no_new(tmp_path: Path, monk
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "memo.capture.extract_insights",
-        lambda *a: calls.append((a[2], a[3])) or [],
+        lambda *a, **k: calls.append((a[2], a[3])) or [],
     )
 
     sid = "sess-oob-stale"
