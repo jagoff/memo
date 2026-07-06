@@ -135,7 +135,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     # Stable and advanced domain tool modules register their @server.tool()
     # closures here. Presence on the MCP surface does not by itself mean a
     # feature is part of memo's stable core contract; see experimental_index.md.
-    # Skip when MEMO_MCP_SLIM=1 — reduces ~110 tools to ~25 core inline tools
+    # Skip when MEMO_MCP_SLIM=1 — reduces 124 tools to the 33-tool core surface
     # for local/constrained LLMs where tool-definition tokens are expensive.
     from memo.surface import mcp_include_advanced_tools
 
@@ -179,7 +179,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
         _register_version_tool(server, memory)
     # One consolidated read-only graph navigator on every profile (incl. agent) —
-    # corpus navigation, not the nine advanced memo_graph_* tools.
+    # corpus navigation, not the advanced memo_graph_* tools.
     _srv_graph_tool.register(server, memory)
     _srv_core_records.register(server, memory)
     _srv_offload.register(server, memory)

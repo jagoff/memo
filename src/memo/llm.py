@@ -1,14 +1,14 @@
-"""MLX chat LLM wrapper — Qwen2.5-Instruct family.
+"""MLX chat LLM wrapper — local Qwen-family helper and chat models.
 
 Two-tier setup mirroring obsidian-rag:
 
-- **Helper tier** (`Qwen2.5-3B-Instruct-4bit`): deterministic
+- **Helper tier** (`cfg.helper_model`, Qwen3-4B in the default profile): deterministic
   (`temperature=0`, `seed=42`) for tasks that need reproducibility:
   title extraction, tag suggestion, dedup classification, content
-  classification. Cheap (~1.9 GB).
-- **Chat tier** (`Qwen2.5-7B-Instruct-4bit`): synthesis,
+  classification.
+- **Chat tier** (`cfg.llm_model`, Qwen2.5-7B in the default profile): synthesis,
   consolidation, conflict resolution. Higher quality but non-trivial
-  VRAM (~4.3 GB). Same options dict (`temperature=0` for memory
+  VRAM. Same options dict (`temperature=0` for memory
   consolidation determinism — we don't want the same input
   consolidating differently across runs).
 

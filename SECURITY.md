@@ -15,13 +15,14 @@ within 30 days for confirmed issues.
 
 ## Threat model
 
-memo runs **entirely on your local Mac**. There are no network calls in
-the hot path: embeddings, reranking, and chat all happen in-process via
-MLX. The data plane is plain Markdown on disk plus three local sqlite
-files. Concretely:
+memo runs **entirely on your local machine**. On Apple Silicon, embeddings,
+reranking, and chat happen in-process via MLX; on Linux/Intel macOS the CPU
+backend supports save/search/recall without cloud calls. The data plane is plain
+Markdown on disk plus local sqlite files. Concretely:
 
-- **No remote endpoints.** memo opens no sockets and accepts no
-  inbound connections.
+- **No cloud memory service.** The normal CLI/MCP path uses stdio, local files,
+  and optional local Unix sockets for the recall/embedder daemons. `memo http-api`
+  and HTTP MCP transport are opt-in localhost surfaces, not hosted services.
 - **No telemetry.** memo emits no usage data.
 - **No credentials.** memo does not request, store, or transmit API keys.
 
@@ -45,5 +46,5 @@ Out of scope:
 
 ## Supported versions
 
-Only the latest minor release (currently the `1.0.x` line) receives
-security fixes. Older releases will not be backported.
+Only the latest minor release (currently the `2.12.x` line) receives security
+fixes. Older releases will not be backported.

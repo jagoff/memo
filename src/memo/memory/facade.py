@@ -139,9 +139,8 @@ class Memory(
         from memo.history import HistoryStore as _HS
 
         self.history = _HS(cfg.history_db, device_id=cfg.device_id)
-        # Helper LLM is lazy — only constructed when `auto_derive=True`
-        # is requested. Cold load of Qwen2.5-3B is ~2-3s; users who
-        # don't opt in pay nothing.
+        # Helper LLM is lazy — only constructed when a helper-backed path
+        # is requested. Users who don't opt in pay nothing.
         self._chat: MLXChat | None = None
         # Guards lazy `_chat` construction — the FastMCP HTTP transport
         # dispatches tool calls on a worker threadpool, so two concurrent

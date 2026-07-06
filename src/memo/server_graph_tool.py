@@ -3,8 +3,8 @@
 A single small tool on the default agent profile that dispatches to the existing
 ``GraphNavigator`` / ``explore_entity`` corpus-navigation methods. Read-only,
 returns compact JSON-serialisable dicts, and keeps the token surface to one tool
-instead of the nine advanced ``memo_graph_*`` tools (those stay gated to the
-full profile in ``server_graph.py``).
+instead of exposing the advanced ``memo_graph_*`` tools on the default profile
+(those stay gated to the full profile in ``server_graph.py``).
 
 This is corpus navigation, not cognition — it carries no
 ``agent``/``cognitive``/``federation``/``lifecycle``/``suggest`` verb, so the

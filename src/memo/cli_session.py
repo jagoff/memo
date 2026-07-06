@@ -548,7 +548,7 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
 def session_refresh_summary() -> None:
     """Stop hook entrypoint — generate/update running_summary for the active session.
 
-    Reads the Stop hook payload from stdin, runs the 3B LLM helper to
+    Reads the Stop hook payload from stdin, runs the configured helper model to
     summarize the session arc, and stores it in the snapshot. Throttled:
     skips if fewer than 3 new turns since the last summary. Always exits 0.
     """
@@ -576,7 +576,7 @@ def session_refresh_summary() -> None:
 
         cfg = Config.from_env()
         cfg.ensure_dirs()
-        _refresh_summary(cfg.state_dir, sid)
+        _refresh_summary(cfg.state_dir, sid, helper_model=cfg.helper_model)
     except Exception as exc:
         if flag_bool("MEMO_SESSION_DEBUG"):
             print(f"# memo session refresh-summary failed: {exc}", file=_sys.stderr)

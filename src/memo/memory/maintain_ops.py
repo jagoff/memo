@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import time
 from typing import Any
 
 import frontmatter
@@ -817,3 +818,79 @@ class _MaintainOpsMixin(_MemoryBase):
             "orphan_disk": orphan_disk,
             "stale_synthesis": stale_synthesis,
         }
+
+    def _transition_stale_memories(
+        self, *, stale_age_days: int = 30, unverify_age_days: int = 60
+    ) -> int:
+        """Auto-transition verified memories to stale, and stale to unverified.
+
+        VERIFIED memories older than stale_age_days transition to STALE.
+        STALE memories older than unverify_age_days transition to UNVERIFIED.
+        Updates memory_map and the store, but does NOT re-embed.
+
+        Returns the count of transitioned memories.
+        """
+        now = int(time.time())
+        transitioned = 0
+
+        # Iterate through memory_map (populated by maintain pipeline)
+        if not hasattr(self, "memory_map"):
+            return 0
+
+        for mem_id, mem in list(self.memory_map.items()):
+            if not mem.verified_at:
+                continue
+
+            days_old = (now - mem.verified_at) / 86400.0
+
+            if mem.verification_state == VerificationState.VERIFIED and days_old > stale_age_days:
+                # Transition VERIFIED → STALE
+                from dataclasses import replace as dataclass_replace
+
+                mem_updated = dataclass_replace(
+                    mem,
+                    verification_state=VerificationState.STALE,
+                )
+                # Update store meta without re-embedding
+                self.store.update_meta(
+                    id_=mem_id,
+                    title=mem_updated.title,
+                    type_=mem_updated.type,
+                    tags=mem_updated.tags,
+                    updated=mem_updated.updated,
+                    extra=dict(mem_updated.extra) if mem_updated.extra else {},
+                )
+                # Update verification_state and verified_at directly in store
+                self.store._conn.execute(
+                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
+                    (mem_updated.verification_state.value, mem_updated.verified_at, mem_id),
+                )
+                self.memory_map[mem_id] = mem_updated
+                transitioned += 1
+            elif mem.verification_state == VerificationState.STALE and days_old > unverify_age_days:
+                # Transition STALE → UNVERIFIED
+                from dataclasses import replace as dataclass_replace
+
+                mem_updated = dataclass_replace(
+                    mem,
+                    verification_state=VerificationState.UNVERIFIED,
+                    verified_at=None,
+                )
+                # Update store meta without re-embedding
+                self.store.update_meta(
+                    id_=mem_id,
+                    title=mem_updated.title,
+                    type_=mem_updated.type,
+                    tags=mem_updated.tags,
+                    updated=mem_updated.updated,
+                    extra=dict(mem_updated.extra) if mem_updated.extra else {},
+                )
+                # Update verification_state and verified_at directly in store
+                self.store._conn.execute(
+                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
+                    (mem_updated.verification_state.value, mem_updated.verified_at, mem_id),
+                )
+                self.memory_map[mem_id] = mem_updated
+                transitioned += 1
+
+        return transitioned

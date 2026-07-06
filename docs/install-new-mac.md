@@ -107,8 +107,7 @@ settings:
 export MEMO_MODEL_PROFILE=quality
 export MEMO_EMBEDDER_DIMS=2560
 memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
-rm -f ~/.local/share/memo/memvec.db
-memo reindex
+memo reindex --rebuild
 ```
 
 The MCP registration stores current `MEMO_*` overrides in each client config.

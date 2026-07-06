@@ -23,7 +23,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         force: bool = False,
     ) -> dict[str, int]:
         """Extract named entities (person/project/technology/file/org/concept)
-        from memory bodies via Qwen2.5-3B and write them to the graph DB.
+        from memory bodies via the configured helper LLM and write them to the graph DB.
 
         Args:
             ids: Specific memory ids to process (full UUID hex). Mutually

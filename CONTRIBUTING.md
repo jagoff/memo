@@ -30,7 +30,7 @@ before you push if your change touches runtime, hooks, retrieval, or MLX code.
 Open an issue at <https://github.com/jagoff/memo/issues> with:
 
 - `memo --version` output
-- macOS version + chip (`uname -mrs`)
+- OS version + CPU/chip (`uname -mrs`)
 - A minimal reproducer (CLI command or MCP tool call)
 - Expected vs actual behaviour
 - Relevant log lines (set `MEMO_DEBUG=1` for verbose output)
@@ -65,11 +65,12 @@ targets are in:
 ## Scope
 
 memo is intentionally narrow: persistent semantic memory for AI agents,
-running 100 % locally on Apple Silicon via MLX. Features that pull it
-toward cloud sync, multi-tenant SaaS, or non-Mac platforms are out of
-scope. The stable core is capture, retrieval, ambient recall/briefing,
-history/time-machine, and runtime health. Experimental modules and
-advanced surfaces (see `src/memo/experimental_index.md`) may change
+running 100% locally. Apple Silicon via MLX is the full-featured runtime; Linux
+and Intel macOS use the CPU `sentence-transformers` backend for standalone
+save/search/recall. Features that pull it toward hosted cloud memory or
+multi-tenant SaaS are out of scope. The stable core is capture, retrieval,
+ambient recall/briefing, history/time-machine, and runtime health. Experimental
+modules and advanced surfaces (see `src/memo/experimental_index.md`) may change
 without notice.
 
 ## License

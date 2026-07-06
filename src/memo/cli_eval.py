@@ -290,7 +290,7 @@ def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
     os.replace(tmp, path)
 
     if as_json:
-        console.print_json(data=snap)
+        click.echo(json.dumps(snap, ensure_ascii=False, indent=2))
     else:
         w7 = snap["online"]["window_7d"]
         console.print(

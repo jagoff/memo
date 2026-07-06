@@ -426,7 +426,7 @@ class _RerankOpsMixin(_MemoryBase):
                     hit["_distance"] = distance  # Debug: track distance
 
         # Apply verification state decay if enabled
-        if flag_bool("MEMO_VERIFICATION_STATE_TRACKING"):
+        if flag_bool("MEMO_VERIFICATION_STATE_TRACKING") and hasattr(self, "memory_map"):
             for hit in scored_hits:
                 mem_id = hit.get("id")
                 if mem_id and mem_id in self.memory_map:

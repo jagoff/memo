@@ -62,7 +62,7 @@ If `memo-mcp` is not on PATH, use the zero-install form instead:
 
 | Variable | Purpose |
 |---|---|
-| `MEMO_DATA_DIR` | Where memory `.md` files live (default `~/.memo`) |
+| `MEMO_DATA_DIR` | Where memory `.md` files live (default `~/Documents/memo`) |
 | `MEMO_VAULT_PATH` | Path to an Obsidian vault to ingest as reference knowledge |
 
 Set them in the `env` block of the MCP server entry if needed. Defaults work out of the box.

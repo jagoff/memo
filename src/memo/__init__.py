@@ -1,16 +1,16 @@
-"""memo — local MCP memory backed by Obsidian vault, MLX-native.
+"""memo — local MCP memory backed by Markdown, sqlite-vec, and MCP.
 
 100% local stack — zero Ollama, zero cloud APIs:
 
-- LLM: `mlx-lm` running Qwen2.5-Instruct quantized models on Apple
-  Silicon Metal (in-process, no daemon).
-- Embedder: `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` with
-  last-token pooling + L2 normalize (1024-dim).
+- LLM: `mlx-lm` running quantized Qwen models on Apple Silicon Metal
+  (in-process, no daemon) for ask/synthesis/dream.
+- Embedder: MLX Qwen3-Embedding on Apple Silicon, or CPU
+  sentence-transformers (`STEmbedder`) on Linux/Intel macOS.
 - Vector store: `sqlite-vec` (single file, no daemon, no Qdrant).
-- Storage of record: markdown files under
-  `<vault>/<SYSTEM_DIR>/AI/memory/`.
-- MCP server: `fastmcp` with tools `memo_save`, `memo_search`,
-  `memo_list`, `memo_get`, `memo_update`, `memo_delete`.
+- Storage of record: markdown files under `MEMO_DATA_DIR`, or under
+  `<vault>/<SYSTEM_DIR>/AI/memory/` when `MEMO_MEMORIES_IN_VAULT=1`.
+- MCP server: `fastmcp`, profile-gated from the 13-tool `agent`
+  surface through the 124-tool `full` surface.
 
 Public API:
 

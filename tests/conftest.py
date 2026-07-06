@@ -36,7 +36,7 @@ os.environ.setdefault(
     str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-config.toml"),
 )
 # Most server tests exercise the complete administrative contract. Production
-# defaults to the five-tool agent profile; the dedicated surface-profile tests
+# defaults to the 13-tool agent profile; the dedicated surface-profile tests
 # delete/override this value when asserting that default.
 os.environ.setdefault("MEMO_MCP_PROFILE", "full")
 

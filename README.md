@@ -55,7 +55,7 @@
 
 memo is built to **spend fewer tokens, not more**.
 
-- **92% smaller MCP surface.** The default `agent` profile exposes **10 tools / ~1.2k schema tokens**, versus **126 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **~90% smaller MCP surface.** The default `agent` profile exposes **13 tools / ~1.2k schema tokens**, versus **124 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -79,7 +79,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Contradiction radar.** Change your mind on an old decision and memo flags the now-stale version — the agent won't reintroduce what you already discarded.
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
-- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is ~10 tools, not ~120.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 13 tools, not 124.
 
 ## Requirements
 
@@ -136,7 +136,7 @@ curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bas
 memo doctor --strict-runtime     # verify runtime is healthy
 ```
 
-After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_ask`, `memo_get`, `memo_unified_briefing`). Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md › MCP setup](docs/reference.md#mcp-setup)**.
+After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_ask`, `memo_get`, `memo_graph`, `memo_unified_briefing`, plus capture/session/version helpers on the default profile). Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md › MCP setup](docs/reference.md#mcp-setup)**.
 
 ## Quick start
 
@@ -229,10 +229,15 @@ Wire `--gate` into a pre-commit hook to catch retrieval regressions before they 
 ### 🖼️ Multi-modal ingestion
 
 ```bash
-memo ocr-image screenshot.png               # macOS Vision OCR
-memo multimodal add-image photo.jpg --title "whiteboard"
-memo search "whiteboard diagram"            # finds it
+memo ocr-image screenshot.png                         # one-shot macOS Vision OCR
+MEMO_VLM_CAPTION_ENABLED=1 memo ingest ~/Vault --include-orphan-images
+memo ingest ~/Vault --include-audio                   # mlx-whisper, optional
+memo search "whiteboard diagram"                      # finds OCR/caption/transcript text
 ```
+
+The old placeholder `memo multimodal` store was removed; images and audio now
+become searchable by flowing OCR, VLM captions, and whisper transcripts through
+the normal text index.
 
 ### Daemons
 
@@ -245,34 +250,34 @@ memo runs four background daemons:
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
-### All 104 CLI commands
+### All 108 visible CLI commands
 
 <details>
 <summary>Click to expand</summary>
 
-**Core:** `save` `search` `ask` `get` `edit` `delete` `list`
+**Core:** `save` `search` `ask` `get` `edit` `rename` `delete` `list`
 
 **Recall & Hooks:** `recall` `recall-hook` `briefing` `continuity` `prewarm` `capture-tick` `capture-stop`
 
 **Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes`
 
-**Maintenance:** `reindex` `maintain` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `temporal` `compress-context`
+**Maintenance:** `reindex` `maintain` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `invalidate` `temporal` `compress-context`
 
 **Analysis & Quality:** `health` `stats` `doctor` `lint` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile`
 
 **Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version` `related`
 
-**Advanced Search:** `embed` `rerank` `contextual` `chat` `chat-ask` `multimodal` `repo`
+**Advanced Search:** `embed` `rerank` `contextual` `chat` `chat-ask` `repo`
 
 **Import / Export / Sync:** `import` `export` `backup` `restore` `sync` `ingest`
 
 **Visualization:** `tui` `dashboard` `map` `logs` `hook-log`
 
-**Setup & Config:** `init` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `watch` `release` `mcp-command`
+**Setup & Config:** `init` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `watch` `release`
 
 **Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon` `idle-daemon`
 
-**Other:** `feedback` `query` `provenance` `mandate` `sleep-cycle` `ocr-image` `http-api` `codex-badge` `backend-native` `collaborative`
+**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `sleep-cycle` `ocr-image` `provenance` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate`
 
 </details>
 
@@ -280,9 +285,9 @@ memo runs four background daemons:
 
 | Profile | Tools | Schema tokens | Use when |
 |---|---|---|---|
-| `agent` (default) | 10 | ~1.2k | Standard agent work — max token economy |
-| `core` | 30 | ~2.8k | Constrained clients (Codex, OpenCode) |
-| `full` | 123 | ~15k | Power users, debugging |
+| `agent` (default) | 13 | ~1.2k | Standard agent work — max token economy |
+| `core` / `slim` | 33 | ~2.8k | Constrained clients (Codex, OpenCode), admin-lite |
+| `full` / `default` | 124 | ~15k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
@@ -310,8 +315,8 @@ Non-MCP clients: `memo http-api` serves the same operations as a localhost REST 
 
 | Model | Dims | Disk | Use |
 |---|---|---|---|
-| `Qwen3-Embedding-0.6B-4bit` | 1024 | ~0.4 GB | Default (fast, good) |
-| `Qwen3-Embedding-4B-4bit` | 2560 | ~2.5 GB | Higher recall quality |
+| `Qwen3-Embedding-0.6B-4bit` | 1024 | ~0.6 GB | Default (fast, good) |
+| `Qwen3-Embedding-4B-4bit` | 2560 | ~3 GB | Higher recall quality |
 | `Qwen3-Embedding-8B-4bit` | 4096 | ~5 GB | Maximum quality |
 
 Switch with `MEMO_EMBEDDER_MODEL` + `MEMO_EMBEDDER_DIMS` (requires `memo reindex --rebuild`).
@@ -322,11 +327,11 @@ Switch with `MEMO_EMBEDDER_MODEL` + `MEMO_EMBEDDER_DIMS` (requires `memo reindex
 |---|---|
 | Full install detail, installer knobs, new-Mac migration | [docs/reference.md › Install](docs/reference.md#install-detail) |
 | Per-client MCP setup + the `/memo` slash command | [docs/reference.md › MCP setup](docs/reference.md#mcp-setup) |
-| All MCP tools reference | [docs/reference.md › MCP tools](docs/reference.md#mcp-tools) |
+| MCP profile tools and advanced domains | [docs/reference.md › MCP tools](docs/reference.md#mcp-tools) |
 | Ambient memory, recall daemon, capture & recall tuning | [docs/reference.md › Ambient memory](docs/reference.md#ambient-memory) |
 | Time-machine, session briefing, semantic map | [docs/reference.md › Surfaces](docs/reference.md#surfaces) |
 | Full CLI reference + live dashboard (`memo tui`) | [docs/reference.md › CLI](docs/reference.md#cli-reference) |
-| All `MEMO_*` flags, model profiles, upgrading the embedder | [docs/reference.md › Configuration](docs/reference.md#configuration) |
+| Stable/common `MEMO_*` flags, model profiles, upgrading the embedder | [docs/reference.md › Configuration](docs/reference.md#configuration) |
 | Architecture, sync tiers, design notes | [docs/reference.md › Design & comparison](docs/reference.md#design-and-comparison) |
 
 Contributors: `git clone https://github.com/jagoff/memo && cd memo && uv pip install -e '.[dev]'`. See [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -6,6 +6,7 @@
 # This file tracks the latest published PyPI sdist, not necessarily the
 # in-flight source-tree version; update only after the sdist exists and
 # the sha256 has been calculated.
+# TODO: update to 2.12.14 after sdist is published on PyPI.
 #
 # Users then install with:
 #

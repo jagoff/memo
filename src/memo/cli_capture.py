@@ -43,7 +43,7 @@ def capture_stop() -> None:
 
     Reads the Stop hook payload from stdin (Claude Code format), pulls
     the last (user, assistant) exchange from the transcript, asks the
-    helper LLM (Qwen2.5-3B) to extract any actionable insights, dedups
+    configured helper LLM to extract any actionable insights, dedups
     against the existing corpus, and saves survivors via Memory.save().
 
     Hook input (stdin, JSON):

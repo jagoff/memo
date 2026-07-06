@@ -1,7 +1,7 @@
 """Save-side ambient capture — Phase B.
 
 Hook fires on every assistant turn (Stop event), reads the just-finished
-exchange from the transcript, asks the helper LLM (Qwen2.5-3B) to
+exchange from the transcript, asks the configured helper LLM to
 extract any actionable insights, dedups against the existing corpus,
 and saves the survivors with auto-derived metadata.
 
@@ -740,8 +740,8 @@ def extract_insights(
     state_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Run the helper LLM. Returns a list of insight dicts; empty on
-    parse failure or model refusal. The helper is the small Qwen2.5-3B
-    so latency is bounded (~1-3s warm).
+    parse failure or model refusal. The helper model is configured by
+    `cfg.helper_model`; warm latency is typically ~1-3s.
     """
     system_prompt = _EXTRACT_SYSTEM_PROMPT
     if state_dir is not None:

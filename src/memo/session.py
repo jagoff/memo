@@ -459,10 +459,10 @@ def refresh_summary(
     state_dir: Path,
     session_id: str,
     *,
-    helper_model: str = "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    helper_model: str = "mlx-community/Qwen3-4B-4bit",
     min_new_turns: int = _SUMMARY_MIN_NEW_TURNS,
 ) -> bool:
-    """Generate/update `running_summary` from the transcript using the 3B helper.
+    """Generate/update `running_summary` from the transcript using the helper model.
 
     Called from the Stop hook. Throttled by `min_new_turns` so we don't
     pay LLM cost on every single turn. Returns True if the summary was

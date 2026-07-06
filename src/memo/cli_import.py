@@ -173,7 +173,7 @@ def import_whatsapp(
             raise click.ClickException(f"reindex failed: {exc}") from exc
         out = {"reindexed": True, "notes_dir": str(target)}
         if as_json:
-            console.print_json(_json.dumps(out))
+            click.echo(_json.dumps(out))
         else:
             console.print(f"[green]Reindexed[/green] {target}")
         return

@@ -152,7 +152,7 @@ class _RepoStoreMixin(_StoreBase):
                 raise ValueError(
                     f"Repo cache embedding dim mismatch: got {len(emb)}, expected {dims} "
                     f"[input={input_hash[:12]}].\n"
-                    f"Fix: rm {self.db_path} && memo reindex\n"
+                    f"Fix: memo reindex --rebuild\n"
                     f"Or check: MEMO_MODEL_PROFILE={dims}D"
                 )
         with self._tx() as cx:

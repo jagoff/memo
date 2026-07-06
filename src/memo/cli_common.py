@@ -17,7 +17,8 @@ from rich.console import Console
 from memo.config import Config
 
 # One process-wide rich Console shared by every command for consistent output.
-console = Console()
+# force_terminal=False ensures tests/non-TTY get plain text, not ANSI escape codes.
+console = Console(force_terminal=False)
 
 
 def get_memory(cfg: Config) -> Any:

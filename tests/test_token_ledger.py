@@ -334,7 +334,7 @@ def test_tokens_cmd_empty_is_graceful(tmp_path: Path) -> None:
 
     r = CliRunner().invoke(cli, ["tokens"], env=_cli_env(tmp_path))
     assert r.exit_code == 0, r.output
-    assert "Todavía no hay" in r.output
+    assert "No memories used" in r.output
 
 
 def test_tokens_cmd_renders_numbers_and_bars(tmp_path: Path) -> None:
@@ -345,8 +345,8 @@ def test_tokens_cmd_renders_numbers_and_bars(tmp_path: Path) -> None:
     _seed_grounding(tmp_path / "s", 5)
     r = CliRunner().invoke(cli, ["tokens"], env=_cli_env(tmp_path))
     assert r.exit_code == 0, r.output
-    assert "HISTÓRICO" in r.output
-    assert "tokens ahorrados" in r.output
+    assert "ALL-TIME" in r.output
+    assert "tokens saved" in r.output
 
 
 def test_summarize_exposes_ablation_totals(tmp_path) -> None:

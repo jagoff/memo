@@ -247,7 +247,7 @@ class Config(BaseModel):
         description="HF id of the chat model used for synthesis / consolidation.",
     )
     helper_model: str = Field(
-        default="mlx-community/Qwen2.5-3B-Instruct-4bit",
+        default="mlx-community/Qwen3-4B-4bit",
         description=(
             "Smaller model used for deterministic helper tasks (tag suggestion, "
             "title extraction, dedup). `temperature=0`, `seed=42` enforced."

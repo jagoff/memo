@@ -1,7 +1,7 @@
 {
   "name": "memo",
   "version": "2.12.14",
-  "description": "Slash skill and MCP wiring for memo, the local MLX-native memory system.",
+  "description": "Slash skill and MCP wiring for memo, the local memory system: MLX on Apple Silicon or CPU on Linux/Intel.",
   "author": {
     "name": "Fernando Ferrari",
     "url": "https://github.com/jagoff"
@@ -21,7 +21,7 @@
   "interface": {
     "displayName": "memo",
     "shortDescription": "Persistent local memory as a memo skill",
-    "longDescription": "Adds the memo skill for slash-capable Codex surfaces and registers the memo MCP server. memo stores long-term memories as Markdown, indexes them with sqlite-vec, and runs local MLX models on Apple Silicon.",
+    "longDescription": "Adds the memo skill for slash-capable Codex surfaces and registers the memo MCP server. memo stores long-term memories as Markdown, indexes them with sqlite-vec, and runs local MLX models on Apple Silicon or CPU embeddings on Linux/Intel.",
     "developerName": "Fernando Ferrari",
     "category": "Productivity",
     "capabilities": [

@@ -34,7 +34,7 @@ from memo.config import Config
 @click.option("--json", "as_json", is_flag=True)
 def extract_entities(all_: bool, id_: tuple[str, ...], force: bool, as_json: bool) -> None:
     """Extract named entities (person/project/technology/file/org/concept)
-    from memory bodies via Qwen2.5-3B and write them to the graph DB.
+    from memory bodies via the configured helper LLM and write them to the graph DB.
 
     Cost: ~0.5-1s per memory. 223-doc corpus ≈ 2-4 min.
     """

@@ -38,7 +38,7 @@
 
   <!-- Title -->
   <text x="40" y="40" class="title">memo — how it fits in your stack</text>
-  <text x="40" y="60" class="sub">Local MCP memory · MLX-native · Apple Silicon · 95 CLI commands · 109 MCP tools across 30 server modules</text>
+  <text x="40" y="60" class="sub">Local MCP memory · MLX on Apple Silicon or CPU on Linux · 108 CLI commands · 124 MCP tools</text>
 
   <!-- ============== CLIENTS ROW ============== -->
   <text x="40" y="96" class="section">clients</text>
@@ -81,8 +81,8 @@
   <rect x="40" y="199" width="880" height="58" class="group-rect" rx="10"/>
 
   <rect x="55" y="207" width="650" height="42" class="box box-blue" rx="8" filter="url(#shadow)"/>
-  <text x="380" y="227" class="label">memo-mcp (FastMCP stdio) — 109 tools, 30 server modules</text>
-  <text x="380" y="243" class="meta">MEMO_MCP_PROFILE:  agent (5 tools ~589 tokens)  ·  core (~25 tools)  ·  full (109 tools ~16k tokens)</text>
+  <text x="380" y="227" class="label">memo-mcp (FastMCP stdio) — 124 tools in the full profile</text>
+  <text x="380" y="243" class="meta">MEMO_MCP_PROFILE:  agent (13 tools ~1.2k tokens)  ·  core/slim (33 tools ~2.8k)  ·  full/default (124 tools ~15k)</text>
 
   <rect x="720" y="207" width="190" height="42" class="box" rx="8" filter="url(#shadow)"/>
   <text x="815" y="227" class="label">memo CLI</text>

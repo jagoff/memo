@@ -383,6 +383,29 @@ class _SchemaMixin(_StoreBase):
             except Exception as e:
                 _log.debug("schema migration memory_health.support_count failed: %s", e)
 
+        # Inline migration (V1): verification state tracking columns for state machine.
+        # CREATE IF NOT EXISTS skips existing tables, so pre-existing DBs
+        # need the columns added here. Idempotent, no user_version dance
+        # (the fresh-DB early-return in _run_migrations would skip v4).
+        mcols = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(meta)").fetchall()
+        }
+        if "verification_state" not in mcols:
+            try:
+                self._conn.execute(
+                    "ALTER TABLE meta ADD COLUMN verification_state TEXT DEFAULT 'unverified'"
+                )
+            except Exception as e:
+                _log.debug("schema migration meta.verification_state failed: %s", e)
+        if "verified_at" not in mcols:
+            try:
+                self._conn.execute(
+                    "ALTER TABLE meta ADD COLUMN verified_at INTEGER"
+                )
+            except Exception as e:
+                _log.debug("schema migration meta.verified_at failed: %s", e)
+
         # Ensure sessions table exists (session pattern)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions ("

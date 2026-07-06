@@ -1,0 +1,227 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1320" font-family="Helvetica">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <style>
+    .title { font-size: 28px; font-weight: 750; fill: #0f172a; }
+    .subtitle { font-size: 14px; fill: #475569; }
+    .lane-title { font-size: 12px; font-weight: 750; fill: #475569; text-transform: uppercase; }
+    .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.4; rx: 8; filter: url(#shadow); }
+    .input { fill: #f8fafc; stroke: #94a3b8; }
+    .blue { fill: #eff6ff; stroke: #93c5fd; }
+    .green { fill: #f0fdf4; stroke: #86efac; }
+    .amber { fill: #fffbeb; stroke: #fbbf24; }
+    .rose { fill: #fff1f2; stroke: #fda4af; }
+    .purple { fill: #faf5ff; stroke: #d8b4fe; }
+    .cyan { fill: #ecfeff; stroke: #67e8f9; }
+    .slate { fill: #f1f5f9; stroke: #94a3b8; }
+    .outline { fill: none; stroke: #cbd5e1; stroke-width: 1.2; stroke-dasharray: 5 5; }
+    .label { font-size: 13px; font-weight: 700; fill: #0f172a; text-anchor: middle; }
+    .small-label { font-size: 12px; font-weight: 700; fill: #0f172a; text-anchor: middle; }
+    .heading-left { font-size: 12px; font-weight: 700; fill: #0f172a; text-anchor: start; }
+    .meta { font-size: 11px; fill: #475569; text-anchor: middle; }
+    .meta-left { font-size: 11px; fill: #475569; text-anchor: start; }
+    .mono { font-size: 10px; fill: #475569; font-family: Courier; }
+    .arrow { stroke: #334155; stroke-width: 1.7; fill: none; marker-end: url(#arrow); }
+    .arrow-blue { stroke: #2563eb; stroke-width: 1.8; fill: none; marker-end: url(#arrow-blue); }
+    .arrow-green { stroke: #15803d; stroke-width: 1.8; fill: none; marker-end: url(#arrow-green); }
+    .arrow-soft { stroke: #64748b; stroke-width: 1.4; fill: none; marker-end: url(#arrow); stroke-dasharray: 5 4; }
+  </style>
+
+  <rect width="1280" height="1320" fill="#ffffff"/>
+
+  <text x="48" y="48" class="title">memo information flow</text>
+  <text x="48" y="72" class="subtitle">From an incoming query to an answer, and from Markdown / Obsidian / private git sync to the searchable local index.</text>
+
+  <!-- ======================== READ PATH ======================== -->
+  <text x="48" y="112" class="lane-title">read path - query to result</text>
+  <rect x="40" y="126" width="1200" height="430" class="outline" rx="12"/>
+
+  <rect x="64" y="150" width="168" height="82" class="box input"/>
+  <text x="148" y="176" class="label">1. Query arrives</text>
+  <text x="148" y="195" class="meta">CLI, MCP, ask/chat,</text>
+  <text x="148" y="211" class="meta">or recall-hook</text>
+
+  <rect x="270" y="150" width="168" height="82" class="box blue"/>
+  <text x="354" y="176" class="label">2. Adapter</text>
+  <text x="354" y="195" class="meta">memo-mcp profile,</text>
+  <text x="354" y="211" class="meta">CLI command, hook budget</text>
+
+  <rect x="476" y="150" width="180" height="82" class="box amber"/>
+  <text x="566" y="176" class="label">3. Memory facade</text>
+  <text x="566" y="195" class="meta">normalizes flags, mode,</text>
+  <text x="566" y="211" class="meta">k, source, filters</text>
+
+  <rect x="700" y="150" width="200" height="82" class="box green"/>
+  <text x="800" y="176" class="label">4. Candidate generation</text>
+  <text x="800" y="195" class="meta">semantic, keyword, exact,</text>
+  <text x="800" y="211" class="meta">optional graph candidates</text>
+
+  <rect x="944" y="150" width="240" height="82" class="box purple"/>
+  <text x="1064" y="176" class="label">5. Rank and trim</text>
+  <text x="1064" y="195" class="meta">RRF fusion, feedback, health,</text>
+  <text x="1064" y="211" class="meta">recency, optional reranker</text>
+
+  <path class="arrow" d="M232 191 H270"/>
+  <path class="arrow" d="M438 191 H476"/>
+  <path class="arrow" d="M656 191 H700"/>
+  <path class="arrow" d="M900 191 H944"/>
+
+  <rect x="286" y="278" width="212" height="94" class="box green"/>
+  <text x="392" y="303" class="label">Semantic leg</text>
+  <text x="392" y="322" class="meta">embed query with retrieval</text>
+  <text x="392" y="338" class="meta">instruction prefix</text>
+  <text x="392" y="354" class="meta">then sqlite-vec kNN</text>
+
+  <rect x="532" y="278" width="212" height="94" class="box cyan"/>
+  <text x="638" y="303" class="label">Lexical leg</text>
+  <text x="638" y="322" class="meta">BM25 / exact / fuzzy</text>
+  <text x="638" y="338" class="meta">over title, tags, body</text>
+  <text x="638" y="354" class="meta">via FTS5 or Tantivy</text>
+
+  <rect x="778" y="278" width="212" height="94" class="box rose"/>
+  <text x="884" y="303" class="label">Signal leg</text>
+  <text x="884" y="322" class="meta">entity graph, source feedback,</text>
+  <text x="884" y="338" class="meta">memory health, access,</text>
+  <text x="884" y="354" class="meta">contradiction penalties</text>
+
+  <path class="arrow-blue" d="M800 232 C760 252 480 252 392 278"/>
+  <path class="arrow-blue" d="M800 232 C760 254 658 254 638 278"/>
+  <path class="arrow-blue" d="M800 232 C830 254 864 254 884 278"/>
+  <path class="arrow-blue" d="M392 372 C470 420 760 420 1064 372"/>
+  <path class="arrow-blue" d="M638 372 C710 414 860 414 1064 372"/>
+  <path class="arrow-blue" d="M884 372 C930 410 1010 410 1064 372"/>
+
+  <rect x="950" y="418" width="234" height="96" class="box purple"/>
+  <text x="1067" y="443" class="label">6. Materialize winners</text>
+  <text x="1067" y="462" class="meta">candidate bodies can come from FTS</text>
+  <text x="1067" y="478" class="meta">for speed; final records re-read</text>
+  <text x="1067" y="494" class="meta">canonical Markdown from disk</text>
+
+  <rect x="680" y="418" width="222" height="96" class="box blue"/>
+  <text x="791" y="443" class="label">7. Consumer result</text>
+  <text x="791" y="462" class="meta">search: ranked records</text>
+  <text x="791" y="478" class="meta">ask/chat: snippets + citations</text>
+  <text x="791" y="494" class="meta">recall: compact additionalContext</text>
+
+  <rect x="438" y="418" width="194" height="96" class="box green"/>
+  <text x="535" y="443" class="label">8. Optional synthesis</text>
+  <text x="535" y="462" class="meta">ask/chat sends cited snippets</text>
+  <text x="535" y="478" class="meta">to the local chat model</text>
+  <text x="535" y="494" class="meta">and returns answer + sources</text>
+
+  <path class="arrow" d="M1064 232 V418"/>
+  <path class="arrow" d="M950 466 H902"/>
+  <path class="arrow" d="M680 466 H632"/>
+
+  <!-- ======================== STORAGE CORE ======================== -->
+  <text x="48" y="604" class="lane-title">storage core - what the DB does</text>
+  <rect x="40" y="618" width="1200" height="282" class="outline" rx="12"/>
+
+  <rect x="64" y="650" width="270" height="210" class="box amber"/>
+  <text x="199" y="676" class="label">Markdown source of truth</text>
+  <text x="84" y="704" class="meta-left">- One .md per memory with YAML frontmatter</text>
+  <text x="84" y="724" class="meta-left">- Body is human-readable and editable</text>
+  <text x="84" y="744" class="meta-left">- Obsidian can be the active vault</text>
+  <text x="84" y="764" class="meta-left">- Hand edits win on next reindex</text>
+  <text x="84" y="784" class="meta-left">- Wikilinks feed crossref / graph tools</text>
+  <text x="84" y="820" class="mono">MEMO_MEMORIES_IN_VAULT=1</text>
+  <text x="84" y="838" class="mono">memo migrate --into-vault</text>
+
+  <rect x="392" y="638" width="470" height="238" class="box slate"/>
+  <text x="627" y="664" class="label">SQLite state</text>
+  <text x="412" y="692" class="heading-left">memvec.db - rebuildable derived index</text>
+  <text x="432" y="716" class="meta-left">meta: id, path, title, type, tags, hashes, timestamps</text>
+  <text x="432" y="736" class="meta-left">vec: sqlite-vec embeddings and cosine distance search</text>
+  <text x="432" y="756" class="meta-left">fts / Tantivy: BM25 over title, tags, body text</text>
+  <text x="432" y="776" class="meta-left">signals: access, source feedback, memory health, cache hints</text>
+  <text x="432" y="796" class="meta-left">graph: entities, links, co-recall, related navigation</text>
+  <text x="412" y="830" class="heading-left">history.db - append-only audit log</text>
+  <text x="432" y="852" class="meta-left">save / update / delete events power as-of, diff, rollback, sync replay</text>
+
+  <rect x="922" y="650" width="278" height="210" class="box cyan"/>
+  <text x="1061" y="676" class="label">Private git sync repo</text>
+  <text x="942" y="704" class="meta-left">- Optional repo such as memo-sync</text>
+  <text x="942" y="724" class="meta-left">- Carries Markdown memories between machines</text>
+  <text x="942" y="744" class="meta-left">- Exports/imports signal tables separately</text>
+  <text x="942" y="764" class="meta-left">- Session hooks pull, rebase, commit, push</text>
+  <text x="942" y="784" class="meta-left">- New machine bootstraps, then rebuilds index</text>
+  <text x="942" y="820" class="mono">memo sync bootstrap git@...</text>
+  <text x="942" y="838" class="mono">memo sync once</text>
+
+  <path class="arrow-green" d="M334 744 H392"/>
+  <text x="353" y="732" class="mono">reindex</text>
+  <path class="arrow-soft" d="M392 812 H334"/>
+  <text x="342" y="800" class="mono">read bodies</text>
+  <path class="arrow-green" d="M922 744 H862"/>
+  <text x="876" y="732" class="mono">pull</text>
+  <path class="arrow-green" d="M862 812 H922"/>
+  <text x="880" y="800" class="mono">push</text>
+
+  <!-- ======================== WRITE PATH ======================== -->
+  <text x="48" y="948" class="lane-title">write path - capture, ingest, chunks, sync</text>
+  <rect x="40" y="962" width="1200" height="290" class="outline" rx="12"/>
+
+  <rect x="64" y="990" width="188" height="82" class="box input"/>
+  <text x="158" y="1016" class="label">1. New information</text>
+  <text x="158" y="1035" class="meta">memo save, capture-stop,</text>
+  <text x="158" y="1051" class="meta">import, ingest, Obsidian edit</text>
+
+  <rect x="292" y="990" width="190" height="82" class="box amber"/>
+  <text x="387" y="1016" class="label">2. Write Markdown</text>
+  <text x="387" y="1035" class="meta">frontmatter id, title, type,</text>
+  <text x="387" y="1051" class="meta">tags, created, updated, body</text>
+
+  <rect x="522" y="990" width="188" height="82" class="box green"/>
+  <text x="616" y="1016" class="label">3. Embed text</text>
+  <text x="616" y="1035" class="meta">documents embed raw</text>
+  <text x="616" y="1051" class="meta">title + body or chunk text</text>
+
+  <rect x="750" y="990" width="210" height="82" class="box slate"/>
+  <text x="855" y="1016" class="label">4. Upsert DB rows</text>
+  <text x="855" y="1035" class="meta">meta + vec + FTS</text>
+  <text x="855" y="1051" class="meta">graph extras when present</text>
+
+  <rect x="1000" y="990" width="190" height="82" class="box cyan"/>
+  <text x="1095" y="1016" class="label">5. Share safely</text>
+  <text x="1095" y="1035" class="meta">sync private git repo</text>
+  <text x="1095" y="1051" class="meta">other machines reindex</text>
+
+  <path class="arrow-green" d="M252 1031 H292"/>
+  <path class="arrow-green" d="M482 1031 H522"/>
+  <path class="arrow-green" d="M710 1031 H750"/>
+  <path class="arrow-green" d="M960 1031 H1000"/>
+
+  <rect x="292" y="1112" width="416" height="108" class="box rose"/>
+  <text x="500" y="1137" class="label">Optional chunking on reindex</text>
+  <text x="500" y="1158" class="meta">Default: one vector for the whole note.</text>
+  <text x="500" y="1174" class="meta">With MEMO_CHUNK_INGEST=1, long notes split by</text>
+  <text x="500" y="1190" class="meta">H2/H3 headings, paragraphs, then sentences.</text>
+  <text x="500" y="1206" class="meta">Target ~2000 chars, overlap 200 chars; chunks are</text>
+  <text x="500" y="1222" class="meta">reference rows with extra.parent_id and path #chunk-n.</text>
+
+  <rect x="750" y="1112" width="440" height="108" class="box blue"/>
+  <text x="970" y="1137" class="label">Rebuild contract</text>
+  <text x="970" y="1158" class="meta">Markdown is canonical; SQLite can be rebuilt with</text>
+  <text x="970" y="1174" class="meta">memo reindex --rebuild while preserving signal tables.</text>
+  <text x="970" y="1190" class="meta">If embedding fails, memo keeps the .md and marks it</text>
+  <text x="970" y="1206" class="meta">pending so a later reindex can recover semantic search.</text>
+
+  <path class="arrow-soft" d="M387 1072 V1112"/>
+  <path class="arrow-soft" d="M616 1072 V1112"/>
+  <path class="arrow-soft" d="M855 1072 V1112"/>
+
+  <text x="48" y="1286" class="subtitle">Legend: solid arrows are the hot path; dashed arrows are rebuild, sync, or recovery paths. The hot query path stays local: filesystem + SQLite + local embedder/reranker/chat model.</text>
+</svg>

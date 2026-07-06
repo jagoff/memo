@@ -199,7 +199,7 @@ def sleep_cycle(debug: bool) -> None:
     "download_all",
     is_flag=True,
     default=False,
-    help="Also pre-download the chat LLM models (7B + 3B helper). Used by the installer.",
+    help="Also pre-download the configured chat/helper LLM models. Used by the installer.",
 )
 def prewarm(download_all: bool) -> None:
     """SessionStart hook — pre-load the MLX embedder so first recall is fast.
@@ -209,7 +209,7 @@ def prewarm(download_all: bool) -> None:
     from ~2 s to ~500 ms). Writes a warm-signal file so the recall-hook
     can detect a cold start and fall back to BM25 instead of timing out.
 
-    With --download-all, also pre-downloads the chat LLM models (7B + 3B)
+    With --download-all, also pre-downloads the configured chat/helper LLM models
     so the first `memo ask` doesn't stall on a multi-GB download. Designed
     to be called by the installer immediately after `pipx install`.
 

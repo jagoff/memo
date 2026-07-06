@@ -41,7 +41,7 @@ from memo.errors import StorageError
 @click.option(
     "--auto-derive",
     is_flag=True,
-    help="When title/type/tags missing, ask Qwen2.5-3B helper to derive them. "
+    help="When title/type/tags missing, ask the configured helper LLM to derive them. "
     "Adds ~1-2s latency on first call.",
 )
 @click.option(
@@ -328,7 +328,7 @@ def rename(title: str, id_: str | None, as_json: bool) -> None:
     is_flag=True,
     help="Truncate the markdown-derivable index (meta/vec/fts) and replay the "
     "whole thing from disk — the markdown-is-truth reset. Preserves feedback / "
-    "access / health signal. Prefer this over `rm memvec.db`.",
+    "access / health signal. Prefer this over manual DB deletion.",
 )
 @click.option("--json", "as_json", is_flag=True)
 def reindex(force: bool, rebuild: bool, as_json: bool) -> None:

@@ -1,8 +1,10 @@
 # memo — reference manual
 
 The [README](../README.md) is the front door. This is the full manual: install
-detail, per-client MCP setup, the complete tool and CLI surface, every `MEMO_*`
-knob, design notes, and how memo compares to other agent-memory projects.
+detail, per-client MCP setup, the profiled MCP and CLI surfaces, the stable and
+commonly tuned `MEMO_*` knobs, design notes, and how memo compares to other
+agent-memory projects. For the complete live flag registry, run
+`memo config flags`.
 
 - [Install detail](#install-detail)
 - [MCP setup](#mcp-setup)
@@ -12,6 +14,7 @@ knob, design notes, and how memo compares to other agent-memory projects.
 - [CLI reference](#cli-reference)
 - [Configuration](#configuration)
 - [Design and comparison](#design-and-comparison)
+- [Information flow diagram](#information-flow-diagram)
 
 ---
 
@@ -86,7 +89,7 @@ MEMO_NONINTERACTIVE=1 memo prewarm --download-all
 # Or download individual models with the HF CLI
 hf download mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
 hf download mku64/Qwen3-Reranker-0.6B-mlx-8Bit
-hf download mlx-community/Qwen2.5-3B-Instruct-4bit
+hf download mlx-community/Qwen3-4B-4bit
 hf download mlx-community/Qwen2.5-7B-Instruct-4bit
 
 # Optional quality profile.
@@ -98,10 +101,10 @@ hf download mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510
 
 | Component | Choice | Why |
 |---|---|---|
-| LLM (chat) | [`Qwen2.5-7B-Instruct-4bit`](https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit) + [`3B helper`](https://huggingface.co/mlx-community/Qwen2.5-3B-Instruct-4bit) via [`mlx-lm`](https://github.com/ml-explore/mlx-lm) | Two-tier; 7B for `ask()` synthesis, 3B for cheap helpers. Both 4-bit fit comfortably. |
+| LLM (chat) | [`Qwen2.5-7B-Instruct-4bit`](https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit) + [`Qwen3-4B` helper](https://huggingface.co/mlx-community/Qwen3-4B-4bit) via [`mlx-lm`](https://github.com/ml-explore/mlx-lm) | Two-tier; 7B for `ask()` synthesis, 4B for deterministic helper tasks. Both 4-bit fit comfortably. |
 | Embedder | [`Qwen3-Embedding-0.6B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ) by default; [`Qwen3-Embedding-4B-4bit-DWQ`](https://huggingface.co/mlx-community/Qwen3-Embedding-4B-4bit-DWQ) in `quality` | 1024-dim default, 2560-dim quality. Choose via `MEMO_MODEL_PROFILE`. |
 | Reranker | [`mku64/Qwen3-Reranker-0.6B-mlx-8Bit`](https://huggingface.co/mku64/Qwen3-Reranker-0.6B-mlx-8Bit) | Cross-encoder over top-30 from vec+BM25, then alpha-fusion. |
-| Vector store | [`sqlite-vec`](https://github.com/asg017/sqlite-vec) | One file, no daemon, embedded. Reset = `rm memvec.db`. |
+| Vector store | [`sqlite-vec`](https://github.com/asg017/sqlite-vec) | One file, no daemon, embedded. Rebuild with `memo reindex --rebuild` so non-derived signal tables survive. |
 | Source of truth | Markdown files under `MEMO_DATA_DIR` with YAML frontmatter | Human-editable; sync via iCloud/git/Syncthing. |
 | MCP transport | [`fastmcp`](https://github.com/jlowin/fastmcp) | Stdio out of the box. |
 
@@ -176,9 +179,11 @@ Released wheels include the Claude/Codex/Devin agent assets, so a normal
 checkout, pass `--repo /path/to/memo` to test uncommitted plugin changes.
 
 Tools surface inside the agent as `mcp__memo__memo_*`. Agent installs default to
-a five-tool surface (`briefing`, `search`, `ask`, `get`, `save`) so
-administrative schemas don't consume model context — set `MEMO_MCP_PROFILE=core`
-(25 tools) or `full` (everything) only for a dedicated administrative client.
+a 13-tool surface (`ask`, `get`, `graph`, `offload`, `rename`, `save`,
+`search`, `unified_briefing`, `version`, and session/capture notification
+helpers) so administrative schemas don't consume model context — set
+`MEMO_MCP_PROFILE=core`/`slim` (33 tools) or `full`/`default` (124 tools) only
+for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
 
@@ -284,8 +289,9 @@ memo install-slash --client devin
 ```
 
 Restart the client (or open a new session) after installing from the CLI so the
-slash-command registry reloads. The skill routes user input to the right MCP
-tool:
+slash-command registry reloads. The skill uses MCP tools when the active profile
+exposes them and falls back to the isolated `memo` CLI for admin commands that
+are intentionally absent from the default agent profile:
 
 | Input | Action |
 |---|---|
@@ -308,21 +314,48 @@ tool:
 
 ## MCP tools
 
+The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
+
+| Profile | Tool count | Use |
+|---|---:|---|
+| `agent` (default) | 13 | Minimal always-on agent surface; optimized for schema-token cost. |
+| `core` / `slim` | 33 | CRUD, search, embeddings, history, sessions, lint, and lightweight graph/offload. |
+| `full` / `default` | 124 | Every advanced domain module and compatibility tool. |
+
+The default `agent` profile exposes exactly:
+
+`memo_ask`, `memo_get`, `memo_graph`, `memo_idle_capture`, `memo_offload`,
+`memo_pop_notification`, `memo_rename`, `memo_save`, `memo_save_text`,
+`memo_search`, `memo_start_session`, `memo_unified_briefing`, `memo_version`.
+
+The `core` / `slim` profile adds CRUD/admin-lite tools:
+
+`memo_chat_ask`, `memo_consolidate`, `memo_delete`, `memo_embed_batch`,
+`memo_embed_query`, `memo_forget`, `memo_get_embedder_profile`, `memo_history`,
+`memo_lint`, `memo_list`, `memo_provenance`, `memo_record_diff`,
+`memo_reindex`, `memo_rerank`, `memo_search_trace`, `memo_session_get`,
+`memo_session_list`, `memo_stats`, `memo_unforget`, `memo_update`.
+
+The `full` / `default` profile also registers advanced domains: repository
+index/search, entities, temporal analysis, contradiction triage, consolidation,
+synthesis, reflection, advanced graph navigation/export, related/around,
+health reports, contextual retrieval, backlinks, version rollback, saved
+queries, backup/restore, sync, cache management, analytics, import/export,
+feedback, OCR, collaboration, as-of/diff, episodic search, session-pattern
+tools, and the `mem_*` compatibility tools.
+
+Core tool behavior:
+
 | Tool | What it does |
 |---|---|
-| `memo_save(content, title?, type?, tags?)` | Persist a new memory; returns the full record. |
-| `memo_search(query, limit?, type?, body_chars=280, mode="hybrid")` | Top-k. `hybrid` (default) fuses vec + bm25 via RRF, then optionally re-ranks. `vec` is semantic only; `bm25` is keyword (FTS5 unicode61, diacritic-stripping for Spanish). |
-| `memo_list(limit?, type?)` | Recent by `updated` desc. |
-| `memo_get(id)` | Full record. Accepts a unique prefix ≥4 chars (git-style); returns `{"error": "ambiguous", "matches": [...]}` on collision. |
-| `memo_update(id, title?, type?, tags?, content?)` | Patches fields; re-embeds only if body changed. |
-| `memo_reindex()` | Re-scan vault, re-embed entries whose `body_hash` diverged. |
-| `memo_delete(id)` | Removes from vec + disk. |
-| `memo_ask(question)` | RAG synthesis; cites memories by id. |
-| `memo_chat_ask(question, history?, context?)` | Chat-shaped RAG envelope (`memo.chat_ask.v2`) with answer, citations, retrieval trace, and synthesis status. |
-| `memo_stats()` | Counts, paths, active models. |
-| `memo_history(limit?, record_id?)` | Recent save/update/delete events, optionally filtered to one record. |
-| `memo_record_diff(id, limit?)` | Chronological audit trail for one record with field-level diffs. |
-| `memo_consolidate()`, `memo_extract_entities()`, `memo_entities()` | Corpus maintenance — see CHANGELOG. |
+| `memo_save(content, title?, type?, tags?, extract?, defer_embed?, source?)` | Persist a new memory; returns the full record. |
+| `memo_search(query, limit?, type?, body_chars=280, mode="hybrid", source?)` | Top-k. `hybrid` fuses vec + BM25 via RRF, then optionally reranks. `vec` is semantic only; `bm25` is keyword. |
+| `memo_unified_briefing(cwd?, source?)` | Session-start briefing: knowledge map, open loops, memory of the day, and current-project context. |
+| `memo_ask(question, k?, type?, source?)` | RAG synthesis; cites memories by id. |
+| `memo_graph(query_or_id?, depth?, limit?)` | Compact graph navigator available on every profile. |
+| `memo_offload(content, title?)` | Content-addressed offload for large text that should not be inlined into model context. |
+| `memo_idle_capture(dry_run?)`, `memo_pop_notification()`, `memo_start_session(cwd?)`, `memo_save_text(text, title?)` | MCP-only capture/session plumbing for clients without Claude Code hooks. |
+| `memo_version()` | Installed package version plus backend protocol version. |
 
 ---
 
@@ -330,23 +363,39 @@ tool:
 
 Install the bundled Claude Code plugin and memo silently consults your past on
 every prompt and injects the most relevant memories as `additionalContext` —
-**the agent sees them before answering**, no manual invocation. With the plugin,
-six hooks plug in automatically:
+**the agent sees them before answering**, no manual invocation. The recall hook
+itself is memo-owned and self-healing: `memo install-recall-hook` writes
+`UserPromptSubmit -> memo recall-hook` into Claude settings, and every
+`memo-mcp` start re-asserts it when `MEMO_HOOK_SELFHEAL` is enabled. The plugin's
+`hooks/hooks.json` carries the surrounding session, capture, sync, and
+maintenance hooks.
 
 | Event | Command | Mode | Budget | Purpose |
 |---|---|---|---|---|
-| `SessionStart` (startup/clear) | `memo prewarm` | async | 30 s | Pre-loads MLX embedder + reranker; writes warm-signal file |
-| `SessionStart` (startup/clear) | `memo recall-daemon start` | async | 5 s | Starts the recall daemon (keeps embedder in RAM; <200 ms recall) |
-| `SessionStart` (startup/resume) | `memo briefing` | sync | 5 s | Session-briefing panel: open loops, memory of the day, last session |
-| `UserPromptSubmit` | `memo recall-hook` | sync | 8 s | Queries the recall daemon (fast path) or falls back to BM25 when cold |
-| `Stop` | `memo capture-stop` | async | 30 s | Extracts insights from the finished exchange via helper LLM |
-| `Stop` | `memo session checkpoint` | async | 5 s | Snapshots session state for crash recovery |
+| `SessionStart` (startup/resume/clear) | `memo sync pull --quiet` | async | 90 s | Pull cross-Mac memories when a git sync remote is configured; soft no-op otherwise. |
+| `SessionStart` (startup/clear) | `memo reflect --last --if-due --quiet` | async | 90 s | Turn the previous session into durable memories before briefing when due. |
+| `SessionStart` (startup/clear) | `memo prewarm` | async | 30 s | Pre-loads the active embedder/reranker and writes the warm-signal file. |
+| `SessionStart` (startup/clear) | `memo recall-daemon start` | async | 5 s | Starts the recall daemon (keeps embedder in RAM; <200 ms recall on Apple Silicon). |
+| `SessionStart` (startup/clear) | `memo session recent` | sync | 5 s | Shows recent resumable sessions. |
+| `SessionStart` (startup/clear) | `MEMO_SYNTHESIS_ENABLED=1 memo maintain --if-due` | async | 5 s | Daily reversible corpus freshness pass when due. |
+| `SessionStart` (startup/resume/compact) | `memo briefing --compact` | sync | 5 s | Session-briefing panel: open loops, memory of the day, knowledge map. |
+| `UserPromptSubmit` | `memo recall-hook` | sync | 12 s | Self-healed settings hook; queries the recall daemon or falls back safely. |
+| `UserPromptSubmit` | `memo session autosave` | sync | 5 s | Snapshots prompt state early enough to survive crashes. |
+| `UserPromptSubmit` | `memo session idle-maintenance --mode capture` | async | 30 s | Waits for a quiet window, then captures new durable insights. |
+| `UserPromptSubmit` | `memo session checkpoint` | async | 5 s | Updates the current session snapshot. |
+| `UserPromptSubmit` | `memo sync auto` | async | 90 s | Debounced pull/push so long sessions do not strand memories. |
+| `Stop` | `memo capture-stop` | async | 30 s | Extracts insights from the finished exchange via helper LLM. |
+| `Stop` | `memo session checkpoint` | async | 5 s | Final crash-recovery checkpoint. |
+| `Stop` | `memo session refresh-summary` | async | 20 s | Updates the session summary. |
+| `Stop` | `memo sync once --quiet` | async | 90 s | Final lock-guarded cross-Mac sync flush. |
+| `Stop` | `memo session idle-maintenance --mode reflect` | async | 360 s | Longer quiet-window session-arc synthesis. |
+| `Stop` | `memo dream if-due` | async | 300 s | Daily dream maintenance when due. |
+| `PreCompact` | `memo capture-tick --force` | async | 60 s | Flushes capture before context compaction destroys early-session detail. |
 
-**Note:** idle capture and other hooks require Claude Code's hook system
-(`hooks/hooks.json`). Other agents (OpenCode, Devin Desktop, …) using MCP only get
-the `memo_*` tools — add a similar idle trigger via the agent's native hook
-system or use `memo session idle-maintenance --mode capture`. All hooks run 100%
-local; your prompts never leave the machine.
+Other agents (OpenCode, Devin Desktop, …) using MCP only get the `memo_*` tools;
+they can trigger `memo_idle_capture` / `memo_pop_notification` directly or add
+equivalent native hooks. All hooks run 100% local; your prompts never leave the
+machine.
 
 ### Recall daemon
 
@@ -382,20 +431,21 @@ session start if macOS killed it under memory pressure.
 |---|---|---|
 | `MEMO_RECALL_DISABLE` | unset | Set to `1` to skip recall entirely |
 | `MEMO_RECALL_TOP_K` | `3` | Max memories to inject |
-| `MEMO_RECALL_MIN_SIM` | `0.6` | Cosine similarity floor |
+| `MEMO_RECALL_MIN_SIM` | `0.5` | Similarity floor after recall scoring/decay |
 | `MEMO_RECALL_MIN_PROMPT_CHARS` | `12` | Skip very short prompts |
-| `MEMO_RECALL_BODY_CHARS` | `240` | Snippet length per memory |
+| `MEMO_RECALL_BODY_CHARS` | `400` | Snippet length per memory |
 | `MEMO_RECALL_SKIP_SLASH` | `1` | Skip recall on `/` prompts |
-| `MEMO_RECALL_TOKEN_BUDGET` | `0` | When > 0, pack memories greedily until ~N tokens; truncate tail to fit |
-| `MEMO_RECALL_PROJECT_BOOST` | `0.15` | Additive score boost for memories whose tags match the current project tag |
+| `MEMO_RECALL_TOKEN_BUDGET` | `600` | Pack memories greedily until ~N tokens; truncate tail to fit |
+| `MEMO_RECALL_PROJECT_BOOST` | `0.25` | Additive score boost for memories whose tags match the current project tag |
+| `MEMO_RECALL_GLOBAL_BOOST` | `0.10` | Additive boost for global preferences/feedback and memories without a project tag |
 | `MEMO_RECALL_MIN_BODY_CHARS` | `40` | Filter out stub memories (empty or near-empty bodies) |
 | `MEMO_RECALL_FORCE_MODE` | unset | Set to `1` to disable the warm-signal cold-start check |
 | `MEMO_RECALL_DEBUG` | unset | Print failure reasons to stderr |
 
-The `MIN_SIM=0.6` floor is empirically tuned: on a 223-doc corpus, a relevant
-query returns hits at 0.71–0.74 while an off-topic query ("how to bake apple
-pie") returns 0 hits at 0.6 (3 noise hits at 0.51–0.56 cut by the floor). Tune
-lower (0.5) on sparse corpora, higher (0.7) for high-precision only.
+The default floor is intentionally below the older `0.6` setting because recall
+now applies recency, health, project/global, and optional graph/synthesis
+signals after raw vector similarity. Tune higher for precision-only corpora or
+lower on very sparse corpora.
 
 ### Capture tuning
 
@@ -455,7 +505,7 @@ debounces FS events and runs `Memory.reindex()` automatically. Logs land in
 `memo save` auto-attaches a `project:<repo>` tag derived from the git toplevel of
 your cwd (or `MEMO_PROJECT_TAG`). The recall hook reads `cwd` from the hook
 payload and boosts memories whose tags match by `MEMO_RECALL_PROJECT_BOOST`
-(default `0.15`). Opt out per-call with `memo save --no-project-tag`; disable
+(default `0.25`). Opt out per-call with `memo save --no-project-tag`; disable
 globally with `MEMO_AUTO_PROJECT_TAG=0`.
 
 ---
@@ -612,8 +662,8 @@ memo hook-log --limit 50
 memo hook-log --follow            # stream new entries as they arrive
 
 # ── Updates ────────────────────────────────────────────────────────────────
-memo self-update                  # upgrade via pipx/uv + re-warm models
-memo self-update --check          # check PyPI for a newer version without installing
+memo update                       # upgrade via pipx/uv + re-warm models
+memo update --check               # check PyPI for a newer version without installing
 
 # ── Live dashboard ─────────────────────────────────────────────────────────
 memo tui                          # live terminal dashboard (Ctrl+C exits)
@@ -630,12 +680,13 @@ Six panels, refresh every second: **corpus** (totals, project tags, top types),
 `history.db`, the JSONL recall log, the daemon PID file, and the warm-signal
 file. Quit with `q`, `ESC`, or `Ctrl+C`.
 
-### Updating — `memo self-update`
+### Updating — `memo update`
 
-`memo self-update` detects the active install method (checks `pipx list` then
+`memo update` detects the active install method (checks `pipx list` then
 `uv tool list`), runs the appropriate upgrade, and re-warms models with
-`memo prewarm --download-all`. `memo self-update --check` compares installed vs
-latest PyPI without installing.
+`memo prewarm --download-all`. `memo update --check` compares installed vs
+latest PyPI without installing. The old `memo self-update` and `memo upgrade`
+names remain hidden compatibility aliases.
 
 ---
 
@@ -667,12 +718,12 @@ hardcoded defaults.
 |---|---|---|
 | `MEMO_MODEL_PROFILE` | `balanced` | Model bundle: `light`, `balanced`, or `quality` |
 | `MEMO_LLM_MODEL` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Chat tier |
-| `MEMO_HELPER_MODEL` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | Helper tier |
+| `MEMO_HELPER_MODEL` | `mlx-community/Qwen3-4B-4bit` | Helper tier in the default `balanced` profile |
 | `MEMO_EMBEDDER_MODEL` | `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Embedder |
 | `MEMO_EMBEDDER_DIMS` | `1024` | Embedding dim — must match the embedder |
 | `MEMO_RERANKER_ENABLED` | `1` in `balanced`/`quality` | Enable cross-encoder rerank for hybrid search |
 | `MEMO_RERANKER_MODEL` | `mku64/Qwen3-Reranker-0.6B-mlx-8Bit` | MLX reranker model |
-| `MEMO_RERANK_INPUT_K` | `5` | Hybrid candidates sent to the reranker |
+| `MEMO_RERANK_INPUT_K` | `30` | Hybrid candidates sent to the reranker |
 | `MEMO_RERANK_FUSION_ALPHA` | `0.7` | Weight of reranker score vs RRF position bonus |
 
 **Search**
@@ -696,11 +747,10 @@ Recall, capture, and briefing knobs are listed under
 
 **Model profiles**
 
-- `light`: 0.6B embedder, Qwen2.5 chat/helper, no reranker. Best for low-latency hooks.
-- `balanced`: 0.6B embedder + 0.6B reranker + Qwen2.5 chat/helper. Default for most users.
+- `light`: 0.6B embedder, Qwen2.5 chat / Qwen3-4B helper, no reranker. Best for low-latency hooks.
+- `balanced`: 0.6B embedder + 0.6B reranker + Qwen2.5 chat / Qwen3-4B helper. Default for most users.
 - `quality`: 4B embedder (2560 dims) + 0.6B reranker + Qwen3 4B chat. Requires
-  `rm ~/.local/share/memo/memvec.db && memo reindex` when switching from
-  1024-dim profiles.
+  `memo reindex --rebuild` when switching from 1024-dim profiles.
 
 If models are still downloading, you can save without MLX and keep keyword
 search available:
@@ -726,7 +776,7 @@ queries can be noisy. For the 200–2000 memories range, swap to a larger varian
 hf download mlx-community/Qwen3-Embedding-4B-4bit-DWQ   # 1) pre-download
 export MEMO_MODEL_PROFILE=quality                       # 2) point memo at it
 memo backup --out memo-pre-4b.zip                       # 3) backup before re-embed
-rm ~/.local/share/memo/memvec.db && memo reindex        # 4) wipe + rebuild
+memo reindex --rebuild                                  # 4) rebuild derived vectors
 memo doctor --strict-runtime
 ```
 
@@ -741,7 +791,8 @@ model's hidden size, and `memo doctor` validates it at load.
 
 - **One sqlite file, no Qdrant.** `sqlite-vec` outperforms a small Qdrant
   snapshot at the corpus size memo targets (a few thousand entries, single
-  writer). One file makes reset trivial: `rm memvec.db`.
+  writer). Rebuild with `memo reindex --rebuild`; hand-deleting the DB loses
+  signal tables that are not derivable from markdown.
 - **Embed `title + body` together.** Titles carry the highest-density retrieval
   signal; prepending also protects the title from head-truncation on long
   bodies. Pure retag/type changes skip the embedder.
@@ -837,3 +888,11 @@ behaviour change.
 | Contradict loop — synapse pulls via `memo contradict list --json` | [contradict-loop.md](contradict-loop.md) | ON (synapse-side) | — |
 | Receipts — operational breadcrumbs to memflow | [receipts.md](receipts.md) | OFF | `MEMO_EMIT_RECEIPTS=1` |
 | Briefing — synapse `present_state` in the session panel | [briefing.md](briefing.md) | ON when `synapse` is on PATH | `MEMO_BRIEFING_SYNAPSE_DISABLE=1` |
+
+## Information flow diagram
+
+This diagram shows the end-to-end path from an incoming query to the delivered
+result, plus the write/ingest path that keeps Markdown, SQLite, Obsidian, chunks,
+and private git sync in agreement.
+
+![memo information flow](information-flow.svg)

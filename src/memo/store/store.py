@@ -1,8 +1,9 @@
 """sqlite-vec-backed vector store for memory records.
 
 Single file, single writer. No daemon. Metadata + vectors live in the
-same DB file under separate tables — easier reset (`rm memvec.db`) and
-simpler migration than splitting across qdrant + sqlite.
+same DB file under separate tables; `memo reindex --rebuild` can replay
+markdown-derived state while preserving signal tables, which is simpler
+than splitting across qdrant + sqlite.
 
 ## Schema
 
