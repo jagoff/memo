@@ -97,3 +97,4 @@ err_synth*.txt
 # dogfood/audit harness scratch (never committed)
 audit/
 uv.lock
+.worktrees/
