@@ -465,18 +465,14 @@ class TestIntegrationExtractAndSave:
         cfg.state_dir = tmp_path
         cfg.helper_model = "local"
 
-        helper = MagicMock()
-        mem._ensure_chat.return_value = helper
-
-        insights_json = json.dumps([
+        insights = [
             {
                 "title": "voy a implementar",  # Meta-commentary title
                 "type": "note",
                 "body": "let me check the system",  # Pure narration
                 "tags": [],
             }
-        ])
-        helper.chat.return_value = {"message": {"content": insights_json}}
+        ]
 
         from memo.capture_core import _extract_and_save
 
@@ -488,9 +484,10 @@ class TestIntegrationExtractAndSave:
                 "memo.capture_core._capture_flag_bool",
                 side_effect=capture_flag_enabled,
             ):
-                result = _extract_and_save(
-                    mem, cfg, "user text", "assistant text", debug=False
-                )
+                with patch("memo.capture_core.extract_insights", return_value=insights):
+                    result = _extract_and_save(
+                        mem, cfg, "user text", "assistant text", debug=False
+                    )
         # Meta-commentary candidate is dropped
         assert result["candidates"] == 1
         assert result["skipped_meta"] == 1
