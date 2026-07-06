@@ -55,24 +55,24 @@ def _header_panel(s: dict) -> Panel:
         t = Text(justify="center")
         t.append(f"{label}\n", style="dim")
         t.append(f"{_fmt_tokens(tokens)}\n", style=f"bold {color}")
-        t.append("tokens ahorrados\n", style="dim")
-        t.append(f"{grounded} recuerdos usados", style="dim")
+        t.append("tokens saved\n", style="dim")
+        t.append(f"{grounded} memories used", style="dim")
         return t
 
     grid.add_row(
-        cell("HOY", s["today"]["tokens"], s["today"]["grounded"], "cyan"),
+        cell("TODAY", s["today"]["tokens"], s["today"]["grounded"], "cyan"),
         cell(
-            f"MES · {s['month']['month']}",
+            f"MONTH · {s['month']['month']}",
             s["month"]["tokens"],
             s["month"]["grounded"],
             "magenta",
         ),
-        cell("HISTÓRICO", s["historic"]["tokens"], s["historic"]["grounded"], "green"),
+        cell("ALL-TIME", s["historic"]["tokens"], s["historic"]["grounded"], "green"),
     )
     return Panel(
         grid,
-        title="[bold]memo · tokens ahorrados[/bold]",
-        subtitle="[dim]ahorro exclusivo de memo (recuerdos que la respuesta usó)[/dim]",
+        title="[bold]memo · tokens saved[/bold]",
+        subtitle="[dim]memo-only savings (memories the answer actually used)[/dim]",
         border_style="bright_blue",
         padding=(1, 2),
     )
@@ -96,13 +96,13 @@ def _growth_text(s: dict) -> Text:
     g = s["growth"]
     t = Text()
     if g["up"] is None:
-        t.append("crecimiento: sin mes previo para comparar todavía", style="dim")
+        t.append("growth: no prior month to compare yet", style="dim")
     else:
         arrow = "▲" if g["up"] else "▼"
         style = "green" if g["up"] else "yellow"
         pct = g["pct"]
         t.append(f"{arrow} {abs(pct):.0f}% ", style=f"bold {style}")
-        t.append("vs mes anterior  ", style="dim")
+        t.append("vs prior month  ", style="dim")
         t.append(
             f"({_fmt_tokens(g['prev_month_tokens'])} → {_fmt_tokens(g['this_month_tokens'])} tok)",
             style="dim",
@@ -111,11 +111,11 @@ def _growth_text(s: dict) -> Text:
 
 
 @click.command(name="tokens")
-@click.option("--days", default=14, show_default=True, help="Días en el gráfico diario.")
-@click.option("--months", default=6, show_default=True, help="Meses en el gráfico mensual.")
-@click.option("--json", "as_json", is_flag=True, help="Salida machine-readable.")
+@click.option("--days", default=14, show_default=True, help="Days in the daily chart.")
+@click.option("--months", default=6, show_default=True, help="Months in the monthly chart.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> None:
-    """Mostrar cuántos tokens ahorró memo: hoy, este mes y total histórico."""
+    """Show how many tokens memo saved: today, this month, and all-time total."""
     from memo import token_meter
 
     cfg = Config.from_env()
@@ -137,27 +137,27 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
         delta = p["delta"]
         proxy_line = (
             f"tool-spend grounded {p['grounded_tool_tok_per_turn']} vs "
-            f"no-grounded {p['ungrounded_tool_tok_per_turn']} tok/turno"
+            f"ungrounded {p['ungrounded_tool_tok_per_turn']} tok/turn"
             + (f"  (Δ {delta:+.0f})" if delta is not None else "")
             if p["grounded_tool_tok_per_turn"] is not None and p["ungrounded_tool_tok_per_turn"] is not None
-            else "proxy: aún sin sesiones grounded+no-grounded para comparar"
+            else "proxy: no grounded+ungrounded sessions to compare yet"
         )
         console.print(Panel(
             Text.from_markup(
-                f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok respuesta · "
+                f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok answer · "
                 f"[bold]{_fmt_tokens(measured['tool_tok'])}[/bold] tok tool-loops · "
-                f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok inyectados "
-                f"([dim]{measured['sessions']} sesiones medidas[/dim])\n[dim]{proxy_line}[/dim]"
+                f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok injected "
+                f"([dim]{measured['sessions']} measured sessions[/dim])\n[dim]{proxy_line}[/dim]"
             ),
-            title="[bold]memo · medido (transcript real)[/bold]",
+            title="[bold]memo · measured (real transcript)[/bold]",
             border_style="green", padding=(0, 2),
         ))
 
     if s["historic"]["grounded"] == 0:
         console.print(
-            "[dim]Todavía no hay recuerdos usados en respuestas (grounding.log vacío).\n"
-            "Corré algunas sesiones de Claude Code: cada recuerdo que la respuesta\n"
-            "use suma al ahorro. Verificá el hook con [/dim][bold]memo doctor[/bold][dim].[/dim]"
+            "[dim]No memories used in answers yet (grounding.log empty).\n"
+            "Run a few Claude Code sessions: each memory the answer\n"
+            "uses adds to the savings. Check the hook with [/dim][bold]memo doctor[/bold][dim].[/dim]"
         )
         return
 
@@ -166,20 +166,20 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
     daily_rows = [
         (d["date"][5:], d["grounded"], d["tokens"]) for d in s["daily"]  # MM-DD
     ]
-    console.print(_chart(daily_rows, "cyan", f"últimos {days} días · tokens/día"))
+    console.print(_chart(daily_rows, "cyan", f"last {days} days · tokens/day"))
 
     if s["monthly"]:
         monthly_rows = [(m["month"], m["grounded"], m["tokens"]) for m in s["monthly"]]
-        console.print(_chart(monthly_rows, "magenta", "por mes · tokens/mes"))
+        console.print(_chart(monthly_rows, "magenta", "by month · tokens/month"))
 
     console.print(_growth_text(s))
     abl = s.get("ablation") or {}
     if abl.get("turns_off"):
         console.print(
-            f"[dim]ablación: {abl['turns_on']} turnos con memo · "
-            f"{abl['turns_off']} sin memo (MEMO_RECALL_DISABLE) — ver `memo roi`[/dim]"
+            f"[dim]ablation: {abl['turns_on']} turns with memo · "
+            f"{abl['turns_off']} without memo (MEMO_RECALL_DISABLE) — see `memo roi`[/dim]"
         )
     console.print(
-        f"[dim]est: {s['tpg']} tok/recuerdo-usado (MEMO_ROI_TOKENS_PER_GROUNDED) · "
-        f"más memorias útiles ⇒ más recuerdos usados ⇒ más ahorro[/dim]"
+        f"[dim]est: {s['tpg']} tok/memory-used (MEMO_ROI_TOKENS_PER_GROUNDED) · "
+        f"more useful memories ⇒ more memories used ⇒ more savings[/dim]"
     )
