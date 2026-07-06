@@ -269,3 +269,77 @@ def bench_store_config(root: Path, live: Any) -> Config:
         embedder_dims=live.embedder_dims,
         reranker_enabled=live.reranker_enabled,
     )
+
+
+# --- Ingestion into the isolated store ----------------------------------------------
+
+MANIFEST_NAME = "manifest.json"
+
+
+@dataclass
+class IngestResult:
+    turn_to_memory: dict[str, str]  # turn_id -> full memory id
+    turn_to_session: dict[str, str]  # turn_id -> session_id
+
+
+def load_manifest(root: Path) -> IngestResult | None:
+    p = root / MANIFEST_NAME
+    if not p.exists():
+        return None
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        return IngestResult(
+            turn_to_memory={str(k): str(v) for k, v in raw["turn_to_memory"].items()},
+            turn_to_session={str(k): str(v) for k, v in raw["turn_to_session"].items()},
+        )
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def ingest_sample(
+    mem: Any,
+    sample: BenchSample,
+    root: Path,
+    *,
+    progress: Callable[[int, int], None] | None = None,
+) -> IngestResult:
+    """Save every conversation turn as a durable memory in the bench store.
+
+    Idempotent: a manifest covering all of the sample's turns short-circuits
+    (re-runs skip re-embedding). Turns carry bench provenance in `extra`
+    (bench_turn_id / bench_session_id) — the evidence join key for scoring —
+    and are back-dated via save(created=...) so temporal-reasoning questions
+    see original event time, not ingest time."""
+    cached = load_manifest(root)
+    if cached is not None and len(cached.turn_to_memory) == len(sample.turns):
+        return cached
+    turn_to_memory: dict[str, str] = {}
+    turn_to_session: dict[str, str] = {}
+    for i, turn in enumerate(sample.turns, start=1):
+        if progress is not None:
+            progress(i, len(sample.turns))
+        rec = mem.save(
+            content=f"{turn.role}: {turn.text}" if turn.role else turn.text,
+            title=f"{sample.sample_id} {turn.turn_id}",
+            type_="note",  # durable tier: reference tier is excluded from the recall pool
+            tags=[f"bench:{sample.sample_id}"],
+            extra={"bench_turn_id": turn.turn_id, "bench_session_id": turn.session_id},
+            auto_project=False,
+            created=turn.date,
+        )
+        turn_to_memory[turn.turn_id] = rec.id
+        turn_to_session[turn.turn_id] = turn.session_id
+    result = IngestResult(turn_to_memory, turn_to_session)
+    (root / MANIFEST_NAME).write_text(
+        json.dumps(
+            {
+                "sample_id": sample.sample_id,
+                "turn_to_memory": turn_to_memory,
+                "turn_to_session": turn_to_session,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return result

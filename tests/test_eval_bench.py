@@ -6,7 +6,7 @@ fetcher, ingestion via a stubbed 4-dim embedder, grading via fake judges.
 
 from __future__ import annotations
 
-import hashlib  # noqa: F401  # used by sibling append-tasks (I4/I7)
+import hashlib  # used by sibling append-tasks (I4/I7)
 import json  # used by sibling append-tasks (I3/I4/I6/I7)
 from pathlib import Path  # noqa: F401  # used by sibling append-tasks (I3/I7)
 from types import SimpleNamespace  # noqa: F401  # used by sibling append-task (I6)
@@ -14,7 +14,7 @@ from types import SimpleNamespace  # noqa: F401  # used by sibling append-task (
 import pytest
 
 from memo import eval_bench
-from memo.config import Config  # noqa: F401  # used by sibling append-tasks (I3/I4)
+from memo.config import Config  # used by sibling append-tasks (I3/I4)
 from memo.errors import MemoError
 
 # --- tiny dataset fixtures ---------------------------------------------------
@@ -181,3 +181,69 @@ def test_bench_store_config_is_isolated(tmp_path, tmp_cfg):
     assert bcfg.llm_model == tmp_cfg.llm_model
     assert bcfg.reranker_enabled == tmp_cfg.reranker_enabled
     assert bcfg.data_dir.is_dir() and bcfg.state_dir.is_dir()
+
+
+# --- ingestion ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def bench_mem(tmp_path, monkeypatch):
+    """Isolated bench store with a deterministic 4-dim stub embedder.
+
+    Dims are pinned to the stub's output (embedder_dims=4 on BOTH configs),
+    per the MLX-invariants house rule for stubbed embedders."""
+
+    def _stub_embed(self, inputs):
+        out = []
+        for s in inputs:
+            h = hashlib.sha256((s or "").encode("utf-8")).digest()
+            v = [((h[j] / 255.0) * 2.0) - 1.0 for j in range(4)]
+            n = sum(x * x for x in v) ** 0.5
+            out.append([x / n for x in v])
+        return out
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
+    live_data = tmp_path / "live-data"
+    live_state = tmp_path / "live-state"
+    live_data.mkdir()
+    live_state.mkdir()
+    live = Config(
+        data_dir=live_data, state_dir=live_state, embedder_dims=4, reranker_enabled=False
+    )
+    root = tmp_path / "bench" / "locomo" / "conv-1"
+    bcfg = eval_bench.bench_store_config(root, live)
+    from memo.memory import Memory
+
+    mem = Memory(bcfg)
+    yield mem, root, live
+    mem.close()
+
+
+def test_ingest_sample_isolated_backdated_idempotent(bench_mem):
+    mem, root, live = bench_mem
+    sample = eval_bench.parse_locomo([LOCOMO_SAMPLE])[0]
+    res = eval_bench.ingest_sample(mem, sample, root)
+
+    assert set(res.turn_to_memory) == {"D1:1", "D1:2", "D2:1"}
+    assert res.turn_to_session["D2:1"] == "session_2"
+    # provenance + back-dating on the saved record
+    rec = mem.get(res.turn_to_memory["D1:1"])
+    assert rec is not None
+    assert rec.extra["bench_turn_id"] == "D1:1"
+    assert rec.extra["bench_session_id"] == "session_1"
+    assert rec.created.startswith("2023-05-08")
+    # ISOLATION: memories landed under the bench root, live data_dir untouched
+    assert (root / "manifest.json").exists()
+    assert list(live.data_dir.rglob("*.md")) == []
+    md_before = len(list((root / "data").rglob("*.md")))
+    assert md_before == 3
+    # IDEMPOTENT: second call reuses the manifest, writes nothing new
+    res2 = eval_bench.ingest_sample(mem, sample, root)
+    assert res2.turn_to_memory == res.turn_to_memory
+    assert len(list((root / "data").rglob("*.md"))) == md_before
+
+
+def test_load_manifest_missing_or_corrupt(tmp_path):
+    assert eval_bench.load_manifest(tmp_path) is None
+    (tmp_path / "manifest.json").write_text("{not json", encoding="utf-8")
+    assert eval_bench.load_manifest(tmp_path) is None
