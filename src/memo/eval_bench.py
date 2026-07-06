@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from memo.config import Config
 from memo.errors import MemoError
@@ -425,3 +425,181 @@ def aggregate_retrieval(
         out[cat] = {m: round(v / total, 3) for m, v in slot.items()}
         out[cat]["n_questions"] = int(total)
     return out
+
+
+# --- Pluggable QA judge ---------------------------------------------------------------
+
+_JUDGE_SYSTEM = (
+    "You are grading a memory assistant's answer against a gold answer. "
+    "Reply with exactly one word: yes or no."
+)
+
+
+def _judge_user_prompt(question: str, gold: str, answer: str, abstention: bool) -> str:
+    if abstention:
+        return (
+            "The correct behavior for this question is to ABSTAIN — the "
+            "information is not present in memory.\n"
+            f"Question: {question}\n"
+            f"Model answer: {answer}\n"
+            "Does the model answer decline to answer or state that the "
+            "information is unavailable? Reply yes or no."
+        )
+    return (
+        f"Question: {question}\n"
+        f"Gold answer: {gold}\n"
+        f"Model answer: {answer}\n"
+        "Does the model answer contain or entail the gold answer? Reply yes or no."
+    )
+
+
+def _parse_verdict(text: str) -> bool:
+    return (text or "").strip().lower().startswith("yes")
+
+
+class Judge(Protocol):
+    name: str
+
+    def grade(self, *, question: str, gold: str, answer: str, abstention: bool) -> bool: ...
+
+
+class MLXJudge:
+    """Local judge on memo's MLXChat (default). MLX loads lazily on first grade."""
+
+    name = "mlx"
+
+    def __init__(self, model: str) -> None:
+        self._model = model
+        self._chat: Any = None
+
+    def grade(self, *, question: str, gold: str, answer: str, abstention: bool) -> bool:
+        if self._chat is None:
+            from memo.llm import MLXChat  # deferred — never load MLX at import time
+
+            self._chat = MLXChat()
+        out = self._chat.chat(
+            self._model,
+            [
+                {"role": "system", "content": _JUDGE_SYSTEM},
+                {
+                    "role": "user",
+                    "content": _judge_user_prompt(question, gold, answer, abstention),
+                },
+            ],
+            options={"temperature": 0.0, "num_predict": 8},
+        )
+        return _parse_verdict(out.get("message", {}).get("content", ""))
+
+
+class APIJudge:
+    """OpenAI-compatible chat-completions judge (env-gated via MEMO_BENCH_JUDGE=api)."""
+
+    name = "api"
+
+    def __init__(self, url: str, model: str, api_key: str) -> None:
+        self._url = url.rstrip("/")
+        self._model = model
+        self._api_key = api_key
+
+    def grade(self, *, question: str, gold: str, answer: str, abstention: bool) -> bool:
+        import urllib.request
+
+        payload = {
+            "model": self._model,
+            "temperature": 0,
+            "max_tokens": 8,
+            "messages": [
+                {"role": "system", "content": _JUDGE_SYSTEM},
+                {
+                    "role": "user",
+                    "content": _judge_user_prompt(question, gold, answer, abstention),
+                },
+            ],
+        }
+        req = urllib.request.Request(  # noqa: S310 — user-configured https endpoint
+            f"{self._url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 — user-configured https endpoint
+            data = json.load(resp)
+        return _parse_verdict(data["choices"][0]["message"]["content"])
+
+
+def judge_from_flags(live: Any) -> Judge:
+    """Resolve the judge from MEMO_BENCH_* flags. Local MLX by default; the
+    api judge requires URL + model and reads its key from the env var named
+    by MEMO_BENCH_JUDGE_API_KEY_ENV (secrets stay out of MEMO_* flags)."""
+    from memo.flags import flag_str
+
+    kind = (flag_str("MEMO_BENCH_JUDGE") or "mlx").strip().lower()
+    model = (flag_str("MEMO_BENCH_JUDGE_MODEL") or "").strip()
+    if kind == "mlx":
+        return MLXJudge(model or live.llm_model)
+    if kind == "api":
+        url = (flag_str("MEMO_BENCH_JUDGE_URL") or "").strip()
+        if not url or not model:
+            raise MemoError(
+                "MEMO_BENCH_JUDGE=api requires MEMO_BENCH_JUDGE_URL and MEMO_BENCH_JUDGE_MODEL"
+            )
+        key_env = (flag_str("MEMO_BENCH_JUDGE_API_KEY_ENV") or "OPENAI_API_KEY").strip()
+        api_key = os.environ.get(key_env, "")
+        if not api_key:
+            raise MemoError(
+                f"api judge: env var {key_env} is empty "
+                "(set it, or point MEMO_BENCH_JUDGE_API_KEY_ENV at the right variable)"
+            )
+        return APIJudge(url, model, api_key)
+    raise MemoError(f"unknown MEMO_BENCH_JUDGE {kind!r} (expected: mlx | api)")
+
+
+# --- End-to-end QA grading ---------------------------------------------------------
+
+
+@dataclass
+class QAResult:
+    qa_id: str
+    category: str
+    abstention: bool
+    correct: bool
+    answer_head: str  # first 400 chars, for the receipt
+
+
+def grade_sample_qa(
+    mem: Any,
+    sample: BenchSample,
+    judge: Judge,
+    *,
+    k: int = 5,
+    max_qa: int | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> list[QAResult]:
+    """`memo ask` each QA over the bench store and judge the answer."""
+    items = list(sample.qa)[:max_qa] if max_qa else list(sample.qa)
+    results: list[QAResult] = []
+    for i, qa in enumerate(items, start=1):
+        if progress is not None:
+            progress(i, len(items))
+        res = mem.ask(qa.question, k=k)
+        answer = str(res.get("answer") or "")
+        correct = judge.grade(
+            question=qa.question, gold=qa.answer, answer=answer, abstention=qa.abstention
+        )
+        results.append(QAResult(qa.qa_id, qa.category, qa.abstention, correct, answer[:400]))
+    return results
+
+
+def qa_accuracy_by_category(results: list[QAResult]) -> dict[str, dict[str, float | int]]:
+    by_cat: dict[str, list[QAResult]] = {}
+    for r in results:
+        by_cat.setdefault(r.category, []).append(r)
+    return {
+        cat: {
+            "accuracy": round(sum(1 for r in rs if r.correct) / len(rs), 3),
+            "n_questions": len(rs),
+        }
+        for cat, rs in by_cat.items()
+    }

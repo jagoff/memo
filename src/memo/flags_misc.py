@@ -1094,4 +1094,37 @@ SPECS: tuple[FlagSpec, ...] = (
         "crossref backlinks table at save/update/delete/reindex, enabling "
         "cascade-aware supersede/delete warnings. Default off.",
     ),
+    # public benchmark harness (`memo eval bench`) — offline batch, never the hook
+    _spec(
+        "MEMO_BENCH_JUDGE",
+        "str",
+        "mlx",
+        "bench",
+        "QA judge for `memo eval bench`: 'mlx' (local MLXChat, default) or "
+        "'api' (OpenAI-compatible endpoint — local small judges are weak graders).",
+    ),
+    _spec(
+        "MEMO_BENCH_JUDGE_MODEL",
+        "str",
+        "",
+        "bench",
+        "Judge model id. Empty = the configured llm_model for the mlx judge; "
+        "required when MEMO_BENCH_JUDGE=api.",
+    ),
+    _spec(
+        "MEMO_BENCH_JUDGE_URL",
+        "str",
+        "",
+        "bench",
+        "Base URL of the OpenAI-compatible endpoint when MEMO_BENCH_JUDGE=api "
+        "(e.g. https://api.openai.com/v1).",
+    ),
+    _spec(
+        "MEMO_BENCH_JUDGE_API_KEY_ENV",
+        "str",
+        "OPENAI_API_KEY",
+        "bench",
+        "NAME of the env var that holds the API key for the api judge. The key "
+        "itself is read from that variable — it never lives in a MEMO_* flag.",
+    ),
 )

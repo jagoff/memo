@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib  # used by sibling append-tasks (I4/I7)
 import json  # used by sibling append-tasks (I3/I4/I6/I7)
 from pathlib import Path  # noqa: F401  # used by sibling append-tasks (I3/I7)
-from types import SimpleNamespace  # noqa: F401  # used by sibling append-task (I6)
+from types import SimpleNamespace  # used by sibling append-task (I6)
 
 import pytest
 
@@ -314,3 +314,94 @@ def test_aggregate_retrieval_weighted_mean():
     assert agg["single_hop"]["recall_at_k"] == 0.25  # (1.0*1 + 0.0*3) / 4
     assert agg["single_hop"]["n_questions"] == 4
     assert "adversarial" not in agg  # zero scored prompts contribute nothing
+
+
+# --- judge + QA grading ------------------------------------------------------------
+
+
+def test_parse_verdict():
+    assert eval_bench._parse_verdict("Yes")
+    assert eval_bench._parse_verdict("  yes, it entails the gold answer")
+    assert not eval_bench._parse_verdict("No")
+    assert not eval_bench._parse_verdict("")
+
+
+class _RexJudge:
+    name = "fake"
+
+    def grade(self, *, question, gold, answer, abstention):
+        if abstention:
+            return "couldn't find" in answer.lower()
+        return gold.lower() in answer.lower()
+
+
+def test_grade_sample_qa_and_category_rollup():
+    sample = eval_bench.parse_locomo([LOCOMO_SAMPLE])[0]
+    mem = SimpleNamespace(
+        ask=lambda q, k=5: {
+            "answer": "The dog is Rex." if "dog" in q else "I couldn't find that in memory."
+        }
+    )
+    results = eval_bench.grade_sample_qa(mem, sample, _RexJudge(), k=3)
+    assert [r.correct for r in results] == [True, True]
+    acc = eval_bench.qa_accuracy_by_category(results)
+    assert acc["single_hop"] == {"accuracy": 1.0, "n_questions": 1}
+    assert acc["adversarial"] == {"accuracy": 1.0, "n_questions": 1}
+
+
+def test_grade_sample_qa_max_qa_cap():
+    sample = eval_bench.parse_locomo([LOCOMO_SAMPLE])[0]
+    mem = SimpleNamespace(ask=lambda q, k=5: {"answer": "Rex"})
+    assert len(eval_bench.grade_sample_qa(mem, sample, _RexJudge(), max_qa=1)) == 1
+
+
+def test_judge_from_flags_default_is_local_mlx(tmp_cfg, monkeypatch):
+    monkeypatch.delenv("MEMO_BENCH_JUDGE", raising=False)
+    j = eval_bench.judge_from_flags(tmp_cfg)
+    assert isinstance(j, eval_bench.MLXJudge)
+    assert j._model == tmp_cfg.llm_model  # empty MEMO_BENCH_JUDGE_MODEL falls back
+
+
+def test_judge_from_flags_api_env_gated(tmp_cfg, monkeypatch):
+    monkeypatch.setenv("MEMO_BENCH_JUDGE", "api")
+    with pytest.raises(MemoError):
+        eval_bench.judge_from_flags(tmp_cfg)  # url + model missing
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_URL", "https://api.example.com/v1")
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_MODEL", "judge-1")
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_API_KEY_ENV", "TEST_BENCH_KEY")
+    monkeypatch.delenv("TEST_BENCH_KEY", raising=False)
+    with pytest.raises(MemoError):
+        eval_bench.judge_from_flags(tmp_cfg)  # key env var empty
+    monkeypatch.setenv("TEST_BENCH_KEY", "sk-test")
+    j = eval_bench.judge_from_flags(tmp_cfg)
+    assert isinstance(j, eval_bench.APIJudge)
+
+
+def test_api_judge_posts_openai_shape(monkeypatch):
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"choices": [{"message": {"content": "yes"}}]}'
+
+    def fake_urlopen(req, timeout=0):
+        captured["url"] = req.full_url
+        captured["auth"] = req.get_header("Authorization")
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return _Resp()
+
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    j = eval_bench.APIJudge("https://api.example.com/v1", "judge-1", "sk-test")
+    assert j.grade(question="q", gold="Rex", answer="the dog is Rex", abstention=False)
+    assert captured["url"] == "https://api.example.com/v1/chat/completions"
+    assert captured["auth"] == "Bearer sk-test"
+    assert captured["body"]["model"] == "judge-1"
+    assert captured["body"]["temperature"] == 0
