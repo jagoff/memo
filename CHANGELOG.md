@@ -9,6 +9,27 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.14] - 2026-07-06
+
+Post-Wave-5 robustness fast-follow for the history importers (from the Wave 5
+whole-branch review).
+
+### Fixed
+
+- **Per-record error isolation in streaming importers.** A single malformed
+  record no longer aborts the whole import. `iter_codex/opencode/chatgpt/
+  claude_export_exchanges` now skip-and-continue on any per-record parse error
+  (previously e.g. a non-object `message.data` in opencode raised an uncaught
+  `AttributeError`). Valid records still import; matches the already-guarded
+  mem0/zep path.
+
+### Added
+
+- **Source provenance on imports.** Memories imported by the streaming
+  importers (codex / opencode / chatgpt / claude-export) now carry
+  `extra.source = "imported:<source>"`, so imports are attributable and
+  cleanable later — matching the `imported:mem0` / `imported:zep` markers.
+
 ## [2.12.13] - 2026-07-06
 
 Ecosystem roadmap **Wave 5** (final) — benchmarks (workstream I, 7 tasks) +
