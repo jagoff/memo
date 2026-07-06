@@ -61,6 +61,14 @@ os.environ.setdefault(
     str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-state"),
 )
 
+# Neutralize production trinity flags that a developer's shell exports for live
+# behavior but that break tests asserting a flag's *default* (support-lift 0.0,
+# supersede gate off). Hard-set off (overrides an exported `=0.1` / `=3`) so
+# `pytest` is hermetic on a dev machine. Tests that need them on opt back in via
+# `monkeypatch.setenv` / `CliRunner(...).invoke(env=...)`.
+os.environ["MEMO_SUPPORT_CONFIDENCE_LIFT"] = "0"
+os.environ["MEMO_SUPERSEDE_SUPPORT_GATE"] = "0"
+
 from memo.config import Config
 
 

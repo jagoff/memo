@@ -453,11 +453,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             ).fetchall()
         return [r["id"] for r in rows]
 
-    def get_by_path(self, path: str) -> dict[str, Any] | None:
+    def get_by_path(self, path: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
+        """Row for `path`, or None. `include_deleted=True` also matches
+        soft-deleted rows — needed by callers reclaiming a path, because a
+        tombstone still occupies the UNIQUE(path) index and blocks INSERTs.
+        """
+        deleted_filter = "" if include_deleted else " AND (deleted_at IS NULL OR deleted_at = '')"
         try:
             row = self._conn.execute(
                 "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-                "FROM meta WHERE path = ? AND (deleted_at IS NULL OR deleted_at = '')",
+                f"FROM meta WHERE path = ?{deleted_filter}",
                 (path,),
             ).fetchone()
         except sqlite3.OperationalError as exc:

@@ -16,6 +16,7 @@ from typing import Any
 from memo.daemon_common import cleanup, daemon_paths, is_pid_alive, read_pid
 from memo.daemon_common import serve_until_shutdown as _serve_until_shutdown
 from memo.embed_protocol import MAX_LINE_BYTES
+from memo.mlx_gpu import gpu_deadline, set_process_gpu_priority
 from memo.recall_logic import _recall_logic
 from memo.recall_stats import _STATS_DEFAULT_PERSIST_INTERVAL_S, _DaemonStats, _stats_persister
 
@@ -111,9 +112,12 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         try:
             # No cross-encoder rerank: it adds ~6s and a fallback bridge wants a
             # fast hybrid shortlist, not a precision re-sort. Caller score-filters.
-            hits = self.server._mem.search(
-                prompt, limit=limit, type_=type_, mode="hybrid", disable_reranker=True
-            )
+            with gpu_deadline(timeout_s):
+                hits = self.server._mem.search(
+                    prompt, limit=limit, type_=type_, mode="hybrid", disable_reranker=True
+                )
+        except TimeoutError:
+            return json.dumps({"error": "search: timeout acquiring lock", "results": []})
         finally:
             self.server._priority_lock.release()
         results = []
@@ -157,7 +161,10 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         for i in range(0, len(texts), chunk):
             if self.server._priority_lock.acquire(priority=0, timeout=60.0, label="embed_batch"):
                 try:
-                    vectors.extend(self.server._mem.embedder.embed(texts[i : i + chunk]))
+                    with gpu_deadline(60.0):
+                        vectors.extend(self.server._mem.embedder.embed(texts[i : i + chunk]))
+                except TimeoutError:
+                    return json.dumps({"error": "embed_batch: timeout acquiring lock"})
                 finally:
                     self.server._priority_lock.release()
             else:
@@ -266,18 +273,24 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     if wait_ms > _LOCK_WAIT_LOG_MS:
                         _log_lock_contention("recall_lock_wait", wait_ms, held_by)
                     try:
-                        result, log_fn = _recall_logic(
-                            prompt,
-                            cwd,
-                            self.server._mem,
-                            self.server._cfg,
-                            debug,
-                            t0=t0,
-                            session_id=_sid,
-                            turn=_turn,
-                            client=_client,
-                            micro_embedder=self.server._micro_embedder,
-                        )
+                        # Bound the GPU flock wait to the recall budget: a
+                        # busy GPU raises TimeoutError (caught below → error
+                        # response) instead of wedging this thread inside
+                        # the PriorityLock, which starved every other op
+                        # (the observed recall_lock_bail storms).
+                        with gpu_deadline(timeout_s):
+                            result, log_fn = _recall_logic(
+                                prompt,
+                                cwd,
+                                self.server._mem,
+                                self.server._cfg,
+                                debug,
+                                t0=t0,
+                                session_id=_sid,
+                                turn=_turn,
+                                client=_client,
+                                micro_embedder=self.server._micro_embedder,
+                            )
                     finally:
                         self.server._priority_lock.release()
                 elif op == "embed_query":
@@ -301,7 +314,8 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                         priority=0, timeout=_embed_timeout_s, label="embed_query"
                     ):
                         try:
-                            result = self._embed_query(req)
+                            with gpu_deadline(_embed_timeout_s):
+                                result = self._embed_query(req)
                         finally:
                             self.server._priority_lock.release()
                     else:
@@ -530,6 +544,13 @@ def run_server(state_dir: Path | None = None) -> None:
 
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+    # The resident daemon is the machine's latency-critical GPU user: its
+    # warmup + query embeds take the fast lane on the cross-process GPU
+    # flock so batch jobs (capture-stop, refresh-summary, idle-daemon,
+    # test suites) yield at their next chunk boundary instead of starving
+    # it for minutes (observed 2026-07-05: recall_lock_bail storms while
+    # the embed thread waited behind the batch queue).
+    set_process_gpu_priority(True)
     mem = Memory(cfg)
 
     # Bind FIRST (so `memo recall-daemon start`'s socket probe succeeds on a
