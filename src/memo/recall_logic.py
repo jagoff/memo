@@ -1068,7 +1068,8 @@ def _recall_logic(
     # zero-grounding band. Default OFF (flag unset). Absorb load errors silently.
     if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
         try:
-            from memo.token_meter import load_precision_bands, suppress_score as _pg_suppress
+            from memo.token_meter import load_precision_bands
+            from memo.token_meter import suppress_score as _pg_suppress
 
             _pg_bands = load_precision_bands(cfg.state_dir)
             if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):

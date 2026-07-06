@@ -15,11 +15,9 @@ import click
 
 from memo.config import Config
 from memo.flags import flag_bool, flag_float, flag_int, flag_str
-
-_log = logging.getLogger("memo.cli_recall_hook")
-
 from memo.recall_logic import session_budget_scale  # re-export for tests + local use
 
+_log = logging.getLogger("memo.cli_recall_hook")
 
 _TRIVIAL_WORDS: frozenset[str] = frozenset(
     {

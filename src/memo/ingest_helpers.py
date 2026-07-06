@@ -24,6 +24,7 @@ import hashlib
 import logging
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from memo.obsidian_links import find_image_embeds, resolve_image_path
@@ -146,12 +147,15 @@ def find_orphan_images(
     vault_root: Path,
     referenced: set[Path],
     excluded_dirs: tuple[str, ...] = (),
+    excluded_fn: Callable[[Path], bool] | None = None,
 ) -> list[Path]:
     """Walk `vault_root` for image files not present in `referenced`.
 
-    `excluded_dirs` is the same exclusion list used by the markdown
-    walker (`.obsidian`, `.git`, `Obsidian`, etc.) — we honour it
-    so attachments under excluded directories are also skipped.
+    `excluded_fn` is the preferred exclusion predicate — pass the
+    `_excluded(rel: Path) -> bool` closure from the ingest command so
+    `/**` patterns and case-insensitive matching are handled identically
+    to the markdown walker. Falls back to `excluded_dirs` for callers
+    that don't have the closure (e.g. tests).
     """
     referenced_resolved = {p.resolve() for p in referenced}
     orphans: list[Path] = []
@@ -161,9 +165,13 @@ def find_orphan_images(
         if path.suffix.lower() not in IMAGE_EXTENSIONS:
             continue
         rel = path.relative_to(vault_root)
-        rel_str = str(rel)
-        if any(rel_str.startswith(d) or f"/{d}/" in f"/{rel_str}/" for d in excluded_dirs):
-            continue
+        if excluded_fn is not None:
+            if excluded_fn(rel):
+                continue
+        elif excluded_dirs:
+            rel_str = str(rel)
+            if any(rel_str.startswith(d) or f"/{d}/" in f"/{rel_str}/" for d in excluded_dirs):
+                continue
         if path.resolve() in referenced_resolved:
             continue
         orphans.append(path)

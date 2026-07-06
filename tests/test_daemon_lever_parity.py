@@ -13,7 +13,6 @@ from memo.config import Config
 from memo.memory import Memory
 from memo.recall_logic import _recall_logic
 
-
 # ---------------------------------------------------------------------------
 # Shared stub embedder fixture (mirrors test_daemon_session_cited.py)
 # ---------------------------------------------------------------------------

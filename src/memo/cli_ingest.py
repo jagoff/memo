@@ -640,7 +640,7 @@ def ingest(
 
         if include_orphan_images and ocr:
             orphans = find_orphan_images(
-                vault, referenced_images, excluded_dirs=tuple(exclude_patterns)
+                vault, referenced_images, excluded_fn=_excluded
             )
             # Filter image extensions we actually OCR (Apple Vision covers png/jpg/webp/heic).
             orphans = [o for o in orphans if o.suffix.lower() in IMAGE_EXTENSIONS]
@@ -701,10 +701,30 @@ def ingest(
     # gone from disk (moved/renamed/deleted). Per-file chunk reconciliation
     # already ran in _emit_record for re-emitted files; this catches whole
     # files that disappeared. source-filtered, so curated memories are safe.
+    #
+    # Guard: only prune a row if its modality was actually walked this run.
+    # A row for an un-walked modality (audio when --include-audio is off,
+    # pdf when pdftotext is absent, images when --no-include-orphan-images
+    # or --no-ocr) means "not walked, not in seen_abs" — that MUST NOT be
+    # treated as "file gone from disk". The nightly synapse ingest agent
+    # never passes --include-audio, so every vault-ingest-audio row would
+    # otherwise be silently deleted every night.
     if prune:
+        walked_audio = include_audio and audio_supported
+        walked_pdf = include_pdf and pdf_supported
+        walked_imgs = include_orphan_images and ocr
         for row in store.vault_ingest_rows(label):
             abs_path = row.get("abs_path")
-            if abs_path and abs_path not in seen_abs and store.delete(row["id"]):
+            if not abs_path or abs_path in seen_abs:
+                continue
+            suffix = Path(abs_path).suffix.lower()
+            if suffix in AUDIO_EXTENSIONS and not walked_audio:
+                continue
+            if suffix == ".pdf" and not walked_pdf:
+                continue
+            if suffix in IMAGE_EXTENSIONS and not walked_imgs:
+                continue
+            if store.delete(row["id"]):
                 pruned += 1
 
     # Bump on-disk schema version so the legacy-paths probe in

@@ -804,3 +804,153 @@ def test_ingest_audio_without_whisper_warns_and_skips(tmp_path: Path, runner_env
     )
     assert result.exit_code == 0, result.output
     assert "mlx-whisper not installed" in result.output
+
+
+# Regression tests for two bugs found in v2.12.14:
+# Bug 1: --prune silently deleted audio/pdf/image rows for modalities not
+#         walked this run (e.g. nightly synapse ingest never passes --include-audio,
+#         so every vault-ingest-audio row was deleted each night).
+# Bug 2: find_orphan_images ignored `/**`-form exclude patterns, so images under
+#         excluded subtrees (e.g. Obsidian/Whatsapp/**) were ingested as orphan
+#         standalone memories.
+
+
+def test_prune_does_not_delete_audio_rows_when_include_audio_is_off(
+    tmp_path: Path, runner_env, monkeypatch
+):
+    """Regression: --prune must NOT delete vault-ingest-audio rows when
+    --include-audio is absent (the nightly synapse agent config).  The audio
+    file is still on disk; the row should survive."""
+    vault = _build_vault(
+        tmp_path / "vault",
+        {"note.md": "# Note\n\nsome content here."},
+    )
+    (vault / "voice.m4a").write_bytes(b"fake-aac-bytes")
+
+    monkeypatch.setattr("memo.audio_transcribe.whisper_available", lambda: True)
+    monkeypatch.setattr(
+        "memo.audio_transcribe.transcribe_audio_cached",
+        lambda p, *, cache_dir: "transcript of the voice note",
+    )
+
+    # Run 1: ingest WITH --include-audio  → vault-ingest-audio row appears.
+    r1 = CliRunner().invoke(
+        cli,
+        [
+            "ingest", str(vault), "--name", "v",
+            "--include-audio", "--no-include-pdf",
+            "--no-include-orphan-images", "--no-ocr", "--no-chunk",
+        ],
+        env=runner_env,
+    )
+    assert r1.exit_code == 0, r1.output
+    rows1 = _all_rows(_open_store(runner_env))
+    audio_rows1 = [r for r in rows1 if "voice.m4a" in r["path"]]
+    assert len(audio_rows1) == 1, f"audio row must be present after run-1: {rows1}"
+
+    # Run 2: ingest WITHOUT --include-audio + --prune  → audio row must survive.
+    r2 = CliRunner().invoke(
+        cli,
+        [
+            "ingest", str(vault), "--name", "v",
+            "--prune", "--no-include-pdf",
+            "--no-include-orphan-images", "--no-ocr", "--no-chunk",
+        ],
+        env=runner_env,
+    )
+    assert r2.exit_code == 0, r2.output
+    rows2 = _all_rows(_open_store(runner_env))
+    audio_rows2 = [r for r in rows2 if "voice.m4a" in r["path"]]
+    assert len(audio_rows2) == 1, (
+        f"REGRESSION: audio row wiped by --prune when voice.m4a is still on disk "
+        f"(run-2 output={r2.output!r}, rows after={[r['path'] for r in rows2]})"
+    )
+
+
+def test_prune_does_not_delete_audio_rows_when_whisper_unavailable(
+    tmp_path: Path, runner_env, monkeypatch
+):
+    """Regression: --prune must NOT delete vault-ingest-audio rows when
+    whisper is unavailable on the current run (audio_supported=False)."""
+    vault = _build_vault(
+        tmp_path / "vault",
+        {"note.md": "# Note\n\nsome content here."},
+    )
+    (vault / "voice.m4a").write_bytes(b"fake-aac-bytes")
+
+    # Run 1: whisper available → ingest audio row.
+    monkeypatch.setattr("memo.audio_transcribe.whisper_available", lambda: True)
+    monkeypatch.setattr(
+        "memo.audio_transcribe.transcribe_audio_cached",
+        lambda p, *, cache_dir: "transcript of the voice note",
+    )
+    r1 = CliRunner().invoke(
+        cli,
+        [
+            "ingest", str(vault), "--name", "v",
+            "--include-audio", "--no-include-pdf",
+            "--no-include-orphan-images", "--no-ocr", "--no-chunk",
+        ],
+        env=runner_env,
+    )
+    assert r1.exit_code == 0, r1.output
+    rows1 = _all_rows(_open_store(runner_env))
+    assert any("voice.m4a" in r["path"] for r in rows1)
+
+    # Run 2: whisper gone + --prune → audio row must survive.
+    monkeypatch.setattr("memo.audio_transcribe.whisper_available", lambda: False)
+    r2 = CliRunner().invoke(
+        cli,
+        [
+            "ingest", str(vault), "--name", "v",
+            "--include-audio", "--prune", "--no-include-pdf",
+            "--no-include-orphan-images", "--no-ocr", "--no-chunk",
+        ],
+        env=runner_env,
+    )
+    assert r2.exit_code == 0, r2.output
+    assert "mlx-whisper not installed" in r2.output
+    rows2 = _all_rows(_open_store(runner_env))
+    assert any("voice.m4a" in r["path"] for r in rows2), (
+        f"REGRESSION: audio row wiped when whisper unavailable "
+        f"(run-2={r2.output!r}, rows={[r['path'] for r in rows2]})"
+    )
+
+
+def test_orphan_images_excluded_by_glob_star_star_pattern(
+    tmp_path: Path, runner_env, monkeypatch
+):
+    """Regression: images inside a `dir/**`-excluded subtree must not be
+    ingested as orphan standalone memories.  The md walker's `_excluded`
+    closure handles `/**` correctly; `find_orphan_images` previously had
+    its own simpler predicate that ignored the trailing `/**`."""
+    vault = tmp_path / "vault"
+    # Excluded subtree (/** form, exactly as synapse ops.py passes it).
+    whatsapp_dir = vault / "Obsidian" / "Whatsapp"
+    whatsapp_dir.mkdir(parents=True)
+    (whatsapp_dir / "photo.jpg").write_bytes(b"\xff\xd8\xff fake-jpg")
+    # Normal note (not in excluded subtree).
+    (vault / "note.md").write_text("# Note\n\nno image references here.", encoding="utf-8")
+
+    def _fail_ocr(p, *, cache_dir):
+        raise AssertionError(f"OCR must not be called for excluded image {p}")
+
+    monkeypatch.setattr("memo.ocr.extract_text_cached_with_confidence", _fail_ocr)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "ingest", str(vault), "--name", "v",
+            "--exclude", "Obsidian/Whatsapp/**",
+            "--ocr", "--include-orphan-images",
+            "--no-include-pdf", "--no-chunk",
+        ],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+    rows = _all_rows(_open_store(runner_env))
+    excluded_rows = [r for r in rows if "photo.jpg" in r["path"]]
+    assert not excluded_rows, (
+        f"REGRESSION: excluded image ingested as orphan "
+        f"(rows={[r['path'] for r in rows]})"
+    )
