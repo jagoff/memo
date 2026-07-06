@@ -45,6 +45,12 @@ from memo.cli_dream_passes import (
     _state_path,
 )
 from memo.config import Config
+from memo.dream_utils import (
+    acquire_dream_lock,
+    check_convergence,
+    read_previous_fingerprint,
+    release_dream_lock,
+)
 from memo.memory.record import derived_save_scope
 
 _log = _logging.getLogger(__name__)
@@ -108,32 +114,17 @@ def dream_run(
     # the OS releases it on process exit. (dry-run is read-only, no lock needed.)
     _lock_fh = None
     if not dry_run:
-        import fcntl as _fcntl
-
         try:
-            cfg.state_dir.mkdir(parents=True, exist_ok=True)
-            _lock_fh = (cfg.state_dir / ".dream.lock").open("w")
-            _flags = _fcntl.fcntl(_lock_fh.fileno(), _fcntl.F_GETFD)
-            _fcntl.fcntl(_lock_fh.fileno(), _fcntl.F_SETFD, _flags | _fcntl.FD_CLOEXEC)
-            _fcntl.flock(_lock_fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            _lock_fh = acquire_dream_lock(cfg)
         except OSError:
-            if _lock_fh is not None:
-                _lock_fh.close()
             console.print("[yellow]another dream run is already active — skipping.[/yellow]")
             return
+
     # Convergence guard: read the previous run's corpus fingerprint. If nothing
     # changed since then (and signal-gather adds nothing), the expensive LLM
     # passes (contradict/synthesize/consolidate) are skipped — a re-run becomes
     # near-instant instead of redoing the same work. `--force` overrides.
-    _prev_fp: str | None = None
-    try:
-        import json as _json
-
-        _prev_fp = _json.loads(
-            (cfg.state_dir / "dream" / "last.json").read_text(encoding="utf-8")
-        ).get("corpus_fp")
-    except Exception:
-        _prev_fp = None
+    _prev_fp = read_previous_fingerprint(cfg)
 
     from memo.flags import flag_bool, flag_int
 
@@ -254,14 +245,7 @@ def dream_run(
         # re-run is then near-instant. `--force` overrides.
         _cur_fp = _corpus_fingerprint(mem)
         _sg_saved = int(receipt["signal_gathered"].get("memories_saved", 0) or 0)
-        _converged = (
-            not force
-            and not dry_run
-            and _prev_fp is not None
-            and _cur_fp is not None
-            and _cur_fp == _prev_fp
-            and _sg_saved == 0
-        )
+        _converged = check_convergence(force, dry_run, _prev_fp, _cur_fp, _sg_saved)
         if _converged:
             receipt["converged"] = True
             console.print(
@@ -1066,9 +1050,11 @@ def dream_run(
 
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
-        return
+    else:
+        _render_run_summary(receipt, dry_run)
 
-    _render_run_summary(receipt, dry_run)
+    # Clean up lock (will auto-release on process exit, but explicit cleanup is cleaner)
+    release_dream_lock(_lock_fh)
 
 
 @dream_cmd.command(name="status")
