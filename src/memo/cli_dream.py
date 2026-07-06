@@ -35,13 +35,20 @@ from memo.cli_dream_passes import (
     _render_run_summary,
     _run_capture_weights,
     _run_compress,
+    _run_consolidate_dups,
+    _run_contradict,
+    _run_entities,
     _run_eval_recall,
     _run_eviction,
     _run_harvest_labels,
     _run_presynthesis,
     _run_prewarm_queries,
     _run_prune_floor,
+    _run_roi_decay,
+    _run_roi_reconcile,
     _run_signal_gather,
+    _run_stale,
+    _run_synthesis,
     _state_path,
 )
 from memo.config import Config
@@ -611,63 +618,12 @@ def dream_run(
             # 1. Contradictions ----------------------------------------------
             progress.update(step, description="[1/6] contradictions — scanning corpus...")
             try:
-
-                def _contradict_progress(current: int, total: int, _title: str) -> None:
-                    progress.update(
-                        step,
-                        description=f"[1/6] contradictions — {current}/{total}...",
-                        total=total,
-                        completed=current,
-                    )
-
-                mem.contradict_scanner.scan_corpus(
-                    confidence_threshold=0.9,
-                    max_pairs=50,
-                    progress=_contradict_progress,
-                    persist=not dry_run,
-                )
-                from memo.flags import flag_float as _flag_float
-
-                _evo_conf = _flag_float("MEMO_EVOLUTION_CONFIDENCE")
-                _evo_conf = 0.6 if _evo_conf is None else _evo_conf
-                contradicted_ids: list[str] = []
-                for pair in mem.contradict_store.list_open(min_confidence=0.9):
-                    rel = (pair.relationship or "").lower()
-                    if "evolu" in rel:
-                        if not dry_run:
-                            # Demote the superseded (older) side so the temporal
-                            # verdict actually steers ranking: lower its
-                            # confidence (health-score multiplier, default-on)
-                            # instead of marking "both kept" and changing nothing.
-                            older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
-                            if _evo_conf < 1.0:
-                                try:
-                                    mem.store.set_confidence_batch([(older, _evo_conf)])
-                                except Exception as _exc:
-                                    receipt["errors"].append(
-                                        f"evolution_confidence: {type(_exc).__name__}: {_exc}"
-                                    )
-                            mem.contradict_store.resolve(
-                                pair.pair_id,
-                                "evolved",
-                                note=f"dream: evolution, demoted older {older[:8]}",
-                            )
-                        receipt["evolved"].append(pair.pair_id)
-                        continue
-                    if "contrad" not in rel:
-                        continue
-                    older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
-                    contradicted_ids.extend([pair.memory_id_a, pair.memory_id_b])
-                    if not dry_run:
-                        ok = mem.lifecycle.archive_memory(older)
-                        if ok:
-                            mem.contradict_store.resolve(
-                                pair.pair_id, "kept_newer", note=f"dream: archived older {older}"
-                            )
-                    receipt["superseded"].append({"pair_id": pair.pair_id, "older": older})
-                if contradicted_ids and not dry_run:
-                    mem.store.penalize_confidence_batch(contradicted_ids)
-                    receipt["confidence_penalized"] = len(set(contradicted_ids))
+                res = _run_contradict(mem, dry_run=dry_run)
+                if "error" in res:
+                    receipt["errors"].append(f"contradict: {res['error']}")
+                receipt["superseded"] = res.get("superseded", [])
+                receipt["evolved"] = res.get("evolved", [])
+                receipt["confidence_penalized"] = res.get("confidence_penalized", 0)
                 progress.update(
                     step,
                     description=(
@@ -688,15 +644,10 @@ def dream_run(
                 completed=0,
             )
             try:
-                res = mem.consolidator.consolidate_all(
-                    threshold=0.9,
-                    auto_apply=True,
-                    dry_run=dry_run,
-                )
-                for r in res.get("results", []):
-                    receipt["merged"].append(
-                        {"merged_id": r.get("merged_id"), "archived_ids": r.get("archived_ids", [])}
-                    )
+                res = _run_consolidate_dups(mem, dry_run=dry_run)
+                if "error" in res:
+                    receipt["errors"].append(f"consolidate: {res['error']}")
+                receipt["merged"] = res.get("merged", [])
                 progress.update(
                     step,
                     description=(
@@ -713,16 +664,10 @@ def dream_run(
                 step, description="[3/6] stale memories — detecting...", total=None, completed=0
             )
             try:
-                stale = mem.temporal.detect_stale_memories(days_threshold=365, min_access_count=0)
-                for item in stale:
-                    mid = item.get("id")
-                    if not mid:
-                        continue
-                    if not dry_run:
-                        mem.lifecycle.archive_memory(mid)
-                    receipt["archived_stale"].append(
-                        {"id": mid, "days": item.get("days_since_update")}
-                    )
+                res = _run_stale(mem, dry_run=dry_run)
+                if "error" in res:
+                    receipt["errors"].append(f"stale: {res['error']}")
+                receipt["archived_stale"] = res.get("archived", [])
                 progress.update(
                     step,
                     description=(
@@ -742,17 +687,10 @@ def dream_run(
                 completed=0,
             )
             try:
-                results = mem.synthesize_cross_cluster(
-                    dry_run=dry_run, min_cluster_size=5, max_clusters=8
-                )
-                for r in results:
-                    receipt["synthesized"].append(
-                        {
-                            "title": r.get("title"),
-                            "confidence": r.get("confidence"),
-                            "saved": r.get("saved", False),
-                        }
-                    )
+                res = _run_synthesis(mem, dry_run=dry_run)
+                if "error" in res:
+                    receipt["errors"].append(f"synthesize: {res['error']}")
+                receipt["synthesized"] = res.get("synthesized", [])
                 saved_n = sum(1 for s in receipt["synthesized"] if s.get("saved"))
                 progress.update(
                     step,
@@ -775,8 +713,10 @@ def dream_run(
                 completed=0,
             )
             try:
-                counts = mem.extract_entities(all_=True, skip_already_indexed=True, max_batch=50)
-                receipt["entities_extracted"] = counts.get("entities_extracted", 0)
+                res = _run_entities(mem, dry_run=dry_run)
+                if "error" in res:
+                    receipt["errors"].append(f"entities: {res['error']}")
+                receipt["entities_extracted"] = res.get("extracted", 0)
                 progress.update(
                     step,
                     description=(
@@ -803,33 +743,12 @@ def dream_run(
                 completed=0,
             )
             try:
-                from memo.outcome import (
-                    dead_weight,
-                    reconcile_roi,
-                    reconcile_source_feedback,
-                )
-
-                receipt["roi_reconciled"] = reconcile_roi(mem).get("updated", 0)
-                # Per-query learning: mine implicit feedback from grounding so
-                # ranking sharpens for the queries actually asked (opt-in).
-                if flag_bool("MEMO_OUTCOME_SOURCE_FEEDBACK"):
-                    try:
-                        fb = reconcile_source_feedback(
-                            mem,
-                            include_negatives=flag_bool("MEMO_OUTCOME_SOURCE_FEEDBACK_NEG"),
-                        )
-                        receipt["source_feedback_mined"] = fb
-                    except Exception as _exc:
-                        receipt["errors"].append(f"source_feedback: {type(_exc).__name__}: {_exc}")
-                min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 0
-                for d in dead_weight(mem, min_surfaced=min_surfaced):
-                    if (
-                        mem.forget(
-                            d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
-                        )
-                        is not None
-                    ):
-                        receipt["dead_archived"].append(d["id"])
+                res = _run_roi_reconcile(mem, dry_run=dry_run)
+                if "error" in res:
+                    receipt["errors"].append(f"roi_reconcile: {res['error']}")
+                receipt["roi_reconciled"] = res.get("reconciled", 0)
+                receipt["dead_archived"] = res.get("dead_archived", [])
+                receipt["source_feedback_mined"] = res.get("source_feedback_mined", 0)
                 progress.update(
                     step,
                     description=(
@@ -851,9 +770,13 @@ def dream_run(
                 step, description="[7/7] ROI decay — adjusting scores...", total=None, completed=0
             )
             try:
-                n = mem.store.decay_roi(factor=0.98, older_than_days=30)
-                receipt["roi_decayed"] = n
-                progress.update(step, description=(f"[7/7] ROI decay [green]✓[/green]  {n} rows"))
+                res = _run_roi_decay(mem, dry_run=dry_run)
+                if "error" in res:
+                    receipt["errors"].append(f"roi_decay: {res['error']}")
+                receipt["roi_decayed"] = res.get("decayed", 0)
+                progress.update(
+                    step, description=(f"[7/7] ROI decay [green]✓[/green]  {receipt['roi_decayed']} rows")
+                )
             except Exception as exc:
                 progress.update(step, description="[7/7] ROI decay [yellow]warn[/yellow]")
                 receipt["errors"].append(f"roi_decay: {type(exc).__name__}: {exc}")
