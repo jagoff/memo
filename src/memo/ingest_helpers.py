@@ -51,6 +51,25 @@ def pdftotext_available() -> bool:
     return _PDFTOTEXT is not None
 
 
+def caption_if_ocr_weak(img_path: Path, ocr_text: str, state_dir: Path) -> str:
+    """mlx-vlm caption fallback for images whose OCR yielded little/no text.
+
+    Gated by MEMO_VLM_CAPTION_ENABLED (default off). Returns "" when the
+    flag is off, OCR already produced enough text
+    (>= MEMO_VLM_CAPTION_MIN_OCR_CHARS), or captioning fails. Ingest-time
+    only — never called from the recall-hook path.
+    """
+    from memo.flags import flag_bool, flag_int
+
+    if not flag_bool("MEMO_VLM_CAPTION_ENABLED"):
+        return ""
+    if len((ocr_text or "").strip()) >= (flag_int("MEMO_VLM_CAPTION_MIN_OCR_CHARS") or 40):
+        return ""
+    from memo.vlm_caption import caption_image_cached
+
+    return caption_image_cached(img_path, cache_dir=state_dir / "vlm_cache")
+
+
 def enrich_with_ocr(
     text: str,
     note_path: Path,
@@ -79,9 +98,13 @@ def enrich_with_ocr(
             continue
         resolved.append(img_path)
         ocr_text = extract_text_cached(img_path, cache_dir=cache_dir)
-        if not ocr_text:
+        caption = caption_if_ocr_weak(img_path, ocr_text, state_dir)
+        if not ocr_text and not caption:
             continue
-        ocr_blocks.append(f"\n\n<!-- OCR: {img_name} -->\n{ocr_text}\n")
+        if ocr_text:
+            ocr_blocks.append(f"\n\n<!-- OCR: {img_name} -->\n{ocr_text}\n")
+        if caption:
+            ocr_blocks.append(f"\n\n<!-- VLM: {img_name} -->\n{caption}\n")
         try:
             img_hashes.append(hashlib.sha256(img_path.read_bytes()).digest())
         except Exception as exc:

@@ -469,6 +469,37 @@ def test_ingest_orphan_image_becomes_memoria(tmp_path: Path, runner_env):
     assert "standalone-image" in (orphan_row["tags"] or "")
 
 
+def test_orphan_image_gets_vlm_caption_body(tmp_path: Path, runner_env, monkeypatch):
+    """OCR-empty orphan image + MEMO_VLM_CAPTION_ENABLED=1 → caption becomes the
+    record body, tagged vlm-caption, with neutral (None) health confidence."""
+    vault = _build_vault(tmp_path / "vault", {"note.md": "# Note\n\nno image references here."})
+    (vault / "diagram.png").write_bytes(b"\x89PNG fake")
+
+    monkeypatch.setattr(
+        "memo.ocr.extract_text_cached_with_confidence",
+        lambda p, *, cache_dir: ("", 0.0),
+    )
+    monkeypatch.setattr(
+        "memo.ingest_helpers.caption_if_ocr_weak",
+        lambda img, ocr_text, state_dir: "architecture diagram of the recall daemon",
+    )
+    env = dict(runner_env, MEMO_VLM_CAPTION_ENABLED="1")
+
+    result = CliRunner().invoke(
+        cli,
+        ["ingest", str(vault), "--name", "v", "--ocr", "--include-orphan-images",
+         "--no-include-pdf", "--no-chunk"],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+
+    rows = _all_rows(_open_store(runner_env))
+    img_rows = [r for r in rows if "diagram.png" in r["path"]]
+    assert len(img_rows) == 1
+    assert "architecture diagram" in (img_rows[0]["body"] or "")
+    assert "vlm-caption" in img_rows[0]["tags"]
+
+
 def test_ingest_pdf_chunked(tmp_path: Path, runner_env):
     """PDF with mocked extracted text > chunk_chars produces multiple rows."""
     vault = tmp_path / "vault"

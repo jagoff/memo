@@ -9,6 +9,14 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- Ingest: optional mlx-vlm caption pass for images whose OCR yields
+  little/no text (`MEMO_VLM_CAPTION_ENABLED`, default off) — text-free
+  diagrams/photos become searchable via `<!-- VLM: … -->` blocks and
+  caption-bodied orphan-image records (`vlm-caption` tag). Install deps
+  with `pip install "mlx-memo[multimodal]"`.
+
 ## [2.12.12] - 2026-07-05
 
 Ecosystem roadmap **Wave 4** — profile distillation (workstream B, 5 tasks) +

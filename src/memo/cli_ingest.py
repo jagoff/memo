@@ -140,6 +140,7 @@ def ingest(
     from memo.flags import flag_str as _flag_str
     from memo.ingest_helpers import (
         IMAGE_EXTENSIONS,
+        caption_if_ocr_weak,
         enrich_with_ocr,
         extract_pdf_text,
         find_orphan_images,
@@ -603,24 +604,34 @@ def ingest(
                             img_path, cache_dir=cache_dir
                         )
                         ocr_text = (ocr_text_raw or "").strip()
-                        if not ocr_text:
+                        caption = caption_if_ocr_weak(img_path, ocr_text, cfg.state_dir)
+                        if not ocr_text and not caption:
                             orphan_skipped += 1
                             continue
+                        if caption and ocr_text:
+                            body_text = f"{ocr_text}\n\n<!-- VLM caption -->\n{caption}"
+                        else:
+                            body_text = ocr_text or caption
                         rel = img_path.relative_to(vault)
                         store_path = f"{label}/{rel}" if label else str(rel)
                         title = img_path.stem.replace("-", " ").replace("_", " ")
                         tags = [p for p in rel.parent.parts if p] + ["standalone-image"]
+                        if caption:
+                            tags.append("vlm-caption")
                         outcome = _emit_record(
                             store_path=store_path,
                             title=title,
                             tags=tags,
-                            body=ocr_text,
+                            body=body_text,
                             abs_path=img_path,
                             source="vault-ingest-image",
                             extra_meta={"image_ext": img_path.suffix.lower()},
                             # Down-weight low-quality screenshot OCR so garbled
-                            # captures rank below clean text notes.
-                            health_confidence=image_health_confidence(ocr_conf),
+                            # captures rank below clean text notes. A caption-only
+                            # body is clean model text — leave it neutral (None).
+                            health_confidence=(
+                                image_health_confidence(ocr_conf) if ocr_text else None
+                            ),
                         )
                         if outcome == "added":
                             orphan_added += 1
