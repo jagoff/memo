@@ -89,6 +89,13 @@ def _resolve_ingest_row(store, path_str):
     help="OCR images not referenced by any note and ingest them as standalone memories.",
 )
 @click.option(
+    "--include-audio/--no-include-audio",
+    default=False,
+    help="Transcribe vault audio (m4a/mp3/wav/aac/ogg/flac/opus) via mlx-whisper "
+    "+ chunk + embed. Requires the optional mlx-whisper dep "
+    "(pip install 'mlx-memo[multimodal]'). Default off.",
+)
+@click.option(
     "--prune/--no-prune",
     default=False,
     help="Delete stale vault-ingest chunks under this label: files moved/renamed/deleted (abs_path gone) and leftover chunks of notes edited down to fewer chunks. Default off (ingest is purely additive); the synapse vault-ingest agent passes --prune so the index self-heals.",
@@ -105,6 +112,7 @@ def ingest(
     chunk_overlap: int,
     include_pdf: bool,
     include_orphan_images: bool,
+    include_audio: bool,
     prune: bool,
 ) -> None:
     """Bulk-ingest all .md from a vault into the memo index.
@@ -134,6 +142,11 @@ def ingest(
 
     import frontmatter
 
+    from memo.audio_transcribe import (
+        AUDIO_EXTENSIONS,
+        transcribe_audio_cached,
+        whisper_available,
+    )
     from memo.chunker import chunk_markdown
     from memo.embedder import assert_valid_embedding
     from memo.embedder_select import make_embedder
@@ -227,6 +240,7 @@ def ingest(
 
     md_files: list[Path] = []
     pdf_files: list[Path] = []
+    audio_files: list[Path] = []
     for p in vault.rglob("*"):
         if not p.is_file():
             continue
@@ -238,17 +252,25 @@ def ingest(
             md_files.append(p)
         elif suffix == ".pdf" and include_pdf:
             pdf_files.append(p)
+        elif suffix in AUDIO_EXTENSIONS and include_audio:
+            audio_files.append(p)
     md_files.sort()
     pdf_files.sort()
+    audio_files.sort()
 
     pdf_supported = include_pdf and pdftotext_available()
     if include_pdf and not pdf_supported:
         console.print("[yellow]pdftotext not found on PATH — skipping PDFs[/yellow]")
         pdf_files = []
 
+    audio_supported = include_audio and whisper_available()
+    if include_audio and not audio_supported:
+        console.print("[yellow]mlx-whisper not installed — skipping audio[/yellow]")
+        audio_files = []
+
     console.print(
-        f"[cyan]found[/cyan] {len(md_files)} .md, {len(pdf_files)} .pdf in {label} "
-        f"(after exclusions)"
+        f"[cyan]found[/cyan] {len(md_files)} .md, {len(pdf_files)} .pdf, "
+        f"{len(audio_files)} audio in {label} (after exclusions)"
     )
 
     if dry_run:
@@ -280,6 +302,7 @@ def ingest(
 
     skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0
     skipped_pdf_empty = pdf_added = orphan_added = orphan_skipped = 0
+    audio_added = skipped_audio_empty = 0
     chunks_emitted = pruned = 0
     referenced_images: set[Path] = set()
     # Abs-paths of every file seen on disk this walk (md + pdf + orphan imgs),
@@ -583,6 +606,38 @@ def ingest(
                 finally:
                     progress.advance(pdf_task)
 
+        if audio_files:
+            audio_task = progress.add_task(f"Audio {label}", total=len(audio_files))
+            audio_cache = cfg.state_dir / "audio_cache"
+            for audio_path in audio_files:
+                try:
+                    rel = audio_path.relative_to(vault)
+                    seen_abs.add(str(audio_path))
+                    text = transcribe_audio_cached(audio_path, cache_dir=audio_cache).strip()
+                    if not text:
+                        skipped_audio_empty += 1
+                        continue
+                    store_path = f"{label}/{rel}" if label else str(rel)
+                    title = audio_path.stem.replace("-", " ").replace("_", " ")
+                    tags = [p for p in rel.parent.parts if p] + ["audio"]
+                    outcome = _emit_record(
+                        store_path=store_path,
+                        title=title,
+                        tags=tags,
+                        body=text,
+                        abs_path=audio_path,
+                        source="vault-ingest-audio",
+                        extra_meta={"audio_ext": audio_path.suffix.lower()},
+                    )
+                    if outcome == "added":
+                        audio_added += 1
+                except Exception as exc:
+                    errors += 1
+                    if debug_mode:
+                        console.print(f"[red]err audio[/] {audio_path}: {exc}")
+                finally:
+                    progress.advance(audio_task)
+
         if include_orphan_images and ocr:
             orphans = find_orphan_images(
                 vault, referenced_images, excluded_dirs=tuple(exclude_patterns)
@@ -657,7 +712,7 @@ def ingest(
     # vaults (vault-ingest rows live outside `cfg.data_dir` and the
     # probe can't resolve them; setting user_version=1 marks "this DB
     # is post-init, the legacy fallback is no longer relevant").
-    if added or updated or pdf_added or orphan_added:
+    if added or updated or pdf_added or orphan_added or audio_added:
         with contextlib.suppress(Exception):
             store.set_user_version(1)
         # Flush WAL after a productive ingest so a subsequent crash doesn't
@@ -672,6 +727,7 @@ def ingest(
         f"skipped_id={skipped_id} skipped_empty={skipped_empty} "
         f"pdf_added={pdf_added} pdf_empty={skipped_pdf_empty} "
         f"orphan_added={orphan_added} orphan_skipped={orphan_skipped} "
+        f"audio_added={audio_added} skipped_audio_empty={skipped_audio_empty} "
         f"chunks_emitted={chunks_emitted} pruned={pruned} "
         f"errors={errors}"
     )

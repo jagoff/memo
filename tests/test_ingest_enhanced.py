@@ -744,3 +744,63 @@ def test_ingest_redaction_rerun_is_idempotent(tmp_path: Path, runner_env):
     rows_after = _all_rows(_open_store(runner_env))
     assert len(rows_after) == len(rows_before) == 1
     assert "****MNOP" in (rows_after[0]["body"] or "")
+
+
+def test_ingest_include_audio_transcribes_and_indexes(tmp_path: Path, runner_env, monkeypatch):
+    vault = _build_vault(tmp_path / "vault", {"note.md": "# Note\n\nplain note body here."})
+    (vault / "memos").mkdir()
+    (vault / "memos" / "standup-2026-07-01.m4a").write_bytes(b"fake-aac-bytes")
+
+    monkeypatch.setattr("memo.audio_transcribe.whisper_available", lambda: True)
+    monkeypatch.setattr(
+        "memo.audio_transcribe.transcribe_audio_cached",
+        lambda p, *, cache_dir: "decidimos migrar el deploy a uv y postergar el refactor",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["ingest", str(vault), "--name", "v", "--include-audio",
+         "--no-include-pdf", "--no-include-orphan-images", "--no-ocr", "--no-chunk"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+
+    rows = _all_rows(_open_store(runner_env))
+    audio_rows = [r for r in rows if "standup-2026-07-01" in r["path"]]
+    assert len(audio_rows) == 1
+    assert "migrar el deploy" in (audio_rows[0]["body"] or "")
+    assert "audio" in audio_rows[0]["tags"]
+
+
+def test_ingest_audio_default_off(tmp_path: Path, runner_env, monkeypatch):
+    vault = _build_vault(tmp_path / "vault", {"note.md": "# Note\n\nplain note body here."})
+    (vault / "voice.m4a").write_bytes(b"fake")
+
+    def _boom(p, *, cache_dir):
+        raise AssertionError("audio must not be transcribed without --include-audio")
+
+    monkeypatch.setattr("memo.audio_transcribe.transcribe_audio_cached", _boom)
+
+    result = CliRunner().invoke(
+        cli,
+        ["ingest", str(vault), "--name", "v",
+         "--no-include-pdf", "--no-include-orphan-images", "--no-ocr", "--no-chunk"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+    assert not [r for r in _all_rows(_open_store(runner_env)) if "voice" in r["path"]]
+
+
+def test_ingest_audio_without_whisper_warns_and_skips(tmp_path: Path, runner_env, monkeypatch):
+    vault = _build_vault(tmp_path / "vault", {"note.md": "# Note\n\nplain note body here."})
+    (vault / "voice.m4a").write_bytes(b"fake")
+    monkeypatch.setattr("memo.audio_transcribe.whisper_available", lambda: False)
+
+    result = CliRunner().invoke(
+        cli,
+        ["ingest", str(vault), "--name", "v", "--include-audio",
+         "--no-include-pdf", "--no-include-orphan-images", "--no-ocr", "--no-chunk"],
+        env=runner_env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "mlx-whisper not installed" in result.output

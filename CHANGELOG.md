@@ -16,6 +16,9 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   diagrams/photos become searchable via `<!-- VLM: … -->` blocks and
   caption-bodied orphan-image records (`vlm-caption` tag). Install deps
   with `pip install "mlx-memo[multimodal]"`.
+- `memo ingest --include-audio`: vault audio files (m4a/mp3/wav/…) are
+  transcribed via mlx-whisper (SHA256-cached) and indexed through the same
+  pipeline as notes/PDFs, keeping the raw file as provenance. Opt-in.
 
 ## [2.12.12] - 2026-07-05
 
