@@ -29,6 +29,10 @@ from memo.memory.record import (
 )
 from memo.prompt_overrides import resolve_prompt
 
+# Max provenance memories pulled into the ask context per _build_ask_context
+# call when MEMO_ASK_EXPAND_SYNTHESIS is on (bounds disk reads + tokens).
+_EXPAND_SOURCES_MAX = 4
+
 
 class _AskOpsMixin(_MemoryBase):
     # -- chat ask -----------------------------------------------------------
@@ -283,6 +287,57 @@ class _AskOpsMixin(_MemoryBase):
                 }
             )
             seen_paths.update(_vault_dedup_keys(h))
+        # Lazy synthesis_sources expansion (MEMO_ASK_EXPAND_SYNTHESIS, default
+        # off): a synthesis hit is an ABSTRACT — for holistic asks the concrete
+        # answer often lives in its source memories. Pull a bounded number of
+        # provenance memories into the context (store fetches only, NO LLM
+        # call; ask path only — never the 5s recall hook). Community-kind
+        # syntheses keep entity NAMES in synthesis_sources; non-resolvable
+        # strings skip via self.get() returning None.
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_ASK_EXPAND_SYNTHESIS"):
+            _seen_ids = {h.id for h in hits}
+            _expanded = 0
+            for h in hits:
+                if h.type != "synthesis" or _expanded >= _EXPAND_SOURCES_MAX:
+                    continue
+                _hx = h.extra or {}
+                _src_ids = (
+                    _hx.get("synthesis_source_memories") or _hx.get("synthesis_sources") or []
+                )
+                if not isinstance(_src_ids, list):
+                    continue
+                for sid in _src_ids:
+                    if _expanded >= _EXPAND_SOURCES_MAX:
+                        break
+                    if not isinstance(sid, str) or sid in _seen_ids:
+                        continue
+                    src = self.get(sid)
+                    if src is None or src.id in _seen_ids:
+                        continue
+                    _seen_ids.add(src.id)
+                    _seen_ids.add(sid)
+                    _expanded += 1
+                    _snip = (src.body or "")[:snippet_chars]
+                    if len(src.body or "") > snippet_chars:
+                        _snip = _snip.rstrip() + "…"
+                    snippet_lines.append(
+                        f"[{src.id[:8]}] title: {src.title}  |  type: {src.type}"
+                        f"  |  context: source-of [{h.id[:8]}]\n{_snip}\n"
+                    )
+                    sources.append(
+                        {
+                            "source": "memory",
+                            "id": src.id,
+                            "id_short": src.id[:8],
+                            "title": src.title,
+                            "type": src.type,
+                            "score": None,
+                            "snippet": _snip,
+                            "expanded_from": h.id,
+                        }
+                    )
         seen_repo_keys: set[tuple[str, str]] = set()
         appended_repo = 0
         for h in repo_hits:

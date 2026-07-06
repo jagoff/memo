@@ -374,6 +374,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "Message returned by memo_ask when no relevant sources are found.",
     ),
     _spec(
+        "MEMO_ASK_EXPAND_SYNTHESIS",
+        "bool",
+        False,
+        "misc",
+        "Lazy synthesis_sources expansion at ask time: when a retrieved hit is "
+        "a type=synthesis abstract, pull up to 4 of its provenance memories "
+        "into the ask context (store fetches only — no extra LLM call). "
+        "Ask/chat path only; never the recall hook. Off by default.",
+    ),
+    _spec(
         "MEMO_VAULT_SYSTEM_DIR",
         "str",
         "Obsidian",
