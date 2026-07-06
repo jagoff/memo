@@ -70,6 +70,11 @@ def test_dry_run_merges_nothing(monkeypatch):
     res = run_entity_canon(None, mem, dry_run=True)
     assert mem.graph.merges == []
     assert res["merged"] and res["merged"][0]["dry_run"] is True
+    # Regression: canonicalize_existing() must NOT be called in dry_run —
+    # it commits five categories of destructive mutations to graph.db.
+    assert mem.graph.canon_called == 0, (
+        "dry_run must not call canonicalize_existing() — it writes to graph.db"
+    )
 
 
 def test_max_pairs_caps_llm_calls(monkeypatch):

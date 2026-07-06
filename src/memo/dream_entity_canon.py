@@ -80,7 +80,10 @@ def run_entity_canon(
     try:
         # Exact fold_key folding FIRST, so the fuzzy stage never re-litigates
         # what deterministic canonicalization already merges for free.
-        mem.graph.canonicalize_existing()
+        # dry_run: skip the write entirely — canonicalize_existing() commits
+        # five categories of mutations to graph.db unconditionally.
+        if not dry_run:
+            mem.graph.canonicalize_existing()
         rows = mem.graph.list_entities(min_mentions=1)
         by_name = {r["name"]: r for r in rows}
         res["entities"] = len(by_name)
