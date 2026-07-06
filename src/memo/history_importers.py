@@ -84,25 +84,25 @@ def iter_codex_exchanges(rollout_path: Path) -> Iterator[tuple[str, str]]:
                 continue
             try:
                 obj = json.loads(line)
-            except json.JSONDecodeError:
+                item = obj.get("payload", obj) if isinstance(obj, dict) else None
+                if not isinstance(item, dict) or item.get("type") != "message":
+                    continue
+                role = item.get("role")
+                if role not in ("user", "assistant"):
+                    continue
+                parts = item.get("content") or []
+                text = "\n".join(
+                    str(c.get("text", ""))
+                    for c in parts
+                    if isinstance(c, dict) and c.get("text")
+                ).strip()
+                if not text:
+                    continue
+                if role == "user" and text.startswith(_CODEX_SKIP_PREFIXES):
+                    continue
+                yield (role, text)
+            except Exception:  # noqa: S112 — untrusted external data; one bad line must not abort
                 continue
-            item = obj.get("payload", obj) if isinstance(obj, dict) else None
-            if not isinstance(item, dict) or item.get("type") != "message":
-                continue
-            role = item.get("role")
-            if role not in ("user", "assistant"):
-                continue
-            parts = item.get("content") or []
-            text = "\n".join(
-                str(c.get("text", ""))
-                for c in parts
-                if isinstance(c, dict) and c.get("text")
-            ).strip()
-            if not text:
-                continue
-            if role == "user" and text.startswith(_CODEX_SKIP_PREFIXES):
-                continue
-            yield (role, text)
 
     yield from _pair_turns(_turns())
 
@@ -149,18 +149,18 @@ def iter_opencode_exchanges(db_path: Path) -> Iterator[tuple[str, str]]:
         try:
             role = str(json.loads(msg_data).get("role") or "")
             part = json.loads(part_data)
-        except (ValueError, TypeError):
+            if not isinstance(part, dict) or part.get("type") != "text":
+                continue
+            text = str(part.get("text") or "").strip()
+            if not text:
+                continue
+            if msg_id != cur_key:
+                if buf:
+                    messages.append((cur_session, cur_role, "\n".join(buf)))
+                cur_key, cur_role, cur_session, buf = msg_id, role, str(session_id), []
+            buf.append(text)
+        except Exception:  # noqa: S112 — untrusted external data; one bad row must not abort
             continue
-        if not isinstance(part, dict) or part.get("type") != "text":
-            continue
-        text = str(part.get("text") or "").strip()
-        if not text:
-            continue
-        if msg_id != cur_key:
-            if buf:
-                messages.append((cur_session, cur_role, "\n".join(buf)))
-            cur_key, cur_role, cur_session, buf = msg_id, role, str(session_id), []
-        buf.append(text)
     if buf:
         messages.append((cur_session, cur_role, "\n".join(buf)))
 
@@ -200,21 +200,24 @@ def iter_chatgpt_exchanges(export_path: Path) -> Iterator[tuple[str, str]]:
             continue
         msgs: list[tuple[float, str, str]] = []
         for node in mapping.values():
-            msg = node.get("message") if isinstance(node, dict) else None
-            if not isinstance(msg, dict):
+            try:
+                msg = node.get("message") if isinstance(node, dict) else None
+                if not isinstance(msg, dict):
+                    continue
+                role = str((msg.get("author") or {}).get("role") or "")
+                if role not in ("user", "assistant"):
+                    continue
+                content = msg.get("content") or {}
+                if not isinstance(content, dict) or content.get("content_type") != "text":
+                    continue
+                text = "\n".join(
+                    str(p) for p in (content.get("parts") or []) if isinstance(p, str)
+                ).strip()
+                if not text:
+                    continue
+                msgs.append((float(msg.get("create_time") or 0.0), role, text))
+            except Exception:  # noqa: S112 — untrusted external data; one bad node must not abort
                 continue
-            role = str((msg.get("author") or {}).get("role") or "")
-            if role not in ("user", "assistant"):
-                continue
-            content = msg.get("content") or {}
-            if content.get("content_type") != "text":
-                continue
-            text = "\n".join(
-                str(p) for p in (content.get("parts") or []) if isinstance(p, str)
-            ).strip()
-            if not text:
-                continue
-            msgs.append((float(msg.get("create_time") or 0.0), role, text))
         msgs.sort(key=lambda t: t[0])
         yield from _pair_turns((role, text) for _, role, text in msgs)
 
@@ -238,25 +241,28 @@ def iter_claude_export_exchanges(export_path: Path) -> Iterator[tuple[str, str]]
 
         def _turns(convo: dict = convo) -> Iterator[tuple[str, str]]:
             for msg in convo.get("chat_messages") or []:
-                if not isinstance(msg, dict):
+                try:
+                    if not isinstance(msg, dict):
+                        continue
+                    sender = msg.get("sender")
+                    if sender == "human":
+                        role = "user"
+                    elif sender == "assistant":
+                        role = "assistant"
+                    else:
+                        continue
+                    text = str(msg.get("text") or "").strip()
+                    if not text:
+                        blocks = msg.get("content") or []
+                        text = "\n".join(
+                            str(b.get("text", ""))
+                            for b in blocks
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        ).strip()
+                    if text:
+                        yield (role, text)
+                except Exception:  # noqa: S112 — untrusted external data; one bad msg must not abort
                     continue
-                sender = msg.get("sender")
-                if sender == "human":
-                    role = "user"
-                elif sender == "assistant":
-                    role = "assistant"
-                else:
-                    continue
-                text = str(msg.get("text") or "").strip()
-                if not text:
-                    blocks = msg.get("content") or []
-                    text = "\n".join(
-                        str(b.get("text", ""))
-                        for b in blocks
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    ).strip()
-                if text:
-                    yield (role, text)
 
         yield from _pair_turns(_turns())
 

@@ -164,7 +164,12 @@ def mine_exchange_stream(
                 f"# mine: {source_name or 'exchange'} → {len(insights)} candidate(s)",
                 file=sys.stderr,
             )
-        extra = extra_fn(user_text, assist_text, h) if extra_fn is not None else None
+        if extra_fn is not None:
+            extra = extra_fn(user_text, assist_text, h)
+        elif source_name:
+            extra = {"source": f"imported:{source_name}"}
+        else:
+            extra = None
         for cand in insights:
             if is_near_duplicate(mem, cand):
                 dup += 1

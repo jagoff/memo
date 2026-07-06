@@ -1,7 +1,12 @@
 """Cold-start importer parsers — Codex rollouts, opencode SQLite,
 ChatGPT / Claude.ai export JSON. Fixtures mirror the real on-disk formats
 (verified against ~/.codex/sessions and ~/.local/share/opencode/opencode.db,
-2026-07)."""
+2026-07).
+
+Also covers two robustness properties:
+- per-record isolation: a malformed record must not abort the whole import
+- source provenance: mine_exchange_stream stamps extra["source"] on saved memories
+"""
 
 from __future__ import annotations
 
@@ -158,3 +163,143 @@ def test_iter_claude_export_handles_text_and_block_formats(tmp_path: Path):
         ("por que falla el recall hook?", "el daemon no estaba corriendo"),
         ("segunda charla", "respuesta en bloques"),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 — per-record robustness
+# ---------------------------------------------------------------------------
+
+
+def test_iter_opencode_malformed_msg_data_skipped(tmp_path: Path):
+    """A msg_data row that decodes to a non-dict (e.g. JSON integer 42) must
+    NOT abort the import.  The original except (ValueError, TypeError) does NOT
+    catch the resulting AttributeError from `42.get("role")`, so before the fix
+    this test raises and fails; after the fix the valid exchange is returned."""
+    db = tmp_path / "opencode.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE message (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        CREATE TABLE part (
+            id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        """
+    )
+    conn.executemany(
+        "INSERT INTO message VALUES (?,?,?,?,?)",
+        [
+            ("m1", "s1", 1, 1, json.dumps({"role": "user"})),
+            # malformed: valid JSON but not a dict — json.loads("42") == 42,
+            # then 42.get("role") raises AttributeError (not caught pre-fix)
+            ("m_bad", "s1", 2, 2, "42"),
+            ("m2", "s1", 3, 3, json.dumps({"role": "assistant"})),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO part VALUES (?,?,?,?,?,?)",
+        [
+            ("p1", "m1", "s1", 1, 1, json.dumps({"type": "text", "text": "arregla el bug"})),
+            ("p_bad", "m_bad", "s1", 2, 2, json.dumps({"type": "text", "text": "no importa"})),
+            ("p2", "m2", "s1", 3, 3, json.dumps({"type": "text", "text": "ya lo arregle"})),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    # Must not raise; the valid exchange must survive.
+    pairs = list(iter_opencode_exchanges(db))
+    assert pairs == [("arregla el bug", "ya lo arregle")]
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — source provenance
+# ---------------------------------------------------------------------------
+
+
+def _stub_embed_4dim(self, inputs):  # type: ignore[override]
+    """Deterministic 4-dim stub (same shape as conftest.mem_with_stub)."""
+    out = []
+    for s in inputs:
+        h = sum(ord(c) for c in (s or "")) % 4
+        v = [0.0] * 4
+        v[h] = 1.0
+        out.append(v)
+    return out
+
+
+def test_mine_exchange_stream_stamps_source_provenance(tmp_path: Path, monkeypatch):
+    """mine_exchange_stream stamps extra['source'] = 'imported:<name>' on every
+    saved memory when source_name is set and no extra_fn is provided.
+    Before Fix 2, extra is None and rec.extra has no 'source' key."""
+    from memo.config import Config
+    from memo.memory import Memory
+    from memo.transcript_miner import mine_exchange_stream
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed_4dim)
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.__init__", lambda self, **kw: None)
+
+    # Bypass the LLM: return one candidate directly.
+    monkeypatch.setattr(
+        "memo.transcript_miner.extract_insights",
+        lambda *a, **kw: [
+            {
+                "title": "fixed bug with broad except in opencode importer",
+                "type": "bug",
+                "body": (
+                    "The import was aborting on malformed records because AttributeError "
+                    "was not caught. Fixed by using broad except Exception so that one "
+                    "bad record skips and valid records are still processed and saved."
+                ),
+                "tags": ["import", "bug"],
+            }
+        ],
+    )
+    # No duplicates in an empty store — make it explicit.
+    monkeypatch.setattr("memo.transcript_miner.is_near_duplicate", lambda *a, **kw: False)
+
+    data_dir = tmp_path / "data"
+    vault = tmp_path / "vault"
+    state_dir = tmp_path / "state"
+    data_dir.mkdir()
+    (vault / "Obsidian" / "AI" / "memory").mkdir(parents=True)
+    state_dir.mkdir()
+
+    cfg = Config(
+        data_dir=data_dir, vault_path=vault, state_dir=state_dir,
+        embedder_dims=4, reranker_enabled=False,
+    )
+    mem = Memory(cfg)
+    chat = mem._ensure_chat()
+
+    # The assistant text must pass _passes_prefilter (>=200 chars + trigger keyword).
+    user_text = "how do we handle malformed records in the opencode importer?"
+    assist_text = (
+        "The fix is to wrap the per-record body in a broad except Exception handler "
+        "so a single malformed record does not abort the entire import run. "
+        "The bug was AttributeError from calling .get() on a non-dict JSON value. "
+        "After the fix all valid records are processed and malformed ones are silently skipped."
+    )
+
+    result = mine_exchange_stream(
+        mem, chat, cfg,
+        iter([(user_text, assist_text)]),
+        turn_hashes=set(),
+        source_name="opencode.db",
+    )
+    mem.close()
+
+    assert result["saved"], "expected at least one saved memory"
+
+    # Reopen to read back the persisted extra field.
+    mem2 = Memory(cfg)
+    rec = mem2.get(result["saved"][0])
+    mem2.close()
+
+    assert rec is not None, "saved memory must be retrievable"
+    assert rec.extra.get("source") == "imported:opencode.db"
