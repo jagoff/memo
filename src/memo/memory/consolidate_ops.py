@@ -370,7 +370,17 @@ class _ConsolidateOpsMixin(_MemoryBase):
         """
         # 1) Pull all embeddings (already stored; no re-embed) and
         # 2) greedy single-link cluster by cosine ≥ threshold.
-        items = self._pull_embeddings(type_filter=type_)
+        # Always exclude reference tier: reference memories are bulk-ingested
+        # vault chunks whose paths resolve back to the user's Obsidian vault
+        # files (via _resolve_existing's legacy fallback). Archiving them via
+        # consolidation would unlink the actual vault .md on principal-vault
+        # installs. synthesize_cross_cluster already excludes reference — this
+        # must match. When type_ is given explicitly (e.g. "note"), honour it
+        # as before and also exclude reference.
+        if type_ is not None:
+            items = self._pull_embeddings(type_filter=type_)
+        else:
+            items = self._pull_embeddings(exclude_types={"reference"})
         if not items:
             return []
         clusters = self._greedy_cluster(items, threshold)
