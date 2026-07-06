@@ -60,6 +60,36 @@ SPECS: tuple[FlagSpec, ...] = (
         "entity",
         "Include knowledge-graph candidates in hybrid search. Memories sharing entities with the query are fused via RRF.",
     ),
+    _spec(
+        "MEMO_GRAPH_DENSITY_BOOST",
+        "float",
+        0.0,
+        "entity",
+        "Reranking boost for well-connected memories in the knowledge graph. "
+        "Multiplies graph candidates' scores by (1.0 + boost * degree). "
+        "0.0 (default) = off. Higher values favor semantically central memories.",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_GRAPH_FALLBACK_MIN_HITS",
+        "int",
+        0,
+        "entity",
+        "Fallback seeding: if vec retrieval returns fewer than this many hits, "
+        "automatically enable graph candidates to boost coverage. "
+        "0 (default) = off (graph only used if MEMO_GRAPH_RETRIEVAL_ENABLED=1).",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_GRAPH_SEMANTIC_RELATIONS",
+        "bool",
+        False,
+        "entity",
+        "Track semantic relation types ('causes', 'contradicts', 'extends', 'depends_on') "
+        "in the knowledge graph in addition to co-mention edges. "
+        "Improves semantic retrieval and dependency tracking. "
+        "Currently a stub — implementation deferred to v2.13+.",
+    ),
     # session checkpoints / resume
     _spec(
         "MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."

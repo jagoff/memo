@@ -225,9 +225,15 @@ class _SearchOpsMixin(_MemoryBase):
                 field_boost="exact",
             )
 
-            # Graph-based candidates (Entity-aware retrieval)
+            # Graph-based candidates (Entity-aware retrieval).
+            # Enabled by MEMO_GRAPH_RETRIEVAL_ENABLED or when vec hits fall below
+            # MEMO_GRAPH_FALLBACK_MIN_HITS threshold (fallback seeding).
             graph_hits = []
-            if flag_bool("MEMO_GRAPH_RETRIEVAL_ENABLED"):
+            use_graph = flag_bool("MEMO_GRAPH_RETRIEVAL_ENABLED")
+            fallback_threshold = flag_int("MEMO_GRAPH_FALLBACK_MIN_HITS") or 0
+            if not use_graph and fallback_threshold > 0 and len(vec_hits) < fallback_threshold:
+                use_graph = True  # Fallback: vec is weak, try graph
+            if use_graph:
                 graph_hits = self._fetch_graph_candidates(
                     query, limit=k_each, type_=type_, exclude_types=exclude_types
                 )

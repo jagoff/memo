@@ -107,8 +107,17 @@ class _SearchScoringMixin(_MemoryBase):
             # (1, 2, 3...) rather than [0,1] floats would corrupt any path
             # that inspects the score BEFORE _rrf_fuse runs.
             rrf_k = flag_int("MEMO_RRF_K") or 60
+            density_boost = flag_float("MEMO_GRAPH_DENSITY_BOOST") or 0.0
             for rank, r in enumerate(out):
-                r["score"] = 1.0 / (rrf_k + rank + 1)
+                base_score = 1.0 / (rrf_k + rank + 1)
+                # Boost well-connected memories (density reranking).
+                if density_boost > 0:
+                    try:
+                        degree = self.graph.memory_degree(r["id"])
+                        base_score *= 1.0 + (density_boost * degree)
+                    except Exception:
+                        pass
+                r["score"] = base_score
             return out
         except Exception as exc:
             _log.debug("graph_candidates failed: %s", exc)
