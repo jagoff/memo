@@ -9,7 +9,44 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.13] - 2026-07-06
+
+Ecosystem roadmap **Wave 5** (final) — benchmarks (workstream I, 7 tasks) +
+maintenance-extras (workstream K, 7 tasks) + multimodal-import (workstream H,
+8 tasks). **This completes the 11-workstream / 92-task ecosystem-learnings
+roadmap** (Waves 1–5). Every new flag is default-off; the recall hot path is
+untouched (empty diff); full non-MLX suite green (2960), mypy clean,
+whole-branch opus review = SHIP.
+
 ### Added
+
+- **Benchmark harness (`memo eval bench`).** LoCoMo / LongMemEval dataset
+  schema + parsers, fetch/cache into an isolated store, an idempotent ingestion
+  adapter (provenance + back-dating), per-category retrieval scoring via the
+  shared `rank_hits` path, and a pluggable QA judge (local MLX default, API
+  judge env-gated). `eval_recall` gains ranked metrics **Recall@K / NDCG@K /
+  MRR** alongside precision@K.
+- **Chunk→parent recall** (`MEMO_SEARCH_CHUNK_PARENT`, default off, eval-gated).
+  In explicit `Memory.search`, a chunk hit maps to its parent memory. The 5s
+  recall hook is untouched and excludes the reference tier, so this is a no-op
+  there even when enabled.
+- **Entity de-duplication.** MinHash+LSH blocking (pure-Python, entropy-gated)
+  before any LLM merge, `graph.list_entities` / `merge_entity_pair`, and a
+  nightly entity-canon dream pass (`MEMO_DREAM_ENTITY_CANON`, default off) that
+  records merge counts in the receipt.
+- **Consolidation bounds** — per-topic size invariant + synthesis body cap
+  (memobase-style; `MEMO_SYNTHESIS_MAX_MEMBERS` / `_BODY_MAX_CHARS`, default 0 =
+  off) and a per-folder vault-abstract dream pass (`synthesis_kind=folder_abstract`).
+- **Multimodal & imports.** mlx-vlm image captions + mlx-whisper audio
+  transcription into ingest (guarded optional deps, deferred imports, SHA256
+  cache, opt-in `--include-audio` / caption flags); history importers for
+  **Codex / opencode / ChatGPT / claude-export / mem0 / zep** (`memo import …`,
+  CLI-gated, normal save path with dedup + provenance).
+
+### Removed
+
+- Placeholder CLIP multimodal stub — captions/transcripts flow through the text
+  index, which is the real cross-modal retrieval path.
 
 - Cold-start importers: `memo import codex` (Codex CLI rollouts, resumable
   cursors), `memo import opencode` (opencode SQLite), `memo import
