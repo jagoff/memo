@@ -190,3 +190,17 @@ def test_export_result_dataclass():
     )
     assert result.exported_count == 100
     assert result.format == "json"
+
+
+def test_import_records_saves_normalized_records(mock_memory):
+    from memo.import_export import Importer
+
+    imp = Importer(mock_memory)
+    result = imp.import_records(
+        [
+            {"content": "usa uv", "title": "envs", "type": "decision", "tags": ["tooling"]},
+            "not-a-dict",
+        ]
+    )
+    assert result.imported_count == 1
+    assert result.skipped_count == 1

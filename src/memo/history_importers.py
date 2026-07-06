@@ -27,6 +27,7 @@ import json
 import logging
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "iter_chatgpt_exchanges",
@@ -258,3 +259,99 @@ def iter_claude_export_exchanges(export_path: Path) -> Iterator[tuple[str, str]]
                     yield (role, text)
 
         yield from _pair_turns(_turns())
+
+
+# -- runners (cursored + one-shot) -------------------------------------------
+
+_IMPORT_STATE = "import-history.json"
+
+
+def run_codex_import(
+    root: Path | None = None,
+    *,
+    since_days: float | None = None,
+    file_limit: int | None = None,
+    dry_run: bool = False,
+    debug: bool = False,
+) -> dict[str, Any]:
+    """Walk Codex rollout JSONLs, mine exchanges, save. Resumable via
+    per-file line cursors in `state_dir/import-history.json` (same
+    semantics as mine-history)."""
+    from memo.config import Config
+    from memo.memory import Memory
+    from memo.transcript_miner import (
+        _load_state,
+        _save_state,
+        find_transcripts,
+        mine_exchange_stream,
+    )
+
+    cfg = Config.from_env()
+    root = root or Path.home() / ".codex" / "sessions"
+    files = find_transcripts(root, since_days=since_days)
+    if file_limit is not None and file_limit > 0:
+        files = files[:file_limit]
+    if not files:
+        return {"status": "no_files", "root": str(root), "files": 0}
+
+    state = _load_state(cfg.state_dir, name=_IMPORT_STATE)
+    mem = Memory(cfg)
+    chat = mem._ensure_chat()
+    turn_hashes: set[str] = set()
+    candidates = 0
+    saved: list[str] = []
+    skipped_dup = 0
+    files_processed = 0
+    files_skipped = 0
+    for f in files:
+        key = str(f)
+        prev = state.get(key, {}).get("lines_processed", 0)
+        try:
+            text = f.read_text(encoding="utf-8")
+            line_count = text.count("\n") + 1 if text else 0
+        except (OSError, UnicodeDecodeError):
+            line_count = 0
+        if line_count <= prev:
+            files_skipped += 1
+            continue
+        result = mine_exchange_stream(
+            mem, chat, cfg, iter_codex_exchanges(f),
+            turn_hashes=turn_hashes, dry_run=dry_run, debug=debug, source_name=f.name,
+        )
+        candidates += result["candidates"]
+        saved.extend(result["saved"])
+        skipped_dup += result["skipped_dup"]
+        if not dry_run:
+            state[key] = {"lines_processed": line_count, "mtime": f.stat().st_mtime}
+            _save_state(cfg.state_dir, state, name=_IMPORT_STATE)
+        files_processed += 1
+    return {
+        "status": "ok", "root": str(root), "files_total": len(files),
+        "files_processed": files_processed, "files_skipped": files_skipped,
+        "candidates": candidates, "saved": saved, "skipped_dup": skipped_dup,
+        "dry_run": dry_run,
+    }
+
+
+def run_file_import(
+    exchanges: Iterator[tuple[str, str]],
+    *,
+    dry_run: bool = False,
+    debug: bool = False,
+    source_name: str = "",
+) -> dict[str, Any]:
+    """One-shot mine over a single exchange iterator (opencode db, ChatGPT /
+    Claude.ai export files). No cursor state — these are point-in-time
+    dumps; the embedding near-dup check keeps re-runs from double-saving."""
+    from memo.config import Config
+    from memo.memory import Memory
+    from memo.transcript_miner import mine_exchange_stream
+
+    cfg = Config.from_env()
+    mem = Memory(cfg)
+    chat = mem._ensure_chat()
+    result = mine_exchange_stream(
+        mem, chat, cfg, exchanges,
+        turn_hashes=set(), dry_run=dry_run, debug=debug, source_name=source_name,
+    )
+    return {"status": "ok", "dry_run": dry_run, **result}

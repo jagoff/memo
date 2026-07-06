@@ -11,6 +11,12 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Added
 
+- Cold-start importers: `memo import codex` (Codex CLI rollouts, resumable
+  cursors), `memo import opencode` (opencode SQLite), `memo import
+  chatgpt` / `memo import claude-export` (data-export conversations.json) —
+  all replay through the same mine-history extraction pipeline — plus
+  `memo import mem0` / `memo import zep` store migrators (invalidated Zep
+  facts are skipped).
 - Ingest: optional mlx-vlm caption pass for images whose OCR yields
   little/no text (`MEMO_VLM_CAPTION_ENABLED`, default off) — text-free
   diagrams/photos become searchable via `<!-- VLM: … -->` blocks and

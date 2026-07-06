@@ -46,6 +46,31 @@ class Importer:
     def __init__(self, memory: Any) -> None:
         self.memory = memory
 
+    def import_records(self, records: list[Any]) -> ImportResult:
+        """Save a list of normalized record dicts
+        ({content|body, title, tags, type, created}). Shared by import_json
+        and the Mem0/Zep migrators."""
+        imported = 0
+        skipped = 0
+        errors = []
+        for item in records:
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
+            try:
+                self.memory.save(
+                    content=item.get("content") or item.get("body") or "",
+                    title=item.get("title", ""),
+                    tags=item.get("tags", []),
+                    type_=item.get("type", "note"),
+                    created=item.get("created"),
+                )
+                imported += 1
+            except Exception as e:
+                errors.append(f"Failed to import {item.get('id', 'unknown')}: {e}")
+                skipped += 1
+        return ImportResult(imported_count=imported, skipped_count=skipped, errors=errors)
+
     def import_json(self, input_path: Path) -> ImportResult:
         """Import memories from JSON.
 
@@ -63,32 +88,7 @@ class Importer:
         )
         memories: list[Any] = raw_memories if isinstance(raw_memories, list) else []
 
-        imported = 0
-        skipped = 0
-        errors = []
-
-        for item in memories:
-            if not isinstance(item, dict):
-                skipped += 1
-                continue
-            try:
-                self.memory.save(
-                    content=item.get("content") or item.get("body") or "",
-                    title=item.get("title", ""),
-                    tags=item.get("tags", []),
-                    type_=item.get("type", "note"),
-                    created=item.get("created"),
-                )
-                imported += 1
-            except Exception as e:
-                errors.append(f"Failed to import {item.get('id', 'unknown')}: {e}")
-                skipped += 1
-
-        return ImportResult(
-            imported_count=imported,
-            skipped_count=skipped,
-            errors=errors,
-        )
+        return self.import_records(memories)
 
     def import_csv(self, input_path: Path) -> ImportResult:
         """Import memories from CSV.
