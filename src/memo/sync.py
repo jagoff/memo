@@ -163,12 +163,12 @@ class BackupManager:
                             data = json.loads(extracted.read().decode("utf-8"))
                             data["compressed_size"] = archive.stat().st_size
                             meta = BackupMetadata(**data)
-                            meta.name = archive.stem
+                            meta.name = archive.name.removesuffix(".tar.gz")
                             return meta
         except Exception:  # noqa: S110
             pass
         meta = BackupMetadata(datetime.now(UTC).isoformat(), 0, "", archive.stat().st_size, 0)
-        meta.name = archive.name.replace(".tar.gz", "")
+        meta.name = archive.name.removesuffix(".tar.gz")
         return meta
 
     def restore_backup(
