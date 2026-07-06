@@ -7,7 +7,7 @@ fetcher, ingestion via a stubbed 4-dim embedder, grading via fake judges.
 from __future__ import annotations
 
 import hashlib  # noqa: F401  # used by sibling append-tasks (I4/I7)
-import json  # noqa: F401  # used by sibling append-tasks (I3/I4/I6/I7)
+import json  # used by sibling append-tasks (I3/I4/I6/I7)
 from pathlib import Path  # noqa: F401  # used by sibling append-tasks (I3/I7)
 from types import SimpleNamespace  # noqa: F401  # used by sibling append-task (I6)
 
@@ -131,3 +131,53 @@ def test_parse_dataset_dispatch():
     assert eval_bench.parse_dataset("longmemeval_oracle", [LME_INSTANCE])[0].sample_id == "q-001"
     with pytest.raises(MemoError):
         eval_bench.parse_dataset("nope", [])
+
+
+# --- fetch/cache -----------------------------------------------------------------
+
+
+def test_fetch_dataset_caches_and_reuses(tmp_path):
+    calls: list[str] = []
+
+    def fake_fetch(url: str) -> bytes:
+        calls.append(url)
+        return b'{"ok": true}'
+
+    p1 = eval_bench.fetch_dataset("locomo", tmp_path, fetcher=fake_fetch)
+    p2 = eval_bench.fetch_dataset("locomo", tmp_path, fetcher=fake_fetch)
+    assert p1 == p2 == tmp_path / "locomo.json"
+    assert calls == [eval_bench.DATASET_URLS["locomo"]]  # 2nd call served from cache
+
+
+def test_fetch_dataset_rejects_non_json_payload(tmp_path):
+    with pytest.raises(json.JSONDecodeError):
+        eval_bench.fetch_dataset("locomo", tmp_path, fetcher=lambda url: b"<html>err</html>")
+    assert not (tmp_path / "locomo.json").exists()  # nothing cached on failure
+
+
+def test_fetch_dataset_unknown_name_and_url_override(tmp_path):
+    with pytest.raises(MemoError):
+        eval_bench.fetch_dataset("nope", tmp_path, fetcher=lambda url: b"{}")
+    seen: list[str] = []
+    eval_bench.fetch_dataset(
+        "custom", tmp_path, url="https://example.com/d.json",
+        fetcher=lambda url: (seen.append(url), b"[]")[1],
+    )
+    assert seen == ["https://example.com/d.json"]
+
+# --- isolated store config --------------------------------------------------------
+
+
+def test_bench_store_config_is_isolated(tmp_path, tmp_cfg):
+    root = tmp_path / "bench-root"
+    bcfg = eval_bench.bench_store_config(root, tmp_cfg)
+    assert str(bcfg.data_dir).startswith(str(root))
+    assert str(bcfg.state_dir).startswith(str(root))
+    assert bcfg.data_dir != tmp_cfg.data_dir
+    assert bcfg.state_dir != tmp_cfg.state_dir
+    # model settings are inherited from the live config
+    assert bcfg.embedder_dims == tmp_cfg.embedder_dims
+    assert bcfg.embedder_model == tmp_cfg.embedder_model
+    assert bcfg.llm_model == tmp_cfg.llm_model
+    assert bcfg.reranker_enabled == tmp_cfg.reranker_enabled
+    assert bcfg.data_dir.is_dir() and bcfg.state_dir.is_dir()

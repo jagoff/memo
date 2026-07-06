@@ -13,11 +13,16 @@ strptime (not dateparser) for the two datasets' date formats.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
+from memo.config import Config
 from memo.errors import MemoError
 
 # --- Normalized schema --------------------------------------------------------
@@ -188,3 +193,79 @@ def parse_dataset(name: str, raw: Any) -> list[BenchSample]:
     if name.startswith("longmemeval"):
         return parse_longmemeval(raw)
     raise MemoError(f"unknown bench dataset {name!r}")
+
+
+# --- Dataset download / cache ----------------------------------------------------
+
+DATASET_URLS: dict[str, str] = {
+    # LoCoMo-10 (Maharana et al. 2024) — public JSON in the snap-research repo.
+    "locomo": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json",
+    # LongMemEval (Wu et al. 2024) — JSON files on the HF dataset mirror.
+    # oracle = evidence-only haystacks (small, fast); _s = ~115k-token haystacks.
+    "longmemeval_oracle": "https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_oracle.json",
+    "longmemeval_s": "https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s.json",
+}
+
+Fetcher = Callable[[str], bytes]
+
+
+def _http_fetch(url: str) -> bytes:
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": "memo-eval-bench"})  # noqa: S310 — https URL from fixed table or explicit --url
+    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 — https URL from fixed table or explicit --url
+        return resp.read()
+
+
+def fetch_dataset(
+    name: str,
+    dest_dir: Path,
+    *,
+    url: str | None = None,
+    fetcher: Fetcher = _http_fetch,
+) -> Path:
+    """Download-and-cache a benchmark JSON; returns the cached path.
+
+    An existing non-empty cache file is reused (delete it to re-download).
+    The payload is validated as JSON before caching so an HTML error page
+    never poisons the cache."""
+    resolved = url or DATASET_URLS.get(name)
+    if not resolved:
+        raise MemoError(
+            f"unknown bench dataset {name!r}; known: {', '.join(sorted(DATASET_URLS))} "
+            "(or pass --url / --file)"
+        )
+    dest = dest_dir / f"{name}.json"
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    data = fetcher(resolved)
+    json.loads(data.decode("utf-8"))  # fail fast on a non-JSON payload
+    tmp = dest.with_suffix(".json.tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, dest)
+    return dest
+
+
+# --- Isolated bench store ----------------------------------------------------------
+
+
+def bench_store_config(root: Path, live: Any) -> Config:
+    """Build the ISOLATED Config for a bench store under `root`.
+
+    data_dir/state_dir point INSIDE `root` (explicit kwargs — the tmp_cfg
+    isolation pattern, never Config.from_env()), so ingestion physically
+    cannot touch the live corpus. Only model settings are copied from the
+    live config so bench vectors match the live embedder."""
+    data = root / "data"
+    state = root / "state"
+    data.mkdir(parents=True, exist_ok=True)
+    state.mkdir(parents=True, exist_ok=True)
+    return Config(
+        data_dir=data,
+        state_dir=state,
+        llm_model=live.llm_model,
+        embedder_model=live.embedder_model,
+        embedder_dims=live.embedder_dims,
+        reranker_enabled=live.reranker_enabled,
+    )
