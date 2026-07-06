@@ -37,7 +37,14 @@ def http_api(port: int, host: str, reload: bool) -> None:
     _log = logging.getLogger(__name__)
     _log.info("Starting memo HTTP API on %s:%d", host, port)
 
-    from memo.server_http import run_server
+    try:
+        from memo.server_http import run_server
+    except ImportError as exc:
+        raise click.ClickException(
+            "The HTTP API requires fastapi and uvicorn.\n"
+            "Install with: pip install 'mlx-memo[http]'\n"
+            "  or: uv tool install 'mlx-memo[http]'"
+        ) from exc
 
     if reload:
         import uvicorn
