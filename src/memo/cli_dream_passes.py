@@ -14,16 +14,15 @@ import logging as _logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
-
 from memo.cli_common import console
+from memo.dream_utils import (
+    _corpus_fingerprint,
+    _harvested_labels_path,
+    _iso_now,
+    _make_progress,
+    _older_id,
+    _state_path,
+)
 from memo.tiers import EVICTION_PROTECTED_TYPES
 from memo.transcript_miner import mine_transcripts
 
@@ -313,14 +312,8 @@ def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[
         return [{"error": str(exc)}]
 
 
-def _iso_now() -> str:
-    from datetime import UTC, datetime
-
-    return datetime.now(UTC).isoformat(timespec="seconds")
-
-
-def _harvested_labels_path(cfg: Config) -> Path:
-    return cfg.state_dir / "eval" / "harvested_labels.json"
+# _iso_now, _harvested_labels_path, _state_path, _older_id, _corpus_fingerprint,
+# and _make_progress are now in dream_utils.py and re-exported above.
 
 
 def _run_harvest_labels(cfg: Config) -> dict:
@@ -512,50 +505,6 @@ def _run_capture_weights(cfg: Config, mem: Memory) -> dict:
     return {"types": len(weights), "top": top}
 
 
-def _state_path(cfg: Config):
-    return cfg.state_dir / "dream"
-
-
-def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
-    ra, rb = mem.get(id_a), mem.get(id_b)
-    ua = getattr(ra, "updated", "") or ""
-    ub = getattr(rb, "updated", "") or ""
-    if ua and ub:
-        return (id_a, id_b) if ua <= ub else (id_b, id_a)
-    return id_a, id_b
-
-
-def _corpus_fingerprint(mem: Memory) -> str | None:
-    """A cheap change-signal: (row count, latest update timestamp) of the
-    canonical `meta` table. Any save/edit/delete moves at least one."""
-    try:
-        row = mem.store._conn.execute(
-            "SELECT COUNT(*), COALESCE(MAX(updated), '') FROM meta"
-        ).fetchone()
-        return f"{row[0]}:{row[1]}"
-    except Exception:
-        return None
-
-
-def _make_progress() -> Progress:
-    import sys
-
-    from memo.flags import flag_bool
-
-    # Non-interactive runs (launchd dream, piped output) still get the live-render
-    # ANSI control stream from Rich — ~2MB of escapes per run. Disable the bar
-    # there; the per-pass `console.print` summary at the end still emits.
-    disable = flag_bool("MEMO_NONINTERACTIVE") or not sys.stderr.isatty()
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(bar_width=24),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        console=console,
-        transient=False,
-        disable=disable,
-    )
 
 
 def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
