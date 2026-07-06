@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -30,12 +30,12 @@ from memo.capture import (
 )
 
 
-def _state_file(state_dir: Path) -> Path:
-    return state_dir / "mine-history.json"
+def _state_file(state_dir: Path, name: str = "mine-history.json") -> Path:
+    return state_dir / name
 
 
-def _load_state(state_dir: Path) -> dict[str, Any]:
-    f = _state_file(state_dir)
+def _load_state(state_dir: Path, name: str = "mine-history.json") -> dict[str, Any]:
+    f = _state_file(state_dir, name)
     if not f.is_file():
         return {}
     try:
@@ -44,9 +44,9 @@ def _load_state(state_dir: Path) -> dict[str, Any]:
         return {}
 
 
-def _save_state(state_dir: Path, state: dict[str, Any]) -> None:
+def _save_state(state_dir: Path, state: dict[str, Any], name: str = "mine-history.json") -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
-    _state_file(state_dir).write_text(json.dumps(state), encoding="utf-8")
+    _state_file(state_dir, name).write_text(json.dumps(state), encoding="utf-8")
 
 
 def find_transcripts(
@@ -124,6 +124,83 @@ def iter_exchanges(transcript_path: Path, text: str | None = None) -> Iterator[t
         yield (pending_user, "\n\n".join(pending_assist))
 
 
+def mine_exchange_stream(
+    mem: Any,
+    chat: Any,
+    cfg: Any,
+    exchanges: Iterator[tuple[str, str]],
+    *,
+    turn_hashes: set[str],
+    dry_run: bool = False,
+    debug: bool = False,
+    source_name: str = "",
+    extra_fn: Callable[[str, str, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Run the capture pipeline (prefilter → extract → dedup → save) over an
+    iterator of (user_text, assistant_text) exchange pairs.
+
+    Shared by `mine_transcripts` (Claude Code JSONL) and the cold-start
+    importers in `history_importers.py` (Codex, opencode, ChatGPT/Claude.ai
+    exports). `turn_hashes` is caller-owned so identical assistant turns
+    dedup across files within one run. `extra_fn(user, assistant, turn_hash)`
+    optionally builds the per-save `extra` provenance bag (Claude Code mining
+    stamps session/transcript/turn_hash; importers pass none).
+    """
+    candidates = 0
+    saved: list[str] = []
+    dup = 0
+    for user_text, assist_text in exchanges:
+        if not _passes_prefilter(assist_text):
+            continue
+        h = _hash_assistant(assist_text)
+        if h in turn_hashes:
+            continue
+        turn_hashes.add(h)
+
+        insights = extract_insights(chat, cfg.helper_model, user_text, assist_text)
+        candidates += len(insights)
+        if debug and insights:
+            print(
+                f"# mine: {source_name or 'exchange'} → {len(insights)} candidate(s)",
+                file=sys.stderr,
+            )
+        extra = extra_fn(user_text, assist_text, h) if extra_fn is not None else None
+        for cand in insights:
+            if is_near_duplicate(mem, cand):
+                dup += 1
+                continue
+            if dry_run:
+                saved.append("<dry-run>")
+                continue
+            try:
+                rec = mem.save(
+                    content=cand["body"],
+                    title=cand["title"],
+                    type_=cand["type"],
+                    tags=cand["tags"],
+                    auto_project=False,  # historical: project context unreliable
+                    extra=extra,
+                )
+                saved.append(rec.id)
+            except Exception as exc:
+                if debug:
+                    print(f"# mine: save failed: {exc}", file=sys.stderr)
+    return {"candidates": candidates, "saved": saved, "skipped_dup": dup}
+
+
+def _transcript_extra_fn(f: Path) -> Callable[[str, str, str], dict[str, Any]]:
+    """Provenance-stamp builder for Claude Code transcript mining."""
+
+    def _build(_user: str, _assist: str, turn_hash: str) -> dict[str, Any]:
+        return {
+            "session_id": f.stem,
+            "transcript_path": str(f),
+            "turn_hash": turn_hash,
+        }
+
+    return _build
+
+
 def mine_transcripts(
     root: Path | None = None,
     *,
@@ -185,51 +262,20 @@ def mine_transcripts(
             files_skipped += 1
             continue
 
-        for user_text, assist_text in iter_exchanges(f, text=text):
-            if not _passes_prefilter(assist_text):
-                continue
-            h = _hash_assistant(assist_text)
-            if h in turn_hashes:
-                continue
-            turn_hashes.add(h)
-
-            insights = extract_insights(
-                chat,
-                cfg.helper_model,
-                user_text,
-                assist_text,
-            )
-            total_candidates += len(insights)
-            if debug and insights:
-                print(
-                    f"# mine-history: {f.name} → {len(insights)} candidate(s)",
-                    file=sys.stderr,
-                )
-
-            for cand in insights:
-                if is_near_duplicate(mem, cand):
-                    total_dup += 1
-                    continue
-                if dry_run:
-                    total_saved.append("<dry-run>")
-                    continue
-                try:
-                    rec = mem.save(
-                        content=cand["body"],
-                        title=cand["title"],
-                        type_=cand["type"],
-                        tags=cand["tags"],
-                        auto_project=False,  # historical: project context unreliable
-                        extra={
-                            "session_id": f.stem,
-                            "transcript_path": str(f),
-                            "turn_hash": h,
-                        },
-                    )
-                    total_saved.append(rec.id)
-                except Exception as exc:
-                    if debug:
-                        print(f"# mine-history: save failed: {exc}", file=sys.stderr)
+        result = mine_exchange_stream(
+            mem,
+            chat,
+            cfg,
+            iter_exchanges(f, text=text),
+            turn_hashes=turn_hashes,
+            dry_run=dry_run,
+            debug=debug,
+            source_name=f.name,
+            extra_fn=_transcript_extra_fn(f),
+        )
+        total_candidates += result["candidates"]
+        total_saved.extend(result["saved"])
+        total_dup += result["skipped_dup"]
 
         if not dry_run:
             state[key] = {

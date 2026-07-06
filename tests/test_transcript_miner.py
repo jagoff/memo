@@ -182,3 +182,63 @@ def test_mine_transcripts_stamps_provenance(tmp_path: Path, monkeypatch) -> None
         assert isinstance(rec.extra["turn_hash"], str) and rec.extra["turn_hash"]
     finally:
         mem.close()
+
+
+def test_mine_exchange_stream_extracts_dedups_saves(mock_memory, monkeypatch):
+    import memo.transcript_miner as tm
+
+    monkeypatch.setattr(tm, "_passes_prefilter", lambda text: True)
+    monkeypatch.setattr(
+        tm,
+        "extract_insights",
+        lambda chat, model, u, a: [
+            {"title": "Use uv for envs", "type": "decision", "body": a, "tags": ["tooling"]}
+        ],
+    )
+    monkeypatch.setattr(tm, "is_near_duplicate", lambda mem, cand: False)
+
+    exchanges = iter(
+        [
+            ("how do we manage envs?", "decision: use uv everywhere"),
+            ("repeat", "decision: use uv everywhere"),  # identical assistant turn → hash dedup
+        ]
+    )
+    hashes: set[str] = set()
+    result = tm.mine_exchange_stream(
+        mock_memory, object(), mock_memory.cfg, exchanges, turn_hashes=hashes
+    )
+
+    assert result["candidates"] == 1
+    assert len(result["saved"]) == 1
+    assert result["skipped_dup"] == 0
+    saved = mock_memory.get(result["saved"][0])
+    assert saved.title == "Use uv for envs"
+
+
+def test_mine_exchange_stream_dry_run_saves_nothing(mock_memory, monkeypatch):
+    import memo.transcript_miner as tm
+
+    monkeypatch.setattr(tm, "_passes_prefilter", lambda text: True)
+    monkeypatch.setattr(
+        tm,
+        "extract_insights",
+        lambda chat, model, u, a: [{"title": "T", "type": "note", "body": "B", "tags": []}],
+    )
+    monkeypatch.setattr(tm, "is_near_duplicate", lambda mem, cand: False)
+
+    result = tm.mine_exchange_stream(
+        mock_memory, object(), mock_memory.cfg,
+        iter([("u", "a")]), turn_hashes=set(), dry_run=True,
+    )
+
+    assert result["saved"] == ["<dry-run>"]
+    assert mock_memory.list(limit=10) == []
+
+
+def test_state_helpers_accept_custom_filename(tmp_path):
+    from memo.transcript_miner import _load_state, _save_state
+
+    _save_state(tmp_path, {"/a/b.jsonl": {"lines_processed": 7}}, name="import-history.json")
+    assert (tmp_path / "import-history.json").is_file()
+    assert not (tmp_path / "mine-history.json").exists()
+    assert _load_state(tmp_path, name="import-history.json")["/a/b.jsonl"]["lines_processed"] == 7
