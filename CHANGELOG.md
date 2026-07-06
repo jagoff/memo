@@ -9,6 +9,15 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.16] - 2026-07-06
+
+### Fixed
+
+- Keep Linux CI hermetic on Python 3.13 and 3.14 by installing CPU runtime
+  extras and pinning unit-test runtime assumptions.
+- Stabilize capture meta-filter coverage by patching the extraction boundary
+  instead of an LLM-shaped mock.
+
 ## [2.12.15] - 2026-07-06
 
 ### Fixed
