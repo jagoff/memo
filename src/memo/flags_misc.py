@@ -968,6 +968,28 @@ SPECS: tuple[FlagSpec, ...] = (
         "Minimum entities in a graph community before it is synthesized.",
         min_val=2,
     ),
+    # dream v2 — MinHash-blocked LLM entity canonicalization (workstream K1)
+    _spec(
+        "MEMO_DREAM_ENTITY_CANON_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the `memo dream entity-canon` pass: MinHash+LSH blocking over "
+        "entity names proposes near-duplicate pairs, the helper LLM confirms "
+        "each candidate, confirmed pairs merge via entity_aliases. Receipt "
+        "reports pairs_naive vs pairs_blocked vs llm_calls (measured saving). "
+        "OFF by default.",
+    ),
+    _spec(
+        "MEMO_DREAM_ENTITY_CANON_MAX_PAIRS",
+        "int",
+        30,
+        "misc",
+        "Cap on LLM-confirmed candidate pairs per entity-canon run (bounds "
+        "nightly MLX cost).",
+        min_val=1,
+        max_val=500,
+    ),
     # dream v2 — bridge / multi-hop link synthesis (spec 3, phase 3)
     _spec(
         "MEMO_DREAM_BRIDGES_ENABLED",
