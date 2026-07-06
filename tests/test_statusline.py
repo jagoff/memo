@@ -278,6 +278,7 @@ def test_activity_badge_all_zero_counters_plain_badge(tmp_path) -> None:
     as plain [Memo <ver>] with no 🧠/💾/tok segment."""
     from datetime import date as _date
 
+    (tmp_path / ".memo-version").write_text("9.9.9", encoding="utf-8")
     (tmp_path / "presence_today.json").write_text(
         json.dumps(
             {"date": _date.today().isoformat(), "recalls": 0, "saves": 0, "tokens_saved": 0}

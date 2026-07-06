@@ -449,9 +449,10 @@ class TestIntegrationExtractAndSave:
 
         from memo.capture_core import _extract_and_save
 
-        result = _extract_and_save(
-            mem, cfg, "user text", "assistant text", debug=False
-        )
+        with patch("memo.capture_core._passes_quality", return_value=False):
+            result = _extract_and_save(
+                mem, cfg, "user text", "assistant text", debug=False
+            )
         # Candidate extracted by LLM but filtered by quality gate
         assert result["candidates"] == 1
         assert result["skipped_quality"] == 1
@@ -485,9 +486,10 @@ class TestIntegrationExtractAndSave:
                 return name == "MEMO_CAPTURE_META_FILTER"
             mock_flag.side_effect = flag_side_effect
 
-            result = _extract_and_save(
-                mem, cfg, "user text", "assistant text", debug=False
-            )
+            with patch("memo.capture_core._passes_quality", return_value=False):
+                result = _extract_and_save(
+                    mem, cfg, "user text", "assistant text", debug=False
+                )
             # Meta-commentary candidate is dropped
             assert result["candidates"] == 1
             assert result["skipped_meta"] == 1

@@ -50,6 +50,7 @@ def test_from_env_picks_up_reranker_revision(monkeypatch, tmp_path: Path):
 
 
 def test_model_profile_quality_sets_model_bundle(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("memo.config.is_apple_silicon", lambda: True)
     monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent-config.toml"))
     monkeypatch.setenv("MEMO_MODEL_PROFILE", "quality")
     cfg = Config.from_env()

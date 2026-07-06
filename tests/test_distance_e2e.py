@@ -21,9 +21,12 @@ def test_distance_decay_e2e():
         cfg = Config(
             data_dir=tmpdir,
             state_dir=os.path.join(tmpdir, "state"),
+            embedder_dims=4,
             reranker_enabled=False,
         )
         memory = Memory(cfg)
+        memory.embedder.embed = lambda inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
+        memory.embedder.embed_query = lambda query: [1.0, 0.0, 0.0, 0.0]
 
         try:
             # Save base fact (distance 0)
@@ -122,9 +125,12 @@ def test_distance_decay_disabled_preserves_order():
         cfg = Config(
             data_dir=tmpdir,
             state_dir=os.path.join(tmpdir, "state"),
+            embedder_dims=4,
             reranker_enabled=False,
         )
         memory = Memory(cfg)
+        memory.embedder.embed = lambda inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
+        memory.embedder.embed_query = lambda query: [1.0, 0.0, 0.0, 0.0]
 
         try:
             # Save memories
