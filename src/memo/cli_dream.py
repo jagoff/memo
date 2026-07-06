@@ -1259,7 +1259,7 @@ def dream_consolidate_cmd(dry_run: bool, as_json: bool) -> None:
         return
     console.print(f"[bold]consolidate-episodes:[/bold] {res.get('status')}")
     for d in res.get("consolidated", []):
-        console.print(f"  [{d['status']}] {d.get('project')}: {d.get('title', '')}")
+        console.print(f"  [{d['status']}] {d.get('project')}: {d.get('title', '')}", markup=False)
 
 
 @dream_cmd.command(name="communities")
@@ -1284,7 +1284,7 @@ def dream_communities_cmd(dry_run: bool, as_json: bool) -> None:
     console.print(f"[bold]communities:[/bold] {res.get('status')}")
     for d in res.get("synthesized", []):
         rep = d.get("representative") or ""
-        console.print(f"  [{d['status']}] {rep}: {d.get('title', '')}")
+        console.print(f"  [{d['status']}] {rep}: {d.get('title', '')}", markup=False)
 
 
 @dream_cmd.command(name="entity-canon")
@@ -1366,7 +1366,8 @@ def dream_retag_cmd(dry_run: bool, as_json: bool) -> None:
     for d in res.get("retagged", []):
         console.print(
             f"  [{d['status']}] {d['id'][:8]} -{','.join(d['dropped'])} "
-            f"← {','.join(d['evidence_projects'])}"
+            f"← {','.join(d['evidence_projects'])}",
+            markup=False,
         )
 
 
