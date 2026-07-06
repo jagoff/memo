@@ -446,6 +446,18 @@ _FILLER_OPENER_RE = _re.compile(
 _SENTENCE_SPLIT_RE = _re.compile(r"(?<=[.!?])\s+")
 
 
+def _capture_flag_bool(name: str) -> bool:
+    from memo.flags import flag_bool
+
+    return flag_bool(name)
+
+
+def _capture_flag_float(name: str) -> float | None:
+    from memo.flags import flag_float
+
+    return flag_float(name)
+
+
 def is_meta_commentary(text: str) -> bool:
     """True when `text` opens with process narration (not mere filler)."""
     return bool(_META_COMMENTARY_RE.match(text.strip()))
@@ -850,14 +862,12 @@ def _extract_and_save(
     # keeps the debug/telemetry meaning stable.
     n_extracted = len(insights)
 
-    from memo.flags import flag_bool, flag_float
-
     # Meta-commentary filter: process narration never reaches the vault.
     # Segment-level — a mixed candidate keeps its substantive sentences; a
     # candidate that is ALL narration (or whose title is narration-shaped)
     # is dropped whole. Dropped candidates are logged (debug trail), never saved.
     skipped_meta = 0
-    if flag_bool("MEMO_CAPTURE_META_FILTER"):
+    if _capture_flag_bool("MEMO_CAPTURE_META_FILTER"):
         hygienic: list[dict[str, Any]] = []
         for cand in insights:
             cleaned = strip_meta_commentary(cand["body"])
@@ -884,15 +894,15 @@ def _extract_and_save(
     # near-IDENTICAL paraphrases (>= drop_threshold) are dropped; a same-topic
     # candidate below that is ADMITTED as new so the nightly contradiction/
     # evolution pass (which demotes the superseded side) can do its job.
-    near_threshold = flag_float("MEMO_CAPTURE_DUP_THRESHOLD") or 0.85
-    drop_threshold = flag_float("MEMO_CAPTURE_DUP_DROP_THRESHOLD") or 0.97
+    near_threshold = _capture_flag_float("MEMO_CAPTURE_DUP_THRESHOLD") or 0.85
+    drop_threshold = _capture_flag_float("MEMO_CAPTURE_DUP_DROP_THRESHOLD") or 0.97
 
     # Intra-batch near-dup window (prompt-retry pattern): collapse candidates
     # that duplicate EACH OTHER before the store-level check — the store check
     # only sees already-saved memories, so batch twins would slip through as
     # bogus same-run "evolutions". Keeps the higher-confidence/longer twin.
     skipped_batch_dup = 0
-    if flag_bool("MEMO_CAPTURE_BATCH_DEDUP") and len(insights) > 1:
+    if _capture_flag_bool("MEMO_CAPTURE_BATCH_DEDUP") and len(insights) > 1:
         insights, skipped_batch_dup = dedupe_batch(insights, mem, near_threshold)
         if debug and skipped_batch_dup:
             print(
@@ -900,13 +910,13 @@ def _extract_and_save(
                 file=sys.stderr,
             )
 
-    min_confidence = flag_float("MEMO_CAPTURE_MIN_CONFIDENCE") or 0.0
+    min_confidence = _capture_flag_float("MEMO_CAPTURE_MIN_CONFIDENCE") or 0.0
 
     # Citation-type feedback (default OFF): weights from the nightly dream
     # capture_weights pass, consulted only at the ambiguous-classification
     # branch inside the loop. Empty weights ⇒ identical behavior to flag off.
     type_weights: dict[str, float] = {}
-    if flag_bool("MEMO_CAPTURE_TYPE_FEEDBACK"):
+    if _capture_flag_bool("MEMO_CAPTURE_TYPE_FEEDBACK"):
         from memo.capture_weights import load_type_weights
 
         type_weights = load_type_weights(cfg)

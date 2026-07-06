@@ -458,9 +458,7 @@ class TestIntegrationExtractAndSave:
         assert result["skipped_quality"] == 1
         assert len(result["saved"]) == 0
 
-    def test_extract_and_save_meta_filter(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_extract_and_save_meta_filter(self, tmp_path: Path) -> None:
         """Meta-commentary filter removes process narration."""
         mem = MagicMock()
         cfg = MagicMock()
@@ -482,11 +480,17 @@ class TestIntegrationExtractAndSave:
 
         from memo.capture_core import _extract_and_save
 
-        monkeypatch.setenv("MEMO_CAPTURE_META_FILTER", "1")
+        def capture_flag_enabled(name: str) -> bool:
+            return name == "MEMO_CAPTURE_META_FILTER"
+
         with patch("memo.capture_core._passes_quality", return_value=False):
-            result = _extract_and_save(
-                mem, cfg, "user text", "assistant text", debug=False
-            )
+            with patch(
+                "memo.capture_core._capture_flag_bool",
+                side_effect=capture_flag_enabled,
+            ):
+                result = _extract_and_save(
+                    mem, cfg, "user text", "assistant text", debug=False
+                )
         # Meta-commentary candidate is dropped
         assert result["candidates"] == 1
         assert result["skipped_meta"] == 1
