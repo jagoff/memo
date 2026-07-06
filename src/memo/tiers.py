@@ -18,6 +18,16 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from enum import Enum
+
+
+class VerificationState(str, Enum):
+    """Verification state tracking for memories (UNVERIFIED/VERIFIED/STALE cycle)."""
+
+    UNVERIFIED = "unverified"
+    VERIFIED = "verified"
+    STALE = "stale"
+
 
 # Reference tier: searchable on demand, excluded from auto-recall + briefing.
 REFERENCE_TYPES: frozenset[str] = frozenset({"reference"})
@@ -82,5 +92,6 @@ __all__ = [
     "DURABLE_TYPES",
     "EVICTION_PROTECTED_TYPES",
     "REFERENCE_TYPES",
+    "VerificationState",
     "is_reference_candidate",
 ]

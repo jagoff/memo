@@ -23,6 +23,11 @@ class _MigrationsMixin(_StoreBase):
     #       upsert so prune/eviction queries can use direct column access
     #       instead of COALESCE over LEFT JOIN.  Migration backfills any
     #       meta rows that predate this change.
+    #   3 — session pattern columns (topic_key, normalized_hash, etc.)
+    #       added for tracking memory deduplication and session context.
+    #   4 — verification state tracking columns (verification_state, verified_at)
+    #       added for explicit verification state (UNVERIFIED/VERIFIED/STALE)
+    #       and temporal decay weighting in rerank.
 
     def get_user_version(self) -> int:
         """Return the on-disk schema version (0 by default)."""
@@ -88,3 +93,18 @@ class _MigrationsMixin(_StoreBase):
                             cx.execute(ddl)
                 self.set_user_version(3)
             _log.info("migrated to v3: session pattern columns")
+
+        # v3 → v4: add verification state tracking columns
+        if current < 4:
+            with self._tx() as cx:
+                cols = {row["name"] for row in cx.execute("PRAGMA table_info(meta)").fetchall()}
+                new_cols = {
+                    "verification_state": "ALTER TABLE meta ADD COLUMN verification_state TEXT DEFAULT 'unverified'",
+                    "verified_at": "ALTER TABLE meta ADD COLUMN verified_at INTEGER",
+                }
+                for col, ddl in new_cols.items():
+                    if col not in cols:
+                        with contextlib.suppress(Exception):
+                            cx.execute(ddl)
+                self.set_user_version(4)
+            _log.info("migrated to v4: verification state tracking columns")

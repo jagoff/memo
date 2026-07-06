@@ -1202,4 +1202,12 @@ SPECS: tuple[FlagSpec, ...] = (
         "NAME of the env var that holds the API key for the api judge. The key "
         "itself is read from that variable — it never lives in a MEMO_* flag.",
     ),
+    # verification state tracking
+    _spec(
+        "MEMO_VERIFICATION_STATE_TRACKING",
+        "bool",
+        False,
+        "misc",
+        "Enable verification state tracking (UNVERIFIED/VERIFIED/STALE cycle) with decay weighting in rerank.",
+    ),
 )
