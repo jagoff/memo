@@ -60,6 +60,10 @@ memo is built to **spend fewer tokens, not more**.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
 
+`memo tokens` tracks the savings in real-time:
+
+<img src="docs/tokens-screenshot.png" alt="memo tokens — showing 673k tokens saved all-time across 1924 memories used" width="760" />
+
 | Technique | How to enable | Typical saving |
 |---|---|---|
 | Compact recall format | `export MEMO_RECALL_FORMAT=compact` | ~65% per injection |
