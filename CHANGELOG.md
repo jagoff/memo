@@ -9,6 +9,47 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.12] - 2026-07-05
+
+Ecosystem roadmap **Wave 4** — profile distillation (workstream B, 5 tasks) +
+interfaces (workstream G, 14 tasks). Every new flag is **default-off** except
+`MEMO_BRIEFING_PROFILE` (default on but a no-op until the default-off dream pass
+produces a profile). Retrieval hot path untouched (empty diff); full non-MLX
+suite green, mypy clean.
+
+### Added
+
+- **profile.md distillation (Tier-1 #1).** A nightly `memo dream run` pass
+  (`MEMO_DREAM_PROFILE_ENABLED`, default off) distills preference/feedback/
+  decision/synthesis memories into char-budgeted, rewritten-in-place profile
+  documents (global + per-project) under `memory_dir/_profile/` with memory-id
+  provenance, plus a **Standing rules** block graduated from grounding.log
+  (cited in ≥K distinct sessions) and retired on resolved contradictions. El
+  Briefing injects them at SessionStart via a zero-MLX file read
+  (`MEMO_BRIEFING_PROFILE`, opt-out) — the "facts you wouldn't think to search
+  for" channel that similarity recall structurally misses.
+- **Typed knowledge-graph edges.** `- relation_type [[target]]` link grammar +
+  bare `[[wikilinks]]` parsed into the crossref backlinks table at
+  save/update/delete/reindex (`MEMO_CROSSREF_INDEX`, default off), with
+  prefix-aware reverse traversal and cascade-aware warnings on supersede
+  (`memo maintain`) and `memo_delete`.
+- **Surgical edits.** `Memory.update(replace=(old,new))` / `append=` +
+  `memo_update` params — edit a memory's body without a full rewrite.
+- **`memo_offload` / `memo.offload`.** Content-addressed offload of large
+  payloads to a `reference`-tier memory with a deterministic typed synopsis
+  (recall-excluded; retrievable via drill-down).
+- **`memo.integrations.wrap(client)`.** Wrap an LLM client for automatic
+  pre-call recall injection + post-call capture (sync + async, idempotent
+  re-wrap).
+- **Prompt overrides.** All LLM system prompts route through `resolve_prompt`
+  (`state_dir/prompts/<name>.md`), byte-identical to the built-in default until
+  a user drops an override; captured memories carry a `prompt_version` stamp.
+- **`memo maintain undo`.** `memo maintain` is now a Click group with
+  timestamped receipts; `maintain undo [--run <ts>]` batch-restores from them.
+- **FastMCP tool annotations.** `ToolAnnotations` (readOnly/idempotent/
+  destructive hints) swept across every registered MCP tool, with a
+  completeness gate.
+
 ## [2.12.11] - 2026-07-05
 
 ### Fixed
