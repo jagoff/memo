@@ -366,6 +366,41 @@ class GraphStore:
                 )
             return merged
 
+    def list_entities(self, *, min_mentions: int = 1) -> list[dict[str, Any]]:
+        """All entity rows (id, name, type, mention_count), most-mentioned
+        first. Enumeration surface for external blocking (dream entity-canon)."""
+        rows = self._conn.execute(
+            "SELECT id, name, type, mention_count FROM entities "
+            "WHERE mention_count >= ? ORDER BY mention_count DESC, name ASC",
+            (min_mentions,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def merge_entity_pair(self, canonical_id: int, dup_id: int, dup_name: str) -> None:
+        """Fold entity `dup_id` into `canonical_id` — the same statements as
+        `canonicalize_existing`, for ONE externally-decided pair: re-point
+        links, record the merged spelling in entity_aliases, delete the dup
+        row, recompute the canonical mention_count. Idempotent per pair."""
+        from memo.graph_canonical import fold_key
+
+        with self._tx() as cx:
+            cx.execute(
+                "UPDATE OR IGNORE entity_memory SET entity_id = ? WHERE entity_id = ?",
+                (canonical_id, dup_id),
+            )
+            cx.execute("DELETE FROM entity_memory WHERE entity_id = ?", (dup_id,))
+            cx.execute(
+                "INSERT OR REPLACE INTO entity_aliases (alias_key, canonical_id, alias_name) "
+                "VALUES (?, ?, ?)",
+                (fold_key(dup_name) + "|" + str(dup_id), canonical_id, dup_name),
+            )
+            cx.execute("DELETE FROM entities WHERE id = ?", (dup_id,))
+            cx.execute(
+                "UPDATE entities SET mention_count = "
+                "(SELECT COUNT(*) FROM entity_memory WHERE entity_id = ?) WHERE id = ?",
+                (canonical_id, canonical_id),
+            )
+
     def rebuild_edges(self) -> int:
         """Materialize entity_edges from entity_memory co-occurrence. Idempotent.
         weight = #shared memories; last_seen = max endpoint last_seen."""
