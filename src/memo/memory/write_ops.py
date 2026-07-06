@@ -147,7 +147,7 @@ class _WriteOpsMixin(_MemoryBase):
             _log.debug("graph entity write skipped for %s: %s", record_id[:8], exc)
 
     def _derive_metadata(self, content: str) -> dict[str, Any]:
-        """Use the helper LLM (Qwen2.5-3B-Instruct-4bit) to derive
+        """Use the configured helper LLM to derive
         {title, type, tags} from raw content. Returns a dict with
         whatever keys the model produced (any can be None on parse
         failure). Caller decides whether to fill missing fields.
@@ -232,8 +232,8 @@ class _WriteOpsMixin(_MemoryBase):
           always reflects this write. Use to back-date imported records
           (e.g. historical WhatsApp messages) so temporal queries see the
           original event time, not ingest time.
-        - `auto_derive`: when True, calls the helper LLM
-          (`Qwen2.5-3B-Instruct-4bit`) to fill any missing field
+        - `auto_derive`: when True, calls the configured helper LLM
+          to fill any missing field
           (title is None, type_ is "note" with no tags). Adds ~1-2s
           latency on first call (cold model load) plus ~0.5-1s per save.
           Use for callers (eg. another agent) that don't carry context
@@ -511,6 +511,9 @@ class _WriteOpsMixin(_MemoryBase):
                 updated=now_iso,
             )
             post["extra"] = extra_for_store or {}
+            # Add verification state (always UNVERIFIED for new saves unless overridden)
+            post["verification_state"] = "unverified"
+            # verified_at is omitted for new saves (None)
 
             # For topic key upserts, reuse the existing path instead of creating a new one
             rel_path = (

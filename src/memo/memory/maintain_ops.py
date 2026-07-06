@@ -32,6 +32,7 @@ from memo.memory.record import (
     chat_with_timeout,
     strip_llm_output,
 )
+from memo.tiers import VerificationState
 from memo.prompt_overrides import resolve_prompt
 from memo.util import sha256_full as _sha256_full
 from memo.util import sha256_short as _sha256_short
@@ -288,6 +289,21 @@ class _MaintainOpsMixin(_MemoryBase):
             for _fk in (FORGET_AFTER_KEY, FORGET_REASON_KEY):
                 if _fk in meta and _fk not in extra:
                     extra = {**extra, _fk: meta[_fk]}
+
+            # Extract verification state (backward compatible: defaults to UNVERIFIED)
+            ver_state_str = meta.get("verification_state", "unverified")
+            try:
+                verification_state = VerificationState(ver_state_str)
+            except (ValueError, KeyError):
+                verification_state = VerificationState.UNVERIFIED
+
+            # Extract verified_at timestamp (can be None)
+            verified_at = meta.get("verified_at")
+            if verified_at is not None and not isinstance(verified_at, int):
+                try:
+                    verified_at = int(verified_at)
+                except (ValueError, TypeError):
+                    verified_at = None
 
             if existing is None:
                 # Path-collision guard: an .md may have its frontmatter id
@@ -634,7 +650,7 @@ class _MaintainOpsMixin(_MemoryBase):
         force re-extraction (e.g. after improving the prompt).
 
         Returns counts: `{processed, entities_extracted, links_written, skipped, errors}`.
-        Cost: ~0.5-1s per memory with Qwen2.5-3B. 223 memories ≈ 2-4 min.
+        Cost: ~0.5-1s per memory with the configured helper model.
         """
         if not all_ and not ids:
             raise ValueError("pass either ids=[...] or all_=True")

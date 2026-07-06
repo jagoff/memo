@@ -19,7 +19,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any
+from typing import Any, Optional
 
 # Re-export the system prompts — callers import them from here (ask_ops,
 # write_ops, maintain_ops, cli_capture, memory/__init__). Unused in this module
@@ -32,7 +32,7 @@ from memo.memory.prompts import (
     _REFLECT_SYSTEM_PROMPT,  # noqa: F401
     _SYNTHESIS_SYSTEM_PROMPT,  # noqa: F401
 )
-from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES
+from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES, VerificationState
 
 _log = logging.getLogger(__name__)
 
@@ -384,6 +384,8 @@ class MemoryRecord:
     body: str
     extra: dict[str, Any] = field(default_factory=dict)
     score: float | None = None  # populated by `search()`; None for direct fetches.
+    verification_state: VerificationState = VerificationState.UNVERIFIED
+    verified_at: Optional[int] = None  # Unix timestamp
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -397,15 +399,34 @@ class MemoryRecord:
             "body": self.body,
             "extra": dict(self.extra),
             "score": self.score,
+            "verification_state": self.verification_state.value,
+            "verified_at": self.verified_at,
         }
 
 
 def record_from_row(row: dict[str, Any], *, body: str = "") -> MemoryRecord:
     """Build a MemoryRecord from a store row dict (the `_row_to_dict` shape)."""
+    # Extract verification state, defaulting to UNVERIFIED if not present (backward compatible)
+    ver_state_str = row.get("verification_state", "unverified")
+    try:
+        verification_state = VerificationState(ver_state_str)
+    except (ValueError, KeyError):
+        verification_state = VerificationState.UNVERIFIED
+
+    # Extract verified_at timestamp (can be None)
+    verified_at = row.get("verified_at")
+    if verified_at is not None and not isinstance(verified_at, int):
+        try:
+            verified_at = int(verified_at)
+        except (ValueError, TypeError):
+            verified_at = None
+
     return MemoryRecord(
         id=row["id"], path=row["path"], title=row["title"], type=row["type"],
         tags=row["tags"], created=row["created"], updated=row["updated"],
         body=body, extra=row.get("extra") or {},
+        verification_state=verification_state,
+        verified_at=verified_at,
     )
 
 
