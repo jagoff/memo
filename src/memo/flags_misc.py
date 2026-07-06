@@ -990,6 +990,34 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=1,
         max_val=500,
     ),
+    # dream v2 — per-folder vault abstracts (workstream K4)
+    _spec(
+        "MEMO_DREAM_FOLDER_ABSTRACTS_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the `memo dream folder-abstracts` pass: one synthesis memory "
+        "per vault folder (synthesis_kind=folder_abstract) answering 'what is "
+        "this section about'. Updated in place on membership change; skipped "
+        "when unchanged. OFF by default.",
+    ),
+    _spec(
+        "MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS",
+        "int",
+        5,
+        "misc",
+        "Minimum reference documents in a vault folder before it gets an abstract.",
+        min_val=2,
+    ),
+    _spec(
+        "MEMO_DREAM_FOLDER_ABSTRACTS_MAX",
+        "int",
+        5,
+        "misc",
+        "Max folders abstracted per nightly run (bounds MLX cost).",
+        min_val=1,
+        max_val=100,
+    ),
     # dream v2 — bridge / multi-hop link synthesis (spec 3, phase 3)
     _spec(
         "MEMO_DREAM_BRIDGES_ENABLED",

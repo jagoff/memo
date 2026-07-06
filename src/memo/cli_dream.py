@@ -590,6 +590,31 @@ def dream_run(
                 receipt["errors"].append(f"entity_canon: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[entity-canon] [yellow]warn[/yellow]")
 
+        # Phase 2d — reference tier: per-folder vault abstracts (K4)
+        if flag_bool("MEMO_DREAM_FOLDER_ABSTRACTS_ENABLED"):
+            progress.update(step, description="[folder-abstracts] grouping vault...")
+            try:
+                from memo import dream_folder_abstracts
+
+                receipt["folder_abstracts"] = dream_folder_abstracts.run_folder_abstracts(
+                    cfg,
+                    mem,
+                    min_members=flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS") or 5,
+                    max_folders=flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX") or 5,
+                    dry_run=dry_run,
+                )
+                _fa = receipt["folder_abstracts"]
+                progress.update(
+                    step,
+                    description=(
+                        f"[folder-abstracts] [green]✓[/green]  "
+                        f"{_fa.get('status')} ({len(_fa.get('abstracts', []))})"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"folder_abstracts: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[folder-abstracts] [yellow]warn[/yellow]")
+
         # 0. Forget TTLs (always — explicit user intent) ---------------------
         progress.update(step, description="[dim]TTLs — enforce forget...[/dim]")
         try:
@@ -1288,6 +1313,31 @@ def dream_entity_canon_cmd(dry_run: bool, as_json: bool) -> None:
     )
     for m in res.get("merged", []):
         console.print(f"  merged '{m['drop']}' → '{m['keep']}' (est {m['est']:.2f})")
+
+
+@dream_cmd.command(name="folder-abstracts")
+@click.option("--dry-run", is_flag=True, help="Group + preview folders, save nothing.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the pass receipt as JSON.")
+def dream_folder_abstracts_cmd(dry_run: bool, as_json: bool) -> None:
+    """Reference tier — abstract each vault folder into one synthesis memo."""
+    from memo import dream_folder_abstracts
+    from memo.flags import flag_int
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    res = dream_folder_abstracts.run_folder_abstracts(
+        cfg,
+        mem,
+        min_members=flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS") or 5,
+        max_folders=flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX") or 5,
+        dry_run=dry_run,
+    )
+    if as_json:
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]folder-abstracts:[/bold] {res.get('status')}")
+    for a in res.get("abstracts", []):
+        console.print(f"  [{a['status']}] {a['folder'] or '(root)'}")
 
 
 @dream_cmd.command(name="retag")
