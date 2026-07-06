@@ -309,7 +309,12 @@ class LifecycleManager:
         # stays in place and we abort. (Dropping the index first would let
         # Memory.delete() unlink the canonical .md; if the move then failed the
         # memory would be permanently destroyed instead of archived.)
-        target_path = inactive_dir / source_path.name
+        # Use memory_id as the archive filename (same pattern as consolidation.py)
+        # so two different memories with the same title/date basename can never
+        # silently overwrite each other in inactive/. source_path.name is NOT
+        # safe: archive→recreate→archive on the same day produces the same
+        # basename, and shutil.move on POSIX atomically replaces the destination.
+        target_path = inactive_dir / f"{memory_id}.md"
         try:
             shutil.move(str(source_path), str(target_path))
         except OSError as exc:

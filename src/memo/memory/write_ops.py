@@ -944,9 +944,13 @@ class _WriteOpsMixin(_MemoryBase):
         # `meta.path` is UNIQUE. Two saves with the same title on the same day
         # would collide. Append a numeric suffix until the path is free —
         # checking both the index and the on-disk file (per-bucket).
+        # include_deleted=True: soft-delete tombstones still occupy the
+        # UNIQUE(path) index; without this the allocator silently hands out a
+        # path that will collide at INSERT time, and the save degrades to a
+        # pendng-only write (invisible to search, not recoverable via reindex).
         n = 2
         while (
-            self.store.get_by_path(candidate) is not None
+            self.store.get_by_path(candidate, include_deleted=True) is not None
             or (self.cfg.memory_dir / candidate).exists()
         ):
             candidate = f"{base}-{n}.md"
