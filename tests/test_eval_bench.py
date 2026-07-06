@@ -16,6 +16,7 @@ import pytest
 from memo import eval_bench
 from memo.config import Config  # used by sibling append-tasks (I3/I4)
 from memo.errors import MemoError
+from memo.eval_recall import Row
 
 # --- tiny dataset fixtures ---------------------------------------------------
 
@@ -247,3 +248,69 @@ def test_load_manifest_missing_or_corrupt(tmp_path):
     assert eval_bench.load_manifest(tmp_path) is None
     (tmp_path / "manifest.json").write_text("{not json", encoding="utf-8")
     assert eval_bench.load_manifest(tmp_path) is None
+
+
+# --- retrieval scoring ----------------------------------------------------------------
+
+
+def _qa(**kw):
+    base = dict(
+        qa_id="q1", question="what dog?", answer="Rex", category="single_hop",
+        abstention=False, evidence_session_ids=(), evidence_turn_ids=(),
+    )
+    base.update(kw)
+    return eval_bench.BenchQA(**base)
+
+
+def test_expected_memory_ids_turn_first_session_fallback():
+    ingest = eval_bench.IngestResult(
+        turn_to_memory={"D1:1": "a" * 32, "D1:2": "b" * 32},
+        turn_to_session={"D1:1": "session_1", "D1:2": "session_1"},
+    )
+    assert eval_bench.expected_memory_ids(_qa(evidence_turn_ids=("D1:1",)), ingest) == ["a" * 32]
+    assert eval_bench.expected_memory_ids(
+        _qa(evidence_session_ids=("session_1",)), ingest
+    ) == sorted(["a" * 32, "b" * 32])
+    assert eval_bench.expected_memory_ids(_qa(), ingest) == []
+
+
+def test_category_label_sets_split_and_abstention_unscored():
+    sample = eval_bench.parse_locomo([LOCOMO_SAMPLE])[0]
+    ingest = eval_bench.IngestResult(
+        turn_to_memory={"D1:1": "a" * 32, "D1:2": "b" * 32, "D2:1": "c" * 32},
+        turn_to_session={"D1:1": "session_1", "D1:2": "session_1", "D2:1": "session_2"},
+    )
+    by_cat = eval_bench.category_label_sets(sample, ingest)
+    assert set(by_cat) == {"single_hop", "adversarial"}
+    single = by_cat["single_hop"].prompts[0]
+    assert single.relevant and single.expect_ids == ["a" * 32]
+    adv = by_cat["adversarial"].prompts[0]
+    assert not adv.relevant and adv.expect_ids == []  # abstention never scores retrieval
+
+
+def test_score_retrieval_end_to_end(bench_mem):
+    mem, root, _live = bench_mem
+    sample = eval_bench.parse_locomo([LOCOMO_SAMPLE])[0]
+    ingest = eval_bench.ingest_sample(mem, sample, root)
+    rows = eval_bench.score_retrieval(mem, sample, ingest, k=3)
+    assert set(rows) == {"single_hop", "adversarial"}
+    row, n = rows["single_hop"]
+    assert n == 1
+    assert isinstance(row, Row)
+    # stub embeddings are deterministic-but-arbitrary: assert ranges, not values
+    assert 0.0 <= row.recall_at_k <= 1.0
+    assert 0.0 <= row.ndcg_at_k <= 1.0
+    assert 0.0 <= row.mrr <= 1.0
+    _, n_adv = rows["adversarial"]
+    assert n_adv == 0
+
+
+def test_aggregate_retrieval_weighted_mean():
+    r1 = Row(config="bench", precision_at_k=0.2, recall_at_k=1.0, ndcg_at_k=1.0, mrr=1.0)
+    r2 = Row(config="bench", precision_at_k=0.0, recall_at_k=0.0, ndcg_at_k=0.0, mrr=0.0)
+    agg = eval_bench.aggregate_retrieval(
+        [{"single_hop": (r1, 1)}, {"single_hop": (r2, 3), "adversarial": (r2, 0)}]
+    )
+    assert agg["single_hop"]["recall_at_k"] == 0.25  # (1.0*1 + 0.0*3) / 4
+    assert agg["single_hop"]["n_questions"] == 4
+    assert "adversarial" not in agg  # zero scored prompts contribute nothing

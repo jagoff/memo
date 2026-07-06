@@ -24,6 +24,7 @@ from typing import Any
 
 from memo.config import Config
 from memo.errors import MemoError
+from memo.eval_recall import Cfg, LabelSet, Prompt, Row, run_config
 
 # --- Normalized schema --------------------------------------------------------
 
@@ -343,3 +344,84 @@ def ingest_sample(
         encoding="utf-8",
     )
     return result
+
+
+# --- Retrieval scoring (shared rank_hits path via eval_recall.run_config) ------------
+
+
+def bench_retrieval_cfg() -> Cfg:
+    """One config mirroring the live hook's mode + similarity floor."""
+    from memo.flags import flag_float, flag_str
+
+    return Cfg(
+        "bench",
+        mode=str(flag_str("MEMO_RECALL_MODE") or "vec"),
+        floor=float(flag_float("MEMO_RECALL_MIN_SIM") or 0.0),
+        exclude_archived=False,
+    )
+
+
+def expected_memory_ids(qa: BenchQA, ingest: IngestResult) -> list[str]:
+    """Evidence → memory ids: turn-level ids first, session-level fallback."""
+    ids = {ingest.turn_to_memory[t] for t in qa.evidence_turn_ids if t in ingest.turn_to_memory}
+    if not ids and qa.evidence_session_ids:
+        wanted = set(qa.evidence_session_ids)
+        ids = {
+            mid
+            for tid, mid in ingest.turn_to_memory.items()
+            if ingest.turn_to_session.get(tid) in wanted
+        }
+    return sorted(ids)
+
+
+def category_label_sets(sample: BenchSample, ingest: IngestResult) -> dict[str, LabelSet]:
+    """One LabelSet per question category. Abstention questions carry no
+    expect_ids (relevant=False) — they are graded end-to-end in Task 6, not
+    as retrieval."""
+    by_cat: dict[str, list[Prompt]] = {}
+    for qa in sample.qa:
+        ids = [] if qa.abstention else expected_memory_ids(qa, ingest)
+        by_cat.setdefault(qa.category, []).append(
+            Prompt(text=qa.question, relevant=bool(ids), expect_ids=ids)
+        )
+    return {cat: LabelSet(prompts=ps) for cat, ps in by_cat.items()}
+
+
+def score_retrieval(
+    mem: Any, sample: BenchSample, ingest: IngestResult, *, k: int
+) -> dict[str, tuple[Row, int]]:
+    """Per-category Row via eval_recall.run_config — the SAME dedup +
+    rank_hits + reference-tier-exclusion path `memo eval recall` measures.
+    Returns {category: (Row, n_scored_prompts)}."""
+    cfg = bench_retrieval_cfg()
+    out: dict[str, tuple[Row, int]] = {}
+    for cat, labels in category_label_sets(sample, ingest).items():
+        n = sum(1 for p in labels.prompts if p.expect_ids)
+        out[cat] = (run_config(mem, cfg, k, labels), n)
+    return out
+
+
+def aggregate_retrieval(
+    per_sample: list[dict[str, tuple[Row, int]]],
+) -> dict[str, dict[str, float | int]]:
+    """Weighted-mean (by scored-prompt count) retrieval metrics per category."""
+    acc: dict[str, dict[str, float]] = {}
+    for rows in per_sample:
+        for cat, (row, n) in rows.items():
+            if n <= 0:
+                continue
+            slot = acc.setdefault(
+                cat,
+                {"recall_at_k": 0.0, "ndcg_at_k": 0.0, "mrr": 0.0, "precision_at_k": 0.0, "n": 0.0},
+            )
+            slot["recall_at_k"] += row.recall_at_k * n
+            slot["ndcg_at_k"] += row.ndcg_at_k * n
+            slot["mrr"] += row.mrr * n
+            slot["precision_at_k"] += row.precision_at_k * n
+            slot["n"] += n
+    out: dict[str, dict[str, float | int]] = {}
+    for cat, slot in acc.items():
+        total = slot.pop("n")
+        out[cat] = {m: round(v / total, 3) for m, v in slot.items()}
+        out[cat]["n_questions"] = int(total)
+    return out
