@@ -69,6 +69,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "ingest",
         "Caption an image only when its OCR text is shorter than this many chars.",
     ),
+    _spec(
+        "MEMO_WHISPER_MODEL",
+        "str",
+        "",
+        "ingest",
+        "mlx-whisper model repo for `memo ingest --include-audio` transcription. "
+        "Empty = mlx-whisper's built-in default model.",
+    ),
     # briefing (SessionStart panel)
     _spec(
         "MEMO_BRIEFING_DISABLE",
