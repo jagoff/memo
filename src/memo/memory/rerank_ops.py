@@ -12,6 +12,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
+from memo.flags import flag_bool, flag_float
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     AmbiguousIdError,
@@ -359,3 +360,47 @@ class _RerankOpsMixin(_MemoryBase):
             fused.append(replace(h, score=final))
         fused.sort(key=lambda h: h.score or 0.0, reverse=True)
         return fused[:top_n]
+
+    def _rerank_logic(
+        self,
+        hits: list[dict[str, Any]],
+        query: str,
+        rerank_candidates: int,
+    ) -> list[dict[str, Any]]:
+        """Apply distance decay weighting to hits based on graph distance.
+
+        Takes pre-scored hits and applies inverse-distance decay if enabled,
+        returning the reordered list. Distance decay penalizes memories far
+        from base facts in the knowledge graph via BFS distance.
+
+        Args:
+            hits: List of hit dicts with "id" and "score" fields
+            query: Query text (for context, unused in this version)
+            rerank_candidates: Maximum hits to return
+
+        Returns:
+            Reordered hits with distance-decayed scores and "_distance" field
+            (when decay is enabled)
+        """
+        scored_hits = list(hits or [])  # Copy to avoid mutation
+
+        # Apply distance decay if enabled
+        if flag_bool("MEMO_GRAPH_DISTANCE_DECAY"):
+            decay_rate = flag_float("MEMO_GRAPH_DISTANCE_DECAY_RATE")
+            for hit in scored_hits:
+                mem_id = hit.get("id")
+                if mem_id:
+                    distance = self.graph.distance_to_nearest_fact(mem_id)
+                    # Decay: score *= 1 / (1 + rate * distance)
+                    decay_factor = 1.0 / (1.0 + decay_rate * distance)
+                    current_score = hit.get("score", 0.0)
+                    hit["score"] = current_score * decay_factor
+                    hit["_distance"] = distance  # Debug: track distance
+
+        # Sort by score descending
+        scored_hits.sort(key=lambda h: h.get("score", 0.0), reverse=True)
+
+        # Return top-N if rerank_candidates is specified
+        if rerank_candidates > 0:
+            return scored_hits[:rerank_candidates]
+        return scored_hits
