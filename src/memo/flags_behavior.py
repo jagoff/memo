@@ -321,6 +321,28 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_SYNTHESIS_MAX_MEMBERS",
+        "int",
+        0,
+        "maintain",
+        "Per-topic size invariant (memobase-style bound): a synthesis cluster "
+        "larger than this re-clusters into subtopics at a tighter threshold "
+        "before the LLM abstracts it; unsplittable clusters are sliced so the "
+        "bound always holds. 0 (default) = off.",
+        min_val=0,
+        max_val=500,
+    ),
+    _spec(
+        "MEMO_SYNTHESIS_BODY_MAX_CHARS",
+        "int",
+        0,
+        "maintain",
+        "Character cap for a generated synthesis body. Over the cap → one "
+        "bounded re-summarize LLM call, hard truncation on failure. "
+        "0 (default) = off.",
+        min_val=0,
+    ),
+    _spec(
         "MEMO_CONSOLIDATE_AUTO_THRESHOLD",
         "float",
         0.95,

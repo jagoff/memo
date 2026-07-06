@@ -275,6 +275,70 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     clusters.append([i])
             return clusters
 
+    @staticmethod
+    def _split_oversized_clusters(
+        items: builtins.list[dict[str, Any]],
+        clusters: builtins.list[builtins.list[int]],
+        *,
+        max_members: int,
+        threshold: float,
+    ) -> builtins.list[builtins.list[int]]:
+        """Per-topic size invariant (memobase-style bound): re-cluster any
+        cluster larger than `max_members` at a tighter threshold (+0.05) so a
+        hub-glued grab-bag splits into coherent subtopics before the LLM sees
+        it; if the subset still won't split (near-identical members), slice it
+        into max_members-sized runs so the bound ALWAYS holds. Clusters within
+        bounds pass through untouched. `max_members <= 0` disables (default)."""
+        if max_members <= 0:
+            return clusters
+        out: builtins.list[builtins.list[int]] = []
+        for cluster in clusters:
+            if len(cluster) <= max_members:
+                out.append(cluster)
+                continue
+            sub_items = [items[i] for i in cluster]
+            sub_clusters = _ConsolidateOpsMixin._greedy_cluster(
+                sub_items, min(threshold + 0.05, 0.99)
+            )
+            for sub in sub_clusters:
+                mapped = [cluster[j] for j in sub]
+                # Guarantee the invariant even when re-clustering didn't split.
+                for s in range(0, len(mapped), max_members):
+                    out.append(mapped[s : s + max_members])
+        return out
+
+    def _resummarize_body(self, chat: Any, body: str, *, cap: int) -> str:
+        """Re-summarize an over-cap synthesis body (memobase slot bound).
+        ONE bounded LLM call; hard truncation is the failure fallback —
+        the invariant holds even when the LLM times out or over-generates."""
+        out = None
+        try:
+            out = chat_with_timeout(
+                chat,
+                timeout=60,
+                model=self.cfg.helper_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            f"Compress the user's text to under {cap} characters. "
+                            "Keep every concrete fact; drop filler. Reply with the "
+                            "compressed text only."
+                        ),
+                    },
+                    {"role": "user", "content": body},
+                ],
+                options={"temperature": 0.0, "max_tokens": 512, "thinking": False},
+            )
+        except Exception as exc:
+            _log.warning("synthesize: re-summarize failed: %s", exc)
+        text = ""
+        if out is not None:
+            text = strip_llm_output(((out.get("message") or {}).get("content") or "").strip())
+        if text and len(text) <= cap:
+            return text
+        return body[:cap].rstrip()
+
     def _consolidate_in_process(
         self,
         *,
@@ -471,6 +535,14 @@ class _ConsolidateOpsMixin(_MemoryBase):
             return []
         clusters = self._greedy_cluster(items, threshold)
 
+        # Per-topic size invariant (K2): an oversized topic re-clusters into
+        # subtopics before the LLM sees it. 0 (default) = off.
+        _max_members = flag_int("MEMO_SYNTHESIS_MAX_MEMBERS") or 0
+        if _max_members > 0:
+            clusters = self._split_oversized_clusters(
+                items, clusters, max_members=_max_members, threshold=threshold
+            )
+
         candidate_clusters = [c for c in clusters if len(c) >= min_cluster_size]
         candidate_clusters.sort(key=lambda c: (-len(c), items[c[0]]["updated"]))
         candidate_clusters = candidate_clusters[:max_clusters]
@@ -575,6 +647,11 @@ class _ConsolidateOpsMixin(_MemoryBase):
             body = (data.get("body") or "").strip()
             # normalize relative temporal references to ISO dates
             body = _normalize_relative_dates(body, _dt.datetime.now(_dt.UTC).date())
+            # Slot size bound (K2): over-cap bodies get one bounded
+            # re-summarize call; truncation is the guaranteed fallback.
+            _body_cap = flag_int("MEMO_SYNTHESIS_BODY_MAX_CHARS") or 0
+            if _body_cap > 0 and len(body) > _body_cap:
+                body = self._resummarize_body(chat, body, cap=_body_cap)
             confidence = data.get("confidence") if data.get("confidence") in _conf_rank else "low"
             rationale = (data.get("rationale") or "").strip()
 
