@@ -42,19 +42,6 @@ def test_contradict_scan_help(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# memo multimodal add-image
-# ---------------------------------------------------------------------------
-
-
-def test_multimodal_add_image_help(tmp_path: Path) -> None:
-    """Verify subcommand is registered and options are wired."""
-    res = CliRunner().invoke(cli, ["multimodal", "add-image", "--help"], env=_env(tmp_path))
-    assert res.exit_code == 0
-    # Click shows the argument name in caps in the help text
-    assert "IMAGE_PATH" in res.output
-
-
-# ---------------------------------------------------------------------------
 # memo sync clone
 # ---------------------------------------------------------------------------
 

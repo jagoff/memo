@@ -76,20 +76,6 @@ def _import_export(memory: Any) -> Any:
     return ImportExportManager(memory)
 
 
-def _multimodal(memory: Any) -> Any:
-    from memo.multimodal import (
-        CrossModalSearch,
-        MultiModalManager,
-        MultiModalStore,
-        UniversalEmbedder,
-    )
-
-    store = MultiModalStore(memory.cfg.state_dir)
-    embedder = UniversalEmbedder()
-    search = CrossModalSearch(store, embedder)
-    return MultiModalManager(store, embedder, search)
-
-
 def _collaborative(memory: Any) -> Any:
     from memo.collaborative import CollaborativeFilter, CollaborativeGraph, CollaborativeManager
 
@@ -108,7 +94,6 @@ OPTIONAL_CAPABILITIES: dict[str, CapabilityFactory] = {
     "import_export": _import_export,
     "lifecycle": _lifecycle,
     "link_suggester": _link_suggester,
-    "multimodal": _multimodal,
     "query_composer": _query_composer,
     "sync": _sync,
     "versioning": _versioning,

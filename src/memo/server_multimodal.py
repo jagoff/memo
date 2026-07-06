@@ -1,9 +1,4 @@
-"""MCP tools — multi-modal domain (split from server.py).
-
-Registered by `build_server()` via `register(server, memory)`. Tool names,
-signatures, defaults, docstrings and bodies are identical to the originals;
-only the enclosing function and indentation changed.
-"""
+"""MCP tools — OCR domain. Registered by build_server() via register(server, memory). Hosts memo_ocr_image (used by Synapse as a chat-time OCR fallback). The former memo_multimodal_* tools were placeholder hash-embedding stubs, removed 2026-07 — VLM captions + whisper transcripts through the normal text index are the cross-modal path."""
 
 from __future__ import annotations
 
@@ -12,7 +7,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
-from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
+from memo.server_annotations import READ_ONLY, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
@@ -48,86 +43,3 @@ def register(server: FastMCP, memory: Memory) -> None:
         conf_tag = f"c{round(ocr_min_confidence() * 100):02d}"
         cached = (cache_dir / f"{sha[:32]}.{conf_tag}.json").exists()
         return {"text": text, "cached": cached}
-
-    @annotated_tool(server, **WRITE)
-    def memo_multimodal_add_image(
-        image_path: str,
-        memory_id: str | None = None,
-    ) -> dict[str, str]:
-        """Add image to multi-modal corpus.
-
-        Args:
-            image_path: Path to the image file.
-            memory_id: Optional associated memory ID.
-        """
-        from pathlib import Path
-
-        content = memory.multimodal.add_image(Path(image_path), memory_id)
-        return {"content_id": content.id, "modality": content.modality}
-
-    @annotated_tool(server, **WRITE)
-    def memo_multimodal_add_audio(
-        audio_path: str,
-        memory_id: str | None = None,
-    ) -> dict[str, str]:
-        """Add audio to multi-modal corpus.
-
-        Args:
-            audio_path: Path to the audio file.
-            memory_id: Optional associated memory ID.
-        """
-        from pathlib import Path
-
-        content = memory.multimodal.add_audio(Path(audio_path), memory_id)
-        return {"content_id": content.id, "modality": content.modality}
-
-    @annotated_tool(server, **READ_ONLY)
-    def memo_multimodal_search_images(
-        query: str,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Search with text, find images.
-
-        Args:
-            query: Text query.
-            limit: Max results.
-
-        Returns:
-            List of CrossModalResult objects.
-        """
-        results = memory.multimodal.search.search_text_find_images(query, limit=limit)
-        return [r.__dict__ for r in results]
-
-    @annotated_tool(server, **READ_ONLY)
-    def memo_multimodal_search_audio(
-        query: str,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Search with text, find audio.
-
-        Args:
-            query: Text query.
-            limit: Max results.
-
-        Returns:
-            List of CrossModalResult objects.
-        """
-        results = memory.multimodal.search.search_text_find_audio(query, limit=limit)
-        return [r.__dict__ for r in results]
-
-    @annotated_tool(server, **READ_ONLY)
-    def memo_multimodal_search_all(
-        query: str,
-        limit: int = 10,
-    ) -> dict[str, list[dict[str, Any]]]:
-        """Search across all modalities.
-
-        Args:
-            query: Text query.
-            limit: Max results per modality.
-
-        Returns:
-            Dict with results per modality.
-        """
-        results = memory.multimodal.search.search_all_modalities(query, limit=limit)
-        return {k: [r.__dict__ for r in v] for k, v in results.items()}

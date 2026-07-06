@@ -49,7 +49,6 @@ class _MemoryBase:
     analytics: Any
     dashboard: Any
     import_export: Any
-    multimodal: Any
     collaborative: Any
 
     # -- methods provided by sibling mixins / the facade -------------------

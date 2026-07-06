@@ -170,7 +170,6 @@ LAZY_SUBSYSTEMS = [
     "analytics",
     "dashboard",
     "import_export",
-    "multimodal",
     "collaborative",
 ]
 
@@ -215,7 +214,6 @@ def test_optional_memory_capabilities_live_in_registry(mock_memory) -> None:
         "dashboard",
         "import_export",
         "lifecycle",
-        "multimodal",
         "query_composer",
         "sync",
         "versioning",

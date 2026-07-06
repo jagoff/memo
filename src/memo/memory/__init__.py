@@ -107,12 +107,6 @@ from memo.memory.record import (  # noqa: F401
     _slugify,
     _vault_dedup_keys,
 )
-from memo.multimodal import (  # noqa: F401
-    CrossModalSearch,
-    MultiModalManager,
-    MultiModalStore,
-    UniversalEmbedder,
-)
 from memo.navigation import GraphNavigator  # noqa: F401
 from memo.saved_queries import QueryComposer, QueryStore  # noqa: F401
 from memo.store import VecStore  # noqa: F401

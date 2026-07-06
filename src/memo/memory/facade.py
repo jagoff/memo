@@ -376,11 +376,6 @@ class Memory(
         return self.capability("import_export")
 
     @property
-    def multimodal(self) -> Any:
-        """Lazy accessor for MultiModalManager."""
-        return self.capability("multimodal")
-
-    @property
     def collaborative(self) -> Any:
         """Lazy accessor for CollaborativeManager."""
         return self.capability("collaborative")

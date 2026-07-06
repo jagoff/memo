@@ -809,7 +809,6 @@ federation, and orchestration belong outside memo's surface.
 
 | Module | What it does |
 |---|---|
-| `multimodal` | Cross-modal semantic search over images, audio, and text |
 | `collaborative` | Shared knowledge graph across multiple users |
 | `sharing` | Per-memory sharing links and permission grants |
 | `encryption` | AES-256-GCM file-level primitives (gated OFF; `MEMO_ENCRYPTION_ENABLED=1`) |

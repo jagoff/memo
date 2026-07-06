@@ -85,7 +85,6 @@ from memo.cli_memory import (
     save,
     update,
 )
-from memo.cli_multimodal import multimodal_group
 from memo.cli_outcome import gaps as gaps_cmd
 from memo.cli_outcome import outcome as outcome_cmd
 from memo.cli_profile import profile_group
@@ -203,7 +202,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Advanced Search",
-        ["embed", "rerank", "contextual", "chat", "chat-ask", "multimodal", "repo"],
+        ["embed", "rerank", "contextual", "chat", "chat-ask", "repo"],
     ),
     (
         "Import / Export / Sync",
@@ -450,7 +449,6 @@ cli.add_command(sync_group)
 cli.add_command(analytics_group)
 cli.add_command(import_group)
 cli.add_command(export_group)
-cli.add_command(multimodal_group)
 cli.add_command(collaborative_group)
 cli.add_command(contradict_group)
 cli.add_command(http_api)

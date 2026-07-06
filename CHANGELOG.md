@@ -20,6 +20,15 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   transcribed via mlx-whisper (SHA256-cached) and indexed through the same
   pipeline as notes/PDFs, keeping the raw file as provenance. Opt-in.
 
+### Removed
+
+- The placeholder multi-modal store (`memo multimodal` CLI group and the
+  `memo_multimodal_add_image/add_audio/search_images/search_audio/search_all`
+  MCP tools). Its "universal embeddings" were a hash-based CLIP stub —
+  cross-modal search over them was noise. VLM captions and whisper
+  transcripts indexed through the normal text pipeline replace it.
+  `memo_ocr_image` is unaffected.
+
 ## [2.12.12] - 2026-07-05
 
 Ecosystem roadmap **Wave 4** — profile distillation (workstream B, 5 tasks) +
