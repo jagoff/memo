@@ -290,6 +290,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "Max tokens for HyDE generation (LLM call to generate hypothetical doc).",
     ),
     _spec(
+        "MEMO_SEARCH_CHUNK_PARENT",
+        "bool",
+        False,
+        "search",
+        "Map winning reference-tier CHUNK hits (extra.parent_id from "
+        "MEMO_CHUNK_INGEST) back to their parent memory in explicit search: "
+        "the parent surfaces once at the best chunk's rank/score, deduped "
+        "against parents already in the result list. Skipped when the caller "
+        "filters type='reference'. Recall hook unaffected (reference tier is "
+        "SQL-excluded there). Off by default — eval-gated before any flip.",
+    ),
+    _spec(
         "MEMO_ASK_MULTI_ROUND",
         "bool",
         False,

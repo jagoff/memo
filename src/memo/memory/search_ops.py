@@ -540,6 +540,14 @@ class _SearchOpsMixin(_MemoryBase):
                 output_count=len(out),
                 floor=_ref_floor,
             )
+        # Chunk→parent mapping (K3): a winning reference CHUNK stands in for
+        # its parent note. Flag-gated default off; skipped when the caller
+        # explicitly asked for the reference tier (same rule as the floor
+        # above). See _map_chunks_to_parents.
+        if out and flag_bool("MEMO_SEARCH_CHUNK_PARENT") and type_ not in REFERENCE_TYPES:
+            before = len(out)
+            out = self._map_chunks_to_parents(out)
+            _add_trace("chunk_parent", input_count=before, output_count=len(out))
         self._record_access([r.id for r in out])
         # Co-recall graph edges: record which memories surface together.
         # Gated by flag so the graph DB write stays opt-in (off by default).
@@ -569,6 +577,33 @@ class _SearchOpsMixin(_MemoryBase):
         trace: list[dict[str, Any]] = []
         hits = self.search(query, _trace=trace, **kwargs)
         return {"hits": hits, "trace": trace}
+
+    def _map_chunks_to_parents(self, out: list[MemoryRecord]) -> list[MemoryRecord]:
+        """Chunk-hit → parent mapping (MEMO_SEARCH_CHUNK_PARENT, default off).
+
+        A chunk row (type=reference, extra.parent_id from MEMO_CHUNK_INGEST)
+        that wins retrieval is evidence the PARENT note matters — surface the
+        whole note once, at the best chunk's rank and score, instead of a
+        fragment (or fragment + parent duplicates). Parents already in the
+        list dedup by id; a chunk whose parent was deleted stays as-is.
+        Zero hook cost: the recall hook SQL-excludes the reference tier, so
+        this loop never sees a chunk row on that path.
+        """
+        import dataclasses
+
+        mapped: list[MemoryRecord] = []
+        seen_ids: set[str] = set()
+        for r in out:
+            parent_id = (r.extra or {}).get("parent_id")
+            if r.type in REFERENCE_TYPES and isinstance(parent_id, str) and parent_id:
+                parent = self.get(parent_id)
+                if parent is not None:
+                    r = dataclasses.replace(parent, score=r.score)
+            if r.id in seen_ids:
+                continue  # a better-ranked chunk/parent already covers it
+            seen_ids.add(r.id)
+            mapped.append(r)
+        return mapped
 
     def search_by_file(
         self,
