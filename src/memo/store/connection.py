@@ -41,6 +41,17 @@ class _ConnectionMixin(_StoreBase):
             return self._connect()
         return holder.conn
 
+    @_conn.setter
+    def _conn(self, conn: sqlite3.Connection) -> None:
+        self._local.conn_holder = _ConnectionHolder(conn)
+
+    @_conn.deleter
+    def _conn(self) -> None:
+        holder = getattr(self._local, "conn_holder", None)
+        if holder is not None:
+            holder.close()
+        self._local.conn_holder = None
+
     def _connect(self) -> sqlite3.Connection:
         """Open + configure a connection for the calling thread, load vec0,
         and stash it on thread-local storage. Idempotent per thread."""

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import builtins
 import sqlite3
+from contextlib import suppress
 from dataclasses import replace
 from typing import Any
 
@@ -112,11 +113,9 @@ class _SearchScoringMixin(_MemoryBase):
                 base_score = 1.0 / (rrf_k + rank + 1)
                 # Boost well-connected memories (density reranking).
                 if density_boost > 0:
-                    try:
+                    with suppress(Exception):
                         degree = self.graph.memory_degree(r["id"])
                         base_score *= 1.0 + (density_boost * degree)
-                    except Exception:
-                        pass
                 r["score"] = base_score
             return out
         except Exception as exc:

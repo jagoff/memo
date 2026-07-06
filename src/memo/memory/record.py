@@ -19,7 +19,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
 # Re-export the system prompts — callers import them from here (ask_ops,
 # write_ops, maintain_ops, cli_capture, memory/__init__). Unused in this module
@@ -385,7 +385,7 @@ class MemoryRecord:
     extra: dict[str, Any] = field(default_factory=dict)
     score: float | None = None  # populated by `search()`; None for direct fetches.
     verification_state: VerificationState = VerificationState.UNVERIFIED
-    verified_at: Optional[int] = None  # Unix timestamp
+    verified_at: int | None = None  # Unix timestamp
 
     def to_dict(self) -> dict[str, Any]:
         return {

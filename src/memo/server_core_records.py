@@ -86,10 +86,22 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_list(limit: int = 20, type: str | None = None) -> list[dict[str, Any]]:
+        """List recent memories, optionally filtered by memory type.
+
+        Read-only. Use this to browse the corpus before choosing an id for
+        memo_get, memo_update, memo_rename, memo_delete, or history tools.
+        `limit` caps the number of returned records.
+        """
         return [r.to_dict() for r in memory.list(limit=limit, type_=type)]
 
     @annotated_tool(server, **READ_ONLY)
     def memo_get(id: str) -> dict[str, Any] | None:
+        """Fetch one memory by id or unique id prefix.
+
+        Read-only. Returns the full memory record, `None` when it does not
+        exist, or an ambiguity error when the prefix matches multiple records.
+        Use memo_search or memo_list first when you do not know the id.
+        """
         try:
             rec = memory.get(id)
         except AmbiguousIdError as exc:
@@ -159,10 +171,22 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_reindex(force: bool = False) -> dict[str, int]:
+        """Rebuild memo's searchable index from the markdown vault.
+
+        Writes only derived index state; markdown remains the source of truth.
+        Use after hand-editing vault files or changing indexing behavior.
+        `force` reprocesses records even if memo thinks they are current.
+        """
         return memory.reindex(force=force)
 
     @annotated_tool(server, **DESTRUCTIVE)
     def memo_delete(id: str) -> dict[str, Any]:
+        """Permanently delete one memory by id or unique prefix.
+
+        Destructive. Resolves ambiguous short ids safely and returns an error
+        instead of guessing. When cross-reference indexing is enabled, the
+        response warns about memories that linked to the deleted record.
+        """
         from memo.flags import flag_bool
 
         referenced_by: list[str] = []
@@ -191,6 +215,12 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **DESTRUCTIVE)
     def memo_forget(id: str, reason: str | None = None) -> dict[str, Any]:
+        """Mark one memory as forgotten without deleting its history.
+
+        Destructive in retrieval behavior: the memory is hidden from normal
+        recall/search surfaces until memo_unforget restores it. Pass `reason`
+        to record why the memory should no longer be surfaced.
+        """
         try:
             rec = memory.forget(id, reason=reason)
         except AmbiguousIdError as exc:
@@ -201,6 +231,12 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_unforget(id: str) -> dict[str, Any]:
+        """Restore a previously forgotten memory to normal retrieval.
+
+        Idempotent write. Accepts a full id or unique prefix and returns
+        whether a matching forgotten record was restored. Use after deciding a
+        memory should participate in search and recall again.
+        """
         try:
             rec = memory.unforget(id)
         except AmbiguousIdError as exc:
@@ -236,4 +272,10 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_lint() -> dict[str, list[dict[str, Any]]]:
+        """Inspect the memory corpus for maintenance issues.
+
+        Read-only. Returns grouped lint findings such as malformed metadata or
+        other records that may need cleanup. Use memo_update, memo_delete, or
+        vault edits separately to fix findings.
+        """
         return memory.lint()

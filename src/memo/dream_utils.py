@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging as _logging
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -112,10 +113,8 @@ def acquire_dream_lock(cfg: Config) -> Any:
 def release_dream_lock(fh: Any) -> None:
     """Release the dream lock file handle."""
     if fh is not None:
-        try:
+        with suppress(Exception):
             fh.close()
-        except Exception:
-            pass
 
 
 def read_previous_fingerprint(cfg: Config) -> str | None:

@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from memo.config import Config
 from memo.memory import Memory
 
@@ -43,8 +41,8 @@ def test_rerank_applies_distance_decay():
                 )
 
     # Close memory should score higher than far memory
-    close_final_score = [h["score"] for h in result if h["id"] == "dec1"][0]
-    far_final_score = [h["score"] for h in result if h["id"] == "syn1"][0]
+    close_final_score = next(h["score"] for h in result if h["id"] == "dec1")
+    far_final_score = next(h["score"] for h in result if h["id"] == "syn1")
 
     assert close_final_score > far_final_score, (
         f"Close {close_final_score} should > Far {far_final_score}"

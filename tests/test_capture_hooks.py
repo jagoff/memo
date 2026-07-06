@@ -12,8 +12,6 @@ import json
 import time
 from pathlib import Path
 
-import pytest
-
 from memo.capture_hooks import (
     _load_state,
     _load_watermark,
@@ -285,7 +283,7 @@ def test_list_sessions_without_watermark_ignores_missing_session_id(tmp_path: Pa
 
 def test_run_capture_empty_transcript(tmp_path: Path, monkeypatch):
     """Empty transcript → no_pair status."""
-    state = _setup_env(tmp_path, monkeypatch)
+    _setup_env(tmp_path, monkeypatch)
     transcript = tmp_path / "empty.jsonl"
     transcript.write_text("", encoding="utf-8")
 
@@ -295,7 +293,7 @@ def test_run_capture_empty_transcript(tmp_path: Path, monkeypatch):
 
 def test_run_capture_no_trigger_keywords(tmp_path: Path, monkeypatch):
     """Transcript with no trigger keywords → no_trigger status."""
-    state = _setup_env(tmp_path, monkeypatch)
+    _setup_env(tmp_path, monkeypatch)
     transcript = tmp_path / "notrigger.jsonl"
     transcript.write_text(
         json.dumps({"type": "user", "message": {"content": "hello"}}) + "\n"
@@ -312,7 +310,7 @@ def test_run_capture_no_trigger_keywords(tmp_path: Path, monkeypatch):
 
 def test_run_capture_incremental_empty_transcript(tmp_path: Path, monkeypatch):
     """Empty transcript → no_pair status."""
-    state = _setup_env(tmp_path, monkeypatch)
+    _setup_env(tmp_path, monkeypatch)
     transcript = tmp_path / "empty.jsonl"
     transcript.write_text("", encoding="utf-8")
 
@@ -322,7 +320,7 @@ def test_run_capture_incremental_empty_transcript(tmp_path: Path, monkeypatch):
 
 def test_run_capture_incremental_no_new_turns(tmp_path: Path, monkeypatch):
     """If watermark is current, no_new status."""
-    state = _setup_env(tmp_path, monkeypatch)
+    _setup_env(tmp_path, monkeypatch)
 
     # Create a transcript with 2 exchanges
     transcript = tmp_path / "t.jsonl"

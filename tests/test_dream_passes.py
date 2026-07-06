@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from memo.cli_dream_passes import (
-    _run_contradict,
     _run_consolidate_dups,
+    _run_contradict,
+    _run_entities,
+    _run_roi_decay,
+    _run_roi_reconcile,
     _run_stale,
     _run_synthesis,
-    _run_entities,
-    _run_roi_reconcile,
-    _run_roi_decay,
 )
-from memo.config import Config
 from memo.memory import Memory
 
 
@@ -43,7 +39,7 @@ class TestRunContradict:
         """Dry-run mode never archives or modifies data."""
         with patch.object(mock_memory.contradict_store, "list_open", return_value=[]):
             with patch.object(mock_memory.lifecycle, "archive_memory") as mock_archive:
-                result = _run_contradict(mock_memory, dry_run=True)
+                _run_contradict(mock_memory, dry_run=True)
                 mock_archive.assert_not_called()
 
 
@@ -127,7 +123,7 @@ class TestRunStale:
         mock_stale = [{"id": "aaa", "days_since_update": 400}]
         with patch.object(mock_memory.temporal, "detect_stale_memories", return_value=mock_stale):
             with patch.object(mock_memory.lifecycle, "archive_memory") as mock_archive:
-                result = _run_stale(mock_memory, dry_run=True)
+                _run_stale(mock_memory, dry_run=True)
                 mock_archive.assert_not_called()
 
 

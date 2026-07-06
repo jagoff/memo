@@ -16,13 +16,11 @@ from typing import TYPE_CHECKING, Any
 
 from memo.cli_common import console
 from memo.dream_utils import (
-    _corpus_fingerprint,
     _harvested_labels_path,
     _iso_now,
-    _make_progress,
     _older_id,
-    _state_path,
 )
+from memo.outcome import dead_weight, reconcile_roi, reconcile_source_feedback
 from memo.tiers import EVICTION_PROTECTED_TYPES
 from memo.transcript_miner import mine_transcripts
 
@@ -682,11 +680,6 @@ def _run_roi_reconcile(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     - source_feedback_mined: count (if MEMO_OUTCOME_SOURCE_FEEDBACK enabled)
     """
     from memo.flags import flag_bool, flag_int
-    from memo.outcome import (
-        dead_weight,
-        reconcile_roi,
-        reconcile_source_feedback,
-    )
 
     result: dict[str, Any] = {
         "reconciled": 0,

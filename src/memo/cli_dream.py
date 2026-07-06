@@ -29,9 +29,6 @@ from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.cli_dream_passes import (
     _build_orientation,
-    _corpus_fingerprint,
-    _make_progress,
-    _older_id,
     _render_run_summary,
     _run_capture_weights,
     _run_compress,
@@ -49,10 +46,12 @@ from memo.cli_dream_passes import (
     _run_signal_gather,
     _run_stale,
     _run_synthesis,
-    _state_path,
 )
 from memo.config import Config
 from memo.dream_utils import (
+    _corpus_fingerprint,
+    _make_progress,
+    _state_path,
     acquire_dream_lock,
     check_convergence,
     read_previous_fingerprint,

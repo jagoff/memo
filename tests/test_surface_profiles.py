@@ -77,6 +77,23 @@ def test_mcp_core_profile_hides_advanced_tools(tmp_path, monkeypatch) -> None:
         mem.close()
 
 
+def test_mcp_core_profile_tools_have_descriptions(tmp_path, monkeypatch) -> None:
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        vault_path=tmp_path / "vault",
+        embedder_dims=4,
+    )
+    monkeypatch.setenv("MEMO_MCP_PROFILE", "core")
+    mem = Memory(cfg)
+    try:
+        tools = asyncio.run(build_server(memory=mem).list_tools())
+        missing = sorted(tool.name for tool in tools if not (tool.description or "").strip())
+        assert missing == []
+    finally:
+        mem.close()
+
+
 def test_mcp_agent_profile_is_default_and_exposes_core_tools(tmp_path, monkeypatch) -> None:
     from memo.surface import AGENT_MCP_TOOLS
 

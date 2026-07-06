@@ -10,10 +10,22 @@ from memo.server_annotations import READ_ONLY, annotated_tool
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
     def memo_provenance(id: str) -> dict[str, Any] | None:
+        """Return provenance metadata for one memory.
+
+        Read-only. Use with a full id or unique prefix when you need origin,
+        lineage, file path, or related audit details for a record before
+        trusting, editing, or citing it.
+        """
         return memory.provenance(id)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_record_diff(id: str, limit: int = 50) -> dict[str, Any]:
+        """Return recent history events for one memory in chronological order.
+
+        Read-only. Use to inspect how a memory changed over time before
+        editing or rolling back. Accepts a full id or unique prefix; `limit`
+        caps returned events and `has_more` reports truncation.
+        """
         resolved_id = id
         if len(resolved_id) < 32:
             try:
@@ -38,6 +50,12 @@ def register(server: Any, memory: Memory) -> None:
         op: str | None = None,
         id: str | None = None,
     ) -> list[dict[str, Any]]:
+        """List recent memory history events.
+
+        Read-only. Use for audit trails across the corpus or filter by `op`
+        and memory `id` when investigating a specific write, update, delete,
+        forget, or reindex action. Short ids are resolved safely.
+        """
         record_id = id
         if record_id and len(record_id) < 32:
             try:
@@ -51,18 +69,36 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_session_list(limit: int = 10, project: str | None = None) -> list[dict[str, Any]]:
+        """List tracked memo sessions.
+
+        Read-only. Use to find recent session ids, transcript paths, and
+        project context for capture or inspection. `project` narrows results
+        and `limit` caps the number of sessions returned.
+        """
         from memo.session import list_sessions
 
         return list_sessions(memory.cfg.state_dir, limit=limit, project=project)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_session_get(session_id: str) -> dict[str, Any] | None:
+        """Fetch metadata for one tracked memo session.
+
+        Read-only. Use after memo_session_list or memo_start_session when you
+        need the stored transcript path, project, checkpoints, or other session
+        details. Returns None when the session id is unknown.
+        """
         from memo.session import get_session
 
         return get_session(memory.cfg.state_dir, session_id)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_stats() -> dict[str, Any]:
+        """Return local memo corpus and runtime statistics.
+
+        Read-only. Use for diagnostics, health checks, and environment
+        inspection. Includes corpus count, storage paths, embedder model,
+        history error count, and recall daemon health when available.
+        """
         history_errors = 0
         with contextlib.suppress(Exception):
             history_errors = int(getattr(memory.history, "error_count", 0))

@@ -9,6 +9,14 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.15] - 2026-07-06
+
+### Fixed
+
+- Add MCP descriptions for every core-profile tool so directory quality
+  scanners and MCP clients receive useful tool metadata instead of empty
+  descriptions.
+
 ## [2.12.14] - 2026-07-06
 
 Post-Wave-5 robustness fast-follow for the history importers (from the Wave 5

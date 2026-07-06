@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re as _re
 from pathlib import Path
 from typing import Any
@@ -427,10 +426,10 @@ _META_COMMENTARY_RE = _re.compile(
     # (straight or curly, ' — "Ill-formed inputs" is substance) and bare
     # "i will" is NOT narration ("I will always use X" is a preference) —
     # only "i will <process verb>".
-    r"let\s+me\b|i[’']ll\b|i\s+am\s+going\s+to\b|i[’']m\s+going\s+to\b|"
+    r"let\s+me\b|i[\u2019']ll\b|i\s+am\s+going\s+to\b|i[\u2019']m\s+going\s+to\b|"
     r"i\s+will\s+(?:now|start|begin|check)\b|"
-    r"first,?\s+(?:let\s+me|i[’']ll)\b|now\s+(?:i[’']ll|let\s+me)\b|"
-    r"next,?\s+(?:let\s+me|i[’']ll)\b"
+    r"first,?\s+(?:let\s+me|i[\u2019']ll)\b|now\s+(?:i[\u2019']ll|let\s+me)\b|"
+    r"next,?\s+(?:let\s+me|i[\u2019']ll)\b"
     r")",
     _re.IGNORECASE,
 )

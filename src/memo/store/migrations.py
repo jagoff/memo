@@ -7,6 +7,8 @@ from ._base import _StoreBase
 
 _log = logging.getLogger(__name__)
 
+_CURRENT_USER_VERSION = 4
+
 
 class _MigrationsMixin(_StoreBase):
     # -- schema-version helpers --------------------------------------------
@@ -49,12 +51,14 @@ class _MigrationsMixin(_StoreBase):
         Existing databases are migrated version-by-version.
         """
         current = self.get_user_version()
+        if current >= _CURRENT_USER_VERSION:
+            return
         if current == 0:
             row = self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()
             if row and int(row[0]) == 0:
-                # Fresh DB — stamp at version 2 immediately (skips 1,
-                # which was only about migratable paths).
-                self.set_user_version(2)
+                # Fresh DB — the schema DDL already created the current shape,
+                # so stamp it current without running backfill migrations.
+                self.set_user_version(_CURRENT_USER_VERSION)
                 return
 
         # v1 → v2: backfill access + memory_health rows for meta rows

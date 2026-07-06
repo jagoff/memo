@@ -58,6 +58,13 @@ def _auto_capture(memory: Memory) -> None:
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
     def memo_get_embedder_profile() -> dict[str, Any]:
+        """Return the active embedding model profile.
+
+        Read-only. Use this to inspect the model id, vector dimensions,
+        normalization, and provider that memo uses for semantic search.
+        Useful when verifying compatibility with stored vectors or external
+        retrieval components.
+        """
         cfg = memory.cfg
         try:
             from consciousness_contracts import EmbedderProfile
@@ -82,6 +89,13 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
+        """Load a compact startup briefing from memo and optional Synapse state.
+
+        Read-only with best-effort auto-capture side effects. Call before
+        deciding or answering so prior durable facts can ground the task.
+        Pass `cwd` to bias project context and `source` to attribute consult
+        logs to the calling client.
+        """
         from memo.briefing import (
             compact_text,
             memo_native_briefing_lines,
@@ -134,6 +148,13 @@ def register(server: Any, memory: Memory) -> None:
         date_to: str | None = None,
         when: str | None = None,
     ) -> dict[str, Any]:
+        """Search durable memories by text, vector similarity, or hybrid mode.
+
+        Read-only with best-effort auto-capture side effects. Use for direct
+        retrieval when you need source records, ids, dates, tags, or excerpts.
+        `mode` accepts hybrid, vec, or bm25; `body_chars` controls snippet
+        length, and `source` attributes consult logging.
+        """
         if when and not (date_from or date_to):
             from memo.nl_dates import parse_date_range
 
@@ -174,6 +195,12 @@ def register(server: Any, memory: Memory) -> None:
         mode: str = "hybrid",
         source: str = "",
     ) -> dict[str, Any]:
+        """Search memories and include retrieval trace diagnostics.
+
+        Read-only. Use when debugging ranking, filters, or recall misses rather
+        than for normal lookup. Returns the same style of hits as memo_search
+        plus trace metadata that explains how candidates were selected.
+        """
         t0 = now_ms()
         envelope = memory.search_with_trace(query, limit=limit, type_=type, mode=mode)
         hits: list[dict[str, Any]] = []
@@ -194,10 +221,22 @@ def register(server: Any, memory: Memory) -> None:
         top_n: int | None = None,
         body_chars: int = 1200,
     ) -> list[dict[str, Any]]:
+        """Rerank candidate memory hits for a query.
+
+        Read-only. Use after memo_search or another retrieval source when you
+        already have candidate hit dictionaries and need the most relevant
+        subset ordered for answer synthesis. `top_n` limits the returned list.
+        """
         return memory.rerank_hits(query, hits, top_n=top_n, body_chars=body_chars)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_embed_query(text: str) -> dict[str, Any]:
+        """Embed one query string with memo's query embedding path.
+
+        Read-only. Use for diagnostics or integrations that need the exact
+        vector memo would use for retrieval queries. Rejects empty text and
+        returns the vector, dimension, and model id.
+        """
         if not text or not text.strip():
             raise ValueError("memo_embed_query: empty text")
         vec = memory.embedder.embed_query(text)
@@ -205,6 +244,12 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_embed_batch(texts: list[str]) -> dict[str, Any]:
+        """Embed one or more document strings with memo's document embedder.
+
+        Read-only. Use for diagnostics or external indexing when you need
+        document vectors from the same model memo uses internally. Pass a list
+        of strings; an empty list returns no vectors without error.
+        """
         if not texts:
             return {"vectors": [], "dim": 0, "model": memory.cfg.embedder_model}
         vecs = memory.embedder.embed(texts)
@@ -221,6 +266,13 @@ def register(server: Any, memory: Memory) -> None:
         session_id: str | None = None,
         source: str = "",
     ) -> dict[str, Any]:
+        """Answer a question using memo retrieval and citations.
+
+        Read-only with best-effort auto-capture side effects. Use when you want
+        a synthesized answer grounded in durable memories instead of raw hit
+        lists. `k`, `type`, and `snippet_chars` tune retrieval; `source`
+        attributes consult logging.
+        """
         t0 = now_ms()
         res = memory.ask(
             question,
@@ -254,6 +306,13 @@ def register(server: Any, memory: Memory) -> None:
         session_id: str | None = None,
         source: str = "",
     ) -> dict[str, Any]:
+        """Answer a conversational question with optional history and context.
+
+        Read-only with best-effort auto-capture side effects. Use instead of
+        memo_ask when prior turns or explicit `context` should shape retrieval
+        and synthesis. `history` is a list of chat messages; `session_id`
+        links the answer to a tracked memo session.
+        """
         t0 = now_ms()
         merged_context = dict(context or {})
         if session_id and "session_id" not in merged_context:

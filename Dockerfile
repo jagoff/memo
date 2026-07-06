@@ -1,21 +1,28 @@
-FROM python:3.14-slim
+# Glama sandbox image: start the MCP stdio server by default so Glama can run
+# protocol introspection (tools/list, resources/list, prompts/list).
+FROM python:3.13-slim
 
-WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    MEMO_NONINTERACTIVE=1 \
+    MEMO_AUTO_UPDATE=0 \
+    MEMO_MCP_PROFILE=core \
+    MEMO_EMBEDDER_BACKEND=st \
+    MEMO_ST_EMBEDDER_MODEL=Qwen/Qwen3-Embedding-0.6B \
+    MEMO_EMBEDDER_DIMS=1024 \
+    MEMO_DATA_DIR=/data \
+    MEMO_STATE_DIR=/data/state \
+    HF_HOME=/opt/hf-cache
 
-# Install uv + git (needed for dependencies)
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch \
+    && pip install "mlx-memo[cpu]"
 
-# Install uv
-RUN pip install uv
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('Qwen/Qwen3-Embedding-0.6B')"
 
-# Copy repo
-COPY . .
+RUN useradd -m memo && mkdir -p /data/state /opt/hf-cache \
+    && chown -R memo:memo /data /opt/hf-cache
 
-# Install dependencies via uv
-RUN uv sync
+USER memo
+VOLUME /data
 
-# Set environment
-ENV PYTHONUNBUFFERED=1
-
-# Run memo-mcp server
 CMD ["memo-mcp"]

@@ -1,4 +1,3 @@
-import pytest
 from memo.memory.graph import Graph
 from memo.memory.record import MemoryRecord
 

@@ -2,9 +2,6 @@
 
 import time
 
-import pytest
-
-from memo.config import Config
 from memo.memory import Memory
 from memo.memory.record import MemoryRecord
 from memo.tiers import VerificationState

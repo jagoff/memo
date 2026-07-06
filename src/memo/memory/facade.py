@@ -152,6 +152,8 @@ class Memory(
         # Persistent contradiction sidecar — opened lazily so callers
         # that never scan don't pay for the extra sqlite handle.
         self._contradict_store: ContradictionStore | None = None
+        self._contradict_scanner: ContradictionScanner | None = None
+        self._consolidator: AdvancedConsolidator | None = None
         # Cache-tier manager (opt-in via MEMO_CACHE_MODE) — lazy @property
         # `cache`, memoized here. Construction triggers no cold-start and the
         # backend is built lazily on first use (see CacheManager.ensure_backend).
@@ -272,7 +274,11 @@ class Memory(
         """Lazy accessor for AdvancedConsolidator."""
         # _ensure_chat() (not raw self._chat, which is None until first use) so
         # the consolidator never receives a None LLM.
-        return AdvancedConsolidator(self, self._ensure_chat())
+        if self._consolidator is None:
+            with self._chat_lock:
+                if self._consolidator is None:
+                    self._consolidator = AdvancedConsolidator(self, self._ensure_chat())
+        return self._consolidator
 
     @property
     def contradict_store(self) -> ContradictionStore:
@@ -290,7 +296,13 @@ class Memory(
     @property
     def contradict_scanner(self) -> ContradictionScanner:
         """Lazy accessor for the corpus-wide contradiction scanner."""
-        return ContradictionScanner(self, self.contradict_store, self.temporal)
+        if self._contradict_scanner is None:
+            with self._chat_lock:
+                if self._contradict_scanner is None:
+                    self._contradict_scanner = ContradictionScanner(
+                        self, self.contradict_store, self.temporal
+                    )
+        return self._contradict_scanner
 
     @property
     def navigator(self) -> Any:

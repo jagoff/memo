@@ -33,8 +33,8 @@ from memo.memory.record import (
     chat_with_timeout,
     strip_llm_output,
 )
-from memo.tiers import VerificationState
 from memo.prompt_overrides import resolve_prompt
+from memo.tiers import VerificationState
 from memo.util import sha256_full as _sha256_full
 from memo.util import sha256_short as _sha256_short
 
@@ -290,13 +290,6 @@ class _MaintainOpsMixin(_MemoryBase):
             for _fk in (FORGET_AFTER_KEY, FORGET_REASON_KEY):
                 if _fk in meta and _fk not in extra:
                     extra = {**extra, _fk: meta[_fk]}
-
-            # Extract verification state (backward compatible: defaults to UNVERIFIED)
-            ver_state_str = meta.get("verification_state", "unverified")
-            try:
-                verification_state = VerificationState(ver_state_str)
-            except (ValueError, KeyError):
-                verification_state = VerificationState.UNVERIFIED
 
             # Extract verified_at timestamp (can be None)
             verified_at = meta.get("verified_at")

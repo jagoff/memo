@@ -360,7 +360,9 @@ class _SchemaMixin(_StoreBase):
                     added = True
                 except Exception as e:
                     _log.debug("schema migration col %r failed: %s", col, e)
-        if added:
+        version_row = self._conn.execute("PRAGMA user_version").fetchone()
+        user_version = int(version_row[0]) if version_row else 0
+        if added and user_version < 3:
             self.set_user_version(3)
         # Cache pattern-column presence so upsert/upsert_text_only skip a
         # per-write PRAGMA table_info(meta). `cols` reflects the post-migration

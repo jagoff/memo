@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from enum import Enum
+from enum import StrEnum
 
 
-class VerificationState(str, Enum):
+class VerificationState(StrEnum):
     """Verification state tracking for memories (UNVERIFIED/VERIFIED/STALE cycle)."""
 
     UNVERIFIED = "unverified"

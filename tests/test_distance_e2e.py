@@ -128,13 +128,13 @@ def test_distance_decay_disabled_preserves_order():
 
         try:
             # Save memories
-            fact_rec = memory.save(
+            memory.save(
                 content="Important fact about Python",
                 title="Python fact",
                 type_="fact",
             )
 
-            decision_rec = memory.save(
+            memory.save(
                 content="Decided to use Python",
                 title="Python decision",
                 type_="decision",
