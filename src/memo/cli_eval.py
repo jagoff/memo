@@ -24,6 +24,7 @@ import click
 from memo import eval_baseline, eval_recall
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
+from memo.cli_eval_bench import bench_group
 from memo.config import Config
 
 _CACHE_TTL_S = 24 * 3600
@@ -60,6 +61,9 @@ def _save_cache(cfg: Config, cache: dict) -> None:
 def eval_group() -> None:
     """Measure recall quality against the live corpus."""
     pass
+
+
+eval_group.add_command(bench_group)
 
 
 @eval_group.command(name="recall")

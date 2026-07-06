@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -603,3 +604,89 @@ def qa_accuracy_by_category(results: list[QAResult]) -> dict[str, dict[str, floa
         }
         for cat, rs in by_cat.items()
     }
+
+
+# --- Results receipt + markdown report --------------------------------------------------
+
+RECEIPT_SCHEMA = "memo.eval_bench.receipt.v1"
+
+
+def _safe_dir_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", name) or "sample"
+
+
+def runs_dir(state_dir: Path) -> Path:
+    return state_dir / "bench" / "runs"
+
+
+def write_receipt(state_dir: Path, receipt: dict[str, Any]) -> Path:
+    out = runs_dir(state_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    path = out / f"{receipt.get('dataset', 'bench')}-{ts}.json"
+    path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def load_receipts(
+    state_dir: Path, *, last: int = 3, dataset: str | None = None
+) -> list[dict[str, Any]]:
+    """Most-recent-first receipts (schema-checked, optionally dataset-filtered)."""
+    out: list[dict[str, Any]] = []
+    d = runs_dir(state_dir)
+    if not d.exists():
+        return out
+    for p in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            r = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(r, dict) or r.get("schema") != RECEIPT_SCHEMA:
+            continue
+        if dataset and r.get("dataset") != dataset:
+            continue
+        r["_file"] = p.name
+        out.append(r)
+        if len(out) >= last:
+            break
+    return out
+
+
+def render_report(receipts: list[dict[str, Any]]) -> str:
+    """Markdown comparison — one column per run, newest last; stable
+    `retrieval/<category>/<metric>` and `qa/<category>/accuracy` row keys so
+    runs stay comparable as categories come and go."""
+    if not receipts:
+        return "# memo eval bench\n\n_No runs found._\n"
+    cols = list(reversed(receipts))  # oldest → newest, newest last column
+    lines = ["# memo eval bench — run comparison", ""]
+    lines.append("| metric | " + " | ".join(str(c.get("_file", c.get("ts", "?"))) for c in cols) + " |")
+    lines.append("|" + "---|" * (len(cols) + 1))
+
+    def row(label: str, values: list[str]) -> str:
+        return f"| {label} | " + " | ".join(values) + " |"
+
+    lines.append(row("dataset", [str(c.get("dataset", "?")) for c in cols]))
+    lines.append(row("k", [str(c.get("k", "?")) for c in cols]))
+    lines.append(row("judge", [str(c.get("judge") or "—") for c in cols]))
+    ret_cats = sorted({cat for c in cols for cat in (c.get("retrieval") or {})})
+    for cat in ret_cats:
+        for metric in ("recall_at_k", "ndcg_at_k", "mrr", "precision_at_k", "n_questions"):
+            lines.append(
+                row(
+                    f"retrieval/{cat}/{metric}",
+                    [
+                        str((c.get("retrieval") or {}).get(cat, {}).get(metric, "—"))
+                        for c in cols
+                    ],
+                )
+            )
+    qa_cats = sorted({cat for c in cols for cat in (c.get("qa") or {})})
+    for cat in qa_cats:
+        lines.append(
+            row(
+                f"qa/{cat}/accuracy",
+                [str((c.get("qa") or {}).get(cat, {}).get("accuracy", "—")) for c in cols],
+            )
+        )
+    return "\n".join(lines) + "\n"

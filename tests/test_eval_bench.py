@@ -405,3 +405,55 @@ def test_api_judge_posts_openai_shape(monkeypatch):
     assert captured["auth"] == "Bearer sk-test"
     assert captured["body"]["model"] == "judge-1"
     assert captured["body"]["temperature"] == 0
+
+
+# --- receipt + report ------------------------------------------------------------------
+
+
+def _receipt(dataset="locomo", **kw):
+    base = {
+        "schema": eval_bench.RECEIPT_SCHEMA,
+        "ts": "2026-07-03T12:00:00",
+        "dataset": dataset,
+        "k": 5,
+        "n_samples": 1,
+        "judge": "mlx",
+        "llm_model": "m",
+        "embedder_model": "e",
+        "retrieval": {
+            "single_hop": {
+                "recall_at_k": 0.8, "ndcg_at_k": 0.7, "mrr": 0.6,
+                "precision_at_k": 0.3, "n_questions": 10,
+            }
+        },
+        "qa": {"single_hop": {"accuracy": 0.5, "n_questions": 10}},
+    }
+    base.update(kw)
+    return base
+
+
+def test_write_and_load_receipts_roundtrip(tmp_path):
+    p = eval_bench.write_receipt(tmp_path, _receipt())
+    assert p.parent == tmp_path / "bench" / "runs"
+    loaded = eval_bench.load_receipts(tmp_path, last=5)
+    assert len(loaded) == 1
+    assert loaded[0]["dataset"] == "locomo"
+    assert loaded[0]["_file"] == p.name
+    # dataset filter + schema filter
+    (p.parent / "junk.json").write_text('{"schema": "other"}', encoding="utf-8")
+    assert eval_bench.load_receipts(tmp_path, last=5, dataset="longmemeval_s") == []
+
+
+def test_render_report_stable_keys_across_runs(tmp_path):
+    r1 = {**_receipt(), "_file": "locomo-a.json"}
+    r2 = {**_receipt(), "_file": "locomo-b.json"}
+    r2["retrieval"]["single_hop"] = dict(r2["retrieval"]["single_hop"], recall_at_k=0.9)
+    md = eval_bench.render_report([r2, r1])  # newest-first in, newest last column out
+    assert "| retrieval/single_hop/recall_at_k | 0.8 | 0.9 |" in md
+    assert "| qa/single_hop/accuracy | 0.5 | 0.5 |" in md
+    assert eval_bench.render_report([]).startswith("# memo eval bench")
+
+
+def test_safe_dir_name():
+    assert eval_bench._safe_dir_name("conv-1") == "conv-1"
+    assert eval_bench._safe_dir_name("a/b c") == "a_b_c"
