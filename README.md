@@ -177,14 +177,74 @@ memo contradict triage                # resolve interactively: fuse / newer-wins
 
 The LLM classifies each candidate pair. Results persist in `contradictions.db`; resolved conflicts inform future saves.
 
-### 🔮 Synthesis pipeline
+### 🔮 Synthesis & autonomous maintenance
+
+#### Synthesis
 
 ```bash
 memo synthesize                       # generate cross-cluster insights (LLM)
-memo dream                            # nightly: signal gather → prune → orient
 ```
 
-`MEMO_SYNTHESIS_ENABLED=1` runs synthesis automatically during `memo maintain`. Nightly `memo dream` can also **self-tune recall** (`MEMO_DREAM_TUNE_ENABLED=1`): it mines ground-truth labels from real usage, adjusts the recall threshold, and auto-reverts if the eval baseline regresses.
+`MEMO_SYNTHESIS_ENABLED=1` runs synthesis automatically during `memo maintain`, creating type=`synthesis` memories from inferred cross-cluster patterns. Memories are cited with their source cluster.
+
+#### Dream — nightly self-healing pipeline
+
+`memo dream` is a **7-phase autonomous maintenance** engine that runs nightly (03:00 AM by default) to synthesize, heal, decay, and optimize the corpus with **no manual intervention**:
+
+```bash
+memo dream run                        # run once (foreground)
+memo dream status                     # show last run receipt + changes made
+memo dream if-due                     # no-op unless > 24h since last run (for launchd)
+```
+
+**What dream does:**
+
+1. **Orientation** (read-only) — inventory corpus: total memories, low-ROI candidates, stale (365d+), open contradictions, unindexed entities.
+2. **Signal gather** — mine transcripts for ground-truth labels and gaps.
+3. **Contradictions & consolidate** — scan + auto-resolve conflicts; merge high-similarity duplicates (cosine ≥ 0.9).
+4. **Archive stale** — move 365d+ untouched memories to `archive` tier (searchable, deprioritized).
+5. **ROI decay** — multiply `roi_score × 0.98` for idle (>30d) memories; frequently-accessed memories bubble up search results.
+6. **Synthesize & extract** — auto-generate cross-cluster insights (LLM); backfill missing entity links to knowledge graph.
+7. **Optimize** — prune low-quality floor, evict if corpus exceeds size ceiling (LFU), compress verbose context blocks, prewarm top-100 query embeddings for next-session latency.
+
+Every phase is **logged to a receipt** (`~/.memo-state/dream/last.json`):
+
+```json
+{
+  "timestamp": "2026-07-07T03:15:42Z",
+  "duration_sec": 1250,
+  "phases": {
+    "orientation": { "total": 1847, "low_roi": 12, "stale_candidates": 3, "contradictions": 1 },
+    "signal_gather": { "new_labels": 47 },
+    "contradictions": { "scanned": 1, "resolved": 1 },
+    "consolidated": { "clusters": 2, "merged": 3 },
+    "archived": 0,
+    "entities": { "backfilled": 18 },
+    "synthesized": 5,
+    "evicted": 0,
+    "compressed": 42
+  },
+  "errors": []
+}
+```
+
+<div align="center">
+
+<img src="docs/diagram-dream.svg" alt="Dream pipeline: 7 phases of orientation, signal gather, heal, prune, enrich, optimize, and prewarm — with optional self-improvement (tuner/consolidate/anticipate)" width="1000" />
+
+</div>
+
+**Self-improvement (opt-in, flag-gated):**
+
+Dream can also **auto-tune itself**. Three optional passes run on top of the core 7:
+
+- **Tuner** (`MEMO_DREAM_TUNE_ENABLED=1`) — mines ground-truth labels from real session usage, line-searches `MEMO_RECALL_MIN_SIM` over the live index, and auto-applies the best threshold. Verifies against the curated eval gate; auto-reverts if baseline regresses. Command: `memo dream tune`.
+- **Consolidate** (`MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED=1`) — groups recent episodes by project, abstracts recurring cross-session work into new type=`synthesis` summaries (distinct from per-turn signal gather).
+- **Anticipate** (`MEMO_DREAM_ANTICIPATE_ENABLED=1`) — surfaces recurring unmet gaps + hot queries, pre-warms their embeddings for next session. Never fabricates.
+
+All three default OFF — enable on demand or let the system auto-activate based on convergence checks.
+
+**Failures never silently vanish.** Every failure lands in the receipt; a failed phase doesn't stop the pipeline—subsequent phases run and record their results. Check `memo dream status` to inspect the receipt.
 
 ### 🌐 Cross-Mac git sync
 

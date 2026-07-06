@@ -1,0 +1,258 @@
+<svg viewBox="0 0 1200 1600" xmlns="http://www.w3.org/2000/svg">
+  <!-- Define styles -->
+  <defs>
+    <style>
+      .phase-box { fill: #f0f4f8; stroke: #2d3748; stroke-width: 2; }
+      .phase-title { font-size: 16px; font-weight: bold; fill: #1a202c; }
+      .phase-desc { font-size: 12px; fill: #4a5568; }
+      .arrow { stroke: #2d3748; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .section-label { font-size: 14px; font-weight: bold; fill: #5a67d8; }
+      .legend { font-size: 11px; fill: #718096; }
+      .time-label { font-size: 11px; font-weight: bold; fill: #22543d; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#2d3748" />
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="600" y="40" style="font-size: 28px; font-weight: bold; fill: #1a202c; text-anchor: middle;">
+    memo dream — Nightly Autonomous Maintenance Pipeline
+  </text>
+  <text x="600" y="70" style="font-size: 13px; fill: #4a5568; text-anchor: middle;">
+    Runs every 24h (03:00 AM default) to synthesize, heal, decay, and optimize the corpus
+  </text>
+
+  <!-- Timeline label -->
+  <text x="50" y="110" class="time-label">DURATION: ~15–45 min (corpus-dependent) | RECEIPT: ~/.memo-state/dream/last.json</text>
+
+  <!-- Phase 1: READ -->
+  <g>
+    <text x="50" y="160" class="section-label">PHASE 1: ORIENTATION (read-only)</text>
+
+    <!-- Orientation box -->
+    <rect x="50" y="180" width="320" height="140" class="phase-box"/>
+    <text x="210" y="210" class="phase-title" text-anchor="middle">📊 Orientation Inventory</text>
+    <text x="60" y="235" class="phase-desc">• Total memories by type</text>
+    <text x="60" y="255" class="phase-desc">• Low-ROI candidates (roi_score &lt; 0.3)</text>
+    <text x="60" y="275" class="phase-desc">• Stale (365d+ no access)</text>
+    <text x="60" y="295" class="phase-desc">• Contradiction pairs (open)</text>
+    <text x="60" y="315" class="phase-desc">• Entities missing from index</text>
+  </g>
+
+  <!-- Arrow 1 -->
+  <path d="M 210 320 L 210 370" class="arrow"/>
+
+  <!-- Phase 2: SIGNAL GATHER -->
+  <g>
+    <text x="50" y="360" class="section-label">PHASE 2: SIGNAL GATHER (transcript mining)</text>
+
+    <!-- Signal gather box -->
+    <rect x="50" y="380" width="320" height="120" class="phase-box"/>
+    <text x="210" y="410" class="phase-title" text-anchor="middle">⛏️ Mine Transcripts</text>
+    <text x="60" y="435" class="phase-desc">• Extract new facts from session logs</text>
+    <text x="60" y="455" class="phase-desc">• Build ground-truth labels for eval</text>
+    <text x="60" y="475" class="phase-desc">• Detect gaps in knowledge</text>
+  </g>
+
+  <!-- Arrow 2 -->
+  <path d="M 210 500 L 210 550" class="arrow"/>
+
+  <!-- Phase 3: CONTRADICTIONS & DEDUP -->
+  <g>
+    <text x="50" y="540" class="section-label">PHASE 3: HEAL (resolve conflicts &amp; duplicates)</text>
+
+    <!-- Contradictions box -->
+    <rect x="50" y="560" width="150" height="140" class="phase-box"/>
+    <text x="125" y="590" class="phase-title" text-anchor="middle">⚔️ Contradictions</text>
+    <text x="60" y="615" class="phase-desc">• Scan pairs (LLM)</text>
+    <text x="60" y="635" class="phase-desc">• Auto-resolve:</text>
+    <text x="60" y="650" class="phase-desc">  - newer wins</text>
+    <text x="60" y="665" class="phase-desc">  - merge if fused</text>
+
+    <!-- Consolidate box -->
+    <rect x="220" y="560" width="150" height="140" class="phase-box"/>
+    <text x="295" y="590" class="phase-title" text-anchor="middle">🔗 Consolidate</text>
+    <text x="230" y="615" class="phase-desc">• Find duplicates</text>
+    <text x="230" y="635" class="phase-desc">• High-similarity</text>
+    <text x="230" y="650" class="phase-desc">  clusters</text>
+    <text x="230" y="665" class="phase-desc">  (cosine ≥ 0.9)</text>
+  </g>
+
+  <!-- Arrow 3 -->
+  <path d="M 210 700 L 210 750" class="arrow"/>
+
+  <!-- Phase 4: ARCHIVE STALE -->
+  <g>
+    <text x="50" y="740" class="section-label">PHASE 4: PRUNE (decay old &amp; low-signal memories)</text>
+
+    <!-- Archive box -->
+    <rect x="50" y="760" width="150" height="140" class="phase-box"/>
+    <text x="125" y="790" class="phase-title" text-anchor="middle">🗂️ Archive Stale</text>
+    <text x="60" y="815" class="phase-desc">• 365d+ no access</text>
+    <text x="60" y="835" class="phase-desc">  (move to 'archive'</text>
+    <text x="60" y="850" class="phase-desc">  tier, searchable</text>
+    <text x="60" y="865" class="phase-desc">  but deprioritized)</text>
+
+    <!-- ROI Decay box -->
+    <rect x="220" y="760" width="150" height="140" class="phase-box"/>
+    <text x="295" y="790" class="phase-title" text-anchor="middle">📉 ROI Decay</text>
+    <text x="230" y="815" class="phase-desc">• Idle &gt; 30d:</text>
+    <text x="230" y="835" class="phase-desc">  roi_score ×= 0.98</text>
+    <text x="230" y="850" class="phase-desc">• Frequent wins</text>
+    <text x="230" y="865" class="phase-desc">  search results</text>
+  </g>
+
+  <!-- Arrow 4 -->
+  <path d="M 210 900 L 210 950" class="arrow"/>
+
+  <!-- Phase 5: SYNTHESIS & ENTITIES -->
+  <g>
+    <text x="50" y="940" class="section-label">PHASE 5: ENRICH (synthesize insights &amp; extract entities)</text>
+
+    <!-- Synthesis box -->
+    <rect x="50" y="960" width="150" height="140" class="phase-box"/>
+    <text x="125" y="990" class="phase-title" text-anchor="middle">🔮 Synthesize</text>
+    <text x="60" y="1015" class="phase-desc">• Cross-cluster</text>
+    <text x="60" y="1035" class="phase-desc">  inference (LLM)</text>
+    <text x="60" y="1050" class="phase-desc">• Auto-create new</text>
+    <text x="60" y="1065" class="phase-desc">  type=synthesis</text>
+    <text x="60" y="1080" class="phase-desc">  memories</text>
+
+    <!-- Entities box -->
+    <rect x="220" y="960" width="150" height="140" class="phase-box"/>
+    <text x="295" y="990" class="phase-title" text-anchor="middle">🔤 Extract Entities</text>
+    <text x="230" y="1015" class="phase-desc">• Backfill unindexed</text>
+    <text x="230" y="1035" class="phase-desc">  memories</text>
+    <text x="230" y="1050" class="phase-desc">• Link to knowledge</text>
+    <text x="230" y="1065" class="phase-desc">  graph</text>
+  </g>
+
+  <!-- Arrow 5 -->
+  <path d="M 210 1100 L 210 1150" class="arrow"/>
+
+  <!-- Phase 6: OPTIMIZE -->
+  <g>
+    <text x="50" y="1140" class="section-label">PHASE 6: OPTIMIZE (index hygiene &amp; warmth)</text>
+
+    <!-- Prune Floor box -->
+    <rect x="50" y="1160" width="110" height="140" class="phase-box"/>
+    <text x="105" y="1190" class="phase-title" text-anchor="middle">🏷️ Prune Floor</text>
+    <text x="60" y="1215" class="phase-desc">• Remove low</text>
+    <text x="60" y="1230" class="phase-desc">  quality below</text>
+    <text x="60" y="1245" class="phase-desc">  threshold</text>
+
+    <!-- Evict box -->
+    <rect x="170" y="1160" width="110" height="140" class="phase-box"/>
+    <text x="225" y="1190" class="phase-title" text-anchor="middle">🧹 Evict</text>
+    <text x="180" y="1215" class="phase-desc">• LFU-evict if</text>
+    <text x="180" y="1230" class="phase-desc">  corpus hits</text>
+    <text x="180" y="1245" class="phase-desc">  size ceiling</text>
+
+    <!-- Compress box -->
+    <rect x="290" y="1160" width="110" height="140" class="phase-box"/>
+    <text x="345" y="1190" class="phase-title" text-anchor="middle">📦 Compress</text>
+    <text x="300" y="1215" class="phase-desc">• Minify verbose</text>
+    <text x="300" y="1230" class="phase-desc">  context blocks</text>
+  </g>
+
+  <!-- Arrow 6 -->
+  <path d="M 210 1300 L 210 1350" class="arrow"/>
+
+  <!-- Phase 7: PREWARM -->
+  <g>
+    <text x="50" y="1340" class="section-label">PHASE 7: PREWARM (prepare for next session)</text>
+
+    <!-- Prewarm box -->
+    <rect x="50" y="1360" width="320" height="80" class="phase-box"/>
+    <text x="210" y="1390" class="phase-title" text-anchor="middle">🔥 Prewarm Query Cache</text>
+    <text x="60" y="1415" class="phase-desc">• Embed common queries (~top 100 from session history)</text>
+    <text x="60" y="1430" class="phase-desc">• Cache embeddings → next-session recall under 200 ms</text>
+  </g>
+
+  <!-- Right side: SELF-IMPROVEMENT (optional, flag-gated) -->
+  <g>
+    <text x="500" y="160" class="section-label">🤖 SELF-IMPROVEMENT (opt-in, flag-gated)</text>
+
+    <!-- Tuner box -->
+    <rect x="450" y="180" width="280" height="180" class="phase-box" style="stroke-dasharray: 5,5;"/>
+    <text x="590" y="210" class="phase-title" text-anchor="middle">🎯 Tuner (MEMO_DREAM_TUNE_ENABLED)</text>
+    <text x="460" y="235" class="phase-desc">• Mine ground-truth labels from grounding.log</text>
+    <text x="460" y="255" class="phase-desc">• Line-search MEMO_RECALL_MIN_SIM over live index</text>
+    <text x="460" y="275" class="phase-desc">• Auto-apply winner → ~/.memo-state/tuned_params.json</text>
+    <text x="460" y="295" class="phase-desc">• Verify against eval/regression_labels.json</text>
+    <text x="460" y="315" class="phase-desc">• Auto-revert if baseline regresses</text>
+    <text x="460" y="335" class="phase-desc">Command: memo dream tune</text>
+  </g>
+
+  <!-- Consolidate Episodes -->
+  <g>
+    <rect x="450" y="380" width="280" height="160" class="phase-box" style="stroke-dasharray: 5,5;"/>
+    <text x="590" y="410" class="phase-title" text-anchor="middle">📚 Consolidate (MEMO_DREAM_CONSOLIDATE)</text>
+    <text x="460" y="435" class="phase-desc">• Group recent episodes by project</text>
+    <text x="460" y="455" class="phase-desc">• Abstract recurring cross-session work</text>
+    <text x="460" y="475" class="phase-desc">• Create type=synthesis summaries</text>
+    <text x="460" y="495" class="phase-desc">Command: memo dream consolidate</text>
+  </g>
+
+  <!-- Anticipate -->
+  <g>
+    <rect x="450" y="560" width="280" height="160" class="phase-box" style="stroke-dasharray: 5,5;"/>
+    <text x="590" y="590" class="phase-title" text-anchor="middle">🔭 Anticipate (MEMO_DREAM_ANTICIPATE)</text>
+    <text x="460" y="615" class="phase-desc">• Surface recurring unmet gaps</text>
+    <text x="460" y="635" class="phase-desc">• Detect hot queries (frequent searches)</text>
+    <text x="460" y="655" class="phase-desc">• Pre-warm their embeddings</text>
+    <text x="460" y="675" class="phase-desc">Command: memo dream anticipate</text>
+  </g>
+
+  <!-- Output Receipt -->
+  <g>
+    <rect x="450" y="800" width="280" height="220" style="fill: #edf2f7; stroke: #3182ce; stroke-width: 2;"/>
+    <text x="590" y="830" class="phase-title" text-anchor="middle" style="fill: #3182ce;">📋 Receipt (.memo-state/dream/last.json)</text>
+    <text x="460" y="855" class="phase-desc">• timestamp: when ran</text>
+    <text x="460" y="875" class="phase-desc">• duration_sec: elapsed time</text>
+    <text x="460" y="895" class="phase-desc">• phases: { orientation, signal_gather, …}</text>
+    <text x="460" y="915" class="phase-desc">• counts: { contradictions_resolved,</text>
+    <text x="460" y="930" class="phase-desc">  duplicates_consolidated, archived,</text>
+    <text x="460" y="945" class="phase-desc">  entities_backfilled, synthesized, … }</text>
+    <text x="460" y="965" class="phase-desc">• errors: [] (failures recorded here)</text>
+    <text x="460" y="985" class="phase-desc">• fingerprint: corpus hash (convergence check)</text>
+    <text x="460" y="1005" class="phase-desc">Command: memo dream status</text>
+  </g>
+
+  <!-- Key Facts Box -->
+  <g>
+    <rect x="450" y="1070" width="280" height="370" style="fill: #fffaf0; stroke: #ed8936; stroke-width: 2;"/>
+    <text x="590" y="1100" class="phase-title" text-anchor="middle" style="fill: #ed8936;">📌 Key Facts</text>
+
+    <text x="460" y="1130" class="phase-desc" style="font-weight: bold;">Trigger:</text>
+    <text x="460" y="1150" class="phase-desc">• LaunchAgent @ 03:00 AM (macOS)</text>
+    <text x="460" y="1170" class="phase-desc">• memo dream if-due (24h guard)</text>
+
+    <text x="460" y="1200" class="phase-desc" style="font-weight: bold;">Flags (all default OFF):</text>
+    <text x="460" y="1220" class="phase-desc">• MEMO_DREAM_TUNE_ENABLED=1</text>
+    <text x="460" y="1240" class="phase-desc">• MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED=1</text>
+    <text x="460" y="1260" class="phase-desc">• MEMO_DREAM_ANTICIPATE_ENABLED=1</text>
+
+    <text x="460" y="1290" class="phase-desc" style="font-weight: bold;">Failures:</text>
+    <text x="460" y="1310" class="phase-desc">• Recorded in receipt["errors"]</text>
+    <text x="460" y="1330" class="phase-desc">• NEVER silently swallowed</text>
+
+    <text x="460" y="1360" class="phase-desc" style="font-weight: bold;">Rollback:</text>
+    <text x="460" y="1380" class="phase-desc">• memo dream tune --rollback</text>
+    <text x="460" y="1400" class="phase-desc">• Reverts auto-tuned params</text>
+  </g>
+
+  <!-- Bottom: Example command sequence -->
+  <g>
+    <text x="50" y="1480" class="section-label">📖 Example Commands</text>
+    <rect x="50" y="1500" width="680" height="80" style="fill: #f7fafc; stroke: #4a5568; stroke-width: 1;"/>
+    <text x="60" y="1525" style="font-family: monospace; font-size: 11px; fill: #1a202c;">memo dream run</text>
+    <text x="60" y="1545" style="font-family: monospace; font-size: 11px; fill: #1a202c;">memo dream status</text>
+    <text x="60" y="1565" style="font-family: monospace; font-size: 11px; fill: #1a202c;">memo dream if-due</text>
+
+    <text x="280" y="1525" style="font-family: monospace; font-size: 11px; fill: #1a202c;">memo dream tune</text>
+    <text x="280" y="1545" style="font-family: monospace; font-size: 11px; fill: #1a202c;">memo dream consolidate</text>
+    <text x="280" y="1565" style="font-family: monospace; font-size: 11px; fill: #1a202c;">MEMO_DREAM_TUNE_ENABLED=1 memo dream run</text>
+  </g>
+</svg>
