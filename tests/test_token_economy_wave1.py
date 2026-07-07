@@ -301,3 +301,131 @@ def test_crush_invalid_json_not_crushed(monkeypatch):
         # Should not crash, just return original
         assert crushed == json_content
         assert hash_val is None
+
+
+# --- Task 2.3: Tests for retrieve command ---
+
+
+def test_retrieve_command_via_mcp_tool():
+    """MCP tool memo_crush_retrieve retrieves cached JSON."""
+    from src.memo.server_crush import register as register_crush
+    from src.memo.config import Config
+    from src.memo.memory import Memory
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_dir = Path(tmpdir) / "state"
+        data_dir = Path(tmpdir) / "data"
+        vault_dir = Path(tmpdir) / "vault"
+        state_dir.mkdir()
+        data_dir.mkdir()
+        vault_dir.mkdir()
+
+        # Store a JSON in cache
+        cache = CrushCache(state_dir)
+        original = json.dumps([{"id": 1}, {"id": 2}])
+        hash_val = "abc123def456"
+        cache.cache(hash_val, original)
+
+        # Create Memory and mock server
+        config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False)
+        memory = Memory(config)
+
+        try:
+            from unittest.mock import MagicMock
+            mock_server = MagicMock()
+            tool_functions = {}
+
+            def capture_tool(name=None, **kwargs):
+                def decorator(func):
+                    tool_functions[name or func.__name__] = func
+                    return func
+                return decorator
+
+            mock_server.tool = capture_tool
+            register_crush(mock_server, memory)
+            memo_crush_retrieve = tool_functions["memo_crush_retrieve"]
+
+            # Test successful retrieval
+            result = memo_crush_retrieve(f"<<memo-crush:{hash_val}>>")
+            assert result["original"] == original
+            assert result["hash"] == hash_val
+        finally:
+            memory.close()
+
+
+def test_retrieve_mcp_tool_missing_cache_entry():
+    """MCP tool returns error for missing cache entry."""
+    from src.memo.server_crush import register as register_crush
+    from src.memo.config import Config
+    from src.memo.memory import Memory
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_dir = Path(tmpdir) / "state"
+        data_dir = Path(tmpdir) / "data"
+        vault_dir = Path(tmpdir) / "vault"
+        state_dir.mkdir()
+        data_dir.mkdir()
+        vault_dir.mkdir()
+
+        config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False)
+        memory = Memory(config)
+
+        try:
+            from unittest.mock import MagicMock
+            mock_server = MagicMock()
+            tool_functions = {}
+
+            def capture_tool(name=None, **kwargs):
+                def decorator(func):
+                    tool_functions[name or func.__name__] = func
+                    return func
+                return decorator
+
+            mock_server.tool = capture_tool
+            register_crush(mock_server, memory)
+            memo_crush_retrieve = tool_functions["memo_crush_retrieve"]
+
+            # Test error for nonexistent hash
+            result = memo_crush_retrieve("<<memo-crush:nonexistent>>")
+            assert "error" in result
+        finally:
+            memory.close()
+
+
+def test_retrieve_mcp_tool_invalid_marker_format():
+    """MCP tool rejects invalid marker format."""
+    from src.memo.server_crush import register as register_crush
+    from src.memo.config import Config
+    from src.memo.memory import Memory
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_dir = Path(tmpdir) / "state"
+        data_dir = Path(tmpdir) / "data"
+        vault_dir = Path(tmpdir) / "vault"
+        state_dir.mkdir()
+        data_dir.mkdir()
+        vault_dir.mkdir()
+
+        config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False)
+        memory = Memory(config)
+
+        try:
+            from unittest.mock import MagicMock
+            mock_server = MagicMock()
+            tool_functions = {}
+
+            def capture_tool(name=None, **kwargs):
+                def decorator(func):
+                    tool_functions[name or func.__name__] = func
+                    return func
+                return decorator
+
+            mock_server.tool = capture_tool
+            register_crush(mock_server, memory)
+            memo_crush_retrieve = tool_functions["memo_crush_retrieve"]
+
+            # Test invalid marker format
+            result = memo_crush_retrieve("invalid-marker")
+            assert "error" in result
+        finally:
+            memory.close()
