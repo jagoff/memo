@@ -12,12 +12,13 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_CRUSHER_ENABLED",
         "bool",
-        True,
+        False,
         "capture",
         "Enable JSON array crushing on ingest (L1 SmartCrusher). When on, large JSON "
-        "arrays are deduplicated before indexing, keeping only high-relevance rows and "
-        "caching originals for later retrieval. Default: ON. Set to 0 to disable.",
-        opt_out=True,
+        "arrays are pruned before indexing, keeping only high-relevance rows and "
+        "caching originals for later retrieval. Default: OFF (opt-in) until the "
+        "relevance scorer is real and the token-savings gate has passed — the current "
+        "scorer is a placeholder that would drop rows arbitrarily. Set to 1 to enable.",
     ),
     _spec(
         "MEMO_CRUSHER_ROWS_KEEP_RATIO",
@@ -42,7 +43,7 @@ SPECS: tuple[FlagSpec, ...] = (
 
 
 def flag_crusher_enabled() -> bool:
-    """Enable JSON array crushing on ingest (default: ON)."""
+    """Enable JSON array crushing on ingest (default: OFF until scorer real + gated)."""
     from memo.flags import flag_bool
     return flag_bool("MEMO_CRUSHER_ENABLED")
 

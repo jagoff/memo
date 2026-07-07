@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from freezegun import freeze_time
 
-from src.memo.store.crush_cache import CrushCache, crush_marker
+from memo.store.crush_cache import CrushCache, crush_marker
 
 
 def test_crush_cache_stores_and_retrieves():
@@ -50,9 +50,9 @@ def test_crush_cache_ttl_expiration():
 
         with freeze_time("2026-08-10"):  # 34 days later
             assert cache.retrieve(hash_val, ttl_days=30) is None
-
-        evicted = cache.evict_expired(ttl_days=30)
-        assert evicted == 1
+            # Eviction must run at the future time so the entry reads as expired
+            evicted = cache.evict_expired(ttl_days=30)
+            assert evicted == 1
 
 
 def test_crush_cache_missing_returns_none():
@@ -99,9 +99,12 @@ def test_crush_cache_evict_expired_with_multiple_entries():
         with freeze_time("2026-08-10"):  # 34 days later
             cache.cache("new1", json.dumps({"data": "new"}))
 
-        # Evict with 30-day TTL
-        evicted = cache.evict_expired(ttl_days=30)
-        assert evicted == 2
+            # Evict at the future time: old1/old2 are 34d old (expired), new1 is fresh
+            evicted = cache.evict_expired(ttl_days=30)
+            assert evicted == 2
+
+            # Fresh entry survived
+            assert cache.retrieve("new1", ttl_days=30) is not None
 
         # Verify fresh entry still there
         assert cache.retrieve("new1") == json.dumps({"data": "new"})
@@ -140,7 +143,7 @@ def test_crush_marker_with_different_dropped_counts():
 
 def test_maybe_inject_verbosity_steering_idempotent():
     """Verbosity steering is idempotent (doesn't double-inject)."""
-    from src.memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from memo.cli_recall_hook import maybe_inject_verbosity_steering
 
     prompt = "You are a helpful assistant."
 
@@ -155,7 +158,7 @@ def test_maybe_inject_verbosity_steering_idempotent():
 
 def test_maybe_inject_verbosity_respects_level():
     """Verbosity levels produce correct steering text."""
-    from src.memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from memo.cli_recall_hook import maybe_inject_verbosity_steering
 
     prompt = "Base prompt."
 
@@ -175,7 +178,7 @@ def test_maybe_inject_verbosity_respects_level():
 
 def test_flag_recall_verbosity_level(monkeypatch):
     """Flag resolves verbosity level from env."""
-    from src.memo.flags_recall import flag_recall_verbosity_level
+    from memo.flags_recall import flag_recall_verbosity_level
 
     monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "2")
     assert flag_recall_verbosity_level() == 2
@@ -209,8 +212,8 @@ def test_crush_cache_unicode_content():
 
 def test_maybe_crush_json_capture_detects_json():
     """Crusher detects JSON arrays in capture content."""
-    from src.memo.capture_core import maybe_crush_json_capture
-    from src.memo.config import Config
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.config import Config
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
@@ -234,8 +237,8 @@ def test_maybe_crush_json_capture_detects_json():
 
 def test_maybe_crush_json_respects_disable_flag(monkeypatch):
     """Crusher respects MEMO_CRUSHER_ENABLED=0."""
-    from src.memo.capture_core import maybe_crush_json_capture
-    from src.memo.config import Config
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.config import Config
 
     monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "0")
 
@@ -257,8 +260,8 @@ def test_maybe_crush_json_respects_disable_flag(monkeypatch):
 
 def test_crush_preserves_structure(monkeypatch):
     """Crushed JSON keeps top-K rows + marker."""
-    from src.memo.capture_core import maybe_crush_json_capture
-    from src.memo.config import Config
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.config import Config
 
     monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
     monkeypatch.setenv("MEMO_CRUSHER_KEEP_RATIO", "0.2")
@@ -287,8 +290,8 @@ def test_crush_preserves_structure(monkeypatch):
 
 def test_crush_json_too_small_not_crushed(monkeypatch):
     """Crusher skips arrays smaller than threshold (< 10 rows)."""
-    from src.memo.capture_core import maybe_crush_json_capture
-    from src.memo.config import Config
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.config import Config
 
     monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
 
@@ -310,8 +313,8 @@ def test_crush_json_too_small_not_crushed(monkeypatch):
 
 def test_crush_json_non_array_not_crushed(monkeypatch):
     """Crusher skips non-array JSON."""
-    from src.memo.capture_core import maybe_crush_json_capture
-    from src.memo.config import Config
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.config import Config
 
     monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
 
@@ -334,8 +337,8 @@ def test_crush_json_non_array_not_crushed(monkeypatch):
 
 def test_crush_invalid_json_not_crushed(monkeypatch):
     """Crusher skips invalid JSON."""
-    from src.memo.capture_core import maybe_crush_json_capture
-    from src.memo.config import Config
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.config import Config
 
     monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
 
@@ -360,9 +363,9 @@ def test_crush_invalid_json_not_crushed(monkeypatch):
 
 def test_retrieve_command_via_mcp_tool():
     """MCP tool memo_crush_retrieve retrieves cached JSON."""
-    from src.memo.server_crush import register as register_crush
-    from src.memo.config import Config
-    from src.memo.memory import Memory
+    from memo.server_crush import register as register_crush
+    from memo.config import Config
+    from memo.memory import Memory
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
@@ -407,9 +410,9 @@ def test_retrieve_command_via_mcp_tool():
 
 def test_retrieve_mcp_tool_missing_cache_entry():
     """MCP tool returns error for missing cache entry."""
-    from src.memo.server_crush import register as register_crush
-    from src.memo.config import Config
-    from src.memo.memory import Memory
+    from memo.server_crush import register as register_crush
+    from memo.config import Config
+    from memo.memory import Memory
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
@@ -446,9 +449,9 @@ def test_retrieve_mcp_tool_missing_cache_entry():
 
 def test_retrieve_mcp_tool_invalid_marker_format():
     """MCP tool rejects invalid marker format."""
-    from src.memo.server_crush import register as register_crush
-    from src.memo.config import Config
-    from src.memo.memory import Memory
+    from memo.server_crush import register as register_crush
+    from memo.config import Config
+    from memo.memory import Memory
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
@@ -494,9 +497,9 @@ def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
     monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
     monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "2")
 
-    from src.memo.capture_core import maybe_crush_json_capture
-    from src.memo.cli_recall_hook import maybe_inject_verbosity_steering
-    from src.memo.config import Config
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from memo.config import Config
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
@@ -528,7 +531,7 @@ def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
             assert "_compressed" in crushed_obj[-1]
 
             # Step 4: Retrieve via cache
-            from src.memo.store.crush_cache import CrushCache
+            from memo.store.crush_cache import CrushCache
             cache = CrushCache(state_dir)
             original = cache.retrieve(hash_val)
             assert original == large_json
@@ -549,11 +552,11 @@ def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
 
 def test_wave1_flags_integration(monkeypatch):
     """Wave 1 flags work together (crusher + verbosity) and are independently disableable."""
-    from src.memo.capture_core import maybe_crush_json_capture
-    from src.memo.cli_recall_hook import maybe_inject_verbosity_steering
-    from src.memo.config import Config
-    from src.memo.flags_capture import flag_crusher_enabled
-    from src.memo.flags_recall import flag_recall_verbosity_level
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from memo.config import Config
+    from memo.flags_capture import flag_crusher_enabled
+    from memo.flags_recall import flag_recall_verbosity_level
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
