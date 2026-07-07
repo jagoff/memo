@@ -490,4 +490,25 @@ SPECS: tuple[FlagSpec, ...] = (
         "bands cached to state_dir/precision_bands.json by the Stop hook). "
         "Default OFF: with this unset, recall behavior is unchanged.",
     ),
+    _spec(
+        "MEMO_RECALL_VERBOSITY_LEVEL",
+        "int",
+        0,
+        "recall",
+        "Verbosity steering for recall output (L4 token savings): 0 (no steering) | "
+        "1 (skip preamble/postamble) | 2 (skip code restatement, reference by path+line) | "
+        "3 (minimum tokens, fragments OK, no preamble unless asked). Wave 1 L4 lever; "
+        "byte-stable per level for idempotency; default 0 for backward compatibility.",
+        min_val=0,
+        max_val=3,
+    ),
 )
+
+
+def flag_recall_verbosity_level() -> int:
+    """Verbosity level for recall hook output steering (0–3, default: 0 = no steering)."""
+    from memo.flags import flag_int
+    val = flag_int("MEMO_RECALL_VERBOSITY_LEVEL")
+    if val is None:
+        return 0
+    return max(0, min(3, val))  # Clamp to [0, 3]

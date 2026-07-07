@@ -1097,3 +1097,81 @@ def extract_and_save_text(
             "retyped": 0,
         }
     return {"status": "extracted", **result}
+
+
+def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, str | None]:
+    """Apply SmartCrusher to JSON arrays in capture content.
+
+    Detects JSON arrays, scores rows by relevance, keeps top-K, and offloads
+    the rest to cache. Returns crushed content (original if not applicable)
+    and a hash for retrieval.
+
+    Args:
+        content: Captured text (may contain JSON array)
+        context: Query/context for relevance scoring (currently unused,
+                 TBD for real scorer integration)
+        config: Config instance (for state_dir access)
+
+    Returns:
+        Tuple of (crushed_content_or_original, crush_hash_if_crushed_else_None)
+
+    **Scorer integration (TBD):** Currently uses placeholder 0.5 score for all
+    rows. Should integrate with memo.memory.search_logic.hybrid_score() or
+    equivalent once available. See plan line 389.
+    """
+    import hashlib
+
+    from memo.config import Config
+    from memo.flags_capture import flag_crusher_cache_ttl_days, flag_crusher_enabled, flag_crusher_keep_ratio
+    from memo.store.crush_cache import CrushCache, crush_marker
+
+    if not flag_crusher_enabled():
+        return content, None
+
+    # Try to detect JSON array
+    content_stripped = content.strip()
+    if not (content_stripped.startswith("[") and content_stripped.endswith("]")):
+        return content, None
+
+    try:
+        json_array = json.loads(content_stripped)
+    except (json.JSONDecodeError, TypeError):
+        return content, None
+
+    if not isinstance(json_array, list) or len(json_array) < 10:
+        # Don't crush small arrays
+        return content, None
+
+    # Score rows (placeholder: use 0.5 for all rows)
+    # TODO: Replace with real hybrid_score from memo.memory.search_logic
+    keep_ratio = flag_crusher_keep_ratio()
+    keep_count = max(10, int(len(json_array) * keep_ratio))
+
+    # Simple scoring: for now, use placeholder (all rows equally scored)
+    # Each row gets a synthetic score based on its position/content
+    # (keeping order deterministic for testing)
+    scores = []
+    for i, row in enumerate(json_array):
+        # Placeholder scoring: all rows get 0.5
+        # In production, this should call hybrid_score with the context
+        score = 0.5
+        scores.append(score)
+
+    # Keep top-K
+    top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:keep_count]
+    top_indices.sort()  # Preserve original order
+
+    crushed_array = [json_array[i] for i in top_indices]
+    dropped_count = len(json_array) - len(crushed_array)
+
+    # Add marker
+    hash_val = hashlib.sha256(content_stripped.encode()).hexdigest()[:16]
+    crushed_array.append(crush_marker(dropped_count, hash_val))
+
+    # Cache original
+    if isinstance(config, Config):
+        cache = CrushCache(config.state_dir)
+        cache.cache(hash_val, content_stripped)
+
+    crushed_content = json.dumps(crushed_array, ensure_ascii=False)
+    return crushed_content, hash_val

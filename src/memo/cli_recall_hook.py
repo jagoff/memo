@@ -44,6 +44,39 @@ _TRIVIAL_WORDS: frozenset[str] = frozenset(
 )
 
 
+def maybe_inject_verbosity_steering(system_prompt: str, level: int) -> str:
+    """Append idempotent verbosity steering block to system prompt.
+
+    Levels (cumulative, byte-stable):
+    0: No steering (return unchanged)
+    1: "Skip preamble and postamble. Start with substance."
+    2: "Skip preamble/postamble. Never restate code/diffs; reference by path+line. After tool success, continue without narrating."
+    3: "Minimum tokens. Fragments OK. No preamble, no rationale unless asked."
+    """
+    VERBOSITY_TEXTS = {
+        0: "",
+        1: "Skip preamble and postamble. Start with substance.",
+        2: "Skip preamble/postamble. Never restate code/diffs; reference by path+line. After tool success, continue without narrating.",
+        3: "Minimum tokens. Fragments OK. No preamble, no rationale unless asked.",
+    }
+
+    level = max(0, min(3, level))  # Clamp
+    if level == 0:
+        return system_prompt
+
+    SENTINEL_START = "<headroom_recall_verbosity>"
+    SENTINEL_END = "</headroom_recall_verbosity>"
+
+    # Check if already injected (idempotency)
+    if SENTINEL_START in system_prompt and SENTINEL_END in system_prompt:
+        return system_prompt
+
+    steering_text = VERBOSITY_TEXTS[level]
+    steering_block = f"\n{SENTINEL_START}{level}\n{steering_text}\n{SENTINEL_END}"
+
+    return system_prompt + steering_block
+
+
 @click.command(name="recall-hook")
 def recall_hook() -> None:
     """UserPromptSubmit hook — inject relevant memories as additionalContext."""
@@ -504,6 +537,13 @@ def recall_hook() -> None:
     context = render_associative_line(context, _nudge, token_budget=token_budget)
     if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
         context = f"{context}\n{CITE_INSTRUCTION}"
+
+    # Apply verbosity steering (L4 token savings) if enabled
+    from memo.flags_recall import flag_recall_verbosity_level
+    verbosity_level = flag_recall_verbosity_level()
+    if verbosity_level > 0:
+        context = maybe_inject_verbosity_steering(context, verbosity_level)
+
     if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
         approx = _est_tokens(context)
         print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=sys.stderr)

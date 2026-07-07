@@ -29,6 +29,7 @@ from typing import Any
 # Re-export base types so existing `from memo.flags import FlagSpec` imports still work.
 from memo.flags_base import _FALSE, _TRUE, FlagKind, FlagSpec, _spec  # noqa: F401
 from memo.flags_behavior import SPECS as _behavior_specs
+from memo.flags_capture import SPECS as _capture_specs
 from memo.flags_ingest import SPECS as _ingest_specs
 from memo.flags_misc import SPECS as _misc_specs
 from memo.flags_recall import SPECS as _recall_specs
@@ -38,7 +39,7 @@ _log = logging.getLogger(__name__)
 
 # ── Registry ────────────────────────────────────────────────────────────────
 _SPECS: tuple[FlagSpec, ...] = (
-    _recall_specs + _search_specs + _behavior_specs + _ingest_specs + _misc_specs
+    _recall_specs + _search_specs + _behavior_specs + _capture_specs + _ingest_specs + _misc_specs
 )
 
 REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}
