@@ -11,7 +11,16 @@
 [![Python](https://img.shields.io/pypi/pyversions/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
-[![Glama](https://img.shields.io/badge/Glama-A%20quality-22c55e)](https://glama.ai/mcp/servers/jagoff/memo)
+<a href="https://glama.ai/mcp/servers/jagoff/memo">
+  <img src="https://glama.ai/mcp/servers/jagoff/memo/badges/score.svg" alt="memo MCP server score" />
+</a>
+
+<br />
+<br />
+
+<a href="https://glama.ai/mcp/servers/jagoff/memo">
+  <img src="https://glama.ai/mcp/servers/jagoff/memo/badges/card.svg" alt="memo MCP server on Glama" width="380" />
+</a>
 
 </div>
 
