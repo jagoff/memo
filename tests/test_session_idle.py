@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -164,6 +165,7 @@ def test_idle_maintenance_reflect_runs_when_session_is_still_current(
     monkeypatch.setenv("MEMO_CAPTURE_DISABLE", "0")
 
     calls = []
+    events: list[str] = []
 
     def _fake_get_session(state_dir, session_id):
         return {
@@ -174,6 +176,9 @@ def test_idle_maintenance_reflect_runs_when_session_is_still_current(
     class _FakeMemory:
         def __init__(self, cfg):
             self.cfg = cfg
+
+        def close(self):
+            events.append("closed")
 
     def _fake_reflect(session_id, mem, cfg, debug=False):
         calls.append((session_id, isinstance(mem, _FakeMemory), debug))
@@ -200,6 +205,7 @@ def test_idle_maintenance_reflect_runs_when_session_is_still_current(
 
     assert result.exit_code == 0, result.output
     assert calls == [("sid-3", True, False)]
+    assert events == ["closed"]
 
 
 def test_idle_maintenance_detaches_worker_and_returns(tmp_cfg, monkeypatch, tmp_path):
@@ -251,3 +257,97 @@ def test_idle_maintenance_detaches_worker_and_returns(tmp_cfg, monkeypatch, tmp_
     assert "--detached-worker" in spawned["args"]
     assert "idle-maintenance" in spawned["args"]
     assert captured == []  # capture runs in the detached child, not inline
+
+
+def test_idle_maintenance_env_zero_delay_is_preserved(tmp_cfg, monkeypatch, tmp_path):
+    """MEMO_SESSION_IDLE_CAPTURE_SECS=0 must be forwarded as 0, not 10."""
+    from memo import cli_session as cli_session_mod
+
+    monkeypatch.setattr(cli_session_mod.Config, "from_env", lambda: tmp_cfg)
+    monkeypatch.setenv("MEMO_SESSION_DISABLE", "0")
+    monkeypatch.setenv("MEMO_CAPTURE_DISABLE", "0")
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("")
+    spawned: dict = {}
+
+    class _FakeProc:
+        def __init__(self, *a, **k):
+            spawned["args"] = a[0] if a else k.get("args")
+
+            class _Stdin:
+                def write(self, _b):
+                    pass
+
+                def close(self):
+                    pass
+
+            self.stdin = _Stdin()
+
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+    monkeypatch.setattr(
+        "memo.capture.run_capture_incremental",
+        lambda *a, **k: {"status": "ok"},
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["session", "idle-maintenance", "--mode", "capture"],
+        input=_payload("sid-e", transcript),
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+            "MEMO_SESSION_IDLE_CAPTURE_SECS": "0",
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--delay-secs" in spawned["args"]
+    assert spawned["args"][spawned["args"].index("--delay-secs") + 1] == "0"
+
+
+def test_idle_maintenance_env_zero_reflect_delay_is_preserved(tmp_cfg, monkeypatch, tmp_path):
+    """MEMO_SESSION_IDLE_REFLECT_SECS=0 must be forwarded as 0, not 300."""
+    from memo import cli_session as cli_session_mod
+
+    monkeypatch.setattr(cli_session_mod.Config, "from_env", lambda: tmp_cfg)
+    monkeypatch.setenv("MEMO_SESSION_DISABLE", "0")
+    monkeypatch.setenv("MEMO_CAPTURE_DISABLE", "0")
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("")
+    spawned: dict = {}
+
+    class _FakeProc:
+        def __init__(self, *a, **k):
+            spawned["args"] = a[0] if a else k.get("args")
+
+            class _Stdin:
+                def write(self, _b):
+                    pass
+
+                def close(self):
+                    pass
+
+            self.stdin = _Stdin()
+
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+    monkeypatch.setattr(
+        "memo.cli_transcripts._reflect_session",
+        lambda *a, **k: {"status": "ok"},
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["session", "idle-maintenance", "--mode", "reflect"],
+        input=_payload("sid-f", transcript),
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+            "MEMO_SESSION_IDLE_REFLECT_SECS": "0",
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--delay-secs" in spawned["args"]
+    assert spawned["args"][spawned["args"].index("--delay-secs") + 1] == "0"

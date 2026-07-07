@@ -54,6 +54,13 @@ def _compact_hit_dicts(hits: list[dict], body_chars: int) -> list[dict]:
     return compact
 
 
+def _default_search_json_body_chars() -> int:
+    from memo.flags import flag_int
+
+    value = flag_int("MEMO_SEARCH_JSON_BODY_CHARS")
+    return 280 if value is None else value
+
+
 @click.command()
 @click.argument("query")
 @click.option("--limit", default=10, type=int, show_default=True)
@@ -101,10 +108,8 @@ def search(
     """Top-k search — hybrid (semantic + keyword) by default."""
     import time
 
-    from memo.flags import flag_int
-
     if body_chars is None:
-        body_chars = flag_int("MEMO_SEARCH_JSON_BODY_CHARS") or 280
+        body_chars = _default_search_json_body_chars()
 
     cfg = Config.from_env()
     if use_rerank is True:
@@ -237,7 +242,6 @@ def embed_cmd(text: str | None, batch_json) -> None:
     if batch_json is None and not text:
         raise click.UsageError("provide TEXT or --batch-json")
 
-    mem = _get_memory(Config.from_env())
     if batch_json is not None:
         try:
             texts = json.load(batch_json)
@@ -247,13 +251,20 @@ def embed_cmd(text: str | None, batch_json) -> None:
             raise click.UsageError("--batch-json: expected JSON list of strings")
         if not texts:
             raise click.UsageError("--batch-json: list must not be empty")
-        vecs = mem.embedder.embed(texts)
-        dim = len(vecs[0]) if vecs else 0
-        out = {"vectors": vecs, "dim": dim, "model": mem.cfg.embedder_model}
     else:
         assert text is not None, "internal error: text is None in embed-text mode"
-        vec = mem.embedder.embed_query(text)
-        out = {"vector": vec, "dim": len(vec), "model": mem.cfg.embedder_model}
+
+    mem = _get_memory(Config.from_env())
+    try:
+        if batch_json is not None:
+            vecs = mem.embedder.embed(texts)
+            dim = len(vecs[0]) if vecs else 0
+            out = {"vectors": vecs, "dim": dim, "model": mem.cfg.embedder_model}
+        else:
+            vec = mem.embedder.embed_query(text)
+            out = {"vector": vec, "dim": len(vec), "model": mem.cfg.embedder_model}
+    finally:
+        mem.close()
     sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
@@ -426,10 +437,8 @@ def recall(
     """
     import time
 
-    from memo.flags import flag_int
-
     if body_chars is None:
-        body_chars = flag_int("MEMO_SEARCH_JSON_BODY_CHARS") or 280
+        body_chars = _default_search_json_body_chars()
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)

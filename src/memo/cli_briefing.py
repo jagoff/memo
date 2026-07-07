@@ -6,6 +6,9 @@ Extracted from cli.py (2b god-module decomposition). Registered via
 
 from __future__ import annotations
 
+import contextlib
+from typing import Any
+
 import click
 
 from memo.config import Config
@@ -43,10 +46,17 @@ def briefing(*, compact: bool) -> None:
     from memo.flags import flag_bool, flag_int
 
     debug = flag_bool("MEMO_BRIEFING_DEBUG")
+    mem: Any | None = None
+
+    def _close_memory() -> None:
+        if mem is not None:
+            with contextlib.suppress(Exception):
+                mem.close()
 
     def _bail(reason: str = "") -> None:
         if reason and debug:
             print(f"# memo briefing: {reason}", file=_sys.stderr)
+        _close_memory()
         print("{}")
         _sys.exit(0)
 
@@ -117,10 +127,13 @@ def briefing(*, compact: bool) -> None:
         }
         _log_context_cost(context, sid if same_proj else None)
         print(_json.dumps(output, ensure_ascii=False))
+        _close_memory()
         return
 
-    loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
-    loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
+    loops_n_flag = flag_int("MEMO_BRIEFING_LOOPS_N")
+    loops_days_flag = flag_int("MEMO_BRIEFING_LOOPS_DAYS")
+    loops_n = 5 if loops_n_flag is None else max(0, loops_n_flag)
+    loops_days = 7 if loops_days_flag is None else max(0, loops_days_flag)
 
     lines: list[str] = []
 
@@ -229,3 +242,4 @@ def briefing(*, compact: bool) -> None:
     }
     _log_context_cost(context)
     print(_json.dumps(output, ensure_ascii=False))
+    _close_memory()

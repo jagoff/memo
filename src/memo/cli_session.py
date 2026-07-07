@@ -385,9 +385,11 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
     delay = delay_secs
     if delay is None:
         if mode == "reflect":
-            delay = flag_int("MEMO_SESSION_IDLE_REFLECT_SECS") or 300
+            delay_flag = flag_int("MEMO_SESSION_IDLE_REFLECT_SECS")
+            delay = 300 if delay_flag is None else max(0, delay_flag)
         else:
-            delay = flag_int("MEMO_SESSION_IDLE_CAPTURE_SECS") or 10
+            delay_flag = flag_int("MEMO_SESSION_IDLE_CAPTURE_SECS")
+            delay = 10 if delay_flag is None else max(0, delay_flag)
     delay = max(0, int(delay))
 
     # Survive turn-end reaping. Claude Code reaps this inline async hook when the
@@ -533,7 +535,10 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
                 from memo.memory import Memory
 
                 mem = Memory(cfg)
-                _reflect_session(str(sid), mem, cfg, debug=flag_bool("MEMO_SESSION_DEBUG"))
+                try:
+                    _reflect_session(str(sid), mem, cfg, debug=flag_bool("MEMO_SESSION_DEBUG"))
+                finally:
+                    mem.close()
             finally:
                 _rlock_fd.close()
     except Exception as exc:
@@ -597,7 +602,8 @@ def session_recent(limit: int | None) -> None:
         _sys.exit(0)
 
     if limit is None:
-        limit = flag_int("MEMO_SESSION_RECENT_LIMIT") or 12
+        limit_flag = flag_int("MEMO_SESSION_RECENT_LIMIT")
+        limit = 12 if limit_flag is None else limit_flag
 
     try:
         from memo.session import (

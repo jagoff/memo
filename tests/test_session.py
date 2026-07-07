@@ -122,6 +122,31 @@ def test_recent_prompts_missing_session_or_zero_n(tmp_cfg):
     assert recent_prompts(tmp_cfg.state_dir, "x", 0) == []
 
 
+def test_session_recent_env_zero_limit_disables_panel(tmp_cfg, fake_git, monkeypatch, tmp_path):
+    """MEMO_SESSION_RECENT_LIMIT=0 must mean show zero rows, not fall back to 12."""
+    checkpoint(
+        tmp_cfg.state_dir,
+        session_id="sid-recent-0",
+        cwd=str(tmp_path),
+        transcript_path=str(tmp_path / "t.jsonl"),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        session_group,
+        ["recent"],
+        env={
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_SESSION_RECENT_LIMIT": "0",
+            "MEMO_NONINTERACTIVE": "1",
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "{}"
+
+
 def test_checkpoint_idempotent_upsert(tmp_cfg, fake_git):
     """Repeat checkpoint for same sid bumps turn_count, preserves
     created, advances updated."""
@@ -173,6 +198,30 @@ def test_list_sessions_sorted_recency(tmp_cfg, monkeypatch):
 
     rows = list_sessions(tmp_cfg.state_dir, limit=10)
     assert [r["session_id"] for r in rows] == ["new", "old"]
+
+
+def test_list_sessions_sorts_offset_timestamps_by_instant(tmp_cfg):
+    """Recency sorting must compare UTC instants, not ISO timestamp text."""
+    sessions_dir = tmp_cfg.state_dir / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    lexically_later_but_older = {
+        "session_id": "old-offset",
+        "project": "p",
+        "updated": "2026-01-01T02:00:00+03:00",
+        "turn_count": 1,
+    }
+    actually_newer = {
+        "session_id": "new-utc",
+        "project": "p",
+        "updated": "2026-01-01T00:30:00+00:00",
+        "turn_count": 1,
+    }
+    (sessions_dir / "old-offset.json").write_text(json.dumps(lexically_later_but_older))
+    (sessions_dir / "new-utc.json").write_text(json.dumps(actually_newer))
+
+    rows = list_sessions(tmp_cfg.state_dir, limit=10)
+
+    assert [r["session_id"] for r in rows] == ["new-utc", "old-offset"]
 
 
 def test_list_sessions_project_filter(tmp_cfg):
@@ -228,6 +277,25 @@ def test_prune_lru_keeps_newest(tmp_cfg):
     assert n == 2
     surviving = sorted(p.name for p in sessions_dir.glob("*.json"))
     assert surviving == ["s2.json", "s3.json"]
+
+
+def test_prune_lru_compares_offset_timestamps_by_instant(tmp_cfg):
+    """LRU pruning must keep the newest UTC instant when offsets differ."""
+    sessions_dir = tmp_cfg.state_dir / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    rows = {
+        "old-offset": "2026-01-01T02:00:00+03:00",
+        "new-utc": "2026-01-01T00:30:00+00:00",
+    }
+    for session_id, updated in rows.items():
+        (sessions_dir / f"{session_id}.json").write_text(
+            json.dumps({"session_id": session_id, "updated": updated, "turn_count": 1})
+        )
+
+    n = prune_lru(tmp_cfg.state_dir, cap=1)
+
+    assert n == 1
+    assert sorted(p.name for p in sessions_dir.glob("*.json")) == ["new-utc.json"]
 
 
 def test_get_session_by_full_id(tmp_cfg, fake_git):

@@ -321,7 +321,8 @@ def ingest(
 
     from memo.flags import flag_bool, flag_int
 
-    min_chars = flag_int("MEMO_INGEST_MIN_CHARS") or 200
+    min_chars_flag = flag_int("MEMO_INGEST_MIN_CHARS")
+    min_chars = min_chars_flag if min_chars_flag is not None else 200
     strict_mode = flag_bool("MEMO_INGEST_STRICT")
     debug_mode = flag_bool("MEMO_INGEST_DEBUG")
 

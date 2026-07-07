@@ -27,7 +27,7 @@ from memo.resume import (
     execute_resume_candidate,
     format_resume_candidates,
 )
-from memo.resume._utils import _format_relative_time
+from memo.resume._utils import _active_window_seconds, _format_relative_time, _scan_cap
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
@@ -130,6 +130,16 @@ def test_codex_provider_extracts_goal_from_bootstrap_prompts(tmp_path: Path) -> 
 
     assert rows[0].summary.startswith("finish and harden the runtime loop")
     assert not rows[0].summary.startswith("Repo:")
+
+
+def test_resume_scan_cap_preserves_zero(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_RESUME_SCAN_CAP", "0")
+    assert _scan_cap() == 0
+
+
+def test_resume_active_window_preserves_zero(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_RESUME_ACTIVE_WINDOW_S", "0")
+    assert _active_window_seconds() == 0
 
 
 def test_claude_provider_discovers_native_sessions_for_cwd(tmp_path: Path) -> None:
@@ -340,6 +350,151 @@ def test_discovery_merges_duplicate_sessions_by_agent_and_session_id() -> None:
     assert report.candidates[0].provider == "claude-native"
     assert report.candidates[0].summary == "richer memo summary"
     assert report.candidates[0].provenance == ["claude://session/same", "memo://session/same"]
+
+
+def test_discovery_merge_prefers_newer_utc_instant_for_updated_at() -> None:
+    native = ResumeCandidate(
+        agent="claude",
+        provider="claude-native",
+        uri="claude://session/same",
+        session_id="same",
+        title="native",
+        updated_at="2026-01-01T23:30:00+14:00",
+        resume_mode="native_resume",
+        resume_command=["claude", "--resume", "same"],
+        provenance=["claude://session/same"],
+    )
+    memo = ResumeCandidate(
+        agent="claude",
+        provider="memo",
+        uri="memo://session/same",
+        session_id="same",
+        title="memo",
+        updated_at="2026-01-01T01:00:00-10:00",
+        summary="richer memo summary",
+        resume_mode="native_resume",
+        resume_command=["claude", "--resume", "same"],
+        provenance=["memo://session/same"],
+    )
+
+    report = discover_resume_candidates(
+        providers=[_StaticProvider("claude-native", [native]), _StaticProvider("memo", [memo])],
+        include_all_cwd=True,
+        limit=10,
+    )
+
+    assert len(report.candidates) == 1
+    assert report.candidates[0].updated_at == "2026-01-01T01:00:00-10:00"
+
+
+def test_discovery_sorts_by_utc_instant_not_text() -> None:
+    older_textually_newer = ResumeCandidate(
+        agent="claude",
+        provider="claude-native",
+        uri="claude://session/a",
+        session_id="a",
+        title="alpha",
+        updated_at="2026-01-01T23:30:00+14:00",
+        resume_mode="native_resume",
+        resume_command=["claude", "--resume", "a"],
+        provenance=["claude://session/a"],
+    )
+    newer_textually_older = ResumeCandidate(
+        agent="codex",
+        provider="codex-native",
+        uri="codex://session/b",
+        session_id="b",
+        title="beta",
+        updated_at="2026-01-01T01:00:00-10:00",
+        resume_mode="native_resume",
+        resume_command=["codex", "resume", "b"],
+        provenance=["codex://session/b"],
+    )
+
+    report = discover_resume_candidates(
+        providers=[
+            _StaticProvider("claude-native", [older_textually_newer]),
+            _StaticProvider("codex-native", [newer_textually_older]),
+        ],
+        include_all_cwd=True,
+        limit=10,
+    )
+
+    assert [c.session_id for c in report.candidates][:2] == ["b", "a"]
+
+
+def test_codex_provider_limit_uses_utc_order_not_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    codex_home = tmp_path / "codex"
+    root = codex_home / "sessions"
+    root.mkdir(parents=True)
+    (root / "a.jsonl").write_text("", encoding="utf-8")
+    (root / "b.jsonl").write_text("", encoding="utf-8")
+
+    def fake_candidate(path: Path) -> ResumeCandidate:
+        if path.name == "a.jsonl":
+            return ResumeCandidate(
+                agent="codex",
+                provider="codex-native",
+                uri="codex://session/a",
+                session_id="a",
+                title="alpha",
+                updated_at="2026-01-01T23:30:00+14:00",
+                cwd=str(cwd),
+            )
+        return ResumeCandidate(
+            agent="codex",
+            provider="codex-native",
+            uri="codex://session/b",
+            session_id="b",
+            title="beta",
+            updated_at="2026-01-01T01:00:00-10:00",
+            cwd=str(cwd),
+        )
+
+    monkeypatch.setattr("memo.resume._providers._codex_candidate", fake_candidate)
+
+    rows = CodexNativeProvider(codex_home=codex_home).discover(
+        agent="all", cwd=str(cwd), include_all_cwd=False, limit=1
+    )
+
+    assert [row.session_id for row in rows] == ["b"]
+
+
+def test_resume_tui_sorts_by_utc_instant_not_text() -> None:
+    from memo.resume._tui import _sort_resume_candidates
+
+    created_textually_newer = ResumeCandidate(
+        agent="claude",
+        provider="claude-native",
+        uri="claude://session/a",
+        session_id="a",
+        title="alpha",
+        updated_at="2026-01-01T23:30:00+14:00",
+        metadata={"created_at": "2026-01-01T23:30:00+14:00"},
+    )
+    created_utc_later = ResumeCandidate(
+        agent="codex",
+        provider="codex-native",
+        uri="codex://session/b",
+        session_id="b",
+        title="beta",
+        updated_at="2026-01-01T01:00:00-10:00",
+        metadata={"created_at": "2026-01-01T01:00:00-10:00"},
+    )
+
+    by_created = _sort_resume_candidates(
+        [created_textually_newer, created_utc_later], sort_mode="created"
+    )
+    by_updated = _sort_resume_candidates(
+        [created_textually_newer, created_utc_later], sort_mode="updated"
+    )
+
+    assert [c.session_id for c in by_created] == ["b", "a"]
+    assert [c.session_id for c in by_updated] == ["b", "a"]
 
 
 def test_format_resume_candidates_uses_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:

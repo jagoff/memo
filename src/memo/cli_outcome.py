@@ -60,14 +60,18 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
     from .outcome import compute_utilities, dead_weight, reconcile_roi
 
     cfg = Config.from_env()
-    min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 8
+    min_surfaced_flag = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED")
+    min_surfaced = 8 if min_surfaced_flag is None else min_surfaced_flag
 
     if not do_apply:
         u = compute_utilities(cfg.state_dir)
         scored = len(u["by_prefix"])
         helpful = sum(1 for v in u["by_prefix"].values() if v["grounded"] > 0)
         mem = Memory(cfg)
-        dead = dead_weight(mem, min_surfaced=min_surfaced)
+        try:
+            dead = dead_weight(mem, min_surfaced=min_surfaced)
+        finally:
+            mem.close()
         if as_json:
             click.echo(_json.dumps({"dry_run": True, "dead_weight": dead, **u}, ensure_ascii=False, indent=2))
             return
@@ -89,12 +93,15 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
         return
 
     mem = Memory(cfg)
-    res = reconcile_roi(mem)
-    archived: list[str] = []
-    if archive_dead:
-        for d in dead_weight(mem, min_surfaced=min_surfaced):
-            if mem.forget(d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding") is not None:
-                archived.append(d["id"])
+    try:
+        res = reconcile_roi(mem)
+        archived: list[str] = []
+        if archive_dead:
+            for d in dead_weight(mem, min_surfaced=min_surfaced):
+                if mem.forget(d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding") is not None:
+                    archived.append(d["id"])
+    finally:
+        mem.close()
     if as_json:
         click.echo(_json.dumps({**res, "archived": archived}, ensure_ascii=False, indent=2))
         return

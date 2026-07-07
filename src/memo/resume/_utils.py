@@ -46,10 +46,11 @@ _scan_cap_override: contextvars.ContextVar[int | None] = contextvars.ContextVar(
 def _scan_cap() -> int:
     override = _scan_cap_override.get()
     if override is not None:
-        return max(1, override)
+        return max(0, override)
     from memo.flags import flag_int
 
-    return max(1, flag_int("MEMO_RESUME_SCAN_CAP") or _DEFAULT_SCAN_CAP)
+    flag_value = flag_int("MEMO_RESUME_SCAN_CAP")
+    return _DEFAULT_SCAN_CAP if flag_value is None else max(0, flag_value)
 
 
 def _mtime_capped(paths: Iterable[Path], cap: int | None = None) -> list[Path]:
@@ -81,7 +82,10 @@ _STATUS_BADGES = {
 def _active_window_seconds() -> int:
     from memo.flags import flag_int
 
-    return max(1, flag_int("MEMO_RESUME_ACTIVE_WINDOW_S") or _DEFAULT_ACTIVE_WINDOW_SECONDS)
+    flag_value = flag_int("MEMO_RESUME_ACTIVE_WINDOW_S")
+    return (
+        _DEFAULT_ACTIVE_WINDOW_SECONDS if flag_value is None else max(0, flag_value)
+    )
 
 
 def _age_seconds(updated_at: str, now: datetime) -> float | None:

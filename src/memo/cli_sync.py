@@ -398,8 +398,10 @@ def sync_auto(as_json: bool) -> None:
     except (OSError, json.JSONDecodeError):
         ts = {}
     now = time.time()
-    push_debounce = flag_int("MEMO_SYNC_PUSH_DEBOUNCE_S") or 120
-    pull_interval = flag_int("MEMO_SYNC_PULL_INTERVAL_S") or 300
+    push_debounce_flag = flag_int("MEMO_SYNC_PUSH_DEBOUNCE_S")
+    pull_interval_flag = flag_int("MEMO_SYNC_PULL_INTERVAL_S")
+    push_debounce = 120 if push_debounce_flag is None else max(0, push_debounce_flag)
+    pull_interval = 300 if pull_interval_flag is None else max(0, pull_interval_flag)
     pull_due = now - float(ts.get("last_pull", 0)) >= pull_interval
     push_due = now - float(ts.get("last_push", 0)) >= push_debounce
     if not pull_due and not push_due:
