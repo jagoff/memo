@@ -11,6 +11,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
+[![Glama](https://glama.ai/mcp/servers/jagoff/memo/badge)](https://glama.ai/mcp/servers/jagoff/memo)
 
 </div>
 
