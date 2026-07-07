@@ -26,6 +26,18 @@ from memo.memory.record import (
 from memo.prompt_overrides import resolve_prompt
 
 
+def _sort_updated_utc(value: Any) -> _dt.datetime:
+    if not value:
+        return _dt.datetime.min.replace(tzinfo=_dt.UTC)
+    try:
+        dt = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return _dt.datetime.min.replace(tzinfo=_dt.UTC)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_dt.UTC)
+    return dt.astimezone(_dt.UTC)
+
+
 def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
     """Replace relative temporal expressions with ISO dates anchored to ref_date.
 
@@ -388,7 +400,8 @@ class _ConsolidateOpsMixin(_MemoryBase):
         # 3) Drop singletons; rank by size (then by most-recent updated).
         candidate_clusters = [c for c in clusters if len(c) >= 2]
         candidate_clusters.sort(
-            key=lambda c: (-len(c), items[c[0]]["updated"]),
+            key=lambda c: (len(c), _sort_updated_utc(items[c[0]]["updated"])),
+            reverse=True,
         )
         candidate_clusters = candidate_clusters[:max_clusters]
 
@@ -448,9 +461,10 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 chat = self._ensure_chat()
                 from memo.flags import flag_int
 
+                timeout_flag = flag_int("MEMO_CONSOLIDATE_TIMEOUT")
                 chat_out = chat_with_timeout(
                     chat,
-                    timeout=flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180,
+                    timeout=180 if timeout_flag is None else timeout_flag,
                     model=self.cfg.helper_model,
                     messages=[
                         {
@@ -518,18 +532,21 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
         from memo.flags import flag_float, flag_int, flag_str
 
+        threshold_flag = flag_float("MEMO_SYNTHESIS_THRESHOLD")
         threshold = (
-            threshold if threshold is not None else (flag_float("MEMO_SYNTHESIS_THRESHOLD") or 0.78)
+            threshold if threshold is not None else (0.78 if threshold_flag is None else threshold_flag)
         )
+        min_cluster_flag = flag_int("MEMO_SYNTHESIS_MIN_CLUSTER")
         min_cluster_size = (
             min_cluster_size
             if min_cluster_size is not None
-            else (flag_int("MEMO_SYNTHESIS_MIN_CLUSTER") or 3)
+            else (3 if min_cluster_flag is None else min_cluster_flag)
         )
+        max_clusters_flag = flag_int("MEMO_SYNTHESIS_MAX_CLUSTERS")
         max_clusters = (
             max_clusters
             if max_clusters is not None
-            else (flag_int("MEMO_SYNTHESIS_MAX_CLUSTERS") or 20)
+            else (20 if max_clusters_flag is None else max_clusters_flag)
         )
         min_confidence = min_confidence or flag_str("MEMO_SYNTHESIS_MIN_CONFIDENCE") or "medium"
         _conf_rank = {"low": 0, "medium": 1, "high": 2}
@@ -554,7 +571,10 @@ class _ConsolidateOpsMixin(_MemoryBase):
             )
 
         candidate_clusters = [c for c in clusters if len(c) >= min_cluster_size]
-        candidate_clusters.sort(key=lambda c: (-len(c), items[c[0]]["updated"]))
+        candidate_clusters.sort(
+            key=lambda c: (len(c), _sort_updated_utc(items[c[0]]["updated"])),
+            reverse=True,
+        )
         candidate_clusters = candidate_clusters[:max_clusters]
 
         if not candidate_clusters:
@@ -626,9 +646,10 @@ class _ConsolidateOpsMixin(_MemoryBase):
             try:
                 from memo.flags import flag_int
 
+                timeout_flag = flag_int("MEMO_CONSOLIDATE_TIMEOUT")
                 chat_out = chat_with_timeout(
                     chat,
-                    timeout=flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180,
+                    timeout=180 if timeout_flag is None else timeout_flag,
                     model=self.cfg.helper_model,
                     messages=[
                         {

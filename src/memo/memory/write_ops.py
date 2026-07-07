@@ -380,7 +380,8 @@ class _WriteOpsMixin(_MemoryBase):
             try:
                 _existing_sample = self.store.list_recent(limit=1)
                 if _existing_sample:
-                    _dedup_threshold = flag_float("MEMO_SAVE_DEDUP_THRESHOLD") or 0.88
+                    _dedup_threshold_flag = flag_float("MEMO_SAVE_DEDUP_THRESHOLD")
+                    _dedup_threshold = 0.88 if _dedup_threshold_flag is None else _dedup_threshold_flag
                     _dedup_q = f"{title}\n{content[:300]}"
                     _dedup_emb = self.embedder.embed_query(_dedup_q)
                     _dedup_hits = self.store.search(_dedup_emb, limit=3)
@@ -898,9 +899,10 @@ class _WriteOpsMixin(_MemoryBase):
                 f"NEW OBSERVATION (title: {new_title}):\n{new_content}\n\n"
                 "Return ONLY the merged note body."
             )
+            timeout_flag = flag_int("MEMO_CONSOLIDATE_TIMEOUT")
             out = chat_with_timeout(
                 chat,
-                timeout=float(flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180),
+                timeout=float(180 if timeout_flag is None else timeout_flag),
                 model=self.cfg.llm_model,
                 messages=[
                     {"role": "system", "content": _ABSORB_SYSTEM_PROMPT},

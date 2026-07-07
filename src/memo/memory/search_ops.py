@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+from datetime import UTC, datetime
 from typing import Any
 
 from memo.flags import active_flags, flag_bool, flag_float, flag_int
@@ -36,6 +37,18 @@ def _record_touches_file(record: MemoryRecord, frag: str) -> bool:
         if isinstance(vals, list) and any(frag in str(v).lower() for v in vals):
             return True
     return False
+
+
+def _parse_search_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 class _SearchOpsMixin(_MemoryBase):
@@ -242,7 +255,8 @@ class _SearchOpsMixin(_MemoryBase):
             # configurable (MEMO_RRF_K, default 60); MEMO_RRF_ADAPTIVE opts
             # into density-driven k (sharper on agreement, softer when the
             # lists diverge) — off by default so the eval baseline holds.
-            base_k = flag_int("MEMO_RRF_K") or 25
+            base_k_flag = flag_int("MEMO_RRF_K")
+            base_k = 25 if base_k_flag is None else base_k_flag
             rrf_k = (
                 _adaptive_rrf_k([vec_hits, bm_hits, exact_hits, graph_hits], base_k=base_k)
                 if flag_bool("MEMO_RRF_ADAPTIVE")
@@ -309,11 +323,16 @@ class _SearchOpsMixin(_MemoryBase):
                 input_k=input_k,
             )
         if date_from or date_to:
+            from_dt = _parse_search_ts(date_from)
+            to_dt = _parse_search_ts(date_to)
+
             def _date_ok(r: dict[str, Any]) -> bool:
-                u = str(r.get("updated") or "")
-                if date_from and u < date_from:
+                updated_dt = _parse_search_ts(str(r.get("updated") or ""))
+                if updated_dt is None:
                     return False
-                return not (date_to and u > date_to)
+                if from_dt is not None and updated_dt < from_dt:
+                    return False
+                return not (to_dt is not None and updated_dt > to_dt)
 
             rows = [r for r in rows if _date_ok(r)]
         if exclude_tags:
@@ -422,10 +441,12 @@ class _SearchOpsMixin(_MemoryBase):
         # benchmarking the raw bi-encoder or BM25 surfaces.
         # Also skipped when disable_reranker=True (e.g., chat synthesis).
         if _reranker_will_run and flag_bool("MEMO_RERANK_SKIP_CONFIDENT_RRF"):
+            min_ratio_flag = flag_float("MEMO_RERANK_SKIP_MIN_RATIO")
+            min_gap_flag = flag_float("MEMO_RERANK_SKIP_MIN_GAP")
             decision = _rrf_confident_top(
                 out,
-                min_ratio=flag_float("MEMO_RERANK_SKIP_MIN_RATIO") or 3.0,
-                min_gap=flag_float("MEMO_RERANK_SKIP_MIN_GAP") or 0.05,
+                min_ratio=3.0 if min_ratio_flag is None else min_ratio_flag,
+                min_gap=0.05 if min_gap_flag is None else min_gap_flag,
             )
             if decision.skip:
                 _reranker_will_run = False
@@ -461,7 +482,8 @@ class _SearchOpsMixin(_MemoryBase):
             halflife_days = _RECALL_DECAY_HALFLIFE_DEFAULT
         if halflife_days > 0 and out:
             before = len(out)
-            alpha = min(max(flag_float("MEMO_SEARCH_DECAY_ALPHA") or 0.15, 0.0), 1.0)
+            alpha_flag = flag_float("MEMO_SEARCH_DECAY_ALPHA")
+            alpha = min(max(alpha_flag if alpha_flag is not None else 0.15, 0.0), 1.0)
             out = _apply_decay(out, halflife_days=halflife_days, alpha=alpha)
             _add_trace(
                 "recency_decay",
