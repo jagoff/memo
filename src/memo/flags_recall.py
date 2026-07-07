@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memo.flags_base import FlagSpec, _spec, flag_int
+from memo.flags_base import FlagSpec, _spec
 
 SPECS: tuple[FlagSpec, ...] = (
     # recall hook / daemon (UserPromptSubmit hot path — 5s budget)
@@ -507,6 +507,7 @@ SPECS: tuple[FlagSpec, ...] = (
 
 def flag_recall_verbosity_level() -> int:
     """Verbosity level for recall hook output steering (0–3, default: 0 = no steering)."""
+    from memo.flags import flag_int
     val = flag_int("MEMO_RECALL_VERBOSITY_LEVEL")
     if val is None:
         return 0

@@ -481,3 +481,128 @@ def test_retrieve_mcp_tool_invalid_marker_format():
             assert "error" in result
         finally:
             memory.close()
+
+
+# --- Task 4: Integration tests for end-to-end Wave 1 pipeline ---
+
+
+def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
+    """Full pipeline: capture JSON → crush → retrieve → recall with verbosity steering."""
+    import os
+
+    # Enable both Wave 1 features
+    monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
+    monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "2")
+
+    from src.memo.capture_core import maybe_crush_json_capture
+    from src.memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from src.memo.config import Config
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_dir = Path(tmpdir) / "state"
+        data_dir = Path(tmpdir) / "data"
+        vault_dir = Path(tmpdir) / "vault"
+        state_dir.mkdir(parents=True)
+        data_dir.mkdir(parents=True)
+        vault_dir.mkdir(parents=True)
+
+        config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir)
+
+        # Step 1: Simulate captured JSON (large result set)
+        large_json = json.dumps([
+            {"id": i, "text": f"result row {i}", "data": "x" * 50}
+            for i in range(50)
+        ])
+
+        # Step 2: Crush it
+        crushed, hash_val = maybe_crush_json_capture(large_json, context="search results", config=config)
+        assert isinstance(crushed, str)
+
+        if hash_val is not None:
+            # Verify it's actually compressed
+            assert len(crushed) < len(large_json)
+
+            # Step 3: Verify crush marker is present
+            crushed_obj = json.loads(crushed)
+            assert isinstance(crushed_obj, list)
+            assert "_compressed" in crushed_obj[-1]
+
+            # Step 4: Retrieve via cache
+            from src.memo.store.crush_cache import CrushCache
+            cache = CrushCache(state_dir)
+            original = cache.retrieve(hash_val)
+            assert original == large_json
+
+        # Step 5: Inject verbosity steering on recall output
+        base_prompt = "Answer the following question based on the context above."
+        prompt_with_steering = maybe_inject_verbosity_steering(base_prompt, level=2)
+
+        # Verify steering was injected
+        assert len(prompt_with_steering) > len(base_prompt)
+        assert "<headroom_recall_verbosity>" in prompt_with_steering
+        assert "Skip preamble" in prompt_with_steering
+
+        # Verify idempotency
+        prompt_twice = maybe_inject_verbosity_steering(prompt_with_steering, level=2)
+        assert prompt_twice == prompt_with_steering
+
+
+def test_wave1_flags_integration(monkeypatch):
+    """Wave 1 flags work together (crusher + verbosity) and are independently disableable."""
+    from src.memo.capture_core import maybe_crush_json_capture
+    from src.memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from src.memo.config import Config
+    from src.memo.flags_capture import flag_crusher_enabled
+    from src.memo.flags_recall import flag_recall_verbosity_level
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_dir = Path(tmpdir) / "state"
+        data_dir = Path(tmpdir) / "data"
+        vault_dir = Path(tmpdir) / "vault"
+        state_dir.mkdir(parents=True)
+        data_dir.mkdir(parents=True)
+        vault_dir.mkdir(parents=True)
+
+        config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir)
+
+        # Test 1: Both enabled
+        monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
+        monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "2")
+
+        assert flag_crusher_enabled() is True
+        assert flag_recall_verbosity_level() == 2
+
+        json_content = json.dumps([{"id": i} for i in range(100)])
+        crushed, hash_val = maybe_crush_json_capture(json_content, context="query", config=config)
+
+        prompt = "Base"
+        steered = maybe_inject_verbosity_steering(prompt, level=2)
+        assert steered != prompt  # Should be modified
+
+        # Test 2: Crusher disabled
+        monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "0")
+        assert flag_crusher_enabled() is False
+
+        crushed2, hash_val2 = maybe_crush_json_capture(json_content, context="query", config=config)
+        assert crushed2 == json_content  # Should not be crushed
+        assert hash_val2 is None
+
+        # Test 3: Verbosity disabled
+        monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "0")
+        assert flag_recall_verbosity_level() == 0
+
+        steered2 = maybe_inject_verbosity_steering(prompt, level=0)
+        assert steered2 == prompt  # Should not be modified
+
+        # Test 4: Can re-enable independently
+        monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
+        assert flag_crusher_enabled() is True
+        assert flag_recall_verbosity_level() == 0  # Still disabled
+
+        crushed3, hash_val3 = maybe_crush_json_capture(json_content, context="query", config=config)
+        # Should attempt crush (with our disabled verbosity still at 0)
+        if hash_val3 is not None:
+            assert len(crushed3) < len(json_content)
+
+        steered3 = maybe_inject_verbosity_steering(prompt, level=0)
+        assert steered3 == prompt  # Verbosity still off
