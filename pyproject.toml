@@ -62,6 +62,7 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-xdist>=3.6",
     "pytest-timeout>=2.3",
+    "freezegun>=1.5",
     "ruff==0.15.20",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
