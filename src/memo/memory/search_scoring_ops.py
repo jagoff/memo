@@ -107,7 +107,7 @@ class _SearchScoringMixin(_MemoryBase):
             # the fused score, so having pre-fusion scores that are integers
             # (1, 2, 3...) rather than [0,1] floats would corrupt any path
             # that inspects the score BEFORE _rrf_fuse runs.
-            rrf_k = flag_int("MEMO_RRF_K") or 60
+            rrf_k = 60 if (_rrf := flag_int("MEMO_RRF_K")) is None else _rrf
             density_boost = flag_float("MEMO_GRAPH_DENSITY_BOOST") or 0.0
             for rank, r in enumerate(out):
                 base_score = 1.0 / (rrf_k + rank + 1)

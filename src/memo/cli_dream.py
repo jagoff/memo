@@ -473,7 +473,7 @@ def dream_run(
                 receipt["graduated"] = dream_graduate.run_graduation(
                     cfg,
                     mem,
-                    min_support=flag_int("MEMO_DREAM_GRADUATION_MIN_SUPPORT") or 2,
+                    min_support=2 if (_ms := flag_int("MEMO_DREAM_GRADUATION_MIN_SUPPORT")) is None else _ms,
                     dry_run=dry_run,
                 )
                 _gr = receipt["graduated"]
@@ -494,7 +494,7 @@ def dream_run(
                 receipt["retagged_global"] = dream_retag.run_retag_global(
                     cfg,
                     mem,
-                    min_other_projects=flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS") or 2,
+                    min_other_projects=2 if (_mop := flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS")) is None else _mop,
                     dry_run=dry_run,
                 )
                 _rg = receipt["retagged_global"]
@@ -518,7 +518,7 @@ def dream_run(
                 receipt["communities"] = dream_communities.run_synthesize_communities(
                     cfg,
                     mem,
-                    min_size=flag_int("MEMO_DREAM_COMMUNITIES_MIN_SIZE") or 4,
+                    min_size=4 if (_msz := flag_int("MEMO_DREAM_COMMUNITIES_MIN_SIZE")) is None else _msz,
                     dry_run=dry_run,
                 )
                 _cm = receipt["communities"]
@@ -565,7 +565,7 @@ def dream_run(
                 receipt["entity_canon"] = dream_entity_canon.run_entity_canon(
                     cfg,
                     mem,
-                    max_pairs=flag_int("MEMO_DREAM_ENTITY_CANON_MAX_PAIRS") or 30,
+                    max_pairs=30 if (_mp := flag_int("MEMO_DREAM_ENTITY_CANON_MAX_PAIRS")) is None else _mp,
                     dry_run=dry_run,
                 )
                 _ec = receipt["entity_canon"]
@@ -589,8 +589,8 @@ def dream_run(
                 receipt["folder_abstracts"] = dream_folder_abstracts.run_folder_abstracts(
                     cfg,
                     mem,
-                    min_members=flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS") or 5,
-                    max_folders=flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX") or 5,
+                    min_members=5 if (_mm := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS")) is None else _mm,
+                    max_folders=5 if (_mf := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX")) is None else _mf,
                     dry_run=dry_run,
                 )
                 _fa = receipt["folder_abstracts"]
@@ -795,7 +795,7 @@ def dream_run(
                 from memo.flags import flag_float, flag_int
 
                 roi_floor = flag_float("MEMO_DREAM_PRUNE_FLOOR") or 0.15
-                min_age = flag_int("MEMO_DREAM_PRUNE_MIN_AGE_DAYS") or 90
+                min_age = 90 if (_ma := flag_int("MEMO_DREAM_PRUNE_MIN_AGE_DAYS")) is None else _ma
                 pruned = _run_prune_floor(
                     mem, roi_floor=roi_floor, min_age_days=min_age, dry_run=False
                 )
@@ -919,7 +919,7 @@ def dream_run(
             progress.update(step, description="[13] eval recall — retrieval-only eval...")
             try:
                 receipt["eval_recall"] = _run_eval_recall(
-                    cfg, mem, max_labels=flag_int("MEMO_DREAM_EVAL_MAX_LABELS") or 200
+                    cfg, mem, max_labels=200 if (_ml := flag_int("MEMO_DREAM_EVAL_MAX_LABELS")) is None else _ml
                 )
                 _ev = receipt["eval_recall"]
                 progress.update(
@@ -1035,7 +1035,7 @@ def dream_status() -> None:
                 f"(Δ{_ds}) n={e.get('n_after')}"
             )
 
-    _gk = flag_int("MEMO_DREAM_TUNE_GRADUATION_K") or 5
+    _gk = 5 if (_gk_flag := flag_int("MEMO_DREAM_TUNE_GRADUATION_K")) is None else _gk_flag
     _grad = read_ledger(cfg.state_dir, limit=max(_gk * 4, 20))
     if _grad:
         from memo.dream_tune_online import graduation_streak
@@ -1183,7 +1183,7 @@ def dream_communities_cmd(dry_run: bool, as_json: bool) -> None:
     res = dream_communities.run_synthesize_communities(
         cfg,
         mem,
-        min_size=flag_int("MEMO_DREAM_COMMUNITIES_MIN_SIZE") or 4,
+        min_size=4 if (_msz := flag_int("MEMO_DREAM_COMMUNITIES_MIN_SIZE")) is None else _msz,
         dry_run=dry_run,
     )
     if as_json:
@@ -1208,7 +1208,7 @@ def dream_entity_canon_cmd(dry_run: bool, as_json: bool) -> None:
     res = dream_entity_canon.run_entity_canon(
         cfg,
         mem,
-        max_pairs=flag_int("MEMO_DREAM_ENTITY_CANON_MAX_PAIRS") or 30,
+        max_pairs=30 if (_mp := flag_int("MEMO_DREAM_ENTITY_CANON_MAX_PAIRS")) is None else _mp,
         dry_run=dry_run,
     )
     if as_json:
@@ -1236,8 +1236,8 @@ def dream_folder_abstracts_cmd(dry_run: bool, as_json: bool) -> None:
     res = dream_folder_abstracts.run_folder_abstracts(
         cfg,
         mem,
-        min_members=flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS") or 5,
-        max_folders=flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX") or 5,
+        min_members=5 if (_mm := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS")) is None else _mm,
+        max_folders=5 if (_mf := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX")) is None else _mf,
         dry_run=dry_run,
     )
     if as_json:
@@ -1261,7 +1261,7 @@ def dream_retag_cmd(dry_run: bool, as_json: bool) -> None:
     res = dream_retag.run_retag_global(
         cfg,
         mem,
-        min_other_projects=flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS") or 2,
+        min_other_projects=2 if (_mop := flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS")) is None else _mop,
         dry_run=dry_run,
     )
     if as_json:

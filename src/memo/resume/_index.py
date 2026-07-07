@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -151,16 +152,21 @@ def semantic_search(
     if not allow_cold and ping(state_dir=cfg.state_dir) is None:
         return []  # cold embedder → caller stays on substring
     store = open_store(cfg)
-    if store is None or store.count() == 0:
+    if store is None:
         return []
-    from memo.flags import flag_int
-
-    topk = k or flag_int("MEMO_RESUME_SEMANTIC_K") or 50
     try:
+        if store.count() == 0:
+            return []
+        from memo.flags import flag_int
+
+        topk_flag = flag_int("MEMO_RESUME_SEMANTIC_K"); topk = k or (50 if topk_flag is None else topk_flag)
         qvec = embed_query(q, state_dir=cfg.state_dir)
         rows = store.search(qvec, topk)
     except Exception:
         return []
+    finally:
+        with suppress(Exception):
+            store.close()
     return [_row_to_candidate(r) for r in rows]
 
 
@@ -180,33 +186,37 @@ def backfill(cfg: Config, *, agent: str = "all", rebuild: bool = False) -> dict[
     store = open_store(cfg)
     if store is None:
         return {"enabled": False}
-    if rebuild:
-        store.clear()
-    batch = flag_int("MEMO_RESUME_INDEX_BATCH") or 500
-    embed_fn = partial(embed, state_dir=cfg.state_dir)
-
-    # Lift the per-provider parse cap so the FULL history is enumerable (the
-    # content_hash skip keeps re-embeds cheap). ContextVar, not os.environ —
-    # MEMO_* flags must never be written through the environment.
-    token = _scan_cap_override.set(1_000_000)
     try:
-        report = discover_resume_candidates(agent=agent, include_all_cwd=True, limit=1_000_000)
-    finally:
-        _scan_cap_override.reset(token)
+        if rebuild:
+            store.clear()
+        batch = 500 if (_b := flag_int("MEMO_RESUME_INDEX_BATCH")) is None else _b
+        embed_fn = partial(embed, state_dir=cfg.state_dir)
 
-    indexed = 0
-    skipped = 0
-    for cand in report.candidates:
-        if indexed >= batch:
-            break
+        # Lift the per-provider parse cap so the FULL history is enumerable (the
+        # content_hash skip keeps re-embeds cheap). ContextVar, not os.environ —
+        # MEMO_* flags must never be written through the environment.
+        token = _scan_cap_override.set(1_000_000)
         try:
-            if index_candidate(store, cand, embed_fn=embed_fn):
-                indexed += 1
-            else:
+            report = discover_resume_candidates(agent=agent, include_all_cwd=True, limit=1_000_000)
+        finally:
+            _scan_cap_override.reset(token)
+
+        indexed = 0
+        skipped = 0
+        for cand in report.candidates:
+            if indexed >= batch:
+                break
+            try:
+                if index_candidate(store, cand, embed_fn=embed_fn):
+                    indexed += 1
+                else:
+                    skipped += 1
+            except Exception:
                 skipped += 1
-        except Exception:
-            skipped += 1
-    return {"enabled": True, "indexed": indexed, "skipped": skipped, "total": store.count()}
+        return {"enabled": True, "indexed": indexed, "skipped": skipped, "total": store.count()}
+    finally:
+        with suppress(Exception):
+            store.close()
 
 
 def index_memo_session(cfg: Config, session_id: str, transcript_path: str | None) -> bool:
@@ -214,6 +224,7 @@ def index_memo_session(cfg: Config, session_id: str, transcript_path: str | None
     the Stop hook after `running_summary` is computed. Never raises."""
     if not session_id:
         return False
+    store = None
     try:
         store = open_store(cfg)
         if store is None:
@@ -242,3 +253,7 @@ def index_memo_session(cfg: Config, session_id: str, transcript_path: str | None
         return index_candidate(store, candidate, embed_fn=partial(embed, state_dir=cfg.state_dir))
     except Exception:
         return False
+    finally:
+        if store is not None:
+            with suppress(Exception):
+                store.close()

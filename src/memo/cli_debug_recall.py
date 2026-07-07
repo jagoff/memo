@@ -37,7 +37,7 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
     cfg = Config.from_env()
     mem = get_memory(cfg)
     try:
-        top_k = flag_int("MEMO_RECALL_TOP_K") or 3
+        top_k = 3 if (_tk := flag_int("MEMO_RECALL_TOP_K")) is None else _tk
         _ms = flag_float("MEMO_RECALL_MIN_SIM")
         min_sim = 0.5 if _ms is None else _ms
         _pb = flag_float("MEMO_RECALL_PROJECT_BOOST")

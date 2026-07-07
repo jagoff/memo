@@ -783,7 +783,7 @@ class _SearchOpsMixin(_MemoryBase):
 
     def _generate_hyde_document(self, query: str) -> str | None:
         """Generate a hypothetical answer document for HyDE query expansion."""
-        max_tokens = flag_int("MEMO_HYDE_MAX_TOKENS") or 256
+        max_tokens = 256 if (_mt := flag_int("MEMO_HYDE_MAX_TOKENS")) is None else _mt
         prompt = (
             f"Given the user's question, write a hypothetical ideal answer as a concise "
             f"informational document (like a knowledge-base entry). Focus on the most likely "
