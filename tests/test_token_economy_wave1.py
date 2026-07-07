@@ -135,6 +135,58 @@ def test_crush_marker_with_different_dropped_counts():
         assert marker["_compressed"] == expected_message
 
 
+# --- Task 3: Tests for verbosity steering on recall output ---
+
+
+def test_maybe_inject_verbosity_steering_idempotent():
+    """Verbosity steering is idempotent (doesn't double-inject)."""
+    from src.memo.cli_recall_hook import maybe_inject_verbosity_steering
+
+    prompt = "You are a helpful assistant."
+
+    # Inject once
+    injected_1 = maybe_inject_verbosity_steering(prompt, level=2)
+    assert "<headroom_recall_verbosity>" in injected_1
+
+    # Inject again (should not double-inject)
+    injected_2 = maybe_inject_verbosity_steering(injected_1, level=2)
+    assert injected_1 == injected_2  # Idempotent
+
+
+def test_maybe_inject_verbosity_respects_level():
+    """Verbosity levels produce correct steering text."""
+    from src.memo.cli_recall_hook import maybe_inject_verbosity_steering
+
+    prompt = "Base prompt."
+
+    # Level 0: no steering
+    result_0 = maybe_inject_verbosity_steering(prompt, level=0)
+    assert result_0 == prompt
+
+    # Level 1: basic steering
+    result_1 = maybe_inject_verbosity_steering(prompt, level=1)
+    assert "Skip preamble" in result_1
+    assert "<headroom_recall_verbosity>" in result_1
+
+    # Level 3: aggressive steering
+    result_3 = maybe_inject_verbosity_steering(prompt, level=3)
+    assert "Minimum tokens" in result_3
+
+
+def test_flag_recall_verbosity_level(monkeypatch):
+    """Flag resolves verbosity level from env."""
+    from src.memo.flags_recall import flag_recall_verbosity_level
+
+    monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "2")
+    assert flag_recall_verbosity_level() == 2
+
+    monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "0")
+    assert flag_recall_verbosity_level() == 0
+
+    monkeypatch.delenv("MEMO_RECALL_VERBOSITY_LEVEL", raising=False)
+    assert flag_recall_verbosity_level() == 0  # Default
+
+
 def test_crush_cache_unicode_content():
     """CrushCache handles unicode content correctly."""
     with tempfile.TemporaryDirectory() as tmpdir:
