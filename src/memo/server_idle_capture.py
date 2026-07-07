@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from memo.server_annotations import WRITE, annotated_tool
+from memo.server_annotations import DESTRUCTIVE, WRITE, annotated_tool
 
 _log = logging.getLogger(__name__)
 
@@ -46,10 +46,12 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_idle_capture(dry_run: bool = False) -> dict[str, Any]:
         """Run idle capture on the current session.
 
-        Extracts insights from the most recent session after a period of inactivity.
-        This is useful for agents (like opencode) that don't have Claude Code hooks.
-
-        Call this periodically (e.g., every 30-60s) or after completing a subtask.
+        Write tool. Extracts durable insights from the newest tracked session
+        transcript and saves them as memo records. Use after a meaningful unit
+        of work, or periodically for clients without Stop hooks. Do not use for
+        normal lookup; call memo_search, memo_ask, or memo_unified_briefing
+        when you only need to read existing memories. With `dry_run=True`, no
+        memories are written and the response only reports what would run.
 
         Args:
             dry_run: Preview what would be saved without writing anything.
@@ -118,14 +120,15 @@ def register(server: FastMCP, memory: Memory) -> None:
             "session_id": sid,
         }
 
-    @annotated_tool(server, **WRITE)
+    @annotated_tool(server, **DESTRUCTIVE)
     def memo_pop_notification() -> str:
         """Read and dismiss pending idle-capture notification.
 
-        Returns the notification text (or empty string if none). The
-        notification is deleted after reading, so subsequent calls return
-        empty until a new capture runs. Call this periodically (e.g. after
-        each subtask) to surface auto-captured insights to the user.
+        Destructive only for the notification queue: returns the pending
+        idle-capture message, then removes that transient notification so it is
+        not shown twice. It never deletes memories or session transcripts. Use
+        after memo_idle_capture or before replying to surface auto-saved
+        insights; use memo_search or memo_list to read durable memory records.
         """
         path = memory.cfg.state_dir / "pending_idle_notification.txt"
         if not path.exists():
@@ -144,8 +147,13 @@ def register(server: FastMCP, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Start a new session for this client.
 
-        Call this when beginning a new task or conversation. This enables
-        session tracking (auto-capture, checkpoints, grounding).
+        Write tool. Creates or refreshes a tracked session checkpoint used by
+        capture, grounding, and transcript lookup. Call once at the beginning
+        of a task or conversation. Pass `session_id` to continue a known
+        session; omit it to create one. Pass `cwd` to bind the session to a
+        project directory; omit it to use the current process directory.
+        Do not use this to save memories directly; call memo_save or
+        memo_save_text for durable content.
 
         Args:
             session_id: Optional session ID (auto-generated if not provided).
@@ -190,9 +198,12 @@ def register(server: FastMCP, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Save a memory from text.
 
-        Use this to save insights, decisions, or important information
-        directly without needing a transcript. Works for any LLM client
-        (opencode, Claude Desktop, etc).
+        Write tool. Persists one plain note from `text` and returns the saved
+        memory id. Use for quick client-agnostic saves when you already have
+        the exact content to remember. Prefer memo_save when you need tags,
+        type, extraction, conflict handling options, or project/global scope.
+        Prefer memo_idle_capture for transcript-derived session insights.
+        `title` is optional; when omitted memo uses the first text line.
 
         Args:
             text: The content to save as a memory.

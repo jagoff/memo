@@ -154,8 +154,13 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **DESTRUCTIVE)
     def memo_rename(title: str, id: str | None = None) -> dict[str, Any] | None:
-        """Rename a memory's title. Without `id`, renames the memory most
-        recently saved on this machine — e.g. right after a `memo_save`.
+        """Rename one memory title without changing its body or tags.
+
+        Destructive metadata edit. Use after memo_save or memo_search when a
+        record has the right content but the wrong title. Pass `id` for a
+        specific memory; omit it only immediately after a save, when memo can
+        target the most recent local save. Use memo_update instead when you
+        need to edit content, type, or tags.
         """
         target = id or memory.last_saved_id()
         if target is None:

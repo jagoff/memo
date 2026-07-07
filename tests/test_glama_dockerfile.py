@@ -8,7 +8,7 @@ def test_glama_dockerfile_uses_packaged_stdio_server() -> None:
 
     assert 'pip install "mlx-memo[cpu]"' in dockerfile
     assert "MEMO_NONINTERACTIVE=1" in dockerfile
-    assert "MEMO_MCP_PROFILE=core" in dockerfile
+    assert "MEMO_MCP_PROFILE=agent" in dockerfile
     assert "MEMO_EMBEDDER_BACKEND=st" in dockerfile
     assert 'CMD ["memo-mcp"]' in dockerfile
 

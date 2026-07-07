@@ -9,6 +9,17 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.17] - 2026-07-06
+
+### Fixed
+
+- Ship Glama/Docker builds with the 13-tool `agent` MCP surface instead of the
+  broader `core` surface, keeping the public directory profile focused on the
+  agent workflow while preserving the full installed CLI/server for users.
+- Improve MCP metadata for agent-profile tools by expanding write/destructive
+  tool descriptions and marking `memo_pop_notification` as destructive only for
+  its transient notification queue.
+
 ## [2.12.16] - 2026-07-06
 
 ### Fixed
