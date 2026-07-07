@@ -32,11 +32,22 @@ class VerificationState(StrEnum):
 # Reference tier: searchable on demand, excluded from auto-recall + briefing.
 REFERENCE_TYPES: frozenset[str] = frozenset({"reference"})
 
+# Secret credential kinds
+SECRET_KINDS: frozenset[str] = frozenset({
+    "api_token",
+    "password",
+    "ssh_key",
+    "db_credential",
+    "certificate",
+    "generic",
+})
+
 # Durable tiers: the source-of-truth surfaced automatically. Mirrors
 # `memory._VALID_TYPES` minus the reference tier. `procedure` (how-to
 # workflows: "to do X, run Y") and `failure_pattern` (structured mistake
 # notes: Pattern/Context/Wrong/Right) are the procedural-knowledge kinds
-# mined from execution (2026-07-03 ecosystem survey, Tier2 #7).
+# mined from execution (2026-07-03 ecosystem survey, Tier2 #7). `secret`
+# is for encrypted credentials (passwords, tokens, SSH keys, DB credentials).
 DURABLE_TYPES: frozenset[str] = frozenset(
     {
         "decision",
@@ -49,6 +60,7 @@ DURABLE_TYPES: frozenset[str] = frozenset(
         "synthesis",
         "procedure",
         "failure_pattern",
+        "secret",
     }
 )
 
@@ -92,6 +104,7 @@ __all__ = [
     "DURABLE_TYPES",
     "EVICTION_PROTECTED_TYPES",
     "REFERENCE_TYPES",
+    "SECRET_KINDS",
     "VerificationState",
     "is_reference_candidate",
 ]

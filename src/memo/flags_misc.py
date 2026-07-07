@@ -1210,4 +1210,42 @@ SPECS: tuple[FlagSpec, ...] = (
         "misc",
         "Enable verification state tracking (UNVERIFIED/VERIFIED/STALE cycle) with decay weighting in rerank.",
     ),
+    # secret storage (encrypted credentials)
+    _spec(
+        "MEMO_SECRET_STORAGE_ENABLED",
+        "bool",
+        True,
+        "secret",
+        "Enable encrypted secret storage (passwords, tokens, SSH keys).",
+    ),
+    _spec(
+        "MEMO_CAPTURE_DETECT_SECRETS",
+        "bool",
+        False,
+        "secret",
+        "Auto-detect and save secrets from captured transcripts (opt-in).",
+    ),
+    _spec(
+        "MEMO_DETECT_SECRETS_LLM",
+        "bool",
+        True,
+        "secret",
+        "Use LLM to confirm regex-based secret detection.",
+    ),
+    _spec(
+        "MEMO_SECRET_DAEMON_CACHE_MAX",
+        "int",
+        100,
+        "secret",
+        "Max decrypted secrets in daemon cache.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_SECRET_DAEMON_CACHE_TTL_SECONDS",
+        "int",
+        3600,
+        "secret",
+        "Cache TTL for decrypted secrets (1h default).",
+        min_val=60,
+    ),
 )
