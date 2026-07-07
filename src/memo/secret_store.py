@@ -11,10 +11,9 @@ import socket
 from pathlib import Path
 from typing import Any
 
-from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2 as _PBKDF2
 
 _log = logging.getLogger(__name__)
 
@@ -50,12 +49,11 @@ def derive_secret_key() -> bytes:
 
     material = f"{hostname}:{device_id}:{machine_salt}".encode("utf-8")
 
-    kdf = PBKDF2(
+    kdf = _PBKDF2(
         algorithm=hashes.SHA256(),
         length=32,  # 256 bits
         salt=b"memo_secret_v1",
         iterations=100000,
-        backend=default_backend(),
     )
     return kdf.derive(material)
 
