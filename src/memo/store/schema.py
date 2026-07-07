@@ -142,6 +142,24 @@ CREATE TABLE IF NOT EXISTS memory_health (
 
 CREATE INDEX IF NOT EXISTS idx_health_roi  ON memory_health(roi_score);
 CREATE INDEX IF NOT EXISTS idx_health_conf ON memory_health(confidence);
+
+CREATE TABLE IF NOT EXISTS secret_store (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL CHECK (kind IN (
+        'api_token', 'password', 'ssh_key', 'db_credential', 'certificate', 'generic'
+    )),
+    encrypted_blob BLOB NOT NULL,
+    nonce BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    accessed_at TEXT,
+    accessed_count INTEGER DEFAULT 0,
+    detection_method TEXT CHECK (detection_method IN ('regex', 'llm', 'manual')),
+    confidence REAL CHECK (confidence >= 0.0 AND confidence <= 1.0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_secret_name ON secret_store(name);
+CREATE INDEX IF NOT EXISTS idx_secret_kind ON secret_store(kind);
 """
 
 

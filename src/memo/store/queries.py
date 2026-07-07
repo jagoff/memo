@@ -938,3 +938,88 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     [(id_, vec_rows[id_], new_type) for (id_,) in to_update],
                 )
         return len(ids)
+
+    def secret_store_insert(
+        self,
+        *,
+        id: str,
+        name: str,
+        kind: str,
+        encrypted_blob: bytes,
+        nonce: bytes,
+        created_at: str,
+        detection_method: str | None = None,
+        confidence: float | None = None,
+    ) -> None:
+        """Insert a secret into secret_store."""
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO secret_store
+                (id, name, kind, encrypted_blob, nonce, created_at, detection_method, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (id, name, kind, encrypted_blob, nonce, created_at, detection_method, confidence),
+            )
+
+    def secret_store_get(self, name: str) -> dict[str, Any] | None:
+        """Fetch a secret by name."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, kind, encrypted_blob, nonce, accessed_count FROM secret_store WHERE name = ?",
+            (name,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "name": name,
+            "kind": row[1],
+            "encrypted_blob": row[2],
+            "nonce": row[3],
+            "accessed_count": row[4],
+        }
+
+    def secret_store_list(self, kind: str | None = None) -> list[dict[str, Any]]:
+        """List secrets (metadata only)."""
+        cursor = self.conn.cursor()
+        if kind:
+            cursor.execute(
+                "SELECT id, name, kind, accessed_count FROM secret_store WHERE kind = ? ORDER BY name",
+                (kind,),
+            )
+        else:
+            cursor.execute(
+                "SELECT id, name, kind, accessed_count FROM secret_store ORDER BY name"
+            )
+        rows = cursor.fetchall()
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "kind": row[2],
+                "accessed_count": row[3],
+            }
+            for row in rows
+        ]
+
+    def secret_store_delete(self, name: str) -> bool:
+        """Delete a secret by name. Returns True if deleted, False if not found."""
+        with self._tx() as cursor:
+            cursor.execute("DELETE FROM secret_store WHERE name = ?", (name,))
+            return cursor.rowcount > 0
+
+    def secret_store_increment_access(self, name: str) -> None:
+        """Increment access count and update accessed_at timestamp."""
+        from memo.memory.record import _now_iso
+
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                UPDATE secret_store
+                SET accessed_count = accessed_count + 1, accessed_at = ?
+                WHERE name = ?
+                """,
+                (_now_iso(), name),
+            )
