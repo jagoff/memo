@@ -276,9 +276,9 @@ def dream_run(
                 receipt["tuner"] = dream_tune.run_tuning_pass(
                     cfg,
                     mem,
-                    k=flag_int("MEMO_DREAM_TUNE_K") or 5,
-                    max_evals=flag_int("MEMO_DREAM_TUNE_MAX_EVALS") or 20,
-                    min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+                    k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
+                    max_evals=20 if (_me := flag_int("MEMO_DREAM_TUNE_MAX_EVALS")) is None else _me,
+                    min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
                     dry_run=dry_run,
                 )
                 progress.update(
@@ -303,9 +303,9 @@ def dream_run(
                 receipt["graph_tuner"] = dream_tune.run_graph_weight_pass(
                     cfg,
                     mem,
-                    k=flag_int("MEMO_DREAM_TUNE_K") or 5,
-                    max_evals=flag_int("MEMO_DREAM_TUNE_MAX_EVALS") or 20,
-                    min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+                    k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
+                    max_evals=20 if (_me := flag_int("MEMO_DREAM_TUNE_MAX_EVALS")) is None else _me,
+                    min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
                     dry_run=dry_run,
                 )
                 progress.update(
@@ -330,8 +330,8 @@ def dream_run(
                 receipt["retrieval_tuner"] = dream_tune.run_graph_retrieval_pass(
                     cfg,
                     mem,
-                    k=flag_int("MEMO_DREAM_TUNE_K") or 5,
-                    min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+                    k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
+                    min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
                     dry_run=dry_run,
                     latency_budget_ms=flag_float("MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS")
                     or 2500.0,
@@ -360,8 +360,8 @@ def dream_run(
                 receipt["hyde_tuner"] = dream_tune.run_hyde_pass(
                     cfg,
                     mem,
-                    k=flag_int("MEMO_DREAM_TUNE_K") or 5,
-                    min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+                    k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
+                    min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
                     dry_run=dry_run,
                 )
                 progress.update(
@@ -382,7 +382,7 @@ def dream_run(
                 from memo.flags import flag_float
 
                 receipt["boost_tuner"] = dream_tune.run_boost_pass(
-                    cfg, mem, step=flag_float("MEMO_DREAM_TUNE_BOOST_STEP") or 0.05, dry_run=dry_run
+                    cfg, mem, step=0.05 if (_step := flag_float("MEMO_DREAM_TUNE_BOOST_STEP")) is None else _step, dry_run=dry_run
                 )
             except Exception as exc:
                 receipt["errors"].append(f"boost_tuner: {type(exc).__name__}: {exc}")
@@ -394,7 +394,7 @@ def dream_run(
                 from memo import dream_anticipate
 
                 receipt["anticipated"] = dream_anticipate.anticipate(
-                    cfg, mem, top_gaps=flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS") or 5
+                    cfg, mem, top_gaps=5 if (_tg := flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS")) is None else _tg
                 )
                 progress.update(
                     step,
@@ -416,7 +416,7 @@ def dream_run(
                 receipt["consolidated_episodes"] = dream_consolidate.run_consolidate_episodes(
                     cfg,
                     mem,
-                    min_sessions=flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS") or 2,
+                    min_sessions=2 if (_ms := flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS")) is None else _ms,
                     dry_run=dry_run,
                 )
                 _ce = receipt["consolidated_episodes"]
@@ -441,9 +441,9 @@ def dream_run(
                 receipt["profile"] = dream_profile.run_profile_pass(
                     cfg,
                     mem,
-                    char_budget=flag_int("MEMO_DREAM_PROFILE_CHAR_BUDGET") or 4000,
-                    max_projects=flag_int("MEMO_DREAM_PROFILE_MAX_PROJECTS") or 5,
-                    directive_k=flag_int("MEMO_DREAM_PROFILE_DIRECTIVE_K") or 3,
+                    char_budget=4000 if (_cb := flag_int("MEMO_DREAM_PROFILE_CHAR_BUDGET")) is None else _cb,
+                    max_projects=5 if (_mp := flag_int("MEMO_DREAM_PROFILE_MAX_PROJECTS")) is None else _mp,
+                    directive_k=3 if (_dk := flag_int("MEMO_DREAM_PROFILE_DIRECTIVE_K")) is None else _dk,
                     directive_min_used=(
                         _pf_float("MEMO_DREAM_PROFILE_DIRECTIVE_MIN_USED") or 0.5
                     ),
@@ -1137,7 +1137,7 @@ def dream_anticipate_cmd(as_json: bool) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
     frag = dream_anticipate.anticipate(
-        cfg, mem, top_gaps=flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS") or 5
+        cfg, mem, top_gaps=5 if (_tg := flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS")) is None else _tg
     )
     if as_json:
         click.echo(json.dumps(frag, indent=2, ensure_ascii=False))
@@ -1160,7 +1160,7 @@ def dream_consolidate_cmd(dry_run: bool, as_json: bool) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
     res = dream_consolidate.run_consolidate_episodes(
-        cfg, mem, min_sessions=flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS") or 2, dry_run=dry_run
+        cfg, mem, min_sessions=2 if (_ms := flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS")) is None else _ms, dry_run=dry_run
     )
     if as_json:
         click.echo(json.dumps(res, indent=2, ensure_ascii=False))
@@ -1309,9 +1309,9 @@ def dream_tune_cmd(dry_run: bool, do_rollback: bool, show_status: bool) -> None:
     res = dream_tune.run_tuning_pass(
         cfg,
         mem,
-        k=flag_int("MEMO_DREAM_TUNE_K") or 5,
-        max_evals=flag_int("MEMO_DREAM_TUNE_MAX_EVALS") or 20,
-        min_used_score=flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE") or 0.5,
+        k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
+        max_evals=20 if (_me := flag_int("MEMO_DREAM_TUNE_MAX_EVALS")) is None else _me,
+        min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
         dry_run=dry_run,
     )
     click.echo(json.dumps(res, indent=2, ensure_ascii=False))

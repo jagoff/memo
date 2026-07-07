@@ -68,9 +68,9 @@ class CachePolicy:
             eviction = "lru"
         return cls(
             mode=mode,
-            max_entries=max(0, flag_int("MEMO_CACHE_MAX_ENTRIES", env=env) or 0),
+            max_entries=max(0, 0 if (_cme := flag_int("MEMO_CACHE_MAX_ENTRIES", env=env)) is None else _cme),
             eviction=eviction,
-            ttl_days=max(0, flag_int("MEMO_CACHE_TTL_DAYS", env=env) or 0),
+            ttl_days=max(0, 0 if (_ctd := flag_int("MEMO_CACHE_TTL_DAYS", env=env)) is None else _ctd),
             backend=(flag_str("MEMO_CACHE_BACKEND", env=env) or "memflow").strip().lower(),
         )
 

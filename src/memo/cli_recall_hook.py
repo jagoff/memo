@@ -53,6 +53,13 @@ def recall_hook() -> None:
         print("{}")
         sys.exit(0)
 
+    mem: Any | None = None
+
+    def _close_memory() -> None:
+        if mem is not None:
+            with contextlib.suppress(Exception):
+                mem.close()
+
     def _bail(reason: str = "") -> None:
         if reason and flag_bool("MEMO_RECALL_DEBUG"):
             print(f"# memo recall-hook: {reason}", file=sys.stderr)
@@ -69,6 +76,7 @@ def recall_hook() -> None:
                 )
             except Exception as exc:
                 _log.debug("bail recall-log write failed: %s", exc)
+        _close_memory()
         print("{}")
         sys.exit(0)
 
@@ -182,7 +190,7 @@ def recall_hook() -> None:
         if _raw_float is not None and _raw_float >= 0.1:
             _daemon_timeout = _raw_float
         else:
-            _daemon_timeout = max(0.2, (flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS") or 2000) / 1000.0)
+            _daemon_timeout = max(0.2, (2000 if (_dmt := flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS")) is None else _dmt) / 1000.0)
         _daemon_result = connect_and_recall(
             cfg.state_dir,
             prompt=prompt,
@@ -285,7 +293,7 @@ def recall_hook() -> None:
     if knobs.mode == "hybrid":
         os.environ.setdefault(
             "MEMO_RERANK_INPUT_K",
-            str(flag_int("MEMO_RECALL_RERANK_INPUT_K") or 10),
+            str(10 if (_rik := flag_int("MEMO_RECALL_RERANK_INPUT_K")) is None else _rik),
         )
 
     if knobs.mode in ("vec", "hybrid") and not flag_bool("MEMO_RECALL_FORCE_MODE"):
@@ -549,4 +557,5 @@ def recall_hook() -> None:
     except Exception as e:
         _log.debug("presence bump failed: %s", e)
 
+    _close_memory()
     sys.exit(0)

@@ -42,8 +42,8 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
         from memo.lifecycle import IS_FORGOTTEN_KEY
 
         seed_ids = [r.id for r in relevant]
-        hops: int = flag_int("MEMO_ASSOCIATIVE_HOPS") or 2
-        limit: int = flag_int("MEMO_ASSOCIATIVE_LIMIT") or 2
+        hops: int = 2 if (_h := flag_int("MEMO_ASSOCIATIVE_HOPS")) is None else _h
+        limit: int = 2 if (_l := flag_int("MEMO_ASSOCIATIVE_LIMIT")) is None else _l
         min_act_v = flag_float("MEMO_ASSOCIATIVE_MIN_ACTIVATION")
         min_act: float = 0.5 if min_act_v is None else min_act_v
 
