@@ -35,6 +35,7 @@ from memo import server_asof as _srv_asof
 from memo import server_backup as _srv_backup
 from memo import server_cache as _srv_cache
 from memo import server_collaborative as _srv_collaborative
+from memo import server_crush as _srv_crush
 from memo import server_consolidate as _srv_consolidate
 from memo import server_contextual as _srv_contextual
 from memo import server_contradict as _srv_contradict
@@ -183,6 +184,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     _srv_graph_tool.register(server, memory)
     _srv_core_records.register(server, memory)
     _srv_offload.register(server, memory)
+    _srv_crush.register(server, memory)
     _srv_core_search.register(server, memory)
     _srv_core_history.register(server, memory)
     _srv_idle_capture.register(server, memory)
