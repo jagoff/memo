@@ -36,6 +36,19 @@ from memo.prompt_overrides import resolve_prompt
 
 _log = logging.getLogger(__name__)
 
+
+def _updated_sort_key(value: Any) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=UTC)
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=UTC)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 _MERGE_SYSTEM_PROMPT = """You merge multiple related memory notes into a single coherent entry.
 
 You receive a cluster of 2+ memories that have been identified as semantically
@@ -127,7 +140,7 @@ class AdvancedConsolidator:
         # For evolutions, default to keep_latest strategy
         if relationship == "evolution":
             # Sort by updated date, take latest
-            latest = max(members, key=lambda m: m.get("updated", ""))
+            latest = max(members, key=lambda m: _updated_sort_key(m.get("updated")))
             return MergeProposal(
                 cluster_id=cluster.get("cluster_id", 0),
                 memory_ids=[m["id"] for m in members],
@@ -179,7 +192,8 @@ class AdvancedConsolidator:
 
         from memo.flags import flag_int
 
-        timeout_s = flag_int("MEMO_CONSOLIDATE_TIMEOUT") or 180
+        timeout_flag = flag_int("MEMO_CONSOLIDATE_TIMEOUT")
+        timeout_s = 180 if timeout_flag is None else timeout_flag
         data: dict[str, Any] | None = None
         for attempt, (temperature, max_tokens) in enumerate(((0.0, 1536), (0.3, 3072))):
             try:
@@ -303,7 +317,7 @@ class AdvancedConsolidator:
             # Determine type from the latest source
             latest_rec = max(
                 (self.memory.get(mid) for mid in proposal.memory_ids if self.memory.get(mid)),
-                key=lambda r: r.updated if r else "",
+                key=lambda r: _updated_sort_key(r.updated if r else None),
                 default=None,
             )
             type_ = latest_rec.type if latest_rec else "note"
@@ -392,7 +406,7 @@ class AdvancedConsolidator:
         members = cluster.get("members", [])
         if not members or len(members) < 2:
             return None
-        latest = max(members, key=lambda m: m.get("updated", ""))
+        latest = max(members, key=lambda m: _updated_sort_key(m.get("updated")))
         return MergeProposal(
             cluster_id=cluster.get("cluster_id", 0),
             memory_ids=[m["id"] for m in members],

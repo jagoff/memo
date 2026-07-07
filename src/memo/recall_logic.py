@@ -544,7 +544,8 @@ def knobs_from_flags(
     the ``cli_recall_hook`` subprocess fallback ranks inline and skips every
     rank_hits knob. Flipping these ON makes recall path-dependent."""
     if top_k is None:
-        top_k = flag_int("MEMO_RECALL_TOP_K") or 3
+        top_k_flag = flag_int("MEMO_RECALL_TOP_K")
+        top_k = 3 if top_k_flag is None else top_k_flag
     if min_sim is None:
         _ms = flag_float("MEMO_RECALL_MIN_SIM")
         min_sim = 0.5 if _ms is None else _ms
@@ -873,7 +874,8 @@ def _recall_logic(
     mode = knobs.mode
     project_tag = knobs.project_tag
     contextual = knobs.contextual
-    body_chars = _flag_int("MEMO_RECALL_BODY_CHARS") or 400
+    _body_chars = _flag_int("MEMO_RECALL_BODY_CHARS")
+    body_chars = 400 if _body_chars is None else max(0, _body_chars)
     token_budget = _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
 
     # Session cumulative budget decay: once the session has consumed more than

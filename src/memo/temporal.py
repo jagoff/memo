@@ -63,7 +63,8 @@ def _pair_classify_timeout() -> float:
     try:
         from memo.flags import flag_float
 
-        return flag_float("MEMO_CONTRADICTION_TIMEOUT") or 30.0
+        timeout_flag = flag_float("MEMO_CONTRADICTION_TIMEOUT")
+        return 30.0 if timeout_flag is None else timeout_flag
     except Exception:
         return 30.0
 
@@ -179,7 +180,7 @@ class TemporalAnalyzer:
             return []
 
         # Sort by date for chronological pairing
-        records.sort(key=lambda r: r.updated)
+        records.sort(key=lambda r: _parse_ts(r.updated))
 
         contradictions: list[Contradiction] = []
         pair_count = 0
@@ -316,7 +317,7 @@ Body: {(r2.body or "")[:1000]}
         if not events:
             return None
 
-        events.sort(key=lambda e: e.date)
+        events.sort(key=lambda e: _parse_ts(e.date))
 
         return EntityTimeline(
             entity_name=entity_name,
@@ -342,6 +343,7 @@ Body: {(r2.body or "")[:1000]}
             List of potentially stale memories with metadata.
         """
         cutoff = (datetime.now(UTC) - timedelta(days=days_threshold)).isoformat()
+        cutoff_dt = _parse_ts(cutoff)
 
         # Get all memories, filter by date
         all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP)
@@ -354,7 +356,12 @@ Body: {(r2.body or "")[:1000]}
         stale = []
 
         for rec in all_records:
-            if rec.updated < cutoff:
+            try:
+                rec_updated = _parse_ts(rec.updated)
+            except (ValueError, TypeError):
+                _log.debug("temporal: skip record with unparseable updated date")
+                continue
+            if rec_updated < cutoff_dt:
                 # Check access count from history if available
                 access_count = 0
                 try:
@@ -375,7 +382,7 @@ Body: {(r2.body or "")[:1000]}
                             "title": rec.title,
                             "type": rec.type,
                             "updated": rec.updated,
-                            "days_since_update": (datetime.now(UTC) - _parse_ts(rec.updated)).days,
+                            "days_since_update": (datetime.now(UTC) - rec_updated).days,
                             "access_count": access_count,
                         }
                     )

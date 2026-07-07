@@ -101,7 +101,8 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         type_ = req.get("type") or None
         client = req.get("client") or None
         t0 = time.time()
-        timeout_s = max(0.1, (flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS") or 2500) / 1000.0)
+        timeout_ms = flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS")
+        timeout_s = 2.5 if timeout_ms is None else max(0.0, timeout_ms / 1000.0)
         _we = getattr(self.server, "_warm_event", None)
         if _we is not None:
             _we.wait(timeout=timeout_s)
@@ -153,7 +154,8 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             return json.dumps({"error": "embed_batch: every element of `texts` must be a string"})
         from memo.flags import flag_int
 
-        chunk = max(1, flag_int("MEMO_EMBED_BATCH_CHUNK") or 32)
+        chunk_flag = flag_int("MEMO_EMBED_BATCH_CHUNK")
+        chunk = max(1, 32 if chunk_flag is None else chunk_flag)
         _we = getattr(self.server, "_warm_event", None)
         if _we is not None:
             _we.wait(timeout=60.0)
@@ -248,7 +250,8 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                         return
                     from memo.flags import flag_int
 
-                    timeout_s = max(0.1, (flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS") or 2500) / 1000.0)
+                    timeout_ms = flag_int("MEMO_RECALL_LOCK_TIMEOUT_MS")
+                    timeout_s = 2.5 if timeout_ms is None else max(0.0, timeout_ms / 1000.0)
                     lock = self.server._priority_lock
                     # Snapshot the current holder BEFORE waiting: after a
                     # successful acquire the holder is us, so this is the only
@@ -296,8 +299,9 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                 elif op == "embed_query":
                     from memo.flags import flag_int
 
+                    lock_timeout_flag = flag_int("MEMO_EMBED_LOCK_TIMEOUT_MS")
                     _embed_timeout_s = max(
-                        0.1, (flag_int("MEMO_EMBED_LOCK_TIMEOUT_MS") or 60000) / 1000.0
+                        0.1, (60000 if lock_timeout_flag is None else lock_timeout_flag) / 1000.0
                     )
                     # Not latency-bound: wait out the warmup instead of racing
                     # the background model load.
