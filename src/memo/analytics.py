@@ -14,8 +14,13 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from html import escape
 from pathlib import Path
 from typing import Any
+
+
+def _ensure_output_parent(output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -177,6 +182,7 @@ class AnalyticsEngine:
             "exported_at": datetime.now(UTC).isoformat(),
         }
 
+        _ensure_output_parent(output_path)
         output_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def export_metrics_csv(self, output_path: Path) -> None:
@@ -189,6 +195,7 @@ class AnalyticsEngine:
 
         metrics = self.compute_corpus_metrics()
 
+        _ensure_output_parent(output_path)
         with open(output_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["Metric", "Value"])
@@ -298,7 +305,7 @@ class Dashboard:
         <h2>Type Distribution</h2>
         <table>
             <tr><th>Type</th><th>Count</th></tr>
-            {"".join(f"<tr><td>{t}</td><td>{c}</td></tr>" for t, c in metrics.type_distribution.items())}
+            {"".join(f"<tr><td>{escape(t)}</td><td>{c}</td></tr>" for t, c in metrics.type_distribution.items())}
         </table>
     </div>
 
@@ -306,7 +313,7 @@ class Dashboard:
         <h2>Top Tags</h2>
         <table>
             <tr><th>Tag</th><th>Count</th></tr>
-            {"".join(f"<tr><td>{t}</td><td>{c}</td></tr>" for t, c in list(metrics.tag_frequency.items())[:20])}
+            {"".join(f"<tr><td>{escape(t)}</td><td>{c}</td></tr>" for t, c in list(metrics.tag_frequency.items())[:20])}
         </table>
     </div>
 
@@ -314,7 +321,7 @@ class Dashboard:
         <h2>Top Entities</h2>
         <table>
             <tr><th>Entity</th><th>Count</th></tr>
-            {"".join(f"<tr><td>{e}</td><td>{c}</td></tr>" for e, c in list(metrics.entity_frequency.items())[:20])}
+            {"".join(f"<tr><td>{escape(e)}</td><td>{c}</td></tr>" for e, c in list(metrics.entity_frequency.items())[:20])}
         </table>
     </div>
 
@@ -331,6 +338,7 @@ class Dashboard:
 </html>
 """
 
+        _ensure_output_parent(output_path)
         output_path.write_text(html, encoding="utf-8")
 
 

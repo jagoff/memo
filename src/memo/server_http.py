@@ -4,6 +4,13 @@ Provides a standalone HTTP server (not MCP) for external clients.
 Run via: `memo http-api --port 8080`
 
 Endpoints mirror MCP tools but return plain JSON for any HTTP client.
+
+SECURITY NOTE: This server has no built-in authentication. By default it binds
+to 127.0.0.1:8080 (localhost only). For production or multi-user deployment:
+- Use a reverse proxy (nginx, Caddy) with authentication
+- Set --host 127.0.0.1 (default, never 0.0.0.0 for production)
+- Run behind TLS/HTTPS only
+- Restrict network access via firewall rules
 """
 
 from __future__ import annotations

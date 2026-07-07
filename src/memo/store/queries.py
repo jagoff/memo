@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from datetime import UTC, datetime
 from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
@@ -13,6 +14,18 @@ from .signal_queries import _SignalQueriesMixin
 serialize_float32 = import_sqlite_vec().serialize_float32
 
 _log = logging.getLogger(__name__)
+
+
+def _parse_filter_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
@@ -609,11 +622,15 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             ex_params = sorted(exclude_types)
         cols = "id, path, title, type, tags, created, updated, body_hash, extra_json"
         older = self._conn.execute(
-            f"SELECT {cols} FROM meta WHERE created < ?{ex_sql} ORDER BY created DESC LIMIT ?",
+            f"SELECT {cols} FROM meta "
+            f"WHERE coalesce(julianday(created), -1e300) < julianday(?)"
+            f"{ex_sql} ORDER BY julianday(created) DESC LIMIT ?",
             (created, *ex_params, before),
         ).fetchall()
         newer = self._conn.execute(
-            f"SELECT {cols} FROM meta WHERE created > ?{ex_sql} ORDER BY created ASC LIMIT ?",
+            f"SELECT {cols} FROM meta "
+            f"WHERE coalesce(julianday(created), -1e300) > julianday(?)"
+            f"{ex_sql} ORDER BY julianday(created) ASC LIMIT ?",
             (created, *ex_params, after),
         ).fetchall()
         return [_row_to_dict(r) for r in [*reversed(older), *newer]]
@@ -623,7 +640,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         json.dumps(list), so the quoted token is an exact-tag match)."""
         rows = self._conn.execute(
             "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-            "FROM meta WHERE tags LIKE ? ORDER BY updated DESC LIMIT ?",
+            "FROM meta WHERE tags LIKE ? ORDER BY julianday(updated) DESC LIMIT ?",
             (f'%"{tag}"%', limit),
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
@@ -652,14 +669,15 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             clauses.append(f"type NOT IN ({placeholders})")
             params.extend(sorted(exclude_types))
         if updated_since:
-            # ISO-8601 timestamps sort lexicographically, so a string >=
-            # compares chronologically. Indexed by idx_meta_updated /
-            # idx_meta_type_updated so incremental scans stay cheap.
-            clauses.append("updated >= ?")
+            # Compare UTC instants so mixed offsets don't drop rows. Wrapping
+            # updated in julianday() forces a full table scan since idx_meta_updated
+            # is defined on bare updated, not julianday(updated). For large
+            # corpora, consider adding: CREATE INDEX idx_meta_updated_jd ON meta(julianday(updated))
+            clauses.append("coalesce(julianday(updated), -1e300) >= julianday(?)")
             params.append(updated_since)
         if clauses:
             sql += "WHERE " + " AND ".join(clauses) + " "
-        sql += "ORDER BY updated DESC LIMIT ?"
+        sql += "ORDER BY julianday(updated) DESC LIMIT ?"
         rows = self._conn.execute(sql, (*params, limit)).fetchall()
         return [_row_to_dict(r) for r in rows]
 
@@ -699,17 +717,11 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             for ex_type in sorted(exclude_types):
                 push_clauses.append("vec.type != ?")
                 push_params.append(ex_type)
-        # Hard date window on meta.updated (ISO strings compare chronologically,
-        # same as list_recent's `updated >= ?`). These filter AFTER the kNN
-        # selects rows, so over-fetch the kNN pool to avoid underfilling.
-        date_clauses: list[str] = []
-        date_params: list[Any] = []
-        if date_from:
-            date_clauses.append("meta.updated >= ?")
-            date_params.append(date_from)
-        if date_to:
-            date_clauses.append("meta.updated <= ?")
-            date_params.append(date_to)
+        # Date windows compare instants, not ISO text: stored/imported rows may
+        # carry non-UTC offsets. Fetch a wider kNN pool and filter in Python.
+        from_dt = _parse_filter_ts(date_from)
+        to_dt = _parse_filter_ts(date_to)
+        has_date_filter = from_dt is not None or to_dt is not None
         tag_clauses: list[str] = []
         tag_params: list[Any] = []
         for tag in sorted(exclude_tags or ()):
@@ -718,7 +730,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             # be pushed into vec0 so this filters on the joined meta row).
             tag_clauses.append("meta.tags NOT LIKE ?")
             tag_params.append(f'%"{tag}"%')
-        k_fetch = limit * 4 if (date_clauses or tag_clauses) else limit
+        k_fetch = limit * 4 if (has_date_filter or tag_clauses) else limit
 
         # Check for deleted_at column and build filter
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
@@ -737,20 +749,27 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         for clause in push_clauses:
             sql += f"AND {clause} "
         params.extend(push_params)
-        for clause in date_clauses:
-            sql += f"AND {clause} "
-        params.extend(date_params)
         for clause in tag_clauses:
             sql += f"AND {clause} "
         params.extend(tag_params)
         sql += "ORDER BY distance ASC LIMIT ?"
-        params.append(limit)
+        params.append(k_fetch if has_date_filter else limit)
         rows = self._conn.execute(sql, params).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
             d = _row_to_dict(r)
+            if has_date_filter:
+                updated_dt = _parse_filter_ts(str(d.get("updated") or ""))
+                if updated_dt is None:
+                    continue
+                if from_dt is not None and updated_dt < from_dt:
+                    continue
+                if to_dt is not None and updated_dt > to_dt:
+                    continue
             d["score"] = max(0.0, 1.0 - float(r["distance"]))
             out.append(d)
+            if len(out) >= limit:
+                break
         return out
 
     def clear_memory_index(self) -> int:
@@ -883,7 +902,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         query = "SELECT id FROM meta WHERE deleted_at IS NOT NULL"
         params: list[Any] = []
         if before is not None:
-            query += " AND deleted_at < ?"
+            query += " AND coalesce(julianday(deleted_at), -1e300) < julianday(?)"
             params.append(before)
         rows = self._conn.execute(query, params).fetchall()
         return [r["id"] for r in rows]

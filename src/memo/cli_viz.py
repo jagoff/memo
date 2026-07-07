@@ -224,7 +224,7 @@ def map_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -
             "n": n_pts,
             "type_colors": TYPE_COLORS,
         },
-        ensure_ascii=False,
+        ensure_ascii=True,
     )
 
     html = _MAPA_HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
