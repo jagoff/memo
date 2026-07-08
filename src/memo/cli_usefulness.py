@@ -28,11 +28,7 @@ def _age(ts: str | None) -> str:
     return _human_age(ts)
 
 
-@click.command(name="usefulness")
-@click.option("--limit", default=500, show_default=True, help="Consult-log rows to sample.")
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
-def usefulness(*, limit: int = 500, as_json: bool = False) -> None:
-    """Report how useful memo is: who consults it, hit rate, and silent gaps."""
+def _render_usefulness(*, limit: int = 500, as_json: bool = False) -> None:
     cfg = Config.from_env()
     state_dir = cfg.state_dir
     health = recall_health(state_dir, limit=limit)
@@ -119,3 +115,29 @@ def usefulness(*, limit: int = 500, as_json: bool = False) -> None:
         f"\nmemo consulted {total}× across {n} consumer(s); recall-hook "  # noqa: RUF001
         f"hit_rate={health.get('hit_rate')} strong_hit_rate={health.get('strong_hit_rate')}."
     )
+
+
+@click.group(name="usefulness", invoke_without_command=True)
+@click.option("--limit", default=500, show_default=True, help="Consult-log rows to sample.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_context
+def usefulness(ctx: click.Context, *, limit: int = 500, as_json: bool = False) -> None:
+    """Report how useful memo is: who consults it, hit rate, and silent gaps."""
+    if ctx.invoked_subcommand is not None:
+        return
+    _render_usefulness(limit=limit, as_json=as_json)
+
+
+@usefulness.command(name="doctor")
+@click.option("--limit", default=500, show_default=True, help="Rows/signals to sample.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+def usefulness_doctor(limit: int = 500, as_json: bool = False) -> None:
+    """Diagnose memo adoption and trust signals."""
+    from memo.usefulness_doctor import build_report, format_text_report
+
+    cfg = Config.from_env()
+    report = build_report(cfg, limit=limit)
+    if as_json:
+        click.echo(_json.dumps(report, ensure_ascii=False, indent=2))
+        return
+    click.echo(format_text_report(report))

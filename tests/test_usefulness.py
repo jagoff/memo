@@ -7,12 +7,25 @@ MLX forward pass: the dashboard aggregation (`consult_breakdown` /
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from click.testing import CliRunner
+
 import memo.dashboard_logs as dashboard_logs
 from memo import dashboard
+from memo.cli import cli
 from memo.server_common import log_consult as _log_consult
+
+
+def _cli_env(tmp_path: Path) -> dict[str, str]:
+    return {
+        "MEMO_CONFIG_FILE": str(tmp_path / "memo-config.toml"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
 
 
 def test_consumer_label_classifies_each_source() -> None:
@@ -105,3 +118,27 @@ def test_log_consult_never_raises_on_bad_memory(tmp_path: Path) -> None:
     # A memory object without cfg must not break the caller — telemetry is
     # best-effort and swallows its own errors.
     _log_consult(object(), tool="ask", query="q", hits=[], t0_ms=0)  # type: ignore[arg-type]
+
+
+def test_usefulness_json_shape_remains_unchanged(tmp_path: Path) -> None:
+    result = CliRunner().invoke(cli, ["usefulness", "--json"], env=_cli_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert sorted(payload) == ["by_consumer", "recall_hook"]
+
+
+def test_usefulness_doctor_command_outputs_text(tmp_path: Path) -> None:
+    result = CliRunner().invoke(cli, ["usefulness", "doctor"], env=_cli_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert "memo trust + adoption doctor" in result.output
+    assert "verdict:" in result.output
+
+
+def test_usefulness_doctor_json_shape(tmp_path: Path) -> None:
+    result = CliRunner().invoke(cli, ["usefulness", "doctor", "--json"], env=_cli_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert sorted(payload) == ["actions", "adoption", "summary", "trust", "verdict"]
