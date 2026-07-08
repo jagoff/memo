@@ -76,3 +76,52 @@ def test_render_block_verbosity_level_appends_steering():
     # L4 adds a steering block -> steered is LONGER (the paradox: L4 costs P1 tokens)
     assert len(steered) > len(plain)
     assert "aaaaaaaa" in plain  # id short-prefix present for surviving_ids()
+
+
+import json as _json
+from pathlib import Path
+
+
+def _write_corpus(tmp_path: Path) -> Path:
+    corpus = {
+        "schema": "memo.token_corpus.v1",
+        "cases": [
+            {"name": "late", "must_keep_index": 11,
+             "rows": [{"i": i, "text": f"row {i}"} for i in range(11)]
+                     + [{"i": 11, "text": "THE ANSWER"}]},
+            {"name": "early", "must_keep_index": 0,
+             "rows": [{"i": 0, "text": "THE ANSWER"}]
+                     + [{"i": i, "text": f"row {i}"} for i in range(1, 12)]},
+        ],
+    }
+    p = tmp_path / "token_corpus.json"
+    p.write_text(_json.dumps(corpus), encoding="utf-8")
+    return p
+
+
+def test_load_capture_corpus(tmp_path):
+    cases = eval_tokens.load_capture_corpus(_write_corpus(tmp_path))
+    assert [c.name for c in cases] == ["late", "early"]
+    assert cases[0].must_keep_index == 11
+    assert len(cases[1].rows) == 12
+
+
+def test_measure_crush_case_flags_dropped_answer():
+    case = eval_tokens.CaptureCase(
+        name="late", must_keep_index=11,
+        rows=[{"i": i, "text": f"row {i}"} for i in range(11)] + [{"i": 11, "text": "ANSWER"}],
+    )
+
+    def crush_fn(content: str) -> tuple[str, str | None]:
+        # Simulate a position-only crusher: keep first 10 rows, drop the rest.
+        arr = _json.loads(content)
+        return _json.dumps(arr[:10]), "hash"
+
+    s = eval_tokens.measure_crush_case(case, crush_fn)
+    assert s.tokens_on < s.tokens_off  # crushing saved tokens
+    assert s.survived is False  # index 11 was dropped -> quality FAIL
+
+    row = eval_tokens.aggregate_capture("crusher", [s])
+    assert row.plane == "capture"
+    assert row.quality_on == 0.0
+    assert row.passed is False  # saved tokens but dropped the answer

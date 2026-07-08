@@ -14,10 +14,12 @@ not be wired into the live pipeline to be measured. The data decides wiring.
 
 from __future__ import annotations
 
+import json
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 _CHARS_PER_TOKEN = 4  # keep in lockstep with token_meter._CHARS_PER_TOKEN
@@ -144,3 +146,72 @@ RECALL_LEVERS: list[dict[str, Any]] = [
     {"name": "recall_format_compact", "env": {"MEMO_RECALL_FORMAT": "compact"}},
     {"name": "verbosity_steer_L2", "env": {"MEMO_RECALL_VERBOSITY_LEVEL": "2"}},
 ]
+
+
+CAPTURE_CORPUS_SCHEMA = "memo.token_corpus.v1"
+
+
+@dataclass
+class CaptureCase:
+    name: str
+    rows: list[Any]
+    must_keep_index: int
+
+
+@dataclass
+class P2Sample:
+    tokens_off: int
+    tokens_on: int
+    survived: bool
+
+
+def load_capture_corpus(path: Path) -> list[CaptureCase]:
+    """Load the committed P2 capture corpus (schema memo.token_corpus.v1)."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("cases"), list):
+        raise ValueError(f"capture corpus {path} must be an object with a `cases` list")
+    cases: list[CaptureCase] = []
+    for c in raw["cases"]:
+        cases.append(
+            CaptureCase(
+                name=str(c["name"]),
+                rows=list(c["rows"]),
+                must_keep_index=int(c["must_keep_index"]),
+            )
+        )
+    return cases
+
+
+def measure_crush_case(
+    case: CaptureCase, crush_fn: Callable[[str], tuple[str, str | None]]
+) -> P2Sample:
+    """One capture case: token delta + whether the must-keep row survived."""
+    original = json.dumps(case.rows, ensure_ascii=False)
+    crushed, _hash = crush_fn(original)
+    survived = _row_survived(case.rows[case.must_keep_index], crushed)
+    return P2Sample(
+        tokens_off=count_tokens(original),
+        tokens_on=count_tokens(crushed),
+        survived=survived,
+    )
+
+
+def _row_survived(row: Any, crushed_content: str) -> bool:
+    try:
+        arr = json.loads(crushed_content)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(arr, list) and row in arr
+
+
+def aggregate_capture(lever: str, samples: list[P2Sample]) -> LeverRow:
+    """Fold per-case P2 samples into one LeverRow (mean survival = quality)."""
+    n = len(samples) or 1
+    return LeverRow(
+        lever=lever,
+        plane="capture",
+        tokens_off=sum(s.tokens_off for s in samples),
+        tokens_on=sum(s.tokens_on for s in samples),
+        quality_off=1.0,  # uncrushed content always retains the must-keep row
+        quality_on=sum(1.0 if s.survived else 0.0 for s in samples) / n,
+    )
