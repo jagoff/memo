@@ -256,6 +256,107 @@ def eval_recall_cmd(
                     console.print(f"      {h['score']:>5}  {flag:<5}  {h['title']}")
 
 
+def _tokens_baseline_path(cfg: Config) -> Path:
+    return cfg.state_dir / "eval" / "token_baseline.json"
+
+
+@eval_group.command(name="tokens")
+@click.option("--k", type=int, default=5, help="Top-K hits to render per P1 prompt.")
+@click.option(
+    "--labels",
+    "labels_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default="eval/regression_labels.json",
+    help="P1 label set (schema memo.eval_recall.labels.v1).",
+)
+@click.option(
+    "--corpus",
+    "corpus_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default="eval/token_corpus.json",
+    help="P2 capture corpus (schema memo.token_corpus.v1).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit raw JSON.")
+@click.option("--update-baseline", is_flag=True, help="Save current per-lever metrics as baseline.")
+@click.option("--gate", is_flag=True, help="Exit non-zero if a passing lever regressed vs baseline.")
+@click.option("--force", is_flag=True, help="(accepted for parity; runs are never cached).")
+def eval_tokens_cmd(
+    k: int,
+    labels_path: str,
+    corpus_path: str,
+    as_json: bool,
+    update_baseline: bool,
+    gate: bool,
+    force: bool,
+) -> None:
+    """Measure each token-economy lever: Δtokens + Δquality, per plane.
+
+    P1 (recall-output): render OFF vs ON under each lever, precision = expect_ids
+    surviving into the injected block. P2 (capture): crush the corpus, quality =
+    the labeled must-keep row surviving. A lever PASSes iff it cuts >=5% tokens
+    AND does not drop quality.
+
+    Gate (local, runs against the live index):
+      memo eval tokens --update-baseline
+      memo eval tokens --gate
+    """
+    from memo import eval_tokens
+
+    cfg = Config.from_env()
+    labels = eval_recall.load_labels(Path(labels_path))
+    corpus = eval_tokens.load_capture_corpus(Path(corpus_path))
+    mem = _get_memory(cfg)
+
+    def _search(text: str) -> list:
+        return list(mem.search(text, k=k))
+
+    def _crush(content: str) -> tuple[str, str | None]:
+        from memo.capture_core import maybe_crush_json_capture
+
+        with eval_tokens.env_pins({"MEMO_CRUSHER_ENABLED": "1"}):
+            return maybe_crush_json_capture(content, context="", config=cfg)
+
+    rows = eval_tokens.run_all(
+        prompts=labels.prompts, search=_search, corpus=corpus, crush_fn=_crush, k=k
+    )
+    metrics = eval_tokens.gate_metrics(rows)
+
+    if update_baseline:
+        bp = _tokens_baseline_path(cfg)
+        bp.parent.mkdir(parents=True, exist_ok=True)
+        bp.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[green]✓[/green] token baseline saved → {bp}")
+        return
+
+    if gate:
+        bp = _tokens_baseline_path(cfg)
+        if not bp.exists():
+            raise click.ClickException(
+                f"no token gate baseline at {bp} — seed it with "
+                "`memo eval tokens --update-baseline`"
+            )
+        baseline = json.loads(bp.read_text(encoding="utf-8"))
+        result = eval_tokens.check_gate(rows, baseline)
+        if as_json:
+            click.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+        else:
+            color = "green" if result.passed else "red"
+            mark = "✓" if result.passed else "✗"
+            console.print(f"[{color}]{mark}[/{color}] token gate: {result.message}")
+        sys.exit(0 if result.passed else 1)
+
+    if as_json:
+        click.echo(json.dumps(metrics, ensure_ascii=False, indent=2))
+        return
+    for r in rows:
+        verdict = "PASS" if r.passed else "FAIL"
+        color = "green" if r.passed else "yellow"
+        console.print(
+            f"[{color}]{verdict}[/{color}] {r.lever} [{r.plane}]  "
+            f"saved {r.saved_frac * 100:+.1f}%  Δquality {r.quality_delta:+.2f}"
+        )
+
+
 @eval_group.command(name="baseline")
 @click.option("--k", type=int, default=5, help="Top-K for the offline recall metrics (default: 5).")
 @click.option(
