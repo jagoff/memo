@@ -215,3 +215,45 @@ def aggregate_capture(lever: str, samples: list[P2Sample]) -> LeverRow:
         quality_off=1.0,  # uncrushed content always retains the must-keep row
         quality_on=sum(1.0 if s.survived else 0.0 for s in samples) / n,
     )
+
+
+def gate_metrics(rows: list[LeverRow]) -> dict[str, dict[str, float | bool]]:
+    """Per-lever snapshot the gate tracks: saved_frac, quality_delta, passed."""
+    return {
+        r.lever: {
+            "saved_frac": round(r.saved_frac, 4),
+            "quality_delta": round(r.quality_delta, 4),
+            "passed": r.passed,
+        }
+        for r in rows
+    }
+
+
+@dataclass
+class GateResult:
+    passed: bool
+    message: str
+    regressions: list[str]
+
+
+def check_gate(rows: list[LeverRow], baseline: dict, *, tol: float = 1e-9) -> GateResult:
+    """FAIL if any lever that was PASSING at baseline regressed (now fails,
+    disappeared, or its token saving shrank beyond `tol`)."""
+    cur = gate_metrics(rows)
+    regressions: list[str] = []
+    for lever, base in baseline.items():
+        if not isinstance(base, dict) or not base.get("passed"):
+            continue  # only guard previously-passing levers
+        c = cur.get(lever)
+        if c is None:
+            regressions.append(f"{lever}: missing from current run")
+        elif not c["passed"]:
+            regressions.append(f"{lever}: was passing, now FAIL")
+        elif float(c["saved_frac"]) < float(base["saved_frac"]) - tol:
+            regressions.append(
+                f"{lever}: saving dropped {float(base['saved_frac']):.3f}"
+                f"→{float(c['saved_frac']):.3f}"
+            )
+    passed = not regressions
+    message = "PASS — no token/quality regression" if passed else "FAIL — " + "; ".join(regressions)
+    return GateResult(passed, message, regressions)

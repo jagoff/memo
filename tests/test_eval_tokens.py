@@ -123,3 +123,32 @@ def test_measure_crush_case_flags_dropped_answer():
     assert row.plane == "capture"
     assert row.quality_on == 0.0
     assert row.passed is False  # saved tokens but dropped the answer
+
+
+def test_gate_metrics_snapshots_each_lever():
+    rows = [eval_tokens.LeverRow("compact", "recall_output", 100, 80, 1.0, 1.0)]
+    m = eval_tokens.gate_metrics(rows)
+    assert m["compact"]["passed"] is True
+    assert round(m["compact"]["saved_frac"], 3) == 0.2
+
+
+def test_check_gate_passes_when_no_regression():
+    baseline = {"compact": {"saved_frac": 0.2, "quality_delta": 0.0, "passed": True}}
+    rows = [eval_tokens.LeverRow("compact", "recall_output", 100, 78, 1.0, 1.0)]  # 22% now
+    res = eval_tokens.check_gate(rows, baseline)
+    assert res.passed is True
+
+
+def test_check_gate_fails_when_passing_lever_regresses():
+    baseline = {"compact": {"saved_frac": 0.2, "quality_delta": 0.0, "passed": True}}
+    rows = [eval_tokens.LeverRow("compact", "recall_output", 100, 95, 1.0, 1.0)]  # 5% now
+    res = eval_tokens.check_gate(rows, baseline)
+    assert res.passed is False
+    assert "compact" in res.message
+
+
+def test_check_gate_ignores_levers_that_never_passed():
+    baseline = {"verbosity": {"saved_frac": -0.1, "quality_delta": 0.0, "passed": False}}
+    rows = [eval_tokens.LeverRow("verbosity", "recall_output", 100, 130, 1.0, 1.0)]
+    res = eval_tokens.check_gate(rows, baseline)
+    assert res.passed is True  # a never-passing lever can't regress
