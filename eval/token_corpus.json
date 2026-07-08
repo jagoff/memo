@@ -1,0 +1,60 @@
+{
+  "schema": "memo.token_corpus.v1",
+  "_doc": "Realistic tool-output JSON arrays for the P2 capture plane. Each case's must_keep_index marks the row that MUST survive the crush (the 'answer'). Placed late in most cases so a position-only scorer drops it -> the gate's quality guard FAILs, documenting that L1 needs a real relevance scorer.",
+  "cases": [
+    {
+      "name": "grep_hits_answer_last",
+      "must_keep_index": 29,
+      "rows": [
+        {"file": "src/a01.py", "line": 12, "match": "def unrelated_a(): pass"},
+        {"file": "src/a02.py", "line": 8, "match": "def unrelated_b(): pass"},
+        {"file": "src/a03.py", "line": 3, "match": "import os"},
+        {"file": "src/a04.py", "line": 44, "match": "return None"},
+        {"file": "src/a05.py", "line": 5, "match": "x = 1"},
+        {"file": "src/a06.py", "line": 9, "match": "y = 2"},
+        {"file": "src/a07.py", "line": 1, "match": "# header"},
+        {"file": "src/a08.py", "line": 7, "match": "pass"},
+        {"file": "src/a09.py", "line": 2, "match": "z = 3"},
+        {"file": "src/a10.py", "line": 6, "match": "log.info('x')"},
+        {"file": "src/a11.py", "line": 4, "match": "raise ValueError"},
+        {"file": "src/a12.py", "line": 11, "match": "continue"},
+        {"file": "src/a13.py", "line": 13, "match": "break"},
+        {"file": "src/a14.py", "line": 14, "match": "yield"},
+        {"file": "src/a15.py", "line": 15, "match": "assert True"},
+        {"file": "src/a16.py", "line": 16, "match": "print('a')"},
+        {"file": "src/a17.py", "line": 17, "match": "del q"},
+        {"file": "src/a18.py", "line": 18, "match": "global g"},
+        {"file": "src/a19.py", "line": 19, "match": "nonlocal n"},
+        {"file": "src/a20.py", "line": 20, "match": "lambda: 0"},
+        {"file": "src/a21.py", "line": 21, "match": "with open('f'): pass"},
+        {"file": "src/a22.py", "line": 22, "match": "try: pass"},
+        {"file": "src/a23.py", "line": 23, "match": "except: pass"},
+        {"file": "src/a24.py", "line": 24, "match": "finally: pass"},
+        {"file": "src/a25.py", "line": 25, "match": "class Foo: pass"},
+        {"file": "src/a26.py", "line": 26, "match": "@decorator"},
+        {"file": "src/a27.py", "line": 27, "match": "async def h(): pass"},
+        {"file": "src/a28.py", "line": 28, "match": "await x"},
+        {"file": "src/a29.py", "line": 29, "match": "return sum(v)"},
+        {"file": "src/target.py", "line": 42, "match": "def maybe_crush_json_capture(content, context, config):"}
+      ]
+    },
+    {
+      "name": "search_results_answer_first",
+      "must_keep_index": 0,
+      "rows": [
+        {"rank": 1, "id": "hit_the_answer", "text": "the row we must keep"},
+        {"rank": 2, "id": "n02", "text": "noise 2"},
+        {"rank": 3, "id": "n03", "text": "noise 3"},
+        {"rank": 4, "id": "n04", "text": "noise 4"},
+        {"rank": 5, "id": "n05", "text": "noise 5"},
+        {"rank": 6, "id": "n06", "text": "noise 6"},
+        {"rank": 7, "id": "n07", "text": "noise 7"},
+        {"rank": 8, "id": "n08", "text": "noise 8"},
+        {"rank": 9, "id": "n09", "text": "noise 9"},
+        {"rank": 10, "id": "n10", "text": "noise 10"},
+        {"rank": 11, "id": "n11", "text": "noise 11"},
+        {"rank": 12, "id": "n12", "text": "noise 12"}
+      ]
+    }
+  ]
+}
