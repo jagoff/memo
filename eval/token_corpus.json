@@ -1,6 +1,6 @@
 {
   "schema": "memo.token_corpus.v1",
-  "_doc": "Realistic tool-output JSON arrays for the P2 capture measurement plane. Each case's must_keep_index marks the row that MUST survive the crush (the 'answer'). Placed late in most cases so a position-only scorer drops it -> the gate's quality guard FAILs, documenting that L1 needs a real relevance scorer.",
+  "_doc": "Realistic tool-output JSON arrays for the P2 capture plane. Each case's must_keep_index marks the row that MUST survive the crush (the 'answer'). Placed late in most cases so a position-only scorer drops it -> the gate's quality guard FAILs, documenting that L1 needs a real relevance scorer.",
   "cases": [
     {
       "name": "grep_hits_answer_last",

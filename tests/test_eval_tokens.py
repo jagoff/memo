@@ -1,4 +1,6 @@
+import json as _json
 from dataclasses import dataclass as _dc
+from pathlib import Path
 
 from memo import eval_tokens
 
@@ -76,10 +78,6 @@ def test_render_block_verbosity_level_appends_steering():
     # L4 adds a steering block -> steered is LONGER (the paradox: L4 costs P1 tokens)
     assert len(steered) > len(plain)
     assert "aaaaaaaa" in plain  # id short-prefix present for surviving_ids()
-
-
-import json as _json
-from pathlib import Path
 
 
 def _write_corpus(tmp_path: Path) -> Path:
