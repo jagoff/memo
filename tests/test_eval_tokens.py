@@ -152,3 +152,35 @@ def test_check_gate_ignores_levers_that_never_passed():
     rows = [eval_tokens.LeverRow("verbosity", "recall_output", 100, 130, 1.0, 1.0)]
     res = eval_tokens.check_gate(rows, baseline)
     assert res.passed is True  # a never-passing lever can't regress
+
+
+def test_run_all_measures_p1_and_p2_without_mlx(monkeypatch):
+    from memo.eval_recall import Prompt
+
+    hits = [_FakeHit(id="aaaaaaaa11", title="Answer", body="the answer body " * 10)]
+
+    def fake_search(text: str) -> list:
+        return hits
+
+    def fake_crush(content: str) -> tuple[str, str | None]:
+        import json as j
+        arr = j.loads(content)
+        return j.dumps(arr[:10]), "h"  # position-only: drops late rows
+
+    corpus = [
+        eval_tokens.CaptureCase(
+            "late", must_keep_index=11,
+            rows=[{"i": i} for i in range(11)] + [{"i": 11, "answer": True}],
+        )
+    ]
+    rows = eval_tokens.run_all(
+        prompts=[Prompt("q", expect_ids=["aaaaaaaa11"])],
+        search=fake_search,
+        corpus=corpus,
+        crush_fn=fake_crush,
+    )
+    planes = {r.plane for r in rows}
+    assert planes == {"recall_output", "capture"}
+    # The crusher lever dropped the answer -> capture lever FAILs quality.
+    cap = next(r for r in rows if r.plane == "capture")
+    assert cap.passed is False

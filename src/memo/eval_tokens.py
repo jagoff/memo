@@ -257,3 +257,40 @@ def check_gate(rows: list[LeverRow], baseline: dict, *, tol: float = 1e-9) -> Ga
     passed = not regressions
     message = "PASS — no token/quality regression" if passed else "FAIL — " + "; ".join(regressions)
     return GateResult(passed, message, regressions)
+
+
+def run_all(
+    *,
+    prompts: list[Any],
+    search: Callable[[str], list[Any]],
+    corpus: list[CaptureCase],
+    crush_fn: Callable[[str], tuple[str, str | None]],
+    k: int = 5,
+    body_chars: int = 200,
+    token_budget: int = 400,
+) -> list[LeverRow]:
+    """Measure every P1 recall lever and the P2 crusher over the given corpus.
+
+    `search`/`crush_fn` are injected so tests run without MLX; the CLI wires the
+    real live-index search and the real `maybe_crush_json_capture`.
+    """
+    rows: list[LeverRow] = []
+
+    # --- P1: recall-output levers ---------------------------------------
+    hits_by_prompt = {p.text: (search(p.text) or [])[:k] for p in prompts}
+    for lever in RECALL_LEVERS:
+        samples: list[P1Sample] = []
+        for p in prompts:
+            hits = hits_by_prompt[p.text]
+            block_off = render_block(hits, {}, body_chars=body_chars, token_budget=token_budget)
+            block_on = render_block(
+                hits, lever["env"], body_chars=body_chars, token_budget=token_budget
+            )
+            samples.append(measure_recall_sample(block_off, block_on, p.expect_ids))
+        rows.append(aggregate_recall(lever["name"], samples))
+
+    # --- P2: capture crusher --------------------------------------------
+    p2 = [measure_crush_case(c, crush_fn) for c in corpus]
+    if p2:
+        rows.append(aggregate_capture("crusher_L1", p2))
+    return rows
