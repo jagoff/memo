@@ -192,13 +192,13 @@ def _json_dict(raw: Any) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _malformed_jsonl_rows(path: Any) -> int:
+def _malformed_jsonl_rows(path: Any, *, limit: int) -> int:
     try:
         p = path
         if not p.is_file():
             return 0
         count = 0
-        for line in p.read_text(encoding="utf-8").splitlines():
+        for line in p.read_text(encoding="utf-8").splitlines()[-limit:]:
             try:
                 json.loads(line)
             except json.JSONDecodeError:
@@ -208,14 +208,25 @@ def _malformed_jsonl_rows(path: Any) -> int:
         return 0
 
 
-def _health_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {str(row["name"]) for row in rows}
+
+
+def _health_rows(conn: sqlite3.Connection) -> tuple[list[dict[str, Any]], bool]:
+    columns = _table_columns(conn, "memory_health")
+    if columns and "support_count" not in columns:
+        return [], True
     try:
         rows = conn.execute(
             "SELECT id, confidence, roi_score, updated_at, support_count FROM memory_health"
         ).fetchall()
     except sqlite3.Error:
-        return []
-    return [dict(row) for row in rows]
+        return [], False
+    return [dict(row) for row in rows], False
 
 
 def _grounded_ids(cfg: Config, *, limit: int) -> set[str]:
@@ -254,6 +265,28 @@ def _grounded_memory_rows(
     return [dict(row) for row in rows]
 
 
+def _memory_rows_by_ids(conn: sqlite3.Connection, ids: list[str]) -> list[dict[str, Any]]:
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT m.id,
+                   m.title,
+                   COALESCE(h.confidence, 1.0) AS confidence,
+                   COALESCE(h.support_count, 0) AS support_count
+              FROM meta m
+              LEFT JOIN memory_health h ON h.id = m.id
+             WHERE m.id IN ({placeholders})
+            """,  # noqa: S608
+            tuple(ids),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [dict(row) for row in rows]
+
+
 def _trust_items(
     cfg: Config,
     *,
@@ -282,7 +315,27 @@ def _trust_items(
         return items, actions, summary
 
     try:
-        health_rows = _health_rows(conn)
+        health_rows, schema_missing = _health_rows(conn)
+        if schema_missing:
+            items.append(
+                _item(
+                    id="schema_missing",
+                    severity="warning",
+                    status="unknown",
+                    message="memory_health exists but lacks support_count.",
+                    evidence={"table": "memory_health", "missing_column": "support_count"},
+                    action="Run memo doctor or rebuild/migrate the memo index.",
+                )
+            )
+            actions.append(
+                _action(
+                    "migrate_schema",
+                    "memo doctor",
+                    "memory_health.support_count is missing.",
+                )
+            )
+            return items, actions, summary
+
         support_positive = sum(1 for r in health_rows if int(r.get("support_count") or 0) > 0)
         summary["memory_health_rows"] = len(health_rows)
         summary["support_count_positive"] = support_positive
@@ -311,6 +364,36 @@ def _trust_items(
         grounded_prefixes = _grounded_ids(cfg, limit=limit)
         summary["grounded_memory_ids"] = len(grounded_prefixes)
         if grounded_prefixes:
+            trusted_unused_ids = [
+                str(row.get("id"))
+                for row in health_rows
+                if int(row.get("support_count") or 0) >= 3
+                and str(row.get("id") or "")[:8] not in grounded_prefixes
+            ]
+            trusted_unused = _memory_rows_by_ids(conn, trusted_unused_ids[:10])
+            if trusted_unused:
+                items.append(
+                    _item(
+                        id="trusted_memories_not_used",
+                        severity="warning",
+                        status="degraded",
+                        message="High-support memories were not grounded in the sampled window.",
+                        evidence={
+                            "count": len(trusted_unused_ids),
+                            "memories": [
+                                {
+                                    "id": str(row.get("id") or "")[:8],
+                                    "title": row.get("title"),
+                                    "support_count": int(row.get("support_count") or 0),
+                                    "confidence": float(row.get("confidence") or 1.0),
+                                }
+                                for row in trusted_unused
+                            ],
+                        },
+                        action="Check project/global scope, duplicates, and targeted retrieval eval labels.",
+                    )
+                )
+
             bad: list[dict[str, Any]] = []
             for row in _grounded_memory_rows(conn, grounded_prefixes):
                 rid = str(row.get("id") or "")
@@ -378,7 +461,7 @@ def build_report(cfg: Config, *, limit: int = 500) -> dict[str, Any]:
     adoption, adoption_actions = _adoption_items(cfg, limit=limit)
     trust, trust_actions, trust_summary = _trust_items(cfg, limit=limit)
     verdict = _derive_verdict(adoption, trust)
-    malformed_rows = _malformed_jsonl_rows(recall_log_path(cfg.state_dir))
+    malformed_rows = _malformed_jsonl_rows(recall_log_path(cfg.state_dir), limit=limit)
     return {
         "verdict": verdict,
         "adoption": adoption,

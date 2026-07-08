@@ -118,6 +118,51 @@ def test_doctor_reports_support_count_starvation(tmp_path: Path) -> None:
     assert item["evidence"]["support_count_positive"] == 0
 
 
+def test_doctor_reports_missing_support_count_schema(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(cfg.db_path) as conn:
+        conn.execute(
+            "CREATE TABLE memory_health("
+            "id TEXT PRIMARY KEY, confidence REAL, roi_score REAL, updated_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO memory_health(id, confidence, roi_score, updated_at) "
+            "VALUES('abc12345', 1.0, 1.0, '2026-07-08T00:00:00')"
+        )
+        conn.commit()
+
+    report = build_report(cfg, limit=100)
+
+    item = next(i for i in report["trust"] if i["id"] == "schema_missing")
+    assert item["status"] == "unknown"
+    assert item["evidence"] == {"table": "memory_health", "missing_column": "support_count"}
+
+
+def test_doctor_reports_trusted_memories_not_used(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    mem = Memory(cfg)
+    used = mem.save(content="used supported fact", title="Used", defer_embed=True)
+    unused = mem.save(content="unused supported fact", title="Unused", defer_embed=True)
+    mem.store.bump_support_batch([used.id, used.id, used.id, unused.id, unused.id, unused.id])
+    append_grounding_log(
+        cfg.state_dir,
+        session_id="s-trusted",
+        turn=1,
+        recall_id=used.id[:8],
+        used_score=0.9,
+        method="test",
+    )
+
+    report = build_report(cfg, limit=100)
+
+    item = next(i for i in report["trust"] if i["id"] == "trusted_memories_not_used")
+    assert item["severity"] == "warning"
+    assert item["evidence"]["count"] == 1
+    assert item["evidence"]["memories"][0]["id"] == unused.id[:8]
+
+
 def test_doctor_reports_invalidated_grounded_memory(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     mem = Memory(cfg)
@@ -180,6 +225,17 @@ def test_doctor_skips_malformed_recall_rows(tmp_path: Path) -> None:
     report = build_report(cfg, limit=100)
 
     assert sorted(report) == ["actions", "adoption", "summary", "trust", "verdict"]
+    assert report["summary"]["malformed_rows"] == 1
+
+
+def test_doctor_malformed_rows_respects_limit(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    path = recall_log_path(cfg.state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('not-json-old\n{"via": "daemon"}\nnot-json-new\n', encoding="utf-8")
+
+    report = build_report(cfg, limit=2)
+
     assert report["summary"]["malformed_rows"] == 1
 
 
