@@ -51,23 +51,22 @@ def _header_panel(s: dict) -> Panel:
     grid.add_column(justify="center", ratio=1)
     grid.add_column(justify="center", ratio=1)
 
-    def cell(label: str, tokens: int, grounded: int, color: str) -> Text:
+    def cell(label: str, bucket: dict, color: str) -> Text:
         t = Text(justify="center")
         t.append(f"{label}\n", style="dim")
-        t.append(f"{_fmt_tokens(tokens)}\n", style=f"bold {color}")
+        t.append(f"{_fmt_tokens(bucket['tokens'])}\n", style=f"bold {color}")
         t.append("tokens saved\n", style="dim")
-        t.append(f"{grounded} memories used", style="dim")
+        used = f"{bucket['grounded']} used"
+        consults = int(bucket.get("consults", 0))
+        if consults:
+            used += f" · {consults} consults"
+        t.append(used, style="dim")
         return t
 
     grid.add_row(
-        cell("TODAY", s["today"]["tokens"], s["today"]["grounded"], "cyan"),
-        cell(
-            f"MONTH · {s['month']['month']}",
-            s["month"]["tokens"],
-            s["month"]["grounded"],
-            "magenta",
-        ),
-        cell("ALL-TIME", s["historic"]["tokens"], s["historic"]["grounded"], "green"),
+        cell("TODAY", s["today"], "cyan"),
+        cell(f"MONTH · {s['month']['month']}", s["month"], "magenta"),
+        cell("ALL-TIME", s["historic"], "green"),
     )
     return Panel(
         grid,
@@ -90,6 +89,37 @@ def _chart(rows: list[tuple[str, int, int]], color: str, title: str) -> Panel:
         num = Text(_fmt_tokens(tok) if tok else "·", style="" if tok else "dim")
         tbl.add_row(label, bar, num)
     return Panel(tbl, title=f"[bold {color}]{title}[/bold {color}]", border_style=color)
+
+
+def _by_client_panel(s: dict) -> Panel | None:
+    """All-time savings attributed to each agent that reads memo — Claude Code
+    (grounded) plus every other LLM (codex/opencode/devin/synapse/memflow/...)
+    measured by its productive consults."""
+    bc = s.get("by_client", {}).get("historic", {})
+    if not bc:
+        return None
+    tbl = Table.grid(padding=(0, 2))
+    tbl.add_column(style="bold")           # agent
+    tbl.add_column(justify="right")        # tokens
+    tbl.add_column(justify="left", style="dim")  # signal
+    for client, rec in bc.items():
+        signal = []
+        if rec.get("grounded"):
+            signal.append(f"{rec['grounded']} grounded")
+        if rec.get("consults"):
+            signal.append(f"{rec['consults']} consults")
+        tbl.add_row(
+            client,
+            Text(_fmt_tokens(rec["tokens"]) + " tok", style="green"),
+            " · ".join(signal),
+        )
+    return Panel(
+        tbl,
+        title="[bold]by agent · all-time[/bold]",
+        subtitle="[dim]every LLM that reads memo — grounded (Claude Code) + consults (others)[/dim]",
+        border_style="blue",
+        padding=(0, 2),
+    )
 
 
 def _growth_text(s: dict) -> Text:
@@ -153,15 +183,20 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
             border_style="green", padding=(0, 2),
         ))
 
-    if s["historic"]["grounded"] == 0:
+    if s["historic"]["tokens"] == 0:
         console.print(
-            "[dim]No memories used in answers yet (grounding.log empty).\n"
-            "Run a few Claude Code sessions: each memory the answer\n"
-            "uses adds to the savings. Check the hook with [/dim][bold]memo doctor[/bold][dim].[/dim]"
+            "[dim]No savings recorded yet (no grounded Claude answers, no\n"
+            "productive consults from other agents). Run a few sessions —\n"
+            "each memory an answer uses, or each memo search another agent\n"
+            "makes, adds to the total. Check the hook with [/dim][bold]memo doctor[/bold][dim].[/dim]"
         )
         return
 
     console.print(_header_panel(s))
+
+    agent_panel = _by_client_panel(s)
+    if agent_panel is not None:
+        console.print(agent_panel)
 
     daily_rows = [
         (d["date"][5:], d["grounded"], d["tokens"]) for d in s["daily"]  # MM-DD
@@ -181,5 +216,5 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
         )
     console.print(
         f"[dim]est: {s['tpg']} tok/memory-used (MEMO_ROI_TOKENS_PER_GROUNDED) · "
-        f"more useful memories ⇒ more memories used ⇒ more savings[/dim]"
+        f"{s.get('tpc', 200)} tok/consult by other agents (MEMO_ROI_TOKENS_PER_CONSULT)[/dim]"
     )

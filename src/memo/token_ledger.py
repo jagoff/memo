@@ -14,10 +14,22 @@ rotate, so the historic total is:
   * **monotonic** — a day's grounded count never decreases (max-merge), so the
     historic line only ever rises as memo accumulates more grounded memories.
 
-Tokens saved are derived at read time: ``grounded × MEMO_ROI_TOKENS_PER_GROUNDED``
-(default 350 — the same per-grounded estimate `memo roi` uses). Storing the raw
-grounded count (not the token product) keeps the durable signal physical and
-lets the tunable rate re-price history without rewriting the ledger.
+Two physical signals feed the ledger, one per agent class:
+
+  * **grounded** (Claude Code) — a surfaced memory the answer USED, scored by the
+    Stop-hook grounding pass over the transcript. Strong signal.
+  * **consults** (every other agent: codex/opencode/devin/synapse/memflow/...) —
+    a memo search that returned >=1 hit, logged in recall.log with its
+    ``source``/``client``. These agents read memo over MCP/CLI/socket and we
+    never see their answer, so we cannot ground them; a productive consult is the
+    honest proxy for "a re-derivation memo prevented". Weaker signal.
+
+Tokens saved are derived at read time:
+``grounded × MEMO_ROI_TOKENS_PER_GROUNDED (350) + consults × MEMO_ROI_TOKENS_PER_CONSULT (200)``.
+Storing the raw counts (not the token product) keeps the durable signal physical
+and lets the tunable rates re-price history without rewriting the ledger. Consults
+are attributed per-source and exclude ``claude-code`` (already counted by its
+grounding), so no agent is double-counted.
 
 Pure stdlib + `memo.dashboard` (leaf log readers) + `memo.flags` — no MLX, no
 `memo.memory` import, so it is cheap enough to roll up on every Stop hook.
@@ -34,11 +46,25 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-from .dashboard import GROUNDED_SCORE, read_grounding_log, read_recall_hook_log
+from .dashboard import (
+    GROUNDED_SCORE,
+    read_grounding_log,
+    read_recall_hook_log,
+    read_recall_log,
+)
 from .flags import flag_int
 
 LEDGER_SCHEMA = "memo.token_savings.daily.v1"
 _DEFAULT_TOKENS_PER_GROUNDED = 350
+_DEFAULT_TOKENS_PER_CONSULT = 200
+
+# Grounded rows are attributed to Claude Code — grounding runs only from Claude
+# Code's Stop hook over its transcript, and every grounding.log row confirms
+# client="claude-code". Other agents (codex/opencode/devin/synapse/memflow) never
+# reach grounding; their savings ride the consult signal below, so their consults
+# in recall.log must NOT double-count against a client that also grounds.
+_GROUNDED_CLIENT = "claude-code"
+_CONSULT_EXCLUDE = frozenset({_GROUNDED_CLIENT})
 
 
 def ledger_path(state_dir: Path) -> Path:
@@ -58,6 +84,21 @@ def _ledger_lock_path(state_dir: Path) -> Path:
 def _tokens_per_grounded() -> int:
     v = flag_int("MEMO_ROI_TOKENS_PER_GROUNDED")
     return _DEFAULT_TOKENS_PER_GROUNDED if v is None else v
+
+
+def _tokens_per_consult() -> int:
+    v = flag_int("MEMO_ROI_TOKENS_PER_CONSULT")
+    return _DEFAULT_TOKENS_PER_CONSULT if v is None else v
+
+
+def _consult_source(row: dict) -> str | None:
+    """The agent behind a recall.log consult row: ``source`` (CLI/socket path)
+    or ``client`` (MCP clientInfo handshake). None when unattributed."""
+    src = row.get("source") or row.get("client")
+    if not isinstance(src, str):
+        return None
+    src = src.strip()
+    return src or None
 
 
 def _local_date(ts: str) -> str | None:
@@ -131,6 +172,34 @@ def grounded_by_day(
     return out
 
 
+def consults_by_day_client(
+    rows: list[dict],
+    *,
+    to_day: Callable[[str], str | None] = _local_date,
+    exclude: frozenset[str] = _CONSULT_EXCLUDE,
+) -> dict[str, dict[str, int]]:
+    """Count PRODUCTIVE consults (a recall that returned >=1 hit) per local day,
+    split by the agent that made them.
+
+    ``{day: {source: count}}``. Empty consults (health-check pings that returned
+    no hits) carry no saving and are skipped. ``exclude`` drops clients already
+    measured by grounding (Claude Code) so their consults never double-count.
+    """
+    out: dict[str, dict[str, int]] = {}
+    for r in rows:
+        if not r.get("hits"):
+            continue
+        src = _consult_source(r)
+        if src is None or src.lower() in exclude:
+            continue
+        day = to_day(r.get("ts", ""))
+        if day is None:
+            continue
+        per_src = out.setdefault(day, {})
+        per_src[src] = per_src.get(src, 0) + 1
+    return out
+
+
 def turns_by_cohort(
     rows: list[dict],
     *,
@@ -182,6 +251,16 @@ def roll_up(state_dir: Path, *, limit: int = 4000) -> dict:
             if n >= prev:
                 days[day] = {**days.get(day, {}), "grounded": n}
                 changed = True
+        consults = consults_by_day_client(read_recall_log(state_dir, limit=limit))
+        for day, per_src in consults.items():
+            cur = days.get(day, {})
+            stored: dict = dict(cur.get("consults", {}))
+            for src, n in per_src.items():
+                if n > int(stored.get(src, 0)):
+                    stored[src] = n
+            if stored != cur.get("consults", {}):
+                days[day] = {**cur, "consults": stored}
+                changed = True
         cohorts = turns_by_cohort(read_recall_hook_log(state_dir, limit=limit))
         for day, c in cohorts.items():
             cur = days.get(day, {})
@@ -219,6 +298,7 @@ def summarize(
     ledger = read_ledger(state_dir)
     days: dict[str, dict] = ledger.get("days", {})
     tpg = _tokens_per_grounded()
+    tpc = _tokens_per_consult()
     today = today or datetime.now().astimezone().date()
     today_key = today.isoformat()
     month_prefix = today.strftime("%Y-%m")
@@ -226,41 +306,82 @@ def summarize(
     def _grounded(day_key: str) -> int:
         return int(days.get(day_key, {}).get("grounded", 0))
 
-    def _bucket(grounded: int) -> dict:
-        return {"grounded": grounded, "tokens": grounded * tpg}
+    def _consults(day_key: str) -> dict[str, int]:
+        c = days.get(day_key, {}).get("consults", {})
+        return c if isinstance(c, dict) else {}
 
-    today_g = _grounded(today_key)
-    month_g = sum(_grounded(k) for k in days if k.startswith(month_prefix))
+    def _consults_total(day_key: str) -> int:
+        return sum(int(n) for n in _consults(day_key).values())
+
+    def _tokens(grounded: int, consults: int) -> int:
+        return grounded * tpg + consults * tpc
+
+    def _bucket(grounded: int, consults: int) -> dict:
+        return {
+            "grounded": grounded,
+            "consults": consults,
+            "tokens": _tokens(grounded, consults),
+        }
+
+    def _by_client(day_keys: list[str]) -> dict[str, dict]:
+        """Per-agent savings over ``day_keys``: grounded → Claude Code (its Stop
+        hook is the only grounding path), consults → each consulting agent."""
+        agg: dict[str, dict[str, int]] = {}
+        g = sum(_grounded(k) for k in day_keys)
+        if g:
+            agg[_GROUNDED_CLIENT] = {"grounded": g, "consults": 0}
+        for k in day_keys:
+            for src, n in _consults(k).items():
+                e = agg.setdefault(src, {"grounded": 0, "consults": 0})
+                e["consults"] += int(n)
+        out = {
+            c: {**v, "tokens": _tokens(v["grounded"], v["consults"])}
+            for c, v in agg.items()
+        }
+        return dict(sorted(out.items(), key=lambda kv: kv[1]["tokens"], reverse=True))
+
+    month_keys = [k for k in days if k.startswith(month_prefix)]
+    all_keys = list(days)
+
+    today_g, today_c = _grounded(today_key), _consults_total(today_key)
+    month_g = sum(_grounded(k) for k in month_keys)
+    month_c = sum(_consults_total(k) for k in month_keys)
     historic_g = sum(int(d.get("grounded", 0)) for d in days.values())
+    historic_c = sum(_consults_total(k) for k in all_keys)
 
     # Continuous daily series ending today (gap days filled with 0 for the chart).
     daily = []
     for i in range(days_back - 1, -1, -1):
         d = today - timedelta(days=i)
         key = d.isoformat()
-        daily.append({"date": key, **_bucket(_grounded(key))})
+        daily.append({"date": key, **_bucket(_grounded(key), _consults_total(key))})
 
     # Monthly series — group ledger days by YYYY-MM, last `months_back` months.
-    months: dict[str, int] = {}
+    months: dict[str, dict[str, int]] = {}
     for k, rec in days.items():
-        months[_month_of(k)] = months.get(_month_of(k), 0) + int(rec.get("grounded", 0))
+        m = months.setdefault(_month_of(k), {"grounded": 0, "consults": 0})
+        m["grounded"] += int(rec.get("grounded", 0))
+        m["consults"] += _consults_total(k)
     monthly = [
-        {"month": m, **_bucket(months[m])} for m in sorted(months)[-months_back:]
+        {"month": m, **_bucket(months[m]["grounded"], months[m]["consults"])}
+        for m in sorted(months)[-months_back:]
     ]
 
-    # Growth: this month vs the immediately preceding calendar month.
+    # Growth: this month's total savings vs the preceding calendar month.
     prev_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
-    prev_g = months.get(prev_month, 0)
-    this_g = months.get(month_prefix, 0)
-    if prev_g > 0:
-        pct = round((this_g - prev_g) / prev_g * 100, 1)
-        up: bool | None = this_g >= prev_g
+    prev = months.get(prev_month, {"grounded": 0, "consults": 0})
+    this = months.get(month_prefix, {"grounded": 0, "consults": 0})
+    prev_tok = _tokens(prev["grounded"], prev["consults"])
+    this_tok = _tokens(this["grounded"], this["consults"])
+    if prev_tok > 0:
+        pct = round((this_tok - prev_tok) / prev_tok * 100, 1)
+        up: bool | None = this_tok >= prev_tok
     else:
         pct = None
         up = None
     growth = {
-        "this_month_tokens": this_g * tpg,
-        "prev_month_tokens": prev_g * tpg,
+        "this_month_tokens": this_tok,
+        "prev_month_tokens": prev_tok,
         "pct": pct,
         "up": up,
     }
@@ -272,9 +393,15 @@ def summarize(
 
     return {
         "tpg": tpg,
-        "today": {"date": today_key, **_bucket(today_g)},
-        "month": {"month": month_prefix, **_bucket(month_g)},
-        "historic": _bucket(historic_g),
+        "tpc": tpc,
+        "today": {"date": today_key, **_bucket(today_g, today_c)},
+        "month": {"month": month_prefix, **_bucket(month_g, month_c)},
+        "historic": _bucket(historic_g, historic_c),
+        "by_client": {
+            "today": _by_client([today_key]),
+            "month": _by_client(month_keys),
+            "historic": _by_client(all_keys),
+        },
         "daily": daily,
         "monthly": monthly,
         "growth": growth,

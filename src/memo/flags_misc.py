@@ -543,6 +543,19 @@ SPECS: tuple[FlagSpec, ...] = (
         "regeneration round-trip the user did NOT have to repeat.",
         min_val=0,
     ),
+    _spec(
+        "MEMO_ROI_TOKENS_PER_CONSULT",
+        "int",
+        200,
+        "roi",
+        "Estimated model tokens saved per PRODUCTIVE memo consult (a search that "
+        "returned >=1 hit) by a non-Claude-Code agent (codex/opencode/devin/"
+        "synapse/memflow/...). These agents read memo over MCP/CLI/socket, so we "
+        "log the consult but never see their answer — we can't ground it like a "
+        "Claude Code turn. Priced BELOW MEMO_ROI_TOKENS_PER_GROUNDED (350) because "
+        "the signal is weaker: memo returned relevant memory, use is unverified.",
+        min_val=0,
+    ),
     # Git sync (memo-sync repo ↔ GitHub)
     _spec(
         "MEMO_SYNC_AUTO",

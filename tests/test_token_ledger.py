@@ -334,7 +334,7 @@ def test_tokens_cmd_empty_is_graceful(tmp_path: Path) -> None:
 
     r = CliRunner().invoke(cli, ["tokens"], env=_cli_env(tmp_path))
     assert r.exit_code == 0, r.output
-    assert "No memories used" in r.output
+    assert "No savings recorded yet" in r.output
 
 
 def test_tokens_cmd_renders_numbers_and_bars(tmp_path: Path) -> None:
@@ -358,3 +358,110 @@ def test_summarize_exposes_ablation_totals(tmp_path) -> None:
     token_ledger.roll_up(tmp_path)
     s = token_ledger.summarize(tmp_path)
     assert s["ablation"] == {"turns_on": 0, "turns_off": 1}
+
+
+# --- cross-LLM consults (codex/opencode/devin/synapse/memflow/...) ----------
+
+
+def _c(ts: str, *, source: str, has_hits: bool = True) -> dict:
+    """Build a recall.log consult row from another agent."""
+    return {
+        "ts": ts,
+        "prompt": "q",
+        "hits": [{"id": "abcd1234"}] if has_hits else [],
+        "via": "cli:search",
+        "source": source,
+    }
+
+
+def test_consults_by_day_client_counts_productive_only() -> None:
+    rows = [
+        _c("2026-06-10T12:00:00+00:00", source="codex"),           # productive
+        _c("2026-06-10T13:00:00+00:00", source="codex"),           # productive
+        _c("2026-06-10T14:00:00+00:00", source="synapse", has_hits=False),  # empty ping
+        _c("2026-06-11T09:00:00+00:00", source="memflow"),         # productive, next day
+    ]
+    by = token_ledger.consults_by_day_client(rows, to_day=lambda ts: ts[:10])
+    assert by == {"2026-06-10": {"codex": 2}, "2026-06-11": {"memflow": 1}}
+
+
+def test_consults_by_day_client_excludes_claude_code() -> None:
+    """Claude Code is already measured by grounding — its consults must not
+    double-count via the recall.log proxy."""
+    rows = [
+        _c("2026-06-10T12:00:00+00:00", source="claude-code"),
+        _c("2026-06-10T12:30:00+00:00", source="codex"),
+    ]
+    by = token_ledger.consults_by_day_client(rows, to_day=lambda ts: ts[:10])
+    assert by == {"2026-06-10": {"codex": 1}}
+
+
+def test_consults_attribute_via_client_field_when_no_source() -> None:
+    rows = [{"ts": "2026-06-10T12:00:00+00:00", "hits": [{"id": "x"}], "client": "devin"}]
+    by = token_ledger.consults_by_day_client(rows, to_day=lambda ts: ts[:10])
+    assert by == {"2026-06-10": {"devin": 1}}
+
+
+def test_roll_up_folds_productive_consults_by_source(tmp_path: Path) -> None:
+    from memo.dashboard import append_recall_log
+
+    # Two productive codex consults + one empty synapse ping (no session_id, so
+    # they stay in recall.log — the real cross-agent consult path).
+    append_recall_log(tmp_path, prompt="q", hits=[{"id": "a1"}], via="cli:search", source="codex")
+    append_recall_log(tmp_path, prompt="q", hits=[{"id": "a2"}], via="cli:search", source="codex")
+    append_recall_log(tmp_path, prompt="", hits=[], via="cli:search", source="synapse")
+    ledger = token_ledger.roll_up(tmp_path)
+    (day,) = ledger["days"].keys()
+    assert ledger["days"][day]["consults"] == {"codex": 2}
+
+
+def test_roll_up_consults_are_monotonic_across_rotation(tmp_path: Path) -> None:
+    import json
+
+    log = dashboard.recall_log_path(tmp_path)
+    rows = [_c(f"2026-06-05T1{h}:00:00+00:00", source="codex") for h in range(3)]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    first = token_ledger.roll_up(tmp_path)
+    assert first["days"]["2026-06-05"]["consults"] == {"codex": 3}
+
+    # recall.log rotates down to one row — durable count must not shrink.
+    log.write_text(json.dumps(_c("2026-06-05T12:00:00+00:00", source="codex")) + "\n", encoding="utf-8")
+    second = token_ledger.roll_up(tmp_path)
+    assert second["days"]["2026-06-05"]["consults"] == {"codex": 3}
+
+
+def test_summarize_prices_consults_and_breaks_down_by_client(tmp_path: Path) -> None:
+    token_ledger.write_ledger(
+        tmp_path,
+        {
+            "schema": token_ledger.LEDGER_SCHEMA,
+            "days": {
+                "2026-06-30": {"grounded": 2, "consults": {"codex": 5}},
+            },
+        },
+    )
+    s = token_ledger.summarize(tmp_path, today=date(2026, 6, 30))
+    tpg, tpc = s["tpg"], s["tpc"]
+    assert s["today"]["grounded"] == 2
+    assert s["today"]["consults"] == 5
+    assert s["today"]["tokens"] == 2 * tpg + 5 * tpc
+    # Per-agent breakdown: grounded → claude-code, consults → codex.
+    bc = s["by_client"]["today"]
+    assert bc["claude-code"]["tokens"] == 2 * tpg
+    assert bc["codex"]["tokens"] == 5 * tpc
+
+
+def test_summarize_today_nonzero_from_consults_when_no_grounding(tmp_path: Path) -> None:
+    """The exact bug: another agent used memo today but no Claude Stop fired yet.
+    `today` must reflect the consult savings instead of showing 0."""
+    token_ledger.write_ledger(
+        tmp_path,
+        {
+            "schema": token_ledger.LEDGER_SCHEMA,
+            "days": {"2026-06-30": {"grounded": 0, "consults": {"codex": 5}}},
+        },
+    )
+    s = token_ledger.summarize(tmp_path, today=date(2026, 6, 30))
+    assert s["today"]["grounded"] == 0
+    assert s["today"]["tokens"] == 5 * s["tpc"]
+    assert s["today"]["tokens"] > 0
