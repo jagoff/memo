@@ -14,6 +14,7 @@ from rich.table import Table
 from memo.cli_common import _short, console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.resume._utils import _sort_key
 
 # -- contradiction radar + dedupe ---------------------------------------------
 
@@ -36,6 +37,15 @@ def _fmt_pair_header(rec_a, rec_b, pair) -> str:
     return (
         f"[bold {color}]{rel.upper()}[/bold {color}] "
         f"conf={pair.confidence:.2f}  pair={pair.pair_id}"
+    )
+
+
+def _older_first(rec_a, rec_b):
+    """Return records ordered by updated instant, not ISO text."""
+    return (
+        (rec_a, rec_b)
+        if _sort_key(getattr(rec_a, "updated", "")) <= _sort_key(getattr(rec_b, "updated", ""))
+        else (rec_b, rec_a)
     )
 
 
@@ -288,8 +298,7 @@ def contradict_triage(
 
         # Orient newer as "B" so the walker is always presented with
         # the same temporal layout (older on top, newer below).
-        if rec_a.updated > rec_b.updated:
-            rec_a, rec_b = rec_b, rec_a
+        rec_a, rec_b = _older_first(rec_a, rec_b)
 
         console.print()
         console.print(_fmt_pair_header(rec_a, rec_b, pair))

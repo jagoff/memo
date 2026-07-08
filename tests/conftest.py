@@ -24,6 +24,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from freezegun import configure as configure_freezegun
+
+from memo.config import Config
+
+configure_freezegun(extend_ignore_list=["transformers"])
 
 # Test-wide defaults applied at conftest import. These are `setdefault` so
 # individual tests can still override via `monkeypatch.setenv` /
@@ -68,8 +73,6 @@ os.environ.setdefault(
 # `monkeypatch.setenv` / `CliRunner(...).invoke(env=...)`.
 os.environ["MEMO_SUPPORT_CONFIDENCE_LIFT"] = "0"
 os.environ["MEMO_SUPERSEDE_SUPPORT_GATE"] = "0"
-
-from memo.config import Config
 
 
 @pytest.fixture

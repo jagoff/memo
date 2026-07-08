@@ -36,31 +36,33 @@ def retier_cmd(apply_changes: bool, limit: int) -> None:
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
+    try:
+        # Pull the whole corpus once (cheap metadata-only rows) and pick out the
+        # `note` rows that look like bulk vault ingest.
+        rows = mem.store.list_recent(limit=10_000_000)
+        candidates = [
+            r
+            for r in rows
+            if r.get("type") == "note"
+            and is_reference_candidate(r.get("path"), r.get("tags"), r.get("title"))
+        ]
+        total_notes = sum(1 for r in rows if r.get("type") == "note")
 
-    # Pull the whole corpus once (cheap metadata-only rows) and pick out the
-    # `note` rows that look like bulk vault ingest.
-    rows = mem.store.list_recent(limit=10_000_000)
-    candidates = [
-        r
-        for r in rows
-        if r.get("type") == "note"
-        and is_reference_candidate(r.get("path"), r.get("tags"), r.get("title"))
-    ]
-    total_notes = sum(1 for r in rows if r.get("type") == "note")
+        console.print(f"corpus: {len(rows)} memories, {total_notes} of type 'note'")
+        console.print(f"vault-sourced notes to retier -> reference: [bold]{len(candidates)}[/bold]")
+        for r in candidates[:limit]:
+            console.print(
+                f"  [{(r.get('id') or '')[:8]}] {(r.get('title') or '')[:70]}"
+                f"  [dim]<<{r.get('path') or ''}>>[/dim]"
+            )
+        if len(candidates) > limit:
+            console.print(f"  ... and {len(candidates) - limit} more")
 
-    console.print(f"corpus: {len(rows)} memories, {total_notes} of type 'note'")
-    console.print(f"vault-sourced notes to retier → reference: [bold]{len(candidates)}[/bold]")
-    for r in candidates[:limit]:
-        console.print(
-            f"  [{(r.get('id') or '')[:8]}] {(r.get('title') or '')[:70]}"
-            f"  [dim]«{r.get('path') or ''}»[/dim]"
-        )
-    if len(candidates) > limit:
-        console.print(f"  … and {len(candidates) - limit} more")
+        if not apply_changes:
+            console.print("\n[dim](dry-run - re-run with --apply to commit)[/dim]")
+            return
 
-    if not apply_changes:
-        console.print("\n[dim](dry-run — re-run with --apply to commit)[/dim]")
-        return
-
-    n = mem.store.bulk_update_type([r["id"] for r in candidates], "reference")
+        n = mem.store.bulk_update_type([r["id"] for r in candidates], "reference")
+    finally:
+        mem.close()
     console.print(f"\n[green]reclassified {n} memories to type=reference[/green]")

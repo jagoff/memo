@@ -49,8 +49,11 @@ def as_of_search(
     from memo.time_machine import reconstruct
 
     mem = Memory(Config.from_env())
-    snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
-    hits = snap.search(query, limit=limit, mode=mode)
+    try:
+        snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
+        hits = snap.search(query, limit=limit, mode=mode)
+    finally:
+        mem.close()
     if type_:
         hits = [h for h in hits if h.type == type_]
 
@@ -104,8 +107,11 @@ def as_of_ask(question: str, as_of: str, k: int, as_json: bool) -> None:
     from memo.time_machine import reconstruct
 
     mem = Memory(Config.from_env())
-    snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
-    out = snap.ask(question, k=k)
+    try:
+        snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
+        out = snap.ask(question, k=k)
+    finally:
+        mem.close()
 
     if as_json:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
@@ -135,7 +141,10 @@ def as_of_list(as_of: str, type_: str | None, limit: int, as_json: bool) -> None
     from memo.time_machine import reconstruct
 
     mem = Memory(Config.from_env())
-    snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
+    try:
+        snap = reconstruct(mem, as_of=_parse_as_of_date(as_of))
+    finally:
+        mem.close()
     rows = snap.list(type_=type_)[:limit]
 
     if as_json:

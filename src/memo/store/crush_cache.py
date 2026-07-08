@@ -6,7 +6,6 @@ TTL-based eviction via memo maintain.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path

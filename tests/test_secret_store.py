@@ -3,13 +3,13 @@
 import secrets
 
 import pytest
-from cryptography.hazmat.primitives.ciphers.aead import InvalidTag
+from cryptography.exceptions import InvalidTag
 
 from memo.secret_store import (
     decrypt_secret,
+    derive_secret_key,
     detect_secrets_heuristic,
     detect_secrets_llm,
-    derive_secret_key,
     encrypt_secret,
 )
 from memo.tiers import DURABLE_TYPES, SECRET_KINDS
@@ -23,7 +23,7 @@ def test_secret_in_durable_types():
 def test_secret_kinds_defined():
     """All secret kinds should be defined."""
     expected_kinds = {"api_token", "password", "ssh_key", "db_credential", "certificate", "generic"}
-    assert SECRET_KINDS == expected_kinds
+    assert expected_kinds == SECRET_KINDS
 
 
 # Encryption tests
@@ -46,8 +46,8 @@ def test_different_values_different_ciphertexts():
     """Different values should produce different ciphertexts."""
     value1 = "secret1"
     value2 = "secret2"
-    ct1, nonce1 = encrypt_secret(value1)
-    ct2, nonce2 = encrypt_secret(value2)
+    ct1, _nonce1 = encrypt_secret(value1)
+    ct2, _nonce2 = encrypt_secret(value2)
     # Even though nonce is random, ciphertexts should differ
     assert ct1 != ct2
 
@@ -55,7 +55,7 @@ def test_different_values_different_ciphertexts():
 def test_invalid_nonce_raises():
     """Decrypting with wrong nonce should raise."""
     value = "secret"
-    ct, nonce = encrypt_secret(value)
+    ct, _nonce = encrypt_secret(value)
     wrong_nonce = secrets.token_bytes(12)
 
     with pytest.raises(InvalidTag):

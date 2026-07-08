@@ -7,8 +7,12 @@ drowned. See `memo.tiers`, `VecStore`, and the recall hook.
 
 from __future__ import annotations
 
-import pytest
+from unittest.mock import MagicMock, patch
 
+import pytest
+from click.testing import CliRunner
+
+from memo.cli import cli
 from memo.store import VecStore
 from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES, is_reference_candidate
 
@@ -60,6 +64,17 @@ def test_hand_saved_note_stays_durable():
     # memo's own saves live under date-shaped paths, no vault prefix / chunk.
     assert not is_reference_candidate("2026/05/my-decision.md", ["proj"], "A decision")
     assert not is_reference_candidate(None, [], "Plain hand note")
+
+
+def test_retier_dry_run_closes_memory() -> None:
+    mock_memory = MagicMock()
+    mock_memory.store.list_recent.return_value = []
+
+    with patch("memo.memory.Memory", return_value=mock_memory):
+        result = CliRunner().invoke(cli, ["retier"], env={"MEMO_NONINTERACTIVE": "1"})
+
+    assert result.exit_code == 0, result.output
+    mock_memory.close.assert_called_once_with()
 
 
 def test_tiers_are_disjoint():

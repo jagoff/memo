@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ── L2: Streaming Compression ─────────────────────────────────────────────
 
 
@@ -27,8 +26,9 @@ def test_flag_stream_compress_enabled() -> None:
 def test_compress_token_stream_yields_markers() -> None:
     """L2: Low-signal spans compressed into markers."""
     import os
-    from memo.stream_compress import compress_token_stream
+
     from memo.config import Config
+    from memo.stream_compress import compress_token_stream
 
     # Enable L2 compression for this test
     os.environ["MEMO_STREAM_COMPRESS"] = "1"
@@ -45,8 +45,8 @@ def test_compress_token_stream_yields_markers() -> None:
 
 def test_compress_token_stream_idempotent() -> None:
     """L2: Double-compression returns same result (idempotent)."""
-    from memo.stream_compress import compress_token_stream
     from memo.config import Config
+    from memo.stream_compress import compress_token_stream
 
     tokens = ["I'll", " help", " you", "...", "Let", " me", " think"]
     config = Config()
@@ -72,8 +72,8 @@ def test_flag_prefix_cache_align_enabled() -> None:
 
 def test_optimize_recall_prefix_returns_tuple() -> None:
     """L3: Optimization returns (system_prompt, memories) tuple."""
-    from memo.prefix_optimizer import optimize_recall_prefix
     from memo.config import Config
+    from memo.prefix_optimizer import optimize_recall_prefix
 
     system_prompt = "You are a helpful assistant."
     memories_text = "Memory 1: learned X\nMemory 2: learned Y"
@@ -89,8 +89,8 @@ def test_optimize_recall_prefix_returns_tuple() -> None:
 
 def test_optimize_recall_prefix_stable_order() -> None:
     """L3: Recall prefix is deterministically ordered (reproducible)."""
-    from memo.prefix_optimizer import optimize_recall_prefix
     from memo.config import Config
+    from memo.prefix_optimizer import optimize_recall_prefix
 
     system_prompt = "You are a helpful assistant."
     memories_text = "Memory 1: learned X\nMemory 2: learned Y"
@@ -109,16 +109,16 @@ def test_optimize_recall_prefix_stable_order() -> None:
 
 def test_l2_l3_compatible() -> None:
     """Integration: L2 and L3 compose without interference."""
-    from memo.stream_compress import compress_token_stream
-    from memo.prefix_optimizer import optimize_recall_prefix
     from memo.config import Config
+    from memo.prefix_optimizer import optimize_recall_prefix
+    from memo.stream_compress import compress_token_stream
 
     config = Config()
     system_prompt = "System."
     memories_text = "Memory 1\nMemory 2"
 
     # L3: optimize recall structure
-    opt_sys, opt_mem = optimize_recall_prefix(system_prompt, memories_text, config)
+    opt_sys, _opt_mem = optimize_recall_prefix(system_prompt, memories_text, config)
 
     # L2: compress tokens from output
     tokens = opt_sys.split()
@@ -133,8 +133,8 @@ def test_l2_l3_compatible() -> None:
 
 def test_baseline_script_syntactically_valid() -> None:
     """Measurement: scripts/wave2_token_baseline.py compiles."""
-    import subprocess
     import pathlib
+    import subprocess
 
     script_path = pathlib.Path("/Users/fer/repos/memo/scripts/wave2_token_baseline.py")
     if not script_path.exists():

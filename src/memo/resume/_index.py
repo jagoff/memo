@@ -159,7 +159,8 @@ def semantic_search(
             return []
         from memo.flags import flag_int
 
-        topk_flag = flag_int("MEMO_RESUME_SEMANTIC_K"); topk = k or (50 if topk_flag is None else topk_flag)
+        topk_flag = flag_int("MEMO_RESUME_SEMANTIC_K")
+        topk = k or (50 if topk_flag is None else topk_flag)
         qvec = embed_query(q, state_dir=cfg.state_dir)
         rows = store.search(qvec, topk)
     except Exception:

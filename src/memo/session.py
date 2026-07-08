@@ -75,6 +75,23 @@ from memo.session_sources import (
     read_last_user_msg,
 )
 
+
+def _instant_sort_key(value: str | None) -> tuple[int, float, str]:
+    raw = (value or "").strip()
+    if not raw:
+        return (0, 0.0, "")
+    try:
+        parsed = (
+            datetime.fromisoformat(raw[:-1] + "+00:00")
+            if raw.endswith("Z")
+            else datetime.fromisoformat(raw)
+        )
+    except ValueError:
+        return (0, 0.0, raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (1, parsed.astimezone(UTC).timestamp(), raw)
+
 _log = logging.getLogger(__name__)
 
 _LRU_CAP_DEFAULT = 250
@@ -323,7 +340,7 @@ def list_sessions(
             if stored_resolved != cwd_resolved:
                 continue
         out.append(data)
-    out.sort(key=lambda x: x.get("updated") or "", reverse=True)
+    out.sort(key=lambda x: _instant_sort_key(x.get("updated")), reverse=True)
     return out[:limit]
 
 
@@ -360,14 +377,14 @@ def prune_lru(state_dir: Path, *, cap: int = _LRU_CAP_DEFAULT) -> int:
     files = list(d.glob("*.json"))
     if len(files) <= cap:
         return 0
-    pairs: list[tuple[str, Path]] = []
+    pairs: list[tuple[tuple[int, float, str], Path]] = []
     for p in files:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
             updated = data.get("updated") or ""
         except (json.JSONDecodeError, OSError):
             updated = ""
-        pairs.append((updated, p))
+        pairs.append((_instant_sort_key(updated), p))
     # Sort ascending — oldest first — and trim the head past `cap`.
     pairs.sort(key=lambda x: x[0])
     to_delete = pairs[: len(pairs) - cap]

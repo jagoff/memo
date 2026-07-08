@@ -38,7 +38,10 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
     from_iso = _parse_as_of_date(from_date)
 
     mem = Memory(Config.from_env())
-    d = _diff(mem, from_ts=from_iso, to_ts=to_iso)
+    try:
+        d = _diff(mem, from_ts=from_iso, to_ts=to_iso)
+    finally:
+        mem.close()
 
     if as_json:
         click.echo(
@@ -102,22 +105,25 @@ def history_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
 
     mem = Memory(Config.from_env())
     try:
-        resolved = mem.resolve_id(id_or_prefix)
-    except AmbiguousIdError as exc:
-        console.print(f"[red]Ambiguous prefix:[/red] {exc}")
-        raise SystemExit(1) from exc
-    if resolved is None:
-        console.print(f"[red]No record found for:[/red] {id_or_prefix!r}")
-        raise SystemExit(1)
+        try:
+            resolved = mem.resolve_id(id_or_prefix)
+        except AmbiguousIdError as exc:
+            console.print(f"[red]Ambiguous prefix:[/red] {exc}")
+            raise SystemExit(1) from exc
+        if resolved is None:
+            console.print(f"[red]No record found for:[/red] {id_or_prefix!r}")
+            raise SystemExit(1)
 
-    events = mem.history.list_recent(limit=limit, record_id=resolved)
-    events = list(reversed(events))  # chronological order
+        events = mem.history.list_recent(limit=limit, record_id=resolved)
+        events = list(reversed(events))  # chronological order
+        r = mem.get(resolved)
+    finally:
+        mem.close()
 
     if as_json:
         click.echo(json.dumps(events, ensure_ascii=False, indent=2, default=str))
         return
 
-    r = mem.get(resolved)
     title_str = f"{r.title}" if r else resolved[:8]
     console.print(
         Panel.fit(

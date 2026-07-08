@@ -35,13 +35,13 @@ from memo import server_asof as _srv_asof
 from memo import server_backup as _srv_backup
 from memo import server_cache as _srv_cache
 from memo import server_collaborative as _srv_collaborative
-from memo import server_crush as _srv_crush
 from memo import server_consolidate as _srv_consolidate
 from memo import server_contextual as _srv_contextual
 from memo import server_contradict as _srv_contradict
 from memo import server_core_history as _srv_core_history
 from memo import server_core_records as _srv_core_records
 from memo import server_core_search as _srv_core_search
+from memo import server_crush as _srv_crush
 from memo import server_entities as _srv_entities
 from memo import server_episodes as _srv_episodes
 from memo import server_feedback as _srv_feedback
@@ -165,6 +165,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         _srv_multimodal.register(server, memory)
         _srv_collaborative.register(server, memory)
         _srv_asof.register(server, memory)
+        _srv_crush.register(server, memory)
         # Episodic memory: search past sessions by meaning (Phase 2)
         _srv_episodes.register(server, memory)
         # Session patterns: session-aware, topic keys, conflict detection
@@ -184,7 +185,6 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     _srv_graph_tool.register(server, memory)
     _srv_core_records.register(server, memory)
     _srv_offload.register(server, memory)
-    _srv_crush.register(server, memory)
     _srv_core_search.register(server, memory)
     _srv_core_history.register(server, memory)
     _srv_idle_capture.register(server, memory)

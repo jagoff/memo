@@ -592,8 +592,9 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
             data = zf.read(info)
             if info.filename.startswith("memory/"):
                 rel = info.filename[len("memory/") :]
-                dest = cfg.data_dir / rel
-                if not dest.resolve().is_relative_to(cfg.data_dir.resolve()):
+                memory_root = cfg.memory_dir
+                dest = memory_root / rel
+                if not dest.resolve().is_relative_to(memory_root.resolve()):
                     continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)

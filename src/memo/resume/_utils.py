@@ -168,8 +168,28 @@ def _same_cwd(left: str, right: str) -> bool:
     return _resolve_cwd(left) == _resolve_cwd(right)
 
 
-def _sort_key(value: str) -> str:
-    return value or ""
+def _parse_instant(value: str) -> datetime | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = (
+            datetime.fromisoformat(raw[:-1] + "+00:00")
+            if raw.endswith("Z")
+            else datetime.fromisoformat(raw)
+        )
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _sort_key(value: str) -> tuple[int, float, str]:
+    parsed = _parse_instant(value)
+    if parsed is None:
+        return (0, 0.0, value or "")
+    return (1, parsed.timestamp(), value or "")
 
 
 def _file_updated_at(path: Path) -> str:

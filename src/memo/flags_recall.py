@@ -509,7 +509,7 @@ SPECS: tuple[FlagSpec, ...] = (
         False,
         "recall",
         "L2 streaming compression: detect low-signal token spans (preamble, filler) "
-        "and emit reversible markers instead. Achieves 5–15% response token reduction. "
+        "and emit reversible markers instead. Achieves 5-15% response token reduction. "
         "Default OFF (opt-in).",
     ),
     _spec(

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from memo.memory import Memory
-from memo.server_annotations import READ_ONLY, WRITE
+from memo.server_annotations import READ_ONLY
 
 __all__ = [
     "Param",
@@ -250,27 +250,6 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
         ),
         handler=_handle_entity_search,
         annotations=READ_ONLY,
-    ),
-    ToolSpec(
-        name="memo_feedback_implicit",
-        description=(
-            "Record an implicit feedback signal (click or ignore) on a memory "
-            "for a given query. Use 'click' when the user viewed/used this result; "
-            "'ignore' when they skipped it. These are softer signals than "
-            "memo_feedback_record's thumbs_up/thumbs_down."
-        ),
-        params=(
-            Param("source_id", "string", description="Memory id or unique prefix"),
-            Param("query", "string", description="Query text this feedback applies to"),
-            Param(
-                "signal",
-                "string",
-                default="click",
-                description="'click' (implicit positive) or 'ignore' (implicit negative)",
-            ),
-        ),
-        handler=_handle_feedback_implicit,
-        annotations=WRITE,
     ),
     ToolSpec(
         name="memo_version",

@@ -45,6 +45,8 @@ def feedback_record_cmd(source_id: str, query_text: str, rating: str, as_json: b
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
+    finally:
+        mem.close()
     if as_json:
         click.echo(json.dumps(rid, ensure_ascii=False))
         return
@@ -64,7 +66,10 @@ def feedback_list_cmd(source_id: str | None, limit: int, as_json: bool) -> None:
 
     cfg = Config.from_env()
     mem = Memory(cfg)
-    rows = mem.feedback_list(source_id=source_id, limit=limit)
+    try:
+        rows = mem.feedback_list(source_id=source_id, limit=limit)
+    finally:
+        mem.close()
     if as_json:
         click.echo(json.dumps(rows, ensure_ascii=False, indent=2))
         return
@@ -95,4 +100,6 @@ def feedback_clear_cmd(source_id: str, yes: bool) -> None:
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from exc
+    finally:
+        mem.close()
     console.print(f"[green]ok[/green] deleted {n} row(s)")

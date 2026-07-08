@@ -11,6 +11,7 @@ import signal
 import sys
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from memo.config import Config
@@ -29,8 +30,10 @@ def run_sleep_cycle(debug: bool = False) -> None:
     cfg = Config.from_env()
     mem = Memory(cfg)
 
-    interval = flag_int("MEMO_MAINT_SLEEP_CYCLE_INTERVAL") or 3600
-    idle_threshold = flag_int("MEMO_MAINT_IDLE_THRESHOLD_SECS") or 300
+    interval_flag = flag_int("MEMO_MAINT_SLEEP_CYCLE_INTERVAL")
+    threshold_flag = flag_int("MEMO_MAINT_IDLE_THRESHOLD_SECS")
+    interval = 3600 if interval_flag is None else interval_flag
+    idle_threshold = 300 if threshold_flag is None else threshold_flag
 
     if debug:
         print(
@@ -140,9 +143,9 @@ def _get_last_activity(mem: Memory, cfg: Config) -> float:
     try:
         recent = mem.store.list_recent(limit=1)
         if recent:
-            from datetime import datetime
-
             dt = datetime.fromisoformat(recent[0]["updated"].replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
             last_activity = max(last_activity, dt.timestamp())
     except Exception:  # noqa: S110
         pass

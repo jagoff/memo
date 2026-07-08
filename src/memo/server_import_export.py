@@ -17,7 +17,17 @@ from memo.server_annotations import WRITE, WRITE_IDEMPOTENT, annotated_tool
 
 # Allowed base dirs for import/export file paths. The LLM can only read/write
 # within these directories — path traversal to /etc/shadow is blocked.
-# Note: Path.cwd() is evaluated per-request, not at module import time,
+# Backward-compatible constant for tests/importers. The resolver still reads
+# current allowed dirs at call time so cwd changes are honored.
+_ALLOWED_BASE_DIRS: tuple[Path, ...] = (
+    Path.cwd(),
+    Path.home() / "Downloads",
+    Path.home() / "Desktop",
+    Path.home() / "Documents",
+)
+
+
+# Note: Path.cwd() is evaluated per-request, not only at module import time,
 # to honor the actual working directory at call time.
 def _get_allowed_base_dirs() -> tuple[Path, ...]:
     return (

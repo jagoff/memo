@@ -210,6 +210,8 @@ def repo_index_cmd(
             out = _run_with_repo_progress(_run)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
+    finally:
+        mem.close()
 
     receipt = _repo_index_operational_receipt(out)
     out = {**out, "operational_receipt": receipt}
@@ -247,6 +249,8 @@ def repo_embed_cmd(repo: str, force: bool, as_json: bool) -> None:
             )
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
+    finally:
+        mem.close()
 
     if as_json:
         click.echo(json.dumps(out, ensure_ascii=False, indent=2))
@@ -268,7 +272,10 @@ def repo_status_cmd(repo: str, as_json: bool) -> None:
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    out = mem.repo_status(repo)
+    try:
+        out = mem.repo_status(repo)
+    finally:
+        mem.close()
     if out is None:
         console.print(f"[red]not found:[/red] {repo}")
         sys.exit(1)
@@ -291,7 +298,10 @@ def repo_list_cmd(limit: int, as_json: bool) -> None:
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    rows = mem.repo_list(limit=limit)
+    try:
+        rows = mem.repo_list(limit=limit)
+    finally:
+        mem.close()
     if as_json:
         click.echo(json.dumps(rows, ensure_ascii=False, indent=2))
         return
@@ -339,7 +349,10 @@ def repo_search_cmd(
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    hits = mem.repo_search(query, limit=limit, repo=repo, path=path_glob, mode=mode)
+    try:
+        hits = mem.repo_search(query, limit=limit, repo=repo, path=path_glob, mode=mode)
+    finally:
+        mem.close()
     if as_json:
         click.echo(json.dumps([h.to_dict() for h in hits], ensure_ascii=False, indent=2))
         return
@@ -379,7 +392,10 @@ def repo_get_cmd(
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    out = mem.repo_get_file(repo, path, start=start, end=end)
+    try:
+        out = mem.repo_get_file(repo, path, start=start, end=end)
+    finally:
+        mem.close()
     if out is None:
         console.print(f"[red]not found:[/red] {repo} {path}")
         sys.exit(1)
@@ -406,9 +422,12 @@ def repo_delete_cmd(repo: str, yes: bool, keep_clone: bool) -> None:
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    if not yes:
-        click.confirm(f"Delete indexed repo {repo!r}?", abort=True)
-    ok = mem.repo_delete(repo, remove_clone=not keep_clone)
+    try:
+        if not yes:
+            click.confirm(f"Delete indexed repo {repo!r}?", abort=True)
+        ok = mem.repo_delete(repo, remove_clone=not keep_clone)
+    finally:
+        mem.close()
     console.print(f"[{'green' if ok else 'red'}]{'deleted' if ok else 'not found'}[/]: {repo}")
     if not ok:
         sys.exit(1)

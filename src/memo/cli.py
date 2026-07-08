@@ -93,9 +93,9 @@ from memo.cli_recall_daemon import recall_daemon_group
 from memo.cli_recall_hook import recall_hook
 from memo.cli_related import related
 from memo.cli_release import release_group
-from memo.cli_retrieve import retrieve_cmd
 from memo.cli_repo import repo_group
 from memo.cli_retier import retier_cmd
+from memo.cli_retrieve import retrieve_cmd
 from memo.cli_roi import roi as roi_cmd
 from memo.cli_runtime import (
     init_cmd,
@@ -111,6 +111,7 @@ from memo.cli_runtime import (
     watch,
 )
 from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
+from memo.cli_secret import secret as secret_group
 from memo.cli_session import continuity_cmd, session_group
 from memo.cli_stats import stats
 from memo.cli_statusline import install_statusline
@@ -250,6 +251,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
             "ocr-image",
             "provenance",
             "mcp-command",
+            "secret",
         ],
     ),
 ]
@@ -433,6 +435,7 @@ cli.add_command(maint_daemon_group)
 cli.add_command(embed_daemon_group)
 cli.add_command(as_of_group)
 cli.add_command(session_group)
+cli.add_command(secret_group)
 cli.add_command(continuity_cmd)
 cli.add_command(temporal_group)
 cli.add_command(consolidate_group)

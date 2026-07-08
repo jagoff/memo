@@ -10,7 +10,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
 from freezegun import freeze_time
 
 from memo.store.crush_cache import CrushCache, crush_marker
@@ -66,7 +65,7 @@ def test_crush_cache_creates_directory():
     """CrushCache creates cache directory on init."""
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
-        cache = CrushCache(state_dir)
+        CrushCache(state_dir)
         assert (state_dir / "crush_cache").is_dir()
 
 
@@ -363,9 +362,9 @@ def test_crush_invalid_json_not_crushed(monkeypatch):
 
 def test_retrieve_command_via_mcp_tool():
     """MCP tool memo_crush_retrieve retrieves cached JSON."""
-    from memo.server_crush import register as register_crush
     from memo.config import Config
     from memo.memory import Memory
+    from memo.server_crush import register as register_crush
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
@@ -410,9 +409,9 @@ def test_retrieve_command_via_mcp_tool():
 
 def test_retrieve_mcp_tool_missing_cache_entry():
     """MCP tool returns error for missing cache entry."""
-    from memo.server_crush import register as register_crush
     from memo.config import Config
     from memo.memory import Memory
+    from memo.server_crush import register as register_crush
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
@@ -449,9 +448,9 @@ def test_retrieve_mcp_tool_missing_cache_entry():
 
 def test_retrieve_mcp_tool_invalid_marker_format():
     """MCP tool rejects invalid marker format."""
-    from memo.server_crush import register as register_crush
     from memo.config import Config
     from memo.memory import Memory
+    from memo.server_crush import register as register_crush
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
@@ -491,7 +490,6 @@ def test_retrieve_mcp_tool_invalid_marker_format():
 
 def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
     """Full pipeline: capture JSON → crush → retrieve → recall with verbosity steering."""
-    import os
 
     # Enable both Wave 1 features
     monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
@@ -576,7 +574,7 @@ def test_wave1_flags_integration(monkeypatch):
         assert flag_recall_verbosity_level() == 2
 
         json_content = json.dumps([{"id": i} for i in range(100)])
-        crushed, hash_val = maybe_crush_json_capture(json_content, context="query", config=config)
+        _crushed, _hash_val = maybe_crush_json_capture(json_content, context="query", config=config)
 
         prompt = "Base"
         steered = maybe_inject_verbosity_steering(prompt, level=2)

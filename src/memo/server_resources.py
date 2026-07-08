@@ -32,7 +32,8 @@ def register(server: Any, memory: Memory) -> None:
         if rec is None:
             return f"# Not found\n\nNo memory for id `{id}`.\n"
         tags = ", ".join(rec.tags) if rec.tags else "—"
-        body_chars = flag_int("MEMO_RESOURCE_BODY_CHARS") or 1200
+        body_chars_flag = flag_int("MEMO_RESOURCE_BODY_CHARS")
+        body_chars = 1200 if body_chars_flag is None else body_chars_flag
         body = rec.body or ""
         truncated = False
         if body_chars >= 0 and len(body) > body_chars:

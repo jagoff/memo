@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import secrets
-import uuid
 from typing import Any
 
 import frontmatter
@@ -75,7 +74,7 @@ class _SecretOpsMixin(_MemoryBase):
         }
 
         markdown_content = "[ENCRYPTED: AES-256-GCM]"
-        doc = frontmatter.Post(markdown_content, **frontmatter_data)
+        doc = frontmatter.Post(markdown_content, handler=None, **frontmatter_data)
 
         # Write markdown
         file_path = self.cfg.memory_dir / "secrets" / now_iso[:7].replace("-", "/") / f"{_slugify(name)}.md"
@@ -99,11 +98,14 @@ class _SecretOpsMixin(_MemoryBase):
 
         return MemoryRecord(
             id=record_id,
+            path=str(file_path.relative_to(self.cfg.memory_dir)),
             type="secret",
             title=name,
-            kind=kind,
             tags=tags or [],
             created=now_iso,
+            updated=now_iso,
+            body=markdown_content,
+            extra={"kind": kind, "name": name},
         )
 
     def get_secret(self, name: str) -> str:
@@ -118,7 +120,7 @@ class _SecretOpsMixin(_MemoryBase):
         try:
             plaintext = decrypt_secret(ciphertext, nonce)
         except Exception as exc:
-            raise MemoError(f"Failed to decrypt secret '{name}': {exc}")
+            raise MemoError(f"Failed to decrypt secret '{name}': {exc}") from exc
 
         # Update access metadata
         self.store.secret_store_increment_access(name)

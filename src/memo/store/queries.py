@@ -964,7 +964,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
 
     def secret_store_get(self, name: str) -> dict[str, Any] | None:
         """Fetch a secret by name."""
-        cursor = self.conn.cursor()
+        cursor = self._conn.cursor()
         cursor.execute(
             "SELECT id, kind, encrypted_blob, nonce, accessed_count FROM secret_store WHERE name = ?",
             (name,),
@@ -983,7 +983,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
 
     def secret_store_list(self, kind: str | None = None) -> list[dict[str, Any]]:
         """List secrets (metadata only)."""
-        cursor = self.conn.cursor()
+        cursor = self._conn.cursor()
         if kind:
             cursor.execute(
                 "SELECT id, name, kind, accessed_count FROM secret_store WHERE kind = ? ORDER BY name",
@@ -1006,20 +1006,19 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
 
     def secret_store_delete(self, name: str) -> bool:
         """Delete a secret by name. Returns True if deleted, False if not found."""
-        with self._tx() as cursor:
-            cursor.execute("DELETE FROM secret_store WHERE name = ?", (name,))
+        with self._tx() as cx:
+            cursor = cx.execute("DELETE FROM secret_store WHERE name = ?", (name,))
             return cursor.rowcount > 0
 
     def secret_store_increment_access(self, name: str) -> None:
         """Increment access count and update accessed_at timestamp."""
-        from memo.memory.record import _now_iso
-
-        with self._tx() as cursor:
-            cursor.execute(
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        with self._tx() as cx:
+            cx.execute(
                 """
                 UPDATE secret_store
                 SET accessed_count = accessed_count + 1, accessed_at = ?
                 WHERE name = ?
                 """,
-                (_now_iso(), name),
+                (now, name),
             )

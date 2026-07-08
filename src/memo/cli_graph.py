@@ -276,7 +276,9 @@ def graph_export(format_type: str, output_path: str | None) -> None:
         data = mem.navigator.export_json(include_memories=True)
         json_str = json.dumps(data, indent=2)
         if output_path:
-            Path(output_path).write_text(json_str, encoding="utf-8")
+            out = Path(output_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json_str, encoding="utf-8")
         else:
             click.echo(json_str)
 

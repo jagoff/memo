@@ -22,28 +22,32 @@ _log = logging.getLogger(__name__)
 def stats() -> None:
     """Comprehensive stats: utility, recall quality, consumers, tokens saved."""
     mem = Memory(Config.from_env())
-    state_dir = mem.cfg.state_dir
-
-    console.print(f"\n[bold cyan]memo stats — {datetime.now(UTC).strftime('%H:%M:%S')}[/bold cyan]")
-
-    console.print("\n[bold]📚 Corpus[/bold]")
-    console.print(f"  total       {mem.store.count():,}")
     try:
-        row = mem.store._conn.execute(
-            "SELECT COUNT(*) FROM meta WHERE tags LIKE ? ESCAPE '\\'",
-            ('%"\\_uncertain"%',),
-        ).fetchone()
-        n_uncertain = int(row[0]) if row else 0
-        if n_uncertain:
-            console.print(f"  uncertain   {n_uncertain:,} (low-confidence capture, tag _uncertain)")
-    except Exception as exc:
-        _log.debug("uncertain-tag count failed: %s", exc)
-    console.print(f"  data_dir   {mem.cfg.data_dir}")
+        cfg = mem.cfg
+        state_dir = cfg.state_dir
+
+        console.print(f"\n[bold cyan]memo stats — {datetime.now(UTC).strftime('%H:%M:%S')}[/bold cyan]")
+
+        console.print("\n[bold]📚 Corpus[/bold]")
+        console.print(f"  total       {mem.store.count():,}")
+        try:
+            row = mem.store._conn.execute(
+                "SELECT COUNT(*) FROM meta WHERE tags LIKE ? ESCAPE '\\'",
+                ('%"\\_uncertain"%',),
+            ).fetchone()
+            n_uncertain = int(row[0]) if row else 0
+            if n_uncertain:
+                console.print(f"  uncertain   {n_uncertain:,} (low-confidence capture, tag _uncertain)")
+        except Exception as exc:
+            _log.debug("uncertain-tag count failed: %s", exc)
+        console.print(f"  data_dir   {cfg.data_dir}")
+    finally:
+        mem.close()
 
     console.print("\n[bold]🧠 Models[/bold]")
-    console.print(f"  profile    {mem.cfg.model_profile}")
-    console.print(f"  embedder  {mem.cfg.embedder_model.split('/')[-1]}")
-    console.print(f"  llm      {mem.cfg.llm_model.split('/')[-1]}")
+    console.print(f"  profile    {cfg.model_profile}")
+    console.print(f"  embedder  {cfg.embedder_model.split('/')[-1]}")
+    console.print(f"  llm      {cfg.llm_model.split('/')[-1]}")
 
     console.print("\n[bold]⚡ Utility (last 7 days)[/bold]")
     total_tokens = 0

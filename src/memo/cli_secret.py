@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import shlex
-import sys
 
 import click
 
@@ -34,12 +33,15 @@ def save(name: str, kind: str | None, value: str | None, no_confirm: bool) -> No
     cfg = Config.from_env()
     mem = Memory(cfg)
 
-    rec = mem.save_secret(
-        value=value,
-        name=name,
-        kind=kind,
-        interactive=not no_confirm,
-    )
+    try:
+        rec = mem.save_secret(
+            value=value,
+            name=name,
+            kind=kind,
+            interactive=not no_confirm,
+        )
+    finally:
+        mem.close()
     click.echo(f"✓ Saved secret '{name}' (id={rec.id[:8]})")
 
 
@@ -54,7 +56,9 @@ def get(name: str) -> None:
         value = mem.get_secret(name)
         click.echo(value)
     except Exception as exc:
-        raise click.ClickException(f"Failed to retrieve secret: {exc}")
+        raise click.ClickException(f"Failed to retrieve secret: {exc}") from exc
+    finally:
+        mem.close()
 
 
 @secret.command()
@@ -64,7 +68,10 @@ def list(kind: str | None) -> None:
     cfg = Config.from_env()
     mem = Memory(cfg)
 
-    secrets_list = mem.list_secrets(kind=kind)
+    try:
+        secrets_list = mem.list_secrets(kind=kind)
+    finally:
+        mem.close()
     if not secrets_list:
         click.echo("No secrets found")
         return
@@ -87,7 +94,9 @@ def forget(name: str) -> None:
         mem.forget_secret(name)
         click.echo(f"✓ Deleted secret '{name}'")
     except Exception as exc:
-        raise click.ClickException(f"Failed to delete secret: {exc}")
+        raise click.ClickException(f"Failed to delete secret: {exc}") from exc
+    finally:
+        mem.close()
 
 
 @secret.command()
@@ -100,21 +109,24 @@ def export(format: str) -> None:
     cfg = Config.from_env()
     mem = Memory(cfg)
 
-    secrets_list = mem.list_secrets()
-    if not secrets_list:
-        click.echo("No secrets to export")
-        return
+    try:
+        secrets_list = mem.list_secrets()
+        if not secrets_list:
+            click.echo("No secrets to export")
+            return
 
-    if format == "env":
-        for s in secrets_list:
-            value = mem.get_secret(s["name"])
-            click.echo(f"export MEMO_SECRET_{_slugify(s['name']).upper()}={shlex.quote(value)}")
-    elif format == "json":
-        payload = {}
-        for s in secrets_list:
-            value = mem.get_secret(s["name"])
-            payload[s["name"]] = {"kind": s["kind"], "value": value}
-        click.echo(json.dumps(payload, indent=2))
+        if format == "env":
+            for s in secrets_list:
+                value = mem.get_secret(s["name"])
+                click.echo(f"export MEMO_SECRET_{_slugify(s['name']).upper()}={shlex.quote(value)}")
+        elif format == "json":
+            payload = {}
+            for s in secrets_list:
+                value = mem.get_secret(s["name"])
+                payload[s["name"]] = {"kind": s["kind"], "value": value}
+            click.echo(json.dumps(payload, indent=2))
+    finally:
+        mem.close()
 
 
 def _slugify(text: str) -> str:

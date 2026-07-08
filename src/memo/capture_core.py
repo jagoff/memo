@@ -1122,7 +1122,10 @@ def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, s
     import hashlib
 
     from memo.config import Config
-    from memo.flags_capture import flag_crusher_cache_ttl_days, flag_crusher_enabled, flag_crusher_keep_ratio
+    from memo.flags_capture import (
+        flag_crusher_enabled,
+        flag_crusher_keep_ratio,
+    )
     from memo.store.crush_cache import CrushCache, crush_marker
 
     if not flag_crusher_enabled():
@@ -1151,7 +1154,7 @@ def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, s
     # Each row gets a synthetic score based on its position/content
     # (keeping order deterministic for testing)
     scores = []
-    for i, row in enumerate(json_array):
+    for _i, _row in enumerate(json_array):
         # Placeholder scoring: all rows get 0.5
         # In production, this should call hybrid_score with the context
         score = 0.5

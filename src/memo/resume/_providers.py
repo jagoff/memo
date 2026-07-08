@@ -18,6 +18,7 @@ from ._utils import (
     _agent_matches,
     _clip,
     _mtime_capped,
+    _parse_instant,
     _prefer_status,
     _resolve_cwd,
     _same_cwd,
@@ -361,13 +362,21 @@ def _merge_candidate(existing: ResumeCandidate, incoming: ResumeCandidate) -> Re
     memo_side = next((c for c in (base, other) if c.provider == "memo" and c.summary), None)
     summary = memo_side.summary if memo_side else (base.summary or other.summary)
     title = (memo_side.title if memo_side and memo_side.title else base.title) or other.title
+    base_updated = _parse_instant(base.updated_at)
+    other_updated = _parse_instant(other.updated_at)
+    if base_updated is None:
+        updated_at = other.updated_at
+    elif other_updated is None:
+        updated_at = base.updated_at
+    else:
+        updated_at = base.updated_at if base_updated >= other_updated else other.updated_at
     return ResumeCandidate(
         agent=base.agent,
         provider=base.provider,
         uri=base.uri,
         session_id=base.session_id,
         title=title,
-        updated_at=max(base.updated_at, other.updated_at),
+        updated_at=updated_at,
         cwd=base.cwd or other.cwd,
         summary=summary,
         status=_prefer_status(base.status, other.status),

@@ -548,7 +548,10 @@ def reflect(
 
         # `_reflect_session` lazily warms the chat model via `mem._ensure_chat()`.
         mem = Memory(cfg)
-        result = _reflect_session(target_id, mem, cfg, dry_run=dry_run, debug=debug)
+        try:
+            result = _reflect_session(target_id, mem, cfg, dry_run=dry_run, debug=debug)
+        finally:
+            mem.close()
 
         if quiet:
             click.echo(json.dumps(result, ensure_ascii=False))

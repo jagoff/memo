@@ -45,7 +45,7 @@ def derive_secret_key() -> bytes:
     hostname = socket.gethostname()
     machine_salt = _load_or_create_machine_salt()
 
-    material = f"{hostname}:{device_id}:{machine_salt}".encode("utf-8")
+    material = f"{hostname}:{device_id}:{machine_salt}".encode()
 
     # PBKDF2 key derivation using hashlib
     return hashlib.pbkdf2_hmac(
@@ -85,7 +85,7 @@ def decrypt_secret(ciphertext: bytes, nonce: bytes) -> str:
 # Detection patterns
 HEURISTIC_PATTERNS: dict[str, re.Pattern] = {
     "api_token": re.compile(
-        r"(sk_[a-z0-9]{20,}|token[=:]\s*[a-z0-9]{32,}|"
+        r"(sk_[a-z0-9_-]{20,}|token[=:]\s*[a-z0-9]{32,}|"
         r"api[_-]?key[=:]\s*\S+|ghp_[a-z0-9]{36,})",
         re.IGNORECASE,
     ),

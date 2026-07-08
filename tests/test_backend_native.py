@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -157,3 +158,21 @@ def test_backend_native_replay_rejects_foreign_uri(mock_memory) -> None:
 
     assert payload["status"] == "unsupported"
     assert payload["backend"] == "memo"
+
+
+def test_backend_native_replay_resolve_cli_closes_memory() -> None:
+    mock_memory = MagicMock()
+    mock_memory.backend_native_replay_resolve.return_value = {
+        "status": "missing",
+        "detail": "not found",
+    }
+
+    with patch("memo.memory.Memory", return_value=mock_memory):
+        result = CliRunner().invoke(
+            cli,
+            ["backend-native", "replay-resolve", "memo://memoria/missing", "--json"],
+            env={"MEMO_NONINTERACTIVE": "1"},
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_memory.close.assert_called_once_with()

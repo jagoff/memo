@@ -63,11 +63,14 @@ def backend_native_replay_resolve(uri: str, as_json: bool, trace_id: str) -> Non
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
-    payload = mem.backend_native_replay_resolve(
-        uri,
-        trace_id=_backend_native_trace_id(trace_id),
-        backend_version=_memo_backend_version(),
-    )
+    try:
+        payload = mem.backend_native_replay_resolve(
+            uri,
+            trace_id=_backend_native_trace_id(trace_id),
+            backend_version=_memo_backend_version(),
+        )
+    finally:
+        mem.close()
     if as_json:
         click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
