@@ -5,11 +5,13 @@ Public API used by `memo.cli` (first-run gate, `memo init`, `memo migrate-vault`
 - `detect_obsidian_vaults()` — read Obsidian's macOS registry.
 - `run_picker()` — interactive TUI; returns chosen `(data_dir, vault_path | None)`.
 - `load_config_file()` / `write_config_file()` — TOML round-trip at `~/.config/memo/config.toml`.
+- `snapshot_config_file()` — reversible config snapshot before migrations.
 """
 
 from memo.setup.config_io import (
     CONFIG_FILE_PATH,
     load_config_file,
+    snapshot_config_file,
     write_config_file,
 )
 from memo.setup.picker import PickerResult, run_picker
@@ -22,5 +24,6 @@ __all__ = [
     "detect_obsidian_vaults",
     "load_config_file",
     "run_picker",
+    "snapshot_config_file",
     "write_config_file",
 ]

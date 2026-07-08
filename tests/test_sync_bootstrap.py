@@ -86,12 +86,34 @@ def test_bootstrap_clone_preserves_existing_storage_keys(remote: Path, tmp_path:
         path=cfg_path,
     )
 
-    bootstrap_clone(str(remote), dest, config_path=cfg_path)
+    before = cfg_path.read_text(encoding="utf-8")
+    out = bootstrap_clone(str(remote), dest, config_path=cfg_path)
 
     storage = (load_config_file(cfg_path) or {})["storage"]
     assert storage["data_dir"] == str(dest / "memorias")  # repointed
     assert storage["vault_path"] == str(tmp_path / "vault")  # preserved
     assert storage["single_db"] is True  # preserved
+    assert out["config_backup"] == str(cfg_path.with_suffix(".toml.pre-sync-bootstrap.bak"))
+    assert Path(out["config_backup"]).read_text(encoding="utf-8") == before
+
+
+def test_bootstrap_clone_config_backup_never_overwrites(remote: Path, tmp_path: Path):
+    dest = tmp_path / "memo-sync"
+    cfg_path = tmp_path / "config.toml"
+    from memo.setup.config_io import write_config_file
+
+    write_config_file(data_dir=tmp_path / "old-a", path=cfg_path)
+    first_before = cfg_path.read_text(encoding="utf-8")
+    first = bootstrap_clone(str(remote), dest, config_path=cfg_path)
+
+    write_config_file(data_dir=tmp_path / "old-b", path=cfg_path)
+    second_before = cfg_path.read_text(encoding="utf-8")
+    second = bootstrap_clone(str(remote), dest, config_path=cfg_path)
+
+    assert first["config_backup"] == str(cfg_path.with_suffix(".toml.pre-sync-bootstrap.bak"))
+    assert second["config_backup"] == str(cfg_path.with_suffix(".toml.pre-sync-bootstrap.1.bak"))
+    assert Path(first["config_backup"]).read_text(encoding="utf-8") == first_before
+    assert Path(second["config_backup"]).read_text(encoding="utf-8") == second_before
 
 
 def test_bootstrap_clone_rejects_nonempty_non_clone(tmp_path: Path):
@@ -152,6 +174,7 @@ def test_sync_bootstrap_cli_end_to_end(remote: Path, tmp_path: Path, monkeypatch
     out = _json.loads(result.output)
     assert out["reused"] is False
     assert out["memories_dir"] == str(dest / "memorias")
+    assert out["config_backup"] is None
     assert out["reindexed"]["added"] == 1  # the seeded memoria got indexed
     # config.toml repointed at the clone
     storage = (load_config_file(tmp_path / "config.toml") or {})["storage"]

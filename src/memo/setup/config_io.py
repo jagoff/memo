@@ -17,6 +17,7 @@ Override the file location via `MEMO_CONFIG_FILE` for tests / CI.
 from __future__ import annotations
 
 import os
+import shutil
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,30 @@ def load_config_file(path: Path | None = None) -> dict[str, Any] | None:
 
         print(f"[memo] warning: failed to parse {p}: {exc}", file=sys.stderr)
         return None
+
+
+def snapshot_config_file(
+    path: Path | None = None,
+    *,
+    label: str = "backup",
+) -> Path | None:
+    """Copy the current config beside itself before a migration rewrites it.
+
+    Returns the snapshot path, or None when there is no existing config file.
+    Never overwrites an earlier snapshot for the same label.
+    """
+    p = path or _resolve_config_path()
+    if not p.is_file():
+        return None
+    base = p.with_suffix(p.suffix + f".{label}.bak")
+    candidate = base
+    i = 1
+    while candidate.exists():
+        candidate = p.with_suffix(p.suffix + f".{label}.{i}.bak")
+        i += 1
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(p, candidate)
+    return candidate
 
 
 def write_config_file(

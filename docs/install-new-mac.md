@@ -60,9 +60,34 @@ curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEM
 
 ## 3. Move Your Data
 
-There are two supported paths.
+There are three supported paths.
 
-### Option A: Portable Backup
+### Option A: Git Cross-Mac Sync
+
+Use this when the old Mac already pushed a `memo-sync` repo with
+`memo sync init`.
+
+```bash
+memo sync bootstrap git@github.com:yourname/memo-sync.git
+memo doctor --strict-runtime
+memo sync status --check-remote
+```
+
+`memo sync bootstrap` clones or reuses `~/repos/memo-sync`, points
+`~/.config/memo/config.toml` at the synced `memories/` directory, rebuilds the
+local sqlite index from Markdown, and imports signal snapshots. If an existing
+config is repointed, memo first writes a sibling rollback copy named like
+`config.toml.pre-sync-bootstrap.bak`.
+
+After bootstrap, Claude Code hooks pull on `SessionStart`, push on `Stop`, and
+run debounced `memo sync auto` during long sessions. Re-run agent wiring if you
+changed model/profile env vars before bootstrap:
+
+```bash
+memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
+```
+
+### Option B: Portable Backup
 
 On the old Mac:
 
@@ -82,7 +107,7 @@ The portable zip includes memory Markdown files plus `memvec.db` and
 `history.db`. `--reindex` rebuilds vectors on the new machine, which is safer
 when model profiles or sqlite-vec versions changed.
 
-### Option B: Synced Obsidian/iCloud/Git Folder
+### Option C: Synced Obsidian/iCloud Folder
 
 If your memories already live in a synced folder, let the folder finish syncing
 on the new Mac, then point memo at it:

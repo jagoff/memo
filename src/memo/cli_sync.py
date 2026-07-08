@@ -261,6 +261,8 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
     verb = "Reused" if out.get("reused") else "Cloned"
     console.print(f"[bold green]{verb}[/bold green] → {out['cloned']} ({out['memories']} memories)")
     console.print(f"config → [cyan]{out['config']}[/cyan] (data_dir = {out['memories_dir']})")
+    if out.get("config_backup"):
+        console.print(f"previous config backup → [cyan]{out['config_backup']}[/cyan]")
     console.print(f"reindexed: {out['reindexed']}")
     console.print(f"signal merged: {out['signal']}")
     console.print("[bold green]Ready.[/bold green] memo now reads the git-synced corpus.")

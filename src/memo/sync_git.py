@@ -160,7 +160,7 @@ def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> di
     Does NOT reindex or import signal — that needs a `Memory` and is the
     caller's next step (see the `memo sync bootstrap` CLI command).
     """
-    from memo.setup.config_io import load_config_file, write_config_file
+    from memo.setup.config_io import load_config_file, snapshot_config_file, write_config_file
 
     memories = _corpus_subdir(dest)
     git_ok = (dest / ".git").exists()
@@ -185,8 +185,10 @@ def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> di
         summary = clone_bootstrap(url, dest)
         summary["reused"] = False
 
-    existing = (load_config_file(config_path) or {}).get("storage", {})
+    existing_config = load_config_file(config_path) or {}
+    existing = existing_config.get("storage", {})
     vault_path = existing.get("vault_path")
+    backup_path = snapshot_config_file(config_path, label="pre-sync-bootstrap")
     # Re-read from the summary: on a fresh clone, `memories` was resolved before
     # the clone existed (so it defaulted to memories/); the summary reflects the
     # corpus dir that actually landed (memories/ or legacy memorias/).
@@ -198,6 +200,7 @@ def bootstrap_clone(url: str, dest: Path, config_path: Path | None = None) -> di
         path=config_path,
     )
     summary["config"] = str(written)
+    summary["config_backup"] = str(backup_path) if backup_path else None
     return summary
 
 

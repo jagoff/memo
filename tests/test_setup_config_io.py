@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memo.setup.config_io import load_config_file, write_config_file
+from memo.setup.config_io import load_config_file, snapshot_config_file, write_config_file
 
 
 def test_round_trip_minimal(tmp_path: Path):
@@ -69,3 +69,23 @@ def test_atomic_write_doesnt_corrupt_existing(tmp_path: Path):
     assert loaded["storage"]["data_dir"] == "/tmp/v2"
     # No leftover .tmp sidecar.
     assert not (cfg_path.with_suffix(cfg_path.suffix + ".tmp")).exists()
+
+
+def test_snapshot_config_file_copies_existing_without_overwrite(tmp_path: Path):
+    cfg_path = tmp_path / "config.toml"
+    write_config_file(data_dir=Path("/tmp/v1"), path=cfg_path)
+    first_content = cfg_path.read_text(encoding="utf-8")
+
+    first = snapshot_config_file(cfg_path, label="pre-sync-bootstrap")
+    write_config_file(data_dir=Path("/tmp/v2"), path=cfg_path)
+    second_content = cfg_path.read_text(encoding="utf-8")
+    second = snapshot_config_file(cfg_path, label="pre-sync-bootstrap")
+
+    assert first == cfg_path.with_suffix(".toml.pre-sync-bootstrap.bak")
+    assert second == cfg_path.with_suffix(".toml.pre-sync-bootstrap.1.bak")
+    assert first.read_text(encoding="utf-8") == first_content
+    assert second.read_text(encoding="utf-8") == second_content
+
+
+def test_snapshot_config_file_missing_returns_none(tmp_path: Path):
+    assert snapshot_config_file(tmp_path / "missing.toml") is None
