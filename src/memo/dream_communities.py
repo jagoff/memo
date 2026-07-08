@@ -223,7 +223,7 @@ def run_synthesize_communities(
                 try:
                     mem.save(
                         content=f"{d['body']}\n\n[community {d['provenance_hash']}]",
-                        type="synthesis",
+                        type_="synthesis",
                         title=d["title"],
                         extra={
                             "synthesis_kind": "community",

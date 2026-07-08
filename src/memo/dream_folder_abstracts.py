@@ -161,7 +161,7 @@ def run_folder_abstracts(
                 else:
                     mem.save(
                         content=synth["body"],
-                        type="synthesis",
+                        type_="synthesis",
                         title=synth["title"],
                         extra=extra,
                     )

@@ -3,6 +3,9 @@ adaptive recall, synthesis default, smarter capture, memo_health_report."""
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
 from memo.flags import flag_bool
@@ -67,6 +70,23 @@ class TestInferTypeFromContent:
 
 def test_synthesis_enabled_by_default():
     assert flag_bool("MEMO_SYNTHESIS_ENABLED") is True
+
+
+def test_dream_synthesis_saves_use_type_underscore():
+    offenders: list[str] = []
+    for path in Path("src/memo").glob("dream*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr != "save":
+                continue
+            for kw in node.keywords:
+                if kw.arg == "type":
+                    offenders.append(f"{path}:{node.lineno}")
+
+    assert offenders == []
 
 
 def test_synthesis_min_cluster_default():
