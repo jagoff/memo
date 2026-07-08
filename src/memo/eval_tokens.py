@@ -14,7 +14,11 @@ not be wired into the live pipeline to be measured. The data decides wiring.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Any
 
 _CHARS_PER_TOKEN = 4  # keep in lockstep with token_meter._CHARS_PER_TOKEN
 
@@ -95,3 +99,48 @@ def aggregate_recall(lever: str, samples: list[P1Sample]) -> LeverRow:
         quality_off=sum(s.prec_off for s in samples) / n,
         quality_on=sum(s.prec_on for s in samples) / n,
     )
+
+
+@contextmanager
+def env_pins(overrides: dict[str, str]) -> Iterator[None]:
+    """Temporarily set MEMO_* env vars, restoring prior state on exit."""
+    prior: dict[str, str | None] = {k: os.environ.get(k) for k in overrides}
+    try:
+        os.environ.update(overrides)
+        yield
+    finally:
+        for k, v in prior.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def render_block(
+    hits: list[Any], env: dict[str, str], *, body_chars: int, token_budget: int
+) -> str:
+    """Render the recall block for `hits` under a lever's env pins.
+
+    Applies L4 verbosity steering when MEMO_RECALL_VERBOSITY_LEVEL > 0, so the
+    lever's true effect on the injected block size is measured.
+    """
+    from memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from memo.flags_recall import flag_recall_verbosity_level
+    from memo.recall_logic import render_recall_context
+
+    with env_pins(env):
+        block = render_recall_context(
+            hits, [], turn=2, body_chars=body_chars, token_budget=token_budget
+        )
+        level = flag_recall_verbosity_level()
+        if level > 0:
+            block = maybe_inject_verbosity_steering(block, level)
+        return block
+
+
+# The P1 levers to measure. Env-expressible knobs that transform the injected
+# recall block. Baseline (OFF) is the empty env; each lever is its ON delta.
+RECALL_LEVERS: list[dict[str, Any]] = [
+    {"name": "recall_format_compact", "env": {"MEMO_RECALL_FORMAT": "compact"}},
+    {"name": "verbosity_steer_L2", "env": {"MEMO_RECALL_VERBOSITY_LEVEL": "2"}},
+]

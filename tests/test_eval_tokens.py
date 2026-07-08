@@ -1,3 +1,5 @@
+from dataclasses import dataclass as _dc
+
 from memo import eval_tokens
 
 
@@ -45,3 +47,32 @@ def test_aggregate_recall_sums_tokens_and_means_precision():
     assert row.tokens_off == 160 and row.tokens_on == 140
     assert row.quality_off == 1.0
     assert row.quality_on == 0.5
+
+
+@_dc
+class _FakeHit:
+    id: str
+    title: str
+    body: str
+    score: float | None = 0.9
+    tags: tuple[str, ...] = ()
+
+
+def test_env_pins_sets_and_restores(monkeypatch):
+    monkeypatch.delenv("MEMO_RECALL_FORMAT", raising=False)
+    with eval_tokens.env_pins({"MEMO_RECALL_FORMAT": "compact"}):
+        import os
+        assert os.environ["MEMO_RECALL_FORMAT"] == "compact"
+    import os
+    assert "MEMO_RECALL_FORMAT" not in os.environ
+
+
+def test_render_block_verbosity_level_appends_steering():
+    hits = [_FakeHit(id="aaaaaaaa11", title="T", body="b")]
+    plain = eval_tokens.render_block(hits, {}, body_chars=200, token_budget=200)
+    steered = eval_tokens.render_block(
+        hits, {"MEMO_RECALL_VERBOSITY_LEVEL": "2"}, body_chars=200, token_budget=200
+    )
+    # L4 adds a steering block -> steered is LONGER (the paradox: L4 costs P1 tokens)
+    assert len(steered) > len(plain)
+    assert "aaaaaaaa" in plain  # id short-prefix present for surviving_ids()
