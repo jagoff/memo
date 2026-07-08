@@ -14,6 +14,7 @@ from memo.dashboard import (
     read_grounding_log,
     read_recall_log,
     recall_health,
+    recall_log_path,
 )
 
 DiagnosticItem = dict[str, Any]
@@ -191,6 +192,22 @@ def _json_dict(raw: Any) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _malformed_jsonl_rows(path: Any) -> int:
+    try:
+        p = path
+        if not p.is_file():
+            return 0
+        count = 0
+        for line in p.read_text(encoding="utf-8").splitlines():
+            try:
+                json.loads(line)
+            except json.JSONDecodeError:
+                count += 1
+        return count
+    except OSError:
+        return 0
+
+
 def _health_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     try:
         rows = conn.execute(
@@ -361,6 +378,7 @@ def build_report(cfg: Config, *, limit: int = 500) -> dict[str, Any]:
     adoption, adoption_actions = _adoption_items(cfg, limit=limit)
     trust, trust_actions, trust_summary = _trust_items(cfg, limit=limit)
     verdict = _derive_verdict(adoption, trust)
+    malformed_rows = _malformed_jsonl_rows(recall_log_path(cfg.state_dir))
     return {
         "verdict": verdict,
         "adoption": adoption,
@@ -370,6 +388,8 @@ def build_report(cfg: Config, *, limit: int = 500) -> dict[str, Any]:
             "limit": int(limit),
             "adoption_items": len(adoption),
             "trust_items": len(trust),
+            "malformed_rows": malformed_rows,
+            "errors": [],
             **trust_summary,
         },
     }

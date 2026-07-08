@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import ast
+import json
 import sqlite3
 from pathlib import Path
 
 from memo.config import Config
-from memo.dashboard import append_grounding_log, append_recall_log
+from memo.dashboard import append_grounding_log, append_recall_log, recall_log_path
 from memo.memory import Memory
 from memo.usefulness_doctor import build_report, format_text_report
 
@@ -168,3 +169,24 @@ def test_doctor_parses_grounded_memory_json_defensively(tmp_path: Path) -> None:
     report = build_report(cfg, limit=100)
 
     assert all(item["id"] != "untrusted_memories_grounded" for item in report["trust"])
+
+
+def test_doctor_skips_malformed_recall_rows(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    path = recall_log_path(cfg.state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"via": "mcp:search"}\nnot-json\n', encoding="utf-8")
+
+    report = build_report(cfg, limit=100)
+
+    assert sorted(report) == ["actions", "adoption", "summary", "trust", "verdict"]
+    assert report["summary"]["malformed_rows"] == 1
+
+
+def test_doctor_json_is_serializable_under_empty_state(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+
+    payload = json.dumps(build_report(cfg, limit=100), ensure_ascii=False)
+
+    assert '"verdict"' in payload
+    assert '"actions"' in payload
