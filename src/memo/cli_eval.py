@@ -310,7 +310,7 @@ def eval_tokens_cmd(
     mem = _get_memory(cfg)
 
     def _search(text: str) -> list:
-        return list(mem.search(text, k=k))
+        return list(mem.search(text, limit=k))
 
     def _crush(content: str) -> tuple[str, str | None]:
         from memo.capture_core import maybe_crush_json_capture
