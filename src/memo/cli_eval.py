@@ -278,7 +278,9 @@ def _tokens_baseline_path(cfg: Config) -> Path:
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit raw JSON.")
 @click.option("--update-baseline", is_flag=True, help="Save current per-lever metrics as baseline.")
-@click.option("--gate", is_flag=True, help="Exit non-zero if a passing lever regressed vs baseline.")
+@click.option(
+    "--gate", is_flag=True, help="Exit non-zero if a passing lever regressed vs baseline."
+)
 @click.option("--force", is_flag=True, help="(accepted for parity; runs are never cached).")
 def eval_tokens_cmd(
     k: int,

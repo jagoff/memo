@@ -64,8 +64,10 @@ def test_env_pins_sets_and_restores(monkeypatch):
     monkeypatch.delenv("MEMO_RECALL_FORMAT", raising=False)
     with eval_tokens.env_pins({"MEMO_RECALL_FORMAT": "compact"}):
         import os
+
         assert os.environ["MEMO_RECALL_FORMAT"] == "compact"
     import os
+
     assert "MEMO_RECALL_FORMAT" not in os.environ
 
 
@@ -84,12 +86,18 @@ def _write_corpus(tmp_path: Path) -> Path:
     corpus = {
         "schema": "memo.token_corpus.v1",
         "cases": [
-            {"name": "late", "must_keep_index": 11,
-             "rows": [{"i": i, "text": f"row {i}"} for i in range(11)]
-                     + [{"i": 11, "text": "THE ANSWER"}]},
-            {"name": "early", "must_keep_index": 0,
-             "rows": [{"i": 0, "text": "THE ANSWER"}]
-                     + [{"i": i, "text": f"row {i}"} for i in range(1, 12)]},
+            {
+                "name": "late",
+                "must_keep_index": 11,
+                "rows": [{"i": i, "text": f"row {i}"} for i in range(11)]
+                + [{"i": 11, "text": "THE ANSWER"}],
+            },
+            {
+                "name": "early",
+                "must_keep_index": 0,
+                "rows": [{"i": 0, "text": "THE ANSWER"}]
+                + [{"i": i, "text": f"row {i}"} for i in range(1, 12)],
+            },
         ],
     }
     p = tmp_path / "token_corpus.json"
@@ -106,7 +114,8 @@ def test_load_capture_corpus(tmp_path):
 
 def test_measure_crush_case_flags_dropped_answer():
     case = eval_tokens.CaptureCase(
-        name="late", must_keep_index=11,
+        name="late",
+        must_keep_index=11,
         rows=[{"i": i, "text": f"row {i}"} for i in range(11)] + [{"i": 11, "text": "ANSWER"}],
     )
 
@@ -164,12 +173,14 @@ def test_run_all_measures_p1_and_p2_without_mlx(monkeypatch):
 
     def fake_crush(content: str) -> tuple[str, str | None]:
         import json as j
+
         arr = j.loads(content)
         return j.dumps(arr[:10]), "h"  # position-only: drops late rows
 
     corpus = [
         eval_tokens.CaptureCase(
-            "late", must_keep_index=11,
+            "late",
+            must_keep_index=11,
             rows=[{"i": i} for i in range(11)] + [{"i": 11, "answer": True}],
         )
     ]
