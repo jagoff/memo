@@ -89,8 +89,8 @@ def test_run_consolidate_saves_with_keyword_content(monkeypatch):
         def search(self, q, limit=1, disable_reranker=True):
             return []
 
-        def save(self, *, content, type, title, extra):  # keyword-only, like the real facade
-            saved.append({"content": content, "type": type, "title": title})
+        def save(self, *, content, type_, title, extra):  # keyword-only, like the real facade
+            saved.append({"content": content, "type_": type_, "title": title})
 
     class _Cfg:
         state_dir = "/tmp/unused"
@@ -102,5 +102,5 @@ def test_run_consolidate_saves_with_keyword_content(monkeypatch):
     assert res["status"] == "done"
     assert res["consolidated"][0]["status"] == "saved"
     assert len(saved) == 1
-    assert saved[0]["type"] == "synthesis"
+    assert saved[0]["type_"] == "synthesis"
     assert "insight" in saved[0]["content"]

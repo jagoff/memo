@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
 from memo.server_common import log_consult, now_ms
-
-_log = logging.getLogger(__name__)
 
 
 def _read_notification(memory: Memory) -> str:
@@ -19,40 +16,6 @@ def _read_notification(memory: Memory) -> str:
         return text
     except Exception:
         return ""
-
-
-def _auto_capture(memory: Memory) -> None:
-    """Best-effort auto-capture: runs idle capture on the most recent session.
-
-    Called as a side-effect from memo_unified_briefing, memo_search, memo_ask.
-    Never raises — failures are logged at debug level and silently swallowed.
-    Writes notification to pending file so the next tool call surfaces it.
-    """
-    from pathlib import Path
-
-    from memo.capture import run_capture_incremental
-    from memo.cli_capture import _write_capture_notification
-    from memo.session import list_sessions
-
-    try:
-        state_dir = memory.cfg.state_dir
-        sessions = list_sessions(state_dir, limit=1)
-        if not sessions:
-            return
-        sid = sessions[0].get("session_id")
-        transcript_raw = sessions[0].get("transcript_path")
-        if not sid or not transcript_raw:
-            return
-        transcript = Path(transcript_raw)
-        if not transcript.is_file():
-            return
-        result = run_capture_incremental(transcript, sid, debug=False)
-        titles = result.get("saved_titles") or []
-        if titles:
-            _write_capture_notification(state_dir, titles, idle=True)
-            _log.info("auto-capture: saved %d insight(s): %s", len(titles), "; ".join(titles[:3]))
-    except Exception:
-        _log.debug("auto-capture: skipped", exc_info=True)
 
 
 def register(server: Any, memory: Memory) -> None:
@@ -91,10 +54,9 @@ def register(server: Any, memory: Memory) -> None:
     def memo_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
         """Load a compact startup briefing from memo and optional Synapse state.
 
-        Read-only with best-effort auto-capture side effects. Call before
-        deciding or answering so prior durable facts can ground the task.
-        Pass `cwd` to bias project context and `source` to attribute consult
-        logs to the calling client.
+        Read-only. Call before deciding or answering so prior durable facts can
+        ground the task. Pass `cwd` to bias project context and `source` to
+        attribute consult logs to the calling client.
         """
         from memo.briefing import (
             compact_text,
@@ -125,9 +87,6 @@ def register(server: Any, memory: Memory) -> None:
             source=source,
         )
 
-        # Auto-capture: best-effort side effect — never blocks briefing.
-        _auto_capture(memory)
-
         return {
             "available": bool(lines),
             "markdown": markdown,
@@ -150,10 +109,10 @@ def register(server: Any, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Search durable memories by text, vector similarity, or hybrid mode.
 
-        Read-only with best-effort auto-capture side effects. Use for direct
-        retrieval when you need source records, ids, dates, tags, or excerpts.
-        `mode` accepts hybrid, vec, or bm25; `body_chars` controls snippet
-        length, and `source` attributes consult logging.
+        Read-only. Use for direct retrieval when you need source records, ids,
+        dates, tags, or excerpts. `mode` accepts hybrid, vec, or bm25;
+        `body_chars` controls snippet length, and `source` attributes consult
+        logging.
         """
         if when and not (date_from or date_to):
             from memo.nl_dates import parse_date_range
@@ -174,9 +133,6 @@ def register(server: Any, memory: Memory) -> None:
                 d["body_truncated"] = True
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
-
-        # Auto-capture: best-effort side effect on every search turn.
-        _auto_capture(memory)
 
         # Read pending idle notification (best-effort, races with writer)
         notification = _read_notification(memory)
@@ -268,10 +224,9 @@ def register(server: Any, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Answer a question using memo retrieval and citations.
 
-        Read-only with best-effort auto-capture side effects. Use when you want
-        a synthesized answer grounded in durable memories instead of raw hit
-        lists. `k`, `type`, and `snippet_chars` tune retrieval; `source`
-        attributes consult logging.
+        Read-only. Use when you want a synthesized answer grounded in durable
+        memories instead of raw hit lists. `k`, `type`, and `snippet_chars` tune
+        retrieval; `source` attributes consult logging.
         """
         t0 = now_ms()
         res = memory.ask(
@@ -286,9 +241,6 @@ def register(server: Any, memory: Memory) -> None:
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(memory, tool="ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
-
-        # Auto-capture: best-effort side effect on every ask turn.
-        _auto_capture(memory)
 
         # Read pending idle notification (best-effort, races with writer)
         out["notification"] = _read_notification(memory)
@@ -308,10 +260,9 @@ def register(server: Any, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Answer a conversational question with optional history and context.
 
-        Read-only with best-effort auto-capture side effects. Use instead of
-        memo_ask when prior turns or explicit `context` should shape retrieval
-        and synthesis. `history` is a list of chat messages; `session_id`
-        links the answer to a tracked memo session.
+        Read-only. Use instead of memo_ask when prior turns or explicit
+        `context` should shape retrieval and synthesis. `history` is a list of
+        chat messages; `session_id` links the answer to a tracked memo session.
         """
         t0 = now_ms()
         merged_context = dict(context or {})
@@ -329,9 +280,6 @@ def register(server: Any, memory: Memory) -> None:
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(memory, tool="chat_ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
-
-        # Auto-capture: best-effort side effect on every chat_ask turn.
-        _auto_capture(memory)
 
         # Read pending idle notification (best-effort, races with writer)
         out["notification"] = _read_notification(memory)

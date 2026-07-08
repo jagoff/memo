@@ -68,3 +68,65 @@ def test_memo_search_routes_file_param_to_search_by_file(tmp_cfg):
         "daemon timeout", file="recall_socket.py", limit=5, mode="hybrid", type_=None
     )
     mem.search.assert_not_called()
+
+
+def test_memo_search_does_not_run_capture_inline(tmp_cfg, monkeypatch):
+    """Read-only MCP search must not block behind transcript capture."""
+    import memo.server_core_search as search_server
+    from memo.memory import Memory
+    from memo.server_core_search import register
+
+    def _capture_should_not_run(*args, **kwargs):
+        raise AssertionError("memo_search must not run capture inline")
+
+    monkeypatch.setattr(search_server, "_read_notification", lambda memory: "")
+    monkeypatch.setattr("memo.capture.run_capture_incremental", _capture_should_not_run)
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.search.return_value = []
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    out = tools["memo_search"](query="trust adoption doctor", mode="hybrid", limit=1)
+
+    assert out == {"hits": [], "notification": ""}
+    mem.search.assert_called_once_with(
+        "trust adoption doctor",
+        limit=1,
+        type_=None,
+        mode="hybrid",
+        date_from=None,
+        date_to=None,
+    )
+
+
+def test_memo_ask_does_not_run_capture_inline(tmp_cfg, monkeypatch):
+    """Read-only MCP ask must return after answer synthesis and consult logging."""
+    import memo.server_core_search as search_server
+    from memo.memory import Memory
+    from memo.server_core_search import register
+
+    def _capture_should_not_run(*args, **kwargs):
+        raise AssertionError("memo_ask must not run capture inline")
+
+    monkeypatch.setattr(search_server, "_read_notification", lambda memory: "")
+    monkeypatch.setattr("memo.capture.run_capture_incremental", _capture_should_not_run)
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.ask.return_value = {"answer": "ok", "citations": []}
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    out = tools["memo_ask"](question="what changed?", k=1)
+
+    assert out == {"answer": "ok", "citations": [], "notification": ""}
+    mem.ask.assert_called_once_with(
+        "what changed?",
+        k=1,
+        type_=None,
+        snippet_chars=800,
+        include_repos=True,
+        session_id=None,
+    )

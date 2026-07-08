@@ -134,7 +134,7 @@ def test_run_synthesize_bridges_saves_bounded_and_cites(monkeypatch):
     assert res["status"] == "done"
     assert len(mem.saved) == 1  # one durable insight per bridge
     rec = mem.saved[0]
-    assert rec["type"] == "synthesis"
+    assert rec["type_"] == "synthesis"
     assert rec["extra"]["synthesis_kind"] == "bridge"
     # names the link + carries provenance + cited source memories
     assert "via j" in rec["content"]
