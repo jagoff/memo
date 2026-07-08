@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import sqlite3
 from pathlib import Path
 
 from memo.config import Config
@@ -52,6 +54,32 @@ def test_doctor_reports_unattributed_mcp_consults(tmp_path: Path) -> None:
     assert item["severity"] == "warning"
     assert item["evidence"]["count"] == 1
     assert item["action"] == 'Pass source="<client>" on memo read tool calls.'
+
+
+def test_doctor_module_does_not_import_memo_memory() -> None:
+    src = Path("src/memo/usefulness_doctor.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    forbidden = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "memo.memory":
+            forbidden.append(node.module)
+        if isinstance(node, ast.Import):
+            forbidden.extend(alias.name for alias in node.names if alias.name == "memo.memory")
+
+    assert forbidden == []
+
+
+def test_doctor_missing_db_stays_read_only(tmp_path: Path) -> None:
+    cfg = Config(data_dir=tmp_path / "data", state_dir=tmp_path / "state")
+
+    report = build_report(cfg, limit=25)
+
+    item = next(i for i in report["trust"] if i["id"] == "store_unavailable")
+    assert item["status"] == "unknown"
+    assert item["evidence"]["db_path"] == str(cfg.db_path)
+    assert not cfg.state_dir.exists()
+    assert not cfg.db_path.exists()
 
 
 def test_doctor_text_report_is_action_oriented(tmp_path: Path) -> None:
@@ -114,3 +142,29 @@ def test_doctor_reports_invalidated_grounded_memory(tmp_path: Path) -> None:
     assert item["severity"] == "critical"
     assert item["evidence"]["count"] == 1
     assert item["evidence"]["memories"][0]["id"] == rec.id[:8]
+
+
+def test_doctor_parses_grounded_memory_json_defensively(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    rec = Memory(cfg).save(
+        content="seguimos en vite",
+        title="Bundler",
+        extra={"superseded_by": "vite"},
+        defer_embed=True,
+    )
+    append_grounding_log(
+        cfg.state_dir,
+        session_id="s2",
+        turn=1,
+        recall_id=rec.id[:8],
+        used_score=0.9,
+        method="test",
+    )
+
+    with sqlite3.connect(cfg.db_path) as conn:
+        conn.execute("UPDATE meta SET tags = ?, extra_json = ? WHERE id = ?", ("{}", "[]", rec.id))
+        conn.commit()
+
+    report = build_report(cfg, limit=100)
+
+    assert all(item["id"] != "untrusted_memories_grounded" for item in report["trust"])

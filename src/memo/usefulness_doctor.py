@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from typing import Any
 
 from memo.config import Config
 from memo.dashboard import (
+    GROUNDED_SCORE,
     consult_breakdown,
     consumer_label,
     read_grounding_log,
     read_recall_log,
     recall_health,
 )
-from memo.memory import Memory
 
 DiagnosticItem = dict[str, Any]
 ActionItem = dict[str, Any]
@@ -156,11 +158,47 @@ def _derive_verdict(adoption: list[DiagnosticItem], trust: list[DiagnosticItem])
     return "healthy"
 
 
-def _health_rows(mem: Memory) -> list[dict[str, Any]]:
+def _db_connect_readonly(cfg: Config) -> sqlite3.Connection | None:
+    if not cfg.db_path.is_file():
+        return None
     try:
-        return list(mem.store.dump_signal().get("memory_health") or [])
-    except Exception:
+        conn = sqlite3.connect(f"file:{cfg.db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _json_list(raw: Any) -> list[str]:
+    if not raw:
         return []
+    try:
+        data = json.loads(str(raw))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item) for item in data if isinstance(item, str)]
+
+
+def _json_dict(raw: Any) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(str(raw))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _health_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    try:
+        rows = conn.execute(
+            "SELECT id, confidence, roi_score, updated_at, support_count FROM memory_health"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [dict(row) for row in rows]
 
 
 def _grounded_ids(cfg: Config, *, limit: int) -> set[str]:
@@ -168,9 +206,35 @@ def _grounded_ids(cfg: Config, *, limit: int) -> set[str]:
     for row in read_grounding_log(cfg.state_dir, limit=limit):
         score = row.get("used_score")
         rid = row.get("recall_id")
-        if rid and isinstance(score, (int, float)) and float(score) >= 0.8:
+        if rid and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE:
             ids.add(str(rid))
     return ids
+
+
+def _grounded_memory_rows(
+    conn: sqlite3.Connection,
+    grounded_prefixes: set[str],
+) -> list[dict[str, Any]]:
+    if not grounded_prefixes:
+        return []
+    placeholders = ",".join("?" for _ in grounded_prefixes)
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT m.id,
+                   m.title,
+                   m.tags,
+                   m.extra_json,
+                   COALESCE(h.confidence, 1.0) AS confidence
+              FROM meta m
+              LEFT JOIN memory_health h ON h.id = m.id
+             WHERE substr(m.id, 1, 8) IN ({placeholders})
+            """,  # noqa: S608
+            tuple(sorted(grounded_prefixes)),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [dict(row) for row in rows]
 
 
 def _trust_items(
@@ -185,103 +249,109 @@ def _trust_items(
         "support_count_positive": 0,
         "grounded_memory_ids": 0,
     }
-    try:
-        mem = Memory(cfg)
-    except Exception as exc:
+    conn = _db_connect_readonly(cfg)
+    if conn is None:
         items.append(
             _item(
                 id="store_unavailable",
                 severity="warning",
                 status="unknown",
                 message="Memory store could not be opened for trust checks.",
-                evidence={"error": str(exc)[:200]},
+                evidence={"db_path": str(cfg.db_path)},
                 action="Run memo doctor.",
             )
         )
         actions.append(_action("doctor", "memo doctor", "Store trust checks failed."))
         return items, actions, summary
 
-    health_rows = _health_rows(mem)
-    support_positive = sum(1 for r in health_rows if int(r.get("support_count") or 0) > 0)
-    summary["memory_health_rows"] = len(health_rows)
-    summary["support_count_positive"] = support_positive
-    if len(health_rows) >= 20 and support_positive == 0:
-        items.append(
-            _item(
-                id="support_count_starvation",
-                severity="warning",
-                status="degraded",
-                message="No memory_health rows have support_count > 0.",
-                evidence={
-                    "memory_health_rows": len(health_rows),
-                    "support_count_positive": support_positive,
-                },
-                action="Verify corroboration bump sites and signal export/import.",
-            )
-        )
-        actions.append(
-            _action(
-                "verify_support_count",
-                "uv run --no-sync pytest tests/test_support_count.py -v",
-                "support_count is not accumulating.",
-            )
-        )
-
-    grounded_prefixes = _grounded_ids(cfg, limit=limit)
-    summary["grounded_memory_ids"] = len(grounded_prefixes)
-    if grounded_prefixes:
-        full_ids = mem.store.all_ids()
-        resolved = [id_ for id_ in full_ids if id_[:8] in grounded_prefixes]
-        rows = mem.store.get_batch(resolved)
-        health = mem.store.get_health_batch(resolved)
-        bad: list[dict[str, Any]] = []
-        for row in rows:
-            rid = str(row["id"])
-            tags = list(row.get("tags") or [])
-            extra = row.get("extra") or {}
-            conf = float((health.get(rid) or {}).get("confidence", 1.0))
-            reasons: list[str] = []
-            if "_invalidated" in tags or extra.get("invalidated_reason"):
-                reasons.append("invalidated")
-            if extra.get("superseded_by"):
-                reasons.append("superseded")
-            if conf < 0.5:
-                reasons.append("low_confidence")
-            if reasons:
-                bad.append(
-                    {
-                        "id": rid[:8],
-                        "title": row.get("title"),
-                        "confidence": conf,
-                        "reasons": reasons,
-                    }
-                )
-        if bad:
-            severity = (
-                "critical"
-                if any(
-                    "invalidated" in memory["reasons"] or "superseded" in memory["reasons"]
-                    for memory in bad
-                )
-                else "warning"
-            )
+    try:
+        health_rows = _health_rows(conn)
+        support_positive = sum(1 for r in health_rows if int(r.get("support_count") or 0) > 0)
+        summary["memory_health_rows"] = len(health_rows)
+        summary["support_count_positive"] = support_positive
+        if len(health_rows) >= 20 and support_positive == 0:
             items.append(
                 _item(
-                    id="untrusted_memories_grounded",
-                    severity=severity,
-                    status="untrusted",
-                    message="Grounded recall used memories with low-trust markers.",
-                    evidence={"count": len(bad), "memories": bad[:10]},
-                    action="Update stale memories, run contradiction triage, or undo incorrect invalidations.",
+                    id="support_count_starvation",
+                    severity="warning",
+                    status="degraded",
+                    message="No memory_health rows have support_count > 0.",
+                    evidence={
+                        "memory_health_rows": len(health_rows),
+                        "support_count_positive": support_positive,
+                    },
+                    action="Verify corroboration bump sites and signal export/import.",
                 )
             )
             actions.append(
                 _action(
-                    "triage_untrusted",
-                    "memo contradict triage",
-                    "Grounded memories include invalidated, superseded, or low-confidence records.",
+                    "verify_support_count",
+                    "uv run --no-sync pytest tests/test_support_count.py -v",
+                    "support_count is not accumulating.",
                 )
             )
+
+        grounded_prefixes = _grounded_ids(cfg, limit=limit)
+        summary["grounded_memory_ids"] = len(grounded_prefixes)
+        if grounded_prefixes:
+            bad: list[dict[str, Any]] = []
+            for row in _grounded_memory_rows(conn, grounded_prefixes):
+                rid = str(row.get("id") or "")
+                if not rid:
+                    continue
+                tags = _json_list(row.get("tags"))
+                extra = _json_dict(row.get("extra_json"))
+                conf = float(row.get("confidence") or 1.0)
+                reasons: list[str] = []
+                if "_invalidated" in tags or extra.get("invalidated_reason"):
+                    reasons.append("invalidated")
+                if extra.get("superseded_by"):
+                    reasons.append("superseded")
+                if conf < 0.5:
+                    reasons.append("low_confidence")
+                if reasons:
+                    bad.append(
+                        {
+                            "id": rid[:8],
+                            "title": row.get("title"),
+                            "confidence": conf,
+                            "reasons": reasons,
+                        }
+                    )
+            if bad:
+                severity = (
+                    "critical"
+                    if any(
+                        "invalidated" in memory["reasons"] or "superseded" in memory["reasons"]
+                        for memory in bad
+                    )
+                    else "warning"
+                )
+                items.append(
+                    _item(
+                        id="untrusted_memories_grounded",
+                        severity=severity,
+                        status="untrusted",
+                        message="Grounded recall used memories with low-trust markers.",
+                        evidence={"count": len(bad), "memories": bad[:10]},
+                        action=(
+                            "Update stale memories, run contradiction triage, or undo incorrect "
+                            "invalidations."
+                        ),
+                    )
+                )
+                actions.append(
+                    _action(
+                        "triage_untrusted",
+                        "memo contradict triage",
+                        (
+                            "Grounded memories include invalidated, superseded, or low-confidence "
+                            "records."
+                        ),
+                    )
+                )
+    finally:
+        conn.close()
 
     return items, actions, summary
 
