@@ -61,8 +61,12 @@ def test_context_pack_cli_disabled_by_flag(tmp_path: Path) -> None:
 
 
 def test_context_pack_cli_logs_consult(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
     class _FakeMemory:
         def search(self, *args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
             return [_hit()]
 
     monkeypatch.setattr("memo.cli_search._get_memory", lambda cfg: _FakeMemory())
@@ -85,6 +89,7 @@ def test_context_pack_cli_logs_consult(tmp_path: Path, monkeypatch) -> None:
             "title": "Current status",
         }
     ]
+    assert captured["kwargs"]["read_through"] is False
 
 
 def test_context_pack_mcp_empty_corpus(mem_with_stub, monkeypatch) -> None:
@@ -117,7 +122,14 @@ def test_context_pack_mcp_disabled_by_flag(mem_with_stub, monkeypatch) -> None:
 
 def test_context_pack_mcp_logs_consult(mem_with_stub, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_CONTEXT_PACK", "1")
-    mem_with_stub.search = lambda *args, **kwargs: [_hit()]  # type: ignore[method-assign]
+    captured: dict[str, object] = {}
+
+    def _search(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return [_hit()]
+
+    mem_with_stub.search = _search  # type: ignore[method-assign]
     server = build_server(memory=mem_with_stub)
     tool = asyncio.run(server.get_tool("memo_context_pack"))
 
@@ -135,3 +147,4 @@ def test_context_pack_mcp_logs_consult(mem_with_stub, monkeypatch) -> None:
             "title": "Current status",
         }
     ]
+    assert captured["kwargs"]["read_through"] is False

@@ -143,3 +143,35 @@ Results:
 
 - `35 passed`
 - Ruff clean on touched files
+
+## Review Fixes 2
+
+Addressed the follow-up reviewer finding that explicit read-only context-pack
+surfaces were still opting into cache read-through:
+
+- CLI `memo context-pack` no longer calls `mem.search(..., read_through=True)`.
+  It now passes `read_through=False`, preserving explicit consult logging and
+  the existing `MEMO_CONTEXT_PACK` gate behavior without allowing cache-backed
+  local materialization on a read-only surface.
+- MCP `memo_context_pack` likewise no longer opts into read-through and now
+  calls `memory.search(..., read_through=False)`.
+
+### Focused tests adjusted
+
+Extended [`tests/test_context_pack_surface.py`](/Users/fer/repos/memo/tests/test_context_pack_surface.py)
+so the CLI and MCP consult-logging tests also assert the search call does not
+set `read_through=True`.
+
+### Verification for review fixes 2
+
+Ran:
+
+```bash
+uv run --no-sync pytest tests/test_context_pack_surface.py -v
+uv run --no-sync ruff check src/memo/cli_search.py src/memo/server_context_pack.py tests/test_context_pack_surface.py
+```
+
+Results:
+
+- `6 passed`
+- Ruff clean on touched files

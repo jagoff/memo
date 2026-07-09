@@ -264,7 +264,7 @@ def context_pack_cmd(
         type_=type_,
         mode="hybrid",
         disable_reranker=True,
-        read_through=True,
+        read_through=False,
         quality_rerank=True,
     )
     pack = build_context_pack(question, hits, snippet_chars=snippet_chars)
