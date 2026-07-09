@@ -114,6 +114,7 @@ class _AskOpsMixin(_MemoryBase):
         disable_reranker: bool = True,
         intent_text: str | None = None,
         session_id: str | None = None,
+        use_context_pack: bool = False,
     ) -> tuple[str, list[dict[str, Any]], str, list[MemoryRecord]]:
         """Retrieval half of ask()/ask_stream().
 
@@ -145,6 +146,7 @@ class _AskOpsMixin(_MemoryBase):
                     snippet_chars,
                     include_repos,
                     disable_reranker,
+                    use_context_pack,
                     intent_text or "",
                     question.strip(),
                 )
@@ -267,6 +269,8 @@ class _AskOpsMixin(_MemoryBase):
             hits = sorted(hits, key=_recency_sort_key, reverse=True)[:k]
 
         snippet_lines: list[str] = []
+        expanded_snippet_lines: list[str] = []
+        repo_snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
         for h in hits:
@@ -330,10 +334,12 @@ class _AskOpsMixin(_MemoryBase):
                     _snip = (src.body or "")[:snippet_chars]
                     if len(src.body or "") > snippet_chars:
                         _snip = _snip.rstrip() + "…"
-                    snippet_lines.append(
+                    expanded_line = (
                         f"[{src.id[:8]}] title: {src.title}  |  type: {src.type}"
                         f"  |  context: source-of [{h.id[:8]}]\n{_snip}\n"
                     )
+                    snippet_lines.append(expanded_line)
+                    expanded_snippet_lines.append(expanded_line)
                     sources.append(
                         {
                             "source": "memory",
@@ -363,11 +369,13 @@ class _AskOpsMixin(_MemoryBase):
             snippet = (h.text or "")[:snippet_chars]
             if len(h.text or "") > snippet_chars:
                 snippet = snippet.rstrip() + "…"
-            snippet_lines.append(
+            repo_line = (
                 f"[{label}] source: repo  |  path: {h.path}  |  "
                 f"lines: {h.line_start}-{h.line_end}  |  match: {h.match_type}\n"
                 f"{snippet}\n"
             )
+            snippet_lines.append(repo_line)
+            repo_snippet_lines.append(repo_line)
             appended_repo += 1
             sources.append(
                 {
@@ -386,11 +394,40 @@ class _AskOpsMixin(_MemoryBase):
                 }
             )
 
-        user_msg = (
-            f"User question:\n{question}\n\n"
-            f"Relevant context ({len(hits)} memories, {appended_repo} repo snippets):\n\n"
-            + "\n---\n".join(snippet_lines)
-        )
+        if use_context_pack:
+            from memo.context_pack import build_context_pack
+            from memo.quality import classify_quality
+
+            pack = build_context_pack(
+                question,
+                hits,
+                snippet_chars=snippet_chars,
+                budget_chars=max(snippet_chars * max(k, 1) + 1200, 2000),
+            )
+            user_msg = (
+                f"User question:\n{question}\n\n"
+                f"Relevant context pack ({len(hits)} memories, {appended_repo} repo snippets):\n\n"
+                f"{pack.to_prompt()}"
+            )
+            if expanded_snippet_lines:
+                user_msg += "\n\nExpanded source memories:\n\n" + "\n---\n".join(expanded_snippet_lines)
+            if repo_snippet_lines:
+                user_msg += "\n\nRepository snippets:\n\n" + "\n---\n".join(repo_snippet_lines)
+            quality_by_id = {hit.id: classify_quality(hit) for hit in hits}
+            for source in sources:
+                if source.get("source") != "memory":
+                    continue
+                decision = quality_by_id.get(str(source.get("id") or ""))
+                if decision is None:
+                    continue
+                source["quality_bucket"] = decision.bucket
+                source["quality_reasons"] = list(decision.reasons)
+        else:
+            user_msg = (
+                f"User question:\n{question}\n\n"
+                f"Relevant context ({len(hits)} memories, {appended_repo} repo snippets):\n\n"
+                + "\n---\n".join(snippet_lines)
+            )
         if cache_key is not None and sources:
             # Only cache non-empty retrievals — an empty result is cheap to
             # recompute and may reflect a transient cold embedder.
@@ -484,6 +521,7 @@ class _AskOpsMixin(_MemoryBase):
         include_repos: bool = True,
         intent_text: str | None = None,
         session_id: str | None = None,
+        use_context_pack: bool | None = None,
     ) -> dict[str, Any]:
         """Synthesised Q&A over the memory archive (RAG).
 
@@ -505,10 +543,12 @@ class _AskOpsMixin(_MemoryBase):
         """
         if not question or not question.strip():
             return {"question": question, "answer": "", "sources": []}
-        from memo.flags import flag_int
+        from memo.flags import flag_bool, flag_int
 
         if snippet_chars == 800:
             snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
+        if use_context_pack is None:
+            use_context_pack = flag_bool("MEMO_CONTEXT_PACK")
         norm_question, sources, user_msg, hits = self._build_ask_context(
             question,
             k=k,
@@ -517,6 +557,7 @@ class _AskOpsMixin(_MemoryBase):
             include_repos=include_repos,
             intent_text=intent_text,
             session_id=session_id,
+            use_context_pack=use_context_pack,
         )
         if not sources:
             from memo.flags import flag_str
