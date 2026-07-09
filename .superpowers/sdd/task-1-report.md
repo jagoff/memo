@@ -57,3 +57,20 @@
 ### Self-review
 - Enforced a pure reranker contract without mutating unsupported shapes.
 - Error path is domain-specific (`ValidationError`) and does not alter input objects.
+
+## Reviewer Finding Re-Fix (Task 1)
+
+### Fix summary
+- Preserved dataclass behavior in `src/memo/quality.py:apply_quality_rerank` via `dataclasses.replace`.
+- Added support for non-dataclass, hit-shaped inputs by using `copy.copy()` and writing `score` on the copy.
+- Added strict failure handling so copy/set failures raise `ValidationError` before any `explain` write.
+- Updated `explain` writes to occur only after a reranked copy is successfully created, preventing partial side effects on failure.
+
+### Tests run and outputs
+- `uv run --no-sync pytest tests/test_quality.py -v`: `6 passed`.
+- `uv run --no-sync ruff check src/memo/quality.py tests/test_quality.py`: `All checks passed!`
+
+### Files changed
+- `src/memo/quality.py`
+- `tests/test_quality.py`
+- `.superpowers/sdd/task-1-report.md`

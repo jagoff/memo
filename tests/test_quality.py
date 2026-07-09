@@ -74,9 +74,31 @@ class _MutableHit:
         self.verified_at = None
 
 
-def test_apply_quality_rerank_rejects_non_dataclass_hit_without_mutation() -> None:
+def test_apply_quality_rerank_copies_non_dataclass_hit() -> None:
     hit = _MutableHit()
-    original = hit.score
+    out = apply_quality_rerank([hit])
+    assert len(out) == 1
+    assert out[0] is not hit
+    assert out[0].score == 0.9
+    assert hit.score == 0.9
+
+
+class _CopyFailureHit:
+    def __init__(self) -> None:
+        self.id = "broken"
+        self.score = 0.9
+        self.type = "note"
+        self.tags = []
+        self.extra = {}
+        self.verification_state = VerificationState.UNVERIFIED
+        self.verified_at = None
+
+    def __copy__(self) -> _CopyFailureHit:
+        raise RuntimeError("copy intentionally fails")
+
+
+def test_apply_quality_rerank_does_not_mutate_explain_when_copy_fails() -> None:
+    explain: dict[str, dict[str, Any]] = {}
     with pytest.raises(ValidationError, match="Unsupported hit object"):
-        apply_quality_rerank([hit])
-    assert hit.score == original
+        apply_quality_rerank([_CopyFailureHit()], explain=explain)
+    assert explain == {}

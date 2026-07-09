@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, is_dataclass
 from dataclasses import replace as dc_replace
 from typing import Any
@@ -100,6 +101,18 @@ def apply_quality_rerank(
         base = float(getattr(hit, "score", None) or 0.0)
         score = base * decision.multiplier
 
+        try:
+            if is_dataclass(hit):
+                ranked = dc_replace(hit, score=score)
+            else:
+                ranked = copy.copy(hit)
+                ranked.score = score
+        except Exception as exc:
+            raise ValidationError(
+                "Unsupported hit object for quality rerank; expected a dataclass or "
+                "a hit-shaped object with a writable `score` attribute."
+            ) from exc
+
         if explain is not None:
             hid = str(getattr(hit, "id", ""))
             entry = explain.setdefault(hid, {})
@@ -108,21 +121,7 @@ def apply_quality_rerank(
             entry["quality_reasons"] = list(decision.reasons)
             entry["quality_score"] = score
 
-        if not is_dataclass(hit):
-            raise ValidationError(
-                "Unsupported hit object for quality rerank; expected a dataclass with a "
-                "`score` field."
-            )
-
-        try:
-            hit = dc_replace(hit, score=score)
-        except TypeError as exc:
-            raise ValidationError(
-                "Unsupported hit object for quality rerank; expected a dataclass with a "
-                "`score` field."
-            ) from exc
-
-        scored.append((score, -index, hit, decision))
+        scored.append((score, -index, ranked, decision))
 
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return [hit for _score, _index, hit, _decision in scored]
