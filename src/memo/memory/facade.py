@@ -473,12 +473,11 @@ class Memory(
         if self._contradict_store is not None:
             with contextlib.suppress(Exception):
                 self._contradict_store.close()
-        if "versioning" in self._capabilities:
+        for capability in list(self._capabilities.values()):
             with contextlib.suppress(Exception):
-                self._capabilities["versioning"].close()
-        if "crossref" in self._capabilities:
-            with contextlib.suppress(Exception):
-                self._capabilities["crossref"].close()
+                close = getattr(capability, "close", None)
+                if close is not None:
+                    close()
         with contextlib.suppress(Exception):
             if hasattr(self.embedder, "unload"):
                 self.embedder.unload()
@@ -492,6 +491,10 @@ class Memory(
             if self._temporal is not None and hasattr(self._temporal, "close"):
                 self._temporal.close()
         self._capabilities.clear()
+
+    def __del__(self) -> None:  # pragma: no cover - GC safety net
+        with contextlib.suppress(Exception):
+            self.close()
 
     def _mark_dirty(self, id_: str) -> None:
         """Flag a memory as written-locally-but-not-yet-on-backing-store

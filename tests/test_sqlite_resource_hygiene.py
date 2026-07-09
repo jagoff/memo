@@ -62,3 +62,23 @@ def test_memory_close_is_idempotent_after_lazy_connections(
         gc.collect()
 
     assert _sqlite_resource_warnings(caught) == []
+
+
+def test_memory_finalizer_releases_sqlite_connections(
+    tmp_cfg: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0] + [0.0] * (tmp_cfg.embedder_dims - 1) for _ in inputs],
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        mem = Memory(tmp_cfg)
+        mem.save(content="sqlite finalizer cleanup probe", title="SQLite Finalizer Probe")
+        assert mem.search("sqlite finalizer cleanup probe", mode="bm25", limit=1)
+        del mem
+        gc.collect()
+
+    assert _sqlite_resource_warnings(caught) == []
