@@ -78,6 +78,40 @@ def test_quality_compact_preview_skips_cross_scope_and_sensitive_records(mock_me
     assert proposal["reasons"] == ["explicit_canonical_or_superseded_by"]
 
 
+def test_quality_compact_preview_skips_ambiguous_multi_project_scope(mock_memory) -> None:
+    canonical = mock_memory.save(
+        content="Stable canonical memory.",
+        title="Canonical",
+        tags=["project:memo"],
+    )
+    ambiguous = mock_memory.save(
+        content="Ambiguous duplicate.",
+        title="Ambiguous duplicate",
+        tags=["project:memo", "project:other"],
+        extra={"canonical_id": canonical.id},
+    )
+
+    payload = preview_quality_compaction(mock_memory, limit=20)
+
+    assert payload["proposals"] == []
+    assert payload["errors"] == [f"ambiguous_scope:{ambiguous.id}"]
+
+
+def test_quality_compact_preview_skips_unresolved_canonical_targets(mock_memory) -> None:
+    missing_canonical_id = "f" * 32
+    mock_memory.save(
+        content="Duplicate with missing canonical.",
+        title="Missing canonical duplicate",
+        tags=["project:memo"],
+        extra={"canonical_id": missing_canonical_id},
+    )
+
+    payload = preview_quality_compaction(mock_memory, limit=20)
+
+    assert payload["proposals"] == []
+    assert payload["errors"] == [f"unresolved_canonical:{missing_canonical_id}"]
+
+
 def test_quality_compact_command_requires_flag(tmp_path: Path) -> None:
     env = _env(tmp_path)
     env.pop("MEMO_QUALITY_COMPACT")

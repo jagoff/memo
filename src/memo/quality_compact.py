@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from memo.errors import ValidationError
+from memo.errors import AmbiguousIdError, ValidationError
 
 
 @dataclass(frozen=True)
@@ -39,14 +39,17 @@ def _is_sensitive(record: Any) -> bool:
     )
 
 
-def _scope_key(record: Any) -> str:
-    tags = [str(tag) for tag in (getattr(record, "tags", None) or [])]
-    project = next((tag for tag in tags if tag.startswith("project:")), "")
-    if project:
-        return project
-    extra = _extra(record)
-    scope = str(extra.get("scope") or "").strip()
-    return scope or "global"
+def _scope_key(record: Any) -> str | None:
+    project_tags = {
+        str(tag).strip()
+        for tag in (getattr(record, "tags", None) or [])
+        if str(tag).strip().startswith("project:")
+    }
+    if not project_tags:
+        return "global"
+    if len(project_tags) == 1:
+        return next(iter(project_tags))
+    return None
 
 
 def _proposal_id(scope: str, canonical_id: str) -> str:
@@ -69,6 +72,14 @@ def preview_quality_compaction(memory: Any, *, limit: int = 20) -> dict[str, Any
     rows = memory.list(limit=limit, include_forgotten=False) if hasattr(memory, "list") else []
 
     grouped: dict[tuple[str, str], list[Any]] = {}
+    errors: list[str] = []
+    seen_errors: set[str] = set()
+
+    def _record_error(code: str) -> None:
+        if code not in seen_errors:
+            seen_errors.add(code)
+            errors.append(code)
+
     for record in rows:
         if _is_sensitive(record):
             continue
@@ -76,19 +87,31 @@ def preview_quality_compaction(memory: Any, *, limit: int = 20) -> dict[str, Any
         canonical_id = str(extra.get("canonical_id") or extra.get("superseded_by") or "").strip()
         if not canonical_id or canonical_id == str(getattr(record, "id", "")):
             continue
-        grouped.setdefault((_scope_key(record), canonical_id), []).append(record)
+        scope = _scope_key(record)
+        if scope is None:
+            _record_error(f"ambiguous_scope:{getattr(record, 'id', canonical_id)}")
+            continue
+        grouped.setdefault((scope, canonical_id), []).append(record)
 
     proposals: list[QualityCompactProposal] = []
     for (scope, canonical_id), sources in sorted(grouped.items()):
-        target = memory.get(canonical_id) if hasattr(memory, "get") else None
-        if target is not None:
-            if _is_sensitive(target):
-                continue
-            if _scope_key(target) != scope:
-                continue
-            canonical_title = str(getattr(target, "title", "") or f"Canonical memory {canonical_id[:8]}")
-        else:
-            canonical_title = f"Canonical memory {canonical_id[:8]}"
+        try:
+            target = memory.get(canonical_id) if hasattr(memory, "get") else None
+        except AmbiguousIdError:
+            _record_error(f"unresolved_canonical:{canonical_id}")
+            continue
+        if target is None:
+            _record_error(f"unresolved_canonical:{canonical_id}")
+            continue
+        if _is_sensitive(target):
+            continue
+        target_scope = _scope_key(target)
+        if target_scope is None:
+            _record_error(f"ambiguous_scope:{canonical_id}")
+            continue
+        if target_scope != scope:
+            continue
+        canonical_title = str(getattr(target, "title", "") or f"Canonical memory {canonical_id[:8]}")
 
         source_ids = sorted({str(getattr(source, "id", "")) for source in sources if getattr(source, "id", "")})
         if not source_ids:
@@ -108,5 +131,5 @@ def preview_quality_compaction(memory: Any, *, limit: int = 20) -> dict[str, Any
         "mode": "preview",
         "proposals": [proposal.to_dict() for proposal in proposals],
         "applied": [],
-        "errors": [],
+        "errors": errors,
     }
