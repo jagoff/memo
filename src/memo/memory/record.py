@@ -425,6 +425,7 @@ def record_from_row(row: dict[str, Any], *, body: str = "") -> MemoryRecord:
         id=row["id"], path=row["path"], title=row["title"], type=row["type"],
         tags=row["tags"], created=row["created"], updated=row["updated"],
         body=body, extra=row.get("extra") or {},
+        score=row.get("score"),
         verification_state=verification_state,
         verified_at=verified_at,
     )

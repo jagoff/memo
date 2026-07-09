@@ -340,6 +340,36 @@ def test_cli_eval_recall_rejects_unknown_config(tmp_path: Path):
     assert "unknown recall eval config" in result.output
 
 
+def test_cli_eval_recall_fresh_human_run_prints_progress(tmp_path: Path, monkeypatch):
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        json.dumps({"prompts": [{"text": "where is memo", "relevant": True}]}),
+        encoding="utf-8",
+    )
+    labels = LabelSet(prompts=[Prompt("where is memo", relevant=True)])
+
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: object())
+    monkeypatch.setattr(eval_recall, "load_labels", lambda path: labels)
+    monkeypatch.setattr(eval_recall, "fingerprint_corpus", lambda mem: "corpus")
+
+    def _evaluate(mem, *, k, labels, configs, progress=None):
+        assert progress is not None
+        progress(configs[0], 1, 1)
+        return [eval_recall.Row(config=configs[0].name, precision_at_k=1.0, noise_at_k=0.0)]
+
+    monkeypatch.setattr(eval_recall, "evaluate", _evaluate)
+
+    result = CliRunner().invoke(
+        cli,
+        ["eval", "recall", "--labels", str(labels_path), "--force", "--no-cache"],
+        env=_env(tmp_path),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Running recall eval: 4 config(s) x 1 prompt(s) = 4 search(es)." in result.output
+    assert "eval A vec/0.60/keep: prompt 1/1" in result.output
+
+
 # --- harvest labels from grounding.log --------------------------------------
 
 
@@ -511,17 +541,18 @@ def test_run_config_knob_overrides_beat_env(monkeypatch):
 # --- grid: MMR / synthesis variants ------------------------------------------
 
 
-def test_default_configs_include_mmr_and_synth_variants():
+def test_tuning_configs_are_named_only_mmr_and_synth_variants():
     cfgs = eval_recall.default_configs()
     names = [c.name for c in cfgs]
-    # existing configs intact, in order
-    assert names[:4] == [
+    assert names == [
         "A vec/0.60/keep",
         "B vec/0.72/excl",
         "C hyb/0.40/excl",
         "D hyb/0.40/ctx",
     ]
-    by_name = {c.name: c for c in cfgs}
+
+    tuning = eval_recall.tuning_configs()
+    by_name = {c.name: c for c in tuning}
     assert by_name["E mmr/0.3"].knob_overrides == {"mmr_lambda": 0.3}
     assert by_name["F mmr/0.5"].knob_overrides == {"mmr_lambda": 0.5}
     assert by_name["G mmr/0.7"].knob_overrides == {"mmr_lambda": 0.7}
@@ -1036,6 +1067,7 @@ def test_merge_expect_ids_beat_avoid_ids() -> None:
 def test_hyde_config_is_named_only_not_default() -> None:
     names = [c.name for c in eval_recall.default_configs()]
     assert not any("hyde" in n.lower() for n in names)  # default grid stays no-MLX
+    assert not any("mmr" in n.lower() or "synth" in n.lower() for n in names)
     sel = eval_recall.select_configs(["J"])
     assert sel[0].mode == "hybrid"
     assert sel[0].flag_overrides == {"MEMO_HYDE_ENABLED": "1"}

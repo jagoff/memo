@@ -74,3 +74,31 @@ def test_flag_on_prefers_source_memories_key(mock_memory, monkeypatch):
         "que hay?", k=3, type_=None, snippet_chars=200, include_repos=False
     )
     assert any(s.get("expanded_from") == synth.id and s["id"] == real.id for s in sources)
+
+
+def test_flag_on_skips_sensitive_sources_without_context_pack(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_ASK_EXPAND_SYNTHESIS", "1")
+    secret = mock_memory.save(
+        content="SECRET-LEAK-REVIEW",
+        title="Secret source",
+        type_="secret",
+    )
+    synth = mock_memory.save(
+        content="tema",
+        title="safe synthesis",
+        type_="synthesis",
+        extra={"synthesis_sources": [secret.id]},
+    )
+    _stub_search_to(mock_memory, synth)
+
+    _, sources, user_msg, _ = mock_memory._build_ask_context(
+        "que hay?",
+        k=3,
+        type_=None,
+        snippet_chars=200,
+        include_repos=False,
+        use_context_pack=False,
+    )
+
+    assert "SECRET-LEAK-REVIEW" not in user_msg
+    assert all(s.get("id") != secret.id for s in sources)

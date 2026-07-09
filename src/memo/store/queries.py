@@ -15,6 +15,11 @@ serialize_float32 = import_sqlite_vec().serialize_float32
 
 _log = logging.getLogger(__name__)
 
+META_SELECT_COLUMNS = (
+    "id, path, title, type, tags, created, updated, body_hash, extra_json, "
+    "verification_state, verified_at"
+)
+
 
 def _parse_filter_ts(value: str | None) -> datetime | None:
     if not value:
@@ -406,8 +411,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         # Check for soft delete column
         try:
             row = self._conn.execute(
-                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-                "FROM meta WHERE id = ? AND deleted_at IS NULL",
+                f"SELECT {META_SELECT_COLUMNS} FROM meta WHERE id = ? AND deleted_at IS NULL",
                 (id_,),
             ).fetchone()
         except sqlite3.OperationalError as e:
@@ -415,8 +419,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 raise
             # Fallback for old DBs without deleted_at column
             row = self._conn.execute(
-                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-                "FROM meta WHERE id = ?",
+                f"SELECT {META_SELECT_COLUMNS} FROM meta WHERE id = ?",
                 (id_,),
             ).fetchone()
         return _row_to_dict(row) if row else None
@@ -429,7 +432,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         # Check for soft delete column
         try:
             rows = self._conn.execute(
-                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                f"SELECT {META_SELECT_COLUMNS} "
                 f"FROM meta WHERE id IN ({placeholders}) AND deleted_at IS NULL",
                 ids,
             ).fetchall()
@@ -438,8 +441,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 raise
             # Fallback for old DBs
             rows = self._conn.execute(
-                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-                f"FROM meta WHERE id IN ({placeholders})",
+                f"SELECT {META_SELECT_COLUMNS} FROM meta WHERE id IN ({placeholders})",
                 ids,
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
@@ -474,8 +476,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         deleted_filter = "" if include_deleted else " AND (deleted_at IS NULL OR deleted_at = '')"
         try:
             row = self._conn.execute(
-                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-                f"FROM meta WHERE path = ?{deleted_filter}",
+                f"SELECT {META_SELECT_COLUMNS} FROM meta WHERE path = ?{deleted_filter}",
                 (path,),
             ).fetchone()
         except sqlite3.OperationalError as exc:
@@ -483,8 +484,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 raise
             # Fallback for old DBs without deleted_at column
             row = self._conn.execute(
-                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
-                "FROM meta WHERE path = ?",
+                f"SELECT {META_SELECT_COLUMNS} FROM meta WHERE path = ?",
                 (path,),
             ).fetchone()
         return _row_to_dict(row) if row else None
@@ -500,7 +500,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         """
         try:
             row = self._conn.execute(
-                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                f"SELECT {META_SELECT_COLUMNS} "
                 "FROM meta WHERE path = ? COLLATE NOCASE AND (deleted_at IS NULL OR deleted_at = '') ORDER BY created LIMIT 1",
                 (path,),
             ).fetchone()
@@ -509,7 +509,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 raise
             # Fallback for old DBs without deleted_at column
             row = self._conn.execute(
-                "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+                f"SELECT {META_SELECT_COLUMNS} "
                 "FROM meta WHERE path = ? COLLATE NOCASE ORDER BY created LIMIT 1",
                 (path,),
             ).fetchone()
@@ -568,7 +568,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         low semantically to be retrieved on its own.
         """
         rows = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            f"SELECT {META_SELECT_COLUMNS} "
             "FROM meta "
             "WHERE json_extract(extra_json, '$.parent_path') = ? "
             "ORDER BY title DESC LIMIT ?",
@@ -580,7 +580,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         """All chunks whose extra_json contains the given parent_id.
         Used by reindex to prune stale chunks without scanning every row."""
         rows = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            f"SELECT {META_SELECT_COLUMNS} "
             "FROM meta "
             "WHERE json_extract(extra_json, '$.parent_id') = ?",
             (parent_id,),
@@ -594,7 +594,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         [seq-before, seq+after], anchor row included, ordered by chunk_seq ASC.
         Cheap SQL over extra_json — no embedder, no MLX."""
         rows = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            f"SELECT {META_SELECT_COLUMNS} "
             "FROM meta "
             "WHERE json_extract(extra_json, '$.parent_path') = ? "
             "AND CAST(json_extract(extra_json, '$.chunk_seq') AS INTEGER) BETWEEN ? AND ? "
@@ -620,7 +620,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             _ph = ",".join("?" for _ in exclude_types)
             ex_sql = f" AND type NOT IN ({_ph})"
             ex_params = sorted(exclude_types)
-        cols = "id, path, title, type, tags, created, updated, body_hash, extra_json"
+        cols = META_SELECT_COLUMNS
         older = self._conn.execute(
             f"SELECT {cols} FROM meta "
             f"WHERE coalesce(julianday(created), -1e300) < julianday(?)"
@@ -639,7 +639,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         """Rows whose JSON tags array contains `tag` exactly (tags are stored as
         json.dumps(list), so the quoted token is an exact-tag match)."""
         rows = self._conn.execute(
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "
+            f"SELECT {META_SELECT_COLUMNS} "
             "FROM meta WHERE tags LIKE ? ORDER BY julianday(updated) DESC LIMIT ?",
             (f'%"{tag}"%', limit),
         ).fetchall()
@@ -654,9 +654,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
     ) -> list[dict[str, Any]]:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
         has_deleted = "deleted_at" in cols
-        sql = (
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json FROM meta "
-        )
+        sql = f"SELECT {META_SELECT_COLUMNS} FROM meta "
         clauses: list[str] = []
         params: list[Any] = []
         if has_deleted:
@@ -741,7 +739,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         sql = (
             "SELECT vec.id AS id, vec.distance AS distance, "
             "       meta.path, meta.title, meta.type, meta.tags, "
-            "       meta.created, meta.updated, meta.body_hash, meta.extra_json "
+            "       meta.created, meta.updated, meta.body_hash, meta.extra_json, "
+            "       meta.verification_state, meta.verified_at "
             f"FROM vec JOIN meta ON vec.id = meta.id AND {deleted_filter} "
             "WHERE vec.embedding MATCH ? AND vec.k = ? "
         )

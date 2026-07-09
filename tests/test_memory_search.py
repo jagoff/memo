@@ -2,6 +2,28 @@ from __future__ import annotations
 
 from memo.config import Config
 from memo.memory import Memory
+from memo.tiers import VerificationState
+
+
+def test_read_paths_preserve_verification_metadata(mock_memory) -> None:
+    rec = mock_memory.save(content="verified probe alpha", title="Verified Probe")
+    mock_memory.store._conn.execute(
+        "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
+        (VerificationState.VERIFIED.value, 123456, rec.id),
+    )
+    mock_memory.store._conn.commit()
+
+    got = mock_memory.get(rec.id)
+    listed = next(r for r in mock_memory.list(limit=10) if r.id == rec.id)
+    searched = mock_memory.search("verified probe alpha", mode="bm25", limit=1)[0]
+
+    assert got is not None
+    assert got.verification_state == VerificationState.VERIFIED
+    assert got.verified_at == 123456
+    assert listed.verification_state == VerificationState.VERIFIED
+    assert listed.verified_at == 123456
+    assert searched.verification_state == VerificationState.VERIFIED
+    assert searched.verified_at == 123456
 
 
 def test_search_returns_matching(mem_with_stub: Memory):

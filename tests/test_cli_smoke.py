@@ -94,3 +94,52 @@ def test_record_history_help(tmp_path: Path) -> None:
     res = CliRunner().invoke(cli, ["record-history", "--help"], env=_env(tmp_path))
     assert res.exit_code == 0
     assert "ID_OR_PREFIX" in res.output
+
+
+def test_ask_human_output_handles_none_source_score(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeMemory:
+        def ask(self, *_args, **_kwargs):
+            return {
+                "question": "q",
+                "answer": "answer",
+                "sources": [
+                    {
+                        "id_short": "abc12345",
+                        "title": "Expanded source",
+                        "score": None,
+                    }
+                ],
+            }
+
+    monkeypatch.setattr("memo.cli_search._get_memory", lambda cfg: _FakeMemory())
+
+    res = CliRunner().invoke(cli, ["ask", "q"], env=_env(tmp_path))
+
+    assert res.exit_code == 0, res.output
+    assert "Expanded source" in res.output
+
+
+def test_chat_ask_human_output_handles_none_source_score(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeMemory:
+        def chat_ask(self, *_args, **_kwargs):
+            return {
+                "question": "q",
+                "answer": "answer",
+                "sources": [
+                    {
+                        "id_short": "abc12345",
+                        "title": "Expanded source",
+                        "score": None,
+                    }
+                ],
+            }
+
+    monkeypatch.setattr("memo.cli_search._get_memory", lambda cfg: _FakeMemory())
+
+    res = CliRunner().invoke(cli, ["chat-ask", "q"], env=_env(tmp_path))
+
+    assert res.exit_code == 0, res.output
+    assert "Expanded source" in res.output

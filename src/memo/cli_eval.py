@@ -170,8 +170,13 @@ def eval_recall_cmd(
             cached = True
 
     if rows is None:
-        if quick and not as_json:
+        if not as_json:
             progress = True
+            total_searches = len(selected_configs) * len(labels.prompts)
+            console.print(
+                f"[dim]Running recall eval: {len(selected_configs)} config(s) x "
+                f"{len(labels.prompts)} prompt(s) = {total_searches} search(es).[/dim]"
+            )
 
         def _progress(cfg_: eval_recall.Cfg, index: int, total: int) -> None:
             if progress and not as_json:

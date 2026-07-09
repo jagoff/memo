@@ -536,21 +536,21 @@ class _AskOpsMixin(_MemoryBase):
                     src = self.get(sid)
                     if src is None or src.id in _seen_ids:
                         continue
+                    row = build_context_row(src, snippet_chars=snippet_chars)
+                    if row is None:
+                        _seen_ids.add(src.id)
+                        _seen_ids.add(sid)
+                        expanded_sensitive_omitted += 1
+                        continue
                     _seen_ids.add(src.id)
                     _seen_ids.add(sid)
                     _expanded += 1
-                    _snip = (src.body or "")[:snippet_chars]
-                    if len(src.body or "") > snippet_chars:
-                        _snip = _snip.rstrip() + "…"
+                    _snip = row["snippet"]
                     expanded_line = (
                         f"[{src.id[:8]}] title: {src.title}  |  type: {src.type}"
                         f"  |  context: source-of [{h.id[:8]}]\n{_snip}\n"
                     )
                     if use_context_pack:
-                        row = build_context_row(src, snippet_chars=snippet_chars)
-                        if row is None:
-                            expanded_sensitive_omitted += 1
-                            continue
                         row["context_note"] = f"source-of [{h.id[:8]}]"
                         expanded_memory_rows.append(row)
                         expanded_memory_sources[src.id] = {

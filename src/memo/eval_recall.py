@@ -239,6 +239,17 @@ def default_configs() -> list[Cfg]:
         Cfg("B vec/0.72/excl", "vec", 0.72, exclude_archived=True),
         Cfg("C hyb/0.40/excl", "hybrid", 0.40, exclude_archived=True),
         Cfg("D hyb/0.40/ctx", "hybrid", 0.40, exclude_archived=True, context=True),
+    ]
+
+
+def tuning_configs() -> list[Cfg]:
+    """Named-only knob probes.
+
+    They are useful when explicitly comparing MMR/synthesis boosts, but they
+    multiply the live-index eval cost. Keep the default grid short enough for
+    `memo eval recall --labels ... --force` to be a practical regression check.
+    """
+    return [
         # MMR / synthesis-boost variants vs the A baseline (same mode/floor/keep,
         # only the knob differs — the delta is attributable to the knob).
         Cfg("E mmr/0.3", "vec", 0.60, exclude_archived=False, knob_overrides={"mmr_lambda": 0.3}),
@@ -266,6 +277,7 @@ def extra_configs() -> list[Cfg]:
     grid. J needs MLX chat (HyDE = +1 LLM call per search), and the no-args
     `memo eval recall` grid must stay fast/retrieval-only (no MLX)."""
     return [
+        *tuning_configs(),
         Cfg(
             "J hyb/0.40/hyde",
             "hybrid",

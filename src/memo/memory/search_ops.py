@@ -24,6 +24,7 @@ from memo.memory.record import (
     _log,
     _rrf_confident_top,
     _rrf_fuse,
+    record_from_row,
 )
 from memo.perf import timer
 from memo.tiers import REFERENCE_TYPES
@@ -364,20 +365,7 @@ class _SearchOpsMixin(_MemoryBase):
                 body = _fts_bodies.get(r["id"], "")
             else:
                 body = self._read_body(r["path"])
-            out.append(
-                MemoryRecord(
-                    id=r["id"],
-                    path=r["path"],
-                    title=r["title"],
-                    type=r["type"],
-                    tags=r["tags"],
-                    created=r["created"],
-                    updated=r["updated"],
-                    body=body,
-                    extra=r.get("extra") or {},
-                    score=r.get("score"),
-                ),
-            )
+            out.append(record_from_row(r, body=body))
         _add_trace(
             "materialize", input_count=len(rows), output_count=len(out), load_bodies=load_bodies
         )
@@ -697,20 +685,7 @@ class _SearchOpsMixin(_MemoryBase):
         rows = self.store.list_recent(limit=limit, type_=type_, updated_since=updated_since)
         if not include_forgotten:
             rows = [r for r in rows if not (r.get("extra") or {}).get(IS_FORGOTTEN_KEY)]
-        return [
-            MemoryRecord(
-                id=r["id"],
-                path=r["path"],
-                title=r["title"],
-                type=r["type"],
-                tags=r["tags"],
-                created=r["created"],
-                updated=r["updated"],
-                body=self._read_body(r["path"]),
-                extra=r.get("extra") or {},
-            )
-            for r in rows
-        ]
+        return [record_from_row(r, body=self._read_body(r["path"])) for r in rows]
 
     # -- get ----------------------------------------------------------------
 
@@ -745,17 +720,7 @@ class _SearchOpsMixin(_MemoryBase):
         r = self.store.get(resolved)
         if not r:
             return None
-        return MemoryRecord(
-            id=r["id"],
-            path=r["path"],
-            title=r["title"],
-            type=r["type"],
-            tags=r["tags"],
-            created=r["created"],
-            updated=r["updated"],
-            body=self._read_body(r["path"]),
-            extra=r.get("extra") or {},
-        )
+        return record_from_row(r, body=self._read_body(r["path"]))
 
     def around(self, id_: str, *, before: int = 2, after: int = 2) -> dict[str, Any]:
         """Timeline neighbourhood of one memory — 'what was happening around this'.

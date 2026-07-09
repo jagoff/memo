@@ -24,6 +24,10 @@ from memo.config import Config
 _log = logging.getLogger(__name__)
 
 
+def _format_source_score(score: object) -> str:
+    return f"{score:.3f}" if isinstance(score, (int, float)) else "—"
+
+
 @click.group(name="chat")
 def chat_group() -> None:
     """Chat-shaped RAG commands."""
@@ -142,5 +146,5 @@ def chat_ask(
         for s in envelope["sources"]:
             console.print(
                 f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "
-                f"[dim](score {s.get('score', 0):.3f})[/dim]"
+                f"[dim](score {_format_source_score(s.get('score'))})[/dim]"
             )

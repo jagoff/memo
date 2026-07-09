@@ -23,6 +23,11 @@ _log = logging.getLogger(__name__)
 # multiplier is generous to avoid silently under-filling below `limit`.
 _TYPE_FILTER_CANDIDATE_MULT = 20
 
+_META_SELECT_COLUMNS = (
+    "id, path, title, type, tags, created, updated, body_hash, extra_json, "
+    "verification_state, verified_at"
+)
+
 
 def _env_float(name: str, default: float, min_val: float | None = None, max_val: float | None = None) -> float:
     """Parse a float env var, falling back to `default` when unset/blank/bad.
@@ -99,7 +104,7 @@ class _BM25QueriesMixin(_StoreBase):
         id_score = {h["id"]: h["score"] for h in hits}
         placeholders = ",".join("?" for _ in id_score)
         sql = (
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "  # noqa: S608
+            f"SELECT {_META_SELECT_COLUMNS} "  # noqa: S608
             f"FROM meta WHERE id IN ({placeholders}) AND (deleted_at IS NULL OR deleted_at = '')"
         )
         params: list[Any] = list(id_score.keys())
@@ -173,7 +178,8 @@ class _BM25QueriesMixin(_StoreBase):
                 "SELECT fts.id AS id, "
                 "       bm25(fts, ?, ?, ?, ?) AS bm25_score, "
                 "       meta.path, meta.title, meta.type, meta.tags, "
-                "       meta.created, meta.updated, meta.body_hash, meta.extra_json "
+                "       meta.created, meta.updated, meta.body_hash, meta.extra_json, "
+                "       meta.verification_state, meta.verified_at "
                 "FROM fts JOIN meta ON meta.id = fts.id "
                 "WHERE fts MATCH ? "
             )
@@ -249,7 +255,7 @@ class _BM25QueriesMixin(_StoreBase):
         id_score = {h["id"]: h["score"] for h in hits}
         placeholders = ",".join("?" for _ in id_score)
         sql = (
-            "SELECT id, path, title, type, tags, created, updated, body_hash, extra_json "  # noqa: S608
+            f"SELECT {_META_SELECT_COLUMNS} "  # noqa: S608
             f"FROM meta WHERE id IN ({placeholders}) AND (deleted_at IS NULL OR deleted_at = '')"
         )
         params: list[Any] = list(id_score.keys())
