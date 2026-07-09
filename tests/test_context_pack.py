@@ -91,6 +91,14 @@ def test_build_context_pack_trims_single_oversized_current_fact_to_budget() -> N
     assert pack.current_facts[0]["id"] == "current-id"
 
 
+def test_build_context_pack_handles_budget_smaller_than_row_overhead() -> None:
+    hit = _Hit("current-id", 0.8, "Current", "A" * 10000)
+    pack = build_context_pack("q", [hit], snippet_chars=10000, budget_chars=100)
+    prompt = pack.to_prompt()
+
+    assert len(prompt) <= 100
+
+
 def test_build_context_pack_ignores_malformed_optional_quality_metadata() -> None:
     pack = build_context_pack(
         "q",

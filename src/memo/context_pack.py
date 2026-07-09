@@ -16,12 +16,16 @@ class ContextPack:
     omissions: str
 
     def to_prompt(self) -> str:
-        sections = [
-            f"Context summary:\n{self.summary}",
-            _format_section("Current facts", self.current_facts),
-            _format_section("Supporting context", self.supporting_context),
-            _format_section("Stale/conflicting context", self.stale_or_conflicting),
-        ]
+        sections = []
+        if self.summary:
+            sections.append(f"Context summary:\n{self.summary}")
+        sections.extend(
+            [
+                _format_section("Current facts", self.current_facts),
+                _format_section("Supporting context", self.supporting_context),
+                _format_section("Stale/conflicting context", self.stale_or_conflicting),
+            ]
+        )
         if self.omissions:
             sections.append(f"Omissions:\n{self.omissions}")
         return "\n\n".join(section for section in sections if section.strip())
@@ -148,7 +152,7 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
     if current and len(_pack_prompt(pack, current=current, supporting=supporting, stale=stale, trimmed=omitted)) > budget_chars:
         row = dict(current[-1])
         snippet = str(row.get("snippet", "") or "")
-        best_row = row
+        best_row: dict[str, Any] | None = None
         low = 0
         high = len(snippet)
         while low <= high:
@@ -161,8 +165,12 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
                 low = mid + 1
             else:
                 high = mid - 1
-        current[-1] = best_row
-    return ContextPack(
+        if best_row is not None:
+            current[-1] = best_row
+        else:
+            current.pop()
+            omitted += 1
+    trimmed_pack = ContextPack(
         pack.question,
         pack.summary,
         current,
@@ -170,6 +178,18 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
         stale,
         _omissions_text(pack.omissions, omitted),
     )
+    if len(trimmed_pack.to_prompt()) <= budget_chars:
+        return trimmed_pack
+
+    no_omissions_pack = ContextPack(pack.question, pack.summary, current, supporting, stale, "")
+    if len(no_omissions_pack.to_prompt()) <= budget_chars:
+        return no_omissions_pack
+
+    prefix = "Context summary:\n"
+    if budget_chars <= len(prefix):
+        return ContextPack(pack.question, "", [], [], [], "")
+    summary = pack.summary[: budget_chars - len(prefix)]
+    return ContextPack(pack.question, summary, [], [], [], "")
 
 
 def build_context_pack(
