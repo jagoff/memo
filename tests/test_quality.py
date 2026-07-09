@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
+from memo.errors import ValidationError
 from memo.quality import apply_quality_rerank, classify_quality
 from memo.tiers import VerificationState
 
@@ -59,3 +62,21 @@ def test_apply_quality_rerank_populates_explain() -> None:
     assert explain["old"]["quality_multiplier"] < 1.0
     assert "invalidated" in explain["old"]["quality_reasons"]
 
+
+class _MutableHit:
+    def __init__(self) -> None:
+        self.id = "plain"
+        self.score = 0.9
+        self.type = "note"
+        self.tags = []
+        self.extra = {}
+        self.verification_state = VerificationState.UNVERIFIED
+        self.verified_at = None
+
+
+def test_apply_quality_rerank_rejects_non_dataclass_hit_without_mutation() -> None:
+    hit = _MutableHit()
+    original = hit.score
+    with pytest.raises(ValidationError, match="Unsupported hit object"):
+        apply_quality_rerank([hit])
+    assert hit.score == original

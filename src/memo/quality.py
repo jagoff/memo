@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from dataclasses import replace as dc_replace
 from typing import Any
 
+from memo.errors import ValidationError
 from memo.tiers import VerificationState
 
 
@@ -107,10 +108,19 @@ def apply_quality_rerank(
             entry["quality_reasons"] = list(decision.reasons)
             entry["quality_score"] = score
 
+        if not is_dataclass(hit):
+            raise ValidationError(
+                "Unsupported hit object for quality rerank; expected a dataclass with a "
+                "`score` field."
+            )
+
         try:
             hit = dc_replace(hit, score=score)
-        except TypeError:
-            hit.score = score
+        except TypeError as exc:
+            raise ValidationError(
+                "Unsupported hit object for quality rerank; expected a dataclass with a "
+                "`score` field."
+            ) from exc
 
         scored.append((score, -index, hit, decision))
 
