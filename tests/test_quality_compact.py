@@ -185,6 +185,26 @@ def test_quality_compact_apply_writes_receipt_shape(tmp_path: Path) -> None:
     assert "quality_compacted" in persisted
 
 
+def test_quality_compact_receipt_paths_are_unique_within_same_second(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        reranker_enabled=False,
+    )
+    ns_values = iter([111, 222])
+
+    monkeypatch.setattr(cli_maintain.time, "time", lambda: 123.0)
+    monkeypatch.setattr(cli_maintain.time, "time_ns", lambda: next(ns_values))
+
+    first = cli_maintain._prepare_quality_compact_receipt_paths(cfg)[2]
+    second = cli_maintain._prepare_quality_compact_receipt_paths(cfg)[2]
+
+    assert first != second
+
+
 def test_quality_compact_apply_receipt_publish_is_atomic(tmp_path: Path, monkeypatch) -> None:
     env, source_id = _seed_quality_compact_records(tmp_path)
     maintain_dir = Path(env["MEMO_STATE_DIR"]) / "maintain"

@@ -1175,6 +1175,19 @@ def test_run_config_reports_quality_metrics() -> None:
     assert metrics["compaction_safety"] is None
 
 
+def test_quality_eval_metrics_counts_all_stale_quality_signals() -> None:
+    hits = [
+        _rec(id="invalidated-at", extra={"invalidated_at": "2026-01-01T00:00:00Z"}),
+        _rec(id="rejected", verification_state="rejected"),
+        _rec(id="contradiction-loser", extra={"contradiction_status": "lost"}),
+        _rec(id="current"),
+    ]
+
+    metrics = eval_recall._quality_eval_metrics(hits, k=4)
+
+    assert metrics["stale_at_k"] == 0.75
+
+
 def test_run_config_counts_type_marked_canonical_hit() -> None:
     from dataclasses import dataclass, field
     from typing import Any

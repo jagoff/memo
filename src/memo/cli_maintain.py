@@ -51,7 +51,7 @@ def _prepare_quality_compact_receipt_paths(cfg: Config) -> tuple[Path, Path, str
 
     d = _state_path(cfg)
     runs_dir = d / "runs"
-    run_stamp = str(int(time.time()))
+    run_stamp = f"{int(time.time())}-{os.getpid()}-{time.time_ns()}"
     try:
         runs_dir.mkdir(parents=True, exist_ok=True)
         probe = d / ".quality_compact_receipt_probe"

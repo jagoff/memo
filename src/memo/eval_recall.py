@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from memo.quality import is_canonical_memory
+from memo.quality import classify_quality, is_canonical_memory
 
 
 @contextlib.contextmanager
@@ -426,15 +426,7 @@ class Row:
 def _quality_eval_metrics(top_hits: list[Any], *, k: int) -> dict[str, float | None]:
     visible = top_hits[:k]
 
-    def _extra(hit: Any) -> dict[str, Any]:
-        raw = getattr(hit, "extra", None)
-        return raw if isinstance(raw, dict) else {}
-
-    stale_hits = [
-        hit
-        for hit in visible
-        if _extra(hit).get("superseded_by") or _extra(hit).get("invalidated")
-    ]
+    stale_hits = [hit for hit in visible if classify_quality(hit).bucket == "stale_or_conflicting"]
     canonical_hits = [hit for hit in visible if is_canonical_memory(hit)]
     return {
         "stale_at_k": len(stale_hits) / max(len(visible), 1),
