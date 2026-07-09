@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +38,19 @@ def _repo_hit(*, text: str) -> RepoSearchHit:
         score=0.6,
         match_type="hybrid",
     )
+
+
+def _capturing_stream(
+    prompts: list[str],
+    deltas: list[str],
+):
+    def _stream(
+        self, model: str, messages: list[dict[str, str]], options: dict[str, Any] | None = None
+    ) -> Iterator[str]:
+        prompts.append(messages[-1]["content"])
+        yield from deltas
+
+    return _stream
 
 
 def test_build_context_pack_separates_current_and_stale() -> None:
@@ -274,6 +288,52 @@ def test_context_pack_expanded_memory_gets_quality_metadata(mem_with_stub, monke
     assert isinstance(expanded_source["quality_reasons"], list)
 
 
+def test_context_pack_prevents_sensitive_top_hit_verbatim_bypass(
+    mem_with_stub, monkeypatch
+) -> None:
+    sensitive = mem_with_stub.save(content="secret literal leak", title="Secret", type_="secret")
+    safe = mem_with_stub.save(content="safe fallback context", title="Safe")
+    captured: dict[str, str] = {}
+
+    def _stub_chat(self, model, messages, options=None):
+        captured["user"] = messages[-1]["content"]
+        return {"message": {"content": "Filtered answer."}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+    monkeypatch.setenv("MEMO_CONTEXT_PACK", "1")
+    monkeypatch.setattr(
+        mem_with_stub,
+        "search",
+        lambda *args, **kwargs: [mem_with_stub.get(sensitive.id), mem_with_stub.get(safe.id)],
+    )
+
+    out = mem_with_stub.ask("literal leak", k=2, include_repos=False)
+
+    assert out["answer"] == "Filtered answer."
+    assert sensitive.id not in {source["id"] for source in out["sources"]}
+    assert sensitive.id[:8] not in captured["user"]
+    assert "secret literal leak" not in captured["user"]
+    assert safe.id in {source["id"] for source in out["sources"]}
+
+
+def test_sensitive_top_hit_verbatim_short_circuit_is_preserved_without_context_pack(
+    mem_with_stub, monkeypatch
+) -> None:
+    sensitive = mem_with_stub.save(content="secret literal leak", title="Secret", type_="secret")
+    safe = mem_with_stub.save(content="safe fallback context", title="Safe")
+
+    monkeypatch.setenv("MEMO_CONTEXT_PACK", "0")
+    monkeypatch.setattr(
+        mem_with_stub,
+        "search",
+        lambda *args, **kwargs: [mem_with_stub.get(sensitive.id), mem_with_stub.get(safe.id)],
+    )
+
+    out = mem_with_stub.ask("literal leak", k=2, include_repos=False)
+
+    assert out["answer"] == f"secret literal leak\n\n[{sensitive.id[:8]}]"
+
+
 def test_chat_ask_keeps_standard_prompt_when_context_pack_flag_is_on(
     mem_with_stub, monkeypatch
 ) -> None:
@@ -291,3 +351,46 @@ def test_chat_ask_keeps_standard_prompt_when_context_pack_flag_is_on(
 
     assert out["answer"].startswith("Chat answer")
     assert "Relevant context pack" not in captured["user"]
+
+
+def test_ask_stream_uses_context_pack_only_when_enabled(mem_with_stub, monkeypatch) -> None:
+    rec = mem_with_stub.save(content="alpha body", title="Alpha")
+    prompts: list[str] = []
+
+    monkeypatch.setattr(
+        "memo.llm.MLXChat.chat_stream",
+        _capturing_stream(prompts, ["streamed answer"]),
+    )
+
+    monkeypatch.setenv("MEMO_CONTEXT_PACK", "0")
+    off_events = list(mem_with_stub.ask_stream("what about alpha?", k=1, include_repos=False))
+    off_sources = off_events[0]["sources"]
+    assert "Relevant context pack" not in prompts[-1]
+    assert "quality_bucket" not in off_sources[0]
+
+    monkeypatch.setenv("MEMO_CONTEXT_PACK", "1")
+    on_events = list(mem_with_stub.ask_stream("what about alpha?", k=1, include_repos=False))
+    on_sources = on_events[0]["sources"]
+    assert "Relevant context pack" in prompts[-1]
+    assert "Context summary:" in prompts[-1]
+    assert on_sources[0]["quality_bucket"] == "current"
+    assert on_events[-1]["answer"] == "streamed answer"
+    assert any(rec.id == source["id"] for source in on_sources)
+
+
+def test_chat_ask_stream_keeps_standard_prompt_when_context_pack_flag_is_on(
+    mem_with_stub, monkeypatch
+) -> None:
+    mem_with_stub.save(content="alpha body", title="Alpha")
+    prompts: list[str] = []
+
+    monkeypatch.setattr(
+        "memo.llm.MLXChat.chat_stream",
+        _capturing_stream(prompts, ["chat stream answer"]),
+    )
+    monkeypatch.setenv("MEMO_CONTEXT_PACK", "1")
+
+    events = list(mem_with_stub.chat_ask_stream("what about alpha?", k=1))
+
+    assert events[-1]["answer"] == "chat stream answer"
+    assert "Relevant context pack" not in prompts[-1]

@@ -207,6 +207,24 @@ def _fit_context_pack_prompt(
     return prompt, current, supporting, stale, expanded, repo
 
 
+def _filter_verbatim_hits(
+    hits: list[MemoryRecord],
+    sources: list[dict[str, Any]],
+    *,
+    use_context_pack: bool,
+) -> list[MemoryRecord]:
+    if not use_context_pack:
+        return hits
+    allowed_ids = {
+        str(source.get("id") or "")
+        for source in sources
+        if source.get("source") == "memory"
+    }
+    if not allowed_ids:
+        return []
+    return [hit for hit in hits if hit.id in allowed_ids]
+
+
 class _AskOpsMixin(_MemoryBase):
     # -- chat ask -----------------------------------------------------------
 
@@ -787,7 +805,8 @@ class _AskOpsMixin(_MemoryBase):
         # Verbatim short-circuit: literal phrase lookups bypass the LLM
         # and return the matched note body directly. Avoids the model
         # over-summarising when the user clearly wants the raw content.
-        verbatim = self._verbatim_short_circuit(question, hits)
+        verbatim_hits = _filter_verbatim_hits(hits, sources, use_context_pack=use_context_pack)
+        verbatim = self._verbatim_short_circuit(question, verbatim_hits)
         if verbatim is not None:
             return {
                 "question": norm_question,
@@ -831,6 +850,7 @@ class _AskOpsMixin(_MemoryBase):
         include_repos: bool = True,
         intent_text: str | None = None,
         session_id: str | None = None,
+        use_context_pack: bool | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Streaming variant of `ask()` — yields token-level events.
 
@@ -846,10 +866,12 @@ class _AskOpsMixin(_MemoryBase):
         if not question or not question.strip():
             yield {"event": "done", "answer": "", "sources": []}
             return
-        from memo.flags import flag_int
+        from memo.flags import flag_bool, flag_int
 
         if snippet_chars == 800:
             snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
+        if use_context_pack is None:
+            use_context_pack = flag_bool("MEMO_CONTEXT_PACK")
         _, sources, user_msg, hits = self._build_ask_context(
             question,
             k=k,
@@ -858,6 +880,7 @@ class _AskOpsMixin(_MemoryBase):
             include_repos=include_repos,
             intent_text=intent_text,
             session_id=session_id,
+            use_context_pack=use_context_pack,
         )
         if not sources:
             from memo.flags import flag_str
@@ -874,7 +897,8 @@ class _AskOpsMixin(_MemoryBase):
         # Verbatim short-circuit (literal-phrase queries): emit body as a
         # single token-style event so consumers that show progressive
         # output still get something to render, then a terminal `done`.
-        verbatim = self._verbatim_short_circuit(question, hits)
+        verbatim_hits = _filter_verbatim_hits(hits, sources, use_context_pack=use_context_pack)
+        verbatim = self._verbatim_short_circuit(question, verbatim_hits)
         if verbatim is not None:
             yield {"event": "token", "delta": verbatim}
             yield {"event": "done", "answer": verbatim, "sources": sources}

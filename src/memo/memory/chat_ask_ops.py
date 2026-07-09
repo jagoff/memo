@@ -184,6 +184,7 @@ class _ChatAskOpsMixin(_MemoryBase):
             snippet_chars=resolved_snippet_chars,
             intent_text=question,
             session_id=session_id if isinstance(session_id, str) else None,
+            use_context_pack=False,
         ):
             kind = ev.get("event")
             if kind == "sources":

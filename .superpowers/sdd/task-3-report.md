@@ -136,3 +136,27 @@ Addressed the Task 3 review findings in the `MEMO_CONTEXT_PACK` ask path.
 uv run --no-sync pytest tests/test_context_pack.py tests/test_quality.py tests/test_rag_cache.py -v
 uv run --no-sync ruff check src/memo/context_pack.py src/memo/memory/ask_ops.py tests/test_context_pack.py
 ```
+
+## Re-review Fix Addendum
+
+Addressed the follow-up review findings for Task 3.
+
+### Fixes
+
+- Verbatim short-circuiting now uses only memory hits that actually survived the ask context path when `MEMO_CONTEXT_PACK=1`, so omitted sensitive memories cannot be returned verbatim after prompt filtering.
+- `ask_stream()` now resolves and passes the same `MEMO_CONTEXT_PACK` behavior as `ask()`, including the explicit per-call override.
+- `chat_ask_stream()` now passes `use_context_pack=False` so the streaming chat surface stays on the legacy prompt path, matching `chat_ask()`.
+
+### Added regression coverage
+
+- sensitive top-hit verbatim bypass is blocked when context-pack filtering is active
+- flag-off verbatim short-circuit behavior is preserved
+- direct streaming ask adopts context-pack prompt construction and source metadata only when the flag is enabled
+- streaming chat ask remains opted out of context-pack formatting
+
+### Verification
+
+```bash
+uv run --no-sync pytest tests/test_context_pack.py tests/test_quality.py tests/test_rag_cache.py -v
+uv run --no-sync ruff check src/memo/memory/ask_ops.py src/memo/memory/chat_ask_ops.py tests/test_context_pack.py
+```
