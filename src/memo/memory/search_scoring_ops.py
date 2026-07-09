@@ -257,6 +257,22 @@ class _SearchScoringMixin(_MemoryBase):
         )
         return penalised
 
+    def _apply_quality_rerank(self, results: list[MemoryRecord]) -> list[MemoryRecord]:
+        """Quality-aware reranking for explicit search/ask paths.
+
+        Default-off via MEMO_QUALITY_RERANK. Best-effort: malformed optional
+        quality metadata never breaks retrieval.
+        """
+        if not flag_bool("MEMO_QUALITY_RERANK"):
+            return results
+        try:
+            from memo.quality import apply_quality_rerank
+
+            return apply_quality_rerank(results)
+        except Exception as exc:
+            _log.debug("quality_rerank failed: %s", exc)
+            return results
+
     def _apply_entity_boost(
         self,
         query: str,

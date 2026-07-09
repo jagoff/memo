@@ -1,54 +1,51 @@
-# Task 2: Corpus Trust Checks — Completion Report
+# Task 2: Wire Quality Rerank Into Explicit Search — Completion Report
 
 Status: DONE  
 Date: 2026-07-08  
-Branch: `trust-adoption-doctor`
+Branch: `master`
 
 ## Outcome
-- Extended `memo/usefulness_doctor.py` with read-only trust diagnostics over existing store and grounding signals.
-- Added focused TDD coverage in `tests/test_usefulness_doctor.py` for:
-  - support-count starvation when `memory_health` rows exist but no `support_count` is positive.
-  - grounded invalidated memories surfacing as critical trust findings.
-- Preserved the existing report shape while adding trust summary counters:
-  - `summary["memory_health_rows"]`
-  - `summary["support_count_positive"]`
-  - `summary["grounded_memory_ids"]`
+- Wired Task 1's quality rerank into the explicit `Memory.search()` pipeline only.
+- Kept the existing hybrid/vector/BM25 candidate generation path unchanged.
+- Kept the feature default-off behind `MEMO_QUALITY_RERANK`.
+- Did not change Task 1 APIs.
 
 ## Files
-- Modified: `src/memo/usefulness_doctor.py`
-- Modified: `tests/test_usefulness_doctor.py`
+- Modified: `src/memo/memory/search_scoring_ops.py`
+- Modified: `src/memo/memory/search_ops.py`
+- Added: `tests/test_quality_search.py`
 
-## Validation
-- `PYTHONPATH=src /Users/fer/repos/memo/.venv/bin/python -m pytest tests/test_usefulness_doctor.py -v -k "support_count or invalidated"`
-  - Result: `2 failed` before implementation, as expected for TDD red phase.
-- `PYTHONPATH=src /Users/fer/repos/memo/.venv/bin/python -m pytest tests/test_usefulness_doctor.py -v`
-  - Result: `5 passed`
-- `PYTHONPATH=src /Users/fer/repos/memo/.venv/bin/python -m pytest tests/test_usefulness_doctor.py tests/test_support_count.py tests/test_cli_invalidate.py -v`
-  - Result: `25 passed`
-- `/Users/fer/repos/memo/.venv/bin/ruff check src/memo/usefulness_doctor.py tests/test_usefulness_doctor.py`
-  - Result: `All checks passed!`
+## Implementation
+1. Added focused integration coverage in `tests/test_quality_search.py` for:
+   - flag-gated behavior when `MEMO_QUALITY_RERANK=0` vs `1`
+   - verified-hit promotion via quality rerank
+2. Confirmed the red phase by running the new test first and observing:
+   - `AttributeError: '_Harness' object has no attribute '_apply_quality_rerank'`
+3. Added `_SearchScoringMixin._apply_quality_rerank(results)`:
+   - reads the registered flag via `flag_bool("MEMO_QUALITY_RERANK")`
+   - delegates to `memo.quality.apply_quality_rerank`
+   - fails open with debug logging so malformed optional metadata never breaks search
+4. Wired the helper into `src/memo/memory/search_ops.py`:
+   - after the existing health-score pass
+   - before co-recall/reference-floor stages
+   - with trace emission as `quality_rerank`
+
+## Verification
+- `uv run --no-sync pytest tests/test_quality_search.py -v`
+  - Result before implementation: `2 failed` with missing `_apply_quality_rerank`, as expected
+- `uv run --no-sync pytest tests/test_quality.py tests/test_quality_search.py -v`
+  - Result: `8 passed`
+- `uv run --no-sync pytest tests/test_cli_debug_recall.py::test_rank_hits_explain_none_path_is_identical -v`
+  - Result: `1 passed`
+
+## Self-Review
+- The new helper is double-gated intentionally:
+  - direct helper calls remain safe and testable
+  - the explicit search pipeline stays default-off without changing other paths
+- No ambient recall hot path wiring was added.
+- No project/scope compaction behavior was added.
+- No markdown memories or storage behavior were changed.
+- No issues found in the scoped diff during review.
 
 ## Commit
-- Commit message: `feat(usefulness): report corpus trust diagnostics`
-
-## Notes
-- Trust checks remain read-only: they open `Memory(cfg)` for signal inspection only and do not mutate corpus state.
-- Grounded-memory resolution intentionally maps the 8-char `grounding.log` prefixes back to full ids via `store.all_ids()` before fetching metadata and health rows.
-
-## Review Fix Follow-up
-- Reworked `src/memo/usefulness_doctor.py` to remove `from memo.memory import Memory` and all `Memory`/store constructor usage.
-- Trust checks now open `cfg.db_path` through stdlib `sqlite3` with `file:{cfg.db_path}?mode=ro`, so the doctor stays read-only and does not bootstrap schema/state paths.
-- Missing or unreadable DB now yields a partial report with `store_unavailable` in `unknown` status instead of creating state or failing the command.
-- Grounded-memory trust checks now resolve directly from `meta` + `memory_health`, with defensive JSON parsing for `tags` and `extra_json`.
-- Reused `memo.dashboard.GROUNDED_SCORE` instead of keeping a hardcoded grounding threshold.
-
-## Review Fix Validation
-- `PYTHONPATH=src /Users/fer/repos/memo/.venv/bin/python -m pytest tests/test_usefulness_doctor.py tests/test_support_count.py tests/test_cli_invalidate.py -v`
-  - Result: `28 passed`
-- `/Users/fer/repos/memo/.venv/bin/ruff check src/memo/usefulness_doctor.py tests/test_usefulness_doctor.py`
-  - Result: `All checks passed!`
-
-## Added Regression Coverage
-- Doctor module source does not import `memo.memory`.
-- `build_report()` with a missing DB leaves `state_dir` and `memvec.db` absent.
-- Grounded-memory row parsing tolerates valid-but-wrong JSON shapes in `tags` / `extra_json`.
+- Commit message: `feat: wire quality rerank into search`

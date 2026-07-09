@@ -540,6 +540,10 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._apply_health_scores(out)
             _add_trace("health", input_count=before, output_count=len(out))
+        if out and flag_bool("MEMO_QUALITY_RERANK"):
+            before = len(out)
+            out = self._apply_quality_rerank(out)
+            _add_trace("quality_rerank", input_count=before, output_count=len(out))
         # Co-recall ranking boost: surface memories relationally associated with
         # the top hit. Read side of MEMO_GRAPH_CO_RECALL; cheap (one graph query),
         # behind the same flag so default behaviour is unchanged.
