@@ -96,7 +96,7 @@ eval_group.add_command(bench_group)
     "--config",
     "config_names",
     multiple=True,
-    help="Config to run (A, B, C, D, or full name). Repeat for multiple configs.",
+    help="Config to run (A-J, or full name). Repeat for multiple configs.",
 )
 @click.option(
     "--max-prompts",

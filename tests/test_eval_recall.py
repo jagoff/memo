@@ -341,6 +341,7 @@ def test_cli_eval_recall_help_lists_options():
     assert "--quick" in result.output
     assert "--profile" in result.output
     assert "--config" in result.output
+    assert "A-J" in result.output
     assert "--max-prompts" in result.output
     assert "--progress" in result.output
     assert "--gate" in result.output
