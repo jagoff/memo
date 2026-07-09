@@ -168,6 +168,7 @@ def _fit_context_pack_prompt(
         return prompt, current, supporting, stale, expanded, repo
 
     while len(prompt) > budget_chars:
+        previous_prompt: str | None = None
         if supporting:
             supporting.pop()
             trimmed_counts["supporting"] += 1
@@ -183,11 +184,12 @@ def _fit_context_pack_prompt(
         elif len(current) > 1:
             current.pop()
         elif current:
+            previous_prompt = prompt
             overflow = len(prompt) - budget_chars
             trimmed = dict(current[-1])
             trimmed["snippet"] = _shortened_snippet(
                 str(trimmed.get("snippet") or ""),
-                max_chars=max(len(str(trimmed.get("snippet") or "")) - overflow, 32),
+                max_chars=max(len(str(trimmed.get("snippet") or "")) - overflow, 0),
             )
             current[-1] = trimmed
         else:
@@ -201,6 +203,17 @@ def _fit_context_pack_prompt(
             repo=repo,
             extra_omissions=_omission_notes(),
         )
+        if current and previous_prompt is not None and prompt == previous_prompt:
+            current.pop()
+            prompt = _render_context_pack_sections(
+                pack,
+                current=current,
+                supporting=supporting,
+                stale=stale,
+                expanded=expanded,
+                repo=repo,
+                extra_omissions=_omission_notes(),
+            )
 
     if len(prompt) > budget_chars:
         prompt = prompt[:budget_chars].rstrip()

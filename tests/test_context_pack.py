@@ -262,6 +262,31 @@ def test_context_pack_budget_trims_supporting_and_stale_before_expanded_and_repo
     assert len(kept_repo_rows) == 1
 
 
+def test_context_pack_fitter_handles_budget_smaller_than_row_overhead() -> None:
+    pack = build_context_pack(
+        "q",
+        [_Hit("current", 0.8, "Current", "A" * 10000)],
+        snippet_chars=10000,
+        budget_chars=4000,
+    )
+
+    prompt, current_rows, supporting_rows, stale_rows, kept_expanded_rows, kept_repo_rows = (
+        _fit_context_pack_prompt(
+            pack,
+            expanded_rows=[],
+            repo_rows=[],
+            budget_chars=100,
+        )
+    )
+
+    assert len(prompt) <= 100
+    assert current_rows == []
+    assert supporting_rows == []
+    assert stale_rows == []
+    assert kept_expanded_rows == []
+    assert kept_repo_rows == []
+
+
 def test_context_pack_omits_sensitive_expanded_memory(mem_with_stub, monkeypatch) -> None:
     sensitive = mem_with_stub.save(
         content="top secret",
