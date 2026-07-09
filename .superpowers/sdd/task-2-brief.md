@@ -1,121 +1,83 @@
-### Task 2: Wire Quality Rerank Into Explicit Search
+# Task 2 Brief: Source Audit Helper For Flags And Exceptions
 
-**Files:**
-- Modify: `src/memo/memory/search_scoring_ops.py`
-- Modify: `src/memo/memory/search_ops.py`
-- Test: `tests/test_quality_search.py`
+Plan: docs/superpowers/plans/2026-07-09-memo-deep-improvement-first-sprint.md
 
-**Interfaces:**
-- Consumes: `memo.quality.apply_quality_rerank(hits, explain=None)`
-- Produces: `_SearchScoringMixin._apply_quality_rerank(results: list[MemoryRecord]) -> list[MemoryRecord]`
+## Goal
 
-- [ ] **Step 1: Write failing search integration tests**
+Add a small standard-library source-audit helper and contract tests that make
+raw `MEMO_*` environment reads and selected broad `except Exception` sites
+explicitly classified.
 
-Add `tests/test_quality_search.py`:
+## Global Constraints
 
-```python
-from __future__ import annotations
+- Do not rewrite retrieval ranking.
+- Do not flip HyDE, MMR, graph, or capture defaults.
+- Do not bulk-edit memory records.
+- Do not delete or weaken memory records.
+- Do not restructure the whole CLI/MCP surface.
+- Do not chase coverage percentage with low-value tests.
+- Do not eliminate every broad exception handler.
+- Use `MemoError` subclasses for normal user-visible domain errors.
+- Behavioral `MEMO_*` flags go through `src/memo/flags.py`; storage/model
+  config remains in `src/memo/config.py`.
+- Keep `mlx` / `mlx_lm` imports deferred.
 
-from dataclasses import replace
+## Files
 
-from memo.memory.record import MemoryRecord
-from memo.memory.search_scoring_ops import _SearchScoringMixin
-from memo.verification import VerificationState
+- Create: `src/memo/dev_audit.py`
+- Create: `tests/test_dev_audit.py`
+- Create: `docs/engineering/exception-policy.md`
 
+Do not edit other files unless a focused test failure proves the task cannot be
+completed otherwise.
 
-def _rec(id_: str, score: float, **extra):
-    return MemoryRecord(
-        id=id_,
-        path=f"{id_}.md",
-        title=id_,
-        type="note",
-        tags=[],
-        created="2026-01-01T00:00:00+00:00",
-        updated="2026-01-01T00:00:00+00:00",
-        body="body",
-        extra=dict(extra),
-        score=score,
-    )
+## Interfaces
 
+- `RawMemoEnvRead`
+- `BroadExceptionSite`
+- `RAW_MEMO_ENV_ALLOWED`
+- `BROAD_EXCEPTION_ALLOWED`
+- `find_raw_memo_env_reads(root: Path) -> list[RawMemoEnvRead]`
+- `find_broad_exception_sites(root: Path) -> list[BroadExceptionSite]`
 
-class _Harness(_SearchScoringMixin):
-    pass
+`src/memo/dev_audit.py` must use only the Python standard library.
 
+## Steps
 
-def test_apply_quality_rerank_is_flag_gated(monkeypatch) -> None:
-    hits = [_rec("old", 0.9, superseded_by="new"), _rec("new", 0.7)]
-    monkeypatch.setenv("MEMO_QUALITY_RERANK", "0")
-    assert [h.id for h in _Harness()._apply_quality_rerank(hits)] == ["old", "new"]
+1. Create `tests/test_dev_audit.py` exactly from the Task 2 section of the plan.
+2. Run `uv run --no-sync pytest tests/test_dev_audit.py -q` and confirm it fails
+   because `memo.dev_audit` does not exist.
+3. Implement `src/memo/dev_audit.py` from the plan.
+4. Add `docs/engineering/exception-policy.md` from the plan.
+5. Run:
 
-    monkeypatch.setenv("MEMO_QUALITY_RERANK", "1")
-    out = _Harness()._apply_quality_rerank(hits)
-    assert [h.id for h in out] == ["new", "old"]
+   ```bash
+   uv run --no-sync pytest tests/test_dev_audit.py::test_broad_exception_policy_targets_are_classified -q
+   ```
 
+   If the broad-exception line baseline has shifted, regenerate only that set
+   with the command in the plan and keep the target-file scope unchanged.
+6. Run:
 
-def test_apply_quality_rerank_boosts_verified(monkeypatch) -> None:
-    monkeypatch.setenv("MEMO_QUALITY_RERANK", "1")
-    verified = replace(_rec("verified", 0.7), verification_state=VerificationState.VERIFIED)
-    out = _Harness()._apply_quality_rerank([_rec("plain", 0.72), verified])
-    assert out[0].id == "verified"
-```
+   ```bash
+   uv run --no-sync pytest tests/test_dev_audit.py -q
+   uv run --no-sync ruff check src/memo/dev_audit.py tests/test_dev_audit.py
+   ```
 
-- [ ] **Step 2: Run test to verify failure**
+7. Commit with message exactly:
 
-Run: `uv run --no-sync pytest tests/test_quality_search.py -v`
+   ```text
+   test: audit memo env and exception policy
+   ```
 
-Expected: FAIL with `AttributeError: '_Harness' object has no attribute '_apply_quality_rerank'`.
+8. Write a report to `.superpowers/sdd/task-2-report.md` with status, commit,
+   files changed, tests run, any regenerated baseline, and concerns.
 
-- [ ] **Step 3: Add search-scoring helper**
+## Expected Behavior
 
-In `src/memo/memory/search_scoring_ops.py`, add this method to `_SearchScoringMixin` after `_apply_contradict_penalty`:
-
-```python
-    def _apply_quality_rerank(self, results: list[MemoryRecord]) -> list[MemoryRecord]:
-        """Quality-aware reranking for explicit search/ask paths.
-
-        Default-off via MEMO_QUALITY_RERANK. Best-effort: malformed optional
-        quality metadata never breaks retrieval.
-        """
-        if not flag_bool("MEMO_QUALITY_RERANK"):
-            return results
-        try:
-            from memo.quality import apply_quality_rerank
-
-            return apply_quality_rerank(results)
-        except Exception as exc:
-            _log.debug("quality_rerank failed: %s", exc)
-            return results
-```
-
-- [ ] **Step 4: Wire helper into search pipeline**
-
-In `src/memo/memory/search_ops.py`, after the existing health-score block and before co-recall/reference-floor logic, add:
-
-```python
-        if out and flag_bool("MEMO_QUALITY_RERANK"):
-            before = len(out)
-            out = self._apply_quality_rerank(out)
-            _add_trace("quality_rerank", input_count=before, output_count=len(out))
-```
-
-- [ ] **Step 5: Run focused tests**
-
-Run: `uv run --no-sync pytest tests/test_quality.py tests/test_quality_search.py -v`
-
-Expected: PASS.
-
-- [ ] **Step 6: Run search trace smoke**
-
-Run: `uv run --no-sync pytest tests/test_cli_debug_recall.py::test_rank_hits_explain_none_path_is_identical -v`
-
-Expected: PASS; this confirms the recall ranking pure path is unchanged.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/memo/memory/search_scoring_ops.py src/memo/memory/search_ops.py tests/test_quality_search.py
-git commit -m "feat: wire quality rerank into search"
-```
-
----
-
+- Raw `os.environ.get("MEMO_*")` and `_os.environ.get("MEMO_*")` calls are found.
+- Only allowed raw env reads are accepted by the test.
+- Broad `except Exception` sites in the four target files listed by the plan are
+  checked against the explicit baseline.
+- The policy doc contains the phrases `hook hot path`, `user-visible CLI`, and
+  `destructive write paths`.
