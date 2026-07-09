@@ -45,6 +45,22 @@ def _state_path(cfg: Config):
     return cfg.state_dir / "maintain"
 
 
+def _prepare_quality_compact_receipt_paths(cfg: Config) -> tuple[Path, Path, str]:
+    """Fail closed if apply-mode receipt persistence cannot be set up."""
+
+    d = _state_path(cfg)
+    runs_dir = d / "runs"
+    run_stamp = str(int(time.time()))
+    try:
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        probe = d / ".quality_compact_receipt_probe"
+        probe.write_text(run_stamp, encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except OSError as exc:
+        raise ValidationError(f"quality compaction receipt setup failed: {exc}") from exc
+    return d, runs_dir, run_stamp
+
+
 def _synthesis_state_path(cfg: Config) -> Path:
     return cfg.state_dir / "synthesis_state.json"
 
@@ -90,6 +106,9 @@ def _undo_targets(receipt: dict[str, Any]) -> tuple[list[str], list[str]]:
     for a in receipt.get("archived_stale", []):
         if isinstance(a, dict) and a.get("id"):
             archived.append(a["id"])
+    for q in receipt.get("quality_compacted", []):
+        if isinstance(q, dict):
+            archived.extend(q.get("archived_ids") or [])
     forgotten: list[str] = [x for x in receipt.get("dead_archived", []) if isinstance(x, str)]
     for f in receipt.get("forgotten", []):
         if isinstance(f, dict) and f.get("id"):
@@ -593,31 +612,83 @@ def maintain_undo_cmd(run_stamp: str | None, dry_run: bool, as_json: bool) -> No
 @click.option("--limit", default=20, type=int, show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def quality_compact_cmd(preview: bool, apply_changes: bool, limit: int, as_json: bool) -> None:
-    """Preview quality compaction proposals."""
+    """Preview or apply quality compaction proposals."""
 
-    from memo.quality_compact import preview_quality_compaction
+    from memo.quality_compact import apply_quality_compaction, preview_quality_compaction
 
     if not flag_bool("MEMO_QUALITY_COMPACT"):
         raise click.ClickException("MEMO_QUALITY_COMPACT=1 is required")
     if apply_changes and preview:
         raise click.UsageError("choose either --preview or --apply")
-    if apply_changes:
-        raise click.UsageError("quality compaction apply is not implemented yet; use --preview")
     if not preview:
         preview = True
 
     cfg = Config.from_env()
+    receipt_targets: tuple[Path, Path, str] | None = None
+    if apply_changes:
+        try:
+            receipt_targets = _prepare_quality_compact_receipt_paths(cfg)
+        except ValidationError as exc:
+            raise click.ClickException(str(exc)) from exc
+
     mem = _get_memory(cfg)
     try:
-        receipt = preview_quality_compaction(mem, limit=limit)
+        preview_receipt = preview_quality_compaction(mem, limit=limit)
     except ValidationError as exc:
         raise click.UsageError(str(exc)) from exc
+
+    if apply_changes:
+        if preview_receipt.get("errors"):
+            receipt = {
+                "mode": "apply",
+                "proposals": preview_receipt["proposals"],
+                "applied": [],
+                "quality_compacted": [],
+                "errors": list(preview_receipt.get("errors", [])),
+            }
+        else:
+            applied = apply_quality_compaction(mem, preview_receipt["proposals"], dry_run=False)
+            receipt = {
+                "mode": "apply",
+                "proposals": preview_receipt["proposals"],
+                "applied": applied["quality_compacted"],
+                "quality_compacted": applied["quality_compacted"],
+                "errors": [*preview_receipt.get("errors", []), *applied.get("errors", [])],
+            }
+            assert receipt_targets is not None
+            d, runs_dir, run_stamp = receipt_targets
+            payload = json.dumps(
+                {"ts": time.time(), "run": run_stamp, **receipt},
+                ensure_ascii=False,
+                indent=2,
+            )
+            try:
+                (d / "last.json").write_text(payload, encoding="utf-8")
+                (runs_dir / f"{run_stamp}.json").write_text(payload, encoding="utf-8")
+            except OSError as exc:
+                archived_ids, _ = _undo_targets(receipt)
+                restored, missing = _restore_archived(mem, archived_ids, dry_run=False)
+                if restored:
+                    mem.reindex()
+                detail = f"{type(exc).__name__}: {exc}"
+                if missing:
+                    detail = (
+                        f"{detail}; rolled back {len(restored)} archived ids, "
+                        f"{len(missing)} could not be restored"
+                    )
+                else:
+                    detail = f"{detail}; archived changes were rolled back"
+                raise click.ClickException(
+                    f"quality compaction receipt persistence failed: {detail}"
+                ) from exc
+    else:
+        receipt = preview_receipt
 
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
         return
 
-    tag = "[dim](preview)[/dim] " if preview else ""
+    tag = "[dim](apply)[/dim] " if apply_changes else "[dim](preview)[/dim] "
     console.print(
         f"{tag}[bold]memo maintain quality-compact[/bold] — {len(receipt['proposals'])} proposals"
     )

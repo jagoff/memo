@@ -124,11 +124,30 @@ def test_quality_compact_command_requires_flag(tmp_path: Path) -> None:
     assert "MEMO_QUALITY_COMPACT=1 is required" in result.output
 
 
-def test_quality_compact_apply_is_rejected_in_task_5(tmp_path: Path) -> None:
+def test_quality_compact_apply_rejects_preview_combination(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         cli,
-        ["maintain", "quality-compact", "--apply"],
+        ["maintain", "quality-compact", "--preview", "--apply"],
         env=_env(tmp_path),
     )
     assert result.exit_code != 0
-    assert "quality compaction apply is not implemented yet; use --preview" in result.output
+    assert "choose either --preview or --apply" in result.output
+
+
+def test_quality_compact_apply_writes_receipt_shape(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    result = CliRunner().invoke(
+        cli,
+        ["maintain", "quality-compact", "--apply", "--json"],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["mode"] == "apply"
+    assert "quality_compacted" in payload
+    assert payload["errors"] == []
+    receipt_path = Path(env["MEMO_STATE_DIR"]) / "maintain" / "last.json"
+    assert receipt_path.is_file()
+    persisted = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert persisted["mode"] == "apply"
+    assert "quality_compacted" in persisted

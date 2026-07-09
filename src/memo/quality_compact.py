@@ -133,3 +133,56 @@ def preview_quality_compaction(memory: Any, *, limit: int = 20) -> dict[str, Any
         "applied": [],
         "errors": errors,
     }
+
+
+def apply_quality_compaction(
+    memory: Any,
+    proposals: list[dict[str, Any]],
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Archive compacted source memories and return receipt fragments."""
+
+    applied: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    for proposal in proposals:
+        source_ids = [str(source_id) for source_id in (proposal.get("source_ids") or []) if source_id]
+        archived: list[str] = []
+
+        for source_id in source_ids:
+            if dry_run:
+                archived.append(source_id)
+                continue
+
+            try:
+                record = memory.get(source_id) if hasattr(memory, "get") else None
+                extra = _extra(record) if record is not None else {}
+                superseded_by = str(
+                    extra.get("canonical_id")
+                    or extra.get("superseded_by")
+                    or proposal.get("proposal_id")
+                    or ""
+                ).strip()
+                ok = memory.lifecycle.archive_memory(
+                    source_id,
+                    superseded_by=superseded_by or None,
+                )
+            except Exception as exc:
+                errors.append(f"{source_id}: {type(exc).__name__}: {exc}")
+                continue
+
+            if ok:
+                archived.append(source_id)
+            else:
+                errors.append(f"{source_id}: archive_failed")
+
+        applied.append(
+            {
+                "proposal_id": proposal.get("proposal_id"),
+                "archived_ids": archived,
+                "source_ids": source_ids,
+            }
+        )
+
+    return {"quality_compacted": applied, "errors": errors}

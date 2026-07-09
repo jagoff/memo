@@ -256,25 +256,30 @@ def test_undo_targets_and_restore_from_inactive(mock_memory):
     from memo.cli_maintain import _restore_archived, _undo_targets
 
     a = mock_memory.save(content="stale one", title="Stale")
+    qc = mock_memory.save(content="compact me", title="Compact")
     f = mock_memory.save(content="dead weight", title="Dead")
     assert mock_memory.lifecycle.archive_memory(a.id) is True
+    assert mock_memory.lifecycle.archive_memory(qc.id, superseded_by="canonical") is True
     assert mock_memory.get(a.id) is None
+    assert mock_memory.get(qc.id) is None
     mock_memory.forget(f.id, reason="test")
 
     receipt = {
         "superseded": [],
         "merged": [],
         "archived_stale": [{"id": a.id, "days": 400}],
+        "quality_compacted": [{"proposal_id": "quality-compact-demo", "archived_ids": [qc.id]}],
         "dead_archived": [f.id],
         "forgotten": [],
     }
     archived, forgotten = _undo_targets(receipt)
-    assert archived == [a.id] and forgotten == [f.id]
+    assert archived == [a.id, qc.id] and forgotten == [f.id]
 
     restored, missing = _restore_archived(mock_memory, archived, dry_run=False)
-    assert restored == [a.id] and missing == []
+    assert set(restored) == {a.id, qc.id} and missing == []
     mock_memory.reindex()
     assert mock_memory.get(a.id) is not None
+    assert mock_memory.get(qc.id) is not None
     assert mock_memory.unforget(f.id) is not None
 
 
