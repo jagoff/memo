@@ -149,12 +149,14 @@ def apply_quality_compaction(
     for proposal in proposals:
         source_ids = [str(source_id) for source_id in (proposal.get("source_ids") or []) if source_id]
         archived: list[str] = []
+        attempted: list[str] = []
 
         for source_id in source_ids:
             if dry_run:
                 archived.append(source_id)
                 continue
 
+            attempted.append(source_id)
             try:
                 record = memory.get(source_id) if hasattr(memory, "get") else None
                 extra = _extra(record) if record is not None else {}
@@ -181,6 +183,7 @@ def apply_quality_compaction(
             {
                 "proposal_id": proposal.get("proposal_id"),
                 "archived_ids": archived,
+                "attempted_ids": attempted,
                 "source_ids": source_ids,
             }
         )

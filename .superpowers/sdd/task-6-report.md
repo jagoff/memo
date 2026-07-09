@@ -71,3 +71,32 @@ uv run --no-sync pytest tests/test_quality_compact.py tests/test_maintain.py::te
 ## Self-review
 
 No blocking issues found in the implemented scope.
+
+---
+
+## Review Fixes
+
+Addressed the two follow-up findings from review:
+
+- Receipt persistence for `maintain quality-compact --apply` is now published atomically from the user's point of view. The timestamped run receipt and `last.json` are both staged to temp files first, the run receipt is replaced first, and a later `last.json` replace failure now removes the new run receipt before surfacing the error. Rollback leaves the prior `last.json` content intact.
+- Quality compaction apply receipts now record `attempted_ids` alongside `archived_ids`, and rollback uses those attempted ids instead of only successful archives. That closes the gap where `archive_memory()` could move a file and then raise before returning `True`.
+
+### Additional Tests
+
+- `test_quality_compact_apply_receipt_publish_is_atomic`
+  - seeds a real compaction candidate
+  - simulates the second receipt publish failure (`last.json`)
+  - asserts the prior `last.json` survives, no timestamped run receipt remains, and archived memory is restored
+- `test_quality_compact_apply_rolls_back_attempted_archive_ids`
+  - simulates `archive_memory()` moving the file and then raising
+  - simulates the later receipt publish failure
+  - asserts rollback still restores the attempted source id from inactive
+
+### Verification
+
+Passed:
+
+```bash
+uv run --no-sync ruff check src/memo/quality_compact.py src/memo/cli_maintain.py tests/test_quality_compact.py tests/test_maintain.py
+uv run --no-sync pytest tests/test_quality_compact.py tests/test_maintain.py::test_maintain_undo_cli_dry_run_reads_receipt tests/test_maintain.py::test_undo_targets_and_restore_from_inactive -v
+```

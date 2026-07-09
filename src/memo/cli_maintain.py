@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -59,6 +60,34 @@ def _prepare_quality_compact_receipt_paths(cfg: Config) -> tuple[Path, Path, str
     except OSError as exc:
         raise ValidationError(f"quality compaction receipt setup failed: {exc}") from exc
     return d, runs_dir, run_stamp
+
+
+def _persist_quality_compact_receipt(
+    d: Path,
+    runs_dir: Path,
+    run_stamp: str,
+    payload: str,
+) -> None:
+    """Publish run + last receipts without exposing a rolled-back last.json."""
+
+    run_path = runs_dir / f"{run_stamp}.json"
+    last_path = d / "last.json"
+    staged: dict[Path, Path] = {}
+    published_run = False
+    try:
+        for path in (run_path, last_path):
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            staged[path] = tmp
+        os.replace(staged[run_path], run_path)
+        published_run = True
+        os.replace(staged[last_path], last_path)
+    except OSError:
+        for tmp in staged.values():
+            tmp.unlink(missing_ok=True)
+        if published_run:
+            run_path.unlink(missing_ok=True)
+        raise
 
 
 def _synthesis_state_path(cfg: Config) -> Path:
@@ -114,6 +143,23 @@ def _undo_targets(receipt: dict[str, Any]) -> tuple[list[str], list[str]]:
         if isinstance(f, dict) and f.get("id"):
             forgotten.append(f["id"])
     return archived, forgotten
+
+
+def _quality_compact_rollback_ids(receipt: dict[str, Any]) -> list[str]:
+    """Conservatively include every attempted archive when rolling back apply."""
+
+    rollback_ids: list[str] = []
+    seen: set[str] = set()
+    for item in receipt.get("quality_compacted", []):
+        if not isinstance(item, dict):
+            continue
+        for value in item.get("attempted_ids") or item.get("archived_ids") or []:
+            source_id = str(value or "")
+            if not source_id or source_id in seen:
+                continue
+            seen.add(source_id)
+            rollback_ids.append(source_id)
+    return rollback_ids
 
 
 def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[str], list[str]]:
@@ -663,11 +709,10 @@ def quality_compact_cmd(preview: bool, apply_changes: bool, limit: int, as_json:
                 indent=2,
             )
             try:
-                (d / "last.json").write_text(payload, encoding="utf-8")
-                (runs_dir / f"{run_stamp}.json").write_text(payload, encoding="utf-8")
+                _persist_quality_compact_receipt(d, runs_dir, run_stamp, payload)
             except OSError as exc:
-                archived_ids, _ = _undo_targets(receipt)
-                restored, missing = _restore_archived(mem, archived_ids, dry_run=False)
+                rollback_ids = _quality_compact_rollback_ids(receipt)
+                restored, missing = _restore_archived(mem, rollback_ids, dry_run=False)
                 if restored:
                     mem.reindex()
                 detail = f"{type(exc).__name__}: {exc}"

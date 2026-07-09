@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 
 from click.testing import CliRunner
 
+import memo.cli_maintain as cli_maintain
 from memo.cli import cli
+from memo.config import Config
+from memo.lifecycle import LifecycleManager
+from memo.memory import Memory
 from memo.quality_compact import preview_quality_compaction
 
 
@@ -16,8 +22,34 @@ def _env(tmp_path: Path) -> dict[str, str]:
         "MEMO_DATA_DIR": str(tmp_path / "data"),
         "MEMO_STATE_DIR": str(tmp_path / "state"),
         "MEMO_QUALITY_COMPACT": "1",
+        "MEMO_EMBEDDER_MODEL": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
+        "MEMO_EMBEDDER_DIMS": "1024",
+        "MEMO_MODEL_PROFILE": "balanced",
         "MEMO_RERANKER_ENABLED": "0",
     }
+
+
+def _seed_quality_compact_records(tmp_path: Path) -> tuple[dict[str, str], str]:
+    env = _env(tmp_path)
+    cfg = Config(
+        data_dir=Path(env["MEMO_DATA_DIR"]),
+        state_dir=Path(env["MEMO_STATE_DIR"]),
+        reranker_enabled=False,
+    )
+    mem = Memory(cfg)
+    canonical = mem.save(
+        content="Stable canonical memory.",
+        title="Canonical",
+        tags=["project:memo"],
+    )
+    source = mem.save(
+        content="Duplicate memory.",
+        title="Duplicate",
+        tags=["project:memo"],
+        extra={"canonical_id": canonical.id},
+    )
+    mem.close()
+    return env, source.id
 
 
 def test_quality_compact_preview_empty_corpus_is_read_only(tmp_path: Path) -> None:
@@ -151,3 +183,97 @@ def test_quality_compact_apply_writes_receipt_shape(tmp_path: Path) -> None:
     persisted = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert persisted["mode"] == "apply"
     assert "quality_compacted" in persisted
+
+
+def test_quality_compact_apply_receipt_publish_is_atomic(tmp_path: Path, monkeypatch) -> None:
+    env, source_id = _seed_quality_compact_records(tmp_path)
+    maintain_dir = Path(env["MEMO_STATE_DIR"]) / "maintain"
+    maintain_dir.mkdir(parents=True, exist_ok=True)
+    last_path = maintain_dir / "last.json"
+    previous = {"mode": "previous", "ts": 1.0}
+    last_path.write_text(json.dumps(previous), encoding="utf-8")
+
+    real_replace = os.replace
+
+    def boom(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> None:
+        if Path(dst).name == "last.json":
+            raise OSError("simulated last replace failure")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(cli_maintain.os, "replace", boom)
+
+    result = CliRunner().invoke(
+        cli,
+        ["maintain", "quality-compact", "--apply", "--json"],
+        env=env,
+    )
+
+    assert result.exit_code != 0
+    assert "quality compaction receipt persistence failed" in result.output
+    assert json.loads(last_path.read_text(encoding="utf-8")) == previous
+    assert list((maintain_dir / "runs").glob("*.json")) == []
+
+    cfg = Config(
+        data_dir=Path(env["MEMO_DATA_DIR"]),
+        state_dir=Path(env["MEMO_STATE_DIR"]),
+        reranker_enabled=False,
+    )
+    mem = Memory(cfg)
+    try:
+        assert mem.get(source_id) is not None
+    finally:
+        mem.close()
+
+
+def test_quality_compact_apply_rolls_back_attempted_archive_ids(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    env, source_id = _seed_quality_compact_records(tmp_path)
+    cfg = Config(
+        data_dir=Path(env["MEMO_DATA_DIR"]),
+        state_dir=Path(env["MEMO_STATE_DIR"]),
+        reranker_enabled=False,
+    )
+
+    def partial_move_then_raise(
+        self: LifecycleManager,
+        memory_id: str,
+        *,
+        superseded_by: str | None = None,
+    ) -> bool:
+        del superseded_by
+        rec = self.memory.get(memory_id)
+        assert rec is not None
+        inactive_dir = self.memory.cfg.memory_dir / "inactive"
+        inactive_dir.mkdir(parents=True, exist_ok=True)
+        source_path = self.memory._resolve_existing(rec.path)
+        target_path = inactive_dir / f"{memory_id}.md"
+        shutil.move(str(source_path), str(target_path))
+        raise RuntimeError("simulated move-then-raise")
+
+    real_replace = os.replace
+
+    def boom(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> None:
+        if Path(dst).name == "last.json":
+            raise OSError("simulated last replace failure")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(LifecycleManager, "archive_memory", partial_move_then_raise)
+    monkeypatch.setattr(cli_maintain.os, "replace", boom)
+
+    result = CliRunner().invoke(
+        cli,
+        ["maintain", "quality-compact", "--apply", "--json"],
+        env=env,
+    )
+
+    assert result.exit_code != 0
+    assert "quality compaction receipt persistence failed" in result.output
+    assert not (cfg.memory_dir / "inactive" / f"{source_id}.md").exists()
+
+    mem = Memory(cfg)
+    try:
+        assert mem.get(source_id) is not None
+    finally:
+        mem.close()
