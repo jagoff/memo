@@ -1156,7 +1156,8 @@ def test_run_config_reports_quality_metrics() -> None:
         def search(self, *a: Any, **k: Any) -> list[Any]:
             return [
                 _Hit("stale", 0.9, title="Old", extra={"superseded_by": "canonical"}),
-                _Hit("canonical", 0.8, title="Canonical", extra={"canonical_id": "canonical"}),
+                _Hit("redundant", 0.8, title="Redundant", extra={"canonical_id": "canonical"}),
+                _Hit("canonical", 0.7, title="Canonical", type="synthesis"),
             ]
 
     labels = LabelSet(prompts=[Prompt("q", relevant=True)])
@@ -1169,6 +1170,36 @@ def test_run_config_reports_quality_metrics() -> None:
     metrics = eval_recall.gate_metrics([row])
 
     assert metrics["stale_at_k"] == 0.5
-    assert metrics["canonical_hit_at_k"] == 1.0
+    assert metrics["canonical_hit_at_k"] == 0.0
     assert metrics["pack_answerability"] is None
     assert metrics["compaction_safety"] is None
+
+
+def test_run_config_counts_type_marked_canonical_hit() -> None:
+    from dataclasses import dataclass, field
+    from typing import Any
+
+    @dataclass
+    class _Hit:
+        id: str
+        score: float | None
+        title: str = ""
+        body: str = ""
+        type: str = "note"
+        tags: list[str] = field(default_factory=list)
+        path: str = "p.md"
+        extra: dict[str, Any] = field(default_factory=dict)
+
+    class _Mem:
+        def search(self, *a: Any, **k: Any) -> list[Any]:
+            return [_Hit("canonical", 0.8, title="Canonical", type="synthesis")]
+
+    labels = LabelSet(prompts=[Prompt("q", relevant=True)])
+    row = eval_recall.run_config(
+        _Mem(),
+        eval_recall.Cfg("X vec/0.0/keep", "vec", 0.0, exclude_archived=False),
+        1,
+        labels,
+    )
+
+    assert eval_recall.gate_metrics([row])["canonical_hit_at_k"] == 1.0

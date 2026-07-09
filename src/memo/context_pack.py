@@ -91,6 +91,41 @@ def _format_section(title: str, rows: list[dict[str, Any]]) -> str:
     return "\n\n".join(lines)
 
 
+def _omissions_text(base: str, trimmed: int) -> str:
+    if not trimmed:
+        return base
+    extra = f"+{trimmed} trimmed by budget"
+    return f"{base}; {extra}" if base else extra
+
+
+def _pack_prompt(
+    pack: ContextPack,
+    *,
+    current: list[dict[str, Any]],
+    supporting: list[dict[str, Any]],
+    stale: list[dict[str, Any]],
+    trimmed: int,
+) -> str:
+    return ContextPack(
+        pack.question,
+        pack.summary,
+        current,
+        supporting,
+        stale,
+        _omissions_text(pack.omissions, trimmed),
+    ).to_prompt()
+
+
+def _truncate_snippet(snippet: str, keep_chars: int) -> str:
+    if keep_chars >= len(snippet):
+        return snippet
+    if keep_chars <= 0:
+        return ""
+    if keep_chars <= 3:
+        return snippet[:keep_chars]
+    return snippet[: keep_chars - 3].rstrip() + "..."
+
+
 def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
     if budget_chars <= 0 or len(pack.to_prompt()) <= budget_chars:
         return pack
@@ -98,10 +133,7 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
     stale = list(pack.stale_or_conflicting)
     current = list(pack.current_facts)
     omitted = 0
-    while (
-        len(ContextPack(pack.question, pack.summary, current, supporting, stale, pack.omissions).to_prompt())
-        > budget_chars
-    ):
+    while len(_pack_prompt(pack, current=current, supporting=supporting, stale=stale, trimmed=omitted)) > budget_chars:
         if supporting:
             supporting.pop()
             omitted += 1
@@ -113,10 +145,31 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
             omitted += 1
         else:
             break
-    omissions = pack.omissions
-    if omitted:
-        omissions = f"{omissions}; +{omitted} trimmed by budget" if omissions else f"+{omitted} trimmed by budget"
-    return ContextPack(pack.question, pack.summary, current, supporting, stale, omissions)
+    if current and len(_pack_prompt(pack, current=current, supporting=supporting, stale=stale, trimmed=omitted)) > budget_chars:
+        row = dict(current[-1])
+        snippet = str(row.get("snippet", "") or "")
+        best_row = row
+        low = 0
+        high = len(snippet)
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = dict(row)
+            candidate["snippet"] = _truncate_snippet(snippet, mid)
+            candidate_current = [*current[:-1], candidate]
+            if len(_pack_prompt(pack, current=candidate_current, supporting=supporting, stale=stale, trimmed=omitted)) <= budget_chars:
+                best_row = candidate
+                low = mid + 1
+            else:
+                high = mid - 1
+        current[-1] = best_row
+    return ContextPack(
+        pack.question,
+        pack.summary,
+        current,
+        supporting,
+        stale,
+        _omissions_text(pack.omissions, omitted),
+    )
 
 
 def build_context_pack(
@@ -137,6 +190,8 @@ def build_context_pack(
             continue
         if row["quality_bucket"] == "stale_or_conflicting":
             stale.append(row)
+        elif row["quality_bucket"] == "supporting":
+            supporting.append(row)
         elif index == 0 or not current:
             current.append(row)
         else:
@@ -145,6 +200,10 @@ def build_context_pack(
         summary = "Current context is available; stale/conflicting memories are included only as history."
     elif current:
         summary = "Current context is available from the retrieved memories."
+    elif supporting and stale:
+        summary = "Supporting context was retrieved, but no canonical/current fact was identified; stale/conflicting memories are included only as history."
+    elif supporting:
+        summary = "Supporting context was retrieved, but no canonical/current fact was identified."
     elif stale:
         summary = "Only stale/conflicting context was retrieved; answer cautiously."
     else:

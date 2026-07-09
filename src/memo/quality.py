@@ -28,6 +28,68 @@ def _verification_value(hit: Any) -> str:
     return getattr(value, "value", str(value))
 
 
+def _hit_id(hit: Any) -> str:
+    return str(getattr(hit, "id", "") or "")
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def is_canonical_memory(hit: Any) -> bool:
+    extra = _extra(hit)
+    if str(getattr(hit, "type", "") or "") in {"synthesis", "profile"}:
+        return True
+    for key in ("synthesis_source_memories", "synthesis_sources"):
+        value = extra.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, (list, tuple, set)) and any(str(item).strip() for item in value):
+            return True
+    return False
+
+
+def _source_side_canonical_id(hit: Any) -> str:
+    canonical_id = str(_extra(hit).get("canonical_id") or "").strip()
+    if canonical_id and canonical_id != _hit_id(hit):
+        return canonical_id
+    return ""
+
+
 def classify_quality(hit: Any) -> QualityDecision:
     """Classify quality signals on a hit and return a multiplicative score factor."""
 
@@ -63,21 +125,27 @@ def classify_quality(hit: Any) -> QualityDecision:
         multiplier *= 0.30
         bucket = "stale_or_conflicting"
 
-    support_count = int(extra.get("support_count") or 0)
-    if support_count > 0:
+    support_count = _optional_int(extra.get("support_count"))
+    if support_count is not None and support_count > 0:
         reasons.append("support_count")
         multiplier *= min(1.20, 1.0 + support_count * 0.03)
 
-    roi_score = extra.get("roi_score")
-    if isinstance(roi_score, (int, float)):
+    roi_score = _optional_float(extra.get("roi_score"))
+    if roi_score is not None:
         if roi_score > 1.0:
             reasons.append("positive_roi")
-            multiplier *= min(1.15, float(roi_score))
+            multiplier *= min(1.15, roi_score)
         elif roi_score < 0.5:
             reasons.append("low_roi")
-            multiplier *= max(0.50, float(roi_score))
+            multiplier *= max(0.50, roi_score)
 
-    if extra.get("canonical_id") or extra.get("synthesis_source_memories"):
+    if _source_side_canonical_id(hit) and not is_canonical_memory(hit):
+        reasons.append("redundant_source")
+        multiplier *= 0.85
+        if bucket == "current":
+            bucket = "supporting"
+
+    if is_canonical_memory(hit):
         reasons.append("canonical_or_synthesis")
         multiplier *= 1.05
 

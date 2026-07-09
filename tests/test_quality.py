@@ -44,6 +44,24 @@ def test_classify_quality_boosts_verified_and_supported_hit() -> None:
     assert decision.multiplier > 1.0
 
 
+def test_classify_quality_demotes_source_side_canonical_pointer() -> None:
+    decision = classify_quality(_Hit("dup", 0.9, extra={"canonical_id": "canon"}))
+    assert decision.bucket == "supporting"
+    assert "redundant_source" in decision.reasons
+    assert "canonical_or_synthesis" not in decision.reasons
+    assert decision.multiplier < 1.0
+
+
+def test_classify_quality_ignores_malformed_optional_quality_metadata() -> None:
+    decision = classify_quality(
+        _Hit("odd", 0.5, extra={"support_count": "many", "roi_score": "high"})
+    )
+    assert decision.bucket == "current"
+    assert "support_count" not in decision.reasons
+    assert "positive_roi" not in decision.reasons
+    assert "low_roi" not in decision.reasons
+
+
 def test_apply_quality_rerank_demotes_stale_but_keeps_it_visible() -> None:
     old = _Hit("old", 0.9, extra={"superseded_by": "new"})
     current = _Hit("new", 0.7, verification_state=VerificationState.VERIFIED)

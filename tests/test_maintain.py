@@ -283,6 +283,22 @@ def test_undo_targets_and_restore_from_inactive(mock_memory):
     assert mock_memory.unforget(f.id) is not None
 
 
+def test_quality_compact_rollback_ids_include_attempted_ids():
+    from memo.cli_maintain import _quality_compact_rollback_ids
+
+    attempted_id = ("abc123" * 5 + "ab")[:32]
+    archived_id = ("def456" * 5 + "de")[:32]
+    receipt = {
+        "quality_compacted": [
+            {"proposal_id": "quality-compact-demo", "archived_ids": [], "attempted_ids": [attempted_id]},
+            {"proposal_id": "quality-compact-demo-2", "archived_ids": [archived_id]},
+        ]
+    }
+
+    rollback_ids = _quality_compact_rollback_ids(receipt)
+    assert rollback_ids == [attempted_id, archived_id]
+
+
 def test_maintain_undo_cli_dry_run_reads_receipt(tmp_cfg):
     import json as _json
 

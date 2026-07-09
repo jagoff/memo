@@ -80,6 +80,29 @@ def test_build_context_pack_budget_trims_supporting_before_current() -> None:
     assert len(prompt) <= 500
 
 
+def test_build_context_pack_trims_single_oversized_current_fact_to_budget() -> None:
+    hit = _Hit("current-id", 0.8, "Current", "A" * 10000)
+    pack = build_context_pack("q", [hit], snippet_chars=10000, budget_chars=4000)
+    prompt = pack.to_prompt()
+
+    assert len(prompt) <= 4000
+    assert "[current-]" in prompt
+    assert "title: Current | type: note | quality: current" in prompt
+    assert pack.current_facts[0]["id"] == "current-id"
+
+
+def test_build_context_pack_ignores_malformed_optional_quality_metadata() -> None:
+    pack = build_context_pack(
+        "q",
+        [_Hit("current-id", 0.8, "Current", "Body", extra={"support_count": "many", "roi_score": "high"})],
+        snippet_chars=100,
+        budget_chars=4000,
+    )
+
+    assert pack.current_facts[0]["id"] == "current-id"
+    assert pack.current_facts[0]["quality_bucket"] == "current"
+
+
 def test_ask_uses_context_pack_only_when_enabled(mem_with_stub, monkeypatch) -> None:
     rec = mem_with_stub.save(content="alpha body", title="Alpha")
     captured: dict[str, str] = {}

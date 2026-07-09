@@ -269,7 +269,57 @@ def test_quality_compact_apply_rolls_back_attempted_archive_ids(
     )
 
     assert result.exit_code != 0
-    assert "quality compaction receipt persistence failed" in result.output
+    assert "quality compaction apply failed" in result.output
+    assert not (cfg.memory_dir / "inactive" / f"{source_id}.md").exists()
+    assert not (Path(env["MEMO_STATE_DIR"]) / "maintain" / "last.json").exists()
+    assert list((Path(env["MEMO_STATE_DIR"]) / "maintain" / "runs").glob("*.json")) == []
+
+    mem = Memory(cfg)
+    try:
+        assert mem.get(source_id) is not None
+    finally:
+        mem.close()
+
+
+def test_quality_compact_apply_error_rolls_back_before_persisting_receipt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    env, source_id = _seed_quality_compact_records(tmp_path)
+    cfg = Config(
+        data_dir=Path(env["MEMO_DATA_DIR"]),
+        state_dir=Path(env["MEMO_STATE_DIR"]),
+        reranker_enabled=False,
+    )
+
+    def partial_move_then_raise(
+        self: LifecycleManager,
+        memory_id: str,
+        *,
+        superseded_by: str | None = None,
+    ) -> bool:
+        del superseded_by
+        rec = self.memory.get(memory_id)
+        assert rec is not None
+        inactive_dir = self.memory.cfg.memory_dir / "inactive"
+        inactive_dir.mkdir(parents=True, exist_ok=True)
+        source_path = self.memory._resolve_existing(rec.path)
+        target_path = inactive_dir / f"{memory_id}.md"
+        shutil.move(str(source_path), str(target_path))
+        raise RuntimeError("simulated move-then-raise")
+
+    monkeypatch.setattr(LifecycleManager, "archive_memory", partial_move_then_raise)
+
+    result = CliRunner().invoke(
+        cli,
+        ["maintain", "quality-compact", "--apply", "--json"],
+        env=env,
+    )
+
+    assert result.exit_code != 0
+    assert "quality compaction apply failed" in result.output
+    assert not (Path(env["MEMO_STATE_DIR"]) / "maintain" / "last.json").exists()
+    assert list((Path(env["MEMO_STATE_DIR"]) / "maintain" / "runs").glob("*.json")) == []
     assert not (cfg.memory_dir / "inactive" / f"{source_id}.md").exists()
 
     mem = Memory(cfg)

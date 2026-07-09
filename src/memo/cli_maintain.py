@@ -162,6 +162,14 @@ def _quality_compact_rollback_ids(receipt: dict[str, Any]) -> list[str]:
     return rollback_ids
 
 
+def _rollback_quality_compaction(mem: Any, receipt: dict[str, Any]) -> tuple[list[str], list[str]]:
+    rollback_ids = _quality_compact_rollback_ids(receipt)
+    restored, missing = _restore_archived(mem, rollback_ids, dry_run=False)
+    if rollback_ids:
+        mem.reindex()
+    return restored, missing
+
+
 def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[str], list[str]]:
     """Move receipt-listed .md files back out of inactive/ (matched by
     frontmatter id — the receipt stores ids, not filenames). Returns
@@ -701,6 +709,17 @@ def quality_compact_cmd(preview: bool, apply_changes: bool, limit: int, as_json:
                 "quality_compacted": applied["quality_compacted"],
                 "errors": [*preview_receipt.get("errors", []), *applied.get("errors", [])],
             }
+            if receipt["errors"]:
+                restored, missing = _rollback_quality_compaction(mem, receipt)
+                detail = "; ".join(str(err) for err in receipt["errors"])
+                if missing:
+                    detail = (
+                        f"{detail}; rolled back {len(restored)} archived ids, "
+                        f"{len(missing)} could not be restored"
+                    )
+                elif _quality_compact_rollback_ids(receipt):
+                    detail = f"{detail}; archived changes were rolled back"
+                raise click.ClickException(f"quality compaction apply failed: {detail}")
             assert receipt_targets is not None
             d, runs_dir, run_stamp = receipt_targets
             payload = json.dumps(
@@ -711,17 +730,14 @@ def quality_compact_cmd(preview: bool, apply_changes: bool, limit: int, as_json:
             try:
                 _persist_quality_compact_receipt(d, runs_dir, run_stamp, payload)
             except OSError as exc:
-                rollback_ids = _quality_compact_rollback_ids(receipt)
-                restored, missing = _restore_archived(mem, rollback_ids, dry_run=False)
-                if restored:
-                    mem.reindex()
+                restored, missing = _rollback_quality_compaction(mem, receipt)
                 detail = f"{type(exc).__name__}: {exc}"
                 if missing:
                     detail = (
                         f"{detail}; rolled back {len(restored)} archived ids, "
                         f"{len(missing)} could not be restored"
                     )
-                else:
+                elif _quality_compact_rollback_ids(receipt):
                     detail = f"{detail}; archived changes were rolled back"
                 raise click.ClickException(
                     f"quality compaction receipt persistence failed: {detail}"

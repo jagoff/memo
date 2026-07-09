@@ -32,6 +32,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from memo.quality import is_canonical_memory
+
 
 @contextlib.contextmanager
 def _pinned_flags(overrides: dict[str, str] | None):
@@ -433,11 +435,7 @@ def _quality_eval_metrics(top_hits: list[Any], *, k: int) -> dict[str, float | N
         for hit in visible
         if _extra(hit).get("superseded_by") or _extra(hit).get("invalidated")
     ]
-    canonical_hits = [
-        hit
-        for hit in visible
-        if _extra(hit).get("canonical_id") or getattr(hit, "type", "") in {"synthesis", "profile"}
-    ]
+    canonical_hits = [hit for hit in visible if is_canonical_memory(hit)]
     return {
         "stale_at_k": len(stale_hits) / max(len(visible), 1),
         "canonical_hit_at_k": 1.0 if canonical_hits else 0.0,
