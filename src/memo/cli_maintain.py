@@ -34,6 +34,7 @@ import click
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.errors import ValidationError
 from memo.flags import flag_bool, flag_int
 from memo.util import safe_operation
 
@@ -583,4 +584,40 @@ def maintain_undo_cmd(run_stamp: str | None, dry_run: bool, as_json: bool) -> No
     console.print(
         f"{tag}[bold]memo maintain undo[/bold] — restored {len(restored)}, "
         f"unforgotten {len(unforgotten)}, missing {len(missing)}"
+    )
+
+
+@maintain_cmd.command(name="quality-compact")
+@click.option("--preview", is_flag=True, help="Preview proposals without changing memories.")
+@click.option("--apply", "apply_changes", is_flag=True, help="Apply proposals and write a receipt.")
+@click.option("--limit", default=20, type=int, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def quality_compact_cmd(preview: bool, apply_changes: bool, limit: int, as_json: bool) -> None:
+    """Preview quality compaction proposals."""
+
+    from memo.quality_compact import preview_quality_compaction
+
+    if not flag_bool("MEMO_QUALITY_COMPACT"):
+        raise click.ClickException("MEMO_QUALITY_COMPACT=1 is required")
+    if apply_changes and preview:
+        raise click.UsageError("choose either --preview or --apply")
+    if apply_changes:
+        raise click.UsageError("quality compaction apply is not implemented yet; use --preview")
+    if not preview:
+        preview = True
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    try:
+        receipt = preview_quality_compaction(mem, limit=limit)
+    except ValidationError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    if as_json:
+        click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
+        return
+
+    tag = "[dim](preview)[/dim] " if preview else ""
+    console.print(
+        f"{tag}[bold]memo maintain quality-compact[/bold] — {len(receipt['proposals'])} proposals"
     )

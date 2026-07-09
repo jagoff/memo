@@ -307,6 +307,13 @@ SPECS: tuple[FlagSpec, ...] = (
         "maintain",
         "Route consolidation's synthesis LLM through the maintenance daemon (keeps the multi-GB model out of memo-mcp's resident set). Falls back in-process when the daemon is unreachable.",
     ),
+    _spec(
+        "MEMO_QUALITY_COMPACT",
+        "bool",
+        False,
+        "maintain",
+        "Enable the quality-compaction maintenance command. Default off; preview is read-only and apply is explicit.",
+    ),
     # emergent synthesis (memo synthesize)
     _spec(
         "MEMO_SYNTHESIS_ENABLED",
