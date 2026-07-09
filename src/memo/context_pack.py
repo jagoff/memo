@@ -27,6 +27,21 @@ class ContextPack:
         return "\n\n".join(section for section in sections if section.strip())
 
 
+def consult_hits_from_pack(pack: ContextPack) -> list[dict[str, Any]]:
+    """Flatten a context pack into recall-log hit dicts."""
+
+    hits: list[dict[str, Any]] = []
+    for row in pack.current_facts + pack.supporting_context + pack.stale_or_conflicting:
+        hits.append(
+            {
+                "id": row.get("id") or row.get("id_short") or "",
+                "score": row.get("score"),
+                "title": row.get("title") or "",
+            }
+        )
+    return hits
+
+
 def _is_sensitive(hit: Any) -> bool:
     tags = {str(tag) for tag in (getattr(hit, "tags", None) or [])}
     extra = getattr(hit, "extra", None)

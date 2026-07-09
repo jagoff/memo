@@ -103,3 +103,43 @@ Checked for:
 - no inclusion of unrelated working tree changes in the commit
 
 No functional concerns found in the implemented scope.
+
+## Review Fixes
+
+Addressed the Task 4 review findings with a narrow follow-up patch:
+
+- CLI `memo context-pack` now respects `MEMO_CONTEXT_PACK`.
+  - When disabled, it raises a clear `ClickException` telling the caller to set `MEMO_CONTEXT_PACK=1`.
+  - It now accepts `--source` and logs consults through `log_cli_consult(...)` as `via="cli:context_pack"`.
+  - Consult hits are derived from the built context-pack rows, so the recall log captures the ids/scores/titles actually surfaced by the pack.
+
+- MCP `memo_context_pack` now respects `MEMO_CONTEXT_PACK`.
+  - When disabled, it returns a clear disabled payload:
+    - `{"status": "disabled", "reason": "MEMO_CONTEXT_PACK=0 disables explicit context-pack tools.", "question": ...}`
+  - It now accepts `source` and logs consults through `server_common.log_consult(...)` as `via="mcp:context_pack"`.
+  - MCP consult hits are likewise derived from the built pack rows.
+
+- Added `consult_hits_from_pack(...)` in [`src/memo/context_pack.py`](/Users/fer/repos/memo/src/memo/context_pack.py) so CLI and MCP use one consistent consult-hit projection from explicit context-pack results.
+
+### Focused tests added
+
+Extended [`tests/test_context_pack_surface.py`](/Users/fer/repos/memo/tests/test_context_pack_surface.py) to cover:
+
+- CLI disabled-by-flag behavior
+- CLI consult logging and source attribution
+- MCP disabled-by-flag behavior
+- MCP consult logging and source attribution
+
+### Verification for review fixes
+
+Ran:
+
+```bash
+uv run --no-sync pytest tests/test_context_pack.py tests/test_context_pack_surface.py tests/test_cli_consult_attribution.py tests/test_usefulness.py -q
+uv run --no-sync ruff check src/memo/context_pack.py src/memo/cli_search.py src/memo/server_context_pack.py tests/test_context_pack_surface.py
+```
+
+Results:
+
+- `35 passed`
+- Ruff clean on touched files

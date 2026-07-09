@@ -231,18 +231,33 @@ def ask(
     help="Preview length for retrieved memory snippets.",
 )
 @click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--source",
+    default=None,
+    help="Identify the calling layer so the consult is attributed in "
+    "`memo usefulness` (falls back to MEMO_SOURCE).",
+)
 def context_pack_cmd(
     question: str,
     k: int,
     type_: str | None,
     snippet_chars: int,
     as_json: bool,
+    source: str | None,
 ) -> None:
     """Build an explicit composed context pack without running the LLM."""
-    from memo.context_pack import build_context_pack
+    import time
+
+    from memo.context_pack import build_context_pack, consult_hits_from_pack
+    from memo.flags import flag_bool
 
     cfg = Config.from_env()
+    if not flag_bool("MEMO_CONTEXT_PACK"):
+        raise click.ClickException(
+            "context-pack is disabled. Set MEMO_CONTEXT_PACK=1 to enable explicit context-pack tools."
+        )
     mem = _get_memory(cfg)
+    t0 = int(time.time() * 1000)
     hits = mem.search(
         question,
         limit=k,
@@ -253,6 +268,14 @@ def context_pack_cmd(
         quality_rerank=True,
     )
     pack = build_context_pack(question, hits, snippet_chars=snippet_chars)
+    log_cli_consult(
+        cfg,
+        verb="context_pack",
+        query=question,
+        hits=consult_hits_from_pack(pack),
+        t0_ms=t0,
+        source=source,
+    )
     payload = asdict(pack)
     if as_json:
         click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
