@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from memo.quality import apply_quality_rerank, classify_quality
+from memo.tiers import VerificationState
+
+
+@dataclass(frozen=True)
+class _Hit:
+    id: str
+    score: float | None
+    title: str = ""
+    body: str = "durable body"
+    type: str = "note"
+    tags: list[str] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+    verification_state: VerificationState = VerificationState.UNVERIFIED
+    verified_at: int | None = None
+
+
+def test_classify_quality_marks_superseded_as_stale() -> None:
+    decision = classify_quality(_Hit("old", 0.9, extra={"superseded_by": "new"}))
+    assert decision.bucket == "stale_or_conflicting"
+    assert "superseded_by" in decision.reasons
+    assert decision.multiplier < 1.0
+
+
+def test_classify_quality_boosts_verified_and_supported_hit() -> None:
+    hit = _Hit(
+        "good",
+        0.5,
+        extra={"support_count": 3, "roi_score": 1.3},
+        verification_state=VerificationState.VERIFIED,
+    )
+    decision = classify_quality(hit)
+    assert decision.bucket == "current"
+    assert "verified" in decision.reasons
+    assert "support_count" in decision.reasons
+    assert decision.multiplier > 1.0
+
+
+def test_apply_quality_rerank_demotes_stale_but_keeps_it_visible() -> None:
+    old = _Hit("old", 0.9, extra={"superseded_by": "new"})
+    current = _Hit("new", 0.7, verification_state=VerificationState.VERIFIED)
+    out = apply_quality_rerank([old, current])
+    assert [h.id for h in out] == ["new", "old"]
+
+
+def test_apply_quality_rerank_populates_explain() -> None:
+    explain: dict[str, dict[str, Any]] = {}
+    out = apply_quality_rerank(
+        [_Hit("old", 0.9, extra={"invalidated": True}), _Hit("new", 0.7)],
+        explain=explain,
+    )
+    assert [h.id for h in out] == ["new", "old"]
+    assert explain["old"]["quality_bucket"] == "stale_or_conflicting"
+    assert explain["old"]["quality_multiplier"] < 1.0
+    assert "invalidated" in explain["old"]["quality_reasons"]
+

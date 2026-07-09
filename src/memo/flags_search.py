@@ -178,6 +178,23 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
     ),
     _spec(
+        "MEMO_QUALITY_RERANK",
+        "bool",
+        False,
+        "search",
+        "Enable quality-aware post-retrieval reranking for explicit search/ask paths. "
+        "Demotes invalidated/superseded/contradicted hits and boosts verified/supported hits. "
+        "Default off to preserve ranking baselines.",
+    ),
+    _spec(
+        "MEMO_CONTEXT_PACK",
+        "bool",
+        False,
+        "search",
+        "Enable context-pack construction for memo ask and explicit context-pack tools. "
+        "Default off; ambient recall does not use context packs.",
+    ),
+    _spec(
         "MEMO_GRAPH_EXPANSION_ENABLED",
         "bool",
         False,
