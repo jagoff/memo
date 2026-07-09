@@ -1,76 +1,120 @@
-# Task 1 Report — Quality Signals And Pure Reranker
+# Task 1 Report - SQLite Resource Hygiene Guard
 
-## What changed
-- Added `src/memo/quality.py` with:
-  - `QualityDecision` dataclass
-  - `classify_quality(hit)` signal classifier
-  - `apply_quality_rerank(hits, explain=None)` pure rerank wrapper
-- Added `tests/test_quality.py` with 4 focused RED/GREEN tests for classification and reranking behavior.
-- Registered new default-off search flags in `src/memo/flags_search.py`:
-  - `MEMO_QUALITY_RERANK`
-  - `MEMO_CONTEXT_PACK`
+## Status
+DONE
 
-## TDD evidence
-- **RED**: before adding `memo.quality`, ran:
-  - `uv run --no-sync pytest tests/test_quality.py -v`
-  - collection failed with `ModuleNotFoundError: No module named 'memo.quality'`.
-- **GREEN**: after implementing `memo.quality`, ran:
-  - `uv run --no-sync pytest tests/test_quality.py -v`
-  - `4 passed`.
+Implemented Task 1 only. The initial reproduction did not fail, so no product
+cleanup fix was applied. The work adds a focused regression test file proving
+`Memory.close()` releases SQLite connections and remains idempotent after lazy
+store connection creation.
 
-## Tests and outputs
-- `uv run --no-sync pytest tests/test_quality.py -v`:
-  - 4 tests, 4 passed.
-- `uv run --no-sync ruff check src/memo/quality.py src/memo/flags_search.py tests/test_quality.py`:
-  - All checks passed.
+## Initial Reproduction
+Command:
 
-## Files changed
-- `src/memo/quality.py` (new)
-- `src/memo/flags_search.py` (modified)
-- `tests/test_quality.py` (new)
+```bash
+PYTHONTRACEMALLOC=1 uv run --no-sync pytest \
+  tests/test_resume_episodes.py::test_mcp_episodes_search_tool \
+  tests/test_runtime_isolation.py::test_install_slash_claude_proceeds_to_add_when_remove_fails \
+  -q -W error::ResourceWarning
+```
 
-## Self-review
-- Scope was kept to Task 1 files only; no existing behavior was altered and no new ranking path was wired.
-- `MEMO_QUALITY_RERANK` and `MEMO_CONTEXT_PACK` are default-off, matching the task constraints.
-- `VerificationState` imports in implementation/tests use `memo.tiers` as required.
+Result before implementation: PASS
+
+Output summary:
+
+```text
+2 passed in 2.61s
+```
+
+Because the reproduction passed, the warning appears either already fixed or
+dependent on broader suite interleaving. I continued with the focused guard
+tests as required by the brief.
+
+## Implementation
+Created `tests/test_sqlite_resource_hygiene.py` with two focused tests:
+
+- `test_memory_close_releases_sqlite_connections`
+- `test_memory_close_is_idempotent_after_lazy_connections`
+
+Both tests capture `ResourceWarning`, force garbage collection after
+`Memory.close()`, and assert that no `unclosed database` warning was emitted.
+
+The brief's sample fake embedding used a four-dimensional vector, but the
+current isolated `tmp_cfg` uses `embedder_dims=1024`. The test therefore builds
+the fake embedding from `tmp_cfg.embedder_dims` so it exercises the SQLite
+lifecycle instead of failing at embedding validation.
+
+## Files Changed
+- `tests/test_sqlite_resource_hygiene.py` (new)
+- `.superpowers/sdd/task-1-report.md` (updated for this task report)
+
+No changes were made to:
+
+- `src/memo/store/connection.py`
+- `tests/conftest.py`
+- `tests/test_runtime_isolation.py`
+- `tests/test_resume_episodes.py`
+
+## Tests Run
+Focused guard:
+
+```bash
+uv run --no-sync pytest tests/test_sqlite_resource_hygiene.py -q -W error::ResourceWarning
+```
+
+Initial result after adding the brief's literal sample: FAIL
+
+Failure reason:
+
+```text
+ValueError: embedding dim mismatch: got 4, want 1024
+```
+
+This was a test fixture mismatch, not a SQLite cleanup failure. After adapting
+the fake embedding to `tmp_cfg.embedder_dims`, the same command passed:
+
+```text
+2 passed in 1.51s
+```
+
+Final reproduction rerun:
+
+```bash
+PYTHONTRACEMALLOC=1 uv run --no-sync pytest \
+  tests/test_resume_episodes.py::test_mcp_episodes_search_tool \
+  tests/test_runtime_isolation.py::test_install_slash_claude_proceeds_to_add_when_remove_fails \
+  -q -W error::ResourceWarning
+```
+
+Result:
+
+```text
+2 passed in 2.45s
+```
+
+Lint:
+
+```bash
+uv run --no-sync ruff check tests/test_sqlite_resource_hygiene.py
+```
+
+Result:
+
+```text
+All checks passed!
+```
+
+## Commit
+This report is included in the task commit. The requested commit message is:
+
+```text
+test: guard sqlite resource cleanup
+```
 
 ## Concerns
-- `apply_quality_rerank` mutates non-dataclass hit objects in a fallback branch (`hit.score = score`) when `dataclasses.replace` is not applicable; in practice, hit objects in current search paths are expected to be dataclasses.
-
-## Reviewer Finding Fix (Quality Rerank)
-
-### Fix summary
-- Removed the in-place mutation fallback in `src/memo/quality.py:apply_quality_rerank`.
-- Kept dataclass behavior via `dataclasses.replace`.
-- Added strict validation for unsupported hit types and now raise `ValidationError` for non-dataclass or non-replaceable hits before side effects.
-- Added `test_apply_quality_rerank_rejects_non_dataclass_hit_without_mutation` in `tests/test_quality.py` to assert non-dataclass hits raise the domain error and retain original `score`.
-
-### Tests run and outputs
-- `uv run --no-sync pytest tests/test_quality.py -v`: `5 passed`.
-- `uv run --no-sync ruff check src/memo/quality.py tests/test_quality.py`: `All checks passed!`
-
-### Files changed
-- `src/memo/quality.py`
-- `tests/test_quality.py`
-- `.superpowers/sdd/task-1-report.md` (appended reviewer-finding fix section)
-
-### Self-review
-- Enforced a pure reranker contract without mutating unsupported shapes.
-- Error path is domain-specific (`ValidationError`) and does not alter input objects.
-
-## Reviewer Finding Re-Fix (Task 1)
-
-### Fix summary
-- Preserved dataclass behavior in `src/memo/quality.py:apply_quality_rerank` via `dataclasses.replace`.
-- Added support for non-dataclass, hit-shaped inputs by using `copy.copy()` and writing `score` on the copy.
-- Added strict failure handling so copy/set failures raise `ValidationError` before any `explain` write.
-- Updated `explain` writes to occur only after a reranked copy is successfully created, preventing partial side effects on failure.
-
-### Tests run and outputs
-- `uv run --no-sync pytest tests/test_quality.py -v`: `6 passed`.
-- `uv run --no-sync ruff check src/memo/quality.py tests/test_quality.py`: `All checks passed!`
-
-### Files changed
-- `src/memo/quality.py`
-- `tests/test_quality.py`
-- `.superpowers/sdd/task-1-report.md`
+- The original reproduction passed before implementation, so this task guards
+  the lifecycle directly but does not prove the full-suite interleaving warning
+  source.
+- The working tree had pre-existing uncommitted edits in
+  `.superpowers/sdd/progress.md` and `.superpowers/sdd/task-1-brief.md`; these
+  were left untouched.
