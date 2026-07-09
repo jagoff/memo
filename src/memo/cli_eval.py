@@ -18,6 +18,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import click
 
@@ -86,6 +87,12 @@ eval_group.add_command(bench_group)
     help="Fast smoke: run only config A and cap prompts unless --max-prompts is set.",
 )
 @click.option(
+    "--profile",
+    type=click.Choice(["quick", "default", "pre-push", "matrix", "expensive"]),
+    default=None,
+    help="Named config profile. Explicit --config values override this.",
+)
+@click.option(
     "--config",
     "config_names",
     multiple=True,
@@ -117,6 +124,7 @@ def eval_recall_cmd(
     force: bool,
     no_cache: bool,
     quick: bool,
+    profile: str | None,
     config_names: tuple[str, ...],
     max_prompts: int | None,
     progress: bool,
@@ -152,7 +160,14 @@ def eval_recall_cmd(
         max_prompts = 12
     labels = eval_recall.limit_label_set(labels, max_prompts)
     try:
-        selected_configs = eval_recall.select_configs(list(config_names), quick=quick)
+        if config_names:
+            selected_configs = eval_recall.select_configs(list(config_names), quick=quick)
+        elif profile is not None:
+            selected_configs = eval_recall.profile_configs(
+                cast(eval_recall.EvalProfile, profile)
+            )
+        else:
+            selected_configs = eval_recall.select_configs(None, quick=quick)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 

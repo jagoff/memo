@@ -30,7 +30,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from memo.quality import classify_quality, is_canonical_memory
 
@@ -286,6 +286,24 @@ def extra_configs() -> list[Cfg]:
             flag_overrides={"MEMO_HYDE_ENABLED": "1"},
         ),
     ]
+
+
+EvalProfile = Literal["quick", "default", "pre-push", "matrix", "expensive"]
+
+
+def profile_configs(profile: EvalProfile) -> list[Cfg]:
+    """Named eval profiles with explicit cost/coverage contracts."""
+    if profile == "quick":
+        return select_configs(quick=True)
+    if profile == "default":
+        return default_configs()
+    if profile == "pre-push":
+        return select_configs(["A", "B", "E", "F", "G", "H", "I"])
+    if profile == "matrix":
+        return [*default_configs(), *tuning_configs()]
+    if profile == "expensive":
+        return select_configs(["J"])
+    raise ValueError(f"unknown recall eval profile: {profile}")
 
 
 def select_configs(

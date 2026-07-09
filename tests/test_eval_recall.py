@@ -174,6 +174,37 @@ def test_select_configs_rejects_unknown_name():
         eval_recall.select_configs(["Z"])
 
 
+def test_profile_configs_name_eval_roles() -> None:
+    assert [c.name for c in eval_recall.profile_configs("quick")] == ["A vec/0.60/keep"]
+    assert [c.name for c in eval_recall.profile_configs("default")] == [
+        "A vec/0.60/keep",
+        "B vec/0.72/excl",
+        "C hyb/0.40/excl",
+        "D hyb/0.40/ctx",
+    ]
+    assert [c.name for c in eval_recall.profile_configs("pre-push")] == [
+        "A vec/0.60/keep",
+        "B vec/0.72/excl",
+        "E mmr/0.3",
+        "F mmr/0.5",
+        "G mmr/0.7",
+        "H synth/0.05",
+        "I synth/0.10",
+    ]
+    assert [c.name for c in eval_recall.profile_configs("matrix")] == [
+        "A vec/0.60/keep",
+        "B vec/0.72/excl",
+        "C hyb/0.40/excl",
+        "D hyb/0.40/ctx",
+        "E mmr/0.3",
+        "F mmr/0.5",
+        "G mmr/0.7",
+        "H synth/0.05",
+        "I synth/0.10",
+    ]
+    assert [c.name for c in eval_recall.profile_configs("expensive")] == ["J hyb/0.40/hyde"]
+
+
 def test_limit_label_set_keeps_metadata_and_slices_prompts():
     labels = LabelSet(
         prompts=[Prompt("a"), Prompt("b"), Prompt("c")],
@@ -308,6 +339,7 @@ def test_cli_eval_recall_help_lists_options():
     assert "--labels" in result.output
     assert "--force" in result.output
     assert "--quick" in result.output
+    assert "--profile" in result.output
     assert "--config" in result.output
     assert "--max-prompts" in result.output
     assert "--progress" in result.output
@@ -368,6 +400,45 @@ def test_cli_eval_recall_fresh_human_run_prints_progress(tmp_path: Path, monkeyp
     assert result.exit_code == 0, result.output
     assert "Running recall eval: 4 config(s) x 1 prompt(s) = 4 search(es)." in result.output
     assert "eval A vec/0.60/keep: prompt 1/1" in result.output
+
+
+def test_cli_eval_recall_profile_pre_push_selects_named_subset(
+    tmp_path: Path, monkeypatch
+) -> None:
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        json.dumps({"prompts": [{"text": "where is memo", "relevant": True}]}),
+        encoding="utf-8",
+    )
+    labels = LabelSet(prompts=[Prompt("where is memo", relevant=True)])
+    seen: list[str] = []
+
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: object())
+    monkeypatch.setattr(eval_recall, "load_labels", lambda path: labels)
+    monkeypatch.setattr(eval_recall, "fingerprint_corpus", lambda mem: "corpus")
+
+    def _evaluate(mem, *, k, labels, configs, progress=None):
+        seen.extend(c.name for c in configs)
+        return [eval_recall.Row(config=configs[0].name, precision_at_k=1.0, noise_at_k=0.0)]
+
+    monkeypatch.setattr(eval_recall, "evaluate", _evaluate)
+
+    result = CliRunner().invoke(
+        cli,
+        ["eval", "recall", "--labels", str(labels_path), "--profile", "pre-push", "--force"],
+        env=_env(tmp_path),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == [
+        "A vec/0.60/keep",
+        "B vec/0.72/excl",
+        "E mmr/0.3",
+        "F mmr/0.5",
+        "G mmr/0.7",
+        "H synth/0.05",
+        "I synth/0.10",
+    ]
 
 
 # --- harvest labels from grounding.log --------------------------------------
