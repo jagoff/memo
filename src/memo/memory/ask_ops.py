@@ -34,6 +34,179 @@ from memo.prompt_overrides import resolve_prompt
 _EXPAND_SOURCES_MAX = 4
 
 
+def _context_budget_chars(*, snippet_chars: int, k: int) -> int:
+    return max(snippet_chars * max(k, 1) + 1200, 2000)
+
+
+def _format_expanded_section(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return ""
+    lines = ["Expanded source memories:"]
+    for row in rows:
+        context_note = str(row.get("context_note") or "")
+        context_text = f"  |  context: {context_note}" if context_note else ""
+        lines.append(
+            f"[{row['id_short']}] title: {row['title']} | type: {row['type']} | "
+            f"quality: {row['quality_bucket']}{context_text}\n{row['snippet']}"
+        )
+    return "\n\n".join(lines)
+
+
+def _format_repo_section(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return ""
+    lines = ["Repository snippets:"]
+    for row in rows:
+        lines.append(
+            f"[{row['id_short']}] source: repo | path: {row['path']} | "
+            f"lines: {row['line_start']}-{row['line_end']} | match: {row['match_type']}\n"
+            f"{row['snippet']}"
+        )
+    return "\n\n".join(lines)
+
+
+def _trimmed_item_note(count: int, singular: str, plural: str | None = None) -> str:
+    if count <= 0:
+        return ""
+    noun = singular if count == 1 else (plural or f"{singular}s")
+    return f"{count} {noun} trimmed by budget"
+
+
+def _shortened_snippet(snippet: str, *, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    if len(snippet) <= max_chars:
+        return snippet
+    if max_chars <= 3:
+        return "." * max_chars
+    return snippet[: max_chars - 3].rstrip() + "..."
+
+
+def _render_context_pack_sections(
+    pack: Any,
+    *,
+    current: list[dict[str, Any]],
+    supporting: list[dict[str, Any]],
+    stale: list[dict[str, Any]],
+    expanded: list[dict[str, Any]],
+    repo: list[dict[str, Any]],
+    extra_omissions: list[str],
+) -> str:
+    from memo.context_pack import ContextPack
+
+    omission_parts = [str(pack.omissions).strip(), *[part for part in extra_omissions if part]]
+    omissions = "; ".join(part for part in omission_parts if part)
+    prompt_pack = ContextPack(
+        question=pack.question,
+        summary=pack.summary,
+        current_facts=current,
+        supporting_context=supporting,
+        stale_or_conflicting=stale,
+        omissions=omissions,
+    )
+    sections = [
+        prompt_pack.to_prompt(),
+        _format_expanded_section(expanded),
+        _format_repo_section(repo),
+    ]
+    return "\n\n".join(section for section in sections if section.strip())
+
+
+def _fit_context_pack_prompt(
+    pack: Any,
+    *,
+    expanded_rows: list[dict[str, Any]],
+    repo_rows: list[dict[str, Any]],
+    budget_chars: int,
+    expanded_sensitive_omitted: int = 0,
+) -> tuple[
+    str,
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    current = [dict(row) for row in pack.current_facts]
+    supporting = [dict(row) for row in pack.supporting_context]
+    stale = [dict(row) for row in pack.stale_or_conflicting]
+    expanded = [dict(row) for row in expanded_rows]
+    repo = [dict(row) for row in repo_rows]
+    trimmed_counts = {"supporting": 0, "stale": 0, "expanded": 0, "repo": 0}
+
+    def _omission_notes() -> list[str]:
+        notes: list[str] = []
+        if expanded_sensitive_omitted:
+            noun = (
+                "expanded source memory"
+                if expanded_sensitive_omitted == 1
+                else "expanded source memories"
+            )
+            notes.append(f"{expanded_sensitive_omitted} sensitive {noun} omitted from compacted context")
+        notes.extend(
+            note
+            for note in (
+                _trimmed_item_note(trimmed_counts["supporting"], "supporting memory"),
+                _trimmed_item_note(trimmed_counts["stale"], "stale/conflicting memory"),
+                _trimmed_item_note(trimmed_counts["expanded"], "expanded source memory"),
+                _trimmed_item_note(trimmed_counts["repo"], "repo snippet"),
+            )
+            if note
+        )
+        return notes
+
+    prompt = _render_context_pack_sections(
+        pack,
+        current=current,
+        supporting=supporting,
+        stale=stale,
+        expanded=expanded,
+        repo=repo,
+        extra_omissions=_omission_notes(),
+    )
+    if budget_chars <= 0:
+        return prompt, current, supporting, stale, expanded, repo
+
+    while len(prompt) > budget_chars:
+        if supporting:
+            supporting.pop()
+            trimmed_counts["supporting"] += 1
+        elif stale:
+            stale.pop()
+            trimmed_counts["stale"] += 1
+        elif expanded:
+            expanded.pop()
+            trimmed_counts["expanded"] += 1
+        elif repo:
+            repo.pop()
+            trimmed_counts["repo"] += 1
+        elif len(current) > 1:
+            current.pop()
+        elif current:
+            overflow = len(prompt) - budget_chars
+            trimmed = dict(current[-1])
+            trimmed["snippet"] = _shortened_snippet(
+                str(trimmed.get("snippet") or ""),
+                max_chars=max(len(str(trimmed.get("snippet") or "")) - overflow, 32),
+            )
+            current[-1] = trimmed
+        else:
+            break
+        prompt = _render_context_pack_sections(
+            pack,
+            current=current,
+            supporting=supporting,
+            stale=stale,
+            expanded=expanded,
+            repo=repo,
+            extra_omissions=_omission_notes(),
+        )
+
+    if len(prompt) > budget_chars:
+        prompt = prompt[:budget_chars].rstrip()
+    return prompt, current, supporting, stale, expanded, repo
+
+
 class _AskOpsMixin(_MemoryBase):
     # -- chat ask -----------------------------------------------------------
 
@@ -269,9 +442,8 @@ class _AskOpsMixin(_MemoryBase):
             hits = sorted(hits, key=_recency_sort_key, reverse=True)[:k]
 
         snippet_lines: list[str] = []
-        expanded_snippet_lines: list[str] = []
-        repo_snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
+        primary_memory_sources: dict[str, dict[str, Any]] = {}
         seen_paths: set[str] = set()
         for h in hits:
             id_short = h.id[:8]
@@ -284,20 +456,20 @@ class _AskOpsMixin(_MemoryBase):
                 f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}{graph_info}\n{snippet}\n"
             )
             extra = h.extra or {}
-            sources.append(
-                {
-                    "source": "memory",
-                    "id": h.id,
-                    "id_short": id_short,
-                    "title": h.title,
-                    "type": h.type,
-                    "score": h.score,
-                    "snippet": snippet,
-                    "graph_expanded": bool(extra.get("graph_expanded")),
-                    "synapse_trace_id": extra.get("synapse_trace_id") or "",
-                    "synapse_agent_id": extra.get("synapse_agent_id") or "",
-                }
-            )
+            source = {
+                "source": "memory",
+                "id": h.id,
+                "id_short": id_short,
+                "title": h.title,
+                "type": h.type,
+                "score": h.score,
+                "snippet": snippet,
+                "graph_expanded": bool(extra.get("graph_expanded")),
+                "synapse_trace_id": extra.get("synapse_trace_id") or "",
+                "synapse_agent_id": extra.get("synapse_agent_id") or "",
+            }
+            sources.append(source)
+            primary_memory_sources[h.id] = source
             seen_paths.update(_vault_dedup_keys(h))
         # Lazy synthesis_sources expansion (MEMO_ASK_EXPAND_SYNTHESIS, default
         # off): a synthesis hit is an ABSTRACT — for holistic asks the concrete
@@ -308,7 +480,12 @@ class _AskOpsMixin(_MemoryBase):
         # strings skip via self.get() returning None.
         from memo.flags import flag_bool
 
+        expanded_memory_rows: list[dict[str, Any]] = []
+        expanded_memory_sources: dict[str, dict[str, Any]] = {}
+        expanded_sensitive_omitted = 0
         if flag_bool("MEMO_ASK_EXPAND_SYNTHESIS"):
+            from memo.context_pack import build_context_row
+
             _seen_ids = {h.id for h in hits}
             _expanded = 0
             for h in hits:
@@ -338,22 +515,42 @@ class _AskOpsMixin(_MemoryBase):
                         f"[{src.id[:8]}] title: {src.title}  |  type: {src.type}"
                         f"  |  context: source-of [{h.id[:8]}]\n{_snip}\n"
                     )
-                    snippet_lines.append(expanded_line)
-                    expanded_snippet_lines.append(expanded_line)
-                    sources.append(
-                        {
+                    if use_context_pack:
+                        row = build_context_row(src, snippet_chars=snippet_chars)
+                        if row is None:
+                            expanded_sensitive_omitted += 1
+                            continue
+                        row["context_note"] = f"source-of [{h.id[:8]}]"
+                        expanded_memory_rows.append(row)
+                        expanded_memory_sources[src.id] = {
                             "source": "memory",
                             "id": src.id,
                             "id_short": src.id[:8],
                             "title": src.title,
                             "type": src.type,
                             "score": None,
-                            "snippet": _snip,
+                            "snippet": row["snippet"],
                             "expanded_from": h.id,
+                            "quality_bucket": row["quality_bucket"],
+                            "quality_reasons": list(row["quality_reasons"]),
                         }
-                    )
+                    else:
+                        snippet_lines.append(expanded_line)
+                        sources.append(
+                            {
+                                "source": "memory",
+                                "id": src.id,
+                                "id_short": src.id[:8],
+                                "title": src.title,
+                                "type": src.type,
+                                "score": None,
+                                "snippet": _snip,
+                                "expanded_from": h.id,
+                            }
+                        )
         seen_repo_keys: set[tuple[str, str]] = set()
-        appended_repo = 0
+        repo_rows: list[dict[str, Any]] = []
+        repo_sources: list[dict[str, Any]] = []
         for h in repo_hits:
             norm = _norm_dedup_path(h.path)
             base = norm.rsplit("/", 1)[-1] if norm else ""
@@ -369,63 +566,82 @@ class _AskOpsMixin(_MemoryBase):
             snippet = (h.text or "")[:snippet_chars]
             if len(h.text or "") > snippet_chars:
                 snippet = snippet.rstrip() + "…"
-            repo_line = (
-                f"[{label}] source: repo  |  path: {h.path}  |  "
-                f"lines: {h.line_start}-{h.line_end}  |  match: {h.match_type}\n"
-                f"{snippet}\n"
-            )
-            snippet_lines.append(repo_line)
-            repo_snippet_lines.append(repo_line)
-            appended_repo += 1
-            sources.append(
-                {
-                    "source": "repo",
-                    "id": h.id,
-                    "id_short": label,
-                    "title": h.path,
-                    "type": "repo",
-                    "score": h.score,
-                    "snippet": snippet,
-                    "repo_name": h.repo_name,
-                    "path": h.path,
-                    "line_start": h.line_start,
-                    "line_end": h.line_end,
-                    "locator": label,
-                }
-            )
+            repo_row = {
+                "source": "repo",
+                "id": h.id,
+                "id_short": label,
+                "title": h.path,
+                "type": "repo",
+                "score": h.score,
+                "snippet": snippet,
+                "repo_name": h.repo_name,
+                "path": h.path,
+                "line_start": h.line_start,
+                "line_end": h.line_end,
+                "locator": label,
+                "match_type": h.match_type,
+            }
+            repo_rows.append(repo_row)
+            repo_sources.append(repo_row)
+            if not use_context_pack:
+                repo_line = (
+                    f"[{label}] source: repo  |  path: {h.path}  |  "
+                    f"lines: {h.line_start}-{h.line_end}  |  match: {h.match_type}\n"
+                    f"{snippet}\n"
+                )
+                snippet_lines.append(repo_line)
+                sources.append(dict(repo_row))
 
         if use_context_pack:
             from memo.context_pack import build_context_pack
-            from memo.quality import classify_quality
 
             pack = build_context_pack(
                 question,
                 hits,
                 snippet_chars=snippet_chars,
-                budget_chars=max(snippet_chars * max(k, 1) + 1200, 2000),
+                budget_chars=0,
+            )
+            context_header = (
+                f"Relevant context pack ({len(hits)} memories, {len(repo_rows)} repo snippets):\n\n"
+            )
+            budget_chars = max(
+                _context_budget_chars(snippet_chars=snippet_chars, k=k) - len(context_header),
+                0,
+            )
+            context_prompt, current_rows, supporting_rows, stale_rows, kept_expanded_rows, kept_repo_rows = (
+                _fit_context_pack_prompt(
+                    pack,
+                    expanded_rows=expanded_memory_rows,
+                    repo_rows=repo_rows,
+                    budget_chars=budget_chars,
+                    expanded_sensitive_omitted=expanded_sensitive_omitted,
+                )
             )
             user_msg = (
                 f"User question:\n{question}\n\n"
-                f"Relevant context pack ({len(hits)} memories, {appended_repo} repo snippets):\n\n"
-                f"{pack.to_prompt()}"
+                f"{context_header}"
+                f"{context_prompt}"
             )
-            if expanded_snippet_lines:
-                user_msg += "\n\nExpanded source memories:\n\n" + "\n---\n".join(expanded_snippet_lines)
-            if repo_snippet_lines:
-                user_msg += "\n\nRepository snippets:\n\n" + "\n---\n".join(repo_snippet_lines)
-            quality_by_id = {hit.id: classify_quality(hit) for hit in hits}
-            for source in sources:
-                if source.get("source") != "memory":
+            sources = []
+            for row in [*current_rows, *supporting_rows, *stale_rows]:
+                source = dict(primary_memory_sources.get(str(row["id"]) or ""))
+                if not source:
                     continue
-                decision = quality_by_id.get(str(source.get("id") or ""))
-                if decision is None:
-                    continue
-                source["quality_bucket"] = decision.bucket
-                source["quality_reasons"] = list(decision.reasons)
+                source["snippet"] = row["snippet"]
+                source["quality_bucket"] = row["quality_bucket"]
+                source["quality_reasons"] = list(row["quality_reasons"])
+                sources.append(source)
+            for row in kept_expanded_rows:
+                source = dict(expanded_memory_sources.get(str(row["id"]) or ""))
+                if source:
+                    source["snippet"] = row["snippet"]
+                    sources.append(source)
+            kept_repo_ids = {str(row["id"]) for row in kept_repo_rows}
+            sources.extend(dict(source) for source in repo_sources if str(source["id"]) in kept_repo_ids)
         else:
             user_msg = (
                 f"User question:\n{question}\n\n"
-                f"Relevant context ({len(hits)} memories, {appended_repo} repo snippets):\n\n"
+                f"Relevant context ({len(hits)} memories, {len(repo_rows)} repo snippets):\n\n"
                 + "\n---\n".join(snippet_lines)
             )
         if cache_key is not None and sources:

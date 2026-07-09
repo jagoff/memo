@@ -38,6 +38,14 @@ def _is_sensitive(hit: Any) -> bool:
     )
 
 
+def build_context_row(hit: Any, *, snippet_chars: int) -> dict[str, Any] | None:
+    """Build one prompt-ready memory row, omitting sensitive hits."""
+
+    if _is_sensitive(hit):
+        return None
+    return _snippet(hit, snippet_chars, classify_quality(hit))
+
+
 def _snippet(hit: Any, snippet_chars: int, decision: QualityDecision) -> dict[str, Any]:
     body = str(getattr(hit, "body", "") or "")
     snippet = body[:snippet_chars]
@@ -108,12 +116,11 @@ def build_context_pack(
     stale: list[dict[str, Any]] = []
     sensitive_omitted = 0
     for index, hit in enumerate(hits):
-        if _is_sensitive(hit):
+        row = build_context_row(hit, snippet_chars=snippet_chars)
+        if row is None:
             sensitive_omitted += 1
             continue
-        decision = classify_quality(hit)
-        row = _snippet(hit, snippet_chars, decision)
-        if decision.bucket == "stale_or_conflicting":
+        if row["quality_bucket"] == "stale_or_conflicting":
             stale.append(row)
         elif index == 0 or not current:
             current.append(row)

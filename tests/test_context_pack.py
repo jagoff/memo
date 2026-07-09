@@ -5,6 +5,8 @@ from typing import Any
 
 from memo.context_pack import build_context_pack
 from memo.memory import Memory
+from memo.memory.ask_ops import _fit_context_pack_prompt
+from memo.repo_index import RepoSearchHit
 
 
 @dataclass(frozen=True)
@@ -16,6 +18,25 @@ class _Hit:
     type: str = "note"
     tags: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+def _repo_hit(*, text: str) -> RepoSearchHit:
+    return RepoSearchHit(
+        id="repo-hit",
+        repo_id="r1",
+        repo_name="code-repo",
+        url="x",
+        ref="HEAD",
+        commit_sha="deadbeef",
+        file_id="f1",
+        path="src/foo.py",
+        language="python",
+        line_start=10,
+        line_end=12,
+        text=text,
+        score=0.6,
+        match_type="hybrid",
+    )
 
 
 def test_build_context_pack_separates_current_and_stale() -> None:
@@ -68,8 +89,6 @@ def test_ask_uses_context_pack_only_when_enabled(mem_with_stub, monkeypatch) -> 
 
 
 def test_context_pack_prompt_keeps_repo_snippets(mem_with_stub, monkeypatch) -> None:
-    from memo.repo_index import RepoSearchHit
-
     mem_with_stub.save(content="alpha body", title="Alpha")
 
     monkeypatch.setattr(
@@ -78,24 +97,7 @@ def test_context_pack_prompt_keeps_repo_snippets(mem_with_stub, monkeypatch) -> 
     monkeypatch.setattr(
         Memory,
         "repo_search",
-        lambda self, q, **kw: [
-            RepoSearchHit(
-                id="repo-hit",
-                repo_id="r1",
-                repo_name="code-repo",
-                url="x",
-                ref="HEAD",
-                commit_sha="deadbeef",
-                file_id="f1",
-                path="src/foo.py",
-                language="python",
-                line_start=10,
-                line_end=12,
-                text="def alpha(): pass",
-                score=0.6,
-                match_type="hybrid",
-            )
-        ],
+        lambda self, q, **kw: [_repo_hit(text="def alpha(): pass")],
     )
 
     _, sources, user_msg, _ = mem_with_stub._build_ask_context(
@@ -110,6 +112,166 @@ def test_context_pack_prompt_keeps_repo_snippets(mem_with_stub, monkeypatch) -> 
     assert "Relevant context pack" in user_msg
     assert "Repository snippets:" in user_msg
     assert any(source["source"] == "repo" for source in sources)
+
+
+def test_context_pack_final_budget_enforces_budget_with_expanded_and_repo(
+    mem_with_stub, monkeypatch
+) -> None:
+    current = mem_with_stub.save(content="current " + ("A" * 900), title="Current")
+    support = mem_with_stub.save(content="support " + ("B" * 900), title="Support")
+    stale = mem_with_stub.save(
+        content="stale " + ("C" * 900),
+        title="Stale",
+        extra={"invalidated": True},
+    )
+    expanded = mem_with_stub.save(content="expanded " + ("D" * 900), title="Expanded")
+    synth = mem_with_stub.save(
+        content="synthesis " + ("E" * 900),
+        title="Synthesis",
+        type_="synthesis",
+        extra={"synthesis_sources": [expanded.id]},
+    )
+
+    monkeypatch.setenv("MEMO_ASK_EXPAND_SYNTHESIS", "1")
+    monkeypatch.setattr(
+        mem_with_stub,
+        "search",
+        lambda *args, **kwargs: [
+            mem_with_stub.get(current.id),
+            mem_with_stub.get(support.id),
+            mem_with_stub.get(stale.id),
+            mem_with_stub.get(synth.id),
+        ],
+    )
+    monkeypatch.setattr(
+        type(mem_with_stub.store), "list_repo_sources", lambda self, **kw: [{"name": "code-repo"}]
+    )
+    monkeypatch.setattr(Memory, "repo_search", lambda self, q, **kw: [_repo_hit(text="R" * 900)])
+
+    _, sources, user_msg, _ = mem_with_stub._build_ask_context(
+        "alpha?",
+        k=1,
+        type_=None,
+        snippet_chars=250,
+        include_repos=True,
+        use_context_pack=True,
+    )
+
+    context_text = user_msg.split("Relevant context pack", 1)[1]
+    assert len(context_text) <= 2000
+    assert "Expanded source memories:" in context_text
+    assert "Repository snippets:" in context_text
+    assert any(source.get("expanded_from") == synth.id for source in sources)
+    assert any(source["source"] == "repo" for source in sources)
+
+
+def test_context_pack_budget_trims_supporting_and_stale_before_expanded_and_repo() -> None:
+    pack = build_context_pack(
+        "q",
+        [
+            _Hit("current", 0.8, "Current", "A" * 200),
+            _Hit("support", 0.7, "Support", "B" * 200),
+            _Hit("stale", 0.6, "Stale", "C" * 200, extra={"invalidated": True}),
+        ],
+        snippet_chars=200,
+        budget_chars=0,
+    )
+    expanded_rows = [
+        {
+            "id": "expanded",
+            "id_short": "expanded",
+            "title": "Expanded",
+            "type": "note",
+            "snippet": "D" * 200,
+            "quality_bucket": "current",
+            "quality_reasons": [],
+            "context_note": "source-of [synth]",
+        }
+    ]
+    repo_rows = [
+        {
+            "id": "repo",
+            "id_short": "repo-hit",
+            "path": "src/foo.py",
+            "line_start": 10,
+            "line_end": 12,
+            "match_type": "hybrid",
+            "snippet": "R" * 200,
+        }
+    ]
+
+    prompt, current_rows, supporting_rows, stale_rows, kept_expanded_rows, kept_repo_rows = (
+        _fit_context_pack_prompt(
+            pack,
+            expanded_rows=expanded_rows,
+            repo_rows=repo_rows,
+            budget_chars=1100,
+        )
+    )
+
+    assert len(prompt) <= 1100
+    assert len(current_rows) == 1
+    assert supporting_rows == []
+    assert stale_rows == []
+    assert len(kept_expanded_rows) == 1
+    assert len(kept_repo_rows) == 1
+
+
+def test_context_pack_omits_sensitive_expanded_memory(mem_with_stub, monkeypatch) -> None:
+    sensitive = mem_with_stub.save(
+        content="top secret",
+        title="Sensitive source",
+        type_="secret",
+    )
+    synth = mem_with_stub.save(
+        content="synthesis body",
+        title="Synthesis",
+        type_="synthesis",
+        extra={"synthesis_sources": [sensitive.id]},
+    )
+
+    monkeypatch.setenv("MEMO_ASK_EXPAND_SYNTHESIS", "1")
+    monkeypatch.setattr(mem_with_stub, "search", lambda *args, **kwargs: [mem_with_stub.get(synth.id)])
+
+    _, sources, user_msg, _ = mem_with_stub._build_ask_context(
+        "alpha?",
+        k=2,
+        type_=None,
+        snippet_chars=120,
+        include_repos=False,
+        use_context_pack=True,
+    )
+
+    assert sensitive.id[:8] not in user_msg
+    assert "sensitive expanded source memory omitted" in user_msg
+    assert all(source.get("expanded_from") != synth.id for source in sources)
+
+
+def test_context_pack_expanded_memory_gets_quality_metadata(mem_with_stub, monkeypatch) -> None:
+    expanded = mem_with_stub.save(content="expanded body", title="Expanded source")
+    synth = mem_with_stub.save(
+        content="synthesis body",
+        title="Synthesis",
+        type_="synthesis",
+        extra={"synthesis_sources": [expanded.id]},
+    )
+
+    monkeypatch.setenv("MEMO_ASK_EXPAND_SYNTHESIS", "1")
+    monkeypatch.setattr(mem_with_stub, "search", lambda *args, **kwargs: [mem_with_stub.get(synth.id)])
+
+    _, sources, user_msg, _ = mem_with_stub._build_ask_context(
+        "alpha?",
+        k=2,
+        type_=None,
+        snippet_chars=120,
+        include_repos=False,
+        use_context_pack=True,
+    )
+
+    expanded_source = next(source for source in sources if source.get("expanded_from") == synth.id)
+    assert expanded.id[:8] in user_msg
+    assert expanded_source["quality_bucket"] == "current"
+    assert isinstance(expanded_source["quality_reasons"], list)
 
 
 def test_chat_ask_keeps_standard_prompt_when_context_pack_flag_is_on(
