@@ -105,7 +105,7 @@ def test_mcp_full_profile_registers_every_decorated_server_tool(
     registered = _mcp_tool_names(tmp_path, monkeypatch, "full")
 
     assert expected <= registered
-    assert len(registered) == 124
+    assert len(registered) == 125
 
 
 @pytest.mark.parametrize(
@@ -113,7 +113,7 @@ def test_mcp_full_profile_registers_every_decorated_server_tool(
     [
         ("agent", 13),
         ("core", 33),
-        ("full", 124),
+        ("full", 125),
     ],
 )
 def test_mcp_profile_tool_counts(

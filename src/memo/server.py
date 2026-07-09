@@ -36,6 +36,7 @@ from memo import server_backup as _srv_backup
 from memo import server_cache as _srv_cache
 from memo import server_collaborative as _srv_collaborative
 from memo import server_consolidate as _srv_consolidate
+from memo import server_context_pack as _srv_context_pack
 from memo import server_contextual as _srv_contextual
 from memo import server_contradict as _srv_contradict
 from memo import server_core_history as _srv_core_history
@@ -136,7 +137,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     # Stable and advanced domain tool modules register their @server.tool()
     # closures here. Presence on the MCP surface does not by itself mean a
     # feature is part of memo's stable core contract; see experimental_index.md.
-    # Skip when MEMO_MCP_SLIM=1 — reduces 124 tools to the 33-tool core surface
+    # Skip when MEMO_MCP_SLIM=1 — reduces 125 tools to the 33-tool core surface
     # for local/constrained LLMs where tool-definition tokens are expensive.
     from memo.surface import mcp_include_advanced_tools
 
@@ -152,6 +153,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         _srv_related.register(server, memory)
         _srv_around.register(server, memory)
         _srv_health.register(server, memory)
+        _srv_context_pack.register(server, memory)
         _srv_contextual.register(server, memory)
         _srv_links.register(server, memory)
         _srv_version.register(server, memory)

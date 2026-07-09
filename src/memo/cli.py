@@ -110,7 +110,7 @@ from memo.cli_runtime import (
     uninstall_watcher_cmd,
     watch,
 )
-from memo.cli_search import ask, chat_ask, embed_cmd, recall, rerank_cmd, search
+from memo.cli_search import ask, chat_ask, context_pack_cmd, embed_cmd, recall, rerank_cmd, search
 from memo.cli_secret import secret as secret_group
 from memo.cli_session import continuity_cmd, session_group
 from memo.cli_stats import stats
@@ -135,7 +135,7 @@ from memo.setup import run_picker, write_config_file
 _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
         "Core",
-        ["save", "search", "ask", "get", "edit", "rename", "delete", "list"],
+        ["save", "search", "ask", "context-pack", "get", "edit", "rename", "delete", "list"],
     ),
     (
         "Recall & Hooks",
@@ -405,6 +405,7 @@ cli.add_command(save)
 cli.add_command(search)
 cli.add_command(recall)
 cli.add_command(ask)
+cli.add_command(context_pack_cmd)
 cli.add_command(embed_cmd)
 cli.add_command(chat_ask)
 cli.add_command(chat_group)

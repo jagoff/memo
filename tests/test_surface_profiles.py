@@ -177,7 +177,7 @@ def test_token_cost_full_is_not_reduced() -> None:
 
     for profile in ("full", "default"):
         count, cost, reduced = mcp_profile_token_cost(profile)
-        assert count == "124"
+        assert count == "125"
         assert cost == "~15k"
         assert reduced is False
 

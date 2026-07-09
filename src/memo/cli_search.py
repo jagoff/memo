@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import asdict
 
 import click
 from rich.panel import Panel
@@ -214,6 +215,55 @@ def ask(
                 f"  [dim][{s['id_short']}][/dim] {s['title'][:60]}  "
                 f"[dim](score {s['score']:.3f})[/dim]"
             )
+
+
+@click.command(name="context-pack")
+@click.argument("question")
+@click.option(
+    "--k", default=5, type=int, show_default=True, help="Top-K memories to interpret as a context pack."
+)
+@click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
+@click.option(
+    "--snippet-chars",
+    default=800,
+    type=int,
+    show_default=True,
+    help="Preview length for retrieved memory snippets.",
+)
+@click.option("--json", "as_json", is_flag=True)
+def context_pack_cmd(
+    question: str,
+    k: int,
+    type_: str | None,
+    snippet_chars: int,
+    as_json: bool,
+) -> None:
+    """Build an explicit composed context pack without running the LLM."""
+    from memo.context_pack import build_context_pack
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    hits = mem.search(
+        question,
+        limit=k,
+        type_=type_,
+        mode="hybrid",
+        disable_reranker=True,
+        read_through=True,
+        quality_rerank=True,
+    )
+    pack = build_context_pack(question, hits, snippet_chars=snippet_chars)
+    payload = asdict(pack)
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    console.print(
+        Panel.fit(
+            pack.to_prompt(),
+            title=f"context-pack: {question[:60]}",
+            border_style="cyan",
+        )
+    )
 
 
 @click.command(name="embed")
