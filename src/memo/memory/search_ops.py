@@ -72,6 +72,7 @@ class _SearchOpsMixin(_MemoryBase):
         entity_boost: bool | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        quality_rerank: bool | None = None,
         _trace: list[dict[str, Any]] | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
@@ -105,6 +106,9 @@ class _SearchOpsMixin(_MemoryBase):
                 discard. The recall hook + briefing pass `REFERENCE_TYPES`
                 (see `memo.tiers`) so bulk vault material stays searchable on
                 demand but never drowns durable knowledge in the prompt.
+            quality_rerank: Explicit opt-in for quality-aware reranking on
+                consumer-facing search paths. Ambient recall leaves this off
+                even when the feature flag is enabled.
         """
 
         def _add_trace(stage: str, **data: Any) -> None:
@@ -540,7 +544,7 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._apply_health_scores(out)
             _add_trace("health", input_count=before, output_count=len(out))
-        if out and flag_bool("MEMO_QUALITY_RERANK"):
+        if out and quality_rerank and flag_bool("MEMO_QUALITY_RERANK"):
             before = len(out)
             out = self._apply_quality_rerank(out)
             _add_trace("quality_rerank", input_count=before, output_count=len(out))

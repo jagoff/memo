@@ -84,7 +84,14 @@ class _AskOpsMixin(_MemoryBase):
             seen = {h.id for h in hits}
             added: list[MemoryRecord] = []
             for q in queries:
-                for h in self.search(q, limit=k, type_=type_, mode="hybrid", disable_reranker=True):
+                for h in self.search(
+                    q,
+                    limit=k,
+                    type_=type_,
+                    mode="hybrid",
+                    disable_reranker=True,
+                    quality_rerank=True,
+                ):
                     if h.id in seen or len(added) >= k:
                         continue
                     seen.add(h.id)
@@ -194,6 +201,7 @@ class _AskOpsMixin(_MemoryBase):
             disable_reranker=disable_reranker,
             read_through=True,
             recency=recency_intent,
+            quality_rerank=True,
         )
         repo_hits = []
         if include_repos and self.store.list_repo_sources(limit=1):

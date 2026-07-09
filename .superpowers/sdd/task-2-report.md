@@ -49,3 +49,33 @@ Branch: `master`
 
 ## Commit
 - Commit message: `feat: wire quality rerank into search`
+
+## Review Fixes
+
+Status: DONE  
+Date: 2026-07-08
+
+### Findings addressed
+1. Moved quality rerank behind an explicit per-call opt-in on `Memory.search(...)`.
+   - Added keyword-only `quality_rerank: bool | None = None` in `src/memo/memory/search_ops.py`.
+   - The shared search path now applies the rerank stage only when both conditions hold:
+     - the caller explicitly opted in with `quality_rerank=True`
+     - `MEMO_QUALITY_RERANK=1`
+   - Ambient recall and other existing `search()` callers remain unchanged by default.
+2. Wired explicit surfaces instead of the shared ambient path.
+   - `src/memo/cli_search.py` now opts `memo search` into quality rerank.
+   - `src/memo/memory/ask_ops.py` now opts the ask retrieval path, including multi-round refinement searches, into quality rerank.
+   - Recall hook / daemon call sites were not changed.
+3. Replaced helper-only coverage with real pipeline coverage.
+   - `tests/test_quality_search.py` now verifies:
+     - `search_with_trace()` does not emit `quality_rerank` by default, even when the flag is on
+     - `search_with_trace()` emits `quality_rerank` only when explicit opt-in and the flag are both on
+     - the ask retrieval context calls `search(..., quality_rerank=True)`
+
+### Verification
+- `uv run --no-sync pytest tests/test_quality.py tests/test_quality_search.py -v`
+  - Result: `10 passed`
+- `uv run --no-sync pytest tests/test_cli_debug_recall.py::test_rank_hits_explain_none_path_is_identical -v`
+  - Result: `1 passed`
+- `uv run --no-sync ruff check src/memo/memory/search_ops.py src/memo/memory/ask_ops.py src/memo/cli_search.py tests/test_quality_search.py`
+  - Result: `All checks passed`

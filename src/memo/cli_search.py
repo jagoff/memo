@@ -126,7 +126,14 @@ def search(
     mem = _get_memory(cfg)
     disable_reranker = use_rerank is False
     t0 = int(time.time() * 1000)
-    hits = mem.search(query, limit=limit, type_=type_, mode=mode, disable_reranker=disable_reranker)
+    hits = mem.search(
+        query,
+        limit=limit,
+        type_=type_,
+        mode=mode,
+        disable_reranker=disable_reranker,
+        quality_rerank=True,
+    )
     hit_dicts = _compact_hit_dicts([h.to_dict() for h in hits], body_chars)
     log_cli_consult(cfg, verb="search", query=query, hits=hit_dicts, t0_ms=t0, source=source)
     if as_json:
