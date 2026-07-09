@@ -642,18 +642,21 @@ class _AskOpsMixin(_MemoryBase):
             )
             sources = []
             for row in [*current_rows, *supporting_rows, *stale_rows]:
-                source = dict(primary_memory_sources.get(str(row["id"]) or ""))
-                if not source:
+                source_data = primary_memory_sources.get(str(row["id"]) or "")
+                if not source_data:
                     continue
+                source = dict(source_data)
                 source["snippet"] = row["snippet"]
                 source["quality_bucket"] = row["quality_bucket"]
                 source["quality_reasons"] = list(row["quality_reasons"])
                 sources.append(source)
             for row in kept_expanded_rows:
-                source = dict(expanded_memory_sources.get(str(row["id"]) or ""))
-                if source:
-                    source["snippet"] = row["snippet"]
-                    sources.append(source)
+                source_data = expanded_memory_sources.get(str(row["id"]) or "")
+                if not source_data:
+                    continue
+                source = dict(source_data)
+                source["snippet"] = row["snippet"]
+                sources.append(source)
             kept_repo_ids = {str(row["id"]) for row in kept_repo_rows}
             sources.extend(dict(source) for source in repo_sources if str(source["id"]) in kept_repo_ids)
         else:

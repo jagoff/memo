@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, is_dataclass
 from dataclasses import replace as dc_replace
-from typing import Any
+from typing import Any, cast
 
 from memo.errors import ValidationError
 from memo.tiers import VerificationState
@@ -103,7 +103,7 @@ def apply_quality_rerank(
 
         try:
             if is_dataclass(hit):
-                ranked = dc_replace(hit, score=score)
+                ranked = dc_replace(cast(Any, hit), score=score)
             else:
                 ranked = copy.copy(hit)
                 ranked.score = score
