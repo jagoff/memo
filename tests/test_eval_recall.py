@@ -225,7 +225,14 @@ def test_best_row_picks_highest_precision_then_lowest_noise():
 
 def test_gate_metrics_returns_best_pair():
     rows = _rows((0.4, 0.3), (0.9, 0.1))
-    assert eval_recall.gate_metrics(rows) == {"precision_at_k": 0.9, "noise_at_k": 0.1}
+    assert eval_recall.gate_metrics(rows) == {
+        "precision_at_k": 0.9,
+        "noise_at_k": 0.1,
+        "stale_at_k": 0.0,
+        "canonical_hit_at_k": 0.0,
+        "pack_answerability": None,
+        "compaction_safety": None,
+    }
 
 
 def test_check_gate_passes_when_metrics_hold():
@@ -1128,3 +1135,40 @@ def test_run_config_reports_ranked_metrics(mock_memory):
     assert row.recall_at_k == 1.0
     assert 0.0 < row.mrr <= 1.0
     assert 0.0 < row.ndcg_at_k <= 1.0
+
+
+def test_run_config_reports_quality_metrics() -> None:
+    from dataclasses import dataclass, field
+    from typing import Any
+
+    @dataclass
+    class _Hit:
+        id: str
+        score: float | None
+        title: str = ""
+        body: str = ""
+        type: str = "note"
+        tags: list[str] = field(default_factory=list)
+        path: str = "p.md"
+        extra: dict[str, Any] = field(default_factory=dict)
+
+    class _Mem:
+        def search(self, *a: Any, **k: Any) -> list[Any]:
+            return [
+                _Hit("stale", 0.9, title="Old", extra={"superseded_by": "canonical"}),
+                _Hit("canonical", 0.8, title="Canonical", extra={"canonical_id": "canonical"}),
+            ]
+
+    labels = LabelSet(prompts=[Prompt("q", relevant=True)])
+    row = eval_recall.run_config(
+        _Mem(),
+        eval_recall.Cfg("X vec/0.0/keep", "vec", 0.0, exclude_archived=False),
+        2,
+        labels,
+    )
+    metrics = eval_recall.gate_metrics([row])
+
+    assert metrics["stale_at_k"] == 0.5
+    assert metrics["canonical_hit_at_k"] == 1.0
+    assert metrics["pack_answerability"] is None
+    assert metrics["compaction_safety"] is None

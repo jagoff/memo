@@ -9,6 +9,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- Design and gated implementation path for Memory Quality Loop:
+  quality-aware reranking, context packs, and reversible quality compaction.
+
 ## [2.12.17] - 2026-07-06
 
 ### Fixed

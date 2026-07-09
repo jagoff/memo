@@ -413,8 +413,39 @@ class Row:
     recall_at_k: float = 0.0
     ndcg_at_k: float = 0.0
     mrr: float = 0.0
+    stale_at_k: float = 0.0
+    canonical_hit_at_k: float = 0.0
+    pack_answerability: float | None = None
+    compaction_safety: float | None = None
     latency_ms_p50: float = 0.0
     detail: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _quality_eval_metrics(top_hits: list[Any], *, k: int) -> dict[str, float | None]:
+    visible = top_hits[:k]
+
+    def _extra(hit: Any) -> dict[str, Any]:
+        raw = getattr(hit, "extra", None)
+        return raw if isinstance(raw, dict) else {}
+
+    stale_hits = [
+        hit
+        for hit in visible
+        if _extra(hit).get("superseded_by") or _extra(hit).get("invalidated")
+    ]
+    canonical_hits = [
+        hit
+        for hit in visible
+        if _extra(hit).get("canonical_id") or getattr(hit, "type", "") in {"synthesis", "profile"}
+    ]
+    return {
+        "stale_at_k": len(stale_hits) / max(len(visible), 1),
+        "canonical_hit_at_k": 1.0 if canonical_hits else 0.0,
+        # These require dedicated eval labels/fixtures for context-pack quality
+        # and reversible compaction outcomes, which Task 7 does not add.
+        "pack_answerability": None,
+        "compaction_safety": None,
+    }
 
 
 def _scored_prompts(labels: LabelSet) -> int:
@@ -460,6 +491,8 @@ def _run_config_inner(
     rk_sum = 0.0
     ndcg_sum = 0.0
     mrr_sum = 0.0
+    stale_sum = 0.0
+    canonical_sum = 0.0
     ranked_total = 0
     detail: list[dict[str, Any]] = []
     n_prompts = len(labels.prompts) or 1
@@ -554,12 +587,15 @@ def _run_config_inner(
         if cfg.exclude_archived:
             ranked = [h for h in ranked if not _is_noise(h, labels)]
         top = ranked[:k]
+        quality_metrics = _quality_eval_metrics(top, k=k)
         if prompt.expect_ids:
             ranked_ids = [getattr(h, "id", "") or "" for h in top]
             rk_sum += recall_at_k(ranked_ids, prompt.expect_ids, k)
             ndcg_sum += ndcg_at_k(ranked_ids, prompt.expect_ids, k)
             mrr_sum += mrr_at_k(ranked_ids, prompt.expect_ids, k)
             ranked_total += 1
+        stale_sum += float(quality_metrics["stale_at_k"] or 0.0)
+        canonical_sum += float(quality_metrics["canonical_hit_at_k"] or 0.0)
 
         def _hit_is_noise(h: Any, _avoid_ids: list[str] = prompt.avoid_ids) -> bool:
             return _is_noise(h, labels) or _id_matches(getattr(h, "id", ""), _avoid_ids)
@@ -610,6 +646,10 @@ def _run_config_inner(
         recall_at_k=round(rk_sum / ranked_total, 3) if ranked_total else 0.0,
         ndcg_at_k=round(ndcg_sum / ranked_total, 3) if ranked_total else 0.0,
         mrr=round(mrr_sum / ranked_total, 3) if ranked_total else 0.0,
+        stale_at_k=round(stale_sum / n_prompts, 3) if n_prompts else 0.0,
+        canonical_hit_at_k=round(canonical_sum / n_prompts, 3) if n_prompts else 0.0,
+        pack_answerability=None,
+        compaction_safety=None,
         latency_ms_p50=round(lat[len(lat) // 2], 1) if lat else 0.0,
         detail=detail,
     )
@@ -738,10 +778,17 @@ class GateResult:
     baseline_noise: float
 
 
-def gate_metrics(rows: list[Row]) -> dict[str, float]:
+def gate_metrics(rows: list[Row]) -> dict[str, Any]:
     """The single (precision@K, noise@K) pair the gate tracks — the best config."""
     b = best_row(rows)
-    return {"precision_at_k": b.precision_at_k, "noise_at_k": b.noise_at_k}
+    return {
+        "precision_at_k": b.precision_at_k,
+        "noise_at_k": b.noise_at_k,
+        "stale_at_k": b.stale_at_k,
+        "canonical_hit_at_k": b.canonical_hit_at_k,
+        "pack_answerability": b.pack_answerability,
+        "compaction_safety": b.compaction_safety,
+    }
 
 
 def check_gate(rows: list[Row], baseline: dict[str, float], *, tol: float = 1e-9) -> GateResult:
