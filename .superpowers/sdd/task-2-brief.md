@@ -1,59 +1,121 @@
-# Task 2: L1 JSON Crushing on Ingest + Retrieval Command
+### Task 2: Wire Quality Rerank Into Explicit Search
 
-**Context:** Wave 1, Task 2 of 4. Task 1 (crusher infrastructure) is complete. This task wires the crusher into the capture pipeline, adds the retrieve command, and registers an MCP tool for LLM access.
-
-**What to build:** JSON compression on ingest + retrieval command.
-
-**Deliverables:**
-1. `maybe_crush_json_capture()` function in `src/memo/capture_core.py`
-2. `src/memo/cli_retrieve.py` — new retrieve command module
-3. Wire retrieve into `src/memo/cli.py` and `src/memo/server.py`
-4. Tests: 5+ covering crusher logic + retrieval
+**Files:**
+- Modify: `src/memo/memory/search_scoring_ops.py`
+- Modify: `src/memo/memory/search_ops.py`
+- Test: `tests/test_quality_search.py`
 
 **Interfaces:**
+- Consumes: `memo.quality.apply_quality_rerank(hits, explain=None)`
+- Produces: `_SearchScoringMixin._apply_quality_rerank(results: list[MemoryRecord]) -> list[MemoryRecord]`
 
-**Consumes from Task 1:**
-- `CrushCache(state_dir)` class (cache/retrieve/evict_expired methods)
-- `crush_marker(dropped_count, hash_val)` function
-- Flags: `flag_crusher_enabled()`, `flag_crusher_keep_ratio()`, `flag_crusher_cache_ttl_days()`
+- [ ] **Step 1: Write failing search integration tests**
 
-**Produces (for Task 3+):**
-- `maybe_crush_json_capture(content: str, context: str, config: Config) -> tuple[str, str | None]`
-  - Returns: (crushed_content, crush_hash if crushed else None)
-- CLI command: `memo retrieve <<memo-crush:HASH>>`
-- MCP tool: `memo_crush_retrieve(hash_marker: str) -> dict`
+Add `tests/test_quality_search.py`:
 
-**Global Constraints:**
-- Token gate requirement: Wave 1 must show ≥5% actual token savings before v2.13.0 ship
-- Flags default to ON (crusher enabled by default)
-- Crusher only activates on JSON arrays ≥10 rows
-- Scoring uses 0.5 placeholder (TBD: integrate real BM25+vec scorer)
-- Reversible: original JSON stored in cache, marker + hash in crushed output
-- No regressions in existing tests
+```python
+from __future__ import annotations
 
-**Key Details:**
-- JSON detection: `[...]` structure check, no schema validation
-- Keep ratio: default 0.2 (top 20% of rows by score)
-- Marker format: `{"_compressed": "N rows offloaded — ask `memo retrieve <<memo-crush:HASH>>` for full"}`
-- Retrieve output: JSON `{"original": json_string, "hash": hash_val}`
-- Scorer placeholder in code (line 389–399 of plan): call real hybrid_score TBD
+from dataclasses import replace
 
-**Steps:** Follow the plan exactly (Section Task 2, Step 2.1–2.3). TDD workflow: write tests RED, implement GREEN, commit after each step passes.
+from memo.memory.record import MemoryRecord
+from memo.memory.search_scoring_ops import _SearchScoringMixin
+from memo.verification import VerificationState
 
-**Test locations:**
-- `test_maybe_crush_json_capture_detects_json` — JSON detection
-- `test_maybe_crush_json_respects_disable_flag` — flag gating
-- `test_crush_preserves_structure` — top-K + marker format
-- `test_retrieve_command_returns_original` — retrieve via CLI
-- `test_mcp_tool_retrieves_cached_json` — MCP tool integration
 
-**Report:** Write to `.superpowers/sdd/task-2-report.md` with sections:
-- Completed (files modified/created)
-- Tests (command run + output summary)
-- Commits (git log output)
-- Self-review (spec compliance vs plan, scorer integration status, any concerns)
-- Concerns (if any)
+def _rec(id_: str, score: float, **extra):
+    return MemoryRecord(
+        id=id_,
+        path=f"{id_}.md",
+        title=id_,
+        type="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="body",
+        extra=dict(extra),
+        score=score,
+    )
+
+
+class _Harness(_SearchScoringMixin):
+    pass
+
+
+def test_apply_quality_rerank_is_flag_gated(monkeypatch) -> None:
+    hits = [_rec("old", 0.9, superseded_by="new"), _rec("new", 0.7)]
+    monkeypatch.setenv("MEMO_QUALITY_RERANK", "0")
+    assert [h.id for h in _Harness()._apply_quality_rerank(hits)] == ["old", "new"]
+
+    monkeypatch.setenv("MEMO_QUALITY_RERANK", "1")
+    out = _Harness()._apply_quality_rerank(hits)
+    assert [h.id for h in out] == ["new", "old"]
+
+
+def test_apply_quality_rerank_boosts_verified(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_QUALITY_RERANK", "1")
+    verified = replace(_rec("verified", 0.7), verification_state=VerificationState.VERIFIED)
+    out = _Harness()._apply_quality_rerank([_rec("plain", 0.72), verified])
+    assert out[0].id == "verified"
+```
+
+- [ ] **Step 2: Run test to verify failure**
+
+Run: `uv run --no-sync pytest tests/test_quality_search.py -v`
+
+Expected: FAIL with `AttributeError: '_Harness' object has no attribute '_apply_quality_rerank'`.
+
+- [ ] **Step 3: Add search-scoring helper**
+
+In `src/memo/memory/search_scoring_ops.py`, add this method to `_SearchScoringMixin` after `_apply_contradict_penalty`:
+
+```python
+    def _apply_quality_rerank(self, results: list[MemoryRecord]) -> list[MemoryRecord]:
+        """Quality-aware reranking for explicit search/ask paths.
+
+        Default-off via MEMO_QUALITY_RERANK. Best-effort: malformed optional
+        quality metadata never breaks retrieval.
+        """
+        if not flag_bool("MEMO_QUALITY_RERANK"):
+            return results
+        try:
+            from memo.quality import apply_quality_rerank
+
+            return apply_quality_rerank(results)
+        except Exception as exc:
+            _log.debug("quality_rerank failed: %s", exc)
+            return results
+```
+
+- [ ] **Step 4: Wire helper into search pipeline**
+
+In `src/memo/memory/search_ops.py`, after the existing health-score block and before co-recall/reference-floor logic, add:
+
+```python
+        if out and flag_bool("MEMO_QUALITY_RERANK"):
+            before = len(out)
+            out = self._apply_quality_rerank(out)
+            _add_trace("quality_rerank", input_count=before, output_count=len(out))
+```
+
+- [ ] **Step 5: Run focused tests**
+
+Run: `uv run --no-sync pytest tests/test_quality.py tests/test_quality_search.py -v`
+
+Expected: PASS.
+
+- [ ] **Step 6: Run search trace smoke**
+
+Run: `uv run --no-sync pytest tests/test_cli_debug_recall.py::test_rank_hits_explain_none_path_is_identical -v`
+
+Expected: PASS; this confirms the recall ranking pure path is unchanged.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/memo/memory/search_scoring_ops.py src/memo/memory/search_ops.py tests/test_quality_search.py
+git commit -m "feat: wire quality rerank into search"
+```
 
 ---
 
-**Read the plan's Task 2 section (lines 276–559) for exact code, step-by-step requirements, and test commands.**
