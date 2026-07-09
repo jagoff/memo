@@ -65,7 +65,12 @@ def test_memo_search_routes_file_param_to_search_by_file(tmp_cfg):
 
     tools["memo_search"](query="daemon timeout", file="recall_socket.py", limit=5)
     mem.search_by_file.assert_called_once_with(
-        "daemon timeout", file="recall_socket.py", limit=5, mode="hybrid", type_=None
+        "daemon timeout",
+        file="recall_socket.py",
+        limit=5,
+        mode="hybrid",
+        type_=None,
+        quality_rerank=True,
     )
     mem.search.assert_not_called()
 
@@ -98,7 +103,57 @@ def test_memo_search_does_not_run_capture_inline(tmp_cfg, monkeypatch):
         mode="hybrid",
         date_from=None,
         date_to=None,
+        quality_rerank=True,
     )
+
+
+def test_memo_search_trace_opts_into_quality_rerank(tmp_cfg):
+    from memo.memory import Memory
+    from memo.server_core_search import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.search_with_trace.return_value = {"hits": [], "trace": []}
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    out = tools["memo_search_trace"](query="alpha", limit=3)
+
+    assert out == {"hits": [], "trace": []}
+    mem.search_with_trace.assert_called_once_with(
+        "alpha",
+        limit=3,
+        type_=None,
+        mode="hybrid",
+        quality_rerank=True,
+    )
+
+
+def test_search_by_file_forwards_quality_rerank(mock_memory, monkeypatch):
+    hit = mock_memory.save(
+        content="Recall socket change.",
+        title="Recall socket",
+        extra={"files_modified": ["src/memo/recall_socket.py"]},
+    )
+    seen: dict[str, object] = {}
+
+    def _fake_search(query: str, **kwargs):
+        seen["query"] = query
+        seen.update(kwargs)
+        return [hit]
+
+    monkeypatch.setattr(mock_memory, "search", _fake_search)
+
+    out = mock_memory.search_by_file(
+        "socket",
+        file="recall_socket.py",
+        limit=1,
+        quality_rerank=True,
+    )
+
+    assert [r.id for r in out] == [hit.id]
+    assert seen["query"] == "socket"
+    assert seen["quality_rerank"] is True
 
 
 def test_memo_ask_does_not_run_capture_inline(tmp_cfg, monkeypatch):

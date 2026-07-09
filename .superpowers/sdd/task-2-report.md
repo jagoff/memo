@@ -79,3 +79,30 @@ Date: 2026-07-08
   - Result: `1 passed`
 - `uv run --no-sync ruff check src/memo/memory/search_ops.py src/memo/memory/ask_ops.py src/memo/cli_search.py tests/test_quality_search.py`
   - Result: `All checks passed`
+
+## Review Fixes 2
+
+Status: DONE  
+Date: 2026-07-08
+
+### Findings addressed
+1. Wired explicit MCP search surfaces into the existing per-call quality-rerank opt-in.
+   - `src/memo/server_core_search.py` now passes `quality_rerank=True` from:
+     - `memo_search(...)` when calling `memory.search(...)`
+     - `memo_search(...)` when calling `memory.search_by_file(...)`
+     - `memo_search_trace(...)` when calling `memory.search_with_trace(...)`
+   - Ambient recall remains unchanged because the opt-in is still only applied by explicit callers.
+2. Preserved wrapper behavior in `Memory.search_by_file(...)` while carrying the opt-in through.
+   - Added keyword-only `quality_rerank: bool | None = None` to `src/memo/memory/search_ops.py`.
+   - Forwarded the value to the fallback plain-search path and the by-file candidate-pool search.
+
+### Focused coverage
+- Updated `tests/test_search_by_file.py` to verify:
+  - MCP `memo_search(file=...)` forwards `quality_rerank=True` to `search_by_file(...)`
+  - MCP `memo_search(...)` forwards `quality_rerank=True` to `search(...)`
+  - MCP `memo_search_trace(...)` forwards `quality_rerank=True` to `search_with_trace(...)`
+  - `Memory.search_by_file(...)` forwards `quality_rerank=True` to its internal `search(...)` call
+
+### Verification
+- `uv run --no-sync pytest tests/test_quality_search.py tests/test_search_by_file.py tests/test_server.py -v`
+- `uv run --no-sync ruff check src/memo/server_core_search.py src/memo/memory/search_ops.py tests/test_search_by_file.py`

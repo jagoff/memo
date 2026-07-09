@@ -121,9 +121,24 @@ def register(server: Any, memory: Memory) -> None:
         t0 = now_ms()
         out: list[dict[str, Any]] = []
         records = (
-            memory.search_by_file(query, file=file, limit=limit, mode=mode, type_=type)
+            memory.search_by_file(
+                query,
+                file=file,
+                limit=limit,
+                mode=mode,
+                type_=type,
+                quality_rerank=True,
+            )
             if file
-            else memory.search(query, limit=limit, type_=type, mode=mode, date_from=date_from, date_to=date_to)
+            else memory.search(
+                query,
+                limit=limit,
+                type_=type,
+                mode=mode,
+                date_from=date_from,
+                date_to=date_to,
+                quality_rerank=True,
+            )
         )
         for r in records:
             d = r.to_dict()
@@ -158,7 +173,13 @@ def register(server: Any, memory: Memory) -> None:
         plus trace metadata that explains how candidates were selected.
         """
         t0 = now_ms()
-        envelope = memory.search_with_trace(query, limit=limit, type_=type, mode=mode)
+        envelope = memory.search_with_trace(
+            query,
+            limit=limit,
+            type_=type,
+            mode=mode,
+            quality_rerank=True,
+        )
         hits: list[dict[str, Any]] = []
         for r in envelope["hits"]:
             d = r.to_dict()

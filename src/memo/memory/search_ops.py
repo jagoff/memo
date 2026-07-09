@@ -649,6 +649,7 @@ class _SearchOpsMixin(_MemoryBase):
         limit: int = 10,
         mode: str = "hybrid",
         type_: str | None = None,
+        quality_rerank: bool | None = None,
     ) -> list[MemoryRecord]:
         """High-precision by-file lane over the capture-stamped
         `files_read`/`files_modified` arrays (see `capture.collect_tool_files`).
@@ -661,9 +662,19 @@ class _SearchOpsMixin(_MemoryBase):
         """
         frag = (file or "").strip().lower()
         if not frag:
-            return self.search(query, limit=limit, mode=mode, type_=type_)  # type: ignore[no-any-return]
+            return self.search(  # type: ignore[no-any-return]
+                query,
+                limit=limit,
+                mode=mode,
+                type_=type_,
+                quality_rerank=quality_rerank,
+            )
         pool: list[MemoryRecord] = self.search(
-            query or file, limit=max(limit * 5, 25), mode=mode, type_=type_
+            query or file,
+            limit=max(limit * 5, 25),
+            mode=mode,
+            type_=type_,
+            quality_rerank=quality_rerank,
         )
         return [r for r in pool if _record_touches_file(r, frag)][:limit]
 
