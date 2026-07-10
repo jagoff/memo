@@ -9,6 +9,32 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.19] - 2026-07-10
+
+### Added
+
+- **Capability-taxonomy rollup** for `memo eval bench` (Memoria-style 6-bucket
+  view): per-category retrieval/QA metrics roll up into fixed capability buckets
+  — single-session grounding, preference understanding, multi-session synthesis,
+  temporal state tracking, knowledge-update/conflict, abstention/constraint — via
+  the new pure leaf module `eval_bench_taxonomy.py` (`capability/<bucket>/…` rows
+  in the receipt + report). Cross-dataset: maps both LoCoMo and LongMemEval
+  category labels.
+- **First-class abstention metric** in `memo eval bench` — correct-abstentions,
+  hallucinations, abstention-accuracy, hallucination-rate — plus per-bucket QA
+  accuracy. An abstention question routes to the `abstention_constraint` bucket
+  regardless of its source category.
+- **Typed feedback lifecycle routing**: `memo feedback flag --kind outdated|wrong`
+  (CLI) and `memo_feedback_flag` (MCP) route a stale/wrong memory through the
+  reversible archive — `outdated` archives it (hidden from search, restorable),
+  `wrong` archives **and** supersedes it (optionally by a replacement id). Steers
+  non-Claude clients to self-correct via a new mandate bullet.
+
+### Fixed
+
+- LongMemEval benchmark download 404 — the HuggingFace blobs (`longmemeval_oracle`,
+  `longmemeval_s`) have no `.json` extension; appending it 404s.
+
 ## [2.12.18] - 2026-07-10
 
 ### Added
