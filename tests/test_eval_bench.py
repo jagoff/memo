@@ -477,3 +477,39 @@ def test_render_report_stable_keys_across_runs(tmp_path):
 def test_safe_dir_name():
     assert eval_bench._safe_dir_name("conv-1") == "conv-1"
     assert eval_bench._safe_dir_name("a/b c") == "a_b_c"
+
+
+# --- judge granularity guard ---------------------------------------------------
+
+
+def test_grade_sample_qa_calls_judge_once_per_qa():
+    """Guard: memo judges ONE answer per LLM-judge call. Batching multiple
+    candidates into one judge call masks real differences (honest-agent-memory
+    finding). This test fails if a future refactor batches grading."""
+    from memo import eval_bench
+
+    class _CountingJudge:
+        name = "counting"
+        def __init__(self) -> None:
+            self.calls = 0
+        def grade(self, *, question, gold, answer, abstention):
+            self.calls += 1
+            return True
+
+    class _FakeMem:
+        def ask(self, question, k=5):
+            return {"answer": "some answer"}
+
+    sample = eval_bench.BenchSample(
+        sample_id="s1",
+        turns=(),
+        qa=(
+            eval_bench.BenchQA(qa_id="q1", category="single_hop", question="a?", answer="a", abstention=False, evidence_session_ids=(), evidence_turn_ids=()),
+            eval_bench.BenchQA(qa_id="q2", category="single_hop", question="b?", answer="b", abstention=False, evidence_session_ids=(), evidence_turn_ids=()),
+            eval_bench.BenchQA(qa_id="q3", category="single_hop", question="c?", answer="c", abstention=False, evidence_session_ids=(), evidence_turn_ids=()),
+        ),
+    )
+    judge = _CountingJudge()
+    results = eval_bench.grade_sample_qa(_FakeMem(), sample, judge, k=5)
+    assert judge.calls == 3
+    assert len(results) == 3
