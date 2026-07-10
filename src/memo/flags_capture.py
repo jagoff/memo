@@ -47,6 +47,28 @@ SPECS: tuple[FlagSpec, ...] = (
         "Surface a multi-line receipt (titles+ids+undo/fix verbs) for auto-saved "
         "memories, instead of the muted one-liner. Visible + correctable capture.",
     ),
+    _spec(
+        "MEMO_GROUNDING_JUDGE",
+        "bool",
+        False,
+        "capture",
+        "At capture, score source->claim entailment with the helper LLM (temp 0, "
+        "off the recall hook). A candidate scoring below MEMO_GROUNDING_WRITE_MIN "
+        "is tagged '_uncertain' (already recall-excluded, see "
+        "MEMO_RECALL_EXCLUDE_UNCERTAIN) and its grounding_score is stamped in the "
+        ".md extra bag. Default off.",
+    ),
+    _spec(
+        "MEMO_GROUNDING_WRITE_MIN",
+        "float",
+        0.4,
+        "capture",
+        "Grounding-score floor (0.0-1.0) at capture. A candidate whose source->claim "
+        "entailment is below this is quarantined as '_uncertain'. Only active when "
+        "MEMO_GROUNDING_JUDGE is on.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
 )
 
 
