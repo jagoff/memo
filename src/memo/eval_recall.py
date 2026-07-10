@@ -23,6 +23,7 @@ example tuned to the author's stack corpus — replace it with your own via
 from __future__ import annotations
 
 import contextlib
+import inspect
 import json
 import os
 import re
@@ -538,6 +539,17 @@ def _graph_reason_has_low_idf_edge(reason: Any) -> bool:
     return False
 
 
+def _search_for_eval(mem: Any, query: str, *, trace: list[dict[str, Any]], **kwargs: Any) -> list[Any]:
+    search = mem.search
+    with contextlib.suppress(TypeError, ValueError):
+        sig = inspect.signature(search)
+        if "_trace" in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        ):
+            kwargs["_trace"] = trace
+    return search(query, **kwargs)
+
+
 def _scored_prompts(labels: LabelSet) -> int:
     """How many prompts contribute to precision (have a known answer)."""
     return sum(1 for p in labels.prompts if p.relevant or p.expect_ids)
@@ -644,13 +656,14 @@ def _run_config_inner(
         )
         t0 = time.time()
         trace: list[dict[str, Any]] = []
-        hits = mem.search(
+        hits = _search_for_eval(
+            mem,
             query,
+            trace=trace,
             limit=k * 4,
             mode=cfg.mode,
             exclude_types=exclude_types,
             exclude_tags=exclude_tags,
-            _trace=trace,
         )
         lat.append((time.time() - t0) * 1000)
         band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
