@@ -86,6 +86,7 @@ def test_self_update_proceeds_for_isolated_install(monkeypatch):
     monkeypatch.setattr(upd, "_find_uv", lambda: "uv")
     monkeypatch.setattr(upd, "_clear_update_notify", lambda: None)
     monkeypatch.setattr(upd, "_notify_codex_plugin_updated", lambda: False)
+    monkeypatch.setattr(upd, "_refresh_agent_artifacts", lambda: False)
     monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
 
     calls: list = []
@@ -219,6 +220,7 @@ def test_self_update_to_tag_notifies_codex_after_success(monkeypatch):
     monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
     monkeypatch.setattr(upd, "_find_uv", lambda: "uv")
     monkeypatch.setattr(upd, "_clear_update_notify", lambda: None)
+    monkeypatch.setattr(upd, "_refresh_agent_artifacts", lambda: False)
     monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
     notified: list[bool] = []
     monkeypatch.setattr(

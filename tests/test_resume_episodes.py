@@ -7,6 +7,7 @@ semantic search (+ cold degrade), the picker's semantic ordering, and the
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -50,47 +51,47 @@ def _store(tmp_path: Path):
 
 
 def test_episode_store_upsert_search_and_skip(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    for i, sid in enumerate(("a", "b", "c")):
-        store.upsert(
-            agent="claude",
-            session_id=sid,
-            content_hash=f"h{i}",
-            embedding=_unit(i),
-            cwd="/repo",
-            updated_at="2026-05-23T10:00:00Z",
-            summary=f"session {sid}",
-            resume_command=["claude", "--resume", sid],
-            turn_count=i,
-        )
-    assert store.count() == 3
-    assert store.content_hash_for("claude", "b") == "h1"
-    assert store.content_hash_for("claude", "zzz") is None
+    with closing(_store(tmp_path)) as store:
+        for i, sid in enumerate(("a", "b", "c")):
+            store.upsert(
+                agent="claude",
+                session_id=sid,
+                content_hash=f"h{i}",
+                embedding=_unit(i),
+                cwd="/repo",
+                updated_at="2026-05-23T10:00:00Z",
+                summary=f"session {sid}",
+                resume_command=["claude", "--resume", sid],
+                turn_count=i,
+            )
+        assert store.count() == 3
+        assert store.content_hash_for("claude", "b") == "h1"
+        assert store.content_hash_for("claude", "zzz") is None
 
-    # Query closest to "b" (one-hot dim 1) ranks b first.
-    rows = store.search(_unit(1), k=3)
-    assert rows[0]["session_id"] == "b"
-    assert rows[0]["resume_command"] == ["claude", "--resume", "b"]
-    assert rows[0]["score"] > rows[1]["score"]
+        # Query closest to "b" (one-hot dim 1) ranks b first.
+        rows = store.search(_unit(1), k=3)
+        assert rows[0]["session_id"] == "b"
+        assert rows[0]["resume_command"] == ["claude", "--resume", "b"]
+        assert rows[0]["score"] > rows[1]["score"]
 
-    store.clear()
-    assert store.count() == 0
+        store.clear()
+        assert store.count() == 0
 
 
 def test_episode_store_rejects_wrong_dims(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    with pytest.raises(ValueError, match="dim mismatch"):
-        store.upsert(
-            agent="claude",
-            session_id="x",
-            content_hash="h",
-            embedding=[1.0, 0.0],
-            cwd="/repo",
-            updated_at="",
-            summary="",
-            resume_command=[],
-            turn_count=0,
-        )
+    with closing(_store(tmp_path)) as store:
+        with pytest.raises(ValueError, match="dim mismatch"):
+            store.upsert(
+                agent="claude",
+                session_id="x",
+                content_hash="h",
+                embedding=[1.0, 0.0],
+                cwd="/repo",
+                updated_at="",
+                summary="",
+                resume_command=[],
+                turn_count=0,
+            )
 
 
 # ── indexer: prompt_arc + index_candidate skip ────────────────────────────────
@@ -131,7 +132,6 @@ def test_prompt_arc_gathers_summary_and_prompts(tmp_path: Path) -> None:
 def test_index_candidate_skips_unchanged(tmp_path: Path) -> None:
     from memo.resume._index import index_candidate
 
-    store = _store(tmp_path)
     cand = _cand("s1", summary="some work on the resume picker")
     calls = {"n": 0}
 
@@ -139,12 +139,13 @@ def test_index_candidate_skips_unchanged(tmp_path: Path) -> None:
         calls["n"] += 1
         return [_unit(0)]
 
-    assert index_candidate(store, cand, embed_fn=fake_embed) is True
-    assert calls["n"] == 1
-    # Same content → hash match → skip, no second embed.
-    assert index_candidate(store, cand, embed_fn=fake_embed) is False
-    assert calls["n"] == 1
-    assert store.count() == 1
+    with closing(_store(tmp_path)) as store:
+        assert index_candidate(store, cand, embed_fn=fake_embed) is True
+        assert calls["n"] == 1
+        # Same content → hash match → skip, no second embed.
+        assert index_candidate(store, cand, embed_fn=fake_embed) is False
+        assert calls["n"] == 1
+        assert store.count() == 1
 
 
 # ── semantic_search: warm path + cold degrade ────────────────────────────────
@@ -167,18 +168,19 @@ def test_semantic_search_ranks_by_meaning(tmp_path: Path, monkeypatch: pytest.Mo
     cfg = _episodic_cfg(tmp_path)
     store = open_store(cfg)
     assert store is not None and store.dims == _DIMS
-    for i, sid in enumerate(("alpha", "beta", "gamma")):
-        store.upsert(
-            agent="claude",
-            session_id=sid,
-            content_hash=f"h{i}",
-            embedding=_unit(i),
-            cwd="/repo",
-            updated_at="2026-05-23T10:00:00Z",
-            summary=f"work {sid}",
-            resume_command=["claude", "--resume", sid],
-            turn_count=1,
-        )
+    with closing(store):
+        for i, sid in enumerate(("alpha", "beta", "gamma")):
+            store.upsert(
+                agent="claude",
+                session_id=sid,
+                content_hash=f"h{i}",
+                embedding=_unit(i),
+                cwd="/repo",
+                updated_at="2026-05-23T10:00:00Z",
+                summary=f"work {sid}",
+                resume_command=["claude", "--resume", sid],
+                turn_count=1,
+            )
     # Warm daemon; query embeds to the "beta" one-hot.
     monkeypatch.setattr(ec, "ping", lambda **_kw: {"ok": True})
     monkeypatch.setattr(ec, "embed_query", lambda _q, **_kw: _unit(1))
@@ -198,17 +200,18 @@ def test_semantic_search_degrades_when_cold(
     cfg = _episodic_cfg(tmp_path)
     store = open_store(cfg)
     assert store is not None
-    store.upsert(
-        agent="claude",
-        session_id="x",
-        content_hash="h",
-        embedding=_unit(0),
-        cwd="/repo",
-        updated_at="",
-        summary="x",
-        resume_command=[],
-        turn_count=0,
-    )
+    with closing(store):
+        store.upsert(
+            agent="claude",
+            session_id="x",
+            content_hash="h",
+            embedding=_unit(0),
+            cwd="/repo",
+            updated_at="",
+            summary="x",
+            resume_command=[],
+            turn_count=0,
+        )
     # Cold embedder → no semantic, caller stays on substring.
     monkeypatch.setattr(ec, "ping", lambda **_kw: None)
     assert semantic_search(cfg, "beta") == []
@@ -305,19 +308,19 @@ def test_cli_episodes_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    store = EpisodeStore(state_dir / "episodes.db", _DIMS)
-    for i, sid in enumerate(("alpha", "beta")):
-        store.upsert(
-            agent="claude",
-            session_id=sid,
-            content_hash=f"h{i}",
-            embedding=_unit(i),
-            cwd="/repo",
-            updated_at="2026-05-23T10:00:00Z",
-            summary=f"work {sid}",
-            resume_command=["claude", "--resume", sid],
-            turn_count=1,
-        )
+    with closing(EpisodeStore(state_dir / "episodes.db", _DIMS)) as store:
+        for i, sid in enumerate(("alpha", "beta")):
+            store.upsert(
+                agent="claude",
+                session_id=sid,
+                content_hash=f"h{i}",
+                embedding=_unit(i),
+                cwd="/repo",
+                updated_at="2026-05-23T10:00:00Z",
+                summary=f"work {sid}",
+                resume_command=["claude", "--resume", sid],
+                turn_count=1,
+            )
     # allow_cold path skips ping; query embeds to the "beta" one-hot.
     monkeypatch.setattr(ec, "embed_query", lambda _q, **_kw: _unit(1))
     env = {

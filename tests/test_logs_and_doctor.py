@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from contextlib import closing
 
 import pytest
 from click.testing import CliRunner
@@ -122,29 +123,28 @@ def test_append_recall_log_persists_reason_and_error(tmp_path):
 
 
 def test_history_error_count_initial(tmp_path):
-    h = HistoryStore(tmp_path / "history.db")
-    assert h.error_count == 0
+    with closing(HistoryStore(tmp_path / "history.db")) as h:
+        assert h.error_count == 0
 
 
 def test_history_error_count_increments_on_failure(tmp_path):
-    h = HistoryStore(tmp_path / "history.db")
+    with closing(HistoryStore(tmp_path / "history.db")) as h:
+        # Close the underlying connection so every subsequent execute() raises
+        # sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        # That exercises the swallow-and-count path without monkeypatching.
+        h._conn.close()
 
-    # Close the underlying connection so every subsequent execute() raises
-    # sqlite3.ProgrammingError("Cannot operate on a closed database.")
-    # That exercises the swallow-and-count path without monkeypatching.
-    h._conn.close()
+        h.log_save(ts="2026-05-27T00:00:00Z", record_id="abc", title="t", type_="memo")
+        h.log_update(
+            ts="2026-05-27T00:00:00Z",
+            record_id="abc",
+            title="t",
+            type_="memo",
+            delta={"title": ("a", "b")},
+        )
+        h.log_delete(ts="2026-05-27T00:00:00Z", record_id="abc", title="t", type_="memo")
 
-    h.log_save(ts="2026-05-27T00:00:00Z", record_id="abc", title="t", type_="memo")
-    h.log_update(
-        ts="2026-05-27T00:00:00Z",
-        record_id="abc",
-        title="t",
-        type_="memo",
-        delta={"title": ("a", "b")},
-    )
-    h.log_delete(ts="2026-05-27T00:00:00Z", record_id="abc", title="t", type_="memo")
-
-    assert h.error_count == 3
+        assert h.error_count == 3
 
 
 # ---------- doctor daemon health -------------------------------------------

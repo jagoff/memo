@@ -152,5 +152,9 @@ def _install_codex_plugin(root: Path, *, dry_run: bool) -> None:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=5)
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
 
     console.print("[green]✓[/green] codex plugin/install memo@memo")

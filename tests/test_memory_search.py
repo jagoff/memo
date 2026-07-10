@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import closing
+
 from memo.config import Config
 from memo.memory import Memory
 from memo.tiers import VerificationState
@@ -119,10 +121,10 @@ def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
     )
-    mem = Memory(cfg)
-    mem.save(content="cuerpo del doc", title="X")
-    seen_inputs.clear()
-    mem.search("buscame algo", limit=3)
+    with closing(Memory(cfg)) as mem:
+        mem.save(content="cuerpo del doc", title="X")
+        seen_inputs.clear()
+        mem.search("buscame algo", limit=3)
     assert seen_inputs
     assert seen_inputs[0].startswith("Instruct:")
     assert "buscame algo" in seen_inputs[0]

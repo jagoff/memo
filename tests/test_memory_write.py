@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -62,7 +63,7 @@ def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
         cfg.crossref_db: ("backlinks", "source_id = ?", (rec.id,)),
     }
     for db_path, (table, where, params) in checks.items():
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn:
             count = conn.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE {where}",  # noqa: S608
                 params,

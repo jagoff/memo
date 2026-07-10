@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import types
+from contextlib import closing
 
 import pytest
 from click.testing import CliRunner
@@ -82,9 +83,9 @@ def test_ensure_chat_raises_memoerror_without_mlx(monkeypatch, tmp_cfg):
     from memo.memory import Memory
 
     cfg = tmp_cfg.model_copy(update={"embedder_backend": "st"})
-    mem = Memory(cfg)
-    with pytest.raises(MemoError, match="MLX"):
-        mem._ensure_chat()
+    with closing(Memory(cfg)) as mem:
+        with pytest.raises(MemoError, match="MLX"):
+            mem._ensure_chat()
 
 
 # ── per-OS Obsidian registry path ───────────────────────────────────────────
@@ -112,7 +113,10 @@ def test_repocorpus_uses_factory_not_hardcoded_mlx(tmp_cfg):
 
     cfg = tmp_cfg.model_copy(update={"embedder_backend": "st"})
     corpus = RepoCorpus(cfg)
-    assert type(corpus.embedder).__name__ == "STEmbedder"
+    try:
+        assert type(corpus.embedder).__name__ == "STEmbedder"
+    finally:
+        corpus.store.close()
 
 
 # ── per-OS MCP-client config paths ──────────────────────────────────────────

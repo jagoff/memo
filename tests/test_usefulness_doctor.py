@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from memo.config import Config
@@ -103,12 +104,12 @@ def test_doctor_text_report_is_action_oriented(tmp_path: Path) -> None:
 
 def test_doctor_reports_support_count_starvation(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    mem = Memory(cfg)
     ids: list[str] = []
-    for n in range(25):
-        rec = mem.save(content=f"fact {n}", title=f"Fact {n}", defer_embed=True)
-        ids.append(rec.id)
-    mem.store.set_confidence_batch([(id_, 1.0) for id_ in ids])
+    with closing(Memory(cfg)) as mem:
+        for n in range(25):
+            rec = mem.save(content=f"fact {n}", title=f"Fact {n}", defer_embed=True)
+            ids.append(rec.id)
+        mem.store.set_confidence_batch([(id_, 1.0) for id_ in ids])
 
     report = build_report(cfg, limit=100)
 
@@ -122,7 +123,7 @@ def test_doctor_reports_missing_support_count_schema(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True, exist_ok=True)
     cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(cfg.db_path) as conn:
+    with closing(sqlite3.connect(cfg.db_path)) as conn:
         conn.execute(
             "CREATE TABLE memory_health("
             "id TEXT PRIMARY KEY, confidence REAL, roi_score REAL, updated_at TEXT)"
@@ -142,10 +143,10 @@ def test_doctor_reports_missing_support_count_schema(tmp_path: Path) -> None:
 
 def test_doctor_reports_trusted_memories_not_used(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    mem = Memory(cfg)
-    used = mem.save(content="used supported fact", title="Used", defer_embed=True)
-    unused = mem.save(content="unused supported fact", title="Unused", defer_embed=True)
-    mem.store.bump_support_batch([used.id, used.id, used.id, unused.id, unused.id, unused.id])
+    with closing(Memory(cfg)) as mem:
+        used = mem.save(content="used supported fact", title="Used", defer_embed=True)
+        unused = mem.save(content="unused supported fact", title="Unused", defer_embed=True)
+        mem.store.bump_support_batch([used.id, used.id, used.id, unused.id, unused.id, unused.id])
     append_grounding_log(
         cfg.state_dir,
         session_id="s-trusted",
@@ -165,14 +166,14 @@ def test_doctor_reports_trusted_memories_not_used(tmp_path: Path) -> None:
 
 def test_doctor_reports_invalidated_grounded_memory(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    mem = Memory(cfg)
-    rec = mem.save(
-        content="usamos webpack",
-        title="Bundler",
-        tags=["_invalidated"],
-        extra={"invalidated_reason": "migramos a vite"},
-        defer_embed=True,
-    )
+    with closing(Memory(cfg)) as mem:
+        rec = mem.save(
+            content="usamos webpack",
+            title="Bundler",
+            tags=["_invalidated"],
+            extra={"invalidated_reason": "migramos a vite"},
+            defer_embed=True,
+        )
     append_grounding_log(
         cfg.state_dir,
         session_id="s1",
@@ -192,12 +193,13 @@ def test_doctor_reports_invalidated_grounded_memory(tmp_path: Path) -> None:
 
 def test_doctor_parses_grounded_memory_json_defensively(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    rec = Memory(cfg).save(
-        content="seguimos en vite",
-        title="Bundler",
-        extra={"superseded_by": "vite"},
-        defer_embed=True,
-    )
+    with closing(Memory(cfg)) as mem:
+        rec = mem.save(
+            content="seguimos en vite",
+            title="Bundler",
+            extra={"superseded_by": "vite"},
+            defer_embed=True,
+        )
     append_grounding_log(
         cfg.state_dir,
         session_id="s2",
@@ -207,7 +209,7 @@ def test_doctor_parses_grounded_memory_json_defensively(tmp_path: Path) -> None:
         method="test",
     )
 
-    with sqlite3.connect(cfg.db_path) as conn:
+    with closing(sqlite3.connect(cfg.db_path)) as conn:
         conn.execute("UPDATE meta SET tags = ?, extra_json = ? WHERE id = ?", ("{}", "[]", rec.id))
         conn.commit()
 
