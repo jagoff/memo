@@ -405,6 +405,14 @@ def recall_hook() -> None:
 
     qualifying = apply_injection_filters(qualifying)
 
+    _guard_banner: str | None = None
+    if flag_bool("MEMO_GUARD_ENABLED") and qualifying:
+        from memo.guard import guard_banner as _gb
+
+        _guard_banner = _gb(
+            prompt, qualifying, sim_threshold=flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
+        )
+
     def _stamp_metrics(n_hits: int) -> None:
         # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
         # the subprocess line is comparable with the daemon path, which counts
@@ -561,6 +569,9 @@ def recall_hook() -> None:
         )
     except Exception as exc:
         _log.debug("context-cost log write failed: %s", exc)
+
+    if _guard_banner:
+        context = f"{_guard_banner}\n\n{context}"
 
     output: dict[str, Any] = {
         "hookSpecificOutput": {

@@ -1064,6 +1064,14 @@ def _recall_logic(
     if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and unmatched_term_gate(prompt, qualifying):
         qualifying = []
 
+    _guard_banner: str | None = None
+    if flag_bool("MEMO_GUARD_ENABLED") and qualifying:
+        from memo.guard import guard_banner as _gb
+
+        _guard_banner = _gb(
+            prompt, qualifying, sim_threshold=_flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
+        )
+
     relevant = qualifying[:top_k]
 
     # Precision-gate: suppress injection when the top score falls in a learned
@@ -1179,6 +1187,9 @@ def _recall_logic(
             )
         except Exception as exc:
             _logger.debug("recall log append failed: %s", exc)
+
+    if _guard_banner:
+        context = f"{_guard_banner}\n\n{context}"
 
     output: dict[str, Any] = {
         "hookSpecificOutput": {

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from memo.guard import guard_candidates, has_reversal_signal
+from memo.guard import guard_banner, guard_candidates, has_reversal_signal
 
 
 def _hit(id_, type_, score):
@@ -28,3 +28,18 @@ def test_guard_candidates_filters_type_score_and_signal():
 def test_guard_candidates_empty_when_no_reversal_signal():
     hits = [_hit("a", "decision", 0.9)]
     assert guard_candidates("how does recall work?", hits, sim_threshold=0.6) == []
+
+
+def test_guard_banner_names_prior_decision():
+    hits = [_hit("a1b2c3d4", "decision", 0.9)]
+    hits[0].title = "use vec mode as recall default"
+    banner = guard_banner("switch recall to hybrid instead", hits, sim_threshold=0.6)
+    assert banner is not None
+    assert "PRIOR DECISION" in banner
+    assert "a1b2c3d4" in banner
+    assert "use vec mode as recall default" in banner
+
+
+def test_guard_banner_none_without_candidate():
+    hits = [_hit("a", "note", 0.9)]
+    assert guard_banner("switch to X instead", hits, sim_threshold=0.6) is None
