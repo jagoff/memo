@@ -14,6 +14,7 @@ import logging as _logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from memo.belief import ARCHIVE, COMPETING, HOLD_OPEN, supersede_decision
 from memo.cli_common import console
 from memo.dream_utils import (
     _harvested_labels_path,
@@ -518,6 +519,8 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     result: dict[str, Any] = {
         "superseded": [],
         "evolved": [],
+        "competing": [],
+        "flagged_for_review": [],
         "confidence_penalized": 0,
     }
     try:
@@ -556,15 +559,35 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
             if "contrad" not in rel:
                 continue
 
-            older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
+            older, newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
             contradicted_ids.extend([pair.memory_id_a, pair.memory_id_b])
+            decision = supersede_decision(mem, older_id=older, newer_id=newer)
+            if decision.action == COMPETING:
+                if not dry_run:
+                    mem.contradict_store.resolve(
+                        pair.pair_id, "competing", note=f"dream: competing — {decision.reason}"
+                    )
+                result.setdefault("competing", []).append(pair.pair_id)
+                continue
+            if decision.action == HOLD_OPEN:
+                result.setdefault("flagged_for_review", []).append(
+                    {
+                        "pair_id": pair.pair_id,
+                        "held": decision.dominated_id,
+                        "support_count": decision.support_dominated,
+                    }
+                )
+                continue
+            assert decision.action == ARCHIVE
             if not dry_run:
-                ok = mem.lifecycle.archive_memory(older)
+                ok = mem.lifecycle.archive_memory(decision.dominated_id)
                 if ok:
                     mem.contradict_store.resolve(
-                        pair.pair_id, "kept_newer", note=f"dream: archived older {older}"
+                        pair.pair_id,
+                        "kept_newer",
+                        note=f"dream: archived {decision.dominated_id} — {decision.reason}",
                     )
-            result["superseded"].append({"pair_id": pair.pair_id, "older": older})
+            result["superseded"].append({"pair_id": pair.pair_id, "older": decision.dominated_id})
 
         if contradicted_ids and not dry_run:
             mem.store.penalize_confidence_batch(contradicted_ids)

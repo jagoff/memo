@@ -42,6 +42,25 @@ class TestRunContradict:
                 _run_contradict(mock_memory, dry_run=True)
                 mock_archive.assert_not_called()
 
+    def test_run_contradict_marks_competing_within_margin(self, mock_memory, monkeypatch) -> None:
+        """Belief mode + wide margin -> pair marked competing, neither side archived."""
+        monkeypatch.setenv("MEMO_BELIEF_COMPETING", "1")
+        monkeypatch.setenv("MEMO_SUPERSEDE_MARGIN", "0.5")  # wide -> force competing
+
+        a = mock_memory.save(content="El dashboard corre en el puerto 8080", title="p-old")
+        b = mock_memory.save(content="El dashboard corre en el puerto 8765", title="p-new")
+        mock_memory.contradict_store.upsert_open(
+            memory_id_a=a.id, memory_id_b=b.id,
+            relationship="contradiction", confidence=0.95, rationale="ports differ",
+        )
+
+        result = _run_contradict(mock_memory, dry_run=False)
+
+        assert result.get("competing"), "expected a competing pair"
+        # neither side archived
+        assert mock_memory.get(a.id) is not None
+        assert mock_memory.get(b.id) is not None
+
 
 class TestRunConsolidateDups:
     """Tests for _run_consolidate_dups phase handler."""
