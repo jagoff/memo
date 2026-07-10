@@ -92,3 +92,32 @@ def supersede_decision(mem: Any, *, older_id: str, newer_id: str) -> SupersedeDe
         ARCHIVE, dominant, dominated,
         f"trust dominance ({s_old:.3f} vs {s_new:.3f})", support_dominated,
     )
+
+
+def nway_competing_pairs(pairs: list[tuple[int, str, str]]) -> set[int]:
+    """Return pair_ids whose two memories belong to a connected component of
+    3+ mutually-contradicting memories. Pure graph (union-find), no store I/O."""
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        parent[find(a)] = find(b)
+
+    for _pid, a, b in pairs:
+        union(a, b)
+
+    size: dict[str, int] = {}
+    members: dict[str, set[str]] = {}
+    for node in list(parent):
+        root = find(node)
+        members.setdefault(root, set()).add(node)
+    for root, nodes in members.items():
+        size[root] = len(nodes)
+
+    return {pid for pid, a, b in pairs if size.get(find(a), 0) >= 3}

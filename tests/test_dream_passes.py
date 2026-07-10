@@ -61,6 +61,24 @@ class TestRunContradict:
         assert mock_memory.get(a.id) is not None
         assert mock_memory.get(b.id) is not None
 
+    def test_run_contradict_nway_marks_all_competing(self, mock_memory, monkeypatch) -> None:
+        """3+ mutually-contradicting memories (a connected component) all end competing."""
+        monkeypatch.setenv("MEMO_BELIEF_COMPETING", "1")
+        monkeypatch.setenv("MEMO_BELIEF_NWAY", "1")
+
+        a = mock_memory.save(content="El release sale el lunes", title="r1")
+        b = mock_memory.save(content="El release sale el martes", title="r2")
+        c = mock_memory.save(content="El release sale el miércoles", title="r3")
+        for x, y in [(a, b), (b, c), (c, a)]:
+            mock_memory.contradict_store.upsert_open(
+                memory_id_a=x.id, memory_id_b=y.id,
+                relationship="contradiction", confidence=0.95, rationale="dates differ",
+            )
+
+        result = _run_contradict(mock_memory, dry_run=False)
+        assert len(result.get("competing", [])) == 3
+        assert mock_memory.get(a.id) and mock_memory.get(b.id) and mock_memory.get(c.id)
+
 
 class TestRunConsolidateDups:
     """Tests for _run_consolidate_dups phase handler."""

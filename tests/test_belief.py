@@ -53,3 +53,14 @@ def test_trust_dominance_archives_weaker(monkeypatch):
     assert d.action == "archive"
     assert d.dominated_id == "NEW"   # the weaker NEW is archived, NOT the older
     assert d.dominant_id == "OLD"
+
+
+def test_nway_competing_pairs_flags_triangle():
+    # A-B, B-C, C-A : component {A,B,C} size 3 -> all three pairs competing
+    pairs = [(1, "A", "B"), (2, "B", "C"), (3, "C", "A")]
+    assert belief.nway_competing_pairs(pairs) == {1, 2, 3}
+
+
+def test_nway_competing_pairs_ignores_lone_pair():
+    pairs = [(1, "A", "B"), (2, "C", "D")]  # two separate 2-node components
+    assert belief.nway_competing_pairs(pairs) == set()

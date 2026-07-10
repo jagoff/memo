@@ -14,7 +14,7 @@ import logging as _logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from memo.belief import ARCHIVE, COMPETING, HOLD_OPEN, supersede_decision
+from memo.belief import ARCHIVE, COMPETING, HOLD_OPEN, nway_competing_pairs, supersede_decision
 from memo.cli_common import console
 from memo.dream_utils import (
     _harvested_labels_path,
@@ -514,7 +514,7 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     - evolved: list of pair_ids
     - confidence_penalized: count of confidence-demoted ids
     """
-    from memo.flags import flag_float
+    from memo.flags import flag_bool, flag_float
 
     result: dict[str, Any] = {
         "superseded": [],
@@ -538,7 +538,18 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
         _evo_conf = 0.6 if _evo_conf is None else _evo_conf
         contradicted_ids: list[str] = []
 
-        for pair in mem.contradict_store.list_open(min_confidence=0.9):
+        _open_pairs = list(mem.contradict_store.list_open(min_confidence=0.9))
+        _nway_ids: set[int] = set()
+        if flag_bool("MEMO_BELIEF_NWAY") and flag_bool("MEMO_BELIEF_COMPETING"):
+            _nway_ids = nway_competing_pairs(
+                [
+                    (p.pair_id, p.memory_id_a, p.memory_id_b)
+                    for p in _open_pairs
+                    if "contrad" in (p.relationship or "").lower()
+                ]
+            )
+
+        for pair in _open_pairs:
             rel = (pair.relationship or "").lower()
             if "evolu" in rel:
                 if not dry_run:
@@ -557,6 +568,14 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                 continue
 
             if "contrad" not in rel:
+                continue
+
+            if pair.pair_id in _nway_ids:
+                if not dry_run:
+                    mem.contradict_store.resolve(
+                        pair.pair_id, "competing", note="dream: N-way conflict (3+ mutually contradicting)"
+                    )
+                result.setdefault("competing", []).append(pair.pair_id)
                 continue
 
             older, newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
