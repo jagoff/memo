@@ -9,8 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.18] - 2026-07-10
+
 ### Added
 
+- Accountable memo — proactive **Guard** + **Capture receipt** (both default-OFF):
+  - Guard (`MEMO_GUARD_ENABLED`): flags a prior `decision`/`preference` the prompt
+    looks to be reversing (reversal-signal gate over recalled hits) with a ⚠ banner
+    at the top of the recall block, in both recall paths (subprocess hook + warm
+    daemon). Advisory, never blocks; pure-Python, respects the 5s recall budget.
+    `memo guard stats` reports fires. A live-LLM verdict is specified but deferred —
+    measurement showed the bottleneck is decision *retrieval*, not classification.
+  - Capture receipt (`MEMO_CAPTURE_RECEIPT`): makes auto-capture visible and
+    correctable — a Stop-hook receipt lists saved titles+ids with `memo undo` /
+    `memo fix` verbs to remove or correct a wrongly-captured memory.
 - Design and gated implementation path for Memory Quality Loop:
   quality-aware reranking, context packs, and reversible quality compaction.
 
