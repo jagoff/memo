@@ -598,6 +598,20 @@ def recall_hook() -> None:
                 output["systemMessage"] = _sysmsg
         except Exception as exc:
             _log.debug("recall system-message build failed: %s", exc)
+
+    # Cross-client "※ recap:" line (mirrors Claude Code's native recap).
+    # Cheap cadence check (one JSON read + int compare) writing to the SAME
+    # pending-notification file capture already uses, so it reaches every
+    # client via the `notification` field on the next memo_* MCP call — not
+    # just Claude Code's own systemMessage above. Best-effort; never raises.
+    if _sid:
+        try:
+            from memo.cli_recap import maybe_write_recap
+
+            maybe_write_recap(cfg.state_dir, _sid)
+        except Exception as exc:
+            _log.debug("recap write failed: %s", exc)
+
     print(json.dumps(output, ensure_ascii=False))
 
     # Persist newly recalled IDs so future turns can dedup them

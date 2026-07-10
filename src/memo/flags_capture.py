@@ -69,6 +69,28 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    _spec(
+        "MEMO_RECAP",
+        "bool",
+        True,
+        "capture",
+        "Emit a cross-client '※ recap: <goal/progress>' line (dim ANSI, mirrors "
+        "Claude Code's native recap) via the pending-notification channel every "
+        "client already reads (the `notification` field on memo_search/"
+        "memo_ask/memo_chat_ask/memo_context/memo_unified_briefing). Sourced "
+        "from the existing session snapshot summary — no extra LLM call. "
+        "Default on; disable with MEMO_RECAP=0.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_RECAP_EVERY_N",
+        "int",
+        6,
+        "capture",
+        "Turns between recap lines for a session (default: 6). 0 or negative "
+        "disables recap regardless of MEMO_RECAP.",
+        min_val=0,
+    ),
 )
 
 

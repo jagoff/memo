@@ -273,6 +273,23 @@ def stamp_recall_turn(state_dir: Path, session_id: str, turn: int) -> None:
         _log.debug("session: failed to checkpoint recall turn: %s", exc)
 
 
+def stamp_recap_turn(state_dir: Path, session_id: str, turn: int) -> None:
+    """Merge-write `last_recap_turn` into the session snapshot. Best-effort,
+    never raises — recap must not break the recall hook it rides on. Mirrors
+    `stamp_recall_turn`; used by `cli_recap.maybe_write_recap` to remember the
+    turn a `※ recap:` line last fired on, so the cadence check
+    (`due_for_recap`) doesn't re-fire every turn once due."""
+    if not session_id:
+        return
+    try:
+        existing = _load(state_dir, session_id) or {}
+        existing["session_id"] = session_id
+        existing["last_recap_turn"] = int(turn)
+        _write(state_dir, session_id, existing)
+    except (OSError, ValueError, TypeError) as exc:
+        _log.debug("session: failed to checkpoint recap turn: %s", exc)
+
+
 def recent_prompts(state_dir: Path, session_id: str, n: int) -> list[str]:
     """Last `n` user prompts from the session `prompt_trail` ring buffer.
 
