@@ -353,7 +353,7 @@ Core tool behavior:
 | `memo_search(query, limit?, type?, body_chars=280, mode="hybrid", source?)` | Top-k. `hybrid` fuses vec + BM25 via RRF, then optionally reranks. `vec` is semantic only; `bm25` is keyword. |
 | `memo_unified_briefing(cwd?, source?)` | Session-start briefing: knowledge map, open loops, memory of the day, and current-project context. |
 | `memo_ask(question, k?, type?, source?)` | RAG synthesis; cites memories by id. |
-| `memo_graph(query_or_id?, depth?, limit?)` | Compact graph navigator available on every profile. |
+| `memo_graph(verb, a?, b?, entity?, limit?, include_code?)` | Compact graph navigator available on every profile. Use `verb="why"` with `a` and `b` for a weighted path plus evidence memory ids. |
 | `memo_offload(content, title?)` | Content-addressed offload for large text that should not be inlined into model context. |
 | `memo_idle_capture(dry_run?)`, `memo_pop_notification()`, `memo_start_session(cwd?)`, `memo_save_text(text, title?)` | MCP-only capture/session plumbing for clients without Claude Code hooks. |
 | `memo_version()` | Installed package version plus backend protocol version. |
@@ -447,6 +447,45 @@ The default floor is intentionally below the older `0.6` setting because recall
 now applies recency, health, project/global, and optional graph/synthesis
 signals after raw vector similarity. Tune higher for precision-only corpora or
 lower on very sparse corpora.
+
+### Graph retrieval controls
+
+Graph retrieval signal is conservative by default: ranking effects and
+per-result reasons are off unless explicitly enabled, graph work is bounded for
+hot search/recall paths, and high-document-frequency entity hubs are suppressed.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MEMO_GRAPH_SIGNAL_ENABLED` | `0` | Enable bounded graph signal collection after primary search. |
+| `MEMO_GRAPH_REASON_ENABLED` | `0` | Attach `extra.graph_reason` to graph-touched search results. |
+| `MEMO_GRAPH_SEMANTIC_RELATIONS` | `0` | Include deterministic semantic relations from `graph.db` in graph reasons. |
+| `MEMO_GRAPH_HUB_SUPPRESSION` | `1` | Suppress broad entity hubs from graph ranking signal. |
+| `MEMO_GRAPH_SIGNAL_BUDGET_MS` | `150` | Millisecond budget for graph signal work in hot paths. |
+| `MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO` | `0.25` | Treat entities above this corpus document-frequency ratio as hubs. |
+| `MEMO_GRAPH_MIN_ENTITY_IDF` | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
+
+Example:
+
+```bash
+MEMO_GRAPH_SIGNAL_ENABLED=1 MEMO_GRAPH_REASON_ENABLED=1 memo search "recall hook budget" --json
+```
+
+Graph-touched JSON hits include `extra.graph_reason` with the mode, query
+entities, hit entities, neighbor edges, and optional semantic relations. The
+same graph can be inspected directly:
+
+```bash
+memo graph why "mlx" "daemon"
+```
+
+The MCP `memo_graph` tool exposes the same explanation with
+`verb="why", a="mlx", b="daemon"`. It returns the weighted path, per-hop edge
+weights, and evidence memory ids when available.
+
+`memo eval recall` keeps the precision/noise gate unchanged but reports graph
+diagnostics when graph attribution is present: `graph_recall_gain`,
+`graph_noise_rate`, `graph_explanation_coverage`, `hub_noise_rate`, and
+`latency_ms_graph`.
 
 ### Capture tuning
 
@@ -644,6 +683,9 @@ memo diff --from 2026-03-01 --to 2026-04-30
 memo entities                     # top entities across the corpus
 memo entity <name>                # memories that mention a specific entity
 memo extract-entities --all       # populate the entity graph (Qwen 3B, batch)
+memo graph neighbors "MLX"        # direct related entities
+memo graph path "MLX" "daemon"    # shortest entity path
+memo graph why "MLX" "daemon"     # weighted path + evidence memory ids
 memo consolidate                  # cluster near-duplicates + merge proposals
 
 # ── Backfill & watching ────────────────────────────────────────────────────
