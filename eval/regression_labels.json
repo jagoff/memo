@@ -203,6 +203,30 @@
       "_note": "Associative label — primary hit is 'Memory-First Agent Architecture' (334870f3); graph neighbors 2cddfbfc (Trinity runbook) and 75057eca (memo + graphify integration) are reachable via the 'memo' entity edge. Sourced via `memo related 334870f3`. expect_associative_ids may need human curation if graph edges change."
     },
     {
+      "text": "actually let's switch to the 0.6B embedder instead of what we have now",
+      "relevant": true,
+      "expect_ids": [
+        "f68ddd5c"
+      ],
+      "_note": "Guard reversal-signal probe (Task 6, accountable-guard 2026-07-10): prompt reads like reversing the prior decision 'No reindexar con el embedder 0.6B' (f68ddd5c76ea4f8092c4920164a07a9f) — decided NOT to switch to the 0.6B embedder because Spanish-query recall quality was unacceptable. The guard's heuristic gate (has_reversal_signal + guard_candidates) should be able to surface this decision so the user sees it before overriding."
+    },
+    {
+      "text": "cambiemos el embedder a 0.6B en vez del que usamos ahora",
+      "relevant": true,
+      "expect_ids": [
+        "f68ddd5c"
+      ],
+      "_note": "Spanish variant of the embedder-reversal guard probe — same target decision f68ddd5c76ea4f8092c4920164a07a9f, tests the 'en vez' reversal-signal pattern."
+    },
+    {
+      "text": "revert rerank_input_k back to 30 instead of 5, that was a mistake",
+      "relevant": true,
+      "expect_ids": [
+        "132f48e4"
+      ],
+      "_note": "Guard reversal-signal probe (Task 6): prompt reads like reversing the decision 'Exact BM25 leg and confident-RRF skip added to hybrid search. rerank_input_k def' (132f48e4b24e477f8724a4c606a904af), which lowered rerank_input_k default 30→5. Tests 'revert'/'instead' reversal signals against a decision with a numeric parameter change."
+    },
+    {
       "text": "best pasta recipe for tonight",
       "relevant": false,
       "_note": "Noise probe — culinary content not in the developer's vault."
