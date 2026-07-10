@@ -263,6 +263,48 @@ def test_gate_metrics_returns_best_pair():
         "canonical_hit_at_k": 0.0,
         "pack_answerability": None,
         "compaction_safety": None,
+        "graph_recall_gain": 0.0,
+        "graph_noise_rate": 0.0,
+        "graph_explanation_coverage": 0.0,
+        "hub_noise_rate": 0.0,
+        "latency_ms_graph": 0.0,
+    }
+
+
+def test_graph_diag_metrics_reports_attribution_and_latency():
+    rows = [
+        {
+            "id": "a",
+            "relevant": True,
+            "noise": False,
+            "extra": {
+                "graph_reason": {
+                    "query_entities": ["mlx"],
+                    "neighbor_edges": [{"from": "mlx", "to": "gpu", "idf": 1.2}],
+                }
+            },
+            "trace": [{"stage": "graph_signal", "touched_count": 1, "elapsed_ms": 12.5}],
+        },
+        {
+            "id": "b",
+            "relevant": False,
+            "noise": True,
+            "extra": {
+                "graph_reason": {
+                    "query_entities": ["mlx"],
+                    "neighbor_edges": [{"from": "mlx", "to": "memo", "idf": 0.2}],
+                }
+            },
+            "trace": [{"stage": "graph_signal", "touched_count": 1, "elapsed_ms": 2.5}],
+        },
+    ]
+
+    assert eval_recall.graph_diag_metrics(rows) == {
+        "graph_recall_gain": 1.0,
+        "graph_noise_rate": 0.5,
+        "graph_explanation_coverage": 1.0,
+        "hub_noise_rate": 1.0,
+        "latency_ms_graph": 15.0,
     }
 
 

@@ -449,6 +449,11 @@ class Row:
     canonical_hit_at_k: float = 0.0
     pack_answerability: float | None = None
     compaction_safety: float | None = None
+    graph_recall_gain: float = 0.0
+    graph_noise_rate: float = 0.0
+    graph_explanation_coverage: float = 0.0
+    hub_noise_rate: float = 0.0
+    latency_ms_graph: float = 0.0
     latency_ms_p50: float = 0.0
     detail: list[dict[str, Any]] = field(default_factory=list)
 
@@ -466,6 +471,71 @@ def _quality_eval_metrics(top_hits: list[Any], *, k: int) -> dict[str, float | N
         "pack_answerability": None,
         "compaction_safety": None,
     }
+
+
+def graph_diag_metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
+    """Diagnostic graph metrics over flattened top-K eval rows.
+
+    These are observability metrics, not gate criteria. ``graph_recall_gain``
+    means "share of relevant top-K hits with graph attribution"; proving
+    causal gain requires comparing separate graph-on/graph-off configs.
+    """
+    graph_rows = []
+    graph_noise = 0
+    graph_relevant = 0
+    relevant_total = 0
+    hub_noise = 0
+    graph_latency = 0.0
+    trace_seen = False
+
+    for row in rows:
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        reason = extra.get("graph_reason") if isinstance(extra, dict) else None
+        graph_touched = isinstance(reason, dict)
+        relevant = bool(row.get("relevant") or row.get("expected"))
+        noise = bool(row.get("noise"))
+        if relevant:
+            relevant_total += 1
+        if graph_touched:
+            graph_rows.append(row)
+            if relevant:
+                graph_relevant += 1
+            if noise:
+                graph_noise += 1
+                if _graph_reason_has_low_idf_edge(reason):
+                    hub_noise += 1
+
+        trace = row.get("trace")
+        if isinstance(trace, list):
+            for stage in trace:
+                if not isinstance(stage, dict) or stage.get("stage") != "graph_signal":
+                    continue
+                trace_seen = True
+                with contextlib.suppress(TypeError, ValueError):
+                    graph_latency += float(stage.get("elapsed_ms") or 0.0)
+
+    graph_count = len(graph_rows)
+    return {
+        "graph_recall_gain": round(graph_relevant / relevant_total, 3) if relevant_total else 0.0,
+        "graph_noise_rate": round(graph_noise / graph_count, 3) if graph_count else 0.0,
+        "graph_explanation_coverage": round(graph_count / len(rows), 3) if rows else 0.0,
+        "hub_noise_rate": round(hub_noise / graph_noise, 3) if graph_noise else 0.0,
+        "latency_ms_graph": round(graph_latency, 1) if trace_seen else 0.0,
+    }
+
+
+def _graph_reason_has_low_idf_edge(reason: Any) -> bool:
+    if not isinstance(reason, dict):
+        return False
+    for edge in reason.get("neighbor_edges") or []:
+        if not isinstance(edge, dict):
+            continue
+        try:
+            if float(edge.get("idf") or 0.0) <= 0.5:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 def _scored_prompts(labels: LabelSet) -> int:
@@ -515,6 +585,7 @@ def _run_config_inner(
     canonical_sum = 0.0
     ranked_total = 0
     detail: list[dict[str, Any]] = []
+    graph_eval_rows: list[dict[str, Any]] = []
     n_prompts = len(labels.prompts) or 1
     # Honest associative metric: measure what the associative engine actually
     # surfaces from the top-K seeds, not whether vector search already found the
@@ -572,8 +643,15 @@ def _run_config_inner(
             else prompt.text
         )
         t0 = time.time()
-        hits = mem.search(query, limit=k * 4, mode=cfg.mode, exclude_types=exclude_types,
-                          exclude_tags=exclude_tags)
+        trace: list[dict[str, Any]] = []
+        hits = mem.search(
+            query,
+            limit=k * 4,
+            mode=cfg.mode,
+            exclude_types=exclude_types,
+            exclude_tags=exclude_tags,
+            _trace=trace,
+        )
         lat.append((time.time() - t0) * 1000)
         band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
         if band_days > 0:
@@ -608,6 +686,20 @@ def _run_config_inner(
             ranked = [h for h in ranked if not _is_noise(h, labels)]
         top = ranked[:k]
         quality_metrics = _quality_eval_metrics(top, k=k)
+
+        def _hit_is_noise(h: Any, _avoid_ids: list[str] = prompt.avoid_ids) -> bool:
+            return _is_noise(h, labels) or _id_matches(getattr(h, "id", ""), _avoid_ids)
+
+        for h in top:
+            graph_eval_rows.append(
+                {
+                    "id": getattr(h, "id", ""),
+                    "relevant": _is_relevant(h, prompt, labels),
+                    "noise": _hit_is_noise(h),
+                    "extra": getattr(h, "extra", None) or {},
+                    "trace": trace,
+                }
+            )
         if prompt.expect_ids:
             ranked_ids = [getattr(h, "id", "") or "" for h in top]
             rk_sum += recall_at_k(ranked_ids, prompt.expect_ids, k)
@@ -616,9 +708,6 @@ def _run_config_inner(
             ranked_total += 1
         stale_sum += float(quality_metrics["stale_at_k"] or 0.0)
         canonical_sum += float(quality_metrics["canonical_hit_at_k"] or 0.0)
-
-        def _hit_is_noise(h: Any, _avoid_ids: list[str] = prompt.avoid_ids) -> bool:
-            return _is_noise(h, labels) or _id_matches(getattr(h, "id", ""), _avoid_ids)
 
         noise_hits += sum(1 for h in top if _hit_is_noise(h))
         if scored:
@@ -658,6 +747,7 @@ def _run_config_inner(
             }
         )
     lat.sort()
+    graph_metrics = graph_diag_metrics(graph_eval_rows)
     return Row(
         config=cfg.name,
         precision_at_k=round(prec_hits / prec_total, 3) if prec_total else 0.0,
@@ -670,6 +760,11 @@ def _run_config_inner(
         canonical_hit_at_k=round(canonical_sum / n_prompts, 3) if n_prompts else 0.0,
         pack_answerability=None,
         compaction_safety=None,
+        graph_recall_gain=graph_metrics["graph_recall_gain"],
+        graph_noise_rate=graph_metrics["graph_noise_rate"],
+        graph_explanation_coverage=graph_metrics["graph_explanation_coverage"],
+        hub_noise_rate=graph_metrics["hub_noise_rate"],
+        latency_ms_graph=graph_metrics["latency_ms_graph"],
         latency_ms_p50=round(lat[len(lat) // 2], 1) if lat else 0.0,
         detail=detail,
     )
@@ -720,6 +815,22 @@ def rows_to_table(rows: list[Row], k: int) -> str:
         "assoc@k: fraction of graph-neighbor expect_associative_ids the associative "
         "engine surfaces from the top-K seeds (the path vector search alone missed)."
     )
+    if any(
+        r.graph_recall_gain or r.graph_noise_rate or r.graph_explanation_coverage or r.latency_ms_graph
+        for r in rows
+    ):
+        lines.append("")
+        lines.append(
+            f"{'config':<18} {'graph rel':>9} {'graph noise':>11} "
+            f"{'expl cov':>9} {'hub noise':>9} {'graph ms':>9}"
+        )
+        lines.append("-" * 72)
+        for r in rows:
+            lines.append(
+                f"{r.config:<18} {r.graph_recall_gain:>9} {r.graph_noise_rate:>11} "
+                f"{r.graph_explanation_coverage:>9} {r.hub_noise_rate:>9} "
+                f"{r.latency_ms_graph:>9}"
+            )
     return "\n".join(lines)
 
 
@@ -808,6 +919,11 @@ def gate_metrics(rows: list[Row]) -> dict[str, Any]:
         "canonical_hit_at_k": b.canonical_hit_at_k,
         "pack_answerability": b.pack_answerability,
         "compaction_safety": b.compaction_safety,
+        "graph_recall_gain": b.graph_recall_gain,
+        "graph_noise_rate": b.graph_noise_rate,
+        "graph_explanation_coverage": b.graph_explanation_coverage,
+        "hub_noise_rate": b.hub_noise_rate,
+        "latency_ms_graph": b.latency_ms_graph,
     }
 
 
