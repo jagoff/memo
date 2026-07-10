@@ -381,6 +381,46 @@ def delete(id_: str, yes: bool) -> None:
 
 
 @click.command()
+@click.argument("id_")
+def undo(id_: str) -> None:
+    """Remove a just-captured memory. Delete, no confirmation prompt —
+
+    capture receipts are the audit trail, so an `undo` right after a
+    receipt should not stop to ask.
+    """
+
+    mem = _get_memory(Config.from_env())
+    ok = _resolved(lambda: mem.delete(id_))
+    console.print(f"[{'green' if ok else 'red'}]{'✓ removed' if ok else 'not found'}[/]: {id_}")
+    if not ok:
+        sys.exit(1)
+
+
+@click.command()
+@click.argument("id_")
+@click.option("--title", default=None, help="Corrected title.")
+@click.option(
+    "--type",
+    "type_",
+    type=click.Choice(
+        ["decision", "fact", "bug", "feedback", "preference", "note", "manual"],
+    ),
+    default=None,
+    help="Corrected type.",
+)
+@click.option("--body", default=None, help="Corrected body content.")
+def fix(id_: str, title: str | None, type_: str | None, body: str | None) -> None:
+    """Correct a captured memory's title/type/body (thin wrapper over `update`)."""
+
+    mem = _get_memory(Config.from_env())
+    rec = _resolved(lambda: mem.update(id_, title=title, type_=type_, content=body))
+    if rec is None:
+        console.print(f"[red]not found:[/red] {id_}")
+        sys.exit(1)
+    console.print(f"[green]✓ fixed[/green]: {rec.id}")
+
+
+@click.command()
 @click.option("--limit", default=20, type=int, show_default=True)
 @click.option(
     "--op",

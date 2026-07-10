@@ -74,6 +74,7 @@ from memo.cli_maintain import maintain_cmd
 from memo.cli_mandate import mandate as mandate_cmd
 from memo.cli_memory import (
     delete,
+    fix,
     get,
     history,
     lint,
@@ -84,6 +85,7 @@ from memo.cli_memory import (
     rename,
     restore,
     save,
+    undo,
     update,
 )
 from memo.cli_outcome import gaps as gaps_cmd
@@ -428,6 +430,8 @@ cli.add_command(update)
 cli.add_command(rename)
 cli.add_command(reindex)
 cli.add_command(delete)
+cli.add_command(undo)
+cli.add_command(fix)
 cli.add_command(history)
 cli.add_command(retrieve_cmd)
 cli.add_command(ocr_image)
