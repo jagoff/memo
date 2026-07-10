@@ -41,3 +41,27 @@ def test_merge_entity_pair_repoints_links_and_recounts(tmp_cfg):
     merged = {r["name"]: r for r in g.list_entities()}
     assert set(merged) == {"memo recall daemon"}
     assert merged["memo recall daemon"]["mention_count"] == 2
+
+
+def test_weighted_neighbors_merges_same_name_across_entity_types(tmp_cfg):
+    g = GraphStore(tmp_cfg.graph_db)
+    g.record_extraction(
+        memory_id="m1",
+        memory_date="2026-07-01",
+        entities=[
+            {"name": "mlx", "type": "concept"},
+        ],
+        extracted_at="2026-07-01T00:00:00Z",
+    )
+    g.record_extraction(
+        memory_id="m2",
+        memory_date="2026-07-02",
+        entities=[
+            {"name": "mlx", "type": "technology"},
+            {"name": "daemon", "type": "technology"},
+        ],
+        extracted_at="2026-07-02T00:00:00Z",
+    )
+    g.rebuild_edges()
+
+    assert g.weighted_neighbors("mlx")["daemon"] == 1.0

@@ -406,6 +406,51 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._attach_related_fact_edges(query, out)
             _add_trace("fact_surface", input_count=before, output_count=len(out))
+        if out and flag_bool("MEMO_GRAPH_SIGNAL_ENABLED"):
+            try:
+                from dataclasses import replace as dc_replace
+
+                from memo.graph_reason import build_graph_reason
+                from memo.graph_signal import collect_graph_signal
+
+                graph_signal = collect_graph_signal(
+                    self.graph,
+                    query,
+                    [r.id for r in out],
+                )
+                _add_trace(
+                    "graph_signal",
+                    enabled=graph_signal.enabled,
+                    query_entities=graph_signal.query_entities,
+                    touched_count=len(graph_signal.boosts),
+                    skipped=graph_signal.skipped,
+                    elapsed_ms=round(graph_signal.elapsed_ms, 3),
+                )
+                if graph_signal.boosts:
+                    out = [
+                        dc_replace(
+                            r,
+                            score=round((r.score or 0.0) + graph_signal.boosts.get(r.id, 0.0), 6),
+                        )
+                        for r in out
+                    ]
+                    out.sort(key=lambda r: r.score or 0.0, reverse=True)
+                if flag_bool("MEMO_GRAPH_REASON_ENABLED") and graph_signal.traces:
+                    out = [
+                        dc_replace(
+                            r,
+                            extra={
+                                **(r.extra or {}),
+                                "graph_reason": build_graph_reason(r.id, graph_signal.traces[r.id]),
+                            },
+                        )
+                        if r.id in graph_signal.traces
+                        else r
+                        for r in out
+                    ]
+            except Exception as exc:
+                _log.debug("graph_signal failed: %s", exc)
+                _add_trace("graph_signal", enabled=True, skipped="error")
         # Drop soft-forgotten memories (forget_after TTL elapsed, see
         # lifecycle.py) before feedback/rerank so they never reach the
         # consumer — recall, ask, chat all route through here. Reversible

@@ -441,23 +441,22 @@ class GraphStore:
 
     def weighted_neighbors(self, name: str) -> dict[str, float]:
         name = name.strip().lower()
-        row = self._conn.execute(
-            "SELECT id FROM entities WHERE name = ? LIMIT 1", (name,)
-        ).fetchone()
-        if row is None:
+        rows = self._conn.execute("SELECT id FROM entities WHERE name = ?", (name,)).fetchall()
+        if not rows:
             return {}
-        eid = row["id"]
+        eids = [int(r["id"]) for r in rows]
         out: dict[str, float] = {}
-        for r in self._conn.execute(
-            "SELECT CASE WHEN a_id = ? THEN b_id ELSE a_id END AS other, weight "
-            "FROM entity_edges WHERE a_id = ? OR b_id = ?",
-            (eid, eid, eid),
-        ):
-            nm = self._conn.execute(
-                "SELECT name FROM entities WHERE id = ?", (r["other"],)
-            ).fetchone()
-            if nm is not None:
-                out[nm["name"]] = float(r["weight"])
+        for eid in eids:
+            for r in self._conn.execute(
+                "SELECT CASE WHEN a_id = ? THEN b_id ELSE a_id END AS other, weight "
+                "FROM entity_edges WHERE a_id = ? OR b_id = ?",
+                (eid, eid, eid),
+            ):
+                nm = self._conn.execute(
+                    "SELECT name FROM entities WHERE id = ?", (r["other"],)
+                ).fetchone()
+                if nm is not None:
+                    out[nm["name"]] = max(float(r["weight"]), out.get(nm["name"], 0.0))
         return out
 
     def entity_names(self) -> set[str]:
