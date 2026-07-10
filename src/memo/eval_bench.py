@@ -203,10 +203,12 @@ def parse_dataset(name: str, raw: Any) -> list[BenchSample]:
 DATASET_URLS: dict[str, str] = {
     # LoCoMo-10 (Maharana et al. 2024) — public JSON in the snap-research repo.
     "locomo": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json",
-    # LongMemEval (Wu et al. 2024) — JSON files on the HF dataset mirror.
+    # LongMemEval (Wu et al. 2024) — JSON files on the HF dataset mirror. The
+    # HF blobs have NO .json extension (`longmemeval_oracle`, not
+    # `longmemeval_oracle.json`) — appending it 404s.
     # oracle = evidence-only haystacks (small, fast); _s = ~115k-token haystacks.
-    "longmemeval_oracle": "https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_oracle.json",
-    "longmemeval_s": "https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s.json",
+    "longmemeval_oracle": "https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_oracle",
+    "longmemeval_s": "https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s",
 }
 
 Fetcher = Callable[[str], bytes]
