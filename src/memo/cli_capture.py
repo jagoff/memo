@@ -126,7 +126,12 @@ def capture_stop() -> None:
             {"id": "?", "title": t, "type": "note"} for t in (result.get("saved_titles") or [])
         ]
         if saved:
-            _write_capture_notification(Config.from_env().state_dir, saved)
+            # Default-OFF parity: pre-branch, capture-stop only printed to the
+            # console and never wrote the notification file. Gate the new file
+            # write behind MEMO_CAPTURE_RECEIPT so the flag-off Stop path stays
+            # byte-identical to before (console line only).
+            if flag_bool("MEMO_CAPTURE_RECEIPT"):
+                _write_capture_notification(Config.from_env().state_dir, saved)
             console.print("[dim]※ MEMO auto-saved[/dim]")
     except Exception as exc:
         if debug:

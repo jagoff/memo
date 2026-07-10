@@ -55,26 +55,6 @@ def guard_banner(
     return "\n".join(lines)
 
 
-def boost_guarded(hits: list[Any], guarded_ids: set[str], boost: float) -> list[Any]:
-    """Return a new list with guard-flagged hits' scores raised by `boost`."""
-    import copy
-    import dataclasses
-
-    out = []
-    for h in hits:
-        if getattr(h, "id", None) in guarded_ids and boost:
-            base = getattr(h, "score", None) or 0.0
-            try:
-                out.append(dataclasses.replace(h, score=base + boost))
-            except TypeError:  # not a dataclass — mutate a shallow copy
-                c = copy.copy(h)
-                c.score = base + boost
-                out.append(c)
-        else:
-            out.append(h)
-    return out
-
-
 def log_guard_fire(state_dir: Path, *, prompt: str, ids: list[str]) -> None:
     """Append one guard-fire record to state_dir/guard.log. Best-effort."""
     try:
