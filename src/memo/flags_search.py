@@ -195,6 +195,28 @@ SPECS: tuple[FlagSpec, ...] = (
         "Default off; ambient recall does not use context packs.",
     ),
     _spec(
+        "MEMO_CONTEXT_SURFACE",
+        "bool",
+        True,
+        "search",
+        "Enable the prompt-ready memo context/profile surface for agents.",
+    ),
+    _spec(
+        "MEMO_CONTEXT_CACHE",
+        "bool",
+        True,
+        "search",
+        "Enable a short process-local cache for read-only context surface calls.",
+    ),
+    _spec(
+        "MEMO_CONTEXT_CACHE_TTL",
+        "int",
+        60,
+        "search",
+        "TTL in seconds for the process-local context surface cache.",
+        min_val=0,
+    ),
+    _spec(
         "MEMO_GRAPH_EXPANSION_ENABLED",
         "bool",
         False,

@@ -114,7 +114,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 13 tools) | core/slim (stable core) | full/default (all tools).",
+        "MCP surface profile: agent (default, 14 tools) | core/slim (stable core) | full/default (all tools).",
     ),
     _spec(
         "MEMO_RESOURCE_BODY_CHARS",

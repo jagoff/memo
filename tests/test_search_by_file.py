@@ -129,6 +129,73 @@ def test_memo_search_trace_opts_into_quality_rerank(tmp_cfg):
     )
 
 
+def test_memo_search_explain_uses_trace(tmp_cfg):
+    from memo.memory import Memory
+    from memo.server_core_search import register
+
+    hit = MagicMock()
+    hit.id = "abc12345deadbeef"
+    hit.score = 0.7
+    hit.to_dict.return_value = {
+        "id": "abc12345deadbeef",
+        "title": "Alpha",
+        "body": "Alpha body",
+        "score": 0.7,
+    }
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.search_with_trace.return_value = {
+        "hits": [hit],
+        "trace": [
+            {
+                "stage": "candidate_generation",
+                "mode": "hybrid",
+                "vec_count": 1,
+                "bm25_count": 1,
+                "output_count": 1,
+            },
+            {"stage": "final", "output_count": 1},
+        ],
+    }
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    out = tools["memo_search"](query="alpha", limit=1, explain=True)
+
+    assert out["hits"][0]["explain"]["legs"]["vec"]["present"] is True
+    assert out["hits"][0]["explain"]["legs"]["bm25"]["present"] is True
+    assert out["trace"][0]["stage"] == "candidate_generation"
+    mem.search.assert_not_called()
+
+
+def test_memo_context_tool_logs_consult(tmp_cfg):
+    from memo.memory import Memory
+    from memo.server_core_search import register
+
+    hit = MagicMock()
+    hit.id = "abc12345deadbeef"
+    hit.score = 0.7
+    hit.title = "Alpha"
+    hit.body = "Alpha body"
+    hit.type = "note"
+    hit.tags = []
+    hit.extra = {}
+    store = MagicMock()
+    store.list_recent.return_value = []
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.store = store
+    mem.search.return_value = [hit]
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    out = tools["memo_context"](question="alpha", include_profile=False, source="codex")
+
+    assert out["schema"] == "memo.context.v1"
+    assert out["hits"][0]["id"] == "abc12345deadbeef"
+    mem.search.assert_called_once()
+
+
 def test_search_by_file_forwards_quality_rerank(mock_memory, monkeypatch):
     hit = mock_memory.save(
         content="Recall socket change.",

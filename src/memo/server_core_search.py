@@ -101,6 +101,7 @@ def register(server: Any, memory: Memory) -> None:
         type: str | None = None,
         body_chars: int = 280,
         mode: str = "hybrid",
+        explain: bool = False,
         source: str = "",
         file: str = "",
         date_from: str | None = None,
@@ -120,8 +121,10 @@ def register(server: Any, memory: Memory) -> None:
             date_from, date_to = parse_date_range(when)
         t0 = now_ms()
         out: list[dict[str, Any]] = []
-        records = (
-            memory.search_by_file(
+        trace: list[dict[str, Any]] = []
+        explanations: dict[str, dict[str, Any]] = {}
+        if explain and file:
+            records = memory.search_by_file(
                 query,
                 file=file,
                 limit=limit,
@@ -129,8 +132,10 @@ def register(server: Any, memory: Memory) -> None:
                 type_=type,
                 quality_rerank=True,
             )
-            if file
-            else memory.search(
+        elif explain:
+            from memo.search_explain import build_search_explanations
+
+            envelope = memory.search_with_trace(
                 query,
                 limit=limit,
                 type_=type,
@@ -139,13 +144,38 @@ def register(server: Any, memory: Memory) -> None:
                 date_to=date_to,
                 quality_rerank=True,
             )
-        )
+            records = envelope["hits"]
+            trace = envelope.get("trace") or []
+            explanations = build_search_explanations(records, trace)
+        else:
+            records = (
+                memory.search_by_file(
+                    query,
+                    file=file,
+                    limit=limit,
+                    mode=mode,
+                    type_=type,
+                    quality_rerank=True,
+                )
+                if file
+                else memory.search(
+                    query,
+                    limit=limit,
+                    type_=type,
+                    mode=mode,
+                    date_from=date_from,
+                    date_to=date_to,
+                    quality_rerank=True,
+                )
+            )
         for r in records:
             d = r.to_dict()
             body = d.get("body") or ""
             if body_chars >= 0 and len(body) > body_chars:
                 d["body"] = body[:body_chars].rstrip() + "…"
                 d["body_truncated"] = True
+            if explain:
+                d["explain"] = explanations.get(str(d.get("id") or ""), {})
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
 
@@ -155,7 +185,55 @@ def register(server: Any, memory: Memory) -> None:
         return {
             "hits": out,
             "notification": notification,
+            **({"trace": trace} if explain else {}),
         }
+
+    @annotated_tool(server, **READ_ONLY)
+    def memo_context(
+        question: str,
+        k: int = 7,
+        type: str | None = None,
+        snippet_chars: int = 700,
+        budget_chars: int = 6000,
+        include_profile: bool = True,
+        include_dynamic: bool = True,
+        source: str = "",
+    ) -> dict[str, Any]:
+        """Build prompt-ready memory context without calling the answer LLM.
+
+        Read-only. Returns static profile, dynamic recent context, query hits,
+        omissions, and a readonly prompt wrapper for direct model injection.
+        """
+        from memo.context_surface import build_context_surface, consult_hits_from_context
+        from memo.flags import flag_bool
+
+        if not flag_bool("MEMO_CONTEXT_SURFACE"):
+            return {
+                "status": "disabled",
+                "reason": "MEMO_CONTEXT_SURFACE=0 disables memo_context.",
+                "question": question,
+            }
+        t0 = now_ms()
+        out = build_context_surface(
+            memory,
+            question,
+            k=k,
+            type_=type,
+            snippet_chars=snippet_chars,
+            budget_chars=budget_chars,
+            include_profile=include_profile,
+            include_dynamic=include_dynamic,
+        )
+        log_consult(
+            memory,
+            tool="context",
+            query=question,
+            hits=consult_hits_from_context(out),
+            t0_ms=t0,
+            source=source,
+        )
+        out["notification"] = _read_notification(memory)
+        return out
 
     @annotated_tool(server, **READ_ONLY)
     def memo_search_trace(

@@ -94,6 +94,7 @@ def _default_search_json_body_chars() -> int:
     "Default: MEMO_SEARCH_JSON_BODY_CHARS (280).",
 )
 @click.option("--json", "as_json", is_flag=True)
+@click.option("--explain", is_flag=True, help="Include per-hit ranking explanation details.")
 @click.option(
     "--source",
     default=None,
@@ -108,6 +109,7 @@ def search(
     use_rerank: bool | None,
     body_chars: int | None,
     as_json: bool,
+    explain: bool,
     source: str | None,
 ) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
@@ -131,15 +133,35 @@ def search(
     mem = _get_memory(cfg)
     disable_reranker = use_rerank is False
     t0 = int(time.time() * 1000)
-    hits = mem.search(
-        query,
-        limit=limit,
-        type_=type_,
-        mode=mode,
-        disable_reranker=disable_reranker,
-        quality_rerank=True,
-    )
+    trace = None
+    if explain:
+        from memo.search_explain import build_search_explanations
+
+        envelope = mem.search_with_trace(
+            query,
+            limit=limit,
+            type_=type_,
+            mode=mode,
+            disable_reranker=disable_reranker,
+            quality_rerank=True,
+        )
+        hits = envelope["hits"]
+        trace = envelope.get("trace") or []
+        explanations = build_search_explanations(hits, trace)
+    else:
+        hits = mem.search(
+            query,
+            limit=limit,
+            type_=type_,
+            mode=mode,
+            disable_reranker=disable_reranker,
+            quality_rerank=True,
+        )
+        explanations = {}
     hit_dicts = _compact_hit_dicts([h.to_dict() for h in hits], body_chars)
+    if explain:
+        for hit in hit_dicts:
+            hit["explain"] = explanations.get(str(hit.get("id") or ""), {})
     log_cli_consult(cfg, verb="search", query=query, hits=hit_dicts, t0_ms=t0, source=source)
     if as_json:
         click.echo(json.dumps(hit_dicts, ensure_ascii=False, indent=2))
@@ -160,6 +182,86 @@ def search(
             ", ".join(h.tags) or "—",
         )
     console.print(tbl)
+    if explain and trace is not None:
+        console.print(f"[dim]search trace stages: {', '.join(str(t.get('stage')) for t in trace)}[/dim]")
+
+
+@click.command(name="context")
+@click.argument("question")
+@click.option("--k", default=7, type=int, show_default=True, help="Top-K memories to include.")
+@click.option("--type", "type_", default=None, help="Restrict retrieval to one record type.")
+@click.option(
+    "--snippet-chars",
+    default=700,
+    type=int,
+    show_default=True,
+    help="Per-memory snippet length.",
+)
+@click.option(
+    "--budget-chars",
+    default=6000,
+    type=int,
+    show_default=True,
+    help="Approximate prompt text budget.",
+)
+@click.option("--profile/--no-profile", "include_profile", default=True, show_default=True)
+@click.option("--dynamic/--no-dynamic", "include_dynamic", default=True, show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--source",
+    default=None,
+    help="Identify the calling layer so the consult is attributed in `memo usefulness`.",
+)
+def context_cmd(
+    question: str,
+    k: int,
+    type_: str | None,
+    snippet_chars: int,
+    budget_chars: int,
+    include_profile: bool,
+    include_dynamic: bool,
+    as_json: bool,
+    source: str | None,
+) -> None:
+    """Build prompt-ready memory context without calling the answer LLM."""
+    import time
+
+    from memo.context_surface import build_context_surface, consult_hits_from_context
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_CONTEXT_SURFACE"):
+        raise click.ClickException("memo context is disabled by MEMO_CONTEXT_SURFACE=0.")
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    t0 = int(time.time() * 1000)
+    payload = build_context_surface(
+        mem,
+        question,
+        k=k,
+        type_=type_,
+        snippet_chars=snippet_chars,
+        budget_chars=budget_chars,
+        include_profile=include_profile,
+        include_dynamic=include_dynamic,
+    )
+    log_cli_consult(
+        cfg,
+        verb="context",
+        query=question,
+        hits=consult_hits_from_context(payload),
+        t0_ms=t0,
+        source=source,
+    )
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    console.print(
+        Panel.fit(
+            payload["prompt"] or "[dim](no memory context)[/dim]",
+            title=f"context: {question[:60]}",
+            border_style="cyan",
+        )
+    )
 
 
 @click.command()
