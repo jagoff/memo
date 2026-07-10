@@ -101,6 +101,7 @@ def test_memo_graph_why_verb(mock_memory):
     assert out["verb"] == "why"
     assert out["result"]["path"] == ["alpha", "beta", "gamma"]
     assert len(out["result"]["edges"]) == 2
+    assert out["result"]["evidence_memory_ids"] == ["m1", "m2"]
 
 
 def test_memo_graph_neighbors_verb(mock_memory):

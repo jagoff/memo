@@ -63,6 +63,49 @@ def graph_path(source: str, target: str, max_length: int, as_json: bool, codegra
     console.print(f"[dim]Via {len(path.intermediate_memories)} memory(s)[/dim]")
 
 
+@graph_group.command(name="why")
+@click.argument("source")
+@click.argument("target")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+@click.option(
+    "--codegraph/--no-codegraph",
+    default=None,
+    help="Force codegraph code graph fallback (auto-enabled if memo graph empty)",
+)
+def graph_why(source: str, target: str, as_json: bool, codegraph: bool | None) -> None:
+    """Explain why two entities are connected.
+
+    Example: memo graph why mlx daemon
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    result = mem.navigator.why_connected(source, target, use_codegraph=codegraph)
+
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    if not result["path"]:
+        console.print(f"[yellow]No path found between '{source}' and '{target}'[/yellow]")
+        return
+
+    console.print(f"[bold]Why '{source}' connects to '{target}'[/bold]")
+    console.print(" → ".join(result["path"]))
+    table = Table()
+    table.add_column("From", style="cyan")
+    table.add_column("To", style="cyan")
+    table.add_column("Weight", style="green")
+    table.add_column("Evidence", style="yellow")
+    for edge in result["edges"]:
+        table.add_row(
+            str(edge["from"]),
+            str(edge["to"]),
+            str(edge["weight"]),
+            str(edge.get("memory_id") or ""),
+        )
+    console.print(table)
+
+
 @graph_group.command(name="neighbors")
 @click.argument("entity")
 @click.option(

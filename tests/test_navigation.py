@@ -118,6 +118,27 @@ def test_get_neighbors_with_data(navigator, mock_memory):
     assert neighbors.entity == "mlx"
 
 
+def test_why_connected_returns_weighted_path_and_memory_evidence(mock_graph_store):
+    g = mock_graph_store
+    g.record_extraction(
+        memory_id="m1",
+        memory_date="2026-07-10",
+        entities=[
+            {"name": "mlx", "type": "technology"},
+            {"name": "daemon", "type": "technology"},
+        ],
+        extracted_at="2026-07-10T00:00:00Z",
+    )
+    g.rebuild_edges()
+    nav = GraphNavigator(g)
+
+    why = nav.why_connected("mlx", "daemon", use_codegraph=False)
+
+    assert why["path"] == ["mlx", "daemon"]
+    assert why["edges"][0]["weight"] == 1.0
+    assert why["evidence_memory_ids"] == ["m1"]
+
+
 def test_detect_communities_empty(navigator):
     """Test community detection with empty graph."""
     communities = navigator.detect_communities(min_size=2)
