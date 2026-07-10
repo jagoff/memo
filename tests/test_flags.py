@@ -25,6 +25,17 @@ def test_flag_returns_default_when_unset() -> None:
     assert flags.flag_int("MEMO_DREAM_COMPRESS_THRESHOLD", env=env) == 0
 
 
+def test_graph_integration_flags_have_safe_defaults() -> None:
+    env: dict[str, str] = {}
+    assert flags.flag_bool("MEMO_GRAPH_SIGNAL_ENABLED", env=env) is False
+    assert flags.flag_bool("MEMO_GRAPH_REASON_ENABLED", env=env) is False
+    assert flags.flag_bool("MEMO_GRAPH_SEMANTIC_RELATIONS", env=env) is False
+    assert flags.flag_bool("MEMO_GRAPH_HUB_SUPPRESSION", env=env) is True
+    assert flags.flag_int("MEMO_GRAPH_SIGNAL_BUDGET_MS", env=env) == 150
+    assert flags.flag_float("MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO", env=env) == 0.25
+    assert flags.flag_float("MEMO_GRAPH_MIN_ENTITY_IDF", env=env) == 0.5
+
+
 def test_typed_coercion() -> None:
     env = {
         "MEMO_RECALL_TOP_K": "7",
