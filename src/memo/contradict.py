@@ -81,6 +81,7 @@ VALID_STATUSES = {
     "kept_newer",  # newer side won, older deleted/archived
     "kept_older",  # older side won (rare; explicit user choice)
     "evolved",  # both kept, marked as legitimate evolution
+    "competing",  # both kept: neither side dominates (trust within margin / N-way)
     "dismissed",  # false positive
 }
 

@@ -157,6 +157,21 @@ def test_valid_statuses_does_not_include_open_as_resolution():
 def test_is_stale_helper():
     assert is_stale("2020-01-01T00:00:00+00:00", days_threshold=30) is True
     assert is_stale("2999-01-01T00:00:00+00:00", days_threshold=30) is False
+
+
+def test_resolve_accepts_competing_status(mock_memory):
+    a = mock_memory.save(content="El puerto es 8080", title="p-old")
+    b = mock_memory.save(content="El puerto es 8765", title="p-new")
+    pair = mock_memory.contradict_store.upsert_open(
+        memory_id_a=a.id,
+        memory_id_b=b.id,
+        relationship="contradiction",
+        confidence=0.95,
+        rationale="ports",
+    )
+    mock_memory.contradict_store.resolve(pair, "competing", note="neither dominates")
+    rows = mock_memory.contradict_store.list_all(status="competing")
+    assert any(r.pair_id == pair for r in rows)
     assert is_stale("garbage", days_threshold=30) is False
 
 

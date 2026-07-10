@@ -25,6 +25,36 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0,
     ),
     _spec(
+        "MEMO_BELIEF_COMPETING",
+        "bool",
+        False,
+        "temporal",
+        "When on, contradiction resolution (maintain + nightly Dream) picks the "
+        "loser by trust (confidence x roi_score), not raw recency, and marks the "
+        "pair 'competing' (both kept) when the two sides are within "
+        "MEMO_SUPERSEDE_MARGIN. Default off = legacy recency-newer-wins.",
+    ),
+    _spec(
+        "MEMO_SUPERSEDE_MARGIN",
+        "float",
+        0.15,
+        "temporal",
+        "Trust-score band (|conf_a x roi_a - conf_b x roi_b|) under which neither "
+        "side dominates: the pair is marked 'competing' instead of superseded. "
+        "Only active when MEMO_BELIEF_COMPETING is on.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_BELIEF_NWAY",
+        "bool",
+        False,
+        "temporal",
+        "When on, a connected component of 3+ mutually-contradicting memories is "
+        "marked 'competing' (all pairs) instead of pairwise auto-superseded. "
+        "Requires MEMO_BELIEF_COMPETING. Default off.",
+    ),
+    _spec(
         "MEMO_CONTRADICT_MUTABILITY",
         "bool",
         False,
