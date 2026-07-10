@@ -512,6 +512,10 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     Returns a dict with:
     - superseded: list of {pair_id, older}
     - evolved: list of pair_ids
+    - competing: list of pair_ids (dominance within MEMO_SUPERSEDE_MARGIN, or
+      N-way conflict of 3+ mutually contradicting memories)
+    - flagged_for_review: list of {pair_id, held, support_count} held open by
+      the support gate
     - confidence_penalized: count of confidence-demoted ids
     """
     from memo.flags import flag_bool, flag_float

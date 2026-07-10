@@ -56,7 +56,7 @@ def supersede_decision(mem: Any, *, older_id: str, newer_id: str) -> SupersedeDe
             return {}
 
     if not flag_bool("MEMO_BELIEF_COMPETING"):
-        support_older = _support([older_id]).get(older_id, 0)
+        support_older = _support([older_id]).get(older_id, 0) if gate > 0 else 0
         if gate > 0 and support_older >= gate:
             return SupersedeDecision(
                 HOLD_OPEN, newer_id, older_id,

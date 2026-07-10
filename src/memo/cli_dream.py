@@ -146,6 +146,8 @@ def dream_run(
         "signal_gathered": {"files_processed": 0, "memories_saved": 0, "skipped_dup": 0},
         "superseded": [],
         "evolved": [],
+        "competing": [],
+        "flagged_for_review": [],
         "merged": [],
         "archived_stale": [],
         "synthesized": [],
@@ -622,6 +624,8 @@ def dream_run(
                     receipt["errors"].append(f"contradict: {res['error']}")
                 receipt["superseded"] = res.get("superseded", [])
                 receipt["evolved"] = res.get("evolved", [])
+                receipt["competing"] = res.get("competing", [])
+                receipt["flagged_for_review"] = res.get("flagged_for_review", [])
                 receipt["confidence_penalized"] = res.get("confidence_penalized", 0)
                 progress.update(
                     step,

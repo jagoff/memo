@@ -80,6 +80,54 @@ class TestRunContradict:
         assert mock_memory.get(a.id) and mock_memory.get(b.id) and mock_memory.get(c.id)
 
 
+class TestDreamRunReceiptCarriesCompeting:
+    """`dream run` must copy competing/flagged_for_review from _run_contradict
+    into the top-level receipt (cli_dream.py merge seam), same as cli_maintain.py."""
+
+    def test_dream_run_receipt_carries_competing_pair(self, mock_memory, monkeypatch) -> None:
+        import json
+
+        from click.testing import CliRunner
+
+        from memo.cli_dream import dream_cmd
+
+        monkeypatch.setenv("MEMO_BELIEF_COMPETING", "1")
+        monkeypatch.setenv("MEMO_SUPERSEDE_MARGIN", "0.5")  # wide -> force competing
+
+        a = mock_memory.save(content="El dashboard corre en el puerto 8080", title="p-old")
+        b = mock_memory.save(content="El dashboard corre en el puerto 8765", title="p-new")
+        mock_memory.contradict_store.upsert_open(
+            memory_id_a=a.id, memory_id_b=b.id,
+            relationship="contradiction", confidence=0.95, rationale="ports differ",
+        )
+
+        with patch("memo.cli_dream._get_memory", return_value=mock_memory):
+            res = CliRunner().invoke(
+                dream_cmd,
+                [
+                    "run",
+                    "--json",
+                    "--skip-orientation",
+                    "--skip-signal-gather",
+                    "--skip-entities",
+                    "--skip-decay",
+                    "--skip-prune-floor",
+                    "--skip-evict",
+                    "--skip-compress",
+                    "--skip-prewarm",
+                    "--skip-presynthesis",
+                ],
+            )
+        assert res.exit_code == 0, res.output
+        out = res.output
+        receipt = json.loads(out[out.index("{") :])
+        assert receipt.get("competing"), "expected the competing pair to surface in the dream receipt"
+        assert "flagged_for_review" in receipt
+        # neither side archived
+        assert mock_memory.get(a.id) is not None
+        assert mock_memory.get(b.id) is not None
+
+
 class TestRunConsolidateDups:
     """Tests for _run_consolidate_dups phase handler."""
 
