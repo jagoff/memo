@@ -179,10 +179,10 @@ Released wheels include the Claude/Codex/Devin agent assets, so a normal
 checkout, pass `--repo /path/to/memo` to test uncommitted plugin changes.
 
 Tools surface inside the agent as `mcp__memo__memo_*`. Agent installs default to
-a 13-tool surface (`ask`, `get`, `graph`, `offload`, `rename`, `save`,
+a 14-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
 `search`, `unified_briefing`, `version`, and session/capture notification
 helpers) so administrative schemas don't consume model context — set
-`MEMO_MCP_PROFILE=core`/`slim` (33 tools) or `full`/`default` (124 tools) only
+`MEMO_MCP_PROFILE=core`/`slim` (34 tools) or `full`/`default` (129 tools) only
 for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
@@ -318,15 +318,16 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 
 | Profile | Tool count | Use |
 |---|---:|---|
-| `agent` (default) | 13 | Minimal always-on agent surface; optimized for schema-token cost. |
-| `core` / `slim` | 33 | CRUD, search, embeddings, history, sessions, lint, and lightweight graph/offload. |
-| `full` / `default` | 124 | Every advanced domain module and compatibility tool. |
+| `agent` (default) | 14 | Minimal always-on agent surface; optimized for schema-token cost. |
+| `core` / `slim` | 34 | CRUD, search, embeddings, history, sessions, lint, and lightweight graph/offload. |
+| `full` / `default` | 129 | Every advanced domain module and compatibility tool. |
 
 The default `agent` profile exposes exactly:
 
-`memo_ask`, `memo_get`, `memo_graph`, `memo_idle_capture`, `memo_offload`,
-`memo_pop_notification`, `memo_rename`, `memo_save`, `memo_save_text`,
-`memo_search`, `memo_start_session`, `memo_unified_briefing`, `memo_version`.
+`memo_ask`, `memo_context`, `memo_get`, `memo_graph`, `memo_idle_capture`,
+`memo_offload`, `memo_pop_notification`, `memo_rename`, `memo_save`,
+`memo_save_text`, `memo_search`, `memo_start_session`, `memo_unified_briefing`,
+`memo_version`.
 
 The `core` / `slim` profile adds CRUD/admin-lite tools:
 
@@ -599,8 +600,8 @@ memo save 'body markdown' --title 'X' -t mlx -t local
 memo search 'query' --limit 5
 memo list --limit 20 --type decision
 memo get <id>
-memo update <id> --title 'X2' -t mlx -t local --type decision
-memo update <id> --content -      # read replacement body from stdin
+memo edit <id> --title 'X2' -t mlx -t local --type decision
+memo edit <id> --content -        # read replacement body from stdin
 memo delete <id> --yes
 memo reindex                      # absorb edits made directly in Obsidian
 memo stats

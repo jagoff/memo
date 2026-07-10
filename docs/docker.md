@@ -65,7 +65,7 @@ docker run -e MEMO_DATA_DIR=/data \
 Common flags:
 - `MEMO_DATA_DIR` — data directory (default: `/data`)
 - `MEMO_SEARCH_MODE` — `vec`, `bm25`, or `hybrid` (default: `hybrid`)
-- `MEMO_EMBEDDER_DIMS` — embedding dimension (CPU uses 384-dim; do not override)
+- `MEMO_EMBEDDER_DIMS` — embedding dimension (CPU default is 1024-dim, `Qwen/Qwen3-Embedding-0.6B`; only override to match a different model)
 - `MEMO_NONINTERACTIVE=1` — suppress prompts
 
 See `memo config validate` for full registry.
@@ -86,25 +86,29 @@ docker run -v memo-data:/data \
 
 For remote clients, use Docker Compose or expose via `docker run`:
 
+The `memo-mcp` server speaks stdio by default. Select the HTTP transport with
+`MEMO_MCP_TRANSPORT=http` and bind it explicitly (default port is `18768`):
+
 ```bash
 docker run -d --name memo-server \
   -v memo-data:/data \
   -p 8765:8765 \
+  -e MEMO_MCP_TRANSPORT=http \
+  -e MEMO_MCP_HOST=0.0.0.0 \
   -e MEMO_MCP_PORT=8765 \
   ghcr.io/jagoff/memo:latest \
-  memo-mcp --http 0.0.0.0:8765
+  memo-mcp
 ```
 
 Then connect clients to `http://localhost:8765`.
 
 ### HTTP auth
 
-`memo http-api` requires bearer auth by default. Set `MEMO_HTTP_API_TOKEN`
-and send `Authorization: Bearer <token>` on API requests. Binding to a
-non-loopback host requires both a token and `--allow-non-loopback`.
-
-Loopback-only development can use `--allow-no-auth`; this flag is rejected for
-non-loopback binds.
+Neither the HTTP MCP transport nor `memo http-api` has **built-in
+authentication** — both bind to `127.0.0.1` (loopback) by default. To expose
+either beyond localhost, set the host to `0.0.0.0` **and** put a reverse proxy
+(nginx, Caddy) with authentication in front. Do not expose an unauthenticated
+memo endpoint on an untrusted network.
 
 ### Compose example
 
@@ -118,6 +122,9 @@ services:
     environment:
       MEMO_DATA_DIR: /data
       MEMO_SEARCH_MODE: hybrid
+      MEMO_MCP_TRANSPORT: http
+      MEMO_MCP_HOST: 0.0.0.0
+      MEMO_MCP_PORT: "8765"
     command: memo-mcp
     ports:
       - "8765:8765"
@@ -144,7 +151,7 @@ docker compose up -d
 
 ## Performance notes
 
-- **Embeddings:** CPU-quantized (384-dim) runs ~50-200ms per query depending on workload.
+- **Embeddings:** CPU `sentence-transformers` (1024-dim) runs ~50-200ms per query depending on workload.
 - **Search latency:** BM25 is instant; hybrid adds embedding cost (50-200ms).
 - **Memory:** Typical container uses 300-500MB (embedder cached).
 - **Scaling:** For high throughput, use `docker compose` with resource limits or orchestrate via Kubernetes.
