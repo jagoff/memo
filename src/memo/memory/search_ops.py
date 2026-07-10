@@ -436,12 +436,23 @@ class _SearchOpsMixin(_MemoryBase):
                     ]
                     out.sort(key=lambda r: r.score or 0.0, reverse=True)
                 if flag_bool("MEMO_GRAPH_REASON_ENABLED") and graph_signal.traces:
+                    relations_by_id: dict[str, list[dict[str, Any]]] = {}
+                    if flag_bool("MEMO_GRAPH_SEMANTIC_RELATIONS"):
+                        for r in out:
+                            relations_by_id[r.id] = self.graph.semantic_relations_for(
+                                source_id=r.id,
+                                limit=10,
+                            )
                     out = [
                         dc_replace(
                             r,
                             extra={
                                 **(r.extra or {}),
-                                "graph_reason": build_graph_reason(r.id, graph_signal.traces[r.id]),
+                                "graph_reason": build_graph_reason(
+                                    r.id,
+                                    graph_signal.traces[r.id],
+                                    relations=relations_by_id.get(r.id),
+                                ),
                             },
                         )
                         if r.id in graph_signal.traces
