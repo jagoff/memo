@@ -941,6 +941,7 @@ def _extract_and_save(
 
     saved: list[str] = []
     saved_titles: list[str] = []
+    saved_records: list[dict[str, str]] = []
     facts = 0
     fact_edges_declared = 0
     fact_edges_prepared = 0
@@ -1069,6 +1070,7 @@ def _extract_and_save(
             )
             saved.append(rec.id)
             saved_titles.append(rec.title)
+            saved_records.append({"id": rec.id, "title": rec.title, "type": rec.type})
             facts += len(
                 mem.fact_edges.query(
                     source_record_id=rec.id,
@@ -1086,6 +1088,7 @@ def _extract_and_save(
         "candidates": n_extracted,
         "saved": saved,
         "saved_titles": saved_titles,
+        "saved_records": saved_records,
         "facts": facts,
         "extract_stats": {
             "fact_edges_declared": fact_edges_declared,

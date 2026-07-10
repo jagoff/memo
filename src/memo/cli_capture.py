@@ -23,16 +23,31 @@ if TYPE_CHECKING:
     from memo.resume import ResumeCandidate
 
 
-def _write_capture_notification(state_dir: Path, titles: list[str], *, idle: bool = False) -> None:
+def _write_capture_notification(state_dir: Path, saved: list[dict], *, idle: bool = False) -> None:
     """Write a pending notification the next recall-hook surfaces, so passive
-    auto-capture is visible to the user. Rendered as a single muted line
-    (``※ MEMO auto-saved``) rather than a heading, to stay unobtrusive in the
-    console. Best-effort; never raises."""
-    if not titles:
+    auto-capture is visible to the user and correctable.
+
+    With ``MEMO_CAPTURE_RECEIPT`` on, writes a multi-line receipt — title/type/id
+    per saved memory plus a `memo fix`/`memo undo` hint. With the flag off
+    (default), writes the legacy muted one-liner (``※ MEMO auto-saved``).
+    Best-effort; never raises."""
+    if not saved:
         return
+    from memo.flags import flag_bool
+
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "pending_idle_notification.txt").write_text("※ MEMO auto-saved\n", encoding="utf-8")
+        if flag_bool("MEMO_CAPTURE_RECEIPT"):
+            lines = [f"☾ memo saved {len(saved)} this session:"]
+            for s in saved:
+                lines.append(
+                    f"  • \"{s.get('title', '?')}\" ({s.get('type', 'note')}) [{s.get('id', '?')}]"
+                )
+            lines.append("  fix: memo fix <id> · undo: memo undo <id>")
+            body = "\n".join(lines) + "\n"
+        else:
+            body = "※ MEMO auto-saved\n"
+        (state_dir / "pending_idle_notification.txt").write_text(body, encoding="utf-8")
     except OSError:
         pass
 
@@ -104,8 +119,14 @@ def capture_stop() -> None:
         # channel the user already sees). Without this, capture-stop — the path
         # that does most of the saving — is silent and the user can't tell it
         # ran. Only fires when memories were actually saved (not on dedup/cooldown).
-        titles = result.get("saved_titles") or []
-        if titles:
+        # `saved_records` (id+title+type per memory) is the enriched receipt
+        # source; fall back to wrapping `saved_titles` when it's absent so an
+        # older/mocked result dict still notifies.
+        saved = result.get("saved_records") or [
+            {"id": "?", "title": t, "type": "note"} for t in (result.get("saved_titles") or [])
+        ]
+        if saved:
+            _write_capture_notification(Config.from_env().state_dir, saved)
             console.print("[dim]※ MEMO auto-saved[/dim]")
     except Exception as exc:
         if debug:

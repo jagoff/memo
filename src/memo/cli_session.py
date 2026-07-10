@@ -509,7 +509,11 @@ def session_idle_maintenance(mode: str, delay_secs: int | None, detached_worker:
                 _titles = result.get("saved_titles") or []
             if _titles:
                 from memo.cli_capture import _write_capture_notification
-                _write_capture_notification(cfg.state_dir, _titles, idle=True)
+
+                _saved_records = result.get("saved_records") or [
+                    {"id": "?", "title": t, "type": "note"} for t in _titles
+                ]
+                _write_capture_notification(cfg.state_dir, _saved_records, idle=True)
             _hb("captured-notified", saved=len(_titles))
             print("{}")
         else:

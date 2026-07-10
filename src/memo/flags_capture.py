@@ -39,6 +39,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "during maintenance. Minimum: 1 day.",
         min_val=1,
     ),
+    _spec(
+        "MEMO_CAPTURE_RECEIPT",
+        "bool",
+        False,
+        "capture",
+        "Surface a multi-line receipt (titles+ids+undo/fix verbs) for auto-saved "
+        "memories, instead of the muted one-liner. Visible + correctable capture.",
+    ),
 )
 
 
