@@ -66,12 +66,30 @@ existing decay and hit the same old-date wall.
   bench. Out of scope for a knob; needs its own design + gate.
 - **knowledge_update_conflict (mis-ranking):** memo's actual conflict handling is
   the **contradiction penalty** (`MEMO_CONTRADICT_PENALTY_ENABLED`), which
-  penalizes the older side of a *detected* contradiction pair (a date-difference
-  signal that works even for old dates, unlike blanket decay). The isolated bench
-  store never runs `memo contradict scan`, so this bucket measures raw retrieval
-  and understates production. To measure faithfully, run a contradiction scan on
-  each bench store before scoring (embedding-based pair detection; no LLM/OOM),
-  then re-measure. Tracked as a bench-faithfulness follow-up.
+  penalizes the older side of a *detected* contradiction/evolution pair. The
+  isolated bench store never runs `memo contradict scan`, so the raw bucket
+  understates production. **Implemented + measured** as `memo eval bench run
+  --contradict-scan` (runs the scanner per store with the small `cfg.helper_model`
+  — off the 30B OOM path — then enables the penalty during scoring):
+
+  | knowledge_update (10 Q) | baseline | +contradict-scan |
+  |---|--:|--:|
+  | recall@5 | 0.717 | 0.383 |
+  | ndcg@5 | 0.552 | 0.343 |
+  | mrr | 0.573 | 0.495 |
+
+  **Measured-NEGATIVE.** The scan detected 367 contradiction/evolution pairs
+  across just 10 samples (835 examined). Root cause: the bench ingests every
+  conversation *turn* as its own memory, and the classifier over-fires on
+  ordinary dialogue evolution ("I prefer X" → later "now Y"), so the penalty
+  demotes the gold turn along with the noise. The contradiction penalty is
+  calibrated for **curated, deduplicated durable facts** (decisions/facts), not
+  raw turn-granular dialogue — so it cannot be faithfully measured on this
+  ingestion model. The `--contradict-scan` flag ships (default OFF, unit-tested)
+  as the instrument; a faithful knowledge-update measurement needs either
+  fact-level ingestion (consolidate turns into durable facts before scoring) or a
+  much stricter classifier gate (contradiction-only, confidence ≥ 0.9). Deferred
+  with this evidence.
 
 ## Abstention
 
