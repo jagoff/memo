@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from memo.fact_extraction import FACT_EDGES_KEY, candidate_fact_edges
+from memo.grounding_judge import score_grounding
 from memo.util import sha256_short
 
 _log = logging.getLogger(__name__)
@@ -865,13 +866,17 @@ def _extract_and_save(
     _extract_prompt_version = prompt_version(
         "capture_extract", _EXTRACT_SYSTEM_PROMPT, cfg.state_dir
     )
+    _helper_chat = mem._ensure_chat()
     insights = extract_insights(
-        mem._ensure_chat(),
+        _helper_chat,
         cfg.helper_model,
         user_text,
         assistant_text,
         state_dir=cfg.state_dir,
     )
+    _ground_on = _capture_flag_bool("MEMO_GROUNDING_JUDGE")
+    _ground_min = _capture_flag_float("MEMO_GROUNDING_WRITE_MIN") or 0.4
+    _ground_source = f"{user_text}\n{assistant_text}"
     if debug:
         print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
     # `candidates` reports the EXTRACTED count (pre-hygiene) — it feeds
@@ -1020,6 +1025,22 @@ def _extract_and_save(
                     f"({confidence:.2f} < {min_confidence:.2f}) — tagged _uncertain",
                     file=sys.stderr,
                 )
+        grounding_score: float | None = None
+        if _ground_on:
+            grounding_score = score_grounding(
+                _helper_chat, cfg.helper_model,
+                source=_ground_source, claim=f"{cand['title']}\n{cand['body']}",
+            )
+            if grounding_score is not None and grounding_score < _ground_min:
+                uncertain += 1
+                if "_uncertain" not in tags:
+                    tags.append("_uncertain")
+                if debug:
+                    print(
+                        f"# memo capture: low grounding '{cand['title']}' "
+                        f"({grounding_score:.2f} < {_ground_min:.2f}) — tagged _uncertain",
+                        file=sys.stderr,
+                    )
         raw_fact_edges = cand.get(FACT_EDGES_KEY)
         if isinstance(raw_fact_edges, dict):
             fact_edges_declared += 1
@@ -1057,6 +1078,8 @@ def _extract_and_save(
             "capture_confidence": round(confidence, 3),
             "prompt_version": _extract_prompt_version,
         }
+        if grounding_score is not None:
+            extra_for_save["grounding_score"] = round(grounding_score, 3)
         if fact_edges:
             extra_for_save[FACT_EDGES_KEY] = fact_edges
         try:
