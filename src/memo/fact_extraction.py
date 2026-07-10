@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from typing import Any
 
 FACT_EDGES_KEY = "fact_edges"
+FACT_ASSERTION_PREDICATE = "asserts"
 
 
 def _coerce_fact_items(raw: Any) -> Iterable[dict[str, Any]]:
@@ -99,7 +100,7 @@ def fact_edges_from_metadata(
             out.append(
                 {
                     "subject": "memory",
-                    "predicate": "asserts",
+                    "predicate": FACT_ASSERTION_PREDICATE,
                     "object": normalized_title,
                     "source_record_id": record_id,
                     "valid_at": created,
@@ -141,4 +142,36 @@ def upsert_declared_fact_edges(
     return count
 
 
-__all__ = ["FACT_EDGES_KEY", "fact_edges_from_metadata", "upsert_declared_fact_edges"]
+def assertion_fact_edge(
+    *,
+    title: str,
+    extractor: str,
+    mode: str,
+    confidence: float = 1.0,
+    provenance: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Build a coarse temporal assertion edge for an atomic memory."""
+    normalized_title = title.strip()
+    if not normalized_title:
+        return None
+    return {
+        "subject": "memory",
+        "predicate": FACT_ASSERTION_PREDICATE,
+        "object": normalized_title,
+        "confidence": _coerce_confidence(confidence),
+        "provenance": {
+            "extractor": extractor,
+            "mode": mode,
+            **(provenance or {}),
+        },
+        "metadata": metadata or {},
+    }
+
+
+__all__ = [
+    "FACT_EDGES_KEY",
+    "assertion_fact_edge",
+    "fact_edges_from_metadata",
+    "upsert_declared_fact_edges",
+]

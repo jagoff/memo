@@ -69,6 +69,37 @@ def test_extract_decomposes_blob_into_atomic_facts(mem_with_stub, monkeypatch):
     assert types == {"decision", "bug"}
 
 
+def test_extract_populates_temporal_fact_edges(mem_with_stub, monkeypatch):
+    cands = [
+        {
+            "title": "memo uses temporal fact edges",
+            "body": "memo now stores extracted atomic insights as temporal fact edges.",
+            "type": "decision",
+            "tags": ["memo", "temporal"],
+        }
+    ]
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *a, **kw: cands)
+    monkeypatch.setattr(capture_mod, "_passes_quality", lambda *a, **kw: True)
+    monkeypatch.setattr(capture_mod, "find_near_duplicate", lambda *a, **kw: None)
+
+    out = extract_and_save_text(mem_with_stub, mem_with_stub.cfg, "raw design note")
+    rows = mem_with_stub.fact_edges.query(
+        subject="memory",
+        predicate="asserts",
+        as_of="2999-01-01T00:00:00+00:00",
+    )
+
+    assert out["status"] == "extracted"
+    assert out["facts"] == 1
+    assert len(rows) == 1
+    assert rows[0]["source_record_id"] == out["saved"][0]
+    assert rows[0]["object"] == "memo uses temporal fact edges"
+    assert rows[0]["provenance"]["extractor"] == "memo.capture"
+    assert rows[0]["provenance"]["mode"] == "atomic-insight"
+    assert rows[0]["metadata"]["type"] == "decision"
+    assert rows[0]["metadata"]["tags"] == ["memo", "temporal"]
+
+
 def test_extract_merges_caller_tags_into_every_fact(mem_with_stub, monkeypatch):
     cands = [
         {"title": "fact one", "body": "a" * 80, "type": "note", "tags": []},
@@ -103,6 +134,7 @@ def test_extract_verbatim_fallback_when_nothing_extractable(mem_with_stub, monke
     )
 
     assert out["status"] == "verbatim"
+    assert out["facts"] == 1
     assert len(out["saved"]) == 1
     rec = mem_with_stub.get(out["saved"][0])
     assert rec.title == "kept note"

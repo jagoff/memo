@@ -21,6 +21,7 @@ import re as _re
 from pathlib import Path
 from typing import Any
 
+from memo.fact_extraction import FACT_EDGES_KEY, assertion_fact_edge
 from memo.util import sha256_short
 
 _log = logging.getLogger(__name__)
@@ -923,6 +924,7 @@ def _extract_and_save(
 
     saved: list[str] = []
     saved_titles: list[str] = []
+    facts = 0
     skipped_dup = 0
     reconciled = 0
     skipped_quality = 0
@@ -996,6 +998,25 @@ def _extract_and_save(
                     f"({confidence:.2f} < {min_confidence:.2f}) — tagged _uncertain",
                     file=sys.stderr,
                 )
+        fact_edge = assertion_fact_edge(
+            title=str(cand.get("title") or ""),
+            extractor="memo.capture",
+            mode="atomic-insight",
+            confidence=confidence,
+            provenance={"prompt_version": _extract_prompt_version},
+            metadata={
+                "type": str(cand.get("type") or "note"),
+                "tags": tags,
+                "body_preview": str(cand.get("body") or "")[:240],
+            },
+        )
+        extra_for_save = {
+            **(extra_base or {}),
+            "capture_confidence": round(confidence, 3),
+            "prompt_version": _extract_prompt_version,
+        }
+        if fact_edge is not None:
+            extra_for_save[FACT_EDGES_KEY] = [fact_edge]
         try:
             rec = mem.save(
                 content=cand["body"],
@@ -1003,14 +1024,17 @@ def _extract_and_save(
                 type_=cand["type"],
                 tags=tags,
                 auto_project=auto_project,
-                extra={
-                    **(extra_base or {}),
-                    "capture_confidence": round(confidence, 3),
-                    "prompt_version": _extract_prompt_version,
-                },
+                extra=extra_for_save,
             )
             saved.append(rec.id)
             saved_titles.append(rec.title)
+            facts += len(
+                mem.fact_edges.query(
+                    source_record_id=rec.id,
+                    include_inactive=True,
+                    limit=1000,
+                )
+            )
             if debug:
                 print(f"# memo capture: saved [{rec.id[:8]}] {rec.title}", file=sys.stderr)
         except Exception as exc:
@@ -1021,6 +1045,7 @@ def _extract_and_save(
         "candidates": n_extracted,
         "saved": saved,
         "saved_titles": saved_titles,
+        "facts": facts,
         "skipped_dup": skipped_dup,
         "reconciled": reconciled,
         "skipped_quality": skipped_quality,
@@ -1088,6 +1113,13 @@ def extract_and_save_text(
             "candidates": 0,
             "saved": [rec.id],
             "saved_titles": [rec.title],
+            "facts": len(
+                mem.fact_edges.query(
+                    source_record_id=rec.id,
+                    include_inactive=True,
+                    limit=1000,
+                )
+            ),
             "skipped_dup": 0,
             "reconciled": 0,
             "skipped_quality": 0,
