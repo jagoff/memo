@@ -13,6 +13,30 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 - Design and gated implementation path for Memory Quality Loop:
   quality-aware reranking, context packs, and reversible quality compaction.
+- **Temporal fact edges.** Subject–predicate–object fact edges are extracted
+  from memories into a `fact_edges` store, rebuilt on `memo reindex`, and fused
+  into hybrid search as a temporal fact-edge leg (`MEMO_FACT_RETRIEVAL_ENABLED`,
+  weight `MEMO_FACT_RETRIEVAL_WEIGHT=0.6`, both default-on). Query-relevant facts
+  attach to search/ask results (`MEMO_FACT_SURFACE_ENABLED`) and surface in the
+  SessionStart briefing's **Temporal facts** section. New CLI:
+  `memo temporal facts add|list|invalidate` with validity windows
+  (`--valid-at` / `--invalid-at` / `--expired-at`, `list --as-of <date>`) and
+  full-profile MCP tools (`memo_fact_edges`, `memo_fact_edge_save`,
+  `memo_fact_edge_invalidate`).
+- **Visible memory context surface.** `memo context "<question>"` builds the
+  prompt-ready recall block without calling the answer LLM; exposed as the
+  default-profile `memo_context` MCP tool and gated by `MEMO_CONTEXT_SURFACE`
+  (default on). `memo search --explain` (and the `memo_search` `trace` option)
+  report per-hit ranking rationale.
+
+### Fixed
+
+- Documentation corrected to match code: the HTTP MCP transport and
+  `memo http-api` have **no built-in authentication** (previously documented as
+  bearer-auth with `MEMO_HTTP_API_TOKEN`, which does not exist); MCP profile tool
+  counts are 14 / 34 / 129 (agent / core-slim / full); the CPU embedder is
+  1024-dim; the record editor is `memo edit` (not `memo update <id>`); and the
+  Docker HTTP transport uses `MEMO_MCP_TRANSPORT=http` (no `memo-mcp --http`).
 
 ## [2.12.17] - 2026-07-06
 

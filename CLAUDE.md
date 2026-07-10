@@ -181,7 +181,7 @@ The `.md` files are canonical; the sqlite index is **derived and replayable**:
   `memo migrate --into-vault` moves an existing install there (non-destructive,
   `--rollback` restores the prior config). `memo migrate` never drops `memvec.db`.
 - **One DB file (opt-in).** `MEMO_SINGLE_DB=1` folds the sidecar stores
-  (history/graph/contradictions/crossref) into `memvec.db` — each keeps its own
+  (history/graph/contradictions/crossref/fact_edges) into `memvec.db` — each keeps its own
   connection to the one file (WAL allows it; no shared-transaction risk). Run
   `memo migrate --consolidate-db` once to merge existing `*.db` files (renames
   them `*.db.bak`, idempotent). Default off keeps the historical multi-file

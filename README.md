@@ -78,7 +78,7 @@ No Ollama, no Qdrant, no cloud APIs, no keys.
 
 memo is built to **spend fewer tokens, not more**.
 
-- **~90% smaller MCP surface.** The default `agent` profile exposes **13 tools / ~1.2k schema tokens**, versus **124 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **~90% smaller MCP surface.** The default `agent` profile exposes **14 tools / ~1.4k schema tokens**, versus **129 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -102,7 +102,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Contradiction radar.** Change your mind on an old decision and memo flags the now-stale version — the agent won't reintroduce what you already discarded.
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
-- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 13 tools, not 124.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 14 tools, not 129.
 
 ## Requirements
 
@@ -159,7 +159,7 @@ curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bas
 memo doctor --strict-runtime     # verify runtime is healthy
 ```
 
-After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_ask`, `memo_get`, `memo_graph`, `memo_unified_briefing`, plus capture/session/version helpers on the default profile). Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md › MCP setup](docs/reference.md#mcp-setup)**.
+After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_context`, `memo_ask`, `memo_get`, `memo_graph`, `memo_unified_briefing`, plus capture/session/version helpers on the default profile). Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md › MCP setup](docs/reference.md#mcp-setup)**.
 
 ## Quick start
 
@@ -176,6 +176,7 @@ memo ask 'what changed in the embedder this month?'   # RAG — cites memories b
 - **Ambient recall** — every prompt silently consults memory and injects top hits as context. Warm recall daemon keeps it under **<200 ms**. No `/remember` calls.
 - **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate. The corpus grows on its own.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery.
+- **Visible memory context** — `memo context "<question>"` (and the `memo_context` MCP tool) show exactly what memory *would* be injected before an agent answers — the recall block on demand, with no LLM call. Add `--explain` to `memo search` to see why each hit ranked where it did.
 
 ## Key capabilities
 
@@ -267,6 +268,15 @@ memo links --id abc123                 # backlinks + outlinks
 
 Entity extraction uses a dependency-free regex backend. For code-heavy corpora, memo can merge a **[codegraph](https://github.com/colbymchenry/codegraph) symbol graph** as the graph's primary layer (opt-in, `MEMO_GRAPH_USE_CODEGRAPH`) — callers, callees, and imports become first-class edges, so recall and `memo graph path` reason over real code structure, not just text similarity. The merged graph also powers the `memo_graph` MCP tool and the entity-centric "Knowledge map" briefing.
 
+### 🧩 Temporal facts
+
+```bash
+memo temporal facts add postgres is "primary datastore" --valid-at 2026-01-01
+memo temporal facts list --as-of 2026-03-01     # facts live at that date
+```
+
+memo extracts subject–predicate–object **fact edges** from your memories and fuses a temporal fact-edge leg into hybrid search via RRF (`MEMO_FACT_RETRIEVAL_ENABLED`, on by default; weight `MEMO_FACT_RETRIEVAL_WEIGHT=0.6`). Query-relevant facts attach to search/ask results (`MEMO_FACT_SURFACE_ENABLED`) and surface in the SessionStart briefing's **Temporal facts** section. Every edge carries validity windows (`--valid-at` / `--invalid-at` / `--expired-at`) so `list --as-of <date>` returns only what was true then. Disable with `MEMO_FACT_RETRIEVAL_ENABLED=0`.
+
 ### 🏥 Health scoring & eval gates
 
 ```bash
@@ -302,14 +312,14 @@ memo runs four background daemons:
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
-### All 108 visible CLI commands
+### All 112 visible CLI commands
 
 <details>
 <summary>Click to expand</summary>
 
 **Core:** `save` `search` `ask` `get` `edit` `rename` `delete` `list`
 
-**Recall & Hooks:** `recall` `recall-hook` `briefing` `continuity` `prewarm` `capture-tick` `capture-stop`
+**Recall & Hooks:** `recall` `recall-hook` `context` `briefing` `continuity` `prewarm` `capture-tick` `capture-stop`
 
 **Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes`
 
@@ -319,7 +329,7 @@ memo runs four background daemons:
 
 **Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version` `related`
 
-**Advanced Search:** `embed` `rerank` `contextual` `chat` `chat-ask` `repo`
+**Advanced Search:** `embed` `rerank` `contextual` `retrieve` `context-pack` `chat` `chat-ask` `repo`
 
 **Import / Export / Sync:** `import` `export` `backup` `restore` `sync` `ingest`
 
@@ -329,7 +339,7 @@ memo runs four background daemons:
 
 **Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon` `idle-daemon`
 
-**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `sleep-cycle` `ocr-image` `provenance` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate`
+**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `sleep-cycle` `ocr-image` `provenance` `secret` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate`
 
 </details>
 
@@ -337,13 +347,13 @@ memo runs four background daemons:
 
 | Profile | Tools | Schema tokens | Use when |
 |---|---|---|---|
-| `agent` (default) | 13 | ~1.2k | Standard agent work — max token economy |
-| `core` / `slim` | 33 | ~2.8k | Constrained clients (Codex, OpenCode), admin-lite |
-| `full` / `default` | 124 | ~15k | Power users, debugging |
+| `agent` (default) | 14 | ~1.4k | Standard agent work — max token economy |
+| `core` / `slim` | 34 | ~3.0k | Constrained clients (Codex, OpenCode), admin-lite |
+| `full` / `default` | 129 | ~15k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
-Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON). The HTTP API requires bearer auth by default; set `MEMO_HTTP_API_TOKEN` or use the generated local state-dir token.
+Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON). It has **no built-in authentication** and binds to `127.0.0.1` (loopback) by default — put a reverse proxy (nginx/Caddy) with auth in front before exposing it beyond localhost.
 
 ## Retrieval architecture
 
