@@ -406,12 +406,18 @@ def recall_hook() -> None:
     qualifying = apply_injection_filters(qualifying)
 
     _guard_banner: str | None = None
+    _guard_ids: list[str] = []
     if flag_bool("MEMO_GUARD_ENABLED") and qualifying:
         from memo.guard import guard_banner as _gb
+        from memo.guard import guard_candidates as _gc
 
-        _guard_banner = _gb(
-            prompt, qualifying, sim_threshold=flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
-        )
+        _guard_sim_threshold = flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
+        _guard_banner = _gb(prompt, qualifying, sim_threshold=_guard_sim_threshold)
+        if _guard_banner:
+            _guard_ids = [
+                getattr(h, "id", "")
+                for h in _gc(prompt, qualifying, sim_threshold=_guard_sim_threshold)[:1]
+            ]
 
     def _stamp_metrics(n_hits: int) -> None:
         # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
@@ -571,7 +577,10 @@ def recall_hook() -> None:
         _log.debug("context-cost log write failed: %s", exc)
 
     if _guard_banner:
+        from memo.guard import log_guard_fire
+
         context = f"{_guard_banner}\n\n{context}"
+        log_guard_fire(cfg.state_dir, prompt=prompt, ids=_guard_ids)
 
     output: dict[str, Any] = {
         "hookSpecificOutput": {

@@ -1065,12 +1065,18 @@ def _recall_logic(
         qualifying = []
 
     _guard_banner: str | None = None
+    _guard_ids: list[str] = []
     if flag_bool("MEMO_GUARD_ENABLED") and qualifying:
         from memo.guard import guard_banner as _gb
+        from memo.guard import guard_candidates as _gc
 
-        _guard_banner = _gb(
-            prompt, qualifying, sim_threshold=_flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
-        )
+        _guard_sim_threshold = _flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
+        _guard_banner = _gb(prompt, qualifying, sim_threshold=_guard_sim_threshold)
+        if _guard_banner:
+            _guard_ids = [
+                getattr(h, "id", "")
+                for h in _gc(prompt, qualifying, sim_threshold=_guard_sim_threshold)[:1]
+            ]
 
     relevant = qualifying[:top_k]
 
@@ -1189,7 +1195,10 @@ def _recall_logic(
             _logger.debug("recall log append failed: %s", exc)
 
     if _guard_banner:
+        from memo.guard import log_guard_fire
+
         context = f"{_guard_banner}\n\n{context}"
+        log_guard_fire(cfg.state_dir, prompt=prompt, ids=_guard_ids)
 
     output: dict[str, Any] = {
         "hookSpecificOutput": {

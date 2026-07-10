@@ -8,7 +8,9 @@ prior decision; it never blocks or claims the user is wrong.
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 _GUARD_TYPES = frozenset({"decision", "preference"})
@@ -71,3 +73,14 @@ def boost_guarded(hits: list[Any], guarded_ids: set[str], boost: float) -> list[
         else:
             out.append(h)
     return out
+
+
+def log_guard_fire(state_dir: Path, *, prompt: str, ids: list[str]) -> None:
+    """Append one guard-fire record to state_dir/guard.log. Best-effort."""
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        rec = {"prompt": (prompt or "")[:200], "ids": ids}
+        with (state_dir / "guard.log").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
