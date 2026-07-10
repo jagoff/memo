@@ -97,6 +97,26 @@ CREATE TABLE IF NOT EXISTS entity_aliases (
     canonical_id INTEGER NOT NULL,
     alias_name   TEXT                -- original display spelling (provenance)
 );
+
+CREATE TABLE IF NOT EXISTS semantic_relations (
+    source_kind  TEXT NOT NULL,
+    source_id    TEXT NOT NULL,
+    target_kind  TEXT NOT NULL,
+    target_id    TEXT NOT NULL,
+    relation     TEXT NOT NULL,
+    weight       REAL NOT NULL DEFAULT 1.0,
+    confidence   REAL NOT NULL DEFAULT 1.0,
+    evidence_id  TEXT,
+    derived_from TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    valid_at     TEXT,
+    invalid_at   TEXT,
+    PRIMARY KEY (source_kind, source_id, target_kind, target_id, relation, derived_from)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sr_source ON semantic_relations(source_kind, source_id);
+CREATE INDEX IF NOT EXISTS idx_sr_target ON semantic_relations(target_kind, target_id);
+CREATE INDEX IF NOT EXISTS idx_sr_relation ON semantic_relations(relation);
 """
 
 
@@ -441,23 +461,22 @@ class GraphStore:
 
     def weighted_neighbors(self, name: str) -> dict[str, float]:
         name = name.strip().lower()
-        row = self._conn.execute(
-            "SELECT id FROM entities WHERE name = ? LIMIT 1", (name,)
-        ).fetchone()
-        if row is None:
+        rows = self._conn.execute("SELECT id FROM entities WHERE name = ?", (name,)).fetchall()
+        if not rows:
             return {}
-        eid = row["id"]
+        eids = [int(r["id"]) for r in rows]
         out: dict[str, float] = {}
-        for r in self._conn.execute(
-            "SELECT CASE WHEN a_id = ? THEN b_id ELSE a_id END AS other, weight "
-            "FROM entity_edges WHERE a_id = ? OR b_id = ?",
-            (eid, eid, eid),
-        ):
-            nm = self._conn.execute(
-                "SELECT name FROM entities WHERE id = ?", (r["other"],)
-            ).fetchone()
-            if nm is not None:
-                out[nm["name"]] = float(r["weight"])
+        for eid in eids:
+            for r in self._conn.execute(
+                "SELECT CASE WHEN a_id = ? THEN b_id ELSE a_id END AS other, weight "
+                "FROM entity_edges WHERE a_id = ? OR b_id = ?",
+                (eid, eid, eid),
+            ):
+                nm = self._conn.execute(
+                    "SELECT name FROM entities WHERE id = ?", (r["other"],)
+                ).fetchone()
+                if nm is not None:
+                    out[nm["name"]] = max(float(r["weight"]), out.get(nm["name"], 0.0))
         return out
 
     def entity_names(self) -> set[str]:
@@ -571,6 +590,86 @@ class GraphStore:
             "weight_mean": round(float(row[3] or 0), 3),
             "edges_gt1": int(row[4] or 0),
         }
+
+    def upsert_semantic_relation(
+        self,
+        *,
+        source_kind: str,
+        source_id: str,
+        target_kind: str,
+        target_id: str,
+        relation: str,
+        weight: float = 1.0,
+        confidence: float = 1.0,
+        evidence_id: str | None = None,
+        derived_from: str,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
+    ) -> None:
+        """Insert or refresh one deterministic semantic relation.
+
+        Relations are derived graph state: callers must provide `derived_from`
+        so rebuilders can replace their own rows idempotently.
+        """
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).isoformat()
+        with self._tx() as cx:
+            cx.execute(
+                "INSERT INTO semantic_relations "
+                "(source_kind, source_id, target_kind, target_id, relation, weight, confidence, "
+                "evidence_id, derived_from, created_at, valid_at, invalid_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_kind, source_id, target_kind, target_id, relation, derived_from) "
+                "DO UPDATE SET weight = excluded.weight, confidence = excluded.confidence, "
+                "evidence_id = excluded.evidence_id, valid_at = excluded.valid_at, "
+                "invalid_at = excluded.invalid_at",
+                (
+                    source_kind,
+                    source_id,
+                    target_kind,
+                    target_id,
+                    relation,
+                    float(weight),
+                    float(confidence),
+                    evidence_id,
+                    derived_from,
+                    now,
+                    valid_at,
+                    invalid_at,
+                ),
+            )
+
+    def semantic_relations_for(
+        self,
+        *,
+        source_id: str | None = None,
+        target_id: str | None = None,
+        relation: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if source_id is not None:
+            clauses.append("source_id = ?")
+            params.append(source_id)
+        if target_id is not None:
+            clauses.append("target_id = ?")
+            params.append(target_id)
+        if relation is not None:
+            clauses.append("relation = ?")
+            params.append(relation)
+        sql = "SELECT * FROM semantic_relations"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY confidence DESC, weight DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def delete_semantic_relations_for_source(self, source_id: str) -> int:
+        with self._tx() as cx:
+            cur = cx.execute("DELETE FROM semantic_relations WHERE source_id = ?", (source_id,))
+            return int(cur.rowcount or 0)
 
     def record_co_recall(self, ids: list[str]) -> int:
         """Increment co-recall count for every pair in `ids`.

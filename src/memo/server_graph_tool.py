@@ -74,7 +74,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         if v == "why":
             if not a or not b:
                 return {"error": "why requires a and b"}
-            return {"verb": "why", "result": nav.weighted_path(a, b, use_codegraph=uc)}
+            return {"verb": "why", "result": nav.why_connected(a, b, use_codegraph=uc)}
 
         if v == "neighbors":
             if not focus:

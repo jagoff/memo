@@ -336,6 +336,56 @@ class GraphNavigator:
 
         return None
 
+    def why_connected(
+        self,
+        source: str,
+        target: str,
+        max_length: int = 5,
+        *,
+        use_codegraph: bool | None = None,
+    ) -> dict[str, Any]:
+        """Explain an entity connection with weighted edges and memory evidence."""
+        source_key = source.lower().strip()
+        target_key = target.lower().strip()
+        weighted = self.weighted_path(
+            source_key,
+            target_key,
+            max_length=max_length,
+            use_codegraph=use_codegraph,
+        )
+        if weighted is None:
+            return {
+                "source": source_key,
+                "target": target_key,
+                "path": [],
+                "edges": [],
+                "evidence_memory_ids": [],
+            }
+
+        path = self.find_shortest_path(
+            source_key,
+            target_key,
+            max_length=max_length,
+            use_codegraph=use_codegraph,
+        )
+        evidence: list[str] = []
+        if path is not None:
+            evidence = [mid for mid in path.intermediate_memories if mid and mid != "(codegraph)"]
+
+        edges = []
+        for idx, edge in enumerate(weighted["edges"]):
+            memory_id = path.intermediate_memories[idx] if path and idx < len(path.intermediate_memories) else ""
+            edges.append({**edge, "memory_id": memory_id})
+
+        return {
+            "source": source_key,
+            "target": target_key,
+            "path": weighted["path"],
+            "length": max(0, len(weighted["path"]) - 1),
+            "edges": edges,
+            "evidence_memory_ids": evidence,
+        }
+
     def detect_communities(
         self, min_size: int = 2, *, use_codegraph: bool | None = None
     ) -> list[Community]:
