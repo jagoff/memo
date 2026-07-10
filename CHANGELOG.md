@@ -9,6 +9,26 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [2.12.20] - 2026-07-10
+
+### Added
+
+- `memo eval bench run --contradict-scan`: runs memo's contradiction scanner on
+  each isolated bench store after ingest and enables the contradiction penalty
+  during scoring, so the `knowledge_update` capability bucket measures memo's
+  real conflict handling instead of raw retrieval. Pair classification uses
+  `cfg.helper_model` (~4B), not the answer LLM — off the 30B OOM path. Default
+  off keeps raw-retrieval scoring identical.
+
+### Docs
+
+- `docs/eval/capability-baseline-and-levers.md`: per-bucket LongMemEval-oracle
+  retrieval baseline plus the measured lever results — MMR is negative for
+  single-evidence retrieval, recency decay is N/A for old-dated corpora, and the
+  contradiction penalty over-detects on turn-granular ingestion (measured
+  regression). Documents why BEAM does not fit the evidence-labeled harness and
+  the local-GPU wall for the abstention QA number.
+
 ## [2.12.19] - 2026-07-10
 
 ### Added
