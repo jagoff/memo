@@ -277,6 +277,21 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
     ),
     _spec(
+        "MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED",
+        "bool",
+        False,
+        "search",
+        "Modulate graph-touched ranking boosts by outcome roi_score. Default off until eval-gated.",
+    ),
+    _spec(
+        "MEMO_GRAPH_OUTCOME_WEIGHT",
+        "float",
+        0.05,
+        "search",
+        "Strength of optional outcome modulation on graph boosts.",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_QUERY_CACHE_SIZE",
         "int",
         256,

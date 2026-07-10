@@ -15,6 +15,7 @@ from rich.table import Table
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.flags import flag_float
 
 
 @click.group(name="graph")
@@ -250,6 +251,91 @@ def graph_rebuild() -> None:
     edges = mem.graph.rebuild_edges()
     console.print(
         f"[green]graph rebuilt[/green]: merged {merged} duplicate entities, {edges} edges"
+    )
+
+
+@graph_group.command(name="hubs")
+@click.option("--limit", type=int, default=20, show_default=True, help="Maximum hubs to show.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def graph_hubs(limit: int, as_json: bool) -> None:
+    """Show entities broad enough to behave like graph hubs.
+
+    Example: memo graph hubs --limit 30
+    """
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    hubs = mem.graph.entity_hubs(limit=limit)
+    threshold = flag_float("MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO") or 0.25
+    for hub in hubs:
+        hub["is_hub"] = bool(hub["doc_freq_ratio"] > threshold)
+    if as_json:
+        click.echo(json.dumps(hubs, indent=2, ensure_ascii=False))
+        return
+    if not hubs:
+        console.print("[dim]No graph hubs found.[/dim]")
+        return
+    table = Table(title="Graph hubs")
+    table.add_column("Entity", style="cyan")
+    table.add_column("Type")
+    table.add_column("Docs", justify="right")
+    table.add_column("Ratio", justify="right")
+    table.add_column("Degree", justify="right")
+    table.add_column("Hub", justify="center")
+    for hub in hubs:
+        table.add_row(
+            str(hub["name"]),
+            str(hub["type"]),
+            str(hub["doc_freq"]),
+            f"{float(hub['doc_freq_ratio']):.2f}",
+            str(hub["degree"]),
+            "yes" if hub["is_hub"] else "",
+        )
+    console.print(table)
+
+
+@graph_group.group(name="relations")
+def graph_relations() -> None:
+    """Manage rebuildable semantic relations."""
+    pass
+
+
+@graph_relations.command(name="rebuild")
+@click.option("--limit", type=int, default=200, show_default=True, help="Recent memories to scan.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def graph_relations_rebuild(limit: int, as_json: bool) -> None:
+    """Backfill deterministic semantic relations between recent memories.
+
+    Example: memo graph relations rebuild --limit 500
+    """
+
+    from memo.semantic_relations import (
+        DETERMINISTIC_DERIVED_FROM,
+        extract_relations_batch,
+        store_relations,
+    )
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    memories = mem.list(limit=limit, include_forgotten=False)
+    pairs = [(source, target) for source in memories for target in memories if source.id != target.id]
+    relations = extract_relations_batch(pairs)
+    deleted = mem.graph.delete_semantic_relations_by_derived_from(DETERMINISTIC_DERIVED_FROM)
+    written = store_relations(mem.graph, relations)
+    result = {
+        "scanned_memories": len(memories),
+        "processed_pairs": len(pairs),
+        "deleted": deleted,
+        "written": written,
+        "derived_from": DETERMINISTIC_DERIVED_FROM,
+    }
+    if as_json:
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    console.print(
+        "[green]semantic relations rebuilt[/green]: "
+        f"{written} relation(s) from {len(pairs)} pair(s) "
+        f"({deleted} previous deterministic row(s) removed)"
     )
 
 

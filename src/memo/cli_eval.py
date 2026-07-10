@@ -106,6 +106,11 @@ eval_group.add_command(bench_group)
 )
 @click.option("--progress", is_flag=True, help="Print progress before each prompt search.")
 @click.option(
+    "--graph-ab",
+    is_flag=True,
+    help="Also run graph-off and graph-on variants of the selected configs and report deltas.",
+)
+@click.option(
     "--gate",
     is_flag=True,
     help="Regression gate: exit non-zero if precision@K dropped or noise@K rose "
@@ -128,6 +133,7 @@ def eval_recall_cmd(
     config_names: tuple[str, ...],
     max_prompts: int | None,
     progress: bool,
+    graph_ab: bool,
     gate: bool,
     update_baseline: bool,
 ) -> None:
@@ -141,7 +147,7 @@ def eval_recall_cmd(
     """
     cfg = Config.from_env()
     # The gate compares fresh numbers — never trust a stale cache for a pass/fail.
-    if gate or update_baseline:
+    if gate or update_baseline or graph_ab:
         force = True
 
     if labels_path:
@@ -209,6 +215,40 @@ def eval_recall_cmd(
             cache[cache_key] = {"ts": time.time(), "k": k, "rows": [r.__dict__ for r in rows]}
             _save_cache(cfg, cache)
 
+    graph_ab_payload: dict[str, object] | None = None
+    if graph_ab:
+        off_configs, on_configs = eval_recall.graph_ab_configs(selected_configs)
+
+        def _ab_progress(cfg_: eval_recall.Cfg, index: int, total: int) -> None:
+            if progress and not as_json:
+                console.print(f"[dim]graph A/B {cfg_.name}: prompt {index}/{total}[/dim]")
+
+        if not as_json:
+            console.print(
+                f"[dim]Running graph A/B: {len(selected_configs) * 2} config run(s).[/dim]"
+            )
+        off_rows = eval_recall.evaluate(
+            mem,
+            k=k,
+            labels=labels,
+            configs=off_configs,
+            progress=_ab_progress if progress and not as_json else None,
+        )
+        on_rows = eval_recall.evaluate(
+            mem,
+            k=k,
+            labels=labels,
+            configs=on_configs,
+            progress=_ab_progress if progress and not as_json else None,
+        )
+        comparison = eval_recall.graph_ab_compare(off_rows, on_rows)
+        graph_ab_payload = {
+            "off_rows": [r.__dict__ for r in off_rows],
+            "on_rows": [r.__dict__ for r in on_rows],
+            "comparison": comparison,
+            "summary": eval_recall.graph_ab_summary(comparison),
+        }
+
     if update_baseline:
         metrics = eval_recall.gate_metrics(rows)
         payload = {**metrics, "k": k, "labels_fingerprint": labels.fingerprint()}
@@ -252,6 +292,7 @@ def eval_recall_cmd(
                     "configs": [c.name for c in selected_configs],
                     "rows": [r.__dict__ for r in rows],
                     "recommendation": eval_recall.recommend(rows),
+                    "graph_ab": graph_ab_payload,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -264,6 +305,9 @@ def eval_recall_cmd(
         console.print("[dim](cached — use --force to re-run)[/dim]")
     console.print()
     console.print(f"[bold]Recommendation:[/bold] {eval_recall.recommend(rows)}")
+    if graph_ab_payload is not None:
+        comparison = cast(list[dict[str, object]], graph_ab_payload["comparison"])
+        console.print(eval_recall.graph_ab_table(comparison))
 
     if detail:
         for r in rows:

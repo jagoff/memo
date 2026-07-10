@@ -9,6 +9,14 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- Graph phase 2: deterministic semantic-relation extraction/backfill
+  (`memo graph relations rebuild`), hub diagnostics (`memo graph hubs`),
+  graph-on/off recall eval comparison (`memo eval recall --graph-ab`),
+  human `memo search --explain` graph reasons, and optional outcome-informed
+  graph boost modulation (`MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`).
+
 ### Fixed
 
 - Documentation corrected to match code: the HTTP MCP transport and

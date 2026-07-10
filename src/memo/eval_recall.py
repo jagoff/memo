@@ -808,6 +808,100 @@ def evaluate(
     return [run_config(mem, cfg, k, labels, progress=progress) for cfg in configs]
 
 
+def graph_ab_configs(configs: list[Cfg]) -> tuple[list[Cfg], list[Cfg]]:
+    """Return graph-off / graph-on config sets for causal graph comparison."""
+
+    off: list[Cfg] = []
+    on: list[Cfg] = []
+    for cfg in configs:
+        base_flags = dict(cfg.flag_overrides or {})
+        off.append(
+            replace(
+                cfg,
+                name=f"{cfg.name} graph-off",
+                flag_overrides={
+                    **base_flags,
+                    "MEMO_GRAPH_SIGNAL_ENABLED": "0",
+                    "MEMO_GRAPH_REASON_ENABLED": "0",
+                },
+            )
+        )
+        on.append(
+            replace(
+                cfg,
+                name=f"{cfg.name} graph-on",
+                flag_overrides={
+                    **base_flags,
+                    "MEMO_GRAPH_SIGNAL_ENABLED": "1",
+                    "MEMO_GRAPH_REASON_ENABLED": "1",
+                    "MEMO_GRAPH_HUB_SUPPRESSION": "1",
+                },
+            )
+        )
+    return off, on
+
+
+def graph_ab_compare(off_rows: list[Row], on_rows: list[Row]) -> list[dict[str, Any]]:
+    """Pair graph-off and graph-on rows and report metric deltas."""
+
+    pairs: list[dict[str, Any]] = []
+    for off, on in zip(off_rows, on_rows, strict=False):
+        config = off.config.removesuffix(" graph-off")
+        pairs.append(
+            {
+                "config": config,
+                "precision_off": off.precision_at_k,
+                "precision_on": on.precision_at_k,
+                "precision_delta": round(on.precision_at_k - off.precision_at_k, 3),
+                "noise_off": off.noise_at_k,
+                "noise_on": on.noise_at_k,
+                "noise_delta": round(on.noise_at_k - off.noise_at_k, 3),
+                "recall_off": off.recall_at_k,
+                "recall_on": on.recall_at_k,
+                "recall_delta": round(on.recall_at_k - off.recall_at_k, 3),
+                "graph_explanation_coverage": on.graph_explanation_coverage,
+                "latency_ms_graph": on.latency_ms_graph,
+            }
+        )
+    return pairs
+
+
+def graph_ab_summary(comparison: list[dict[str, Any]]) -> dict[str, float]:
+    if not comparison:
+        return {
+            "precision_delta_mean": 0.0,
+            "noise_delta_mean": 0.0,
+            "recall_delta_mean": 0.0,
+        }
+    n = len(comparison)
+    return {
+        "precision_delta_mean": round(sum(float(r["precision_delta"]) for r in comparison) / n, 3),
+        "noise_delta_mean": round(sum(float(r["noise_delta"]) for r in comparison) / n, 3),
+        "recall_delta_mean": round(sum(float(r["recall_delta"]) for r in comparison) / n, 3),
+    }
+
+
+def graph_ab_table(comparison: list[dict[str, Any]]) -> str:
+    lines = [
+        "\nGraph A/B — graph-off vs graph-on\n",
+        f"{'config':<18} {'Δprec':>7} {'Δnoise':>8} {'Δrecall':>8} {'expl':>6} {'graph ms':>9}",
+        "-" * 66,
+    ]
+    for row in comparison:
+        lines.append(
+            f"{row['config']!s:<18} {float(row['precision_delta']):>7.3f} "
+            f"{float(row['noise_delta']):>8.3f} {float(row['recall_delta']):>8.3f} "
+            f"{float(row['graph_explanation_coverage']):>6.3f} "
+            f"{float(row['latency_ms_graph']):>9.1f}"
+        )
+    summary = graph_ab_summary(comparison)
+    lines.append(
+        f"mean{'':<14} {summary['precision_delta_mean']:>7.3f} "
+        f"{summary['noise_delta_mean']:>8.3f} {summary['recall_delta_mean']:>8.3f}"
+    )
+    return "\n".join(lines)
+
+
 # --- Reporting ---------------------------------------------------------------
 
 

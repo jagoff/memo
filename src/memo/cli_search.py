@@ -190,6 +190,17 @@ def search(
         )
     console.print(tbl)
     if explain and trace is not None:
+        reason_tbl = Table(title="Why these ranked", show_header=False, expand=True)
+        reason_tbl.add_column("hit", width=10, style="dim")
+        reason_tbl.add_column("reason", overflow="fold")
+        for hit in hit_dicts:
+            exp = hit.get("explain") if isinstance(hit.get("explain"), dict) else {}
+            why = exp.get("why") if isinstance(exp, dict) else None
+            if not why:
+                continue
+            reason_tbl.add_row(str(hit.get("id") or "")[:8], "; ".join(str(w) for w in why[:3]))
+        if reason_tbl.row_count:
+            console.print(reason_tbl)
         console.print(f"[dim]search trace stages: {', '.join(str(t.get('stage')) for t in trace)}[/dim]")
 
 

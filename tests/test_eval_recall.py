@@ -308,6 +308,47 @@ def test_graph_diag_metrics_reports_attribution_and_latency():
     }
 
 
+def test_graph_ab_compare_reports_deltas() -> None:
+    off = [
+        eval_recall.Row(
+            config="A vec/0.60/keep graph-off",
+            precision_at_k=0.5,
+            noise_at_k=0.2,
+            recall_at_k=0.4,
+        )
+    ]
+    on = [
+        eval_recall.Row(
+            config="A vec/0.60/keep graph-on",
+            precision_at_k=0.7,
+            noise_at_k=0.1,
+            recall_at_k=0.6,
+            graph_explanation_coverage=0.3,
+            latency_ms_graph=12.0,
+        )
+    ]
+
+    comparison = eval_recall.graph_ab_compare(off, on)
+
+    assert comparison == [
+        {
+            "config": "A vec/0.60/keep",
+            "precision_off": 0.5,
+            "precision_on": 0.7,
+            "precision_delta": 0.2,
+            "noise_off": 0.2,
+            "noise_on": 0.1,
+            "noise_delta": -0.1,
+            "recall_off": 0.4,
+            "recall_on": 0.6,
+            "recall_delta": 0.2,
+            "graph_explanation_coverage": 0.3,
+            "latency_ms_graph": 12.0,
+        }
+    ]
+    assert eval_recall.graph_ab_summary(comparison)["precision_delta_mean"] == 0.2
+
+
 def test_check_gate_passes_when_metrics_hold():
     rows = _rows((0.6, 0.1))
     res = eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1})

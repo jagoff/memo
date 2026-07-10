@@ -263,6 +263,8 @@ Human edits in Obsidian win on the next `memo reindex`. The sqlite index is alwa
 memo graph neighbors "MLX"             # what's related
 memo graph path "embedder" "reranker"  # how two concepts connect
 memo graph why "mlx" "daemon"          # weighted path + evidence memories
+memo graph hubs                        # broad entities that may act as hubs
+memo graph relations rebuild           # deterministic semantic-relation backfill
 memo search "mlx daemon" --explain     # ranking reasons, including graph signal when enabled
 memo entities                          # list extracted entities
 memo links --id abc123                 # backlinks + outlinks
@@ -270,7 +272,7 @@ memo links --id abc123                 # backlinks + outlinks
 
 Entity extraction uses a dependency-free regex backend. For code-heavy corpora, memo can merge a **[codegraph](https://github.com/colbymchenry/codegraph) symbol graph** as the graph's primary layer (opt-in, `MEMO_GRAPH_USE_CODEGRAPH`) — callers, callees, and imports become first-class edges, so recall and `memo graph path` reason over real code structure, not just text similarity. The merged graph also powers the `memo_graph` MCP tool and the entity-centric "Knowledge map" briefing.
 
-Graph ranking is opt-in and hub-suppressed: `MEMO_GRAPH_SIGNAL_ENABLED=1 MEMO_GRAPH_REASON_ENABLED=1 memo search "recall hook budget" --json` adds bounded graph boosts plus a `graph_reason` field on graph-touched hits. Semantic graph relations are also opt-in (`MEMO_GRAPH_SEMANTIC_RELATIONS=1`) and live in the rebuildable graph DB; Markdown remains the source of truth.
+Graph ranking is opt-in and hub-suppressed: `MEMO_GRAPH_SIGNAL_ENABLED=1 MEMO_GRAPH_REASON_ENABLED=1 memo search "recall hook budget" --explain` adds bounded graph boosts plus a human/JSON `graph_reason` field on graph-touched hits. Semantic graph relations are also opt-in (`MEMO_GRAPH_SEMANTIC_RELATIONS=1`) and live in the rebuildable graph DB; Markdown remains the source of truth. `memo eval recall --graph-ab` compares the same recall configs with graph signal off/on before you make graph ranking part of a gate.
 
 ### 🧩 Temporal facts
 

@@ -222,3 +222,33 @@ def test_entity_doc_freqs_batch_and_unknown(tmp_path: Path) -> None:
     assert df["rare"] == 1.0
     assert "does-not-exist" not in df  # unknown names omitted
     assert g.entity_doc_freqs([]) == {}
+
+
+def test_entity_hubs_reports_doc_freq_ratio_and_degree(tmp_path: Path) -> None:
+    g = GraphStore(tmp_path / "graph.db")
+    g.record_extraction(
+        memory_id="m1",
+        memory_date="2026-01-01",
+        extracted_at="2026-01-01T00:00:00Z",
+        entities=[
+            {"name": "memo", "type": "project"},
+            {"name": "graph", "type": "concept"},
+        ],
+    )
+    g.record_extraction(
+        memory_id="m2",
+        memory_date="2026-01-02",
+        extracted_at="2026-01-02T00:00:00Z",
+        entities=[
+            {"name": "memo", "type": "project"},
+            {"name": "eval", "type": "concept"},
+        ],
+    )
+    g.rebuild_edges()
+
+    hubs = g.entity_hubs(limit=1)
+
+    assert hubs[0]["name"] == "memo"
+    assert hubs[0]["doc_freq"] == 2
+    assert hubs[0]["doc_freq_ratio"] == 1.0
+    assert hubs[0]["degree"] == 2

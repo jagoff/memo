@@ -463,6 +463,8 @@ hot search/recall paths, and high-document-frequency entity hubs are suppressed.
 | `MEMO_GRAPH_SIGNAL_BUDGET_MS` | `150` | Millisecond budget for graph signal work in hot paths. |
 | `MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO` | `0.25` | Treat entities above this corpus document-frequency ratio as hubs. |
 | `MEMO_GRAPH_MIN_ENTITY_IDF` | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
+| `MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED` | `0` | Modulate graph-touched boosts by outcome `roi_score`. |
+| `MEMO_GRAPH_OUTCOME_WEIGHT` | `0.05` | Strength of optional outcome modulation on graph boosts. |
 
 Example:
 
@@ -471,11 +473,14 @@ MEMO_GRAPH_SIGNAL_ENABLED=1 MEMO_GRAPH_REASON_ENABLED=1 memo search "recall hook
 ```
 
 Graph-touched JSON hits include `extra.graph_reason` with the mode, query
-entities, hit entities, neighbor edges, and optional semantic relations. The
-same graph can be inspected directly:
+entities, hit entities, neighbor edges, optional semantic relations, and
+optional outcome score. Human `memo search --explain` prints the same reason
+compactly under the result table. The same graph can be inspected directly:
 
 ```bash
 memo graph why "mlx" "daemon"
+memo graph hubs --limit 30
+memo graph relations rebuild --limit 500
 ```
 
 The MCP `memo_graph` tool exposes the same explanation with
@@ -485,7 +490,9 @@ weights, and evidence memory ids when available.
 `memo eval recall` keeps the precision/noise gate unchanged but reports graph
 diagnostics when graph attribution is present: `graph_recall_gain`,
 `graph_noise_rate`, `graph_explanation_coverage`, `hub_noise_rate`, and
-`latency_ms_graph`.
+`latency_ms_graph`. Use `memo eval recall --graph-ab` to run selected configs
+with graph signal forced off and on, then inspect precision/noise/recall deltas
+before enabling graph ranking broadly.
 
 ### Capture tuning
 

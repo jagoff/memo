@@ -413,10 +413,18 @@ class _SearchOpsMixin(_MemoryBase):
                 from memo.graph_reason import build_graph_reason
                 from memo.graph_signal import collect_graph_signal
 
+                outcome_scores: dict[str, float] | None = None
+                if flag_bool("MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED"):
+                    health = self.store.get_health_batch([r.id for r in out])
+                    outcome_scores = {
+                        mid: float(values.get("roi_score", 1.0))
+                        for mid, values in health.items()
+                    }
                 graph_signal = collect_graph_signal(
                     self.graph,
                     query,
                     [r.id for r in out],
+                    outcome_scores=outcome_scores,
                 )
                 _add_trace(
                     "graph_signal",
@@ -424,6 +432,7 @@ class _SearchOpsMixin(_MemoryBase):
                     query_entities=graph_signal.query_entities,
                     touched_count=len(graph_signal.boosts),
                     skipped=graph_signal.skipped,
+                    outcome_signal=outcome_scores is not None,
                     elapsed_ms=round(graph_signal.elapsed_ms, 3),
                 )
                 if graph_signal.boosts:

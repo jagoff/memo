@@ -666,10 +666,67 @@ class GraphStore:
         params.append(limit)
         return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
 
-    def delete_semantic_relations_for_source(self, source_id: str) -> int:
+    def delete_semantic_relations_for_source(
+        self, source_id: str, *, derived_from: str | None = None
+    ) -> int:
         with self._tx() as cx:
-            cur = cx.execute("DELETE FROM semantic_relations WHERE source_id = ?", (source_id,))
+            if derived_from is None:
+                cur = cx.execute("DELETE FROM semantic_relations WHERE source_id = ?", (source_id,))
+            else:
+                cur = cx.execute(
+                    "DELETE FROM semantic_relations WHERE source_id = ? AND derived_from = ?",
+                    (source_id, derived_from),
+                )
             return int(cur.rowcount or 0)
+
+    def delete_semantic_relations_by_derived_from(self, derived_from: str) -> int:
+        with self._tx() as cx:
+            cur = cx.execute(
+                "DELETE FROM semantic_relations WHERE derived_from = ?",
+                (derived_from,),
+            )
+            return int(cur.rowcount or 0)
+
+    def entity_hubs(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Most common entities with document-frequency ratio and edge degree.
+
+        This is the diagnostic counterpart to graph hub suppression: it shows
+        which entities are broad enough to dominate proximity scoring.
+        """
+
+        total = self.total_indexed_memories()
+        rows = self._conn.execute(
+            """
+            SELECT
+                e.name,
+                e.type,
+                COUNT(DISTINCT em.memory_id) AS doc_freq,
+                COUNT(DISTINCT ee.a_id || ':' || ee.b_id) AS degree,
+                e.mention_count,
+                e.first_seen,
+                e.last_seen
+            FROM entities e
+            LEFT JOIN entity_memory em ON em.entity_id = e.id
+            LEFT JOIN entity_edges ee ON ee.a_id = e.id OR ee.b_id = e.id
+            GROUP BY e.id, e.name, e.type, e.mention_count, e.first_seen, e.last_seen
+            ORDER BY doc_freq DESC, degree DESC, e.name ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            doc_freq = int(row["doc_freq"] or 0)
+            out.append(
+                {
+                    **dict(row),
+                    "doc_freq": doc_freq,
+                    "doc_freq_ratio": (doc_freq / total) if total else 0.0,
+                    "degree": int(row["degree"] or 0),
+                    "total_indexed_memories": total,
+                }
+            )
+        return out
 
     def record_co_recall(self, ids: list[str]) -> int:
         """Increment co-recall count for every pair in `ids`.

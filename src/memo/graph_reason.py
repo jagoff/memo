@@ -22,6 +22,8 @@ def build_graph_reason(
     }
     if trace.neighbor_edges:
         reason["neighbor_edges"] = trace.neighbor_edges
+    if trace.outcome_score is not None:
+        reason["outcome_score"] = trace.outcome_score
     if relations:
         reason["relations"] = relations
     if trace.skipped:

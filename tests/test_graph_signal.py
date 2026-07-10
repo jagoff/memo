@@ -55,3 +55,35 @@ def test_collect_graph_signal_returns_disabled_state() -> None:
     assert signal.enabled is False
     assert signal.skipped == "disabled"
     assert signal.boosts == {}
+
+
+def test_collect_graph_signal_modulates_by_outcome_score() -> None:
+    low = collect_graph_signal(
+        _Graph(),
+        "mlx",
+        ["rare-doc"],
+        outcome_scores={"rare-doc": 0.5},
+        config=GraphSignalConfig(
+            enabled=True,
+            hub_suppression=True,
+            min_entity_idf=0.5,
+            outcome_signal_enabled=True,
+            outcome_weight=0.5,
+        ),
+    )
+    high = collect_graph_signal(
+        _Graph(),
+        "mlx",
+        ["rare-doc"],
+        outcome_scores={"rare-doc": 2.0},
+        config=GraphSignalConfig(
+            enabled=True,
+            hub_suppression=True,
+            min_entity_idf=0.5,
+            outcome_signal_enabled=True,
+            outcome_weight=0.5,
+        ),
+    )
+
+    assert high.boosts["rare-doc"] > low.boosts["rare-doc"]
+    assert high.traces["rare-doc"].outcome_score == 2.0

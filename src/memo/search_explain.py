@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from memo.graph_reason import format_graph_reason
+
 
 def build_search_explanations(
     hits: list[Any], trace: list[dict[str, Any]]
@@ -20,20 +22,28 @@ def build_search_explanations(
     for rank, hit in enumerate(hits, 1):
         hit_id = str(getattr(hit, "id", "") or "")
         score = getattr(hit, "score", None)
+        extra = getattr(hit, "extra", None)
+        if not isinstance(extra, dict):
+            extra = {}
+        graph_reason = extra.get("graph_reason")
         why = _why(candidate, stages)
+        legs: dict[str, Any] = {
+            "vec": _leg(candidate, "vec_count", mode == "vec"),
+            "bm25": _leg(candidate, "bm25_count", mode == "bm25"),
+            "exact": _leg(candidate, "exact_count", mode == "exact"),
+            "graph": _leg(candidate, "graph_count", False),
+            "recency": {"present": "recency_decay" in stages, "detail_available": False},
+            "quality": {"present": "quality_rerank" in stages, "detail_available": False},
+        }
+        if isinstance(graph_reason, dict):
+            legs["graph_reason"] = graph_reason
+            why.append(format_graph_reason(graph_reason))
         out[hit_id] = {
             "rank": rank,
             "id": hit_id,
             "final_score": score,
             "mode": mode,
-            "legs": {
-                "vec": _leg(candidate, "vec_count", mode == "vec"),
-                "bm25": _leg(candidate, "bm25_count", mode == "bm25"),
-                "exact": _leg(candidate, "exact_count", mode == "exact"),
-                "graph": _leg(candidate, "graph_count", False),
-                "recency": {"present": "recency_decay" in stages, "detail_available": False},
-                "quality": {"present": "quality_rerank" in stages, "detail_available": False},
-            },
+            "legs": legs,
             "stages": stages,
             "why": why,
         }

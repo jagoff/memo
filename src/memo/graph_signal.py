@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,6 +26,8 @@ class GraphSignalConfig:
     min_entity_idf: float = 0.5
     weight: float = 0.05
     budget_ms: int = 150
+    outcome_signal_enabled: bool = False
+    outcome_weight: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class GraphSignalTrace:
     query_entities: list[str]
     hit_entities: list[str]
     neighbor_edges: list[dict[str, Any]] = field(default_factory=list)
+    outcome_score: float | None = None
     skipped: str | None = None
 
 
@@ -54,6 +57,8 @@ def config_from_flags() -> GraphSignalConfig:
         hub_max_doc_freq_ratio=flag_float("MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO") or 0.25,
         min_entity_idf=flag_float("MEMO_GRAPH_MIN_ENTITY_IDF") or 0.5,
         budget_ms=flag_int("MEMO_GRAPH_SIGNAL_BUDGET_MS") or 150,
+        outcome_signal_enabled=flag_bool("MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED"),
+        outcome_weight=flag_float("MEMO_GRAPH_OUTCOME_WEIGHT") or 0.05,
     )
 
 
@@ -74,6 +79,7 @@ def collect_graph_signal(
     *,
     deadline: float | None = None,
     config: GraphSignalConfig | None = None,
+    outcome_scores: Mapping[str, float] | None = None,
 ) -> GraphSignal:
     started = time.monotonic()
     cfg = config or config_from_flags()
@@ -154,12 +160,17 @@ def collect_graph_signal(
                 score += float(edge["weight"]) * idf * cfg.weight
                 edges.append({**edge, "idf": idf})
             if score > 0:
+                outcome_score: float | None = None
+                if cfg.outcome_signal_enabled and outcome_scores is not None:
+                    outcome_score = max(0.0, float(outcome_scores.get(mid, 1.0)))
+                    score *= max(0.0, 1.0 + cfg.outcome_weight * (outcome_score - 1.0))
                 boosts[mid] = round(score, 6)
                 traces[mid] = GraphSignalTrace(
                     mode="proximity",
                     query_entities=allowed_query_entities,
                     hit_entities=hit_entities,
                     neighbor_edges=edges,
+                    outcome_score=outcome_score,
                 )
         return GraphSignal(
             True,
