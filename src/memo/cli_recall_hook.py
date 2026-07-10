@@ -589,28 +589,39 @@ def recall_hook() -> None:
         }
     }
     # Human-visible presence line — decoration only, never blocks the recall.
+    _sysmsg = ""
     if flag_bool("MEMO_RECALL_SYSTEM_MESSAGE"):
         try:
             from memo.recall_logic import build_system_message
 
             _sysmsg = build_system_message(relevant)
-            if _sysmsg:
-                output["systemMessage"] = _sysmsg
         except Exception as exc:
             _log.debug("recall system-message build failed: %s", exc)
 
     # Cross-client "※ recap:" line (mirrors Claude Code's native recap).
     # Cheap cadence check (one JSON read + int compare) writing to the SAME
-    # pending-notification file capture already uses, so it reaches every
-    # client via the `notification` field on the next memo_* MCP call — not
-    # just Claude Code's own systemMessage above. Best-effort; never raises.
+    # pending-notification file capture already uses, so every OTHER client
+    # picks it up via the `notification` field on its next memo_* MCP call.
+    # On Claude Code specifically, also fold the same line into
+    # systemMessage below so it renders as a proactive, user-visible dim
+    # line straight in the transcript — the closest memo can get to CC's
+    # own native recap, on the one channel memo actually controls.
+    # Best-effort; never raises; never blocks the recall.
+    _recap_line = ""
     if _sid:
         try:
             from memo.cli_recap import maybe_write_recap
 
-            maybe_write_recap(cfg.state_dir, _sid)
+            _recap_line = maybe_write_recap(cfg.state_dir, _sid) or ""
         except Exception as exc:
             _log.debug("recap write failed: %s", exc)
+
+    if _sysmsg or _recap_line:
+        from memo.cli_recap import compose_system_message
+
+        _combined = compose_system_message(_sysmsg, _recap_line)
+        if _combined:
+            output["systemMessage"] = _combined
 
     print(json.dumps(output, ensure_ascii=False))
 

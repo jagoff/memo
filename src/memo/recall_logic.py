@@ -1210,13 +1210,32 @@ def _recall_logic(
     # so the daemon (production) path emits it too. Decoration only: degrade to
     # omit on any error, never block recall. build_system_message + the flag gate
     # live in this module, so no extra imports touch the hot path.
+    _sysmsg = ""
     if flag_bool("MEMO_RECALL_SYSTEM_MESSAGE"):
         try:
             _sysmsg = build_system_message(relevant)
-            if _sysmsg:
-                output["systemMessage"] = _sysmsg
         except Exception as exc:
             _logger.debug("recall system-message build failed: %s", exc)
+
+    # Cross-client "※ recap:" line — mirror the subprocess path so the daemon
+    # (production) path folds it into systemMessage too (this is the path a
+    # warm recall daemon actually serves in production, see CLAUDE.md). Same
+    # best-effort contract; never blocks recall.
+    _recap_line = ""
+    if session_id:
+        try:
+            from memo.cli_recap import maybe_write_recap
+
+            _recap_line = maybe_write_recap(cfg.state_dir, session_id) or ""
+        except Exception as exc:
+            _logger.debug("recap write failed: %s", exc)
+
+    if _sysmsg or _recap_line:
+        from memo.cli_recap import compose_system_message
+
+        _combined = compose_system_message(_sysmsg, _recap_line)
+        if _combined:
+            output["systemMessage"] = _combined
     # Presence bump — mirror the subprocess path (cli_recall_hook). Degrade silently.
     # _recall_logic is daemon-only (cli_recall_hook has its own path), so no double-bump.
     try:

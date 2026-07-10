@@ -202,6 +202,179 @@ def test_system_message_flag_gating(tmp_cfg, monkeypatch) -> None:
     )
 
 
+# --- Subprocess-path recap composed into systemMessage (CC-native "※ recap:") --
+
+
+def test_recap_line_folded_into_system_message_when_due(tmp_cfg, monkeypatch) -> None:
+    """Full-hook: when MEMO_RECAP is on and cadence is due, the '※ recap:'
+    line rides the SAME systemMessage field the 🧠 presence line uses, so
+    Claude Code renders it as a proactive, user-visible dim line — composed,
+    not clobbering the 🧠 line.
+    """
+    import json
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+    from memo.memory import MemoryRecord
+    from memo.session import checkpoint, update_summary
+
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0]] * len(inputs),
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed_query",
+        lambda self, q: [1.0, 0.0, 0.0, 0.0],
+    )
+
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_cfg.data_dir))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_cfg.state_dir))
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_cfg.vault_path))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+    monkeypatch.delenv("MEMO_RECALL_SYSTEM_MESSAGE", raising=False)  # default on
+    monkeypatch.delenv("MEMO_RECAP", raising=False)  # default on
+    monkeypatch.setenv("MEMO_RECAP_EVERY_N", "6")
+
+    _fake = MemoryRecord(
+        id="a1b2c3d4e5f6a7b8",
+        path="notes/deployment-decision.md",
+        title="deployment decision",
+        type="decision",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="deployment orchestration decision about container systems " * 5,
+        extra={},
+        score=0.9,
+    )
+    monkeypatch.setattr("memo.memory.Memory.search", lambda self, q, **kw: [_fake])
+
+    sid = "recap-sysmsg-sess-0001"
+    for _ in range(6):
+        checkpoint(tmp_cfg.state_dir, session_id=sid, cwd=str(tmp_cfg.data_dir))
+    update_summary(tmp_cfg.state_dir, sid, "working on the recap systemMessage feature")
+
+    runner = CliRunner()
+    payload = json.dumps(
+        {
+            "prompt": "deployment orchestration container decision systems",
+            "session_id": sid,
+        }
+    )
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, f"exit={result.exit_code} output={result.output}"
+    data = json.loads(result.output.strip())
+
+    assert "systemMessage" in data, "hook returned no systemMessage with recap due"
+    msg = data["systemMessage"]
+    assert msg.startswith("🧠 memo ·"), f"presence line missing/clobbered: {msg!r}"
+    assert "※ recap:" in msg, f"recap line missing from systemMessage: {msg!r}"
+    assert "working on the recap systemMessage feature" in msg
+
+
+def test_recap_line_absent_from_system_message_when_flag_off(tmp_cfg, monkeypatch) -> None:
+    """MEMO_RECAP=0: systemMessage keeps the 🧠 presence line but never gains
+    a '※ recap:' line, even when cadence would otherwise be due."""
+    import json
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+    from memo.memory import MemoryRecord
+    from memo.session import checkpoint, update_summary
+
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0]] * len(inputs),
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed_query",
+        lambda self, q: [1.0, 0.0, 0.0, 0.0],
+    )
+
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_cfg.data_dir))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_cfg.state_dir))
+    monkeypatch.setenv("MEMO_VAULT_PATH", str(tmp_cfg.vault_path))
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+    monkeypatch.delenv("MEMO_RECALL_SYSTEM_MESSAGE", raising=False)  # default on
+    monkeypatch.setenv("MEMO_RECAP", "0")
+
+    _fake = MemoryRecord(
+        id="a1b2c3d4e5f6a7b8",
+        path="notes/deployment-decision.md",
+        title="deployment decision",
+        type="decision",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="deployment orchestration decision about container systems " * 5,
+        extra={},
+        score=0.9,
+    )
+    monkeypatch.setattr("memo.memory.Memory.search", lambda self, q, **kw: [_fake])
+
+    sid = "recap-sysmsg-sess-0002"
+    for _ in range(6):
+        checkpoint(tmp_cfg.state_dir, session_id=sid, cwd=str(tmp_cfg.data_dir))
+    update_summary(tmp_cfg.state_dir, sid, "working on the recap systemMessage feature")
+
+    runner = CliRunner()
+    payload = json.dumps(
+        {
+            "prompt": "deployment orchestration container decision systems",
+            "session_id": sid,
+        }
+    )
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, f"exit={result.exit_code} output={result.output}"
+    data = json.loads(result.output.strip())
+
+    assert "systemMessage" in data
+    msg = data["systemMessage"]
+    assert msg.startswith("🧠 memo ·")
+    assert "※ recap:" not in msg
+
+
+def test_daemon_path_folds_recap_into_system_message_when_due(monkeypatch, tmp_path) -> None:
+    """Daemon (production) path: _recall_logic must fold the '※ recap:' line
+    into systemMessage too, mirroring the subprocess path — otherwise a warm
+    recall daemon silently never shows the CC-native recap line."""
+    import json
+    from types import SimpleNamespace
+
+    from memo.recall_logic import _recall_logic
+    from memo.session import checkpoint, update_summary
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.delenv("MEMO_RECALL_SYSTEM_MESSAGE", raising=False)  # default on
+    monkeypatch.delenv("MEMO_RECAP", raising=False)  # default on
+    monkeypatch.setenv("MEMO_RECAP_EVERY_N", "6")
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    sid = "recap-daemon-sess-0001"
+    for _ in range(6):
+        checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
+    update_summary(state_dir, sid, "working on the daemon recap path")
+
+    mem, _ = _daemon_stub_memory("sync tier decision")
+    result, _log = _recall_logic(
+        "que decidimos sobre el sync tier",
+        cwd=None,
+        mem=mem,
+        cfg=SimpleNamespace(state_dir=state_dir),
+        debug=False,
+        session_id=sid,
+    )
+    payload = json.loads(result)
+    msg = payload["systemMessage"]
+    assert msg.startswith("🧠 memo · 1: ")
+    assert "※ recap:" in msg
+    assert "working on the daemon recap path" in msg
+
+
 def test_cite_instruction_constant() -> None:
     from memo.recall_logic import CITE_INSTRUCTION
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from memo.cli_recap import (
+    compose_system_message,
     due_for_recap,
     format_recap_line,
     maybe_write_recap,
@@ -213,3 +214,24 @@ def test_maybe_write_recap_never_raises_on_corrupt_state(tmp_path: Path) -> None
     result = maybe_write_recap(state_dir, "any-session-id-0000", every_n=6)
 
     assert result is None
+
+
+# --- compose_system_message -------------------------------------------------
+
+
+def test_compose_system_message_joins_both_lines_with_newline() -> None:
+    combined = compose_system_message("🧠 memo · 1: some title", "※ recap: fix the bug")
+
+    assert combined == "🧠 memo · 1: some title\n※ recap: fix the bug"
+
+
+def test_compose_system_message_presence_only() -> None:
+    assert compose_system_message("🧠 memo · 1: some title", "") == "🧠 memo · 1: some title"
+
+
+def test_compose_system_message_recap_only() -> None:
+    assert compose_system_message("", "※ recap: fix the bug") == "※ recap: fix the bug"
+
+
+def test_compose_system_message_both_empty_returns_empty_string() -> None:
+    assert compose_system_message("", "") == ""

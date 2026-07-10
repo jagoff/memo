@@ -100,6 +100,17 @@ def due_for_recap(snapshot: dict[str, Any] | None, *, every_n: int) -> bool:
     return turn_count >= every_n and (turn_count - last_recap_turn) >= every_n
 
 
+def compose_system_message(presence_line: str, recap_line: str) -> str:
+    """Join the 🧠 presence line and the ``※ recap:`` line into one
+    ``systemMessage`` string, newline-separated, without clobbering either.
+
+    Either side may be empty (feature flag off, no hits, no recap due) — the
+    other is returned unchanged. Both empty returns ``""``.
+    """
+    lines = [line for line in (presence_line, recap_line) if line]
+    return "\n".join(lines)
+
+
 def maybe_write_recap(
     state_dir: Path,
     session_id: str,
