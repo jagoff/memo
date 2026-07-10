@@ -32,6 +32,7 @@ from typing import Any
 
 import click
 
+from memo.belief import ARCHIVE, COMPETING, HOLD_OPEN, supersede_decision
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
@@ -324,6 +325,7 @@ def maintain_cmd(
         "hard_delete": hard_delete,
         "superseded": [],  # contradictions acted on
         "flagged_for_review": [],  # high-support losers held for manual triage (C2 gate)
+        "competing": [],  # contradictions within trust margin: both kept (belief mode)
         "evolved": [],  # contradictions marked evolution (both kept)
         "merged": [],  # duplicate clusters consolidated
         "forgotten": [],  # forget_after TTL elapsed (soft, reversible)
@@ -394,36 +396,40 @@ def maintain_cmd(
                         receipt["cascade_warnings"].append(
                             {"target": older, "action": "supersede", "referenced_by": _refs}
                         )
-                # C2 corroboration gate: a heavily re-asserted fact must not be
-                # auto-archived by ONE newer contradicting mention. Leave the
-                # pair open (status stays 'open' → triage via
-                # `memo contradict list --status open`) and record it.
-                _gate = flag_int("MEMO_SUPERSEDE_SUPPORT_GATE") or 0
-                if _gate > 0:
-                    try:
-                        _support = mem.store.get_support_batch([older]).get(older, 0)
-                    except Exception:
-                        _support = 0
-                    if _support >= _gate:
-                        receipt["flagged_for_review"].append(
-                            {"pair_id": pair.pair_id, "older": older, "support_count": _support}
+                decision = supersede_decision(mem, older_id=older, newer_id=_newer)
+                if decision.action == COMPETING:
+                    if not dry_run:
+                        mem.contradict_store.resolve(
+                            pair.pair_id, "competing", note=f"auto: competing — {decision.reason}"
                         )
-                        continue
+                    receipt.setdefault("competing", []).append(pair.pair_id)
+                    continue
+                if decision.action == HOLD_OPEN:
+                    receipt["flagged_for_review"].append(
+                        {
+                            "pair_id": pair.pair_id,
+                            "older": decision.dominated_id,
+                            "support_count": decision.support_dominated,
+                        }
+                    )
+                    continue
+                assert decision.action == ARCHIVE
+                target = decision.dominated_id
                 action = "delete" if hard_delete else "archive"
                 if not dry_run:
                     ok = (
-                        mem.delete(older)
+                        mem.delete(target)
                         if hard_delete
-                        else mem.lifecycle.archive_memory(older, superseded_by=_newer)
+                        else mem.lifecycle.archive_memory(target, superseded_by=decision.dominant_id)
                     )
                     if ok:
                         mem.contradict_store.resolve(
-                            pair.pair_id, "kept_newer", note=f"auto: {action}d older {older}"
+                            pair.pair_id, "kept_newer", note=f"auto: {action}d {target} — {decision.reason}"
                         )
                 receipt["superseded"].append(
                     {
                         "pair_id": pair.pair_id,
-                        "older": older,
+                        "older": target,
                         "action": action,
                         "confidence": pair.confidence,
                     }

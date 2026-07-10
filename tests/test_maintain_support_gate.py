@@ -81,3 +81,21 @@ def test_gate_off_archives_older_side(mock_memory, tmp_path):
     # exactly one side got archived
     gone = [i for i in (old.id, new.id) if mock_memory.get(i) is None]
     assert len(gone) == 1
+
+
+def test_maintain_marks_competing_within_margin(mock_memory, monkeypatch):
+    from unittest.mock import patch
+    from click.testing import CliRunner
+    from memo.cli import cli
+
+    monkeypatch.setenv("MEMO_BELIEF_COMPETING", "1")
+    monkeypatch.setenv("MEMO_SUPERSEDE_MARGIN", "0.5")
+    _seed_contradiction(mock_memory)
+
+    with patch("memo.cli_maintain._get_memory", return_value=mock_memory):
+        res = CliRunner().invoke(
+            cli,
+            ["maintain", "--skip-consolidate", "--skip-stale", "--skip-synthesize", "--json"],
+        )
+    receipt = _receipt(res.output)
+    assert receipt.get("competing"), "expected a competing pair in the maintain receipt"
