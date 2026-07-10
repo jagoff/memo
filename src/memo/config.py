@@ -484,6 +484,12 @@ class Config(BaseModel):
         Rebuildable from transcripts; collapses onto `db_path` under `single_db`."""
         return self.db_path if self.single_db else self.state_dir / "episodes.db"
 
+    @property
+    def fact_edges_db(self) -> Path:
+        """Temporal fact-edge sidecar DB.
+        Rebuildable from markdown-derived extraction; collapses onto `db_path`."""
+        return self.db_path if self.single_db else self.state_dir / "fact_edges.db"
+
     # ── Construction ─────────────────────────────────────────────────────
 
     @classmethod

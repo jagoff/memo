@@ -10,7 +10,7 @@
 - Storage of record: markdown files under `MEMO_DATA_DIR`, or under
   `<vault>/<SYSTEM_DIR>/AI/memory/` when `MEMO_MEMORIES_IN_VAULT=1`.
 - MCP server: `fastmcp`, profile-gated from the 14-tool `agent`
-  surface through the 126-tool `full` surface.
+  surface through the 129-tool `full` surface.
 
 Public API:
 

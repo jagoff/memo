@@ -24,6 +24,134 @@ def temporal_group() -> None:
     pass
 
 
+@temporal_group.group(name="facts")
+def temporal_facts_group() -> None:
+    """Inspect and maintain temporal fact edges."""
+    pass
+
+
+@temporal_facts_group.command(name="add")
+@click.argument("subject")
+@click.argument("predicate")
+@click.argument("object_")
+@click.option("--source-id", help="Source memory id for provenance.")
+@click.option("--valid-at", help="ISO timestamp when this fact became valid.")
+@click.option("--invalid-at", help="ISO timestamp when this fact became invalid.")
+@click.option("--expired-at", help="ISO timestamp when this fact expires.")
+@click.option("--confidence", type=float, default=1.0, help="Confidence score, default 1.0.")
+@click.option("--supersedes", multiple=True, help="Existing fact id invalidated by this fact.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def temporal_facts_add(
+    subject: str,
+    predicate: str,
+    object_: str,
+    source_id: str | None,
+    valid_at: str | None,
+    invalid_at: str | None,
+    expired_at: str | None,
+    confidence: float,
+    supersedes: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    """Add one temporal fact edge.
+
+    Example: memo temporal facts add memo backend sqlite --valid-at 2026-01-01
+    """
+    mem = _get_memory(Config.from_env())
+    fact_id = mem.fact_edges.upsert_fact(
+        subject=subject,
+        predicate=predicate,
+        object=object_,
+        source_record_id=source_id,
+        valid_at=valid_at,
+        invalid_at=invalid_at,
+        expired_at=expired_at,
+        confidence=confidence,
+        provenance={"surface": "cli"},
+        supersedes=list(supersedes),
+    )
+    row = mem.fact_edges.get(fact_id)
+    if as_json:
+        click.echo(json.dumps(row, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[green]fact saved[/green] [dim]{fact_id[:8]}[/dim]")
+
+
+@temporal_facts_group.command(name="list")
+@click.option("--subject", help="Filter by subject.")
+@click.option("--predicate", help="Filter by predicate.")
+@click.option("--object", "object_", help="Filter by object.")
+@click.option("--source-id", help="Filter by source memory id.")
+@click.option("--as-of", help="ISO timestamp for live fact filtering.")
+@click.option("--include-inactive", is_flag=True, help="Include invalid/future/expired facts.")
+@click.option("--limit", type=int, default=50, help="Maximum facts to show.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def temporal_facts_list(
+    subject: str | None,
+    predicate: str | None,
+    object_: str | None,
+    source_id: str | None,
+    as_of: str | None,
+    include_inactive: bool,
+    limit: int,
+    as_json: bool,
+) -> None:
+    """List temporal fact edges live at --as-of."""
+    mem = _get_memory(Config.from_env())
+    rows = mem.fact_edges.query(
+        subject=subject,
+        predicate=predicate,
+        object=object_,
+        source_record_id=source_id,
+        as_of=as_of,
+        include_inactive=include_inactive,
+        limit=limit,
+    )
+    if as_json:
+        click.echo(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+    if not rows:
+        console.print("[dim]no temporal facts[/dim]")
+        return
+    table = Table(title="Temporal facts")
+    table.add_column("id", width=10)
+    table.add_column("subject")
+    table.add_column("predicate")
+    table.add_column("object")
+    table.add_column("valid")
+    table.add_column("invalid")
+    table.add_column("conf", justify="right")
+    for row in rows:
+        table.add_row(
+            str(row["id"])[:8],
+            str(row["subject"]),
+            str(row["predicate"]),
+            str(row["object"]),
+            str(row["valid_at"])[:10],
+            str(row.get("invalid_at") or "—")[:10],
+            f"{float(row['confidence']):.2f}",
+        )
+    console.print(table)
+
+
+@temporal_facts_group.command(name="invalidate")
+@click.argument("fact_id")
+@click.option("--invalid-at", help="ISO timestamp when this fact became invalid.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def temporal_facts_invalidate(fact_id: str, invalid_at: str | None, as_json: bool) -> None:
+    """Invalidate one temporal fact edge."""
+    mem = _get_memory(Config.from_env())
+    ok = mem.fact_edges.invalidate(fact_id, invalid_at=invalid_at)
+    payload = {"id": fact_id, "invalidated": ok}
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    if ok:
+        console.print(f"[green]invalidated[/green] [dim]{fact_id[:8]}[/dim]")
+    else:
+        console.print(f"[yellow]not found[/yellow] [dim]{fact_id[:8]}[/dim]")
+
+
 @temporal_group.command(name="contradictions")
 @click.argument("entity")
 @click.option("--type", "entity_type", help="Filter by entity type from graph")

@@ -30,8 +30,8 @@ def _make_server_and_tools():
 # ---------------------------------------------------------------------------
 
 
-def test_register_exposes_all_four_tools(tmp_cfg) -> None:
-    """register() must expose exactly the four temporal MCP tools."""
+def test_register_exposes_all_temporal_tools(tmp_cfg) -> None:
+    """register() must expose the temporal MCP tool set."""
     from memo.memory import Memory
     from memo.server_temporal import register
 
@@ -42,6 +42,9 @@ def test_register_exposes_all_four_tools(tmp_cfg) -> None:
     register(server, mem)
 
     expected = {
+        "memo_fact_edge_invalidate",
+        "memo_fact_edge_save",
+        "memo_fact_edges",
         "memo_temporal_contradictions",
         "memo_temporal_timeline",
         "memo_temporal_stale",

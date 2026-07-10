@@ -39,6 +39,7 @@ from memo.memory.secret_ops import _SecretOpsMixin
 from memo.memory.update_ops import _UpdateOpsMixin
 from memo.memory.write_ops import _WriteOpsMixin
 from memo.store import VecStore
+from memo.store.fact_edge_store import FactEdgeStore
 from memo.temporal import TemporalAnalyzer
 
 _log = logging.getLogger(__name__)
@@ -151,6 +152,7 @@ class Memory(
         # Knowledge-graph store. Cheap to open (just sqlite); creating
         # eagerly so graph queries never lazy-stall a CLI command.
         self.graph = GraphStore(cfg.graph_db)
+        self.fact_edges = FactEdgeStore(cfg.fact_edges_db)
         # Persistent contradiction sidecar — opened lazily so callers
         # that never scan don't pay for the extra sqlite handle.
         self._contradict_store: ContradictionStore | None = None
@@ -470,6 +472,8 @@ class Memory(
             self.history.close()
         with contextlib.suppress(Exception):
             self.graph.close()
+        with contextlib.suppress(Exception):
+            self.fact_edges.close()
         if self._contradict_store is not None:
             with contextlib.suppress(Exception):
                 self._contradict_store.close()

@@ -12,10 +12,77 @@ from typing import Any
 from fastmcp import FastMCP
 
 from memo.memory import Memory
-from memo.server_annotations import READ_ONLY, annotated_tool
+from memo.server_annotations import READ_ONLY, WRITE_IDEMPOTENT, annotated_tool
 
 
 def register(server: FastMCP, memory: Memory) -> None:
+    @annotated_tool(server, **READ_ONLY)
+    def memo_fact_edges(
+        subject: str | None = None,
+        predicate: str | None = None,
+        object: str | None = None,
+        source_record_id: str | None = None,
+        as_of: str | None = None,
+        include_inactive: bool = False,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List temporal fact edges, optionally as-of a timestamp.
+
+        Fact edges are explicit subject/predicate/object facts with
+        ``valid_at``/``invalid_at``/``expired_at`` windows. This is a lower-level
+        temporal substrate than memo_search: use it when the question is about
+        fact validity over time, not general semantic recall.
+        """
+        return memory.fact_edges.query(
+            subject=subject,
+            predicate=predicate,
+            object=object,
+            source_record_id=source_record_id,
+            as_of=as_of,
+            include_inactive=include_inactive,
+            limit=limit,
+        )
+
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
+    def memo_fact_edge_save(
+        subject: str,
+        predicate: str,
+        object: str,
+        source_record_id: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
+        expired_at: str | None = None,
+        confidence: float = 1.0,
+        provenance: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        supersedes: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Save one temporal fact edge.
+
+        Re-saving the same subject/predicate/object/source/valid_at combination
+        is idempotent. Passing ``supersedes`` invalidates older fact ids at this
+        fact's ``valid_at`` timestamp.
+        """
+        fact_id = memory.fact_edges.upsert_fact(
+            subject=subject,
+            predicate=predicate,
+            object=object,
+            source_record_id=source_record_id,
+            valid_at=valid_at,
+            invalid_at=invalid_at,
+            expired_at=expired_at,
+            confidence=confidence,
+            provenance=provenance,
+            metadata=metadata,
+            supersedes=supersedes,
+        )
+        return memory.fact_edges.get(fact_id)
+
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
+    def memo_fact_edge_invalidate(id: str, invalid_at: str | None = None) -> dict[str, Any]:
+        """Invalidate one temporal fact edge without deleting its provenance."""
+        return {"id": id, "invalidated": memory.fact_edges.invalidate(id, invalid_at=invalid_at)}
+
     @annotated_tool(server, **READ_ONLY)
     def memo_temporal_contradictions(
         entity: str,
