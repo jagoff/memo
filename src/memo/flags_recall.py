@@ -522,6 +522,23 @@ SPECS: tuple[FlagSpec, ...] = (
         "Default OFF (opt-in). When ON, optimize_recall_prefix reorders system/memories "
         "for stable prefix structure across sessions.",
     ),
+    _spec(
+        "MEMO_GUARD_ENABLED",
+        "bool",
+        False,
+        "recall",
+        "Flag a prior decision/preference the prompt looks to be reversing, "
+        "as a ⚠ banner at the top of the recall block. Advisory, never blocks.",
+    ),
+    _spec(
+        "MEMO_GUARD_SIM_THRESHOLD",
+        "float",
+        0.6,
+        "recall",
+        "Min recall score for a decision/preference hit to be guard-flagged.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
 )
 
 
