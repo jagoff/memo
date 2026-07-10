@@ -513,3 +513,63 @@ def test_grade_sample_qa_calls_judge_once_per_qa():
     results = eval_bench.grade_sample_qa(_FakeMem(), sample, judge, k=5)
     assert judge.calls == 3
     assert len(results) == 3
+
+
+# --- oracle regime ---------------------------------------------------------------
+
+
+def test_grade_sample_qa_oracle_regime_bypasses_ask(monkeypatch):
+    """oracle regime answers from raw sample.turns via the LLM, never calling mem.ask."""
+    from memo import eval_bench
+
+    captured = {"chat_calls": 0, "ask_calls": 0}
+
+    class _FakeChat:
+        def chat(self, model, messages, options=None):
+            captured["chat_calls"] += 1
+            # echo a deterministic answer derived from the turns text
+            return {"message": {"content": "PARIS"}}
+
+    monkeypatch.setattr("memo.llm.MLXChat", lambda *a, **k: _FakeChat())
+
+    class _FakeMem:
+        llm_model = "fake-model"
+
+        def ask(self, question, k=5):
+            captured["ask_calls"] += 1
+            return {"answer": "should-not-be-used"}
+
+    class _Judge:
+        name = "j"
+
+        def grade(self, *, question, gold, answer, abstention):
+            return answer.strip().upper() == gold.strip().upper()
+
+    Turn = eval_bench.BenchTurn
+    sample = eval_bench.BenchSample(
+        sample_id="s1",
+        turns=(
+            Turn(
+                turn_id="t1",
+                session_id="session_1",
+                role="user",
+                text="I live in Paris.",
+                date=None,
+            ),
+        ),
+        qa=(
+            eval_bench.BenchQA(
+                qa_id="q1",
+                category="single_hop",
+                question="Where do I live?",
+                answer="Paris",
+                abstention=False,
+                evidence_session_ids=(),
+                evidence_turn_ids=(),
+            ),
+        ),
+    )
+    results = eval_bench.grade_sample_qa(_FakeMem(), sample, _Judge(), k=5, regime="oracle")
+    assert captured["ask_calls"] == 0
+    assert captured["chat_calls"] == 1
+    assert results[0].correct is True

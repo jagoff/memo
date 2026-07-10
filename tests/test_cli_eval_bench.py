@@ -108,3 +108,10 @@ def test_bench_report_renders_markdown(tmp_path):
     assert r.exit_code == 0, r.output
     assert "retrieval/single_hop/recall_at_k" in r.output
     assert "qa/single_hop/accuracy" in r.output
+
+
+def test_bench_run_accepts_regime_option():
+    res = CliRunner().invoke(cli, ["eval", "bench", "run", "--help"])
+    assert res.exit_code == 0
+    assert "--regime" in res.output
+    assert "oracle" in res.output

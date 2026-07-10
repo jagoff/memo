@@ -60,6 +60,14 @@ def bench_group() -> None:
 )
 @click.option("--retrieval-only", is_flag=True, help="Skip QA grading (no LLM, no judge).")
 @click.option(
+    "--regime",
+    type=click.Choice(["policy", "oracle"]),
+    default="policy",
+    show_default=True,
+    help="policy = memo retrieval+answer; oracle = answer over raw turns "
+    "(ceiling anchor, no memory). 'shuffled' floor is not yet implemented.",
+)
+@click.option(
     "--contradict-scan",
     is_flag=True,
     help="Run memo's contradiction scanner on each isolated store after ingest "
@@ -82,6 +90,7 @@ def bench_run(
     max_samples: int | None,
     max_qa: int | None,
     retrieval_only: bool,
+    regime: str,
     contradict_scan: bool,
     workdir: Path | None,
     as_json: bool,
@@ -136,7 +145,9 @@ def bench_run(
             per_sample_rows.append(eval_bench.score_retrieval(mem, sample, ingest, k=k))
             if judge is not None:
                 qa_results.extend(
-                    eval_bench.grade_sample_qa(mem, sample, judge, k=k, max_qa=max_qa)
+                    eval_bench.grade_sample_qa(
+                        mem, sample, judge, k=k, max_qa=max_qa, regime=regime, model=live.llm_model
+                    )
                 )
         finally:
             mem.close()

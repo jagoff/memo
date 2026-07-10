@@ -605,6 +605,28 @@ class QAResult:
     answer_head: str  # first 400 chars, for the receipt
 
 
+def _answer_oracle(sample: BenchSample, question: str, model: str) -> str:
+    """Ceiling anchor: answer the question from the raw conversation turns with
+    NO memory layer. Direct LLM call — deferred MLX import, offline path only."""
+    from memo.llm import MLXChat  # deferred — never load MLX at import time
+
+    convo = "\n".join(f"{t.role}: {t.text}" for t in sample.turns)
+    chat = MLXChat()
+    out = chat.chat(
+        model,
+        [
+            {
+                "role": "system",
+                "content": "Answer the question using ONLY the conversation. "
+                "If the answer is not present, say you do not know.",
+            },
+            {"role": "user", "content": f"Conversation:\n{convo}\n\nQuestion: {question}"},
+        ],
+        options={"temperature": 0.0, "num_predict": 256},
+    )
+    return str(out.get("message", {}).get("content", ""))
+
+
 def grade_sample_qa(
     mem: Any,
     sample: BenchSample,
@@ -613,15 +635,25 @@ def grade_sample_qa(
     k: int = 5,
     max_qa: int | None = None,
     progress: Callable[[int, int], None] | None = None,
+    regime: str = "policy",
+    model: str | None = None,
 ) -> list[QAResult]:
-    """`memo ask` each QA over the bench store and judge the answer."""
+    """`memo ask` each QA over the bench store and judge the answer.
+
+    regime="policy" (default) uses memo's retrieval+answer; regime="oracle"
+    answers from the raw conversation with no memory layer (ceiling anchor).
+    """
     items = list(sample.qa)[:max_qa] if max_qa else list(sample.qa)
+    _model = model or str(getattr(mem, "llm_model", ""))
     results: list[QAResult] = []
     for i, qa in enumerate(items, start=1):
         if progress is not None:
             progress(i, len(items))
-        res = mem.ask(qa.question, k=k)
-        answer = str(res.get("answer") or "")
+        if regime == "oracle":
+            answer = _answer_oracle(sample, qa.question, _model)
+        else:
+            res = mem.ask(qa.question, k=k)
+            answer = str(res.get("answer") or "")
         correct = judge.grade(
             question=qa.question, gold=qa.answer, answer=answer, abstention=qa.abstention
         )
