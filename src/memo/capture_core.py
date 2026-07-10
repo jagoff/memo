@@ -21,7 +21,7 @@ import re as _re
 from pathlib import Path
 from typing import Any
 
-from memo.fact_extraction import FACT_EDGES_KEY, assertion_fact_edge
+from memo.fact_extraction import FACT_EDGES_KEY, candidate_fact_edges
 from memo.util import sha256_short
 
 _log = logging.getLogger(__name__)
@@ -100,6 +100,7 @@ For each insight, output a JSON object with:
   For "failure_pattern" ONLY, structure the body as four labelled lines:
   "Pattern: <the mistake>", "Context: <when it happens>", "Wrong: <what was done>", "Right: <what to do instead>".
 - "tags": 3-6 lowercase tags (project, technology, domain)
+- Optional "fact_edges": 0-3 structured facts when the insight states a concrete relation. Each edge must be {"subject": "...", "predicate": "...", "object": "..."} with short stable strings. Prefer project/component names as subjects, lowercase verb predicates ("uses", "requires", "fixed_by", "supersedes"), and concrete objects. Omit if uncertain.
 
 Output ONLY a JSON array. Empty array `[]` if nothing notable.
 NO markdown fences. NO commentary. NO preamble."""
@@ -758,6 +759,7 @@ def extract_insights(
         body = (item.get("body") or "").strip()
         type_ = (item.get("type") or "note").strip()
         tags = item.get("tags") or []
+        raw_fact_edges = item.get(FACT_EDGES_KEY)
         if not title or not body:
             continue
         if not isinstance(tags, list):
@@ -772,12 +774,27 @@ def extract_insights(
                 title, body = r_title.text, r_body.text
                 if "_redacted" not in norm_tags:
                     norm_tags.append("_redacted")
+            redacted_edges: list[dict[str, Any]] = []
+            for edge in raw_fact_edges if isinstance(raw_fact_edges, list) else []:
+                if not isinstance(edge, dict):
+                    continue
+                redacted_edge = dict(edge)
+                for key in ("subject", "predicate", "object", "object_"):
+                    value = redacted_edge.get(key)
+                    if isinstance(value, str):
+                        result = redact_secrets(value, entropy=entropy)
+                        if result.found and "_redacted" not in norm_tags:
+                            norm_tags.append("_redacted")
+                        redacted_edge[key] = result.text
+                redacted_edges.append(redacted_edge)
+            raw_fact_edges = redacted_edges if raw_fact_edges is not None else None
         out.append(
             {
                 "title": title[:80],
                 "type": type_,
                 "body": body,
                 "tags": norm_tags,
+                FACT_EDGES_KEY: raw_fact_edges,
             }
         )
     return out
@@ -998,8 +1015,9 @@ def _extract_and_save(
                     f"({confidence:.2f} < {min_confidence:.2f}) — tagged _uncertain",
                     file=sys.stderr,
                 )
-        fact_edge = assertion_fact_edge(
+        fact_edges = candidate_fact_edges(
             title=str(cand.get("title") or ""),
+            raw_edges=cand.get(FACT_EDGES_KEY),
             extractor="memo.capture",
             mode="atomic-insight",
             confidence=confidence,
@@ -1015,8 +1033,8 @@ def _extract_and_save(
             "capture_confidence": round(confidence, 3),
             "prompt_version": _extract_prompt_version,
         }
-        if fact_edge is not None:
-            extra_for_save[FACT_EDGES_KEY] = [fact_edge]
+        if fact_edges:
+            extra_for_save[FACT_EDGES_KEY] = fact_edges
         try:
             rec = mem.save(
                 content=cand["body"],

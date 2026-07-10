@@ -169,9 +169,67 @@ def assertion_fact_edge(
     }
 
 
+def candidate_fact_edges(
+    *,
+    title: str,
+    raw_edges: Any,
+    extractor: str,
+    mode: str,
+    confidence: float = 1.0,
+    provenance: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Normalize candidate-declared fact edges, falling back to assertion."""
+    base_provenance = {
+        "extractor": extractor,
+        "mode": mode,
+        **(provenance or {}),
+    }
+    base_metadata = metadata or {}
+    out: list[dict[str, Any]] = []
+    for item in _coerce_fact_items(raw_edges):
+        subject = str(item.get("subject") or "").strip()
+        predicate = str(item.get("predicate") or "").strip()
+        object_ = str(item.get("object") or item.get("object_") or "").strip()
+        if not subject or not predicate or not object_:
+            continue
+        item_provenance = item.get("provenance")
+        item_metadata = item.get("metadata")
+        edge: dict[str, Any] = {
+            "subject": subject,
+            "predicate": predicate,
+            "object": object_,
+            "confidence": _coerce_confidence(item.get("confidence", confidence)),
+            "provenance": {
+                **base_provenance,
+                **(item_provenance if isinstance(item_provenance, dict) else {}),
+            },
+            "metadata": {
+                **base_metadata,
+                **(item_metadata if isinstance(item_metadata, dict) else {}),
+            },
+        }
+        for key in ("valid_at", "invalid_at", "expired_at", "supersedes"):
+            if key in item:
+                edge[key] = item[key]
+        out.append(edge)
+    if out:
+        return out
+    fallback = assertion_fact_edge(
+        title=title,
+        extractor=extractor,
+        mode=mode,
+        confidence=confidence,
+        provenance=provenance,
+        metadata=metadata,
+    )
+    return [fallback] if fallback is not None else []
+
+
 __all__ = [
     "FACT_EDGES_KEY",
     "assertion_fact_edge",
+    "candidate_fact_edges",
     "fact_edges_from_metadata",
     "upsert_declared_fact_edges",
 ]

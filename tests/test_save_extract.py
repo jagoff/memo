@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 import memo.capture as capture_mod
-from memo.capture import extract_and_save_text
+from memo.capture import extract_and_save_text, extract_insights
 from memo.cli import cli
 from memo.config import Config
 from memo.memory import Memory
@@ -98,6 +98,74 @@ def test_extract_populates_temporal_fact_edges(mem_with_stub, monkeypatch):
     assert rows[0]["provenance"]["mode"] == "atomic-insight"
     assert rows[0]["metadata"]["type"] == "decision"
     assert rows[0]["metadata"]["tags"] == ["memo", "temporal"]
+
+
+def test_extract_preserves_structured_fact_edges_from_helper(monkeypatch):
+    payload = [
+        {
+            "title": "memo extraction emits fact edges",
+            "body": "The capture extractor can emit structured temporal facts.",
+            "type": "fact",
+            "tags": ["memo", "capture", "temporal"],
+            "fact_edges": [
+                {"subject": "memo capture", "predicate": "emits", "object": "fact edges"}
+            ],
+        }
+    ]
+
+    class _Chat:
+        def chat(self, **kwargs):
+            return {"message": {"content": json.dumps(payload)}}
+
+    monkeypatch.setenv("MEMO_REDACT_SECRETS", "0")
+
+    out = extract_insights(_Chat(), "helper", "user", "assistant")
+
+    assert out == [
+        {
+            "title": "memo extraction emits fact edges",
+            "type": "fact",
+            "body": "The capture extractor can emit structured temporal facts.",
+            "tags": ["memo", "capture", "temporal"],
+            "fact_edges": [
+                {"subject": "memo capture", "predicate": "emits", "object": "fact edges"}
+            ],
+        }
+    ]
+
+
+def test_extract_saves_structured_temporal_fact_edges(mem_with_stub, monkeypatch):
+    cands = [
+        {
+            "title": "memo capture records graph facts",
+            "body": "The extraction path records concrete subject-predicate-object facts.",
+            "type": "fact",
+            "tags": ["memo", "graph"],
+            "fact_edges": [
+                {"subject": "memo capture", "predicate": "records", "object": "graph facts"},
+                {"subject": "graph facts", "predicate": "support", "object": "temporal queries"},
+            ],
+        }
+    ]
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *a, **kw: cands)
+    monkeypatch.setattr(capture_mod, "_passes_quality", lambda *a, **kw: True)
+    monkeypatch.setattr(capture_mod, "find_near_duplicate", lambda *a, **kw: None)
+
+    out = extract_and_save_text(mem_with_stub, mem_with_stub.cfg, "raw design note")
+    rows = mem_with_stub.fact_edges.query(
+        as_of="2999-01-01T00:00:00+00:00",
+        include_inactive=True,
+    )
+
+    assert out["status"] == "extracted"
+    assert out["facts"] == 2
+    assert {(row["subject"], row["predicate"], row["object"]) for row in rows} == {
+        ("memo capture", "records", "graph facts"),
+        ("graph facts", "support", "temporal queries"),
+    }
+    assert all(row["source_record_id"] == out["saved"][0] for row in rows)
+    assert all(row["provenance"]["extractor"] == "memo.capture" for row in rows)
+    assert all(row["metadata"]["type"] == "fact" for row in rows)
 
 
 def test_extract_merges_caller_tags_into_every_fact(mem_with_stub, monkeypatch):
