@@ -56,6 +56,49 @@ def feedback_record_cmd(source_id: str, query_text: str, rating: str, as_json: b
     )
 
 
+@feedback_group.command(name="flag")
+@click.argument("source_id")
+@click.option(
+    "--kind",
+    required=True,
+    type=click.Choice(["outdated", "wrong"]),
+    help="outdated = archive stale memory; wrong = archive (+ supersede if a replacement is given).",
+)
+@click.option(
+    "--superseded-by",
+    "superseded_by",
+    default=None,
+    help="For --kind wrong: id (prefix ok) of the memory that replaces this one.",
+)
+@click.option("--as-json", is_flag=True)
+def feedback_flag_cmd(
+    source_id: str, kind: str, superseded_by: str | None, as_json: bool
+) -> None:
+    """Flag SOURCE_ID as outdated/wrong → route to the lifecycle (reversible
+    archive), not the retriever. Use `memo feedback record` for 👍/👎 ranking
+    votes instead.
+
+    SOURCE_ID may be a full meta.id or a unique prefix."""
+    from memo.memory import Memory
+
+    cfg = Config.from_env()
+    mem = Memory(cfg)
+    try:
+        res = mem.feedback_flag(source_id, kind=kind, superseded_by=superseded_by)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from exc
+    finally:
+        mem.close()
+    if as_json:
+        click.echo(json.dumps(res, ensure_ascii=False))
+        return
+    tail = f" → {res['superseded_by'][:8]}" if res.get("superseded_by") else ""
+    console.print(
+        f"[green]ok[/green] {res['action']} {res['source_id'][:8]} (kind={res['kind']}){tail}"
+    )
+
+
 @feedback_group.command(name="list")
 @click.option("--source", "source_id", default=None, help="Filter by source id (prefix ok).")
 @click.option("--limit", default=50, type=int)

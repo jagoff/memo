@@ -27,8 +27,8 @@ def _make_server_and_tools():
     return server, tools
 
 
-def test_register_exposes_all_three_tools(tmp_cfg) -> None:
-    """register() must expose all three expected MCP tools."""
+def test_register_exposes_all_feedback_tools(tmp_cfg) -> None:
+    """register() must expose exactly the expected feedback MCP tools."""
     from memo.server_feedback import register
 
     mem = MagicMock(spec=Memory)
@@ -37,8 +37,30 @@ def test_register_exposes_all_three_tools(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    expected = {"memo_feedback_record", "memo_feedback_list", "memo_feedback_clear"}
+    expected = {
+        "memo_feedback_record",
+        "memo_feedback_flag",
+        "memo_feedback_list",
+        "memo_feedback_clear",
+    }
     assert expected == set(tools), f"Tool mismatch: {set(tools)}"
+
+
+def test_memo_feedback_flag_delegates_to_memory(tmp_cfg) -> None:
+    """memo_feedback_flag must forward kind + superseded_by to feedback_flag."""
+    from memo.server_feedback import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.feedback_flag.return_value = {"action": "superseded", "source_id": "abc123"}
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    result = tools["memo_feedback_flag"](source_id="abc123", kind="wrong", superseded_by="def456")
+
+    mem.feedback_flag.assert_called_once_with("abc123", kind="wrong", superseded_by="def456")
+    assert result["action"] == "superseded"
 
 
 def test_memo_feedback_record_delegates_to_memory(tmp_cfg) -> None:

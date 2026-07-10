@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from memo import eval_bench_taxonomy as taxonomy
 from memo.config import Config
 from memo.errors import MemoError
 from memo.eval_recall import Cfg, LabelSet, Prompt, Row, run_config
@@ -606,6 +607,67 @@ def qa_accuracy_by_category(results: list[QAResult]) -> dict[str, dict[str, floa
     }
 
 
+# --- Capability taxonomy rollup + abstention (auxiliary view) -------------------------
+#
+# Memoria's benchmark reports a unified 6-bucket ability taxonomy on top of the
+# raw per-category numbers (docs/memory-ability-taxonomy.md). We do the same:
+# the raw category numbers stay primary; these give a cross-dataset,
+# cross-run-comparable view and pull abstention out as its own first-class
+# metric instead of leaving it mixed into a topic category.
+
+_RETRIEVAL_METRICS = ("recall_at_k", "ndcg_at_k", "mrr", "precision_at_k")
+
+
+def capability_retrieval(
+    by_category: dict[str, dict[str, float | int]],
+) -> dict[str, dict[str, float | int]]:
+    """Roll aggregate_retrieval() output up into capability buckets."""
+    return taxonomy.rollup_weighted(by_category, _RETRIEVAL_METRICS)
+
+
+def capability_qa(results: list[QAResult]) -> dict[str, dict[str, float | int]]:
+    """Per-capability-bucket QA accuracy. Abstention questions route to the
+    abstention bucket (bucket_for honors the flag), not their topic category."""
+    by_bucket: dict[str, list[QAResult]] = {}
+    for r in results:
+        by_bucket.setdefault(taxonomy.bucket_for(r.category, r.abstention), []).append(r)
+    return {
+        bucket: {
+            "accuracy": round(sum(1 for r in rs if r.correct) / len(rs), 3),
+            "n_questions": len(rs),
+        }
+        for bucket, rs in by_bucket.items()
+    }
+
+
+def abstention_summary(results: list[QAResult]) -> dict[str, float | int]:
+    """First-class abstention / hallucination metric across all categories.
+
+    For an abstention question the correct behavior is to decline; the judge
+    grades `correct=True` when the answer declines. So over the abstention
+    subset: `abstention_accuracy` = correctly-declined rate, and
+    `hallucination_rate` = answered-anyway rate (1 − accuracy) — the share of
+    no-evidence questions memo answered instead of abstaining."""
+    abst = [r for r in results if r.abstention]
+    n = len(abst)
+    if n == 0:
+        return {
+            "n_questions": 0,
+            "correct_abstentions": 0,
+            "hallucinations": 0,
+            "abstention_accuracy": 0.0,
+            "hallucination_rate": 0.0,
+        }
+    correct = sum(1 for r in abst if r.correct)
+    return {
+        "n_questions": n,
+        "correct_abstentions": correct,
+        "hallucinations": n - correct,
+        "abstention_accuracy": round(correct / n, 3),
+        "hallucination_rate": round((n - correct) / n, 3),
+    }
+
+
 # --- Results receipt + markdown report --------------------------------------------------
 
 RECEIPT_SCHEMA = "memo.eval_bench.receipt.v1"
@@ -689,4 +751,36 @@ def render_report(receipts: list[dict[str, Any]]) -> str:
                 [str((c.get("qa") or {}).get(cat, {}).get("accuracy", "—")) for c in cols],
             )
         )
+
+    # Auxiliary capability-taxonomy rollup (Memoria-style 6-bucket view).
+    cap_ret_buckets = sorted({b for c in cols for b in (c.get("capability_retrieval") or {})})
+    for bucket in cap_ret_buckets:
+        for metric in ("recall_at_k", "ndcg_at_k", "mrr", "precision_at_k", "n_questions"):
+            lines.append(
+                row(
+                    f"capability/{bucket}/{metric}",
+                    [
+                        str((c.get("capability_retrieval") or {}).get(bucket, {}).get(metric, "—"))
+                        for c in cols
+                    ],
+                )
+            )
+    cap_qa_buckets = sorted({b for c in cols for b in (c.get("capability_qa") or {})})
+    for bucket in cap_qa_buckets:
+        lines.append(
+            row(
+                f"capability_qa/{bucket}/accuracy",
+                [str((c.get("capability_qa") or {}).get(bucket, {}).get("accuracy", "—")) for c in cols],
+            )
+        )
+
+    # Abstention as a first-class cross-cut (declined-when-no-evidence).
+    if any(c.get("abstention") for c in cols):
+        for metric in ("abstention_accuracy", "hallucination_rate", "n_questions"):
+            lines.append(
+                row(
+                    f"abstention/{metric}",
+                    [str((c.get("abstention") or {}).get(metric, "—")) for c in cols],
+                )
+            )
     return "\n".join(lines) + "\n"

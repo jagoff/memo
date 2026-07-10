@@ -40,6 +40,33 @@ def register(server: FastMCP, memory: Memory) -> None:
         """
         return memory.feedback_record(source_id, query_text=query, rating=rating)
 
+    @annotated_tool(server, **WRITE)
+    def memo_feedback_flag(
+        source_id: str,
+        kind: str,
+        superseded_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Flag a surfaced memory whose CONTENT is no longer true.
+
+        Distinct from `memo_feedback_record` (which teaches the retriever per
+        query): this routes to the memory lifecycle, not ranking.
+
+          kind="outdated" — archive the memory (stale, not contradicted).
+          kind="wrong"    — archive it; pass `superseded_by` (id or prefix of
+                            the replacement memory) to record the supersede.
+
+        Archive is reversible (the `memo maintain`/`dream` primitive), never a
+        hard delete — an over-eager flag is recoverable. Use this when you
+        find a recalled memory that is stale or contradicted rather than
+        silently working around it.
+
+        Args:
+            source_id: meta.id (full or unique prefix >= 4 chars).
+            kind: "outdated" or "wrong".
+            superseded_by: for kind="wrong", the replacement memory id/prefix.
+        """
+        return memory.feedback_flag(source_id, kind=kind, superseded_by=superseded_by)
+
     @annotated_tool(server, **READ_ONLY)
     def memo_feedback_list(
         source_id: str | None = None,

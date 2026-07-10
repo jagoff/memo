@@ -121,6 +121,7 @@ def bench_run(
         finally:
             mem.close()
 
+    retrieval = eval_bench.aggregate_retrieval(per_sample_rows)
     receipt = {
         "schema": eval_bench.RECEIPT_SCHEMA,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -130,9 +131,15 @@ def bench_run(
         "judge": getattr(judge, "name", None),
         "llm_model": live.llm_model,
         "embedder_model": live.embedder_model,
-        "retrieval": eval_bench.aggregate_retrieval(per_sample_rows),
+        "retrieval": retrieval,
         "qa": eval_bench.qa_accuracy_by_category(qa_results) if qa_results else {},
+        # Auxiliary capability-taxonomy rollup (Memoria-style 6-bucket view).
+        "capability_retrieval": eval_bench.capability_retrieval(retrieval),
     }
+    if qa_results:
+        # First-class abstention metric + per-bucket QA accuracy.
+        receipt["capability_qa"] = eval_bench.capability_qa(qa_results)
+        receipt["abstention"] = eval_bench.abstention_summary(qa_results)
     path = eval_bench.write_receipt(live.state_dir, receipt)
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))

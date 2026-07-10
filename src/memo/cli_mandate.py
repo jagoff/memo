@@ -34,6 +34,10 @@ consult memo FIRST:
 - Write durable outcomes back with `memo_save` so the next session inherits
   them. memo is the source of truth for what is *known*; build on it, and
   contradict a surfaced memory only explicitly.
+- Keep it honest: when a surfaced memory is stale or contradicted, correct it
+  instead of silently working around it — `memo_feedback_flag(kind="outdated")`
+  to retire it, or `kind="wrong"` (with `superseded_by` when a replacement
+  exists). Both archive reversibly, never hard-delete.
 """
 
 # Project-local instruction file each client reads (relative to cwd).

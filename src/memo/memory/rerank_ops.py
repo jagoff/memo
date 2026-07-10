@@ -174,6 +174,50 @@ class _RerankOpsMixin(_MemoryBase):
         resolved = self._resolve_source_id(source_id)
         return self.store.clear_source_feedback(resolved)
 
+    def feedback_flag(
+        self,
+        source_id: str,
+        *,
+        kind: str,
+        superseded_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Typed *content-lifecycle* feedback on a surfaced memory.
+
+        Distinct from feedback_record (which teaches the *retriever* per
+        query): this acts on the memory itself when the agent judges the
+        content no longer true. Modeled on Memoria's typed feedback
+        (useful/irrelevant/outdated/wrong) — memo already covers the
+        useful/irrelevant axis via up/down/click/ignore ranking votes; this
+        adds the outdated/wrong axis that routes to the lifecycle:
+
+          kind="outdated" — archive the memory (stale but not contradicted).
+          kind="wrong"    — archive it; if `superseded_by` names a replacement
+                            memory, record the supersede link.
+
+        Archive is reversible (the same primitive `memo maintain`/`dream` use),
+        so an over-eager flag is recoverable — never a hard delete. Accepts a
+        short id prefix for `source_id` / `superseded_by`. Returns the action.
+        """
+        kind_norm = (kind or "").strip().lower()
+        if kind_norm not in ("outdated", "wrong"):
+            raise ValueError("kind must be 'outdated' or 'wrong'")
+        resolved = self.resolve_id(source_id)
+        if not resolved:
+            raise ValueError(f"no memory matches {source_id!r}")
+        replacement: str | None = None
+        if superseded_by:
+            replacement = self.resolve_id(superseded_by)
+            if not replacement:
+                raise ValueError(f"no memory matches superseded_by={superseded_by!r}")
+        archived = bool(self.lifecycle.archive_memory(resolved, superseded_by=replacement))
+        return {
+            "source_id": resolved,
+            "kind": kind_norm,
+            "action": "superseded" if replacement else "archived",
+            "superseded_by": replacement,
+            "archived": archived,
+        }
+
     @staticmethod
     def _normalize_rating(rating: str | int) -> tuple[int, str]:
         """Return (db_rating, canonical_signal).
