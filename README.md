@@ -301,6 +301,16 @@ The old placeholder `memo multimodal` store was removed; images and audio now
 become searchable by flowing OCR, VLM captions, and whisper transcripts through
 the normal text index.
 
+### 🔐 Secret storage
+
+```bash
+memo secret save --name openai-api-key --kind api_token   # value read from stdin
+memo secret get --name openai-api-key                       # decrypt one secret
+memo secret list                                            # names only, never values
+```
+
+Keep credentials (API tokens, passwords, SSH keys, DB creds) in an **encrypted** local store — separate from your searchable memories, never indexed or embedded. Values are sealed with **AES-256-GCM** under a device-bound key (PBKDF2 over hostname + device id + a machine salt — same machine derives the same key, no passphrase to manage). Default-on (`MEMO_SECRET_STORAGE_ENABLED`); `memo secret list` shows names only. Optionally, `MEMO_CAPTURE_DETECT_SECRETS=1` auto-detects and quarantines secrets that show up in captured transcripts (opt-in) so they never land in a plain memory.
+
 ### Daemons
 
 memo runs four background daemons:
