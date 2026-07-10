@@ -942,6 +942,10 @@ def _extract_and_save(
     saved: list[str] = []
     saved_titles: list[str] = []
     facts = 0
+    fact_edges_declared = 0
+    fact_edges_prepared = 0
+    fact_edges_structured = 0
+    fact_edges_fallback = 0
     skipped_dup = 0
     reconciled = 0
     skipped_quality = 0
@@ -1015,9 +1019,14 @@ def _extract_and_save(
                     f"({confidence:.2f} < {min_confidence:.2f}) — tagged _uncertain",
                     file=sys.stderr,
                 )
+        raw_fact_edges = cand.get(FACT_EDGES_KEY)
+        if isinstance(raw_fact_edges, dict):
+            fact_edges_declared += 1
+        elif isinstance(raw_fact_edges, list):
+            fact_edges_declared += sum(1 for item in raw_fact_edges if isinstance(item, dict))
         fact_edges = candidate_fact_edges(
             title=str(cand.get("title") or ""),
-            raw_edges=cand.get(FACT_EDGES_KEY),
+            raw_edges=raw_fact_edges,
             extractor="memo.capture",
             mode="atomic-insight",
             confidence=confidence,
@@ -1028,6 +1037,20 @@ def _extract_and_save(
                 "body_preview": str(cand.get("body") or "")[:240],
             },
         )
+        fact_edges_prepared += len(fact_edges)
+        structured_count = sum(
+            1
+            for edge in fact_edges
+            if not (edge.get("subject") == "memory" and edge.get("predicate") == "asserts")
+        )
+        fact_edges_structured += structured_count
+        fact_edges_fallback += len(fact_edges) - structured_count
+        if debug and fact_edges:
+            print(
+                f"# memo capture: prepared {len(fact_edges)} fact edge(s) "
+                f"({structured_count} structured) for '{cand['title']}'",
+                file=sys.stderr,
+            )
         extra_for_save = {
             **(extra_base or {}),
             "capture_confidence": round(confidence, 3),
@@ -1064,6 +1087,13 @@ def _extract_and_save(
         "saved": saved,
         "saved_titles": saved_titles,
         "facts": facts,
+        "extract_stats": {
+            "fact_edges_declared": fact_edges_declared,
+            "fact_edges_prepared": fact_edges_prepared,
+            "fact_edges_structured": fact_edges_structured,
+            "fact_edges_fallback": fact_edges_fallback,
+            "fact_edges_saved": facts,
+        },
         "skipped_dup": skipped_dup,
         "reconciled": reconciled,
         "skipped_quality": skipped_quality,
@@ -1126,18 +1156,26 @@ def extract_and_save_text(
             tags=vb_tags or None,
             auto_project=auto_project,
         )
+        vb_facts = len(
+            mem.fact_edges.query(
+                source_record_id=rec.id,
+                include_inactive=True,
+                limit=1000,
+            )
+        )
         return {
             "status": "verbatim",
             "candidates": 0,
             "saved": [rec.id],
             "saved_titles": [rec.title],
-            "facts": len(
-                mem.fact_edges.query(
-                    source_record_id=rec.id,
-                    include_inactive=True,
-                    limit=1000,
-                )
-            ),
+            "facts": vb_facts,
+            "extract_stats": {
+                "fact_edges_declared": 0,
+                "fact_edges_prepared": vb_facts,
+                "fact_edges_structured": 0,
+                "fact_edges_fallback": vb_facts,
+                "fact_edges_saved": vb_facts,
+            },
             "skipped_dup": 0,
             "reconciled": 0,
             "skipped_quality": 0,

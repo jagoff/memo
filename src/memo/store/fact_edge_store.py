@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import weakref
@@ -21,7 +22,7 @@ from .connection import _ConnectionMixin
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 def _normalize_ts(value: str | datetime | None) -> str | None:
@@ -73,6 +74,21 @@ def _row_to_fact(row: Any) -> dict[str, Any]:
             parsed = {}
         data[out_key] = parsed if isinstance(parsed, dict) else {}
     return data
+
+
+_FACT_TOKEN_RE = re.compile(r"[\w:+#./-]{2,}", re.UNICODE)
+
+
+def _fact_search_tokens(query: str) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for token in _FACT_TOKEN_RE.findall(query.lower()):
+        token = token.strip("_-./")
+        if len(token) < 2 or token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+    return out[:8]
 
 
 class FactEdgeStore(_ConnectionMixin):
@@ -240,6 +256,59 @@ class FactEdgeStore(_ConnectionMixin):
             params,
         ).fetchall()
         return [_row_to_fact(row) for row in rows]
+
+    def search_text(
+        self,
+        query: str,
+        *,
+        as_of: str | datetime | None = None,
+        include_inactive: bool = False,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Search fact edge text and return rows with a lightweight score."""
+        tokens = _fact_search_tokens(query)
+        if not tokens:
+            return []
+        target = _normalize_ts(as_of) or _now_iso()
+        clauses = [
+            "(lower(subject) LIKE ? OR lower(predicate) LIKE ? OR lower(object) LIKE ?)"
+            for _ in tokens
+        ]
+        params: list[Any] = []
+        for token in tokens:
+            like = f"%{token}%"
+            params.extend([like, like, like])
+        params.extend([1 if include_inactive else 0, target, target, target, max(1, int(limit))])
+        sql = (
+            "SELECT * FROM fact_edges WHERE "  # noqa: S608 - generated placeholders only.
+            f"({' OR '.join(clauses)}) AND "
+            "(? = 1 OR (valid_at <= ? AND "
+            "(invalid_at IS NULL OR invalid_at > ?) AND "
+            "(expired_at IS NULL OR expired_at > ?))) "
+            "ORDER BY valid_at DESC, confidence DESC, updated_at DESC LIMIT ?"
+        )
+        rows = self._conn.execute(
+            sql,
+            params,
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            fact = _row_to_fact(row)
+            haystack = " ".join(
+                str(fact.get(key) or "").lower() for key in ("subject", "predicate", "object")
+            )
+            matches = sum(1 for token in tokens if token in haystack)
+            fact["score"] = round(matches / max(len(tokens), 1), 6)
+            out.append(fact)
+        out.sort(
+            key=lambda fact: (
+                float(fact.get("score") or 0.0),
+                float(fact.get("confidence") or 0.0),
+                str(fact.get("valid_at") or ""),
+            ),
+            reverse=True,
+        )
+        return out
 
     def invalidate(self, id_: str, *, invalid_at: str | datetime | None = None) -> bool:
         ts = _normalize_ts(invalid_at) or _now_iso()

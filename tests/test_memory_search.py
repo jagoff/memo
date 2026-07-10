@@ -100,6 +100,45 @@ def test_hybrid_search_fuses_vec_and_bm25(mem_with_stub: Memory):
     assert any(r.title == "Python testing notes" for r in h)
 
 
+def test_hybrid_search_uses_temporal_fact_edges(mem_with_stub: Memory, monkeypatch):
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+    rec = mem_with_stub.save(
+        content="short operational note",
+        title="Capture graph design",
+        type_="note",
+        extra={
+            "fact_edges": [
+                {
+                    "subject": "memo capture",
+                    "predicate": "records",
+                    "object": "graph facts",
+                }
+            ]
+        },
+    )
+
+    out = mem_with_stub.search("graph facts", mode="hybrid", limit=3)
+
+    hit = next(h for h in out if h.id == rec.id)
+    assert hit.extra["fact_edge_matched"] is True
+    assert hit.extra["related_fact_edges"][0]["subject"] == "memo capture"
+    assert hit.extra["related_fact_edges"][0]["object"] == "graph facts"
+
+
+def test_search_trace_reports_fact_candidate_count(mem_with_stub: Memory, monkeypatch):
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+    mem_with_stub.save(
+        content="note body",
+        title="Temporal graph",
+        extra={"fact_edges": [{"subject": "memo", "predicate": "uses", "object": "facts"}]},
+    )
+
+    envelope = mem_with_stub.search_with_trace("uses facts", mode="hybrid", limit=2)
+    candidate_stage = next(s for s in envelope["trace"] if s["stage"] == "candidate_generation")
+
+    assert candidate_stage["fact_count"] >= 1
+
+
 def test_bm25_handles_empty_and_garbage_queries(mem_with_stub: Memory):
     mem_with_stub.save(content="x", title="X")
     assert mem_with_stub.search("", mode="bm25") == []

@@ -160,6 +160,32 @@ def entity_graph_lines(mem: Any, *, top: int = 5, max_scan: int = 40) -> list[st
     return lines
 
 
+def temporal_fact_lines(mem: Any, *, limit: int = 5) -> list[str]:
+    """Recent live temporal facts for startup orientation."""
+    try:
+        facts = mem.fact_edges.query(limit=limit)
+    except Exception:
+        return []
+    if not facts:
+        return []
+    lines = ["### Temporal facts", ""]
+    for fact in facts[:limit]:
+        subject = str(fact.get("subject") or "").strip()
+        predicate = str(fact.get("predicate") or "").strip()
+        object_ = str(fact.get("object") or "").strip()
+        if not subject or not predicate or not object_:
+            continue
+        rid = str(fact.get("source_record_id") or "")[:8]
+        confidence = fact.get("confidence")
+        conf = f" · conf={confidence:.2f}" if isinstance(confidence, (int, float)) else ""
+        source = f" [{rid}]" if rid else ""
+        lines.append(f"- **{subject}** {predicate} **{object_}**{source}{conf}")
+    if len(lines) <= 2:
+        return []
+    lines.append("")
+    return lines
+
+
 def install_seed_lines(state_dir: Path, *, max_age_days: int = 7) -> list[str]:
     """One-shot onboarding proof: surface the install-seed memory in the
     first briefing after install, then mark it shown.
@@ -337,6 +363,9 @@ def memo_native_briefing_lines(
     if flag_bool("MEMO_BRIEFING_GRAPH"):
         with contextlib.suppress(Exception):
             lines.extend(entity_graph_lines(mem))
+    if flag_bool("MEMO_FACT_SURFACE_ENABLED"):
+        with contextlib.suppress(Exception):
+            lines.extend(temporal_fact_lines(mem))
 
     # ── Open loops: recently updated memories ────────────────────────────
     try:
@@ -432,4 +461,5 @@ __all__ = [
     "memo_native_briefing_lines",
     "profile_lines",
     "synapse_briefing_lines",
+    "temporal_fact_lines",
 ]

@@ -59,6 +59,12 @@ def _compact_hit_dicts(hits: list[dict], body_chars: int) -> list[dict]:
     return compact
 
 
+def _fact_badge(hit: dict) -> str:
+    extra = hit.get("extra") if isinstance(hit.get("extra"), dict) else {}
+    facts = extra.get("related_fact_edges") if isinstance(extra, dict) else None
+    return f" facts:{len(facts)}" if isinstance(facts, list) and facts else ""
+
+
 def _default_search_json_body_chars() -> int:
     from memo.flags import flag_int
 
@@ -175,10 +181,11 @@ def search(
     tbl.add_column("title", overflow="fold")
     tbl.add_column("tags", overflow="fold")
     for h in hits:
+        h_dict = h.to_dict()
         tbl.add_row(
             f"{h.score:.3f}" if h.score is not None else "—",
             h.type,
-            h.title,
+            h.title + _fact_badge(h_dict),
             ", ".join(h.tags) or "—",
         )
     console.print(tbl)

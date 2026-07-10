@@ -8,6 +8,7 @@ the former `memory.py` god-file.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -50,6 +51,23 @@ def _parse_search_ts(value: str | None) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
+
+
+def _compact_fact_edge(fact: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": fact.get("id") or "",
+        "subject": fact.get("subject") or "",
+        "predicate": fact.get("predicate") or "",
+        "object": fact.get("object") or "",
+        "source_record_id": fact.get("source_record_id") or "",
+        "valid_at": fact.get("valid_at"),
+        "invalid_at": fact.get("invalid_at"),
+        "expired_at": fact.get("expired_at"),
+        "confidence": fact.get("confidence"),
+        "score": fact.get("score"),
+        "provenance": fact.get("provenance") or {},
+        "metadata": fact.get("metadata") or {},
+    }
 
 
 class _SearchOpsMixin(_MemoryBase):
@@ -255,6 +273,17 @@ class _SearchOpsMixin(_MemoryBase):
                 graph_hits = self._fetch_graph_candidates(
                     query, limit=k_each, type_=type_, exclude_types=exclude_types
                 )
+            fact_hits = (
+                self._fetch_fact_candidates(
+                    query,
+                    limit=k_each,
+                    type_=type_,
+                    exclude_types=exclude_types,
+                    exclude_tags=exclude_tags,
+                )
+                if flag_bool("MEMO_FACT_RETRIEVAL_ENABLED")
+                else []
+            )
 
             # Fuse all sources. RRF supports multiple ranked lists. `k` is
             # configurable (MEMO_RRF_K, default 60); MEMO_RRF_ADAPTIVE opts
@@ -262,8 +291,11 @@ class _SearchOpsMixin(_MemoryBase):
             # lists diverge) — off by default so the eval baseline holds.
             base_k_flag = flag_int("MEMO_RRF_K")
             base_k = 25 if base_k_flag is None else base_k_flag
+            rrf_lists = [vec_hits, bm_hits, exact_hits, graph_hits]
+            if fact_hits:
+                rrf_lists.append(fact_hits)
             rrf_k = (
-                _adaptive_rrf_k([vec_hits, bm_hits, exact_hits, graph_hits], base_k=base_k)
+                _adaptive_rrf_k(rrf_lists, base_k=base_k)
                 if flag_bool("MEMO_RRF_ADAPTIVE")
                 else base_k
             )
@@ -303,15 +335,15 @@ class _SearchOpsMixin(_MemoryBase):
                 and len(query.split()) <= 2
             ):
                 w_vec, w_bm25 = 0.35, 0.65
+            fact_weight = flag_float("MEMO_FACT_RETRIEVAL_WEIGHT")
             # Build weight list aligned with the lists passed to _rrf_fuse:
-            # [vec_hits, bm_hits, exact_hits, graph_hits] → [w_vec, w_bm25, w_bm25, 1.0]
+            # [vec, bm25, exact, graph, facts] → [w_vec, w_bm25, w_bm25, 1.0, fact_weight]
             rrf_weights = [w_vec, w_bm25, w_bm25, 1.0]
+            if fact_hits:
+                rrf_weights.append(fact_weight or 0.0)
 
             rows = _rrf_fuse(
-                vec_hits,
-                bm_hits,
-                exact_hits,
-                graph_hits,
+                *rrf_lists,
                 limit=input_k,
                 k=rrf_k,
                 weights=rrf_weights,
@@ -323,6 +355,7 @@ class _SearchOpsMixin(_MemoryBase):
                 bm25_count=len(bm_hits),
                 exact_count=len(exact_hits),
                 graph_count=len(graph_hits),
+                fact_count=len(fact_hits),
                 output_count=len(rows),
                 rrf_k=rrf_k,
                 input_k=input_k,
@@ -369,6 +402,10 @@ class _SearchOpsMixin(_MemoryBase):
         _add_trace(
             "materialize", input_count=len(rows), output_count=len(out), load_bodies=load_bodies
         )
+        if out and flag_bool("MEMO_FACT_SURFACE_ENABLED"):
+            before = len(out)
+            out = self._attach_related_fact_edges(query, out)
+            _add_trace("fact_surface", input_count=before, output_count=len(out))
         # Drop soft-forgotten memories (forget_after TTL elapsed, see
         # lifecycle.py) before feedback/rerank so they never reach the
         # consumer — recall, ask, chat all route through here. Reversible
@@ -594,6 +631,88 @@ class _SearchOpsMixin(_MemoryBase):
                 resolved.append(dataclasses.replace(r, body=disk) if disk else r)
             out = resolved
         _add_trace("final", output_count=len(out), limit=limit)
+        return out
+
+    def _fetch_fact_candidates(
+        self,
+        query: str,
+        *,
+        limit: int,
+        type_: str | None = None,
+        exclude_types: set[str] | None = None,
+        exclude_tags: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            facts = self.fact_edges.search_text(query, limit=limit * 3)
+        except Exception as exc:
+            _log.debug("fact retrieval skipped: %s", exc)
+            return []
+        best_by_id: dict[str, dict[str, Any]] = {}
+        facts_by_id: dict[str, list[dict[str, Any]]] = {}
+        for fact in facts:
+            rid = str(fact.get("source_record_id") or "")
+            if not rid:
+                continue
+            row = self.store.get(rid)
+            if row is None:
+                continue
+            if type_ and row.get("type") != type_:
+                continue
+            if exclude_types and row.get("type") in exclude_types:
+                continue
+            tags = {str(t) for t in (row.get("tags") or [])}
+            if exclude_tags and (exclude_tags & tags):
+                continue
+            facts_by_id.setdefault(rid, []).append(_compact_fact_edge(fact))
+            score = float(fact.get("score") or 0.0) * float(fact.get("confidence") or 1.0)
+            if rid not in best_by_id or score > float(best_by_id[rid].get("score") or 0.0):
+                candidate = dict(row)
+                extra = dict(candidate.get("extra") or {})
+                extra["fact_edge_matched"] = True
+                candidate["extra"] = extra
+                candidate["score"] = score
+                best_by_id[rid] = candidate
+        out = sorted(best_by_id.values(), key=lambda row: row.get("score") or 0.0, reverse=True)
+        for row in out:
+            rid = str(row.get("id") or "")
+            extra = dict(row.get("extra") or {})
+            extra["related_fact_edges"] = facts_by_id.get(rid, [])[:5]
+            row["extra"] = extra
+        return out[:limit]
+
+    def _attach_related_fact_edges(
+        self, query: str, records: list[MemoryRecord]
+    ) -> list[MemoryRecord]:
+        try:
+            facts = self.fact_edges.search_text(query, limit=max(len(records) * 5, 20))
+        except Exception as exc:
+            _log.debug("fact surface skipped: %s", exc)
+            return records
+        by_source: dict[str, list[dict[str, Any]]] = {}
+        for fact in facts:
+            rid = str(fact.get("source_record_id") or "")
+            if rid:
+                by_source.setdefault(rid, []).append(_compact_fact_edge(fact))
+        out: list[MemoryRecord] = []
+        for rec in records:
+            related = by_source.get(rec.id)
+            if not related:
+                out.append(rec)
+                continue
+            extra = dict(rec.extra or {})
+            existing = extra.get("related_fact_edges")
+            merged = list(existing) if isinstance(existing, list) else []
+            seen = {str(item.get("id") or "") for item in merged if isinstance(item, dict)}
+            for fact in related:
+                fid = str(fact.get("id") or "")
+                if fid and fid in seen:
+                    continue
+                merged.append(fact)
+                if fid:
+                    seen.add(fid)
+            extra["related_fact_edges"] = merged[:5]
+            extra["fact_edge_matched"] = bool(extra["related_fact_edges"])
+            out.append(dataclasses.replace(rec, extra=extra))
         return out
 
     def search_with_trace(self, query: str, **kwargs: Any) -> dict[str, Any]:

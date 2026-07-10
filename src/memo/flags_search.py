@@ -360,4 +360,28 @@ SPECS: tuple[FlagSpec, ...] = (
         "MEMO_SEARCH_VEC_WEIGHT/BM25_WEIGHT always win. Hybrid mode only — the "
         "recall hook's default vec mode is untouched. Default off; eval-gated.",
     ),
+    _spec(
+        "MEMO_FACT_RETRIEVAL_ENABLED",
+        "bool",
+        True,
+        "search",
+        "Hybrid search: add a lightweight temporal fact-edge leg over "
+        "subject/predicate/object text and fuse source memories through RRF.",
+    ),
+    _spec(
+        "MEMO_FACT_RETRIEVAL_WEIGHT",
+        "float",
+        0.6,
+        "search",
+        "RRF fusion weight for temporal fact-edge candidates in hybrid search.",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_FACT_SURFACE_ENABLED",
+        "bool",
+        True,
+        "search",
+        "Attach query-related temporal fact edges to MemoryRecord.extra for "
+        "search/ask/MCP surfaces.",
+    ),
 )

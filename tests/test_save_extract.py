@@ -159,6 +159,11 @@ def test_extract_saves_structured_temporal_fact_edges(mem_with_stub, monkeypatch
 
     assert out["status"] == "extracted"
     assert out["facts"] == 2
+    assert out["extract_stats"]["fact_edges_declared"] == 2
+    assert out["extract_stats"]["fact_edges_prepared"] == 2
+    assert out["extract_stats"]["fact_edges_structured"] == 2
+    assert out["extract_stats"]["fact_edges_fallback"] == 0
+    assert out["extract_stats"]["fact_edges_saved"] == 2
     assert {(row["subject"], row["predicate"], row["object"]) for row in rows} == {
         ("memo capture", "records", "graph facts"),
         ("graph facts", "support", "temporal queries"),
@@ -203,6 +208,8 @@ def test_extract_verbatim_fallback_when_nothing_extractable(mem_with_stub, monke
 
     assert out["status"] == "verbatim"
     assert out["facts"] == 1
+    assert out["extract_stats"]["fact_edges_fallback"] == 1
+    assert out["extract_stats"]["fact_edges_saved"] == 1
     assert len(out["saved"]) == 1
     rec = mem_with_stub.get(out["saved"][0])
     assert rec.title == "kept note"

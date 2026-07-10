@@ -138,6 +138,35 @@ def test_memory_exposes_fact_edge_store(mock_memory) -> None:
     assert [r["id"] for r in rows] == [fact_id]
 
 
+def test_fact_edge_store_search_text_ranks_matching_edges(tmp_path) -> None:
+    store = FactEdgeStore(tmp_path / "facts.db")
+    try:
+        matching = store.upsert_fact(
+            subject="memo capture",
+            predicate="records",
+            object="graph facts",
+            source_record_id="rec-1",
+            valid_at="2026-07-10T00:00:00+00:00",
+            confidence=0.8,
+        )
+        store.upsert_fact(
+            subject="unrelated",
+            predicate="mentions",
+            object="something else",
+            source_record_id="rec-2",
+            valid_at="2026-07-10T00:00:00+00:00",
+        )
+
+        rows = store.search_text("graph facts", as_of="2026-07-11T00:00:00+00:00")
+
+        assert rows
+        assert rows[0]["id"] == matching
+        assert rows[0]["source_record_id"] == "rec-1"
+        assert rows[0]["score"] > 0
+    finally:
+        store.close()
+
+
 def test_save_declared_fact_edges_populates_fact_store(mock_memory) -> None:
     rec = mock_memory.save(
         content="memo uses sqlite for local temporal facts",

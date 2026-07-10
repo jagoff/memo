@@ -62,6 +62,30 @@ def test_ask_synthesises_with_citations(mem_with_stub: Memory, monkeypatch):
     assert "7B" in captured["model"] or "Qwen2.5" in captured["model"]
 
 
+def test_ask_surfaces_related_temporal_facts(mem_with_stub: Memory, monkeypatch):
+    rec = mem_with_stub.save(
+        content="The body is intentionally generic.",
+        title="Fact backed note",
+        extra={
+            "fact_edges": [
+                {"subject": "memo capture", "predicate": "records", "object": "graph facts"}
+            ]
+        },
+    )
+    captured: dict = {}
+
+    def _stub_chat(self, model, messages, options=None):
+        captured["messages"] = messages
+        return {"message": {"content": f"Memo capture records graph facts [{rec.id[:8]}]."}}
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+
+    out = mem_with_stub.ask("graph facts", k=1)
+
+    assert out["sources"][0]["related_fact_edges"][0]["subject"] == "memo capture"
+    assert "facts: memo capture records graph facts" in captured["messages"][-1]["content"]
+
+
 def test_ask_dedups_repo_hits_against_vault_and_intra_repo(mem_with_stub: Memory, monkeypatch):
     from memo.repo_index import RepoSearchHit
 
