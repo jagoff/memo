@@ -97,6 +97,15 @@ docker run -d --name memo-server \
 
 Then connect clients to `http://localhost:8765`.
 
+### HTTP auth
+
+`memo http-api` requires bearer auth by default. Set `MEMO_HTTP_API_TOKEN`
+and send `Authorization: Bearer <token>` on API requests. Binding to a
+non-loopback host requires both a token and `--allow-non-loopback`.
+
+Loopback-only development can use `--allow-no-auth`; this flag is rejected for
+non-loopback binds.
+
 ### Compose example
 
 ```yaml

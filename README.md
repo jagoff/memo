@@ -343,7 +343,7 @@ memo runs four background daemons:
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
-Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON).
+Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON). The HTTP API requires bearer auth by default; set `MEMO_HTTP_API_TOKEN` or use the generated local state-dir token.
 
 ## Retrieval architecture
 
