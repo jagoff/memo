@@ -350,6 +350,39 @@ def ingest_sample(
     return result
 
 
+# --- Contradiction scan (opt-in bench faithfulness for knowledge-update) ------------
+
+
+def scan_bench_contradictions(
+    mem: Any,
+    *,
+    sim_floor: float = 0.55,
+    confidence_threshold: float = 0.7,
+) -> tuple[int, int]:
+    """Run memo's contradiction scanner over one isolated bench store.
+
+    Populates the store's ContradictionStore so the scoring pass (with
+    MEMO_CONTRADICT_PENALTY_ENABLED=1) demotes the stale side of detected
+    update/conflict pairs — the mechanism that handles knowledge-update
+    questions in production but is otherwise never exercised in the isolated
+    bench store (so that bucket measures raw retrieval and understates memo).
+
+    `min_days_apart=0` because the two sides of a LongMemEval update land in
+    different sessions but may share a date. Pair classification uses
+    `cfg.helper_model` (small ~4B), NOT the answer LLM, so this stays off the
+    30B OOM path even on a memory-constrained Mac.
+
+    Returns (pairs_examined, pairs_inserted).
+    """
+    result = mem.contradict_scanner.scan_corpus(
+        sim_floor=sim_floor,
+        confidence_threshold=confidence_threshold,
+        min_days_apart=0,
+        persist=True,
+    )
+    return result.pairs_examined, result.pairs_inserted
+
+
 # --- Retrieval scoring (shared rank_hits path via eval_recall.run_config) ------------
 
 

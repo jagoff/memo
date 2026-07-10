@@ -14,6 +14,7 @@ near-dup warning costs one vector search per turn and means nothing here.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -59,6 +60,14 @@ def bench_group() -> None:
 )
 @click.option("--retrieval-only", is_flag=True, help="Skip QA grading (no LLM, no judge).")
 @click.option(
+    "--contradict-scan",
+    is_flag=True,
+    help="Run memo's contradiction scanner on each isolated store after ingest "
+    "and enable the contradiction penalty during scoring, so knowledge-update "
+    "measures memo's real conflict handling (uses cfg.helper_model, not the "
+    "answer LLM — off the 30B OOM path). Default off keeps raw-retrieval scoring.",
+)
+@click.option(
     "--workdir",
     type=click.Path(file_okay=False, path_type=Path),
     default=None,
@@ -73,11 +82,16 @@ def bench_run(
     max_samples: int | None,
     max_qa: int | None,
     retrieval_only: bool,
+    contradict_scan: bool,
     workdir: Path | None,
     as_json: bool,
 ) -> None:
     """Ingest a public benchmark into isolated stores and score memo on it."""
     live = Config.from_env()
+    if contradict_scan:
+        # The scoring pass reads this flag in mem.search; set it once for the run
+        # so the penalty demotes the stale side of scanned update/conflict pairs.
+        os.environ["MEMO_CONTRADICT_PENALTY_ENABLED"] = "1"
     bench_root = workdir or (live.state_dir / "bench")
     try:
         data_file = file_path or eval_bench.fetch_dataset(
@@ -101,6 +115,8 @@ def bench_run(
 
     per_sample_rows: list[dict] = []
     qa_results: list[eval_bench.QAResult] = []
+    scan_examined = 0
+    scan_inserted = 0
     for si, sample in enumerate(samples, start=1):
         root = bench_root / "stores" / dataset / eval_bench._safe_dir_name(sample.sample_id)
         bcfg = eval_bench.bench_store_config(root, live)
@@ -113,6 +129,10 @@ def bench_run(
                     f"{len(sample.qa)} QA[/dim]"
                 )
             ingest = eval_bench.ingest_sample(mem, sample, root)
+            if contradict_scan:
+                ex, ins = eval_bench.scan_bench_contradictions(mem)
+                scan_examined += ex
+                scan_inserted += ins
             per_sample_rows.append(eval_bench.score_retrieval(mem, sample, ingest, k=k))
             if judge is not None:
                 qa_results.extend(
@@ -140,6 +160,8 @@ def bench_run(
         # First-class abstention metric + per-bucket QA accuracy.
         receipt["capability_qa"] = eval_bench.capability_qa(qa_results)
         receipt["abstention"] = eval_bench.abstention_summary(qa_results)
+    if contradict_scan:
+        receipt["contradict_scan"] = {"examined": scan_examined, "inserted": scan_inserted}
     path = eval_bench.write_receipt(live.state_dir, receipt)
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))

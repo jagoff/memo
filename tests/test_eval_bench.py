@@ -407,6 +407,26 @@ def test_api_judge_posts_openai_shape(monkeypatch):
     assert captured["body"]["temperature"] == 0
 
 
+# --- contradiction scan (bench faithfulness for knowledge-update) ----------------------
+
+
+def test_scan_bench_contradictions_delegates_and_returns_counters():
+    calls = {}
+
+    class _Scanner:
+        def scan_corpus(self, **kw):
+            calls.update(kw)
+            return SimpleNamespace(pairs_examined=7, pairs_inserted=3)
+
+    mem = SimpleNamespace(contradict_scanner=_Scanner())
+    examined, inserted = eval_bench.scan_bench_contradictions(mem)
+
+    assert (examined, inserted) == (7, 3)
+    # Bench pairs may share a date across sessions → never filter by day gap.
+    assert calls["min_days_apart"] == 0
+    assert calls["persist"] is True
+
+
 # --- receipt + report ------------------------------------------------------------------
 
 
