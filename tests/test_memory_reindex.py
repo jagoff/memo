@@ -179,6 +179,105 @@ def test_reindex_adds_orphan_disk_file(mem_with_stub: Memory):
     assert fetched.title == "Restored"
 
 
+def test_reindex_rebuilds_declared_fact_edges_from_frontmatter(mem_with_stub: Memory):
+    import frontmatter as fm
+
+    rec = mem_with_stub.save(content="placeholder", title="Fact Source", type_="note")
+    md = mem_with_stub.cfg.memory_dir / rec.path
+    post = fm.loads(md.read_text(encoding="utf-8"))
+    post.metadata["fact_edges"] = [
+        {
+            "subject": "memo",
+            "predicate": "stores",
+            "object": "temporal facts",
+            "valid_at": "2026-01-01T00:00:00+00:00",
+        }
+    ]
+    md.write_text(fm.dumps(post), encoding="utf-8")
+
+    counts = mem_with_stub.reindex()
+    rows = mem_with_stub.fact_edges.query(
+        subject="memo",
+        as_of="2026-02-01T00:00:00+00:00",
+    )
+
+    assert counts["facts"] == 1
+    assert len(rows) == 1
+    assert rows[0]["source_record_id"] == rec.id
+    assert rows[0]["predicate"] == "stores"
+    assert rows[0]["object"] == "temporal facts"
+
+
+def test_reindex_updates_fact_edges_when_frontmatter_changes(mem_with_stub: Memory):
+    import frontmatter as fm
+
+    rec = mem_with_stub.save(
+        content="memo backend fact",
+        title="Backend",
+        type_="note",
+        extra={
+            "fact_edges": [
+                {
+                    "subject": "memo",
+                    "predicate": "backend",
+                    "object": "old",
+                    "valid_at": "2026-01-01T00:00:00+00:00",
+                }
+            ]
+        },
+    )
+    assert mem_with_stub.fact_edges.query(subject="memo", as_of="2026-02-01T00:00:00+00:00")
+
+    md = mem_with_stub.cfg.memory_dir / rec.path
+    post = fm.loads(md.read_text(encoding="utf-8"))
+    extra = dict(post.metadata.get("extra") or {})
+    extra["fact_edges"] = [
+        {
+            "subject": "memo",
+            "predicate": "backend",
+            "object": "new",
+            "valid_at": "2026-01-01T00:00:00+00:00",
+        }
+    ]
+    post.metadata["extra"] = extra
+    md.write_text(fm.dumps(post), encoding="utf-8")
+
+    counts = mem_with_stub.reindex()
+    rows = mem_with_stub.fact_edges.query(subject="memo", as_of="2026-02-01T00:00:00+00:00")
+
+    assert counts["facts"] == 1
+    assert [r["object"] for r in rows] == ["new"]
+
+
+def test_reindex_rebuild_drops_fact_edges_for_deleted_markdown(mem_with_stub: Memory):
+    mem_with_stub.save(content="keep this markdown", title="Keep")
+    rec = mem_with_stub.save(
+        content="memo backend fact",
+        title="Backend",
+        type_="note",
+        extra={
+            "fact_edges": [
+                {
+                    "subject": "memo",
+                    "predicate": "backend",
+                    "object": "sqlite",
+                    "valid_at": "2026-01-01T00:00:00+00:00",
+                }
+            ]
+        },
+    )
+    assert mem_with_stub.fact_edges.query(subject="memo", as_of="2026-02-01T00:00:00+00:00")
+    (mem_with_stub.cfg.memory_dir / rec.path).unlink()
+
+    counts = mem_with_stub.reindex(rebuild=True)
+
+    assert counts["facts"] == 0
+    assert mem_with_stub.fact_edges.query(
+        subject="memo",
+        as_of="2026-02-01T00:00:00+00:00",
+    ) == []
+
+
 def test_reindex_reclaims_path_held_by_soft_deleted_tombstone(mem_with_stub: Memory, monkeypatch):
     # Prod incident 2026-07-05: with MEMO_SOFT_DELETE on, a deleted memory
     # leaves a tombstone row that still occupies UNIQUE(meta.path). When a

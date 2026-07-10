@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from click.testing import CliRunner
 
 from memo.cli import cli
+from memo.fact_extraction import fact_edges_from_metadata
 from memo.store.fact_edge_store import FactEdgeStore
 
 
@@ -135,6 +136,77 @@ def test_memory_exposes_fact_edge_store(mock_memory) -> None:
     rows = mock_memory.fact_edges.query(subject="memo", as_of="2026-07-11T00:00:00+00:00")
 
     assert [r["id"] for r in rows] == [fact_id]
+
+
+def test_save_declared_fact_edges_populates_fact_store(mock_memory) -> None:
+    rec = mock_memory.save(
+        content="memo uses sqlite for local temporal facts",
+        title="Memo fact edge",
+        type_="note",
+        created="2026-01-01T00:00:00+00:00",
+        extra={
+            "fact_edges": [
+                {
+                    "subject": "memo",
+                    "predicate": "uses",
+                    "object": "sqlite",
+                    "valid_at": "2026-01-01T00:00:00+00:00",
+                    "confidence": 0.9,
+                }
+            ]
+        },
+    )
+
+    rows = mock_memory.fact_edges.query(subject="memo", as_of="2026-02-01T00:00:00+00:00")
+
+    assert len(rows) == 1
+    assert rows[0]["source_record_id"] == rec.id
+    assert rows[0]["predicate"] == "uses"
+    assert rows[0]["object"] == "sqlite"
+    assert rows[0]["confidence"] == 0.9
+
+
+def test_fact_type_memory_gets_baseline_assertion(mock_memory) -> None:
+    rec = mock_memory.save(
+        content="The temporal store is sqlite-backed.",
+        title="Temporal store backend",
+        type_="fact",
+        created="2026-01-01T00:00:00+00:00",
+    )
+
+    rows = mock_memory.fact_edges.query(
+        subject="memory",
+        predicate="asserts",
+        as_of="2026-02-01T00:00:00+00:00",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["source_record_id"] == rec.id
+    assert rows[0]["object"] == "Temporal store backend"
+
+
+def test_fact_edge_metadata_normalizes_confidence_and_supersedes() -> None:
+    edges = fact_edges_from_metadata(
+        record_id="rec-1",
+        title="Fact",
+        type_="note",
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-02T00:00:00+00:00",
+        extra={
+            "fact_edges": [
+                {
+                    "subject": "memo",
+                    "predicate": "stores",
+                    "object": "facts",
+                    "confidence": "not-a-number",
+                    "supersedes": "old-edge",
+                }
+            ]
+        },
+    )
+
+    assert edges[0]["confidence"] == 1.0
+    assert edges[0]["supersedes"] == ["old-edge"]
 
 
 def test_cli_temporal_facts_add_and_list(tmp_path, monkeypatch) -> None:

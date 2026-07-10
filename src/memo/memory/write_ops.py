@@ -20,6 +20,7 @@ from typing import Any
 import frontmatter
 
 from memo._trace import current_trace
+from memo.fact_extraction import upsert_declared_fact_edges
 from memo.flags import flag_bool
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -85,6 +86,30 @@ def _infer_type_from_content(content: str) -> str | None:
         if pattern.search(snippet):
             return type_name
     return None
+
+
+def _upsert_declared_fact_edges_best_effort(
+    memory: _MemoryBase,
+    *,
+    record_id: str,
+    title: str,
+    type_: str,
+    created: str,
+    updated: str,
+    extra: dict[str, Any] | None,
+) -> None:
+    try:
+        upsert_declared_fact_edges(
+            memory.fact_edges,
+            record_id=record_id,
+            title=title,
+            type_=type_,
+            created=created,
+            updated=updated,
+            extra=extra,
+        )
+    except Exception as exc:
+        _log.debug("fact edge extraction skipped during save(%s): %s", record_id[:8], exc)
 
 
 def _graph_entities_from_extra(extra: dict[str, Any]) -> list[dict[str, str]]:
@@ -554,6 +579,15 @@ class _WriteOpsMixin(_MemoryBase):
                 created_iso=created_iso,
                 extra=extra_for_store,
             )
+            _upsert_declared_fact_edges_best_effort(
+                self,
+                record_id=record_id,
+                title=title,
+                type_=type_,
+                created=created_iso,
+                updated=now_iso,
+                extra=extra_for_store,
+            )
             self.history.log_save(
                 ts=now_iso,
                 record_id=record_id,
@@ -621,6 +655,15 @@ class _WriteOpsMixin(_MemoryBase):
             self._record_graph_entities_from_extra(
                 record_id=record_id,
                 created_iso=created_iso,
+                extra=extra_for_store,
+            )
+            _upsert_declared_fact_edges_best_effort(
+                self,
+                record_id=record_id,
+                title=title,
+                type_=type_,
+                created=created_iso,
+                updated=now_iso,
                 extra=extra_for_store,
             )
         except ValueError:
@@ -762,6 +805,15 @@ class _WriteOpsMixin(_MemoryBase):
             self._record_graph_entities_from_extra(
                 record_id=record_id,
                 created_iso=created_iso,
+                extra=extra_for_store,
+            )
+            _upsert_declared_fact_edges_best_effort(
+                self,
+                record_id=record_id,
+                title=title,
+                type_=type_,
+                created=created_iso,
+                updated=now_iso,
                 extra=extra_for_store,
             )
         with contextlib.suppress(Exception):

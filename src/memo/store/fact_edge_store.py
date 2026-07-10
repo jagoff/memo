@@ -250,5 +250,20 @@ class FactEdgeStore(_ConnectionMixin):
             )
         return cur.rowcount > 0
 
+    def delete_for_source(self, source_record_id: str) -> int:
+        """Delete all fact edges derived from one source record."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "DELETE FROM fact_edges WHERE source_record_id = ?",
+                (source_record_id,),
+            )
+        return int(cur.rowcount)
+
+    def clear(self) -> int:
+        """Delete every fact edge. Used by markdown-derived rebuilds."""
+        with self._tx() as cx:
+            cur = cx.execute("DELETE FROM fact_edges")
+        return int(cur.rowcount)
+
 
 __all__ = ["FactEdgeStore"]

@@ -358,7 +358,8 @@ def reindex(force: bool, rebuild: bool, as_json: bool) -> None:
         f"checked: [cyan]{counts['checked']}[/cyan]  "
         f"reindexed: [yellow]{counts['reindexed']}[/yellow]  "
         f"added: [green]{counts['added']}[/green]  "
-        f"skipped: [dim]{counts['skipped']}[/dim]",
+        f"skipped: [dim]{counts['skipped']}[/dim]  "
+        f"facts: [cyan]{counts.get('facts', 0)}[/cyan]",
     )
 
 
@@ -619,5 +620,5 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
         counts = mem.reindex(force=True)
         console.print(
             f"reindex: checked {counts['checked']}  reindexed {counts['reindexed']}  "
-            f"added {counts['added']}  skipped {counts['skipped']}",
+            f"added {counts['added']}  skipped {counts['skipped']}  facts {counts.get('facts', 0)}",
         )

@@ -9,6 +9,8 @@ needs fault isolation. Each allowed site should have one of these intents:
 - `daemon or maintenance best effort`: capture warning, receipt, or debug context.
 - `optional dependency`: degrade gracefully when an optional package is absent.
 - `cleanup path`: preserve the primary exception and avoid raising during cleanup.
+- `derived index best effort`: auxiliary graph/fact/cache writes may log and
+  skip when the primary markdown/sqlite memory write has already succeeded.
 
 Broad handlers are not acceptable for normal user-visible CLI or domain
 failures. Those should raise or wrap `memo.errors.MemoError` subclasses so

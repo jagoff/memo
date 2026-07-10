@@ -23,6 +23,7 @@ class _MemoryBase:
     store: Any
     history: Any
     graph: Any
+    fact_edges: Any
     _chat: Any
     _cache: Any
     _reranker: Any

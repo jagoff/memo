@@ -17,6 +17,7 @@ import frontmatter
 
 from memo.embedder import assert_valid_embedding
 from memo.errors import StorageError
+from memo.fact_extraction import upsert_declared_fact_edges
 from memo.flags import flag_bool
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
 from memo.memory._base import _MemoryBase
@@ -214,12 +215,12 @@ class _MaintainOpsMixin(_MemoryBase):
         is always indexed whole-note for semantic coherence. Default off
         (MEMO_CHUNK_INGEST=0) preserves existing whole-note behaviour.
 
-        Returns counts: `{"checked", "reindexed", "added", "skipped"}`.
+        Returns counts including checked, reindexed, added, skipped, and facts.
         """
         memory_root = self.cfg.memory_dir
-        checked = reindexed = added = skipped = 0
+        checked = reindexed = added = skipped = facts = 0
         if not memory_root.is_dir():
-            return {"checked": 0, "reindexed": 0, "added": 0, "skipped": 0}
+            return {"checked": 0, "reindexed": 0, "added": 0, "skipped": 0, "facts": 0}
 
         chunk_ingest = flag_bool("MEMO_CHUNK_INGEST")
 
@@ -240,7 +241,9 @@ class _MaintainOpsMixin(_MemoryBase):
             # Wipe only the derivable tables; signal tables survive and re-join
             # on id. Every file then takes the `existing is None` add path.
             cleared = self.store.clear_memory_index()
+            cleared_facts = self.fact_edges.clear()
             _log.info("reindex(rebuild): cleared %d derivable rows, replaying from disk", cleared)
+            _log.info("reindex(rebuild): cleared %d temporal fact edges", cleared_facts)
             force = True
 
         for md_path in sorted(memory_root.rglob("*.md")):
@@ -370,6 +373,17 @@ class _MaintainOpsMixin(_MemoryBase):
                         updated=updated,
                         force=force,
                     )
+                self.fact_edges.delete_for_source(md_id)
+                facts += upsert_declared_fact_edges(
+                    self.fact_edges,
+                    record_id=md_id,
+                    title=title,
+                    type_=type_,
+                    created=created,
+                    updated=updated,
+                    extra=extra if isinstance(extra, dict) else None,
+                    top_level=meta.get("fact_edges"),
+                )
                 continue
             missing_vector = not self.store.has_vector(md_id)
             if force or existing["body_hash"] != new_hash or missing_vector:
@@ -442,11 +456,28 @@ class _MaintainOpsMixin(_MemoryBase):
                         updated=_now_iso(),
                         extra=extra if extra else None,
                     )
+            self.fact_edges.delete_for_source(md_id)
+            facts += upsert_declared_fact_edges(
+                self.fact_edges,
+                record_id=md_id,
+                title=title,
+                type_=type_,
+                created=created,
+                updated=updated,
+                extra=extra if isinstance(extra, dict) else None,
+                top_level=meta.get("fact_edges"),
+            )
         # Successful reindex: every meta.path now uses the current
         # memory_dir-relative layout, so future startups can skip the
         # legacy-path probe in `_maybe_warn_legacy_paths`.
         self.store.set_user_version(1)
-        counts = {"checked": checked, "reindexed": reindexed, "added": added, "skipped": skipped}
+        counts = {
+            "checked": checked,
+            "reindexed": reindexed,
+            "added": added,
+            "skipped": skipped,
+            "facts": facts,
+        }
         if reindexed or added:
             from memo.receipts import emit_receipt
 
@@ -461,6 +492,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     "reindexed": reindexed,
                     "added": added,
                     "skipped": skipped,
+                    "facts": facts,
                     "force": force,
                 },
             )
