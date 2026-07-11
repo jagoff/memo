@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-07-11
+
+### Fixed
+
+- **`memo sync status` / `memo doctor` no longer report a false STRANDED.**
+  Ahead/behind were computed against the last-fetched tracking ref, and a
+  `sync_pending` marker survived after a later trigger already pushed the commit —
+  so the diagnostics cried STRANDED long after the remote was caught up.
+  `sync_status(check_remote=True)` now fetches the ref first (truthful counts) and
+  self-heals a provably-stale marker (reachable + nothing unpushed + clean tree +
+  no block reason); blocked markers from the secret gate survive. The CLI `sync
+  status` fetches by default (`--offline` skips the network; `--check-remote` kept
+  as a hidden deprecated alias), and `doctor` probes the remote.
+
 ## [3.0.0] - 2026-07-11
 
 ### Changed
