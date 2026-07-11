@@ -34,6 +34,30 @@ Status: DONE
 
 - `.superpowers/sdd/task-1-brief.md` was already modified before this task and remains uncommitted; it was not changed or committed by this task.
 
+## Boolean Canonicalization Fix
+
+### Status
+
+DONE
+
+`flag_values()` now emits `"on"` and `"off"` for every accepted boolean
+spelling. Invalid boolean spellings continue to be reported as `ConfigProblem`s.
+
+### Commit
+
+- `fix(config): normalize markdown boolean flags`
+
+### Tests Run
+
+1. `uv run --no-sync pytest tests/test_config_md.py -v`
+   - Result: `11 passed in 0.04s`.
+2. `uv run --no-sync ruff check src/memo/config_md.py tests/test_config_md.py`
+   - Result: `All checks passed!`.
+
+### Concerns
+
+- `.superpowers/sdd/task-1-brief.md` was already modified before this fix and remains uncommitted; it was not changed or committed by this fix.
+
 ## Review Fix
 
 ### Fix Status

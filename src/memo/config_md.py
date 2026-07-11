@@ -131,12 +131,12 @@ def _flag_path_map() -> dict[str, str]:
 
 def _coerce_bool_for_flag(raw: Any) -> str | None:
     if isinstance(raw, bool):
-        return "1" if raw else "0"
+        return "on" if raw else "off"
     text = str(raw).strip().lower()
     if text in _TRUE:
-        return "1"
+        return "on"
     if text in _FALSE:
-        return "0"
+        return "off"
     return None
 
 

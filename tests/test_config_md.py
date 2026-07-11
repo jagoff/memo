@@ -71,8 +71,8 @@ def test_boolean_spellings_are_normalized_for_flags(tmp_path: Path) -> None:
 
     vals = config_md.flag_values({"MEMO_CONFIG_DIR": str(home)})
 
-    assert vals["MEMO_RECALL_DEBUG"] == "1"
-    assert vals["MEMO_RECALL_DISABLE"] == "0"
+    assert vals["MEMO_RECALL_DEBUG"] == "on"
+    assert vals["MEMO_RECALL_DISABLE"] == "off"
 
 
 def test_invalid_boolean_flag_reports_problem(tmp_path: Path) -> None:
