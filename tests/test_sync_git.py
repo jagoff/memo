@@ -971,3 +971,38 @@ def test_sync_nudge_dismiss_roundtrip(tmp_path: Path):
     dismiss_sync_nudge(cfg)
     assert sync_nudge_dismissed(cfg) is True
     assert (cfg.state_dir / ".sync_nudge_dismissed").is_file()
+
+
+def test_sync_init_home_byo_pushes_existing_memories(tmp_path: Path, monkeypatch):
+    import subprocess
+
+    from memo.sync_git import sync_init_home_byo
+
+    # user-created empty bare remote (the "paste this URL" repo)
+    remote = tmp_path / "byo.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(remote)],
+        check=True, capture_output=True,
+    )
+    # a memories dir with one existing .md, not yet a git repo
+    memories = tmp_path / "repo" / "memorias"
+    memories.mkdir(parents=True)
+    (memories / "a.md").write_text("---\nid: a\n---\nbody\n")
+
+    cfg = Config(data_dir=memories, state_dir=tmp_path / "state", embedder_dims=4)
+    # git identity for the ad-hoc repo
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "t")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "t@t.t")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "t")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@t.t")
+
+    out = sync_init_home_byo(cfg, str(remote))
+
+    assert out["repo_url"] == str(remote)
+    assert out["branch"] in ("main", "master")
+    # the remote now has the memory committed
+    ls = subprocess.run(
+        ["git", "-C", str(remote), "log", "--oneline"],
+        capture_output=True, text=True,
+    )
+    assert ls.returncode == 0 and ls.stdout.strip()

@@ -695,3 +695,32 @@ def sync_init_home(cfg: Config, private: bool = True) -> dict:
         remote_url = _git(root, "remote", "get-url", "origin").stdout.strip()
 
     return {"repo_url": remote_url, "branch": _current_branch(root), "local_dir": str(root)}
+
+
+def sync_init_home_byo(cfg: Config, url: str) -> dict:
+    """Init cloud sync against a user-provided EMPTY remote — the no-`gh` mirror
+    of ``sync_init_home``.
+
+    For users without the GitHub CLI: they create an empty private repo
+    themselves and paste its URL. This git-inits the memories dir if needed,
+    sets ``origin`` to ``url``, commits any existing memories, and pushes.
+    """
+    root_candidate = cfg.memory_dir.parent
+    if not (root_candidate / ".git").exists():
+        _git(root_candidate, "init", "-b", "main")
+
+    root = git_root_for(cfg)
+
+    existing = _git(root, "remote", "get-url", "origin", check=False)
+    if existing.returncode == 0:
+        _git(root, "remote", "set-url", "origin", url)
+    else:
+        _git(root, "remote", "add", "origin", url)
+
+    _git(root, "add", "-A")
+    status = _git(root, "status", "--porcelain", check=False).stdout.strip()
+    if status:
+        _git(root, "commit", "-m", "memo: initial memory corpus")
+    branch = _current_branch(root)
+    _git(root, "push", "-u", "origin", branch)
+    return {"repo_url": url, "branch": branch, "local_dir": str(root)}
