@@ -35,6 +35,18 @@ def test_load_values_reads_fenced_toml_blocks(tmp_path: Path) -> None:
     assert values["recall.disable"].env_name == "MEMO_RECALL_DISABLE"
 
 
+def test_index_toml_is_read_and_validated(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    home.mkdir()
+    (home / "memo-config.md").write_text(
+        "```toml\n[recall]\ntop_k = 7\n```\n", encoding="utf-8"
+    )
+    env = {"MEMO_CONFIG_DIR": str(home)}
+
+    assert config_md.flag_values(env)["MEMO_RECALL_TOP_K"] == "7"
+    assert config_md.validate_markdown_config(env) == []
+
+
 def test_multiple_toml_blocks_merge(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"
@@ -63,8 +75,13 @@ def test_boolean_spellings_are_normalized_for_flags(tmp_path: Path) -> None:
     (cfg / "recall-config.md").write_text(
         "```toml\n"
         "[recall]\n"
-        'debug = "on"\n'
-        'disable = "no"\n'
+        "debug = true\n"
+        'disable = "false"\n'
+        'metrics = "1"\n'
+        'force_mode = "0"\n'
+        'associative = "yes"\n'
+        'system_message = "no"\n'
+        'cite_instruction = "on"\n'
         "```\n",
         encoding="utf-8",
     )
@@ -73,6 +90,11 @@ def test_boolean_spellings_are_normalized_for_flags(tmp_path: Path) -> None:
 
     assert vals["MEMO_RECALL_DEBUG"] == "on"
     assert vals["MEMO_RECALL_DISABLE"] == "off"
+    assert vals["MEMO_RECALL_METRICS"] == "on"
+    assert vals["MEMO_RECALL_FORCE_MODE"] == "off"
+    assert vals["MEMO_RECALL_ASSOCIATIVE"] == "on"
+    assert vals["MEMO_RECALL_SYSTEM_MESSAGE"] == "off"
+    assert vals["MEMO_RECALL_CITE_INSTRUCTION"] == "on"
 
 
 def test_invalid_boolean_flag_reports_problem(tmp_path: Path) -> None:

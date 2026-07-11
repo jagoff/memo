@@ -90,3 +90,32 @@ their closing delimiter are also accepted.
    - Result: `Success: no issues found in 1 source file`.
 4. `git diff --check`
    - Result: passed with no whitespace errors.
+
+## Index TOML Review Fix
+
+### Status
+
+DONE
+
+`memo-config.md` is now included in the parsed and signatured configuration
+paths when it exists. Its fenced TOML is validated, while `config/*-config.md`
+files remain later in parse order and therefore retain precedence. Unknown
+`*-config.md` warnings under `config/` are unchanged; the top-level index is
+recognized without warning.
+
+### Commit
+
+- `fix(config): parse fenced TOML from config index`
+
+### Tests Run
+
+1. `uv run --no-sync pytest tests/test_config_md.py -v`
+   - Result: `12 passed in 0.06s`.
+2. `uv run --no-sync ruff check src/memo/config_md.py tests/test_config_md.py`
+   - Result: `All checks passed!`.
+3. `git diff --check`
+   - Result: passed with no whitespace errors.
+
+### Concerns
+
+- `.superpowers/sdd/task-1-brief.md` was already modified before this fix and remains uncommitted; it was not changed or committed by this fix.

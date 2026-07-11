@@ -97,6 +97,12 @@ def _domain_files(env: Mapping[str, str] | None = None) -> list[Path]:
     return sorted(p for p in root.iterdir() if p.is_file() and p.suffix == ".md")
 
 
+def _config_paths(env: Mapping[str, str] | None = None) -> list[Path]:
+    """Return the index followed by domain files so domains retain precedence."""
+    index = index_path(env)
+    return ([index] if index.is_file() else []) + _domain_files(env)
+
+
 def _signature(paths: list[Path]) -> tuple[tuple[str, float], ...]:
     sig: list[tuple[str, float]] = []
     for path in paths:
@@ -218,7 +224,7 @@ def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[Conf
     values: dict[str, ConfigValue] = {}
     problems: list[ConfigProblem] = []
     for path in paths:
-        if path.name not in _CONFIG_FILENAMES:
+        if path.name != "memo-config.md" and path.name not in _CONFIG_FILENAMES:
             if path.name.endswith("-config.md"):
                 problems.append(
                     ConfigProblem(str(path), "", "", "unknown config file; register its domain first")
@@ -254,7 +260,7 @@ def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[Conf
 
 
 def load_values(env: Mapping[str, str] | None = None) -> dict[str, ConfigValue]:
-    paths = _domain_files(env)
+    paths = _config_paths(env)
     sig = _signature(paths)
     cache_key = str(config_home(env))
     cached = _cache.get(cache_key)
@@ -266,7 +272,7 @@ def load_values(env: Mapping[str, str] | None = None) -> dict[str, ConfigValue]:
 
 
 def validate_markdown_config(env: Mapping[str, str] | None = None) -> list[ConfigProblem]:
-    paths = _domain_files(env)
+    paths = _config_paths(env)
     sig = _signature(paths)
     cache_key = str(config_home(env))
     cached = _cache.get(cache_key)
