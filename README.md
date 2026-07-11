@@ -176,6 +176,7 @@ memo ask 'what changed in the embedder this month?'   # RAG — cites memories b
 - **Ambient recall** — every prompt silently consults memory and injects top hits as context. Warm recall daemon keeps it under **<200 ms**. No `/remember` calls.
 - **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate. The corpus grows on its own.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery.
+- **Cross-agent resume** — `memo resume` reopens any recent session from **any** agent (Claude Code, Codex, Devin, Gemini, OpenCode) in one arrow-key picker, resumed natively. [Details ↓](#-resume-any-session--from-any-agent)
 - **Visible memory context** — `memo context "<question>"` (and the `memo_context` MCP tool) show exactly what memory *would* be injected before an agent answers — the recall block on demand, with no LLM call. Add `--explain` to `memo search` to see why each hit ranked where it did.
 
 ## Key capabilities
