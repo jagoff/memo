@@ -63,6 +63,8 @@ editable, and authoritative.
 - Do not change retrieval defaults or runtime behavior merely because the
   configuration surface changes.
 - Do not remove the existing `memo config` subcommands.
+- Do not leave widget, layout, theme, input-loop, or terminal-rendering code
+  outside `src/memo/tui/`; top-level CLI modules are wiring-only exceptions.
 
 ## Fixed Product Decisions
 
@@ -139,17 +141,35 @@ the Textual import cost.
 
 ### 2. Textual Presentation
 
-New focused modules under `src/memo/config_tui/` own presentation only:
+All terminal UI implementation lives under `src/memo/tui/`. The package groups
+the new configuration center and the existing terminal interfaces by product
+surface:
 
 ```text
-config_tui/
+tui/
   __init__.py
-  app.py
-  screens.py
-  widgets.py
-  controls.py
-  styles.tcss
+  common.py
+  picker.py
+  dashboard/
+    __init__.py
+    app.py
+    panels.py
+  config/
+    __init__.py
+    app.py
+    screens.py
+    widgets.py
+    controls.py
+    styles.tcss
 ```
+
+As part of this feature, move the implementation currently in
+`dashboard_tui.py`, `dashboard_panels.py`, and `setup/picker.py` into this
+package while retaining compatibility imports for existing internal callers.
+Top-level `cli_tui.py` and `cli_config.py` remain wiring-only modules because
+repo conventions require CLI surfaces in `cli_<domain>.py`; they lazy-import
+the corresponding `memo.tui` entrypoints and contain no widgets, layout, theme,
+or rendering logic.
 
 Screens consume view models and emit user intents. They do not import
 filesystem helpers, parse Markdown, resolve environment precedence, or restart
@@ -625,6 +645,8 @@ The feature is complete when:
 11. Existing headless config commands remain compatible and tests never touch
     the real vault or state directory.
 12. Ruff, mypy, focused suites, CI-parity pytest, and macOS smoke pass.
+13. All TUI implementation, including the existing dashboard and picker, lives
+    below `src/memo/tui/`; top-level CLI modules contain only lazy wiring.
 
 ## Implementation Order
 
@@ -632,11 +654,13 @@ The later implementation plan should preserve these boundaries and stage work
 in this order:
 
 1. Add Textual dependency and catalog types/coverage enforcement.
-2. Centralize config field/flag path mappings in the catalog.
-3. Build source-aware session, draft, validation, and apply-plan services.
-4. Add preserving Markdown batch rendering and transaction recovery.
-5. Add impact planning and confirmed activation adapters.
-6. Build reusable Textual controls and the main configuration center.
-7. Build first-run, review, conflict, recovery, and result screens.
-8. Wire the TTY-aware Click entrypoint while preserving subcommands.
-9. Add tests, snapshots, documentation, and runtime smoke coverage.
+2. Consolidate existing TUI implementation under `src/memo/tui/` with
+   compatibility imports and no behavior change.
+3. Centralize config field/flag path mappings in the catalog.
+4. Build source-aware session, draft, validation, and apply-plan services.
+5. Add preserving Markdown batch rendering and transaction recovery.
+6. Add impact planning and confirmed activation adapters.
+7. Build reusable Textual controls and the main configuration center.
+8. Build first-run, review, conflict, recovery, and result screens.
+9. Wire the TTY-aware Click entrypoint while preserving subcommands.
+10. Add tests, snapshots, documentation, and runtime smoke coverage.
