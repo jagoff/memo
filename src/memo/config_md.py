@@ -303,3 +303,145 @@ def flag_values(env: Mapping[str, str] | None = None) -> dict[str, str]:
 
 def active_config_values(env: Mapping[str, str] | None = None) -> dict[str, str]:
     return flag_values(env)
+
+
+_DOMAIN_FOR_PREFIX = {
+    "storage": "storage-config.md",
+    "models": "models-config.md",
+    "search": "search-config.md",
+    "recall": "recall-config.md",
+    "capture": "capture-config.md",
+    "graph": "graph-config.md",
+    "hooks": "hooks-config.md",
+    "advanced": "advanced-config.md",
+}
+
+
+def _quote(value: Any) -> str:
+    if isinstance(value, bool):
+        return '"on"' if value else '"off"'
+    if isinstance(value, (int, float)):
+        return str(value)
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _domain_for_key(path_key: str) -> str:
+    prefix = path_key.split(".", 1)[0]
+    try:
+        return _DOMAIN_FOR_PREFIX[prefix]
+    except KeyError as exc:
+        raise KeyError(f"unknown config domain {prefix!r}") from exc
+
+
+def _parse_raw_for_existing_key(path_key: str, raw_value: str) -> Any:
+    if path_key in _FIELD_PATHS:
+        if path_key.endswith(("memories_in_vault", "single_db", "reranker_enabled")):
+            return raw_value
+        if path_key.endswith(("embedder_dims", "rerank_input_k", "default_limit", "max_content_chars")):
+            return int(raw_value)
+        if path_key.endswith("rerank_fusion_alpha"):
+            return float(raw_value)
+        return raw_value
+    env_name = _flag_path_map().get(path_key)
+    if env_name is None:
+        raise KeyError(f"unknown config key {path_key!r}")
+    from memo.flags import REGISTRY
+
+    kind = REGISTRY[env_name].kind
+    if kind == "bool":
+        value = _coerce_bool_for_flag(raw_value)
+        if value is None:
+            raise ValueError(f"expected a boolean value, got {raw_value!r}")
+        return value
+    if kind == "int":
+        return int(raw_value)
+    if kind == "float":
+        return float(raw_value)
+    return raw_value
+
+
+def _read_domain_table(path: Path, table: str) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    values = load_values({"MEMO_CONFIG_DIR": str(path.parent.parent)})
+    prefix = f"{table}."
+    return {key.removeprefix(prefix): value.value for key, value in values.items() if key.startswith(prefix)}
+
+
+def _write_domain_file(path: Path, table: str, values: dict[str, Any], heading: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"# {heading}", "", "```toml", f"[{table}]"]
+    for key in sorted(values):
+        lines.append(f"{key} = {_quote(values[key])}")
+    lines.extend(["```", ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+    _cache.clear()
+
+
+def write_default_config(
+    *,
+    data_dir: Path,
+    vault_path: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    force: bool = False,
+) -> list[Path]:
+    home = config_home(env)
+    root = config_dir(env)
+    paths = [index_path(env), *(root / name for name in sorted(_CONFIG_FILENAMES))]
+    if not force:
+        existing = [path for path in paths if path.exists()]
+        if existing:
+            raise FileExistsError(str(existing[0]))
+    home.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
+    index_path(env).write_text(
+        "# Memo config\n\n"
+        "Persistent memo configuration lives in `config/*-config.md`.\n"
+        "Environment variables override these files for temporary runtime changes.\n",
+        encoding="utf-8",
+    )
+    storage = {"data_dir": str(data_dir), "memories_in_vault": "off", "single_db": "off"}
+    if vault_path is not None:
+        storage["vault_path"] = str(vault_path)
+    _write_domain_file(root / "storage-config.md", "storage", storage, "Storage config")
+    _write_domain_file(
+        root / "models-config.md",
+        "models",
+        {"model_profile": "balanced", "embedder_dims": 1024},
+        "Models config",
+    )
+    _write_domain_file(
+        root / "recall-config.md",
+        "recall",
+        {"disable": "off", "top_k": 3, "min_sim": 0.5, "dedup_collapse": "on"},
+        "Recall config",
+    )
+    for filename, table, heading in (
+        ("search-config.md", "search", "Search config"),
+        ("capture-config.md", "capture", "Capture config"),
+        ("graph-config.md", "graph", "Graph config"),
+        ("hooks-config.md", "hooks", "Hooks config"),
+        ("advanced-config.md", "advanced", "Advanced config"),
+    ):
+        _write_domain_file(root / filename, table, {}, heading)
+    return [path for path in paths if path.exists()]
+
+
+def set_value(path_key: str, raw_value: str, env: Mapping[str, str] | None = None) -> Path:
+    filename = _domain_for_key(path_key)
+    table, key = path_key.split(".", 1)
+    path = config_dir(env) / filename
+    values = _read_domain_table(path, table)
+    values[key] = _parse_raw_for_existing_key(path_key, raw_value)
+    _write_domain_file(path, table, values, f"{table.title()} config")
+    return path
+
+
+def unset_value(path_key: str, env: Mapping[str, str] | None = None) -> Path:
+    filename = _domain_for_key(path_key)
+    table, key = path_key.split(".", 1)
+    path = config_dir(env) / filename
+    values = _read_domain_table(path, table)
+    values.pop(key, None)
+    _write_domain_file(path, table, values, f"{table.title()} config")
+    return path

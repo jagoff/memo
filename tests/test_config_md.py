@@ -234,3 +234,50 @@ def test_unknown_config_file_warns(tmp_path: Path) -> None:
 
     assert any(p.file.endswith("custom-config.md") and "unknown config file" in p.error for p in problems)
     assert not any(p.file.endswith("notes.md") for p in problems)
+
+
+def test_write_default_config_creates_index_and_domain_files(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    written = config_md.write_default_config(
+        data_dir=tmp_path / "data",
+        vault_path=None,
+        env={"MEMO_CONFIG_DIR": str(home)},
+    )
+
+    assert home.joinpath("memo-config.md").is_file()
+    assert home.joinpath("config", "storage-config.md").is_file()
+    assert home.joinpath("config", "models-config.md").is_file()
+    assert home.joinpath("config", "recall-config.md").is_file()
+    assert any(path.name == "storage-config.md" for path in written)
+    assert 'data_dir = "' in home.joinpath("config", "storage-config.md").read_text(encoding="utf-8")
+    assert 'disable = "off"' in home.joinpath("config", "recall-config.md").read_text(encoding="utf-8")
+
+
+def test_write_default_config_refuses_overwrite_without_force(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    config_md.write_default_config(
+        data_dir=tmp_path / "data",
+        env={"MEMO_CONFIG_DIR": str(home)},
+    )
+
+    try:
+        config_md.write_default_config(
+            data_dir=tmp_path / "other",
+            env={"MEMO_CONFIG_DIR": str(home)},
+        )
+    except FileExistsError:
+        pass
+    else:
+        raise AssertionError("expected FileExistsError")
+
+
+def test_set_and_unset_value_rewrite_domain_block(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    config_md.write_default_config(data_dir=tmp_path / "data", env={"MEMO_CONFIG_DIR": str(home)})
+
+    changed = config_md.set_value("recall.top_k", "9", env={"MEMO_CONFIG_DIR": str(home)})
+    assert changed == home / "config" / "recall-config.md"
+    assert config_md.flag_values({"MEMO_CONFIG_DIR": str(home)})["MEMO_RECALL_TOP_K"] == "9"
+
+    config_md.unset_value("recall.top_k", env={"MEMO_CONFIG_DIR": str(home)})
+    assert "MEMO_RECALL_TOP_K" not in config_md.flag_values({"MEMO_CONFIG_DIR": str(home)})
