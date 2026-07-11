@@ -156,6 +156,38 @@ def test_markdown_config_file_loads_storage_and_models(monkeypatch, tmp_path: Pa
     assert cfg.reranker_enabled is False
 
 
+def test_markdown_model_specific_values_override_profile(monkeypatch, tmp_path: Path):
+    home = tmp_path / "memo-home"
+    cfg_dir = home / "config"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "models-config.md").write_text(
+        "```toml\n"
+        "[models]\n"
+        'model_profile = "quality"\n'
+        'llm_model = "mlx-community/Custom-Chat"\n'
+        'embedder_model = "mlx-community/Custom-Embedding"\n'
+        "embedder_dims = 1024\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "missing.toml"))
+    for var in (
+        "MEMO_MODEL_PROFILE",
+        "MEMO_LLM_MODEL",
+        "MEMO_EMBEDDER_MODEL",
+        "MEMO_EMBEDDER_DIMS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    cfg = Config.from_env()
+
+    assert cfg.model_profile == "quality"
+    assert cfg.llm_model == "mlx-community/Custom-Chat"
+    assert cfg.embedder_model == "mlx-community/Custom-Embedding"
+    assert cfg.embedder_dims == 1024
+
+
 def test_env_overrides_markdown_config(monkeypatch, tmp_path: Path):
     home = tmp_path / "memo-home"
     cfg_dir = home / "config"

@@ -547,6 +547,13 @@ class Config(BaseModel):
             )
         kwargs.update(MODEL_PROFILES[profile])
         kwargs["model_profile"] = profile
+        # Profile defaults are a bundle baseline. Re-apply Markdown after the
+        # bundle so persistent per-field choices (for example a custom
+        # embedder under the quality profile) are not lost. Env vars below
+        # still win over both Markdown and profile defaults.
+        for fkey, value in md_values.items():
+            if value is not None and value != "":
+                kwargs[fkey] = value
 
         # Step 3: env-var overrides.
         env_to_field = {
@@ -639,6 +646,7 @@ class Config(BaseModel):
             os.environ.get("MEMO_EMBEDDER_MODEL")
             or os.environ.get("MEMO_EMBEDDER_DIMS")
             or os.environ.get("MEMO_MODEL_PROFILE")
+            or {"embedder_model", "embedder_dims", "model_profile"} & md_values.keys()
             or {"embedder_model", "embedder_dims", "model_profile"} & overrides.keys()
         )
         if not embedder_pinned:
