@@ -47,6 +47,29 @@ def test_index_toml_is_read_and_validated(tmp_path: Path) -> None:
     assert config_md.validate_markdown_config(env) == []
 
 
+def test_invalid_index_value_is_validated_before_domain_override(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (home / "memo-config.md").write_text(
+        '```toml\n[recall]\ntop_k = "bad"\n```\n', encoding="utf-8"
+    )
+    (cfg / "recall-config.md").write_text(
+        "```toml\n[recall]\ntop_k = 5\n```\n", encoding="utf-8"
+    )
+    env = {"MEMO_CONFIG_DIR": str(home)}
+
+    problems = config_md.validate_markdown_config(env)
+
+    assert any(
+        p.file.endswith("memo-config.md")
+        and p.key == "recall.top_k"
+        and "invalid literal" in p.error
+        for p in problems
+    )
+    assert config_md.flag_values(env)["MEMO_RECALL_TOP_K"] == "5"
+
+
 def test_multiple_toml_blocks_merge(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"

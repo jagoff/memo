@@ -247,7 +247,7 @@ def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[Conf
                 if env_name is None and field_name is None:
                     problems.append(ConfigProblem(str(path), key, str(raw), "unknown config key"))
                     continue
-                values[key] = ConfigValue(
+                config_value = ConfigValue(
                     key=key,
                     value=raw,
                     source="markdown",
@@ -255,7 +255,9 @@ def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[Conf
                     env_name=env_name,
                     field_name=field_name,
                 )
-    problems.extend(_validate_mapped_values(values))
+                # Validate each occurrence before a later file can override it.
+                problems.extend(_validate_mapped_values({key: config_value}))
+                values[key] = config_value
     return values, problems
 
 

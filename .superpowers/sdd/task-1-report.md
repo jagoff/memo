@@ -119,3 +119,28 @@ recognized without warning.
 ### Concerns
 
 - `.superpowers/sdd/task-1-brief.md` was already modified before this fix and remains uncommitted; it was not changed or committed by this fix.
+
+## Validation Override Fix
+
+### Status
+
+DONE
+
+Each parsed TOML value is now validated before it enters the effective-value
+map. Later domain files still overwrite earlier index values for `load_values()`
+and `flag_values()`.
+
+### Commit
+
+- `fix(config): validate overridden markdown config values`
+
+### Tests Run
+
+1. `uv run --no-sync pytest tests/test_config_md.py -v`
+   - Result: `13 passed in 0.05s`.
+2. `uv run --no-sync ruff check src/memo/config_md.py tests/test_config_md.py`
+   - Result: `All checks passed!`.
+
+### Concerns
+
+- `.superpowers/sdd/task-1-brief.md` was already modified before this fix and remains uncommitted; it was not changed or committed by this fix.
