@@ -165,11 +165,18 @@ After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`,
 
 ```bash
 memo doctor                                            # self-check: models, vault, sqlite-vec
+memo config                                            # terminal-only configuration center
 memo save 'MLX prefill ~30% faster than Ollama on M3 Max' --title 'MLX bench' -t mlx -t bench
 memo search 'how fast was the MLX benchmark'           # search by meaning, not just keywords
 memo list --limit 5                                    # most recent
 memo ask 'what changed in the embedder this month?'   # RAG — cites memories by id
 ```
+
+`memo config` is a native TUI for editing every persistent setting with search,
+source badges, validation, review, and transactional rollback. Markdown under
+`~/.config/memo/` remains directly editable; `MEMO_*` variables are temporary
+overrides. In pipes/CI or with `MEMO_NONINTERACTIVE=1`, bare `memo config` prints
+help and the existing `config show|validate|set|unset` commands remain headless.
 
 ## Core features
 
