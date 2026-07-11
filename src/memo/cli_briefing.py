@@ -111,23 +111,28 @@ def briefing(*, compact: bool) -> None:
                 f"Last session ({format_relative(top.get('updated'))}): "
                 f"{compact_text(summary, max_chars=160)}"
             )
-            if state:
-                compact_lines.append(f"State: {compact_text(state, max_chars=200)}")
             sid = str(top.get("session_id") or "")
             if sid:
                 compact_lines.append(f"Resume: `claude --resume {sid}`")
+            if state:
+                compact_lines.append(f"State: {compact_text(state, max_chars=200)}")
         else:
             compact_lines.append("No recent session in this project.")
-        context = compact_text("\n".join(compact_lines), max_chars=480)
         # Sync-onboarding nudge — honest (only when no remote is configured),
-        # dismissable, appended AFTER the cap so it is never truncated away.
+        # dismissable, and included in the compact output budget.
         from memo.sync_git import sync_nudge_dismissed, sync_tier
 
+        nudge = ""
         if sync_tier(cfg) == "local" and not sync_nudge_dismissed(cfg):
-            context += (
+            nudge = (
                 "\n💡 memo sync off — compartí entre Macs: `memo sync setup` "
                 "(ocultar: `memo sync setup --never`)"
             )
+        context = compact_text(
+            "\n".join(compact_lines),
+            max_chars=max(1, 480 - len(nudge)),
+        )
+        context += nudge
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
