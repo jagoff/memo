@@ -329,6 +329,23 @@ def _read_pending_reason(cfg: Config) -> str | None:
     return None
 
 
+def _nudge_stamp(cfg: Config) -> Path:
+    """Machine-local marker that silences the sync-onboarding briefing nudge."""
+    return cfg.state_dir / ".sync_nudge_dismissed"
+
+
+def sync_nudge_dismissed(cfg: Config) -> bool:
+    """True once the user ran `memo sync setup --never` on this machine."""
+    return _nudge_stamp(cfg).is_file()
+
+
+def dismiss_sync_nudge(cfg: Config) -> None:
+    """Persist the dismiss marker (idempotent). Machine-local, never synced."""
+    stamp = _nudge_stamp(cfg)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text("", encoding="utf-8")
+
+
 def _scan_staged_secrets(root: Path) -> list[str]:
     """Scan ADDED lines of staged `.md` diffs for secrets — pattern tier only
     (never entropy: a push block must not false-positive on the hashes/ids

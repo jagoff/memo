@@ -954,3 +954,20 @@ def test_cli_doctor_shows_block_reason(remote: Path, tmp_path: Path):
     # sync line matters here, so no exit-code assertion (same stance as
     # tests/test_cli_init.py::test_doctor_doesnt_trigger_picker).
     assert "secret-scan" in result.output
+
+
+def test_sync_nudge_dismiss_roundtrip(tmp_path: Path):
+    from memo.sync_git import dismiss_sync_nudge, sync_nudge_dismissed
+
+    cfg = Config(
+        data_dir=tmp_path / "memorias",
+        state_dir=tmp_path / "state",
+        embedder_dims=4,
+    )
+    assert sync_nudge_dismissed(cfg) is False
+    dismiss_sync_nudge(cfg)
+    assert sync_nudge_dismissed(cfg) is True
+    # idempotent — second call does not raise
+    dismiss_sync_nudge(cfg)
+    assert sync_nudge_dismissed(cfg) is True
+    assert (cfg.state_dir / ".sync_nudge_dismissed").is_file()
