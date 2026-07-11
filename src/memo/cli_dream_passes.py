@@ -697,6 +697,94 @@ def _run_synthesis(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     return result
 
 
+def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Noise-quantile MEMO_RECALL_MIN_SIM floor calibration (MEMO_FLOOR_CALIBRATION).
+
+    Embeds word-shuffled samples of recent memory titles (semantically null
+    probes), estimates the high-quantile null-similarity floor, and RAISES
+    MEMO_RECALL_MIN_SIM toward it via the tuned overlay — never lowers it below
+    the current effective value, and only when the proposed floor does not
+    regress the curated regression set (same gate the min_sim tuner uses).
+    Runs BEFORE the tuner pass so a co-enabled tuner line-searches upward from
+    the floor. Flag off -> complete no-op (no embed call, no overlay write).
+    Deferred MLX import (Dream-only). Never raises — the whole body is wrapped
+    in try/except that stamps result["error"].
+    """
+    result: dict[str, Any] = {
+        "floor_calibration": {"proposed": None, "applied": False, "gate": None}
+    }
+    try:
+        from memo.flags import flag_bool, flag_float, flag_int
+
+        if not flag_bool("MEMO_FLOOR_CALIBRATION"):
+            return result
+
+        import random
+
+        from memo import floor_calibration
+        from memo.dream_tune import _curated_label_set, _regressed, _scalar_overlay, measure
+        from memo.tuned_overlay import write_overlay
+
+        n_probes = 20
+        quantile = 0.95
+        k = 5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k
+
+        conn = mem.store._conn
+        rows = conn.execute(
+            "SELECT title FROM meta WHERE type != 'reference' ORDER BY updated DESC LIMIT ?",
+            (n_probes,),
+        ).fetchall()
+        titles = [r["title"] for r in rows if r["title"]]
+        rng = random.Random(0)  # noqa: S311 — deterministic probe shuffle, not security-sensitive
+        probes: list[str] = []
+        for t in titles:
+            words = t.split()
+            rng.shuffle(words)
+            shuffled = " ".join(words)
+            if shuffled:
+                probes.append(shuffled)
+
+        floor = floor_calibration.estimate_noise_floor(
+            mem.embedder, probes=probes, quantile=quantile, dims=mem.cfg.embedder_dims
+        )
+        result["floor_calibration"]["proposed"] = floor
+        if floor is None:
+            result["floor_calibration"]["gate"] = "too_few_probes"
+            return result
+
+        current = flag_float("MEMO_RECALL_MIN_SIM")
+        current = 0.5 if current is None else current
+        if floor <= current:
+            result["floor_calibration"]["gate"] = "not_above_current"
+            return result
+
+        curated = _curated_label_set(mem.cfg.state_dir)
+        if curated is None:
+            # Vacuous pass — same convention as dream_tune.curated_gate: no
+            # curated set to regress against, so the raise is not blocked.
+            result["floor_calibration"]["gate"] = "no_curated_labels"
+        else:
+            before = measure(mem, curated, k=k, floor=current)
+            after = measure(mem, curated, k=k, floor=floor)
+            gate_ok = not _regressed(after, before)
+            result["floor_calibration"]["gate"] = "ok" if gate_ok else "curated_rejected"
+            result["floor_calibration"]["before"] = before
+            result["floor_calibration"]["after"] = after
+            if not gate_ok:
+                return result
+
+        if not dry_run:
+            params = _scalar_overlay(mem.cfg.state_dir)
+            params["MEMO_RECALL_MIN_SIM"] = floor
+            write_overlay(mem.cfg.state_dir, params, {"source": "floor_calibration"})
+        result["floor_calibration"]["applied"] = not dry_run
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("floor_calibration pass failed: %s", exc)
+
+    return result
+
+
 def _run_entities(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     """Extract entities from unindexed memories.
 

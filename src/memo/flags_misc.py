@@ -860,6 +860,20 @@ SPECS: tuple[FlagSpec, ...] = (
         "Strict mode: raise exceptions instead of silently falling back in contextual retrieval, "
         "embedder client, reranker, and other fallback paths. Use for debugging.",
     ),
+    # dream v2 — noise-quantile min_sim floor calibration, gated + reversible.
+    # Runs before the min_sim tuner (below) so a co-enabled tuner searches
+    # upward from the measured floor.
+    _spec(
+        "MEMO_FLOOR_CALIBRATION",
+        "bool",
+        False,
+        "recall",
+        "At nightly Dream, estimate the noise-quantile similarity floor from "
+        "word-shuffled probes and RAISE MEMO_RECALL_MIN_SIM toward it via the tuned "
+        "overlay — gated by the curated eval set, only ever raising toward the "
+        "measured floor. Runs before the min_sim tuner (which then searches upward "
+        "from the floor). Default off.",
+    ),
     # dream v2 — self-improving recall tuner (min_sim), gated + reversible
     _spec(
         "MEMO_DREAM_TUNE_ENABLED",

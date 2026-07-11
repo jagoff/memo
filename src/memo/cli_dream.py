@@ -37,6 +37,7 @@ from memo.cli_dream_passes import (
     _run_entities,
     _run_eval_recall,
     _run_eviction,
+    _run_floor_calibration,
     _run_harvest_labels,
     _run_presynthesis,
     _run_prewarm_queries,
@@ -162,6 +163,7 @@ def dream_run(
         "prewarm": {},
         "presynthesis": [],
         "graduated": {},
+        "floor_calibration": {},
         "errors": [],
     }
 
@@ -267,6 +269,29 @@ def dream_run(
             )
             active_steps -= _convergence_skip
             progress.update(overall, total=active_steps)
+
+        # Phase 0.5 — noise-quantile min_sim floor calibration, gated + reversible.
+        # Runs BEFORE the min_sim tuner so a co-enabled tuner line-searches
+        # upward from the measured floor instead of past it.
+        if flag_bool("MEMO_FLOOR_CALIBRATION"):
+            progress.update(step, description="[floor] noise-quantile calibration...")
+            try:
+                res = _run_floor_calibration(mem, dry_run=dry_run)
+                if res.get("error"):
+                    receipt["errors"].append(f"floor_calibration: {res['error']}")
+                receipt["floor_calibration"] = res.get("floor_calibration", {})
+                progress.update(
+                    step,
+                    description=(
+                        f"[floor] noise-quantile calibration [green]✓[/green]  "
+                        f"applied={receipt['floor_calibration'].get('applied')}"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"floor_calibration: {type(exc).__name__}: {exc}")
+                progress.update(
+                    step, description="[floor] noise-quantile calibration [yellow]warn[/yellow]"
+                )
 
         # Phase 1 — recall self-tuner (min_sim), gated + reversible ----------
         if flag_bool("MEMO_DREAM_TUNE_ENABLED"):
