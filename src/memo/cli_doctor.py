@@ -244,7 +244,7 @@ def doctor(
     if not sync.get("is_git_clone"):
         console.print(
             "[dim]•[/dim] github sync: OFF "
-            "[dim](data_dir not a git clone — `memo sync bootstrap <url>` to enable)[/dim]"
+            "[dim](data_dir not a git clone — `memo sync setup` to share across machines)[/dim]"
         )
     elif sync.get("pending"):
         _reason = sync.get("pending_reason")
