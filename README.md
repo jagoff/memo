@@ -414,6 +414,14 @@ Switch with `MEMO_EMBEDDER_MODEL` + `MEMO_EMBEDDER_DIMS` (requires `memo reindex
 
 Contributors: `git clone https://github.com/jagoff/memo && cd memo && uv pip install -e '.[dev]'`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Privacy
+
+memo is **local-first**: everything you save is stored on your own machine as
+markdown files plus a rebuildable SQLite index. Embeddings and any LLM steps run
+in-process (MLX / CPU) — **no cloud API, no keys, no telemetry**. The only way
+memory leaves your device is if **you** configure a git `memo-sync` remote you
+own. Full detail: [PRIVACY.md](PRIVACY.md).
+
 ## License & provenance
 
 MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https://github.com/jagoff/mem-vault) (storage layout + frontmatter schema); the MLX backend pieces are ported from [`obsidian-rag`](https://github.com/jagoff/rag-obsidian). memo is one of three sovereign systems in a wider stack ([Memflow](https://github.com/jagoff/memflow), Synapse) — the integration is opt-in everywhere; single-Mac users see zero behaviour change.

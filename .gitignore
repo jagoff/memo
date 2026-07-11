@@ -98,3 +98,6 @@ err_synth*.txt
 audit/
 uv.lock
 .worktrees/
+
+# MCPB desktop-extension build artifact (regenerate with: npx @anthropic-ai/mcpb pack packaging/mcpb)
+packaging/mcpb/*.mcpb
