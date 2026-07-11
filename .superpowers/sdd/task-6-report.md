@@ -100,3 +100,20 @@ Passed:
 uv run --no-sync ruff check src/memo/quality_compact.py src/memo/cli_maintain.py tests/test_quality_compact.py tests/test_maintain.py
 uv run --no-sync pytest tests/test_quality_compact.py tests/test_maintain.py::test_maintain_undo_cli_dry_run_reads_receipt tests/test_maintain.py::test_undo_targets_and_restore_from_inactive -v
 ```
+# Task 6 Report
+
+## Completed
+
+- First-run setup now treats Markdown configuration as configured state and skips the picker when the Markdown index or config directory exists.
+- The picker persists default Markdown config files through `write_default_config()`.
+- `memo.setup` exports Markdown config helpers while retaining legacy TOML helpers for compatibility.
+- Init tests now isolate `MEMO_CONFIG_DIR`, verify Markdown storage output, and cover the Markdown first-run gate.
+
+## Verification
+
+- `uv run --no-sync pytest tests/test_cli_init.py -v` (7 passed)
+- `uv run --no-sync ruff check src/memo/cli.py src/memo/setup/__init__.py tests/test_cli_init.py` (passed)
+
+## Follow-up
+
+`memo init` overwrite confirmation remains implemented in `src/memo/runtime/install.py` and currently checks only the legacy TOML path. That file was outside Task 6 ownership, so the retained confirmation test is explicitly legacy-compatibility coverage; Markdown overwrite confirmation needs a coordinated follow-up there.

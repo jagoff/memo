@@ -1,4 +1,4 @@
-"""First-run setup helpers — Obsidian vault detection, interactive picker, TOML config I/O.
+"""First-run setup helpers — vault detection, picker, and config I/O.
 
 Public API used by `memo.cli` (first-run gate, `memo init`, `memo migrate-vault`):
 
@@ -8,6 +8,16 @@ Public API used by `memo.cli` (first-run gate, `memo init`, `memo migrate-vault`
 - `snapshot_config_file()` — reversible config snapshot before migrations.
 """
 
+from memo.config_md import (
+    config_dir,
+    config_home,
+)
+from memo.config_md import (
+    index_path as markdown_config_index_path,
+)
+from memo.config_md import (
+    write_default_config as write_markdown_config,
+)
 from memo.setup.config_io import (
     CONFIG_FILE_PATH,
     load_config_file,
@@ -21,9 +31,13 @@ __all__ = [
     "CONFIG_FILE_PATH",
     "PickerResult",
     "VaultInfo",
+    "config_dir",
+    "config_home",
     "detect_obsidian_vaults",
     "load_config_file",
+    "markdown_config_index_path",
     "run_picker",
     "snapshot_config_file",
     "write_config_file",
+    "write_markdown_config",
 ]
