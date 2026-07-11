@@ -301,9 +301,15 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_CONTRADICT_PENALTY_ENABLED",
         "bool",
-        True,
+        False,
         "search",
-        "Penalise the older side of open contradiction pairs among retrieved results. Requires `memo contradict scan` to have populated the sidecar DB.",
+        "Penalise the older side of open contradiction pairs among retrieved results. "
+        "Requires `memo contradict scan` to have populated the sidecar DB. Default OFF "
+        "(2026-07-11): measured net-negative on the vec live path — it is effectively "
+        "symmetric (demotes both members of a pair), costing precision@k (+0.006/+0.012 "
+        "when off) with no measurable retrieval benefit. It suppresses disputed content "
+        "rather than improving retrieval; opt in only if wholesale demotion of disputed "
+        "pairs is desired (the dossier/disputes render flags already flag them instead).",
     ),
     _spec(
         "MEMO_CONTRADICT_PENALTY",
