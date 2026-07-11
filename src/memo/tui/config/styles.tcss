@@ -1,0 +1,245 @@
+Screen {
+    background: #101418;
+    color: #e8edf2;
+}
+
+#config-center {
+    width: 100%;
+    height: 100%;
+}
+
+#config-header {
+    height: 3;
+    padding: 0 2;
+    background: #182026;
+    border-bottom: solid #33404a;
+    align: left middle;
+}
+
+#config-title {
+    width: auto;
+    color: #61c7d7;
+    text-style: bold;
+}
+
+#config-context {
+    width: 1fr;
+    padding-left: 2;
+    color: #9eabb5;
+}
+
+#config-toolbar {
+    height: 3;
+    padding: 0 1;
+    background: #141a1f;
+    align: left middle;
+}
+
+#setting-search {
+    width: 1fr;
+    max-width: 64;
+}
+
+#advanced-label {
+    width: auto;
+    padding: 0 1 0 2;
+    color: #b9c3ca;
+}
+
+#show-advanced {
+    width: 8;
+}
+
+#domain-select {
+    display: none;
+    width: 24;
+    margin-left: 1;
+}
+
+#workspace {
+    height: 1fr;
+}
+
+#domain-nav {
+    width: 22;
+    height: 100%;
+    padding: 1;
+    background: #141a1f;
+    border-right: solid #33404a;
+}
+
+.domain-button {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    margin: 0;
+    border: none;
+    background: transparent;
+    color: #b9c3ca;
+    text-align: left;
+}
+
+.domain-button:hover,
+.domain-active {
+    background: #24313a;
+    color: #e8edf2;
+    text-style: bold;
+}
+
+#settings-list {
+    width: 1fr;
+    height: 100%;
+    padding: 0 1;
+}
+
+.setting-row {
+    width: 100%;
+    height: 7;
+    padding: 0 1;
+    border-bottom: solid #2a343c;
+}
+
+.setting-line {
+    width: 100%;
+    height: 5;
+    align: left middle;
+}
+
+.setting-copy {
+    width: 1fr;
+    height: 5;
+    padding-top: 1;
+}
+
+.setting-label {
+    height: 1;
+    text-style: bold;
+    color: #e8edf2;
+}
+
+.setting-description {
+    height: 1;
+    color: #9eabb5;
+    text-overflow: ellipsis;
+}
+
+.setting-key {
+    height: 1;
+    color: #697781;
+}
+
+.setting-meta {
+    width: 34;
+    height: 3;
+    align: right middle;
+}
+
+.source-badge {
+    width: 9;
+    height: 1;
+    margin-right: 1;
+    text-align: center;
+    color: #9eabb5;
+}
+
+.source-env {
+    color: #e3b85b;
+    text-style: bold;
+}
+
+.source-markdown {
+    color: #66c989;
+}
+
+.source-overlay,
+.source-derived {
+    color: #61c7d7;
+}
+
+.setting-control {
+    width: 22;
+}
+
+.setting-issue {
+    height: 1;
+    color: #ef6f72;
+    text-overflow: ellipsis;
+}
+
+.has-error {
+    border-left: solid #ef6f72;
+}
+
+#config-footer {
+    height: 3;
+    padding: 0 1;
+    background: #182026;
+    border-top: solid #33404a;
+    align: left middle;
+}
+
+#validation-summary {
+    width: 1fr;
+    color: #66c989;
+}
+
+#validation-summary.summary-error {
+    color: #ef6f72;
+    text-style: bold;
+}
+
+#pending-summary {
+    width: 12;
+    color: #9eabb5;
+}
+
+#discard-draft,
+#review-draft {
+    width: 12;
+    min-width: 0;
+    height: 3;
+    margin-left: 1;
+}
+
+#empty-settings {
+    padding: 2;
+    color: #9eabb5;
+}
+
+#size-warning {
+    display: none;
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    color: #e3b85b;
+    text-style: bold;
+}
+
+Screen.narrow #domain-nav {
+    display: none;
+}
+
+Screen.narrow #domain-select {
+    display: block;
+}
+
+Screen.narrow .setting-row {
+    height: 9;
+}
+
+Screen.narrow .setting-line {
+    height: 7;
+    layout: vertical;
+}
+
+Screen.narrow .setting-copy {
+    width: 100%;
+    height: 4;
+    padding-top: 0;
+}
+
+Screen.narrow .setting-meta {
+    width: 100%;
+    height: 3;
+    align: right middle;
+}
