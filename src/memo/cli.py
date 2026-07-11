@@ -142,7 +142,7 @@ from memo.runtime.shims import install_shims_cmd
 
 # Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
 # `run_picker` itself defers the heavy `questionary` import until called.
-from memo.setup import run_picker, write_config_file
+from memo.setup import run_picker
 
 _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
@@ -520,7 +520,7 @@ def _first_run_gate(ctx: click.Context) -> None:
 
     Resolution: skip when invoked from hooks (MEMO_NONINTERACTIVE=1 or
     non-TTY), when an env var already configures `data_dir`, when a
-    config file already exists, or when the legacy `MEMO_VAULT_PATH`
+    Markdown or legacy config already exists, or when the legacy `MEMO_VAULT_PATH`
     pair is set (back-compat path). Also skip for setup/diagnostic
     subcommands so the user can always recover via `memo doctor`.
     """
@@ -539,17 +539,21 @@ def _first_run_gate(ctx: click.Context) -> None:
         return
     if "MEMO_VAULT_PATH" in os.environ and "MEMO_MEMORY_SUBDIR" in os.environ:
         return
-    # Re-resolve the config file at gate-firing time (env may have
+    # Re-resolve config locations at gate-firing time (env may have
     # changed between import and invocation, e.g. in tests).
+    from memo.config_md import config_dir as _markdown_config_dir
+    from memo.config_md import index_path as _markdown_index_path
     from memo.setup.config_io import _resolve_config_path
 
+    if _markdown_index_path().is_file() or _markdown_config_dir().is_dir():
+        return
     if _resolve_config_path().is_file():
         return
     _run_picker_and_save()
 
 
 def _run_picker_and_save() -> None:
-    """Drive the interactive picker → persist to TOML → return.
+    """Drive the interactive picker → persist Markdown config → return.
 
     Caller is expected to be the first-run gate (or `memo init`). Picker
     aborts (Ctrl-C / ESC) raise `click.exceptions.Exit(130)` so the
@@ -566,9 +570,12 @@ def _run_picker_and_save() -> None:
             "or run `memo init` to configure.",
         )
         raise click.exceptions.Exit(130) from None
-    cfg_path = write_config_file(
+    from memo.config_md import write_default_config
+
+    written = write_default_config(
         data_dir=result.data_dir,
         vault_path=result.vault_path,
+        force=True,
     )
     result.data_dir.mkdir(parents=True, exist_ok=True)
     console.print(
@@ -579,7 +586,7 @@ def _run_picker_and_save() -> None:
             f"[green]✓[/green] vault_path = {result.vault_path}  "
             "[dim](used by `memo ingest`)[/dim]",
         )
-    console.print(f"[dim]config saved: {cfg_path}[/dim]")
+    console.print(f"[dim]config saved: {written[0].parent}[/dim]")
 
 
 def main() -> None:

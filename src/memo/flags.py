@@ -83,9 +83,21 @@ def flag(name: str, *, env: dict[str, str] | None = None) -> Any:
         # empty string counts as unset except for str flags whose default is also ""
         if raw == "" and spec.kind == "str" and spec.default == "":
             return ""
-        # env unset → consult the auto-tuned overlay (env > overlay > default)
+        # env unset → consult persistent Markdown config, then the tuned overlay.
         if raw is None:
+            from memo.config_md import flag_values as _markdown_flag_values
             from memo.tuned_overlay import overlay_values
+
+            md = _markdown_flag_values(src)
+            if name in md:
+                try:
+                    return _coerce(spec, md[name])
+                except ValueError:
+                    _log.warning(
+                        "invalid markdown config value for %s: %r - checking overlay/default",
+                        name,
+                        md[name],
+                    )
 
             ov = overlay_values(src)
             if name in ov:
@@ -137,6 +149,17 @@ def active_flags(env: dict[str, str] | None = None) -> dict[str, str]:
     return {n: src[n] for n in REGISTRY if src.get(n)}
 
 
+def active_config_values(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Registered Markdown config values currently set.
+
+    Unlike active_flags(), this is not environment state. It is explicit
+    persistent config loaded from memo's Markdown config directory.
+    """
+    from memo.config_md import active_config_values as _active_config_values
+
+    return _active_config_values(os.environ if env is None else env)
+
+
 def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
     """`MEMO_*` env vars set but NOT in the registry (possible typos).
 
@@ -161,6 +184,7 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_RERANK_INPUT_K",
         "MEMO_MAX_CONTENT_CHARS",
         "MEMO_SEARCH_DEFAULT_LIMIT",
+        "MEMO_CONFIG_DIR",
         "MEMO_CONFIG_FILE",
         # Runtime shim/control vars. These are exported between wrapper processes
         # for IPC/idempotency, not user-configurable MEMO_* knobs.
@@ -196,6 +220,16 @@ def validate(env: dict[str, str] | None = None) -> list[dict[str, str]]:
                 "flag": "MEMO_MODEL_PROFILE",
                 "value": profile,
                 "error": "must be one of: light, balanced, quality (or empty)",
+            }
+        )
+    from memo.config_md import validate_markdown_config
+
+    for problem in validate_markdown_config(src):
+        problems.append(
+            {
+                "flag": problem.key or problem.file,
+                "value": problem.value,
+                "error": problem.error,
             }
         )
     for var in unknown_memo_vars(env):

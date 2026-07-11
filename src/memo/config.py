@@ -520,6 +520,15 @@ class Config(BaseModel):
         if storage.get("single_db") is not None:
             kwargs["single_db"] = _coerce_bool(storage["single_db"])
 
+        from memo.config_md import field_values as _markdown_field_values
+
+        md_values = _markdown_field_values(os.environ)
+        # Markdown config is the persistent source of truth. It wins over
+        # legacy config.toml and loses to MEMO_* env vars applied below.
+        for fkey, value in md_values.items():
+            if value is not None and value != "":
+                kwargs[fkey] = value
+
         # Step 2: model profile defaults. Individual env vars below
         # intentionally override profile choices.
         profile = (
@@ -538,6 +547,13 @@ class Config(BaseModel):
             )
         kwargs.update(MODEL_PROFILES[profile])
         kwargs["model_profile"] = profile
+        # Profile defaults are a bundle baseline. Re-apply Markdown after the
+        # bundle so persistent per-field choices (for example a custom
+        # embedder under the quality profile) are not lost. Env vars below
+        # still win over both Markdown and profile defaults.
+        for fkey, value in md_values.items():
+            if value is not None and value != "":
+                kwargs[fkey] = value
 
         # Step 3: env-var overrides.
         env_to_field = {
@@ -592,7 +608,10 @@ class Config(BaseModel):
         has_state_env = "MEMO_STATE_DIR" in os.environ
         has_vault_env = "MEMO_VAULT_PATH" in os.environ
         has_legacy = has_vault_env or os.environ.get("MEMO_MEMORY_SUBDIR")
-        has_storage_config = file_data and file_data.get("storage")
+        has_storage_config = bool(file_data and file_data.get("storage")) or bool(
+            {"data_dir", "vault_path", "memory_subdir", "state_dir", "memories_in_vault", "single_db"}
+            & md_values.keys()
+        )
         if cwd_is_repo and not has_data_env and not has_legacy and not has_storage_config:
             # Default to "memories"; honor a legacy "memorias" dir if one already
             # exists in the clone (back-compat for installs predating the rename).
@@ -627,6 +646,7 @@ class Config(BaseModel):
             os.environ.get("MEMO_EMBEDDER_MODEL")
             or os.environ.get("MEMO_EMBEDDER_DIMS")
             or os.environ.get("MEMO_MODEL_PROFILE")
+            or {"embedder_model", "embedder_dims", "model_profile"} & md_values.keys()
             or {"embedder_model", "embedder_dims", "model_profile"} & overrides.keys()
         )
         if not embedder_pinned:
