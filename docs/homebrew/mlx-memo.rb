@@ -5,8 +5,8 @@
 # under your GitHub user (see `docs/homebrew/README.md`).
 # This file tracks the latest released git tag via GitHub's auto-generated
 # source tarball (no PyPI publish required). On each release, bump the tag
-# in the url and recompute the sha256:
-#   curl -sL https://github.com/jagoff/memo/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
+# in the url below and recompute its sha256 by piping that tarball through
+# `shasum -a 256`.
 #
 # Users then install with:
 #
