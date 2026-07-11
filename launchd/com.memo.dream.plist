@@ -51,6 +51,26 @@
     <string>1</string>
     <key>MEMO_FLOOR_CALIBRATION</key>
     <string>1</string>
+    <!-- Dream v2 self-improvement passes: pre-warm recurring unmet gaps + hot
+         queries (anticipate), degree-normalized graph communities, and abstract
+         recurring cross-session work into durable synthesis memories. -->
+    <key>MEMO_DREAM_ANTICIPATE_ENABLED</key>
+    <string>1</string>
+    <key>MEMO_DREAM_COMMUNITIES_ENABLED</key>
+    <string>1</string>
+    <key>MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED</key>
+    <string>1</string>
+    <!-- Contradiction/support signals: capture tool evidence, weigh mutability in
+         contradiction scans, require N supporting memories before supersede, and
+         lift confidence per corroborating source. -->
+    <key>MEMO_CAPTURE_TOOL_EVIDENCE</key>
+    <string>1</string>
+    <key>MEMO_CONTRADICT_MUTABILITY</key>
+    <string>1</string>
+    <key>MEMO_SUPERSEDE_SUPPORT_GATE</key>
+    <string>3</string>
+    <key>MEMO_SUPPORT_CONFIDENCE_LIFT</key>
+    <string>0.1</string>
     <key>HF_HUB_OFFLINE</key>
     <string>1</string>
     <key>TRANSFORMERS_OFFLINE</key>
