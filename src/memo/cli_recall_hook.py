@@ -536,8 +536,24 @@ def recall_hook() -> None:
     except Exception:
         _nudge = []
 
+    # Trust dossier (MEMO_HIT_DOSSIER, default off): one batched pairs_for_ids
+    # lookup over the top-K ids — never per-hit — so the hook stays cheap.
+    _disputed_by: dict[str, list[str]] = {}
+    if flag_bool("MEMO_HIT_DOSSIER"):
+        try:
+            _ids = [h.id for h in relevant]
+            for _p in mem.contradict_store.pairs_for_ids(
+                _ids, status="open"
+            ) + mem.contradict_store.pairs_for_ids(_ids, status="competing"):
+                _disputed_by.setdefault(_p.memory_id_a, []).append(_p.memory_id_b)
+                _disputed_by.setdefault(_p.memory_id_b, []).append(_p.memory_id_a)
+        except Exception:
+            _disputed_by = {}
+
     if _recall_format == "compact":
-        context = render_recall_compact(relevant, token_budget=token_budget)
+        context = render_recall_compact(
+            relevant, token_budget=token_budget, disputed_by=_disputed_by
+        )
     elif _recall_format == "balanced":
         context = render_recall_balanced(relevant, token_budget=token_budget, turn=_turn)
     else:
@@ -547,6 +563,7 @@ def recall_hook() -> None:
             turn=_turn,
             body_chars=body_chars,
             token_budget=token_budget,
+            disputed_by=_disputed_by,
         )
     context = render_associative_line(context, _nudge, token_budget=token_budget)
     if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):

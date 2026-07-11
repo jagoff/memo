@@ -539,6 +539,15 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    _spec(
+        "MEMO_HIT_DOSSIER",
+        "bool",
+        False,
+        "recall",
+        "Render a compact per-hit trust line (type · date · conf-band · ⚔ disputed by "
+        "[id]) under each recalled memory. Pure render + one cheap contradict-pairs "
+        "lookup; respects MEMO_RECALL_TOKEN_BUDGET. Default off.",
+    ),
 )
 
 

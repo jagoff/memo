@@ -62,6 +62,27 @@ def epistemic_label(hit: Any) -> str:
     return f"{kind} · {month}" if month else kind
 
 
+def _conf_band(score: float | None) -> str:
+    """Coarse confidence band from a hit's score (no health-table read on the hook)."""
+    s = score or 0.0
+    if s >= 0.75:
+        return "high"
+    if s >= 0.5:
+        return "med"
+    return "low"
+
+
+def trust_dossier(hit: Any, disputed_ids: list[str] | None) -> str:
+    """Compact per-hit trust line: `type · YYYY-MM · conf:<band>[ · ⚔ disputed by [id]]`.
+    Pure render — no store read, no MLX. `disputed_ids` is precomputed by the caller."""
+    kind = getattr(hit, "type", "") or "note"
+    month = str(getattr(hit, "updated", "") or "")[:7]
+    parts = [kind, month, f"conf:{_conf_band(getattr(hit, 'score', None))}"]
+    if disputed_ids:
+        parts.append("⚔ disputed by " + ", ".join(f"[{d[:8]}]" for d in disputed_ids))
+    return " · ".join(p for p in parts if p)
+
+
 _SESSION_BUDGET_FLOOR = 150
 
 
@@ -108,6 +129,7 @@ def render_recall_context(
     body_chars: int,
     token_budget: int,
     omitted: list[Any] | None = None,
+    disputed_by: dict[str, list[str]] | None = None,
 ) -> str:
     """Render recall context within a strict chars/4 token budget."""
     include_directive = turn is None or turn <= 1 or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
@@ -146,12 +168,18 @@ def render_recall_context(
         return body_chars
 
     use_labels = flag_bool("MEMO_RECALL_EPISTEMIC_LABELS")
+    use_dossier = flag_bool("MEMO_HIT_DOSSIER")
     dropped: list[Any] = list(omitted or [])
     for i, hit in enumerate(relevant):
         score_tag = f" (score {hit.score:.2f})" if hit.score is not None else ""
         label = f" ⟨{epistemic_label(hit)}⟩" if use_labels else ""
         title_line = f"**[{hit.id[:8]}] {hit.title}**{label}{score_tag}"
         tags_line = f"_tags_: {', '.join(hit.tags)}" if hit.tags else ""
+        dossier_line = (
+            f"_trust_: {trust_dossier(hit, (disputed_by or {}).get(hit.id))}"
+            if use_dossier
+            else ""
+        )
         body = (hit.body or "").strip().replace("\n", " ")
         limit = _effective_body_chars(hit.score)
         if len(body) > limit:
@@ -159,14 +187,19 @@ def render_recall_context(
                 body = _sentence_truncate(body, limit)
             else:
                 body = body[:limit].rstrip() + "…"
-        prefix = [title_line, *([tags_line] if tags_line else [])]
+        prefix = [
+            title_line,
+            *([tags_line] if tags_line else []),
+            *([dossier_line] if dossier_line else []),
+        ]
         block = [*prefix, *([f"> {body}"] if body else []), ""]
         if max_chars is None or len(_render(block)) <= max_chars:
             lines.extend(block)
             continue
 
         # Preserve the citation/title and spend only the remaining budget on body.
-        if max_chars is not None and len(_render([*prefix, ""])) > max_chars and tags_line:
+        _prefix_over = max_chars is not None and len(_render([*prefix, ""])) > max_chars
+        if _prefix_over and (tags_line or dossier_line):
             prefix = [title_line]
         empty_body_len = len(_render([*prefix, ""]))
         _tail_reserve = 50 if (max_chars is not None and flag_bool("MEMO_RECALL_OMISSIONS_TAIL") and (len(relevant) > i + 1 or bool(omitted))) else 0
@@ -210,7 +243,12 @@ def render_recall_context(
     return context
 
 
-def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
+def render_recall_compact(
+    relevant: list[Any],
+    *,
+    token_budget: int,
+    disputed_by: dict[str, list[str]] | None = None,
+) -> str:
     """Compact recall format: one line per hit, no headers/tags/scores/body prose.
 
     Format::
@@ -225,14 +263,18 @@ def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
     max_chars = token_budget * 4 if token_budget > 0 else None
     hit_lines: list[str] = []
     use_labels = flag_bool("MEMO_RECALL_EPISTEMIC_LABELS")
+    use_dossier = flag_bool("MEMO_HIT_DOSSIER")
 
     for hit in relevant:
         body = (hit.body or "").strip().replace("\n", " ")
         short_body = body[:60].rstrip() if body else ""
         label = f" ⟨{epistemic_label(hit)}⟩" if use_labels else ""
         line = f"[{hit.id[:8]}]{label} {hit.title}" + (f" · {short_body}" if short_body else "")
+        new_lines = [line]
+        if use_dossier:
+            new_lines.append(f"_trust_: {trust_dossier(hit, (disputed_by or {}).get(hit.id))}")
 
-        candidate_lines = [*hit_lines, line]
+        candidate_lines = [*hit_lines, *new_lines]
         candidate = "<memo-recall readonly>\n" + "\n".join(candidate_lines) + "\n</memo-recall>"
 
         if max_chars is not None and len(candidate) > max_chars:
@@ -246,7 +288,7 @@ def render_recall_compact(relevant: list[Any], *, token_budget: int) -> str:
                     hit_lines.append(tail)
             break
 
-        hit_lines.append(line)
+        hit_lines.extend(new_lines)
 
     return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
 
@@ -1138,6 +1180,20 @@ def _recall_logic(
         with contextlib.suppress(Exception):
             mem.contextual.record_search(prompt, [h.id for h in relevant])
 
+    # Trust dossier (MEMO_HIT_DOSSIER, default off): one batched pairs_for_ids
+    # lookup over the top-K ids — never per-hit — so the hook stays cheap.
+    disputed_by: dict[str, list[str]] = {}
+    if flag_bool("MEMO_HIT_DOSSIER"):
+        try:
+            _ids = [h.id for h in relevant]
+            for _p in mem.contradict_store.pairs_for_ids(
+                _ids, status="open"
+            ) + mem.contradict_store.pairs_for_ids(_ids, status="competing"):
+                disputed_by.setdefault(_p.memory_id_a, []).append(_p.memory_id_b)
+                disputed_by.setdefault(_p.memory_id_b, []).append(_p.memory_id_a)
+        except Exception:
+            disputed_by = {}
+
     context = render_recall_context(
         relevant,
         nudge,
@@ -1145,6 +1201,7 @@ def _recall_logic(
         body_chars=body_chars,
         token_budget=token_budget,
         omitted=omitted,
+        disputed_by=disputed_by,
     )
 
     # Graph-associative nudge (MEMO_RECALL_ASSOCIATIVE) — render it on the daemon
