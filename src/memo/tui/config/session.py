@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from memo.config_md import ConfigProblem, ConfigValue, configured_values, validate_markdown_config
 from memo.platform_detect import is_apple_silicon
+from memo.tui.config.apply import ApplyPlan, PlannedChange, SourceSnapshot
 from memo.tui.config.catalog import (
     PersistencePolicy,
     SettingKind,
@@ -74,24 +75,6 @@ class ConfigDraft:
         self.operations.clear()
 
 
-@dataclass(frozen=True)
-class PlannedChange:
-    key: str
-    before: object | None
-    after: object | None
-    unset: bool = False
-
-
-@dataclass(frozen=True)
-class ApplyPlan:
-    changes: tuple[PlannedChange, ...]
-    issues: tuple[ValidationIssue, ...] = ()
-
-    @property
-    def blocked(self) -> bool:
-        return any(issue.blocking for issue in self.issues)
-
-
 _POLICY_ERRORS = {
     PersistencePolicy.RUNTIME_ONLY: "runtime-only setting cannot be persisted",
     PersistencePolicy.DERIVED: "derived setting cannot be persisted",
@@ -99,7 +82,7 @@ _POLICY_ERRORS = {
 }
 
 
-def _coerce_scalar(spec: SettingSpec, raw: object) -> object:
+def coerce_value(spec: SettingSpec, raw: object) -> object:
     if raw is None:
         return None
     if spec.config_field:
@@ -165,12 +148,14 @@ class ConfigSession:
         markdown: Mapping[str, ConfigValue],
         legacy: Mapping[str, object],
         overlay: Mapping[str, str],
+        snapshot: SourceSnapshot,
         source_problems: tuple[ConfigProblem, ...] = (),
     ) -> None:
         self.env = dict(env)
         self.markdown = dict(markdown)
         self.legacy = dict(legacy)
         self.overlay = dict(overlay)
+        self.snapshot = snapshot
         self._source_issues = tuple(
             ValidationIssue(problem.key or problem.file, problem.error) for problem in source_problems
         )
@@ -181,14 +166,17 @@ class ConfigSession:
 
     @classmethod
     def open(cls, env: Mapping[str, str] | None = None) -> ConfigSession:
+        from memo.tui.config.apply import snapshot_sources
         from memo.tuned_overlay import overlay_values
 
         source = dict(os.environ if env is None else env)
+        snapshot = snapshot_sources(source)
         return cls(
             source,
             configured_values(source),
             _legacy_storage(source, use_default_path=env is None),
             overlay_values(source),
+            snapshot,
             tuple(validate_markdown_config(source)),
         )
 
@@ -219,7 +207,7 @@ class ConfigSession:
                 source = ValueSource.DERIVED
 
         try:
-            effective = _coerce_scalar(spec, raw)
+            effective = coerce_value(spec, raw)
         except (TypeError, ValueError, ValidationError) as exc:
             effective = raw
             issues = (ValidationIssue(spec.key, str(exc)),)
@@ -261,7 +249,7 @@ class ConfigSession:
     def set_value(self, key: str, raw: object) -> None:
         spec = self._ensure_persistent(key)
         try:
-            value = _coerce_scalar(spec, raw)
+            value = coerce_value(spec, raw)
         except (TypeError, ValueError, ValidationError):
             value = raw
         self.draft.set(key, value)
@@ -313,7 +301,7 @@ class ConfigSession:
             if operation.unset:
                 continue
             try:
-                _coerce_scalar(state.spec, operation.value)
+                coerce_value(state.spec, operation.value)
             except (TypeError, ValueError, ValidationError) as exc:
                 issues.append(ValidationIssue(key, str(exc)))
 
@@ -365,7 +353,11 @@ class ConfigSession:
                     unset=operation.unset,
                 )
             )
-        return ApplyPlan(changes=tuple(changes), issues=self.issues())
+        return ApplyPlan(
+            changes=tuple(changes),
+            issues=self.issues(),
+            snapshot=self.snapshot,
+        )
 
 
 __all__ = [
@@ -377,4 +369,5 @@ __all__ = [
     "SettingState",
     "ValidationIssue",
     "ValueSource",
+    "coerce_value",
 ]

@@ -34,6 +34,22 @@ class StorageError(MemoError, RuntimeError):
     `sqlite3.OperationalError` with no hint of what memo was doing."""
 
 
+class ConfigConflictError(MemoError, RuntimeError):
+    """A persisted setting changed after the configuration session opened."""
+
+    def __init__(self, keys: tuple[str, ...]) -> None:
+        self.keys = keys
+        super().__init__(f"configuration changed externally: {', '.join(keys)}")
+
+
+class ConfigTransactionError(StorageError):
+    """A staged configuration batch could not commit or roll back cleanly."""
+
+
+class ConfigActivationError(MemoError, RuntimeError):
+    """Configuration saved but one or more confirmed activation actions failed."""
+
+
 class AmbiguousIdError(MemoError, ValueError):
     """Raised when an id prefix matches more than one record. Carries
     the candidate matches so the caller can surface them in an error."""

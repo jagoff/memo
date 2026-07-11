@@ -51,6 +51,11 @@ class ConfigProblem:
 _cache: dict[str, tuple[tuple[tuple[str, float], ...], dict[str, ConfigValue], list[ConfigProblem]]] = {}
 
 
+def invalidate_cache() -> None:
+    """Discard cached Markdown reads after an external transactional write."""
+    _cache.clear()
+
+
 def config_home(env: Mapping[str, str] | None = None) -> Path:
     src = os.environ if env is None else env
     raw = src.get("MEMO_CONFIG_DIR")
