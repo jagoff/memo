@@ -121,6 +121,83 @@ def test_env_overrides_config_file(monkeypatch, tmp_path: Path):
     assert cfg.data_dir == (tmp_path / "from-env").resolve()
 
 
+def test_markdown_config_file_loads_storage_and_models(monkeypatch, tmp_path: Path):
+    home = tmp_path / "memo-home"
+    cfg_dir = home / "config"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "storage-config.md").write_text(
+        "```toml\n"
+        "[storage]\n"
+        f'data_dir = "{tmp_path / "from-md"}"\n'
+        f'state_dir = "{tmp_path / "state-md"}"\n'
+        'memories_in_vault = "off"\n'
+        "```\n",
+        encoding="utf-8",
+    )
+    (cfg_dir / "models-config.md").write_text(
+        "```toml\n"
+        "[models]\n"
+        'model_profile = "light"\n'
+        'embedder_dims = 1024\n'
+        "```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "missing.toml"))
+    monkeypatch.delenv("MEMO_DATA_DIR", raising=False)
+    monkeypatch.delenv("MEMO_STATE_DIR", raising=False)
+    monkeypatch.delenv("MEMO_MODEL_PROFILE", raising=False)
+
+    cfg = Config.from_env()
+
+    assert cfg.data_dir == (tmp_path / "from-md").resolve()
+    assert cfg.state_dir == (tmp_path / "state-md").resolve()
+    assert cfg.model_profile == "light"
+    assert cfg.reranker_enabled is False
+
+
+def test_env_overrides_markdown_config(monkeypatch, tmp_path: Path):
+    home = tmp_path / "memo-home"
+    cfg_dir = home / "config"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "storage-config.md").write_text(
+        "```toml\n"
+        "[storage]\n"
+        f'data_dir = "{tmp_path / "from-md"}"\n'
+        "```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "missing.toml"))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "from-env"))
+
+    cfg = Config.from_env()
+
+    assert cfg.data_dir == (tmp_path / "from-env").resolve()
+
+
+def test_markdown_overrides_legacy_toml(monkeypatch, tmp_path: Path):
+    legacy = tmp_path / "config.toml"
+    legacy.write_text(f'[storage]\ndata_dir = "{tmp_path / "from-legacy"}"\n', encoding="utf-8")
+    home = tmp_path / "memo-home"
+    cfg_dir = home / "config"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "storage-config.md").write_text(
+        "```toml\n"
+        "[storage]\n"
+        f'data_dir = "{tmp_path / "from-md"}"\n'
+        "```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(legacy))
+    monkeypatch.delenv("MEMO_DATA_DIR", raising=False)
+
+    cfg = Config.from_env()
+
+    assert cfg.data_dir == (tmp_path / "from-md").resolve()
+
+
 def test_derived_paths_compose(tmp_path: Path):
     cfg = Config(data_dir=tmp_path / "d", state_dir=tmp_path / "state")
     assert cfg.memory_dir == cfg.data_dir

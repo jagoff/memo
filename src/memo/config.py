@@ -520,6 +520,15 @@ class Config(BaseModel):
         if storage.get("single_db") is not None:
             kwargs["single_db"] = _coerce_bool(storage["single_db"])
 
+        from memo.config_md import field_values as _markdown_field_values
+
+        md_values = _markdown_field_values(os.environ)
+        # Markdown config is the persistent source of truth. It wins over
+        # legacy config.toml and loses to MEMO_* env vars applied below.
+        for fkey, value in md_values.items():
+            if value is not None and value != "":
+                kwargs[fkey] = value
+
         # Step 2: model profile defaults. Individual env vars below
         # intentionally override profile choices.
         profile = (
@@ -592,7 +601,10 @@ class Config(BaseModel):
         has_state_env = "MEMO_STATE_DIR" in os.environ
         has_vault_env = "MEMO_VAULT_PATH" in os.environ
         has_legacy = has_vault_env or os.environ.get("MEMO_MEMORY_SUBDIR")
-        has_storage_config = file_data and file_data.get("storage")
+        has_storage_config = bool(file_data and file_data.get("storage")) or bool(
+            {"data_dir", "vault_path", "memory_subdir", "state_dir", "memories_in_vault", "single_db"}
+            & md_values.keys()
+        )
         if cwd_is_repo and not has_data_env and not has_legacy and not has_storage_config:
             # Default to "memories"; honor a legacy "memorias" dir if one already
             # exists in the clone (back-compat for installs predating the rename).
