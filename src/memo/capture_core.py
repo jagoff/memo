@@ -389,7 +389,10 @@ def _extract_text(content: Any) -> str:
                 continue
             if block.get("type") == "text":
                 t = block.get("text", "")
-                if t:
+                # A malformed block can carry a non-str "text" (e.g. a nested
+                # dict); skip it rather than crash the whole capture/mining pass
+                # on `t.strip()` ('dict' object has no attribute 'strip').
+                if isinstance(t, str) and t:
                     out.append(t.strip())
         text = "\n\n".join(out).strip()
         from memo.flags import flag_bool, flag_int

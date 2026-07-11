@@ -58,6 +58,17 @@ class TestTranscriptParsing:
         assert "keep this" in text
         assert "image" not in text
 
+    def test_extract_text_survives_dict_valued_text_block(self) -> None:
+        """A malformed text block with a non-str 'text' must not crash the pass
+        ('dict' object has no attribute 'strip') — it is skipped, siblings kept."""
+        content = [
+            {"type": "text", "text": "good block"},
+            {"type": "text", "text": {"nested": "malformed"}},
+            {"type": "text", "text": "another good block"},
+        ]
+        text = _extract_text(content)
+        assert text == "good block\n\nanother good block"
+
 
 class TestMetaCommentaryFilter:
     """Tests for meta-commentary and LLM filler detection."""
