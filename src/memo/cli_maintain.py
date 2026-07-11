@@ -305,6 +305,15 @@ def maintain_cmd(
             # Optimistic stamp so repeated SessionStarts today don't pile up
             # spawns before the detached run finishes (it re-stamps on completion).
             ts_file.write_text(str(time.time()), encoding="utf-8")
+            # Route the scan's embeds through the warm recall daemon: they
+            # serialize in its queue instead of cold-loading a 2nd embedder and
+            # grabbing the GPU cross-process flock independently, which starves
+            # the live recall daemon (recall_lock_bail on embed_query) for the
+            # whole maintain window. Falls back to in-process if the daemon is
+            # down. `setdefault` on the copied env (not os.environ) preserves an
+            # explicit inherited override without a direct-environ flag read.
+            _child_env = {**_os.environ, "MEMO_NONINTERACTIVE": "1"}
+            _child_env.setdefault("MEMO_EMBEDDER_VIA_DAEMON", "1")
             _sp.Popen(
                 # safe defaults: archive-only, no --hard-delete
                 # cap LLM work: 50 pairs × ~7s = ~350s max, plus 300s wall-clock guard
@@ -313,20 +322,7 @@ def maintain_cmd(
                 stdout=_sp.DEVNULL,
                 stderr=_sp.DEVNULL,
                 start_new_session=True,
-                # Route the scan's embeds through the warm recall daemon: they
-                # serialize in its queue instead of cold-loading a 2nd embedder
-                # and grabbing the GPU cross-process flock independently, which
-                # starves the live recall daemon (recall_lock_bail on
-                # embed_query) for the whole maintain window. Falls back to
-                # in-process automatically if the daemon is down; respects an
-                # explicit override.
-                env={
-                    **_os.environ,
-                    "MEMO_NONINTERACTIVE": "1",
-                    "MEMO_EMBEDDER_VIA_DAEMON": _os.environ.get(
-                        "MEMO_EMBEDDER_VIA_DAEMON", "1"
-                    ),
-                },
+                env=_child_env,
             )
         except Exception as exc:
             _log.warning("maintain --if-due: failed to spawn background maintain: %s", exc)
