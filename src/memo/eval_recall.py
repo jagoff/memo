@@ -606,6 +606,7 @@ def _run_config_inner(
     from memo.recall_logic import (
         apply_injection_filters,
         apply_recency_band,
+        collapse_near_dups,
         fetch_recency_band,
         knobs_from_flags,
         make_vec_cosine,
@@ -640,7 +641,7 @@ def _run_config_inner(
     # explicit mem.search() path does not — without mirroring the exclusion
     # here, ingested vault chunks the hook never surfaces crowd top-K and
     # depress measured precision (seen live: WhatsApp reference chunks).
-    from memo.flags import flag_bool, flag_int
+    from memo.flags import flag_bool, flag_float, flag_int
     from memo.tiers import REFERENCE_TYPES
 
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
@@ -664,6 +665,16 @@ def _run_config_inner(
             mode=cfg.mode,
             exclude_types=exclude_types,
             exclude_tags=exclude_tags,
+            # Retrieval-only, as this gate is documented ("fast, no MLX —
+            # retrieval only"). `hybrid` mode otherwise fires the cross-encoder
+            # reranker (~7-11s/prompt cold, thrashes under the concurrent MLX
+            # fleet — the gate looked "hung" mid hybrid grid). The eval measures
+            # the shared `rank_hits` ordering (applied below), not the
+            # cross-encoder — so we want the fused vec+BM25 candidate POOL here,
+            # not a pre-reordered/trimmed one. Live-default recall is vec mode
+            # (no reranker), so vec configs are unchanged; hybrid configs become
+            # a fast "retrieval pool + rank_hits" comparison instead of hanging.
+            disable_reranker=True,
         )
         lat.append((time.time() - t0) * 1000)
         band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
@@ -697,6 +708,16 @@ def _run_config_inner(
                 ranked = []
         if cfg.exclude_archived:
             ranked = [h for h in ranked if not _is_noise(h, labels)]
+        # Mirror the live _recall_logic pre-top-K paraphrase collapse so this
+        # gate can measure MEMO_RECALL_DEDUP_COLLAPSE. The collapse lives
+        # post-rank_hits in the hook driver (recall_logic._recall_logic), which
+        # this harness doesn't call — without mirroring it here the flag is
+        # invisible to the eval. Same flag + threshold + before-truncation
+        # position as live; flag-off (default) leaves `ranked` untouched.
+        if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(ranked) > 1:
+            ranked = collapse_near_dups(
+                ranked, threshold=flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8
+            )
         top = ranked[:k]
         quality_metrics = _quality_eval_metrics(top, k=k)
 
