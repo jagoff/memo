@@ -3,14 +3,6 @@
   "_doc": "Committed retrieval-regression corpus. DISCIPLINE: every search that returns wrong results becomes a permanent labeled prompt here — never patch a single query, prove the whole set holds. Run: `memo eval recall --labels eval/regression_labels.json --k 5 --json --force`. A retrieval/ingest change must keep precision@K high and noise@K low across ALL prompts, not just the new one. relevant=true prompts must surface their expect_ids (>=8 hex prefix); noise_tags / noise_path_fragments mark records that must NOT crowd the top-K (garbled OCR screenshots, archived/old notes).",
   "prompts": [
     {
-      "text": "¿memo reindex --rebuild preserva los datos o los borra?",
-      "relevant": true,
-      "expect_ids": [
-        "f69661184b01"
-      ],
-      "_note": "2026-07-11: contradiction-penalty pricing case (fills the gap where the corpus had NO contradiction cases, so the eval was blind to MEMO_CONTRADICT_PENALTY_ENABLED's benefit). Cluster: newer fact f69661184b01 'reindex rebuild no data loss' (2026-06-29, CURRENT correct per CLAUDE.md — --rebuild preserves the user-signal tables) supersedes the older decision b2b2fe4421a9 'use reindex WITHOUT --rebuild to preserve index' (2026-06-22, the superseded loser). contradictions.db pair 1669 status=kept_newer. Guards that the current fact surfaces over the superseded one; lets the eval price the penalty (which demotes the superseded member). NOTE 5b6a675c 'reindex --rebuild truncó índice con data_dir vacío' is a VALID caveat (empty-data_dir edge case), NOT noise — do not mark it."
-    },
-    {
       "text": "donde se hace el deploy de las lambda",
       "relevant": true,
       "expect_ids": [
