@@ -230,6 +230,11 @@ def checkpoint(
         # Preserved across checkpoints so the Stop-hook grounding detector can read
         # back the turn label the recall used. See grounding.score_turn.
         "last_recall_turn": existing.get("last_recall_turn"),
+        # Cadence watermark written by cli_recap.maybe_write_recap (stamp_recap_turn).
+        # Preserved across checkpoints the same way as last_recall_turn above, so
+        # due_for_recap's turn_count - last_recap_turn throttle holds across turns
+        # instead of resetting to 0 on the next Stop-hook checkpoint.
+        "last_recap_turn": existing.get("last_recap_turn"),
     }
 
     _write(state_dir, session_id, snapshot)

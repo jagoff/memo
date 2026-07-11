@@ -17,7 +17,7 @@ from memo.cli_recap import (
     maybe_write_recap,
     recap_content,
 )
-from memo.session import checkpoint, get_session, update_summary
+from memo.session import checkpoint, get_session, stamp_recap_turn, update_summary
 
 # --- format_recap_line -------------------------------------------------
 
@@ -152,6 +152,43 @@ def test_maybe_write_recap_stamps_last_recap_turn(tmp_path: Path) -> None:
     snap = get_session(state_dir, sid)
     assert snap is not None
     assert snap.get("last_recap_turn") == 6
+
+
+def test_last_recap_turn_survives_checkpoint(tmp_path: Path) -> None:
+    """Regression: live-flow throttle. `checkpoint()` is called on every Stop
+    hook, forwarding `last_recall_turn` from the existing snapshot — but it
+    was NOT forwarding `last_recap_turn`, so once a recap fired the very next
+    `checkpoint()` call (a normal turn's session bookkeeping, independent of
+    `maybe_write_recap`) silently dropped the watermark. That made
+    `due_for_recap` see `last_recap_turn=0` forever, so the recap fired on
+    EVERY subsequent turn instead of every `every_n` turns.
+
+    Reproduces the full live-flow sequence: advance turns via `checkpoint()`,
+    stamp a recap at turn 6, `checkpoint()` again (simulating the next turn),
+    and assert the watermark survived — so `due_for_recap` is False right
+    after, and only True again once another full `every_n` turns have
+    elapsed.
+    """
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    sid = "recap-sess-livecycle"
+
+    for _ in range(6):
+        checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
+    stamp_recap_turn(state_dir, sid, 6)
+
+    # Next turn's ordinary session bookkeeping (Stop hook), unrelated to recap.
+    snapshot = checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
+
+    assert snapshot.get("last_recap_turn") == 6
+    assert due_for_recap(snapshot, every_n=6) is False
+
+    # Advance to turn 12 (6 more checkpoints beyond the turn-7 one above).
+    for _ in range(5):
+        snapshot = checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
+
+    assert snapshot.get("turn_count") == 12
+    assert due_for_recap(snapshot, every_n=6) is True
 
 
 def test_maybe_write_recap_noop_when_not_due(tmp_path: Path) -> None:
