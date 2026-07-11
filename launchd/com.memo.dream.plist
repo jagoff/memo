@@ -41,6 +41,16 @@
     <string>1</string>
     <key>MEMO_DREAM_TUNE_BOOST_ENABLED</key>
     <string>1</string>
+    <!-- Trust & belief-revision maintenance units (memo v3.0.0): mark mutually-
+         contradicting durable memories `competing`, do N-way supersede over a
+         shared trust margin, and calibrate the recall floor nightly. Read-mostly
+         maintenance; measured in the dream receipt (`memo dream status`). -->
+    <key>MEMO_BELIEF_COMPETING</key>
+    <string>1</string>
+    <key>MEMO_BELIEF_NWAY</key>
+    <string>1</string>
+    <key>MEMO_FLOOR_CALIBRATION</key>
+    <string>1</string>
     <key>HF_HUB_OFFLINE</key>
     <string>1</string>
     <key>TRANSFORMERS_OFFLINE</key>
