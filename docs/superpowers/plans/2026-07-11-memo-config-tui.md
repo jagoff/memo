@@ -15,7 +15,7 @@
 - The feature is a terminal TUI only: no HTTP server, WebView, browser delivery, `textual serve`, or Textual Web support.
 - All widget, layout, theme, input-loop, terminal-rendering, catalog, draft, transaction, and impact code introduced for this feature lives below `src/memo/tui/`.
 - `src/memo/cli_config.py` and `src/memo/cli_tui.py` remain top-level wiring-only modules per repo convention.
-- Existing `dashboard_tui.py`, `dashboard_panels.py`, and `setup/picker.py` implementation moves below `src/memo/tui/`; compatibility modules contain imports only.
+- Existing `dashboard_tui.py`, `dashboard_panels.py`, `setup/picker.py`, and `resume/_tui.py` implementation moves below `src/memo/tui/`; compatibility modules contain imports only.
 - Markdown files remain the persistent editable source of truth.
 - Existing precedence remains: explicit kwargs > environment > Markdown > tuned overlay > legacy TOML > defaults.
 - `MEMO_NONINTERACTIVE=1` and non-TTY invocations never launch Textual.
@@ -57,6 +57,7 @@ src/memo/tui/
   __init__.py                 # Stable terminal-UI entrypoint exports only
   common.py                   # Semantic theme constants and TTY helpers
   picker.py                   # Existing questionary picker implementation
+  resume.py                   # Existing interactive session-resume implementation
   dashboard/
     __init__.py               # Dashboard exports
     app.py                    # Existing Rich Live dashboard loop
@@ -79,6 +80,8 @@ src/memo/tui/
 - Modify `src/memo/dashboard_tui.py` into a re-export shim.
 - Modify `src/memo/dashboard_panels.py` into a re-export shim.
 - Modify `src/memo/setup/picker.py` into a re-export shim.
+- Modify `src/memo/resume/_tui.py` into a re-export shim.
+- Modify `src/memo/resume/__init__.py` to import the resume picker from `memo.tui.resume`.
 - Modify `src/memo/dashboard.py` to import from `memo.tui.dashboard` directly.
 - Modify `src/memo/setup/__init__.py` to import picker types from `memo.tui.picker`.
 - Modify `src/memo/config_md.py` to consume catalog bindings and expose preserving batch helpers.
@@ -109,6 +112,7 @@ tests/test_cli_init.py
 **Files:**
 - Create: `src/memo/tui/__init__.py`
 - Create: `src/memo/tui/picker.py`
+- Create: `src/memo/tui/resume.py`
 - Create: `src/memo/tui/dashboard/__init__.py`
 - Create: `src/memo/tui/dashboard/app.py`
 - Create: `src/memo/tui/dashboard/panels.py`
@@ -117,11 +121,13 @@ tests/test_cli_init.py
 - Modify: `src/memo/dashboard.py`
 - Modify: `src/memo/setup/picker.py`
 - Modify: `src/memo/setup/__init__.py`
+- Modify: `src/memo/resume/_tui.py`
+- Modify: `src/memo/resume/__init__.py`
 - Create: `tests/test_tui_package.py`
 
 **Interfaces:**
-- Produces: `memo.tui.picker.PickerResult`, `memo.tui.picker.run_picker`, `memo.tui.dashboard.render`, `memo.tui.dashboard.run_tui`.
-- Preserves: imports from `memo.setup.picker`, `memo.dashboard_tui`, and `memo.dashboard_panels`.
+- Produces: `memo.tui.picker.PickerResult`, `memo.tui.picker.run_picker`, `memo.tui.resume.pick_resume_candidate_interactive`, `memo.tui.dashboard.render`, `memo.tui.dashboard.run_tui`.
+- Preserves: imports from `memo.setup.picker`, `memo.resume._tui`, `memo.dashboard_tui`, and `memo.dashboard_panels`.
 - Consumes: existing Rich dashboard and questionary picker behavior unchanged.
 
 - [ ] **Step 1: Write compatibility tests**
@@ -152,13 +158,21 @@ def test_dashboard_compatibility_exports_are_identical() -> None:
     assert old_run is new_run
 
 
+def test_resume_compatibility_exports_are_identical() -> None:
+    from memo.resume._tui import pick_resume_candidate_interactive as old_picker
+    from memo.tui.resume import pick_resume_candidate_interactive as new_picker
+
+    assert old_picker is new_picker
+
+
 def test_top_level_tui_modules_are_compatibility_shims() -> None:
     from pathlib import Path
     import memo.dashboard_panels
     import memo.dashboard_tui
+    import memo.resume._tui
     import memo.setup.picker
 
-    for module in (memo.dashboard_panels, memo.dashboard_tui, memo.setup.picker):
+    for module in (memo.dashboard_panels, memo.dashboard_tui, memo.resume._tui, memo.setup.picker):
         body = Path(module.__file__).read_text(encoding="utf-8")
         assert "from memo.tui" in body
         assert "def run_tui" not in body
@@ -184,6 +198,7 @@ mkdir -p src/memo/tui/dashboard
 git mv src/memo/dashboard_tui.py src/memo/tui/dashboard/app.py
 git mv src/memo/dashboard_panels.py src/memo/tui/dashboard/panels.py
 git mv src/memo/setup/picker.py src/memo/tui/picker.py
+git mv src/memo/resume/_tui.py src/memo/tui/resume.py
 ```
 
 Update imports in the moved files from `memo.dashboard_panels` to
@@ -227,7 +242,7 @@ paths directly.
 Run:
 
 ```bash
-uv run --no-sync pytest tests/test_tui_package.py tests/test_cli_init.py tests/test_tui_recall_quality.py tests/test_daemon_lever_parity.py -v
+uv run --no-sync pytest tests/test_tui_package.py tests/test_cli_init.py tests/test_tui_recall_quality.py tests/test_daemon_lever_parity.py tests/test_resume.py tests/test_resume_episodes.py -v
 ```
 
 Expected: PASS.

@@ -52,8 +52,8 @@ from memo.dashboard_metrics import (
     referenced_rate,
     verdict,
 )
-from memo.dashboard_panels import _human_age, _human_bytes, sparkline
-from memo.dashboard_tui import render, run_tui
+from memo.tui.dashboard import render, run_tui
+from memo.tui.dashboard.panels import _human_age, _human_bytes, sparkline
 
 __all__ = [
     "EXPECTED_CONSUMERS",

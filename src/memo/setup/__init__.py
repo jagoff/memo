@@ -24,8 +24,8 @@ from memo.setup.config_io import (
     snapshot_config_file,
     write_config_file,
 )
-from memo.setup.picker import PickerResult, run_picker
 from memo.setup.vaults import VaultInfo, detect_obsidian_vaults
+from memo.tui.picker import PickerResult, run_picker
 
 __all__ = [
     "CONFIG_FILE_PATH",

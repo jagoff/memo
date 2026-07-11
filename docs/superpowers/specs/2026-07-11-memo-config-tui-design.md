@@ -150,6 +150,7 @@ tui/
   __init__.py
   common.py
   picker.py
+  resume.py
   dashboard/
     __init__.py
     app.py
@@ -168,8 +169,9 @@ tui/
 ```
 
 As part of this feature, move the implementation currently in
-`dashboard_tui.py`, `dashboard_panels.py`, and `setup/picker.py` into this
-package while retaining compatibility imports for existing internal callers.
+`dashboard_tui.py`, `dashboard_panels.py`, `setup/picker.py`, and
+`resume/_tui.py` into this package while retaining compatibility imports for
+existing internal callers.
 Top-level `cli_tui.py` and `cli_config.py` remain wiring-only modules because
 repo conventions require CLI surfaces in `cli_<domain>.py`; they lazy-import
 the corresponding `memo.tui` entrypoints and contain no widgets, layout, theme,
@@ -650,8 +652,9 @@ The feature is complete when:
 11. Existing headless config commands remain compatible and tests never touch
     the real vault or state directory.
 12. Ruff, mypy, focused suites, CI-parity pytest, and macOS smoke pass.
-13. All TUI implementation, including the existing dashboard and picker, lives
-    below `src/memo/tui/`; top-level CLI modules contain only lazy wiring.
+13. All TUI implementation, including the existing dashboard, picker, and
+    resume selector, lives below `src/memo/tui/`; top-level CLI modules contain
+    only lazy wiring.
 
 ## Implementation Order
 
