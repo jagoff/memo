@@ -58,6 +58,20 @@ def test_config_set_show_and_unset(tmp_path: Path) -> None:
     assert unset_result.exit_code == 0, unset_result.output
 
 
+def test_config_set_and_unset_reject_runtime_only_keys(tmp_path: Path) -> None:
+    runner = CliRunner()
+    env = _env(tmp_path)
+
+    for command in (
+        ["config", "set", "misc.noninteractive", "on"],
+        ["config", "unset", "misc.noninteractive"],
+    ):
+        result = runner.invoke(cli, command, env=env)
+
+        assert result.exit_code != 0
+        assert "runtime-only" in result.output
+
+
 def test_config_show_effective_uses_environment_over_markdown(tmp_path: Path) -> None:
     runner = CliRunner()
     env = {**_env(tmp_path), "MEMO_RECALL_TOP_K": "2"}

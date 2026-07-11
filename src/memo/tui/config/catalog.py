@@ -467,20 +467,66 @@ def catalog_by_key() -> dict[str, SettingSpec]:
 
 @cache
 def path_to_env() -> dict[str, str]:
-    return {spec.key: spec.env_name for spec in build_catalog() if spec.env_name}
+    """Return Markdown path to env bindings without importing ``Config``.
+
+    ``memo.config`` consults Markdown while its module is still importing, so
+    low-level binding lookups must not construct the enriched catalog (which
+    reads Pydantic field metadata from ``Config``).
+    """
+    from memo.flags import REGISTRY
+
+    paths = {binding.key: binding.env_name for binding in FIELD_BINDINGS}
+    paths.update({_flag_path(env_name, flag.group): env_name for env_name, flag in REGISTRY.items()})
+    return paths
 
 
 @cache
 def path_to_field() -> dict[str, str]:
-    return {spec.key: spec.config_field for spec in build_catalog() if spec.config_field}
+    return {binding.key: binding.field for binding in FIELD_BINDINGS}
+
+
+def persistence_policy_for_key(key: str) -> PersistencePolicy:
+    """Return the persistence policy using only cycle-safe binding metadata."""
+    env_name = path_to_env().get(key)
+    if env_name is None:
+        raise KeyError(f"unknown config key {key!r}")
+    if env_name in RUNTIME_ONLY_ENV_NAMES:
+        return PersistencePolicy.RUNTIME_ONLY
+    if env_name in SENSITIVE_ENV_NAMES:
+        return PersistencePolicy.SECRET
+    return PersistencePolicy.PERSISTENT
+
+
+def setting_kind_for_key(key: str) -> SettingKind:
+    """Return a setting kind without constructing the enriched catalog."""
+    for binding in FIELD_BINDINGS:
+        if binding.key == key:
+            return binding.kind
+
+    from memo.flags import REGISTRY
+
+    env_name = path_to_env().get(key)
+    if env_name is None:
+        raise KeyError(f"unknown config key {key!r}")
+    return {
+        "bool": SettingKind.BOOL,
+        "int": SettingKind.INT,
+        "float": SettingKind.FLOAT,
+        "str": SettingKind.STR,
+    }[REGISTRY[env_name].kind]
 
 
 def domain_file_for_key(key: str) -> str:
-    try:
-        spec = catalog_by_key()[key]
-    except KeyError as exc:
-        raise KeyError(f"unknown config key {key!r}") from exc
-    return DOMAIN_TO_FILE[spec.domain]
+    for binding in FIELD_BINDINGS:
+        if binding.key == key:
+            return DOMAIN_TO_FILE[binding.domain]
+
+    from memo.flags import REGISTRY
+
+    env_name = path_to_env().get(key)
+    if env_name is None:
+        raise KeyError(f"unknown config key {key!r}")
+    return DOMAIN_TO_FILE[GROUP_TO_DOMAIN[REGISTRY[env_name].group]]
 
 
 __all__ = [
@@ -496,4 +542,6 @@ __all__ = [
     "domain_file_for_key",
     "path_to_env",
     "path_to_field",
+    "persistence_policy_for_key",
+    "setting_kind_for_key",
 ]

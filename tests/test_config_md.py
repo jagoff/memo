@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from memo import config_md
 
 
@@ -311,3 +313,40 @@ def test_set_and_unset_value_rewrite_domain_block(tmp_path: Path) -> None:
 
     config_md.unset_value("recall.top_k", env={"MEMO_CONFIG_DIR": str(home)})
     assert "MEMO_RECALL_TOP_K" not in config_md.flag_values({"MEMO_CONFIG_DIR": str(home)})
+
+
+def test_runtime_only_key_is_rejected_in_markdown(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "advanced-config.md").write_text(
+        '```toml\n[misc]\nnoninteractive = "on"\n```\n',
+        encoding="utf-8",
+    )
+
+    problems = config_md.validate_markdown_config({"MEMO_CONFIG_DIR": str(home)})
+
+    assert any("runtime-only" in problem.error for problem in problems)
+    assert "misc.noninteractive" not in config_md.load_values({"MEMO_CONFIG_DIR": str(home)})
+
+
+def test_set_value_refuses_runtime_only_key(tmp_path: Path) -> None:
+    env = {"MEMO_CONFIG_DIR": str(tmp_path / "memo-home")}
+
+    with pytest.raises(ValueError, match="runtime-only"):
+        config_md.set_value("misc.noninteractive", "on", env)
+    with pytest.raises(ValueError, match="runtime-only"):
+        config_md.unset_value("misc.noninteractive", env)
+
+
+def test_configured_values_keeps_source_file(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    path = cfg / "recall-config.md"
+    path.write_text("```toml\n[recall]\ntop_k = 7\n```\n", encoding="utf-8")
+
+    value = config_md.configured_values({"MEMO_CONFIG_DIR": str(home)})["recall.top_k"]
+
+    assert value.value == 7
+    assert value.file == str(path)

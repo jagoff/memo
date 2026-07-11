@@ -149,7 +149,7 @@ def config_unset(key: str) -> None:
 
     try:
         path = unset_value(key)
-    except KeyError as exc:
+    except (KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     problems = validate_markdown_config()
     if problems:

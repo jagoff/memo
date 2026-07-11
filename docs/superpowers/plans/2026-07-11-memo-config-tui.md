@@ -508,7 +508,10 @@ Expected: checks PASS and commit succeeds.
 - Modify: `tests/test_cli_config.py`
 
 **Interfaces:**
-- Consumes `path_to_env()`, `path_to_field()`, `domain_file_for_key()`, and `catalog_by_key()` from Task 2.
+- Consumes cycle-safe `path_to_env()`, `path_to_field()`,
+  `domain_file_for_key()`, `setting_kind_for_key()`, and
+  `persistence_policy_for_key()` lookups from Task 2. The enriched
+  `catalog_by_key()` remains for the TUI after `Config` finishes importing.
 - Preserves all existing public `config_md` functions.
 - Produces `configured_values(env) -> dict[str, ConfigValue]` as the canonical source-aware read surface.
 - Rejects runtime-only, secret, and derived keys in Markdown validation and write paths.
@@ -570,8 +573,8 @@ def configured_values(env: Mapping[str, str] | None = None) -> dict[str, ConfigV
     return dict(load_values(env))
 ```
 
-Before accepting or writing a known key, resolve its `SettingSpec`. Raise or
-return `ConfigProblem` with one of these exact messages:
+Before accepting or writing a known key, resolve its persistence policy. Raise
+or return `ConfigProblem` with one of these exact messages:
 
 ```text
 runtime-only setting cannot be persisted
