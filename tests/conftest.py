@@ -74,6 +74,27 @@ os.environ.setdefault(
 os.environ["MEMO_SUPPORT_CONFIDENCE_LIFT"] = "0"
 os.environ["MEMO_SUPERSEDE_SUPPORT_GATE"] = "0"
 
+# Trust & belief-revision program flags (memo v3.0.0+). A machine running the
+# *activated* trust program exports these via ~/.claude/settings.json `env` (and
+# the launchd fleet), and Claude Code passes them down to a `pytest` subprocess —
+# so the render tests that assert a flag's DEFAULT (no `_trust_`/`⚔` line when
+# MEMO_HIT_DOSSIER is off, etc.) fail as a false positive that never reproduces in
+# CI. Drop them so the suite is hermetic on an activated dev machine; tests that
+# exercise a flag opt back in via `monkeypatch.setenv` / `CliRunner(env=...)`.
+for _trust_flag in (
+    "MEMO_HIT_DOSSIER",
+    "MEMO_RECALL_EPISTEMIC_LABELS",
+    "MEMO_DECLARE_DISPUTES",
+    "MEMO_CONTRADICT_PENALTY_ENABLED",
+    "MEMO_GROUNDING_JUDGE",
+    "MEMO_GROUNDING_ASK_MIN",
+    "MEMO_CLAIM_SUPPORT",
+    "MEMO_BELIEF_COMPETING",
+    "MEMO_BELIEF_NWAY",
+    "MEMO_FLOOR_CALIBRATION",
+):
+    os.environ.pop(_trust_flag, None)
+
 
 @pytest.fixture
 def mem_with_stub(tmp_cfg: Config, monkeypatch):
