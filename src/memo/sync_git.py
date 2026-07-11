@@ -329,6 +329,23 @@ def _read_pending_reason(cfg: Config) -> str | None:
     return None
 
 
+def _nudge_stamp(cfg: Config) -> Path:
+    """Machine-local marker that silences the sync-onboarding briefing nudge."""
+    return cfg.state_dir / ".sync_nudge_dismissed"
+
+
+def sync_nudge_dismissed(cfg: Config) -> bool:
+    """True once the user ran `memo sync setup --never` on this machine."""
+    return _nudge_stamp(cfg).is_file()
+
+
+def dismiss_sync_nudge(cfg: Config) -> None:
+    """Persist the dismiss marker (idempotent). Machine-local, never synced."""
+    stamp = _nudge_stamp(cfg)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text("", encoding="utf-8")
+
+
 def _scan_staged_secrets(root: Path) -> list[str]:
     """Scan ADDED lines of staged `.md` diffs for secrets — pattern tier only
     (never entropy: a push block must not false-positive on the hashes/ids
@@ -678,3 +695,33 @@ def sync_init_home(cfg: Config, private: bool = True) -> dict:
         remote_url = _git(root, "remote", "get-url", "origin").stdout.strip()
 
     return {"repo_url": remote_url, "branch": _current_branch(root), "local_dir": str(root)}
+
+
+def sync_init_home_byo(cfg: Config, url: str) -> dict:
+    """Init cloud sync against a user-provided EMPTY remote — the no-`gh` mirror
+    of ``sync_init_home``.
+
+    For users without the GitHub CLI: they create an empty private repo
+    themselves and paste its URL. This git-inits the memories dir if needed,
+    sets ``origin`` to ``url``, commits any existing memories, and pushes.
+    """
+    root_candidate = cfg.memory_dir.parent
+    if not (root_candidate / ".git").exists():
+        _git(root_candidate, "init", "-b", "main")
+
+    root = git_root_for(cfg)
+
+    existing = _git(root, "remote", "get-url", "origin", check=False)
+    if existing.returncode == 0:
+        _git(root, "remote", "set-url", "origin", url)
+    else:
+        _git(root, "remote", "add", "origin", url)
+
+    _git(root, "add", "-A")
+    # Even with no memories yet, make a real (possibly empty) initial commit so
+    # HEAD is born — otherwise a brand-new user running the create path before
+    # saving anything lands on an unborn branch and _current_branch()/push fail.
+    _git(root, "commit", "--allow-empty", "-m", "memo: initial memory corpus")
+    branch = _current_branch(root)
+    _git(root, "push", "-u", "origin", branch)
+    return {"repo_url": url, "branch": branch, "local_dir": str(root)}

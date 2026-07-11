@@ -119,6 +119,15 @@ def briefing(*, compact: bool) -> None:
         else:
             compact_lines.append("No recent session in this project.")
         context = compact_text("\n".join(compact_lines), max_chars=480)
+        # Sync-onboarding nudge — honest (only when no remote is configured),
+        # dismissable, appended AFTER the cap so it is never truncated away.
+        from memo.sync_git import sync_nudge_dismissed, sync_tier
+
+        if sync_tier(cfg) == "local" and not sync_nudge_dismissed(cfg):
+            context += (
+                "\n💡 memo sync off — compartí entre Macs: `memo sync setup` "
+                "(ocultar: `memo sync setup --never`)"
+            )
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",

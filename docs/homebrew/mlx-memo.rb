@@ -3,10 +3,10 @@
 # Lives in this source tree as a reference copy. To activate it for
 # end users, mirror this file to a tap repo named `homebrew-memo`
 # under your GitHub user (see `docs/homebrew/README.md`).
-# This file tracks the latest published PyPI sdist, not necessarily the
-# in-flight source-tree version; update only after the sdist exists and
-# the sha256 has been calculated.
-# TODO: update to 2.12.14 after sdist is published on PyPI.
+# This file tracks the latest released git tag via GitHub's auto-generated
+# source tarball (no PyPI publish required). On each release, bump the tag
+# in the url below and recompute its sha256 by piping that tarball through
+# `shasum -a 256`.
 #
 # Users then install with:
 #
@@ -20,8 +20,8 @@
 class MlxMemo < Formula
   desc "Local MCP memory for AI agents — MLX-native, sqlite-vec, markdown vault"
   homepage "https://github.com/jagoff/memo"
-  url "https://files.pythonhosted.org/packages/source/m/mlx-memo/mlx_memo-2.9.7.tar.gz"
-  sha256 "4e90be465e26d7ed253b20c0a80d0e701aec5bde6d06caa321cb1512038aeee7"
+  url "https://github.com/jagoff/memo/archive/refs/tags/v3.1.0.tar.gz"
+  sha256 "977e4dfa9691bb421ff9305b20ad48f49193c1a857fa42ade6541e2ad47ca0fc"
   license "MIT"
 
   depends_on :macos

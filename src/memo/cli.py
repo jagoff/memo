@@ -587,6 +587,9 @@ def _run_picker_and_save() -> None:
             "[dim](used by `memo ingest`)[/dim]",
         )
     console.print(f"[dim]config saved: {written[0].parent}[/dim]")
+    console.print(
+        "💡 Tip: sincronizá memorias entre Macs → `memo sync setup` cuando quieras"
+    )
 
 
 def main() -> None:
