@@ -313,7 +313,20 @@ def maintain_cmd(
                 stdout=_sp.DEVNULL,
                 stderr=_sp.DEVNULL,
                 start_new_session=True,
-                env={**_os.environ, "MEMO_NONINTERACTIVE": "1"},
+                # Route the scan's embeds through the warm recall daemon: they
+                # serialize in its queue instead of cold-loading a 2nd embedder
+                # and grabbing the GPU cross-process flock independently, which
+                # starves the live recall daemon (recall_lock_bail on
+                # embed_query) for the whole maintain window. Falls back to
+                # in-process automatically if the daemon is down; respects an
+                # explicit override.
+                env={
+                    **_os.environ,
+                    "MEMO_NONINTERACTIVE": "1",
+                    "MEMO_EMBEDDER_VIA_DAEMON": _os.environ.get(
+                        "MEMO_EMBEDDER_VIA_DAEMON", "1"
+                    ),
+                },
             )
         except Exception as exc:
             _log.warning("maintain --if-due: failed to spawn background maintain: %s", exc)

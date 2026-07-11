@@ -68,6 +68,38 @@ def test_if_due_disabled_by_env(tmp_path: Path):
     assert result.output.strip() == ""
 
 
+def test_if_due_spawns_maintain_routed_through_daemon(tmp_path: Path):
+    """The detached daily maintain routes its embeds through the warm recall
+    daemon (MEMO_EMBEDDER_VIA_DAEMON=1) so its GPU forward passes serialize in
+    the daemon's queue instead of grabbing the cross-process flock independently
+    and starving live recall (recall_lock_bail on embed_query)."""
+    # conftest pins MEMO_EMBEDDER_VIA_DAEMON=0 for isolation; unset it here so the
+    # spawn exercises its production default (unset → "1").
+    env = {**_env(tmp_path), "MEMO_EMBEDDER_VIA_DAEMON": None}
+    with patch("subprocess.Popen") as popen:
+        result = CliRunner().invoke(cli, ["maintain", "--if-due"], env=env)
+    assert result.exit_code == 0, result.output
+    popen.assert_called_once()
+    args, kwargs = popen.call_args
+    assert args[0] == ["memo", "maintain", "--max-pairs", "50", "--max-scan-seconds", "300"]
+    assert kwargs["start_new_session"] is True
+    assert kwargs["env"]["MEMO_NONINTERACTIVE"] == "1"
+    assert kwargs["env"]["MEMO_EMBEDDER_VIA_DAEMON"] == "1"
+
+
+def test_if_due_respects_explicit_via_daemon_override(tmp_path: Path):
+    """An explicit MEMO_EMBEDDER_VIA_DAEMON in the environment is not clobbered."""
+    with patch("subprocess.Popen") as popen:
+        result = CliRunner().invoke(
+            cli,
+            ["maintain", "--if-due"],
+            env={**_env(tmp_path), "MEMO_EMBEDDER_VIA_DAEMON": "0"},
+        )
+    assert result.exit_code == 0, result.output
+    _, kwargs = popen.call_args
+    assert kwargs["env"]["MEMO_EMBEDDER_VIA_DAEMON"] == "0"
+
+
 def test_dry_run_on_empty_corpus_is_safe_noop(tmp_path: Path):
     result = CliRunner().invoke(cli, ["maintain", "--dry-run", "--json"], env=_env(tmp_path))
     assert result.exit_code == 0, result.output
