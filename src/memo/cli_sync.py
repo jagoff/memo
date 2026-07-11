@@ -13,6 +13,8 @@ Two tiers (see CLAUDE.md):
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 from pathlib import Path
 
 import click
@@ -20,6 +22,13 @@ import click
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.sync_git import (
+    bootstrap_clone,
+    dismiss_sync_nudge,
+    sync_init_home,
+    sync_init_home_byo,
+)
+from memo.sync_signal import import_signal, signal_dir_for
 
 
 def _resolve_remote_history_db(remote: str | None) -> Path | None:
@@ -70,8 +79,6 @@ def sync_import_signal(as_json: bool) -> None:
 
     Idempotent: access = max, health = newer wins, feedback = union by id.
     """
-    from memo.sync_signal import import_signal, signal_dir_for
-
     cfg = Config.from_env()
     mem = _get_memory(cfg)
     sig = signal_dir_for(cfg)
@@ -242,9 +249,6 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
 
     Example: memo sync bootstrap https://github.com/jagoff/memo-sync.git
     """
-    from memo.sync_git import bootstrap_clone
-    from memo.sync_signal import import_signal, signal_dir_for
-
     dest_path = Path(dest).expanduser() if dest else Path.home() / "repos" / "memo-sync"
     out = bootstrap_clone(url, dest_path)
 
@@ -278,7 +282,7 @@ def sync_init(public: bool, as_json: bool) -> None:
     memories directory, and pushes. Use the displayed URL to `memo sync clone`
     on other devices.
     """
-    from memo.sync_git import SyncGitError, sync_init_home
+    from memo.sync_git import SyncGitError
 
     cfg = Config.from_env()
     try:
@@ -472,3 +476,94 @@ def sync_both(remote: str) -> None:
     console.print(f"Applied: {diff.applied}")
     console.print(f"Conflicts: {diff.conflicts}")
     console.print(f"Errors: {diff.errors}")
+
+
+def _gh_available() -> bool:
+    """True when the GitHub CLI is installed AND authenticated."""
+    if shutil.which("gh") is None:
+        return False
+    import subprocess
+
+    try:
+        probe = subprocess.run(
+            ["gh", "auth", "status"], capture_output=True, text=True, timeout=15
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0
+
+
+def _run_sync_setup(cfg: Config, choice: str, url: str | None, *, gh_ok: bool) -> dict | None:
+    """Pure dispatch for `memo sync setup` — no prompting, no TTY. Returns the
+    result dict, or None when the user cancels. Split from the Click shell so it
+    is unit-testable without fighting the non-interactive guard."""
+    if choice == "1":
+        if gh_ok:
+            return sync_init_home(cfg, private=True)
+        return sync_init_home_byo(cfg, url or "")
+    if choice == "2":
+        out = bootstrap_clone(url or "", Path.home() / "repos" / "memo-sync")
+        cfg2 = Config.from_env(data_dir=Path(out["memories_dir"]))
+        mem = _get_memory(cfg2)
+        out["reindexed"] = mem.reindex(rebuild=True)
+        out["signal"] = import_signal(mem.store, signal_dir_for(cfg2))
+        out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
+        return out
+    return None
+
+
+@sync_group.command(name="setup")
+@click.option("--never", "never", is_flag=True, help="Silence the sync-onboarding nudge on this machine.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def sync_setup(never: bool, as_json: bool) -> None:
+    """Guided setup to share memories across machines (git-backed corpus).
+
+    Skippable at every step — cancel and you stay local-only. `--never` silences
+    the periodic nudge without configuring anything.
+    """
+    from memo.flags import flag_bool
+
+    cfg = Config.from_env()
+
+    if never:
+        dismiss_sync_nudge(cfg)
+        console.print("[green]✓[/green] nudge silenciado. Activá cuando quieras: `memo sync setup`")
+        return
+
+    # Never prompt from hooks / pipes.
+    if flag_bool("MEMO_NONINTERACTIVE") or not sys.stdin.isatty():
+        console.print("Compartí memorias entre Macs con [cyan]memo sync setup[/cyan] (modo interactivo).")
+        return
+
+    console.print("[bold]memo sync setup[/bold] — compartí memorias entre máquinas.\n")
+    console.print("  1) Crear corpus nuevo (esta es mi 1ra Mac)")
+    console.print("  2) Unirme a uno existente (pegás la URL)")
+    console.print("  3) Cancelar\n")
+    choice = click.prompt("Elegí", type=click.Choice(["1", "2", "3"]), default="3")
+
+    gh_ok = False
+    url: str | None = None
+    if choice == "1":
+        gh_ok = _gh_available()
+        if not gh_ok:
+            console.print(
+                "\nNo encontré `gh`. Creá un repo [bold]privado vacío[/bold] "
+                "(GitHub/GitLab/donde quieras) y pegá su URL.\n"
+            )
+            url = click.prompt("URL del repo vacío")
+    elif choice == "2":
+        url = click.prompt("URL del repo memo-sync")
+
+    out = _run_sync_setup(cfg, choice, url, gh_ok=gh_ok)
+    if out is None:
+        console.print("[yellow]cancelado[/yellow] — seguís en modo local.")
+        return
+    if as_json:
+        click.echo(json.dumps(out, indent=2))
+        return
+    if choice == "1":
+        console.print(f"\n[green]✓[/green] corpus creado → [cyan]{out['repo_url']}[/cyan]")
+        console.print("En tus otras Macs: [cyan]memo sync setup[/cyan] → opción 2 (unirme), pegá esa URL.")
+    else:
+        console.print(f"\n[green]✓[/green] unido → data_dir = [cyan]{out['memories_dir']}[/cyan]")
+        console.print("[bold green]Listo.[/bold green] memo ahora lee el corpus git-sincronizado.")

@@ -17,6 +17,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from memo.cli import cli
+from memo.config import Config
 
 
 def _env(tmp_path: Path, **extra: str) -> dict:
@@ -182,3 +183,118 @@ def test_sync_auto_no_remote_exits_cleanly(tmp_path: Path) -> None:
     # fires and reaches the tier check → skipped: "local tier (no remote...)"
     output_lower = result.output.lower()
     assert "traceback" not in output_lower
+
+
+# ---------------------------------------------------------------------------
+# sync setup — guided onboarding wizard
+# ---------------------------------------------------------------------------
+
+
+def test_sync_setup_never_writes_dismiss_stamp(tmp_path):
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "memorias"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    (tmp_path / "memorias").mkdir()
+    r = CliRunner().invoke(cli, ["sync", "setup", "--never"], env=env)
+    assert r.exit_code == 0
+    assert (tmp_path / "state" / ".sync_nudge_dismissed").is_file()
+
+
+def test_sync_setup_noninteractive_prints_hint_no_prompt(tmp_path):
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "memorias"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    (tmp_path / "memorias").mkdir()
+    r = CliRunner().invoke(cli, ["sync", "setup"], env=env)
+    assert r.exit_code == 0
+    assert "memo sync setup" in r.output  # hint mentions the command
+
+
+def test_run_sync_setup_create_with_gh_calls_init_home(tmp_path, monkeypatch):
+    import memo.cli_sync as cs
+
+    calls = {}
+
+    def fake_sync_init_home(cfg, private=True):
+        calls["init"] = {"private": private}
+        return {"repo_url": "u", "branch": "main", "local_dir": "d"}
+
+    monkeypatch.setattr(cs, "sync_init_home", fake_sync_init_home)
+    cfg = Config(data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)
+    out = cs._run_sync_setup(cfg, "1", None, gh_ok=True)
+    assert calls["init"]["private"] is True
+    assert out["repo_url"] == "u"
+
+
+def test_run_sync_setup_create_without_gh_calls_byo(tmp_path, monkeypatch):
+    import memo.cli_sync as cs
+
+    calls = {}
+
+    def fake_sync_init_home_byo(cfg, url):
+        calls["url"] = url
+        return {"repo_url": url, "branch": "main", "local_dir": "d"}
+
+    monkeypatch.setattr(cs, "sync_init_home_byo", fake_sync_init_home_byo)
+    cfg = Config(data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)
+    out = cs._run_sync_setup(cfg, "1", "https://example.com/x.git", gh_ok=False)
+    assert calls["url"] == "https://example.com/x.git"
+    assert out["repo_url"] == "https://example.com/x.git"
+
+
+def test_run_sync_setup_join_calls_bootstrap(tmp_path, monkeypatch):
+    import memo.cli_sync as cs
+
+    calls = {}
+
+    def fake_bootstrap_clone(url, dest, config_path=None):
+        calls["url"] = url
+        return {"cloned": str(dest), "memories": 0, "memories_dir": str(dest / "memorias")}
+
+    monkeypatch.setattr(cs, "bootstrap_clone", fake_bootstrap_clone)
+
+    class _FakeStore:
+        @staticmethod
+        def rebuild_feedback_vecs(*a, **k):
+            return 0
+
+    class _FakeMem:
+        store = _FakeStore()
+
+        class embedder:
+            @staticmethod
+            def embed_query(*a, **k):
+                return []
+
+        def reindex(self, rebuild=False):
+            return 0
+
+    monkeypatch.setattr(cs, "_get_memory", lambda cfg: _FakeMem())
+    monkeypatch.setattr(cs, "import_signal", lambda *a, **k: 0)
+    monkeypatch.setattr(cs, "signal_dir_for", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(cs.Config, "from_env", staticmethod(lambda **kw: Config(
+        data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)))
+
+    cfg = Config(data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)
+    out = cs._run_sync_setup(cfg, "2", "https://example.com/memo-sync.git", gh_ok=False)
+    assert calls["url"] == "https://example.com/memo-sync.git"
+    assert out["reindexed"] == 0
+
+
+def test_run_sync_setup_cancel_returns_none(tmp_path):
+    import memo.cli_sync as cs
+
+    cfg = Config(data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)
+    assert cs._run_sync_setup(cfg, "3", None, gh_ok=False) is None
