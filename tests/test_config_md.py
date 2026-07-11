@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from memo import config_md
@@ -45,6 +48,33 @@ def test_index_toml_is_read_and_validated(tmp_path: Path) -> None:
 
     assert config_md.flag_values(env)["MEMO_RECALL_TOP_K"] == "7"
     assert config_md.validate_markdown_config(env) == []
+
+
+def test_markdown_flags_do_not_cycle_during_config_import(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n[recall]\ntop_k = 7\n```\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "MEMO_CONFIG_DIR": str(home),
+        "MEMO_CONFIG_FILE": str(tmp_path / "missing.toml"),
+    }
+
+    proc = subprocess.run(
+        [sys.executable, "-c", "from memo.config import Config; print(Config.__name__)"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "Config"
 
 
 def test_invalid_index_value_is_validated_before_domain_override(tmp_path: Path) -> None:

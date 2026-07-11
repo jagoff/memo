@@ -745,12 +745,33 @@ names remain hidden compatibility aliases.
 All env vars are optional; defaults aim at a fresh Apple Silicon Mac (or a
 Linux/Ubuntu `[cpu]` install — see [ubuntu.md](ubuntu.md)). On first
 run in an interactive shell, an arrow-key picker asks where memories should live
-and persists the choice to `~/.config/memo/config.toml`. Re-run it with
-`memo init`. Hooks get `MEMO_NONINTERACTIVE=1` so they never trigger the picker.
+and persists the choice to human-editable Markdown config:
+
+```text
+~/.config/memo/memo-config.md
+~/.config/memo/config/*-config.md
+```
+
+Re-run it with `memo init`. Hooks get `MEMO_NONINTERACTIVE=1` so they never
+trigger the picker. Environment variables still override Markdown for temporary
+runtime changes. The old `~/.config/memo/config.toml` is a legacy fallback and
+migration source; new installs should use Markdown config.
 
 Resolution precedence (highest first): explicit kwargs → `MEMO_*` env vars →
-`~/.config/memo/config.toml` → legacy `MEMO_VAULT_PATH` + `MEMO_MEMORY_SUBDIR` →
-hardcoded defaults.
+Markdown config → tuned local overlay for supported flags → legacy
+`~/.config/memo/config.toml` → legacy `MEMO_VAULT_PATH` + `MEMO_MEMORY_SUBDIR`
+→ hardcoded defaults.
+
+Useful config commands:
+
+```bash
+memo config init
+memo config show --effective
+memo config set recall.top_k 5
+memo config unset recall.top_k
+memo config validate
+memo config migrate
+```
 
 **Storage & paths**
 
@@ -759,7 +780,8 @@ hardcoded defaults.
 | `MEMO_DATA_DIR` | `~/Documents/memo` | Where memory `.md` files live |
 | `MEMO_VAULT_PATH` | `(unset)` | Optional Obsidian vault for `memo ingest` |
 | `MEMO_STATE_DIR` | `~/.local/share/memo` | sqlite-vec DB + state |
-| `MEMO_CONFIG_FILE` | `~/.config/memo/config.toml` | Override config-file path |
+| `MEMO_CONFIG_DIR` | `~/.config/memo` | Override Markdown config home |
+| `MEMO_CONFIG_FILE` | `~/.config/memo/config.toml` | Override legacy TOML config path |
 | `MEMO_NONINTERACTIVE` | unset | Set to `1` in hooks to skip the first-run picker |
 
 **Models**

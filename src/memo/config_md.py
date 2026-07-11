@@ -219,7 +219,9 @@ def _validate_mapped_values(values: Mapping[str, ConfigValue]) -> list[ConfigPro
     return problems
 
 
-def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[ConfigProblem]]:
+def _read_uncached(
+    paths: list[Path], *, validate_values: bool
+) -> tuple[dict[str, ConfigValue], list[ConfigProblem]]:
     flag_paths = _flag_path_map()
     values: dict[str, ConfigValue] = {}
     problems: list[ConfigProblem] = []
@@ -255,8 +257,12 @@ def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[Conf
                     env_name=env_name,
                     field_name=field_name,
                 )
-                # Validate each occurrence before a later file can override it.
-                problems.extend(_validate_mapped_values({key: config_value}))
+                # Validation mode checks each occurrence before a later file
+                # can override it. Plain load mode intentionally skips this so
+                # flags can read Markdown during memo.config import without a
+                # Config -> flags -> config_md -> Config cycle.
+                if validate_values:
+                    problems.extend(_validate_mapped_values({key: config_value}))
                 values[key] = config_value
     return values, problems
 
@@ -264,11 +270,11 @@ def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[Conf
 def load_values(env: Mapping[str, str] | None = None) -> dict[str, ConfigValue]:
     paths = _config_paths(env)
     sig = _signature(paths)
-    cache_key = str(config_home(env))
+    cache_key = f"{config_home(env)}|load"
     cached = _cache.get(cache_key)
     if cached and cached[0] == sig:
         return cached[1]
-    values, problems = _read_uncached(paths)
+    values, problems = _read_uncached(paths, validate_values=False)
     _cache[cache_key] = (sig, values, problems)
     return values
 
@@ -276,11 +282,11 @@ def load_values(env: Mapping[str, str] | None = None) -> dict[str, ConfigValue]:
 def validate_markdown_config(env: Mapping[str, str] | None = None) -> list[ConfigProblem]:
     paths = _config_paths(env)
     sig = _signature(paths)
-    cache_key = str(config_home(env))
+    cache_key = f"{config_home(env)}|validate"
     cached = _cache.get(cache_key)
     if cached and cached[0] == sig:
         return cached[2]
-    values, problems = _read_uncached(paths)
+    values, problems = _read_uncached(paths, validate_values=True)
     _cache[cache_key] = (sig, values, problems)
     return problems
 

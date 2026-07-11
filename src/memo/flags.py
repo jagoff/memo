@@ -184,6 +184,7 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_RERANK_INPUT_K",
         "MEMO_MAX_CONTENT_CHARS",
         "MEMO_SEARCH_DEFAULT_LIMIT",
+        "MEMO_CONFIG_DIR",
         "MEMO_CONFIG_FILE",
         # Runtime shim/control vars. These are exported between wrapper processes
         # for IPC/idempotency, not user-configurable MEMO_* knobs.

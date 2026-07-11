@@ -77,7 +77,11 @@ def test_validate_clean_env_is_empty() -> None:
 
 
 def test_owned_config_vars_not_flagged_unknown() -> None:
-    env = {"MEMO_DATA_DIR": "/tmp/x", "MEMO_RERANKER_REVISION": "abc123"}
+    env = {
+        "MEMO_CONFIG_DIR": "/tmp/memo-config",
+        "MEMO_DATA_DIR": "/tmp/x",
+        "MEMO_RERANKER_REVISION": "abc123",
+    }
     assert flags.unknown_memo_vars(env=env) == []
 
 
