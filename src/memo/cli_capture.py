@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -352,6 +353,54 @@ def _print_candidate_detail(candidate: ResumeCandidate) -> None:
     )
 
 
+def _candidate_summary_text(candidate: ResumeCandidate, *, max_chars: int = 360) -> str:
+    text = (candidate.summary or candidate.title or "").strip()
+    if not text:
+        text = f"{candidate.agent} session {candidate.session_id[:12]}"
+    text = " ".join(text.split())
+    if len(text) > max_chars:
+        return text[: max_chars - 1].rstrip() + "…"
+    return text
+
+
+def _candidate_recent_prompts(candidate: ResumeCandidate) -> list[str]:
+    raw = candidate.metadata.get("prompt_trail")
+    if not isinstance(raw, list):
+        return []
+    prompts = [str(item).strip() for item in raw if isinstance(item, str) and item.strip()]
+    return prompts[-2:]
+
+
+def _print_candidate_resume_list(candidates: list[ResumeCandidate]) -> None:
+    """Render resumable sessions as continuity notes, not a cramped id table."""
+    from pathlib import Path as _Path
+
+    from memo.resume._utils import _format_relative_time
+
+    for index, c in enumerate(candidates, start=1):
+        when = _format_relative_time(c.updated_at) or "—"
+        status = f" · {c.status}" if c.status else ""
+        resume_cmd = " ".join(c.resume_command) if c.resume_command else "(context resume)"
+        cwd_label = str(_Path(c.cwd).name) if c.cwd else "—"
+        console.print(
+            f"[bold]{index}. {escape(_candidate_summary_text(c))}[/bold]\n"
+            f"   [dim]{escape(when)} · {escape(c.agent)}{escape(status)} · "
+            f"{escape(c.session_id[:12])} · {escape(cwd_label)}[/dim]\n"
+            f"   [dim]cwd:[/dim] {escape(c.cwd or '—')}\n"
+            f"   [dim]resume:[/dim] [cyan]{escape(resume_cmd)}[/cyan]"
+        )
+        prompts = _candidate_recent_prompts(c)
+        if prompts:
+            console.print("   [dim]recent prompts:[/dim]")
+            for prompt in prompts:
+                short = " ".join(prompt.split())
+                if len(short) > 160:
+                    short = short[:159].rstrip() + "…"
+                console.print(f"   - {escape(short)}")
+        if index != len(candidates):
+            console.print()
+
+
 def _resume_federated(
     *,
     session_id: str | None,
@@ -380,7 +429,7 @@ def _resume_federated(
         pick_resume_candidate_interactive,
         resolve_resume_candidate,
     )
-    from memo.resume._utils import _format_relative_time, _same_cwd
+    from memo.resume._utils import _same_cwd
 
     cwd = cwd_filter or os.getcwd()
     interactive = (
@@ -473,25 +522,8 @@ def _resume_federated(
             return
         sys.exit(execute_resume_candidate(candidate))
 
-    # Non-TTY (piped / captured): static table.
-    tbl = Table(show_lines=False, expand=True)
-    tbl.add_column("when", width=10)
-    tbl.add_column("agent", width=9)
-    tbl.add_column("status", width=7)
-    tbl.add_column("session", width=12, overflow="fold")
-    tbl.add_column("summary", overflow="fold")
-    tbl.add_column("resume", overflow="fold")
-    for c in candidates:
-        resume_cmd = " ".join(c.resume_command) if c.resume_command else "(context)"
-        tbl.add_row(
-            _format_relative_time(c.updated_at) or "—",
-            c.agent,
-            c.status or "—",
-            c.session_id[:10],
-            (c.summary or c.title or "—")[:100],
-            resume_cmd,
-        )
-    console.print(tbl)
+    # Non-TTY (piped / captured): prioritize continuity over a cramped table.
+    _print_candidate_resume_list(candidates)
     console.print(
         "[dim]Resume: `memo resume <session> --agent all` "
         "(or copy a `resume` command above).[/dim]"

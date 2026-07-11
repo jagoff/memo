@@ -278,6 +278,7 @@ def test_memo_snapshot_provider_reads_own_sessions(tmp_path: Path) -> None:
                 "cwd": str(cwd),
                 "project": "repo",
                 "summary": "memo snapshot work",
+                "prompt_trail": ["first prompt", "continue the important part"],
                 "updated": "2026-05-23T10:00:00+00:00",
                 "created": "2026-05-23T09:00:00+00:00",
                 "turn_count": 3,
@@ -297,6 +298,7 @@ def test_memo_snapshot_provider_reads_own_sessions(tmp_path: Path) -> None:
     assert rows[0].resume_mode == "native_resume"
     assert rows[0].resume_command == ["claude", "--resume", "memo-sess-1"]
     assert rows[0].summary == "memo snapshot work"
+    assert rows[0].metadata["prompt_trail"] == ["first prompt", "continue the important part"]
 
 
 # ── orchestration: merge / format / relative time / execute ───────────────────
@@ -680,6 +682,56 @@ def test_resume_cli_bare_default_federates(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "codex" in result.output
+
+
+def test_resume_cli_bare_output_prioritizes_session_continuity(tmp_path: Path) -> None:
+    """The non-TTY fallback should be useful for continuing work, not mostly ids."""
+    from memo.cli import cli
+
+    state_dir = tmp_path / "state"
+    data_dir = tmp_path / "data"
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    (state_dir / "sessions").mkdir(parents=True, exist_ok=True)
+    (state_dir / "sessions" / "continuity-sess.json").write_text(
+        json.dumps(
+            {
+                "session_id": "continuity-sess",
+                "cwd": str(cwd),
+                "project": cwd.name,
+                "running_summary": (
+                    "The session fixed resume discovery and was preparing the CLI "
+                    "fallback to show the essential continuation context."
+                ),
+                "prompt_trail": [
+                    "reproduce why resume only shows hook session numbers",
+                    "make resume list the fundamental session context",
+                ],
+                "updated": "2026-05-23T10:00:00+00:00",
+                "turn_count": 7,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["resume", "--all-cwd"],
+        env={
+            "MEMO_STATE_DIR": str(state_dir),
+            "MEMO_DATA_DIR": str(data_dir),
+            "MEMO_NONINTERACTIVE": "1",
+            **_agent_home_env(tmp_path),
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "The session fixed resume discovery" in result.output
+    assert "recent prompts:" in result.output
+    assert "make resume list the fundamental session context" in result.output
+    assert "cwd:" in result.output
+    assert cwd.name in result.output
+    assert "resume: claude --resume continuity-sess" in result.output
 
 
 def test_resume_cli_agent_all_federates(tmp_path: Path) -> None:

@@ -966,8 +966,20 @@ class _AskOpsMixin(_MemoryBase):
             }
             return
 
+        answer = "".join(accum_parts).strip()
+        from memo.flags import flag_float
+
+        _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
+        if _ask_min > 0.0 and answer:
+            _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
+            _entail = score_grounding(chat, self.cfg.llm_model, source=_src_text, claim=answer)
+            if _entail is not None and _entail < _ask_min:
+                from memo.flags import flag_str
+
+                answer = flag_str("MEMO_ASK_FALLBACK_MSG")
+
         yield {
             "event": "done",
-            "answer": "".join(accum_parts).strip(),
+            "answer": answer,
             "sources": sources,
         }

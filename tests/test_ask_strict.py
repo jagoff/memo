@@ -25,6 +25,9 @@ class _Chat:
     def chat(self, **k):
         return {"message": {"content": self._a}}
 
+    def chat_stream(self, **k):
+        yield self._a
+
 
 def test_ask_abstains_below_floor(mock_memory, monkeypatch):
     monkeypatch.setenv("MEMO_GROUNDING_ASK_MIN", "0.85")
@@ -48,4 +51,31 @@ def test_ask_off_skips_judge(mock_memory, monkeypatch):
     monkeypatch.setattr(ask_ops, "score_grounding", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or 0.0)
     out = mock_memory.ask("q?")
     assert out["answer"] == "whatever"
+    assert called["n"] == 0
+
+
+def test_ask_stream_abstains_below_floor(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_GROUNDING_ASK_MIN", "0.85")
+    monkeypatch.setenv("MEMO_ASK_FALLBACK_MSG", "I couldn't find that.")
+    _prep(mock_memory, monkeypatch, answer="The port is definitely 9999.", entail=0.2)
+
+    events = list(mock_memory.ask_stream("what port?"))
+
+    assert events[-1]["event"] == "done"
+    assert events[-1]["answer"] == "I couldn't find that."
+
+
+def test_ask_stream_off_skips_judge(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_GROUNDING_ASK_MIN", "0")
+    called = {"n": 0}
+    _prep(mock_memory, monkeypatch, answer="whatever", entail=0.0)
+    monkeypatch.setattr(
+        ask_ops,
+        "score_grounding",
+        lambda *a, **k: called.__setitem__("n", called["n"] + 1) or 0.0,
+    )
+
+    events = list(mock_memory.ask_stream("q?"))
+
+    assert events[-1]["answer"] == "whatever"
     assert called["n"] == 0

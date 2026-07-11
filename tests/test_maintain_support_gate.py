@@ -85,7 +85,9 @@ def test_gate_off_archives_older_side(mock_memory, tmp_path):
 
 def test_maintain_marks_competing_within_margin(mock_memory, monkeypatch):
     from unittest.mock import patch
+
     from click.testing import CliRunner
+
     from memo.cli import cli
 
     monkeypatch.setenv("MEMO_BELIEF_COMPETING", "1")

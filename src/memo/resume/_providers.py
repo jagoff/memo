@@ -251,6 +251,16 @@ def _memo_snapshot_candidate(snap: dict[str, object]) -> ResumeCandidate | None:
     summary = str(
         snap.get("running_summary") or snap.get("summary") or snap.get("last_user_msg") or ""
     )
+    prompt_trail_raw = snap.get("prompt_trail")
+    prompt_trail = (
+        [
+            str(p).strip()
+            for p in prompt_trail_raw
+            if isinstance(p, str) and p.strip()
+        ]
+        if isinstance(prompt_trail_raw, list)
+        else []
+    )
     # memo only snapshots Claude Code today, but read an explicit `agent` if a
     # future writer stores one rather than hardcoding the resume command.
     agent = str(snap.get("agent") or "claude")
@@ -271,6 +281,7 @@ def _memo_snapshot_candidate(snap: dict[str, object]) -> ResumeCandidate | None:
             "project": str(snap.get("project") or ""),
             "turn_count": snap.get("turn_count"),
             "path": str(snap.get("transcript_path") or ""),
+            "prompt_trail": prompt_trail,
         },
     )
 
