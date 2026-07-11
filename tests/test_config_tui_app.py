@@ -74,6 +74,18 @@ async def test_input_change_updates_session_draft(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ctrl_c_quits_even_when_input_has_focus(tmp_path: Path) -> None:
+    app = ConfigApp(_session(tmp_path))
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        app.set_focus(app.query_one("#setting-search", Input))
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert not app.is_running
+
+
+@pytest.mark.asyncio
 async def test_too_small_terminal_shows_requirement(tmp_path: Path) -> None:
     app = ConfigApp(_session(tmp_path))
 

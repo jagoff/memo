@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
-from textual.binding import BindingType
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.widgets import Button, Input, Label, Select, Static, Switch
@@ -49,6 +49,7 @@ class ConfigApp(App[int]):
     CSS_PATH = "styles.tcss"
     TITLE = "memo config"
     BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("ctrl+c", "quit", "Quit", priority=True),
         ("ctrl+r", "review", "Review"),
         ("ctrl+d", "discard", "Discard"),
         ("q", "quit", "Quit"),
