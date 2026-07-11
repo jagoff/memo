@@ -21,6 +21,7 @@ import re as _re
 from pathlib import Path
 from typing import Any
 
+from memo.claim_support import check_claim_support
 from memo.fact_extraction import FACT_EDGES_KEY, candidate_fact_edges
 from memo.grounding_judge import score_grounding
 from memo.util import sha256_short
@@ -877,6 +878,8 @@ def _extract_and_save(
     _ground_on = _capture_flag_bool("MEMO_GROUNDING_JUDGE")
     _ground_min = _capture_flag_float("MEMO_GROUNDING_WRITE_MIN") or 0.4
     _ground_source = f"{user_text}\n{assistant_text}"
+    _claim_on = _capture_flag_bool("MEMO_CLAIM_SUPPORT")
+    _claim_conf = _capture_flag_float("MEMO_CLAIM_SUPPORT_CONFIDENCE") or 0.5
     if debug:
         print(f"# memo capture: {len(insights)} candidate(s)", file=sys.stderr)
     # `candidates` reports the EXTRACTED count (pre-hygiene) — it feeds
@@ -1094,6 +1097,20 @@ def _extract_and_save(
             saved.append(rec.id)
             saved_titles.append(rec.title)
             saved_records.append({"id": rec.id, "title": rec.title, "type": rec.type})
+            if _claim_on:
+                verdict = check_claim_support(f"{cand['title']}\n{cand['body']}")
+                if verdict.unsupported:
+                    try:
+                        mem.store.set_confidence_batch([(rec.id, _claim_conf)])
+                        if debug:
+                            print(
+                                f"# memo capture: claim downgrade '{cand['title']}' "
+                                f"→ conf {_claim_conf:.2f} ({verdict.reason})",
+                                file=sys.stderr,
+                            )
+                    except Exception as _exc:  # never let a downgrade break capture
+                        if debug:
+                            print(f"# memo capture: claim downgrade skipped: {_exc}", file=sys.stderr)
             facts += len(
                 mem.fact_edges.query(
                     source_record_id=rec.id,
