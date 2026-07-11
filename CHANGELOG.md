@@ -9,8 +9,37 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-07-11
+
+### Changed
+
+- **BREAKING — `MEMO_RECALL_DEDUP_COLLAPSE` now defaults ON.** Recall collapses
+  lexical paraphrase near-duplicates in the over-fetched pool before top-K
+  truncation, so redundant near-dups no longer crowd out distinct results. Proven
+  net-positive in the paraphrase-crowding state (controlled fixture recall@5
+  0.5→0.833, zero added noise) and provably never-negative on the committed
+  regression corpus (Δ0.0). Set `MEMO_RECALL_DEDUP_COLLAPSE=0` to restore the
+  prior behaviour.
+
 ### Added
 
+- **Trust & Belief-Revision program (P0–P3).** Every unit is opt-in / default-OFF
+  except the collapse flip above; each has deterministic fail→pass test proof.
+  - Belief-integrity maintenance (Dream + `memo maintain`): a `competing`
+    contradiction status and a shared trust-margin `supersede_decision`,
+    corroboration support-gate, and N-way cluster detection
+    (`MEMO_BELIEF_COMPETING`, `MEMO_SUPERSEDE_MARGIN`, `MEMO_BELIEF_NWAY`,
+    `MEMO_SUPERSEDE_SUPPORT_GATE`).
+  - Write-path grounding: a capture-time grounding judge quarantines
+    low-grounding memories as `_uncertain`, claim-support downgrades unsupported
+    evidence-refs, per-type save-gate presets, and ask-path abstention on
+    unentailed answers (`MEMO_GROUNDING_JUDGE`, `MEMO_CLAIM_SUPPORT`,
+    `MEMO_SAVE_GATE_PRESETS`, `MEMO_GROUNDING_ASK_MIN`).
+  - Honest recall: a per-hit trust dossier, declare-competing-disputes (surface
+    both sides of a dispute instead of silently demoting the older side), and
+    Dream noise-quantile floor calibration (`MEMO_HIT_DOSSIER`,
+    `MEMO_DECLARE_DISPUTES`, `MEMO_FLOOR_CALIBRATION`).
+  - `memo eval bench run --regime oracle` and a per-QA judge guard.
 - Graph phase 2: deterministic semantic-relation extraction/backfill
   (`memo graph relations rebuild`), hub diagnostics (`memo graph hubs`),
   graph-on/off recall eval comparison (`memo eval recall --graph-ab`),
@@ -19,6 +48,12 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- Recall-eval gate (`memo eval recall`) no longer appears to hang mid-grid: its
+  two hybrid configs invoked the production cross-encoder reranker
+  (~7–11s/prompt cold, thrashing under the concurrent MLX fleet), contradicting
+  the documented "fast, retrieval-only" contract. It now runs retrieval-only —
+  the gate re-ranks the candidate pool with the shared `rank_hits` — completing
+  the full 4-config grid in ~15s instead of >300s.
 - Documentation corrected to match code: the HTTP MCP transport and
   `memo http-api` have **no built-in authentication** (previously documented as
   bearer-auth with `MEMO_HTTP_API_TOKEN`, which does not exist); MCP profile tool
