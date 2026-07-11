@@ -32,6 +32,54 @@ def test_session_distinguishes_markdown_and_effective_env(tmp_path: Path) -> Non
     assert state.env_override == "2"
 
 
+def test_process_session_uses_runtime_config_as_effective_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo.config import Config
+
+    runtime_data = tmp_path / "runtime-data"
+    runtime = Config(data_dir=runtime_data, state_dir=tmp_path / "runtime-state")
+    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls: runtime))
+    monkeypatch.setattr(
+        session_module.os,
+        "environ",
+        {"MEMO_CONFIG_DIR": str(tmp_path / "memo-home")},
+    )
+
+    state = ConfigSession.open().state("storage.data_dir")
+
+    assert state.effective_value == runtime_data.resolve()
+
+
+def test_behavior_flag_effective_value_uses_runtime_accessor(tmp_path: Path) -> None:
+    session = ConfigSession.open(
+        {
+            "MEMO_CONFIG_DIR": str(tmp_path / "memo-home"),
+            "MEMO_RECALL_TOP_K": "-1",
+        }
+    )
+
+    state = session.state("recall.top_k")
+
+    assert state.effective_value == 3
+    assert state.source is ValueSource.ENV
+    assert state.issues
+
+
+def test_runtime_accessor_can_resolve_invalid_flag_to_none(tmp_path: Path) -> None:
+    session = ConfigSession.open(
+        {
+            "MEMO_CONFIG_DIR": str(tmp_path / "memo-home"),
+            "MEMO_DECAY_HALFLIFE_REFERENCE": "invalid",
+        }
+    )
+
+    state = session.state("search.decay_halflife_reference")
+
+    assert state.effective_value is None
+    assert state.issues
+
+
 def test_draft_set_and_unset_never_write(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     env = {"MEMO_CONFIG_DIR": str(home), "MEMO_DATA_DIR": str(tmp_path / "data")}

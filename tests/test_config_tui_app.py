@@ -50,6 +50,12 @@ async def test_search_finds_folded_advanced_setting(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_env_override_badge_keeps_markdown_editable(tmp_path: Path) -> None:
+    config_dir = tmp_path / "memo-home" / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "recall-config.md").write_text(
+        "```toml\n[recall]\ntop_k = 7\n```\n",
+        encoding="utf-8",
+    )
     app = ConfigApp(_session(tmp_path, MEMO_RECALL_TOP_K="2"))
 
     async with app.run_test(size=(120, 36)):
@@ -57,6 +63,7 @@ async def test_env_override_badge_keeps_markdown_editable(tmp_path: Path) -> Non
 
         assert row.query_one(SourceBadge).source is ValueSource.ENV
         assert row.query_one(Input).disabled is False
+        assert row.query_one(Input).value == "2"
 
 
 @pytest.mark.asyncio

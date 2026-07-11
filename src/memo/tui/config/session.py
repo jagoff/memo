@@ -80,6 +80,7 @@ _POLICY_ERRORS = {
     PersistencePolicy.DERIVED: "derived setting cannot be persisted",
     PersistencePolicy.SECRET: "secret setting must use encrypted secret storage",
 }
+_NO_RUNTIME_VALUE = object()
 
 
 def coerce_value(spec: SettingSpec, raw: object) -> object:
@@ -150,11 +151,13 @@ class ConfigSession:
         overlay: Mapping[str, str],
         snapshot: SourceSnapshot,
         source_problems: tuple[ConfigProblem, ...] = (),
+        runtime_values: Mapping[str, object] | None = None,
     ) -> None:
         self.env = dict(env)
         self.markdown = dict(markdown)
         self.legacy = dict(legacy)
         self.overlay = dict(overlay)
+        self.runtime_values = dict(runtime_values) if runtime_values is not None else None
         self.snapshot = snapshot
         self._source_issues = tuple(
             ValidationIssue(
@@ -175,6 +178,16 @@ class ConfigSession:
 
         source = dict(os.environ if env is None else env)
         snapshot = snapshot_sources(source)
+        runtime_values: dict[str, object] | None = None
+        if env is None:
+            from memo.config import Config
+
+            try:
+                runtime_values = Config.from_env().model_dump()
+            except (ValueError, ValidationError):
+                # Individual field validation below keeps the TUI available so
+                # a broken current configuration can still be repaired.
+                runtime_values = None
         return cls(
             source,
             configured_values(source),
@@ -182,7 +195,17 @@ class ConfigSession:
             overlay_values(source),
             snapshot,
             tuple(validate_markdown_config(source)),
+            runtime_values,
         )
+
+    def _runtime_effective_value(self, spec: SettingSpec) -> object:
+        if spec.config_field and self.runtime_values is not None:
+            return self.runtime_values.get(spec.config_field)
+        if not spec.config_field and spec.env_name:
+            from memo.flags import flag
+
+            return flag(spec.env_name, env=self.env)
+        return _NO_RUNTIME_VALUE
 
     def _resolve_state(self, spec: SettingSpec, *, include_markdown: bool = True) -> SettingState:
         configured = self.markdown.get(spec.key)
@@ -215,6 +238,11 @@ class ConfigSession:
         except (TypeError, ValueError, ValidationError) as exc:
             effective = raw
             issues = (ValidationIssue(spec.key, str(exc)),)
+
+        if include_markdown:
+            runtime_effective = self._runtime_effective_value(spec)
+            if runtime_effective is not _NO_RUNTIME_VALUE:
+                effective = runtime_effective
 
         available = not spec.platforms or _platform_key() in spec.platforms
         reason = "" if available else "Available only on Apple Silicon."

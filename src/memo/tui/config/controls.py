@@ -21,8 +21,6 @@ def _editable_value(state: SettingState) -> object | None:
         return state.effective_value
     if state.pending_value is not None:
         return state.pending_value
-    if state.configured_value is not None:
-        return state.configured_value
     return state.effective_value
 
 
