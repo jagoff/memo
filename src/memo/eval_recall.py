@@ -543,10 +543,18 @@ def _search_for_eval(mem: Any, query: str, *, trace: list[dict[str, Any]], **kwa
     search = mem.search
     with contextlib.suppress(TypeError, ValueError):
         sig = inspect.signature(search)
-        if "_trace" in sig.parameters or any(
+        has_var_kw = any(
             p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        ):
+        )
+        if "_trace" in sig.parameters or has_var_kw:
             kwargs["_trace"] = trace
+        # Retrieval-only: skip the cross-encoder reranker so `hybrid` configs
+        # measure the fused vec+BM25 candidate POOL (this gate re-ranks with the
+        # shared rank_hits below), not the reranker — and don't hang on it. Only
+        # pass it when the real Memory.search accepts it; test stubs that don't
+        # take the kwarg are left untouched.
+        if "disable_reranker" in sig.parameters or has_var_kw:
+            kwargs["disable_reranker"] = True
     return search(query, **kwargs)
 
 
@@ -665,16 +673,6 @@ def _run_config_inner(
             mode=cfg.mode,
             exclude_types=exclude_types,
             exclude_tags=exclude_tags,
-            # Retrieval-only, as this gate is documented ("fast, no MLX —
-            # retrieval only"). `hybrid` mode otherwise fires the cross-encoder
-            # reranker (~7-11s/prompt cold, thrashes under the concurrent MLX
-            # fleet — the gate looked "hung" mid hybrid grid). The eval measures
-            # the shared `rank_hits` ordering (applied below), not the
-            # cross-encoder — so we want the fused vec+BM25 candidate POOL here,
-            # not a pre-reordered/trimmed one. Live-default recall is vec mode
-            # (no reranker), so vec configs are unchanged; hybrid configs become
-            # a fast "retrieval pool + rank_hits" comparison instead of hanging.
-            disable_reranker=True,
         )
         lat.append((time.time() - t0) * 1000)
         band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
