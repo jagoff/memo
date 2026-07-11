@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_TOML_BLOCK_RE = re.compile(r"```toml\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
-_TRUE = {"1", "true", "yes", "on"}
-_FALSE = {"0", "false", "no", "off", ""}
+from memo.flags_base import _FALSE, _TRUE, FlagSpec
+
+_TOML_BLOCK_RE = re.compile(r"```toml\s*\n(.*?)\n?```", re.DOTALL | re.IGNORECASE)
 _CONFIG_FILENAMES = {
     "storage-config.md",
     "models-config.md",
@@ -150,6 +150,69 @@ def _to_flag_string(env_name: str, raw: Any) -> str:
     return str(raw)
 
 
+def _coerce_flag_value(spec: FlagSpec, raw: Any) -> Any:
+    """Match ``memo.flags._coerce`` for a TOML value without importing flags."""
+    text = str(raw)
+    if spec.kind == "bool":
+        low = text.strip().lower()
+        if low in _TRUE:
+            return True
+        if low in _FALSE:
+            return False
+        raise ValueError(f"expected a boolean (1/0/true/false), got {text!r}")
+    if spec.kind == "int":
+        int_value = int(text.strip())
+        if spec.min_val is not None and int_value < spec.min_val:
+            raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {int_value}")
+        if spec.max_val is not None and int_value > spec.max_val:
+            raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {int_value}")
+        return int_value
+    if spec.kind == "float":
+        float_value = float(text.strip())
+        if spec.min_val is not None and float_value < spec.min_val:
+            raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {float_value}")
+        if spec.max_val is not None and float_value > spec.max_val:
+            raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {float_value}")
+        return float_value
+    return text
+
+
+def _validate_mapped_values(values: Mapping[str, ConfigValue]) -> list[ConfigProblem]:
+    from pydantic import ValidationError
+
+    from memo.config import Config
+    from memo.flags import REGISTRY
+
+    problems: list[ConfigProblem] = []
+    for value in values.values():
+        if value.env_name:
+            try:
+                _coerce_flag_value(REGISTRY[value.env_name], value.value)
+            except ValueError as exc:
+                problems.append(ConfigProblem(value.file, value.key, str(value.value), str(exc)))
+
+    fields = {value.field_name: value.value for value in values.values() if value.field_name}
+    try:
+        Config(**fields)
+    except ValidationError as exc:
+        by_field = {value.field_name: value for value in values.values() if value.field_name}
+        for error in exc.errors():
+            field_name = error["loc"][0]
+            if not isinstance(field_name, str):
+                continue
+            config_value = by_field.get(field_name)
+            if config_value:
+                problems.append(
+                    ConfigProblem(
+                        config_value.file,
+                        config_value.key,
+                        str(config_value.value),
+                        f"config validation error: {error['msg']}",
+                    )
+                )
+    return problems
+
+
 def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[ConfigProblem]]:
     flag_paths = _flag_path_map()
     values: dict[str, ConfigValue] = {}
@@ -186,6 +249,7 @@ def _read_uncached(paths: list[Path]) -> tuple[dict[str, ConfigValue], list[Conf
                     env_name=env_name,
                     field_name=field_name,
                 )
+    problems.extend(_validate_mapped_values(values))
     return values, problems
 
 

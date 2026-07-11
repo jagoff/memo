@@ -75,6 +75,81 @@ def test_boolean_spellings_are_normalized_for_flags(tmp_path: Path) -> None:
     assert vals["MEMO_RECALL_DISABLE"] == "0"
 
 
+def test_invalid_boolean_flag_reports_problem(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n"
+        "[recall]\n"
+        'debug = "perhaps"\n'
+        "```\n",
+        encoding="utf-8",
+    )
+
+    problems = config_md.validate_markdown_config({"MEMO_CONFIG_DIR": str(home)})
+
+    assert any(
+        p.key == "recall.debug" and "expected a boolean" in p.error for p in problems
+    )
+
+
+def test_out_of_bounds_numeric_flag_reports_problem(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n"
+        "[recall]\n"
+        "min_sim = -1\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    problems = config_md.validate_markdown_config({"MEMO_CONFIG_DIR": str(home)})
+
+    assert any(
+        p.key == "recall.min_sim" and "MEMO_RECALL_MIN_SIM must be >= 0.0" in p.error
+        for p in problems
+    )
+
+
+def test_invalid_config_field_reports_problem(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "search-config.md").write_text(
+        "```toml\n"
+        "[search]\n"
+        "default_limit = 0\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    problems = config_md.validate_markdown_config({"MEMO_CONFIG_DIR": str(home)})
+
+    assert any(
+        p.key == "search.default_limit" and "greater than or equal to 1" in p.error
+        for p in problems
+    )
+
+
+def test_load_values_accepts_fence_without_final_newline(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n"
+        "[recall]\n"
+        "top_k = 5```",
+        encoding="utf-8",
+    )
+
+    values = config_md.load_values({"MEMO_CONFIG_DIR": str(home)})
+
+    assert values["recall.top_k"].value == 5
+
+
 def test_unknown_key_reports_problem(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"
