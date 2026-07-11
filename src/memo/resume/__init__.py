@@ -16,6 +16,8 @@ from __future__ import annotations
 import os  # noqa: F401
 import shutil  # noqa: F401
 
+from memo.tui.resume import pick_resume_candidate_interactive
+
 from ._formatting import (
     execute_resume_candidate,
     format_context_resume,
@@ -39,7 +41,6 @@ from ._providers import (
     OpencodeNativeProvider,
     default_resume_providers,
 )
-from ._tui import pick_resume_candidate_interactive
 from ._types import (
     MEMO_RESUME_REPORT_SCHEMA,
     RESUME_AGENT_CHOICES,

@@ -9,6 +9,18 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- **`memo config` terminal configuration center.** Bare `memo config` now opens
+  a Textual TUI on interactive terminals, with a four-step first-run wizard,
+  domain navigation, global search across every registered setting, typed
+  controls, source/effective-value badges, cross-setting validation, draft
+  review, explicit post-save activation, and conflict/recovery screens. Markdown
+  remains the editable source of truth. Multi-file writes preserve surrounding
+  prose and use staged transaction manifests plus rollback backups. Headless and
+  `MEMO_NONINTERACTIVE=1` invocations keep the existing config subcommands and do
+  not load Textual.
+
 ## [3.1.0] - 2026-07-11
 
 ### Added

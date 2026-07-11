@@ -1,4 +1,4 @@
-"""Compatibility exports for the terminal dashboard."""
+"""Terminal dashboard implementation."""
 
 from memo.tui.dashboard.app import render, run_tui
 

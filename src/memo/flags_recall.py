@@ -27,7 +27,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "recall",
         "Honor MEMO_RECALL_MODE even when the embedder isn't warm. Default off: a cold vec/hybrid request downgrades to bm25 to avoid blowing the recall-hook cold-load budget. Set to 1 to force the requested mode regardless of warm state.",
     ),
-    _spec("MEMO_RECALL_TOP_K", "int", 3, "recall", "Number of memories injected per prompt."),
+    _spec(
+        "MEMO_RECALL_TOP_K",
+        "int",
+        3,
+        "recall",
+        "Number of memories injected per prompt.",
+        min_val=1,
+    ),
     _spec(
         "MEMO_RECALL_MIN_SIM",
         "float",

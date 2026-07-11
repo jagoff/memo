@@ -48,30 +48,12 @@ class ConfigProblem:
     error: str
 
 
-_FIELD_PATHS: dict[str, str] = {
-    "storage.data_dir": "data_dir",
-    "storage.vault_path": "vault_path",
-    "storage.memory_subdir": "memory_subdir",
-    "storage.state_dir": "state_dir",
-    "storage.memories_in_vault": "memories_in_vault",
-    "storage.single_db": "single_db",
-    "models.model_profile": "model_profile",
-    "models.llm_model": "llm_model",
-    "models.helper_model": "helper_model",
-    "models.embedder_model": "embedder_model",
-    "models.embedder_dims": "embedder_dims",
-    "models.embedder_backend": "embedder_backend",
-    "models.st_embedder_model": "st_embedder_model",
-    "models.reranker_enabled": "reranker_enabled",
-    "models.reranker_model": "reranker_model",
-    "models.reranker_revision": "reranker_revision",
-    "models.rerank_input_k": "rerank_input_k",
-    "models.rerank_fusion_alpha": "rerank_fusion_alpha",
-    "search.max_content_chars": "max_content_chars",
-    "search.default_limit": "search_default_limit",
-}
-
 _cache: dict[str, tuple[tuple[tuple[str, float], ...], dict[str, ConfigValue], list[ConfigProblem]]] = {}
+
+
+def invalidate_cache() -> None:
+    """Discard cached Markdown reads after an external transactional write."""
+    _cache.clear()
 
 
 def config_home(env: Mapping[str, str] | None = None) -> Path:
@@ -123,16 +105,24 @@ def _flatten(prefix: str, value: Any) -> dict[str, Any]:
     return {prefix: value}
 
 
-def _flag_path_map() -> dict[str, str]:
+def _catalog_bindings() -> tuple[dict[str, str], dict[str, str]]:
     from memo.flags import REGISTRY
+    from memo.tui.config.catalog import path_to_env, path_to_field
 
-    paths: dict[str, str] = {}
-    for env_name, spec in REGISTRY.items():
-        raw = env_name.removeprefix("MEMO_").lower()
-        group_prefix = f"{spec.group}_"
-        key = raw.removeprefix(group_prefix) if raw.startswith(group_prefix) else raw
-        paths[f"{spec.group}.{key}"] = env_name
-    return paths
+    flag_paths = {key: env_name for key, env_name in path_to_env().items() if env_name in REGISTRY}
+    return flag_paths, path_to_field()
+
+
+def _persistence_error(path_key: str) -> str | None:
+    from memo.tui.config.catalog import PersistencePolicy, persistence_policy_for_key
+
+    policy = persistence_policy_for_key(path_key)
+    return {
+        PersistencePolicy.PERSISTENT: None,
+        PersistencePolicy.RUNTIME_ONLY: "runtime-only setting cannot be persisted",
+        PersistencePolicy.DERIVED: "derived setting cannot be persisted",
+        PersistencePolicy.SECRET: "secret setting must use encrypted secret storage",
+    }[policy]
 
 
 def _coerce_bool_for_flag(raw: Any) -> str | None:
@@ -222,7 +212,7 @@ def _validate_mapped_values(values: Mapping[str, ConfigValue]) -> list[ConfigPro
 def _read_uncached(
     paths: list[Path], *, validate_values: bool
 ) -> tuple[dict[str, ConfigValue], list[ConfigProblem]]:
-    flag_paths = _flag_path_map()
+    flag_paths, field_paths = _catalog_bindings()
     values: dict[str, ConfigValue] = {}
     problems: list[ConfigProblem] = []
     for path in paths:
@@ -245,9 +235,13 @@ def _read_uncached(
                 continue
             for key, raw in _flatten("", parsed).items():
                 env_name = flag_paths.get(key)
-                field_name = _FIELD_PATHS.get(key)
+                field_name = field_paths.get(key)
                 if env_name is None and field_name is None:
                     problems.append(ConfigProblem(str(path), key, str(raw), "unknown config key"))
+                    continue
+                policy_error = _persistence_error(key)
+                if policy_error:
+                    problems.append(ConfigProblem(str(path), key, str(raw), policy_error))
                     continue
                 config_value = ConfigValue(
                     key=key,
@@ -277,6 +271,11 @@ def load_values(env: Mapping[str, str] | None = None) -> dict[str, ConfigValue]:
     values, problems = _read_uncached(paths, validate_values=False)
     _cache[cache_key] = (sig, values, problems)
     return values
+
+
+def configured_values(env: Mapping[str, str] | None = None) -> dict[str, ConfigValue]:
+    """Return explicitly persisted values with their Markdown provenance."""
+    return dict(load_values(env))
 
 
 def validate_markdown_config(env: Mapping[str, str] | None = None) -> list[ConfigProblem]:
@@ -311,18 +310,6 @@ def active_config_values(env: Mapping[str, str] | None = None) -> dict[str, str]
     return flag_values(env)
 
 
-_DOMAIN_FOR_PREFIX = {
-    "storage": "storage-config.md",
-    "models": "models-config.md",
-    "search": "search-config.md",
-    "recall": "recall-config.md",
-    "capture": "capture-config.md",
-    "graph": "graph-config.md",
-    "hooks": "hooks-config.md",
-    "advanced": "advanced-config.md",
-}
-
-
 def _quote(value: Any) -> str:
     if isinstance(value, bool):
         return '"on"' if value else '"off"'
@@ -332,36 +319,23 @@ def _quote(value: Any) -> str:
 
 
 def _domain_for_key(path_key: str) -> str:
-    prefix = path_key.split(".", 1)[0]
-    try:
-        return _DOMAIN_FOR_PREFIX[prefix]
-    except KeyError as exc:
-        raise KeyError(f"unknown config domain {prefix!r}") from exc
+    from memo.tui.config.catalog import domain_file_for_key
+
+    return domain_file_for_key(path_key)
 
 
 def _parse_raw_for_existing_key(path_key: str, raw_value: str) -> Any:
-    if path_key in _FIELD_PATHS:
-        if path_key.endswith(("memories_in_vault", "single_db", "reranker_enabled")):
-            return raw_value
-        if path_key.endswith(("embedder_dims", "rerank_input_k", "default_limit", "max_content_chars")):
-            return int(raw_value)
-        if path_key.endswith("rerank_fusion_alpha"):
-            return float(raw_value)
-        return raw_value
-    env_name = _flag_path_map().get(path_key)
-    if env_name is None:
-        raise KeyError(f"unknown config key {path_key!r}")
-    from memo.flags import REGISTRY
+    from memo.tui.config.catalog import SettingKind, setting_kind_for_key
 
-    kind = REGISTRY[env_name].kind
-    if kind == "bool":
+    kind = setting_kind_for_key(path_key)
+    if kind is SettingKind.BOOL:
         value = _coerce_bool_for_flag(raw_value)
         if value is None:
             raise ValueError(f"expected a boolean value, got {raw_value!r}")
         return value
-    if kind == "int":
+    if kind is SettingKind.INT:
         return int(raw_value)
-    if kind == "float":
+    if kind is SettingKind.FLOAT:
         return float(raw_value)
     return raw_value
 
@@ -434,6 +408,9 @@ def write_default_config(
 
 
 def set_value(path_key: str, raw_value: str, env: Mapping[str, str] | None = None) -> Path:
+    policy_error = _persistence_error(path_key)
+    if policy_error:
+        raise ValueError(policy_error)
     filename = _domain_for_key(path_key)
     table, key = path_key.split(".", 1)
     path = config_dir(env) / filename
@@ -444,6 +421,9 @@ def set_value(path_key: str, raw_value: str, env: Mapping[str, str] | None = Non
 
 
 def unset_value(path_key: str, env: Mapping[str, str] | None = None) -> Path:
+    policy_error = _persistence_error(path_key)
+    if policy_error:
+        raise ValueError(policy_error)
     filename = _domain_for_key(path_key)
     table, key = path_key.split(".", 1)
     path = config_dir(env) / filename

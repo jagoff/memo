@@ -38,6 +38,8 @@ dependencies = [
     "pyyaml>=6.0",
     # First-run interactive picker (pure Python; cross-platform).
     "questionary>=2.0",
+    # Terminal-native configuration center. Runtime use is TTY-only; no Textual Web.
+    "textual>=8.2.8,<9",
     "tomli-w>=1.0",
     # File-watcher (FSEvents on macOS). Used by `memo watch`.
     "watchdog>=4.0",
@@ -62,6 +64,8 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-xdist>=3.6",
     "pytest-timeout>=2.3",
+    "pytest-asyncio>=1.4,<2",
+    "pytest-textual-snapshot>=1.1,<2",
     "freezegun>=1.5",
     "ruff==0.15.20",
     "mypy>=1.10",

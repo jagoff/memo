@@ -487,6 +487,7 @@ cli.add_command(install_shims_cmd)
 # something invokes them from an interactive shell while debugging).
 _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "init",
+    "config",
     "doctor",
     "migrate-vault",
     "migrate",  # alias for migrate-vault

@@ -743,18 +743,24 @@ names remain hidden compatibility aliases.
 ## Configuration
 
 All env vars are optional; defaults aim at a fresh Apple Silicon Mac (or a
-Linux/Ubuntu `[cpu]` install — see [ubuntu.md](ubuntu.md)). On first
-run in an interactive shell, an arrow-key picker asks where memories should live
-and persists the choice to human-editable Markdown config:
+Linux/Ubuntu `[cpu]` install — see [ubuntu.md](ubuntu.md)). In an interactive
+terminal, `memo config` opens memo's terminal-only configuration center. It is a
+native TUI, not a browser or web server. On first run, its four-step wizard covers
+storage, model profile, integrations/recall, and privacy/capture before showing an
+explicit review.
+
+The TUI persists choices to human-editable Markdown config:
 
 ```text
 ~/.config/memo/memo-config.md
 ~/.config/memo/config/*-config.md
 ```
 
-Re-run it with `memo init`. Hooks get `MEMO_NONINTERACTIVE=1` so they never
-trigger the picker. Environment variables still override Markdown for temporary
-runtime changes. The old `~/.config/memo/config.toml` is a legacy fallback and
+Markdown remains the source of truth and may still be edited directly. The TUI
+shows configured and effective values separately; an active `MEMO_*` environment
+override is marked `ENV` and continues to win without preventing the underlying
+Markdown value from being edited. Hooks get `MEMO_NONINTERACTIVE=1`, so they
+never open the TUI. The old `~/.config/memo/config.toml` is a legacy fallback and
 migration source; new installs should use Markdown config.
 
 Resolution precedence (highest first): explicit kwargs → `MEMO_*` env vars →
@@ -765,6 +771,7 @@ Markdown config → tuned local overlay for supported flags → legacy
 Useful config commands:
 
 ```bash
+memo config                       # terminal configuration center (TTY only)
 memo config init
 memo config show --effective
 memo config set recall.top_k 5
@@ -772,6 +779,18 @@ memo config unset recall.top_k
 memo config validate
 memo config migrate
 ```
+
+Bare `memo config` prints command help instead of opening a full-screen UI when
+stdin/stdout are not TTYs or `MEMO_NONINTERACTIVE=1`. Scripts and CI should keep
+using `show`, `validate`, `set`, and `unset`.
+
+Edits remain in an in-memory draft until review. `Save only` is the default;
+daemon restarts, hook rewiring, watcher reloads, and reindexing require a separate
+confirmation. Commits stage and validate every affected file, preserve prose
+outside the edited TOML table, and keep transaction manifests/backups under
+`~/.config/memo/.transactions/<id>/`. If a file changes concurrently or a prior
+transaction was interrupted, the TUI opens a conflict/recovery screen with
+read-only, `$EDITOR`, and backup restore paths.
 
 **Storage & paths**
 

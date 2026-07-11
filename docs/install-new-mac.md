@@ -46,6 +46,17 @@ After installing that client, rerun:
 memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
 ```
 
+Open the terminal configuration center to verify storage, hardware profile,
+hooks, recall, privacy, and capture settings before moving data:
+
+```bash
+memo config
+```
+
+This is a terminal-native TUI and does not start a browser or web service. A new
+machine gets a four-step wizard; existing Markdown values are loaded with their
+effective source and can be reviewed before any file is written.
+
 To install the latest PyPI release instead of GitHub `master`:
 
 ```bash
@@ -113,7 +124,7 @@ If your memories already live in a synced folder, let the folder finish syncing
 on the new Mac, then point memo at it:
 
 ```bash
-memo init
+memo config
 memo reindex
 memo doctor --strict-runtime
 ```
@@ -159,7 +170,10 @@ Devin Desktop after `~/.devin/mcp.json` changes.
 | Path | Purpose |
 | --- | --- |
 | `~/Documents/memo` | Default Markdown memory folder |
-| `~/.config/memo/config.toml` | Stores the selected `data_dir` / `vault_path` |
+| `~/.config/memo/memo-config.md` | Config index and human notes |
+| `~/.config/memo/config/*-config.md` | Human-editable domain settings |
+| `~/.config/memo/.transactions/` | TUI transaction manifests and rollback backups |
+| `~/.config/memo/config.toml` | Legacy fallback and migration source |
 | `~/.local/share/memo/memvec.db` | sqlite-vec index; safe to rebuild |
 | `~/.local/share/memo/history.db` | Audit log used by time-machine |
 | `~/.local/share/memo/graph.db` | Entity graph sidecar |
