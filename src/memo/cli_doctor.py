@@ -240,7 +240,7 @@ def doctor(
     # and stranded commits (committed locally but never pushed).
     from memo.sync_git import sync_status as _sync_status
 
-    sync = _sync_status(cfg)
+    sync = _sync_status(cfg, check_remote=True)
     if not sync.get("is_git_clone"):
         console.print(
             "[dim]•[/dim] github sync: OFF "

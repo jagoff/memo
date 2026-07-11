@@ -296,18 +296,23 @@ def sync_init(public: bool, as_json: bool) -> None:
 
 
 @sync_group.command(name="status")
-@click.option("--check-remote", is_flag=True, help="Probe the remote (network) for reachability.")
+@click.option("--offline", is_flag=True, help="Skip the network fetch; use the last-fetched ref.")
+@click.option(
+    "--check-remote", is_flag=True, hidden=True, help="Deprecated: fetch is now the default."
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
-def sync_status(check_remote: bool, as_json: bool) -> None:
+def sync_status(offline: bool, check_remote: bool, as_json: bool) -> None:
     """Is the GitHub sync healthy? Shows clone / ahead-behind / dirty / stranded.
 
     Kills the silent no-op: if the memories dir isn't a git clone, the
     SessionStart/Stop hooks soft-fail and nothing syncs — this says so plainly.
+    Fetches first by default so ahead/behind reflect the real remote (a stale
+    tracking ref otherwise reports a false STRANDED); pass --offline to skip.
     """
     from memo.sync_git import sync_status as _status
 
     cfg = Config.from_env()
-    st = _status(cfg, check_remote=check_remote)
+    st = _status(cfg, check_remote=not offline)
 
     if as_json:
         click.echo(json.dumps(st, indent=2))
@@ -332,7 +337,7 @@ def sync_status(check_remote: bool, as_json: bool) -> None:
     console.print(f"  repo:   {st['root']}  ({st['branch']})")
     console.print(f"  remote: {st['remote'] or '—'}")
     console.print(f"  ahead {ahead} · behind {behind} · dirty {dirty} · last {st['last_commit'] or '—'}")
-    if check_remote:
+    if not offline:
         console.print(f"  remote reachable: {st['remote_reachable']}")
 
 

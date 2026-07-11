@@ -366,12 +366,17 @@ def _scan_staged_secrets(root: Path) -> list[str]:
 
 
 def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = False) -> dict:
-    """Read-only health of the git-sync repo — never raises, never mutates.
+    """Read-only health of the git-sync repo — never raises.
 
     Surfaces the silent no-op (data_dir not a git clone) and stranded commits
     (committed locally but not pushed: offline/auth). ``ahead``/``behind`` are
-    relative to the LAST fetch unless ``check_remote`` (then a network
-    ``ls-remote`` probe runs — slower, used by `doctor`, not the hot path).
+    relative to the LAST fetch unless ``check_remote`` — then a network fetch
+    refreshes the tracking ref FIRST so the counts reflect the real remote
+    (slower, used by `doctor` / the CLI `status` command, not the hot path).
+    The only mutation is self-healing a provably-stale ``sync_pending`` marker:
+    with ``check_remote`` confirming the remote is caught up, a marker left by a
+    push that a later trigger already completed is cleared (never a blocked
+    marker with a reason — that is a real hold).
     """
     try:
         root = git_root_for(cfg)
@@ -382,6 +387,16 @@ def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = Fal
     porcelain = _git(root, "status", "--porcelain", check=False).stdout.strip()
     dirty = len(porcelain.split("\n")) if porcelain else 0
     remote_url = _git(root, "remote", "get-url", remote, check=False).stdout.strip()
+
+    # `check_remote` is the network path: refresh the tracking ref BEFORE counting
+    # so ahead/behind reflect the real remote, not the last fetch. Without this a
+    # stale `<remote>/<branch>` makes status/doctor cry "ahead N / STRANDED" long
+    # after a sibling session (or a later trigger) already pushed the commits.
+    remote_reachable: bool | None = None
+    if check_remote and remote_url:
+        fetched = _git(root, "fetch", remote, branch, check=False)
+        remote_reachable = fetched.returncode == 0
+
     ahead = behind = 0
     counts = _git(
         root, "rev-list", "--left-right", "--count", f"{remote}/{branch}...HEAD", check=False
@@ -392,10 +407,17 @@ def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = Fal
             behind, ahead = int(parts[0]), int(parts[1])
     last = _git(root, "log", "-1", "--format=%cI", check=False).stdout.strip()
 
-    remote_reachable: bool | None = None
-    if check_remote and remote_url:
-        probe = _git(root, "ls-remote", "--exit-code", remote, "HEAD", check=False)
-        remote_reachable = probe.returncode == 0
+    # Self-heal a stale pending marker: a prior push failed and stamped it, but a
+    # later trigger (or a sibling session) already landed the commit on the
+    # remote. Once a fresh fetch proves nothing is unpushed and the tree is clean,
+    # the marker is a lie — clear it so status/doctor stop crying STRANDED. Guarded
+    # on an actual reach (`remote_reachable`) so offline never clears; a blocked
+    # marker (secret gate, with a reason) is a real hold and must survive.
+    pending = _pending_marker(cfg).is_file()
+    pending_reason = _read_pending_reason(cfg)
+    if pending and remote_reachable and ahead == 0 and dirty == 0 and pending_reason is None:
+        _pending_marker(cfg).unlink(missing_ok=True)
+        pending = False
 
     return {
         "is_git_clone": True,
@@ -406,8 +428,8 @@ def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = Fal
         "ahead": ahead,
         "behind": behind,
         "last_commit": last,
-        "pending": _pending_marker(cfg).is_file(),
-        "pending_reason": _read_pending_reason(cfg),
+        "pending": pending,
+        "pending_reason": pending_reason,
         "remote_reachable": remote_reachable,
     }
 

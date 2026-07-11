@@ -197,6 +197,65 @@ def test_sync_push_retries_stranded_commit(remote: Path, tmp_path: Path, monkeyp
         mem.close()
 
 
+def test_sync_status_fetches_and_self_heals_stale_pending(
+    remote: Path, tmp_path: Path, monkeypatch
+):
+    """`check_remote` fetches before counting (a stale tracking ref must not
+    report a false STRANDED) and clears a pending marker the remote already
+    caught up on. Offline stays untouched — never fetches, never heals."""
+    from memo.sync_git import _pending_marker, _stamp_pending
+
+    clone_a = _make_clone(remote, tmp_path / "A")
+    mem_a = _mem_for(clone_a, tmp_path / "stateA", monkeypatch)
+    clone_b = _make_clone(remote, tmp_path / "B")
+    mem_b = _mem_for(clone_b, tmp_path / "stateB", monkeypatch)
+    try:
+        sync_push(mem_a.cfg, mem_a.store)  # A seeds the remote
+        # B advances the remote; A's `origin/main` tracking ref is now stale.
+        mem_b.save(content="from B body", title="FromB")
+        sync_once(mem_b.cfg, mem_b.store, mem_b)
+
+        # A carries a stranded pending marker from an earlier failed push, but has
+        # nothing of its own actually unpushed.
+        _stamp_pending(mem_a.cfg, "main")
+        assert _pending_marker(mem_a.cfg).is_file()
+
+        # Offline: stale ref, no fetch → marker survives, no false heal.
+        off = sync_status(mem_a.cfg, check_remote=False)
+        assert off["pending"] is True
+
+        # check_remote fetches: sees B's commit (behind>0), nothing unpushed
+        # (ahead==0) → the marker is a lie and gets cleared.
+        st = sync_status(mem_a.cfg, check_remote=True)
+        assert st["remote_reachable"] is True
+        assert st["ahead"] == 0
+        assert st["behind"] >= 1
+        assert st["pending"] is False
+        assert not _pending_marker(mem_a.cfg).is_file()
+    finally:
+        mem_a.close()
+        mem_b.close()
+
+
+def test_sync_status_keeps_blocked_marker_with_reason(remote: Path, tmp_path: Path, monkeypatch):
+    """A blocked marker (secret gate — has a reason) is a real hold: the
+    self-heal must never clear it even when the remote is caught up."""
+    from memo.sync_git import _pending_marker, _stamp_pending
+
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        sync_push(mem.cfg, mem.store)
+        _stamp_pending(mem.cfg, "main", reason="secret detected in stray.md")
+        st = sync_status(mem.cfg, check_remote=True)
+        assert st["ahead"] == 0
+        assert st["pending"] is True
+        assert st["pending_reason"] == "secret detected in stray.md"
+        assert _pending_marker(mem.cfg).is_file()
+    finally:
+        mem.close()
+
+
 def test_sync_once_commits_local_deletion_before_pull(remote: Path, tmp_path: Path, monkeypatch):
     """Regression: an uncommitted local .md deletion must survive sync_once
     (commit-before-pull), not be resurrected by rebase --autostash from origin."""
