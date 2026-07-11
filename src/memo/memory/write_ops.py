@@ -38,8 +38,16 @@ from memo.memory.record import (
     is_reference_noise,
 )
 from memo.prompt_overrides import resolve_prompt
+from memo.save_gate import resolve_gate
 from memo.tiers import REFERENCE_TYPES
 from memo.util import sha256_short as _sha256_short
+
+
+class _StrictDedupRefused(ValueError):
+    """Raised inside the near-dup gate's best-effort try/except to signal an
+    intentional refusal (strict preset) rather than a dedup-check failure —
+    the surrounding except re-raises this instead of swallowing it."""
+
 
 _TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
@@ -412,6 +420,12 @@ class _WriteOpsMixin(_MemoryBase):
                     _dedup_hits = self.store.search(_dedup_emb, limit=3)
                     for _dh in _dedup_hits:
                         if (_dh.get("score") or 0.0) >= _dedup_threshold:
+                            if resolve_gate(type_).dedup_mode == "refuse" and _dh.get("id"):
+                                raise _StrictDedupRefused(
+                                    f"near-duplicate of {_dh['id'][:8]} "
+                                    f"(sim={_dh.get('score', 0.0):.2f}); strict gate for "
+                                    f"type '{type_}' — use `memo update {_dh['id'][:8]}` instead"
+                                )
                             _dup_title = _dh.get("title") or (_dh.get("id") or "")[:8]
                             _dup_score = _dh.get("score", 0.0)
                             _dup_id = (_dh.get("id") or "")[:8]
@@ -450,6 +464,8 @@ class _WriteOpsMixin(_MemoryBase):
                                 _dup_id,
                             )
                             break
+            except _StrictDedupRefused:
+                raise
             except Exception as _exc:
                 _log.debug("save: dedup check skipped: %s", _exc)
 
