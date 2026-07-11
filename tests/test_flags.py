@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from memo import flags
 
 
@@ -93,3 +95,66 @@ def test_active_flags_lists_only_set() -> None:
     env = {"MEMO_RECALL_TOP_K": "5", "MEMO_RECALL_DEBUG": ""}
     active = flags.active_flags(env=env)
     assert active == {"MEMO_RECALL_TOP_K": "5"}
+
+
+def test_markdown_flag_value_is_used_when_env_unset(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n"
+        "[recall]\n"
+        "top_k = 8\n"
+        'debug = "on"\n'
+        "```\n",
+        encoding="utf-8",
+    )
+    env = {"MEMO_CONFIG_DIR": str(home)}
+
+    assert flags.flag_int("MEMO_RECALL_TOP_K", env=env) == 8
+    assert flags.flag_bool("MEMO_RECALL_DEBUG", env=env) is True
+
+
+def test_env_flag_overrides_markdown_flag(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n[recall]\ntop_k = 8\n```\n", encoding="utf-8"
+    )
+
+    assert flags.flag_int(
+        "MEMO_RECALL_TOP_K",
+        env={"MEMO_CONFIG_DIR": str(home), "MEMO_RECALL_TOP_K": "2"},
+    ) == 2
+
+
+def test_active_flags_remains_env_only_and_active_config_values_reads_markdown(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n[recall]\ntop_k = 8\ndebug = true\n```\n", encoding="utf-8"
+    )
+    env = {"MEMO_CONFIG_DIR": str(home), "MEMO_RECALL_DEBUG": "1"}
+
+    assert flags.active_flags(env=env) == {"MEMO_RECALL_DEBUG": "1"}
+    assert flags.active_config_values(env=env) == {
+        "MEMO_RECALL_TOP_K": "8",
+        "MEMO_RECALL_DEBUG": "on",
+    }
+
+
+def test_validate_reports_markdown_problems(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n[recall]\ntoppp_k = 8\n```\n", encoding="utf-8"
+    )
+
+    problems = flags.validate(env={"MEMO_CONFIG_DIR": str(home)})
+
+    assert any(p["flag"] == "recall.toppp_k" and "unknown" in p["error"] for p in problems)
