@@ -3,7 +3,7 @@ native "recap" line.
 
 ## Why this exists
 
-Claude Code prints a dim, periodic ``※ recap: <goal/progress>`` line straight
+Claude Code prints a dim, periodic recap line straight
 to the user's terminal — its own UI feature, not something memo controls.
 Every OTHER memo client (codex, opencode, devin) has no equivalent, and
 memo's own recall hook can't fill that gap for them: the hook's
@@ -50,7 +50,7 @@ import contextlib
 from pathlib import Path
 from typing import Any
 
-_RECAP_PREFIX = "※ recap:"
+_RECAP_PREFIX = "※ memo recap:"
 _DIM_START = "\x1b[2m"
 # Matches memo's own dim-ANSI convention (resume/_tui.py's
 # _RESUME_TUI_DIM_OPEN/_CLOSE): SGR 2 (faint) / SGR 22 (normal intensity),
@@ -60,7 +60,7 @@ _DIM_END = "\x1b[22m"
 
 def format_recap_line(content: str, *, disable_hint: str = "MEMO_RECAP=0") -> str:
     """Format a single dim ANSI recap line, mirroring Claude Code's own
-    ``※ recap: <summary>   (disable in /config)`` styling.
+    ``※ memo recap: <summary>   (disable in /config)`` styling.
 
     Returns ``""`` for blank/whitespace-only content (nothing worth showing).
     """
@@ -101,7 +101,7 @@ def due_for_recap(snapshot: dict[str, Any] | None, *, every_n: int) -> bool:
 
 
 def compose_system_message(presence_line: str, recap_line: str) -> str:
-    """Join the 🧠 presence line and the ``※ recap:`` line into one
+    """Join the 🧠 presence line and the ``※ memo recap:`` line into one
     ``systemMessage`` string, newline-separated, without clobbering either.
 
     Either side may be empty (feature flag off, no hits, no recap due) — the

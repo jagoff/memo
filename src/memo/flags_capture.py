@@ -105,7 +105,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "capture",
-        "Emit a cross-client '※ recap: <goal/progress>' line (dim ANSI, mirrors "
+        "Emit a cross-client '※ memo recap: <goal/progress>' line (dim ANSI, mirrors "
         "Claude Code's native recap) via the pending-notification channel every "
         "client already reads (the `notification` field on memo_search/"
         "memo_ask/memo_chat_ask/memo_context/memo_unified_briefing). Sourced "

@@ -202,11 +202,11 @@ def test_system_message_flag_gating(tmp_cfg, monkeypatch) -> None:
     )
 
 
-# --- Subprocess-path recap composed into systemMessage (CC-native "※ recap:") --
+# --- Subprocess-path recap composed into systemMessage ("※ memo recap:") --
 
 
 def test_recap_line_folded_into_system_message_when_due(tmp_cfg, monkeypatch) -> None:
-    """Full-hook: when MEMO_RECAP is on and cadence is due, the '※ recap:'
+    """Full-hook: when MEMO_RECAP is on and cadence is due, the '※ memo recap:'
     line rides the SAME systemMessage field the 🧠 presence line uses, so
     Claude Code renders it as a proactive, user-visible dim line — composed,
     not clobbering the 🧠 line.
@@ -269,13 +269,13 @@ def test_recap_line_folded_into_system_message_when_due(tmp_cfg, monkeypatch) ->
     assert "systemMessage" in data, "hook returned no systemMessage with recap due"
     msg = data["systemMessage"]
     assert msg.startswith("🧠 memo ·"), f"presence line missing/clobbered: {msg!r}"
-    assert "※ recap:" in msg, f"recap line missing from systemMessage: {msg!r}"
+    assert "※ memo recap:" in msg, f"recap line missing from systemMessage: {msg!r}"
     assert "working on the recap systemMessage feature" in msg
 
 
 def test_recap_line_absent_from_system_message_when_flag_off(tmp_cfg, monkeypatch) -> None:
     """MEMO_RECAP=0: systemMessage keeps the 🧠 presence line but never gains
-    a '※ recap:' line, even when cadence would otherwise be due."""
+    a '※ memo recap:' line, even when cadence would otherwise be due."""
     import json
 
     from click.testing import CliRunner
@@ -333,11 +333,11 @@ def test_recap_line_absent_from_system_message_when_flag_off(tmp_cfg, monkeypatc
     assert "systemMessage" in data
     msg = data["systemMessage"]
     assert msg.startswith("🧠 memo ·")
-    assert "※ recap:" not in msg
+    assert "※ memo recap:" not in msg
 
 
 def test_daemon_path_folds_recap_into_system_message_when_due(monkeypatch, tmp_path) -> None:
-    """Daemon (production) path: _recall_logic must fold the '※ recap:' line
+    """Daemon (production) path: _recall_logic must fold the '※ memo recap:' line
     into systemMessage too, mirroring the subprocess path — otherwise a warm
     recall daemon silently never shows the CC-native recap line."""
     import json
@@ -371,7 +371,7 @@ def test_daemon_path_folds_recap_into_system_message_when_due(monkeypatch, tmp_p
     payload = json.loads(result)
     msg = payload["systemMessage"]
     assert msg.startswith("🧠 memo · 1: ")
-    assert "※ recap:" in msg
+    assert "※ memo recap:" in msg
     assert "working on the daemon recap path" in msg
 
 

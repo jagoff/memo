@@ -615,7 +615,7 @@ def recall_hook() -> None:
         except Exception as exc:
             _log.debug("recall system-message build failed: %s", exc)
 
-    # Cross-client "※ recap:" line (mirrors Claude Code's native recap).
+    # Cross-client "※ memo recap:" line (mirrors Claude Code's native recap).
     # Cheap cadence check (one JSON read + int compare) writing to the SAME
     # pending-notification file capture already uses, so every OTHER client
     # picks it up via the `notification` field on its next memo_* MCP call.

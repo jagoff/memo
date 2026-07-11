@@ -1,6 +1,6 @@
 """Tests for `memo recap` — cross-client session recap line.
 
-Mirrors Claude Code's native `※ recap: ...` line, but sourced from memo's
+Mirrors Claude Code's native recap line, but sourced from memo's
 own session snapshot and delivered via the pending-notification channel so
 every memo client (not just Claude Code) can surface it. See
 `src/memo/cli_recap.py` for the design rationale.
@@ -27,7 +27,7 @@ def test_format_recap_line_has_prefix_and_dim_ansi() -> None:
 
     assert line.startswith("\x1b[2m")
     assert line.endswith("\x1b[22m")
-    assert "※ recap: fix the login bug" in line
+    assert "※ memo recap: fix the login bug" in line
 
 
 def test_format_recap_line_has_disable_hint_referencing_flag() -> None:
@@ -133,10 +133,10 @@ def test_maybe_write_recap_writes_notification_when_due(tmp_path: Path) -> None:
     result = maybe_write_recap(state_dir, sid, every_n=6)
 
     assert result is not None
-    assert "※ recap:" in result
+    assert "※ memo recap:" in result
     notif_path = state_dir / "pending_idle_notification.txt"
     assert notif_path.exists()
-    assert "※ recap:" in notif_path.read_text(encoding="utf-8")
+    assert "※ memo recap:" in notif_path.read_text(encoding="utf-8")
 
 
 def test_maybe_write_recap_stamps_last_recap_turn(tmp_path: Path) -> None:
@@ -257,9 +257,11 @@ def test_maybe_write_recap_never_raises_on_corrupt_state(tmp_path: Path) -> None
 
 
 def test_compose_system_message_joins_both_lines_with_newline() -> None:
-    combined = compose_system_message("🧠 memo · 1: some title", "※ recap: fix the bug")
+    combined = compose_system_message(
+        "🧠 memo · 1: some title", "※ memo recap: fix the bug"
+    )
 
-    assert combined == "🧠 memo · 1: some title\n※ recap: fix the bug"
+    assert combined == "🧠 memo · 1: some title\n※ memo recap: fix the bug"
 
 
 def test_compose_system_message_presence_only() -> None:
@@ -267,7 +269,10 @@ def test_compose_system_message_presence_only() -> None:
 
 
 def test_compose_system_message_recap_only() -> None:
-    assert compose_system_message("", "※ recap: fix the bug") == "※ recap: fix the bug"
+    assert (
+        compose_system_message("", "※ memo recap: fix the bug")
+        == "※ memo recap: fix the bug"
+    )
 
 
 def test_compose_system_message_both_empty_returns_empty_string() -> None:

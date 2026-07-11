@@ -1282,7 +1282,7 @@ def _recall_logic(
         except Exception as exc:
             _logger.debug("recall system-message build failed: %s", exc)
 
-    # Cross-client "※ recap:" line — mirror the subprocess path so the daemon
+    # Cross-client "※ memo recap:" line — mirror the subprocess path so the daemon
     # (production) path folds it into systemMessage too (this is the path a
     # warm recall daemon actually serves in production, see CLAUDE.md). Same
     # best-effort contract; never blocks recall.
