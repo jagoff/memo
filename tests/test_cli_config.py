@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
@@ -101,3 +102,39 @@ def test_config_migrate_reads_legacy_toml(tmp_path: Path) -> None:
     assert legacy.with_suffix(".toml.pre-md-config.bak").is_file()
     body = (tmp_path / "memo-home" / "config" / "storage-config.md").read_text(encoding="utf-8")
     assert str(tmp_path / "legacy-data") in body
+
+
+def test_bare_config_launches_tui_on_tty(tmp_path: Path) -> None:
+    runner = CliRunner()
+    env = {**_env(tmp_path), "MEMO_NONINTERACTIVE": ""}
+    with (
+        patch("memo.cli_config._terminal_is_interactive", return_value=True),
+        patch("memo.tui.config.run_config_tui", return_value=0) as run,
+    ):
+        result = runner.invoke(cli, ["config"], env=env)
+
+    assert result.exit_code == 0, result.output
+    run.assert_called_once()
+
+
+def test_bare_config_prints_help_without_tty(tmp_path: Path) -> None:
+    runner = CliRunner()
+    with patch("memo.tui.config.run_config_tui") as run:
+        result = runner.invoke(cli, ["config"], env=_env(tmp_path))
+
+    assert result.exit_code == 0
+    assert "show" in result.output
+    run.assert_not_called()
+
+
+def test_noninteractive_blocks_tui_even_with_tty(tmp_path: Path) -> None:
+    runner = CliRunner()
+    with (
+        patch("memo.cli_config._terminal_is_interactive", return_value=True),
+        patch("memo.tui.config.run_config_tui") as run,
+    ):
+        result = runner.invoke(cli, ["config"], env=_env(tmp_path))
+
+    assert result.exit_code == 0
+    assert "show" in result.output
+    run.assert_not_called()

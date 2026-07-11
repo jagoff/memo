@@ -19,10 +19,28 @@ from memo import flags
 from memo.cli_common import console
 
 
-@click.group(name="config")
-def config_group() -> None:
-    """Inspect + validate memo's MEMO_* configuration flags."""
-    pass
+def _terminal_is_interactive() -> bool:
+    import sys
+
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+@click.group(name="config", invoke_without_command=True)
+@click.pass_context
+def config_group(ctx: click.Context) -> None:
+    """Inspect, validate, and edit memo configuration."""
+    if ctx.invoked_subcommand is not None:
+        return
+
+    from memo.flags import flag_bool
+
+    if flag_bool("MEMO_NONINTERACTIVE") or not _terminal_is_interactive():
+        click.echo(ctx.get_help())
+        return
+
+    from memo.tui.config import run_config_tui
+
+    raise click.exceptions.Exit(run_config_tui())
 
 
 @config_group.command(name="flags")
