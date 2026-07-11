@@ -9,6 +9,22 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-07-11
+
+### Added
+
+- **`memo sync setup` — guided onboarding for cross-machine memory sharing.** One
+  interactive command to share your memory corpus over git: *create a new corpus*
+  (auto-creates a private repo when the GitHub CLI is present, otherwise guides you
+  to paste any empty repo URL — GitHub/GitLab/self-hosted) or *join an existing one*
+  (paste the URL). Skippable at every step; `--never` silences the nudge.
+- **Discoverable, never restrictive.** A one-line first-run tip, a dismissable
+  SessionStart briefing line shown only when sync is off, and a richer `memo doctor`
+  hint all point at `memo sync setup` — so sharing is easy to find without ever
+  blocking a local-only user or prompting from a hook.
+- `sync_init_home_byo` — the no-`gh` "bring your own empty repo" initializer
+  (initializes cleanly even for a brand-new empty corpus).
+
 ## [3.0.1] - 2026-07-11
 
 ### Fixed
