@@ -233,6 +233,24 @@ class _SearchScoringMixin(_MemoryBase):
         def _demote(mid: str, pen: float) -> None:
             mult[mid] = min(mult.get(mid, 1.0), pen)
 
+        # declare-disputes: when both sides of a competing/open pair surface in
+        # the same result set, keep BOTH at full score instead of silently
+        # demoting the older side — the dispute is exposed via the hit
+        # dossier's ⚔ marker (Task 1), so no duplicate state is written here.
+        declared: set[str] = set()
+        if flag_bool("MEMO_DECLARE_DISPUTES"):
+            try:
+                declare_pairs = self.contradict_store.pairs_for_ids(
+                    ids, status="competing"
+                ) + self.contradict_store.pairs_for_ids(ids, status="open")
+            except Exception as exc:
+                _log.debug("declare_disputes pairs_for_ids failed: %s", exc)
+                declare_pairs = []
+            for _p in declare_pairs:
+                if _p.memory_id_a in present and _p.memory_id_b in present:
+                    declared.add(_p.memory_id_a)
+                    declared.add(_p.memory_id_b)
+
         for pair in pairs:
             rel = (pair.relationship or "").lower()
             a, b = pair.memory_id_a, pair.memory_id_b
@@ -241,10 +259,16 @@ class _SearchScoringMixin(_MemoryBase):
                 # Only demote when BOTH sides carry a timestamp — otherwise we
                 # can't tell which is older and would risk sinking the newer one.
                 if a_ts and b_ts:
-                    _demote(a if a_ts < b_ts else b, contradict_penalty)
+                    target = a if a_ts < b_ts else b
+                    if target in declared:
+                        continue  # both sides surfaced → declare, don't hide
+                    _demote(target, contradict_penalty)
             elif "evolu" in rel and a in present and b in present and a_ts and b_ts:
                 # Only when BOTH sides surfaced can we safely demote the older.
-                _demote(a if a_ts < b_ts else b, evolution_penalty)
+                target = a if a_ts < b_ts else b
+                if target in declared:
+                    continue  # both sides surfaced → declare, don't hide
+                _demote(target, evolution_penalty)
         if not mult:
             return results
         penalised = [

@@ -452,4 +452,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "Attach query-related temporal fact edges to MemoryRecord.extra for "
         "search/ask/MCP surfaces.",
     ),
+    _spec(
+        "MEMO_DECLARE_DISPUTES",
+        "bool",
+        False,
+        "search",
+        "When both sides of a competing/open contradiction pair surface in the same "
+        "result set, keep BOTH at full score (the dispute is declared via the hit "
+        "dossier's ⚔ marker) instead of silently demoting the older side by "
+        "MEMO_CONTRADICT_PENALTY. Default off = legacy silent demote.",
+    ),
 )
