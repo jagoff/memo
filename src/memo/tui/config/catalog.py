@@ -104,6 +104,7 @@ FIELD_BINDINGS: tuple[FieldBinding, ...] = (
         "Paths",
         SettingKind.PATH,
         Visibility.COMMON,
+        restart_targets=("watcher",),
     ),
     FieldBinding(
         "storage.vault_path",
@@ -113,6 +114,7 @@ FIELD_BINDINGS: tuple[FieldBinding, ...] = (
         "Paths",
         SettingKind.PATH,
         Visibility.COMMON,
+        restart_targets=("watcher",),
     ),
     FieldBinding(
         "storage.memory_subdir",
@@ -121,6 +123,7 @@ FIELD_BINDINGS: tuple[FieldBinding, ...] = (
         "Storage",
         "Legacy",
         SettingKind.STR,
+        restart_targets=("watcher",),
     ),
     FieldBinding(
         "storage.state_dir",
@@ -139,6 +142,7 @@ FIELD_BINDINGS: tuple[FieldBinding, ...] = (
         "Layout",
         SettingKind.BOOL,
         Visibility.COMMON,
+        restart_targets=("watcher",),
     ),
     FieldBinding(
         "storage.single_db",
@@ -354,6 +358,9 @@ COMMON_ENV_NAMES = frozenset(
 RUNTIME_ONLY_ENV_NAMES = frozenset({"MEMO_AGENT_TTY", "MEMO_NONINTERACTIVE"})
 SENSITIVE_ENV_NAMES: frozenset[str] = frozenset()
 EXPERIMENTAL_GROUPS = frozenset({"bench", "dream"})
+FLAG_RESTART_TARGETS: dict[str, tuple[str, ...]] = {
+    "MEMO_HOOK_SELFHEAL": ("hooks",),
+}
 
 
 def _label_from_key(key: str) -> str:
@@ -442,6 +449,7 @@ def _flag_specs(bound_env_names: frozenset[str]) -> list[SettingSpec]:
                 maximum=flag.max_val,
                 visibility=visibility,
                 policy=policy,
+                restart_targets=FLAG_RESTART_TARGETS.get(env_name, ()),
                 sensitive=env_name in SENSITIVE_ENV_NAMES,
             )
         )
