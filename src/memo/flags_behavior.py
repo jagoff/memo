@@ -511,4 +511,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "caller back-dates (imports); durable tiers only — reference chunks are "
         "never rewritten. Default off.",
     ),
+    _spec(
+        "MEMO_GROUNDING_ASK_MIN",
+        "float",
+        0.0,
+        "recall",
+        "Ask-path abstention floor (0.0-1.0; 0 = off). After ask() drafts an answer, "
+        "score how well the recalled sources entail it; below this floor ask abstains "
+        "with MEMO_ASK_FALLBACK_MSG instead of emitting an unsupported inference. "
+        "Off the recall hook (ask path only). Default 0 = off.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
 )

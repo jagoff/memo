@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
 
+from memo.grounding_judge import score_grounding
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _ASK_SYSTEM_PROMPT,
@@ -859,6 +860,17 @@ class _AskOpsMixin(_MemoryBase):
             answer = ((out.get("message") or {}).get("content") or "").strip()
         except Exception as exc:
             answer = f"(error querying the model: {type(exc).__name__})"
+
+        from memo.flags import flag_float
+
+        _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
+        if _ask_min > 0.0 and answer:
+            _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
+            _entail = score_grounding(chat, self.cfg.llm_model, source=_src_text, claim=answer)
+            if _entail is not None and _entail < _ask_min:
+                from memo.flags import flag_str
+
+                answer = flag_str("MEMO_ASK_FALLBACK_MSG")
 
         return {
             "question": norm_question,
