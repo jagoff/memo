@@ -477,6 +477,17 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    _spec(
+        "MEMO_RECALL_DEDUP_COLLAPSE",
+        "bool",
+        False,
+        "recall",
+        "Collapse lexical paraphrase-duplicate hits in the over-fetched pool BEFORE "
+        "top-K truncation (reuses the hook-safe token-Jaccard collapse), so near-dups "
+        "don't crowd out distinct results. Distinct from MEMO_RECALL_INTRA_DEDUP "
+        "(post-top-K). Cosine variant deferred (hits carry no vectors on the hook). "
+        "Default off.",
+    ),
     _spec("MEMO_RECALL_SESSION_TOKEN_BUDGET", "int", 0, "recall",
           "Cumulative recall-token budget per session; past it, per-turn budget decays "
           "(0 = off). Conservative: only scales down, never hard-bails.", min_val=0),

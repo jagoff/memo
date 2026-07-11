@@ -1120,6 +1120,14 @@ def _recall_logic(
                 for h in _gc(prompt, qualifying, sim_threshold=_guard_sim_threshold)[:1]
             ]
 
+    # Pre-top-K paraphrase collapse: drop lexical near-dups from the over-fetched
+    # pool BEFORE truncation, so they don't crowd out distinct results. Default OFF
+    # (flag unset). Reuses the same threshold flag as the post-top-K MEMO_RECALL_INTRA_DEDUP.
+    if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(qualifying) > 1:
+        qualifying = collapse_near_dups(
+            qualifying, threshold=_flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8
+        )
+
     relevant = qualifying[:top_k]
 
     # Precision-gate: suppress injection when the top score falls in a learned
