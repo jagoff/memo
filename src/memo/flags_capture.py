@@ -91,6 +91,16 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_SAVE_GATE_PRESETS",
+        "str",
+        "",
+        "capture",
+        "JSON map of memory type -> save-gate preset (strict/balanced/permissive), "
+        "e.g. '{\"decision\":\"strict\",\"bug\":\"strict\"}'. A 'strict' type REFUSES "
+        "a near-duplicate save (ValueError with the colliding id) instead of warning. "
+        "Unset/unlisted types = 'balanced' = today's behavior. Default off (empty).",
+    ),
+    _spec(
         "MEMO_RECAP",
         "bool",
         True,
