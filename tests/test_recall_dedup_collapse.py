@@ -77,10 +77,11 @@ def test_dedup_collapse_runs_pre_topk_when_flag_on(mem: Memory, monkeypatch):
 
 
 def test_dedup_collapse_skipped_when_flag_off(mem: Memory, monkeypatch):
-    """With MEMO_RECALL_DEDUP_COLLAPSE unset, no pre-top-K collapse runs — recall
-    stays byte-identical to today."""
+    """With MEMO_RECALL_DEDUP_COLLAPSE=0, no pre-top-K collapse runs — recall
+    stays byte-identical to the pre-collapse path. (Default is ON as of v3.0.0,
+    so the off-path must be requested explicitly.)"""
     _base_env(monkeypatch)
-    monkeypatch.delenv("MEMO_RECALL_DEDUP_COLLAPSE", raising=False)
+    monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
     monkeypatch.delenv("MEMO_RECALL_INTRA_DEDUP", raising=False)
 
     mem.save(content="el cutover memflow a mac-work fue ok", title="Deploy cutover mac-work", type_="fact")
@@ -95,7 +96,7 @@ def test_dedup_collapse_skipped_when_flag_off(mem: Memory, monkeypatch):
     monkeypatch.setattr("memo.recall_logic.collapse_near_dups", _spy)
 
     _recall_logic("deploy cutover mac-work", None, mem, mem.cfg)
-    assert not calls, "collapse_near_dups must NOT be called when MEMO_RECALL_DEDUP_COLLAPSE is unset"
+    assert not calls, "collapse_near_dups must NOT be called when MEMO_RECALL_DEDUP_COLLAPSE=0"
 
 
 def test_collapse_near_dups_drops_lower_scored_paraphrase():

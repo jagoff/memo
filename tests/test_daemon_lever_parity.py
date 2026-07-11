@@ -121,9 +121,13 @@ def test_intra_dedup_collapses_near_dups_when_flag_on(mem: Memory, monkeypatch):
 
 
 def test_intra_dedup_skipped_when_flag_off(mem: Memory, monkeypatch):
-    """With MEMO_RECALL_INTRA_DEDUP unset, collapse_near_dups is never called."""
+    """With both dedup levers off, collapse_near_dups is never called. Both the
+    post-top-K MEMO_RECALL_INTRA_DEDUP and the pre-top-K MEMO_RECALL_DEDUP_COLLAPSE
+    (default ON since v3.0.0) call the shared collapse_near_dups, so isolating the
+    INTRA_DEDUP off-path requires disabling the collapse lever too."""
     _base_env(monkeypatch)
     monkeypatch.delenv("MEMO_RECALL_INTRA_DEDUP", raising=False)
+    monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
 
     mem.save(content="el cutover memflow a mac-work fue ok", title="Deploy cutover mac-work", type_="fact")
     mem.save(content="el cutover memflow a mac work fue ok", title="Deploy cutover en mac-work", type_="fact")

@@ -263,6 +263,10 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
     monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")  # isolate from prefs
     monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "0")
+    # These 5 synthetic "hit N" records tokenize near-identically; disable the
+    # pre-top-K paraphrase collapse (default ON since v3.0.0) so the nudge-cut
+    # under test sees all 5 rather than one collapsed survivor.
+    monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
 
     result, _log = _recall_logic(
         "q", cwd=None, mem=StubMemory(), cfg=SimpleNamespace(state_dir=tmp_path), debug=False

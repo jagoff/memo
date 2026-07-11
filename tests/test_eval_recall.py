@@ -604,9 +604,13 @@ def test_label_parses_expect_associative_ids():
     assert lab.expect_associative_ids == ("abcd1234", "ef567890")
 
 
-def test_run_config_uses_faithful_ranking_dedup() -> None:
+def test_run_config_uses_faithful_ranking_dedup(monkeypatch) -> None:
     """run_config must rank via rank_hits — so the same memory surfaced twice is
     deduped the way the daemon does, not counted as two separate top-K hits."""
+    # Isolate the rank_hits id-dedup under test from the pre-top-K paraphrase
+    # collapse (default ON since v3.0.0), which would also merge these
+    # lexically-near-identical synthetic bodies.
+    monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
     from dataclasses import dataclass, field
     from typing import Any
 
@@ -760,7 +764,11 @@ def _redundant_mem():
     return _Mem()
 
 
-def test_mmr_config_differs_from_baseline_on_redundant_corpus():
+def test_mmr_config_differs_from_baseline_on_redundant_corpus(monkeypatch):
+    # This test asserts the baseline KEEPS the redundant near-duplicate (MMR is
+    # what drops it). The pre-top-K collapse (default ON since v3.0.0) would also
+    # drop it, masking the MMR-vs-baseline contrast — so disable it here.
+    monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
     labels = LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["cccccccc"])])
     base = eval_recall.Cfg("base vec/0.0/keep", "vec", 0.0, exclude_archived=False)
     mmr = eval_recall.Cfg(
