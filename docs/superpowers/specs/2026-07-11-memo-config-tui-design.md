@@ -160,6 +160,10 @@ tui/
     screens.py
     widgets.py
     controls.py
+    catalog.py
+    session.py
+    apply.py
+    impact.py
     styles.tcss
 ```
 
@@ -177,19 +181,20 @@ services.
 
 ### 3. Configuration Domain
 
-Focused non-UI modules own reusable configuration behavior:
+Focused non-UI modules inside the feature package own reusable configuration
+behavior:
 
 ```text
-config_catalog.py
-config_session.py
-config_apply.py
-config_impact.py
+tui/config/catalog.py
+tui/config/session.py
+tui/config/apply.py
+tui/config/impact.py
 ```
 
-- `config_catalog.py` defines the complete setting catalog.
-- `config_session.py` loads configured/effective state and owns the draft.
-- `config_apply.py` validates and applies a transactional batch.
-- `config_impact.py` maps changed settings to explicit activation actions.
+- `catalog.py` defines the complete setting catalog.
+- `session.py` loads configured/effective state and owns the draft.
+- `apply.py` validates and applies a transactional batch.
+- `impact.py` maps changed settings to explicit activation actions.
 
 The CLI subcommands may reuse these services so the TUI and CLI do not develop
 different validation or write semantics.
@@ -469,9 +474,9 @@ The TUI must preserve user ownership of Markdown:
 
 ## Runtime Impact
 
-`config_impact.py` maps keys to explicit targets such as recall daemon, watcher,
-hooks, or no restart. It produces descriptions and callables but does not run
-them during planning.
+`tui/config/impact.py` maps keys to explicit targets such as recall daemon,
+watcher, hooks, or no restart. It produces descriptions and callables but does
+not run them during planning.
 
 After a successful save:
 
