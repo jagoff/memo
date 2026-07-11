@@ -13,8 +13,11 @@ from memo.tui.config.widgets import SettingRow, SourceBadge
 
 
 def _session(tmp_path: Path, **overrides: str) -> ConfigSession:
+    home = tmp_path / "memo-home"
+    home.mkdir(exist_ok=True)
+    (home / "memo-config.md").write_text("# Memo config\n", encoding="utf-8")
     env = {
-        "MEMO_CONFIG_DIR": str(tmp_path / "memo-home"),
+        "MEMO_CONFIG_DIR": str(home),
         "MEMO_CONFIG_FILE": str(tmp_path / "legacy.toml"),
         "MEMO_DATA_DIR": str(tmp_path / "data"),
         "MEMO_STATE_DIR": str(tmp_path / "state"),

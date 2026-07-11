@@ -243,3 +243,108 @@ Screen.narrow .setting-meta {
     height: 3;
     align: right middle;
 }
+
+FirstRunWizard,
+ReviewScreen,
+ConflictScreen,
+RecoveryScreen,
+ApplyResultScreen {
+    align: center middle;
+    background: #080a0c 75%;
+}
+
+.screen-panel {
+    width: 88%;
+    max-width: 110;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    background: #182026;
+    border: solid #50606b;
+}
+
+.wizard-panel {
+    width: 72;
+    min-height: 22;
+}
+
+.review-panel,
+.recovery-panel {
+    height: 80%;
+}
+
+.conflict-panel,
+.result-panel {
+    min-height: 14;
+}
+
+.screen-title {
+    height: 2;
+    color: #61c7d7;
+    text-style: bold;
+}
+
+#wizard-progress {
+    height: 2;
+    color: #9eabb5;
+}
+
+.screen-note {
+    height: auto;
+    min-height: 3;
+    color: #9eabb5;
+}
+
+#wizard-body {
+    height: 1fr;
+    padding: 1 0;
+}
+
+#wizard-body Input,
+#wizard-body Select {
+    margin-bottom: 1;
+}
+
+.screen-actions {
+    height: 3;
+    align: right middle;
+}
+
+.screen-actions Button {
+    width: auto;
+    min-width: 12;
+    height: 3;
+    margin-left: 1;
+}
+
+#review-changes,
+#recovery-issues {
+    height: 1fr;
+    border-top: solid #33404a;
+    border-bottom: solid #33404a;
+    padding: 1;
+}
+
+.review-change,
+.recovery-issue {
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+}
+
+.review-section {
+    height: 2;
+    color: #e3b85b;
+    text-style: bold;
+}
+
+.result-error {
+    color: #ef6f72;
+    text-style: bold;
+}
+
+Screen.narrow .screen-panel {
+    width: 98%;
+    height: 94%;
+    padding: 1;
+}

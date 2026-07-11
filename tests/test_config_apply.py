@@ -14,6 +14,7 @@ from memo.tui.config.apply import (
     ConfigTransaction,
     recover_interrupted_transaction,
     render_draft,
+    restore_transaction_backup,
 )
 from memo.tui.config.session import ConfigSession
 
@@ -177,4 +178,18 @@ def test_recovery_restores_backups_from_committing_manifest(tmp_path: Path) -> N
 
     assert recovered is not None
     assert recovered.state == "recovered"
+    assert "top_k = 3" in path.read_text(encoding="utf-8")
+
+
+def test_selected_transaction_backup_can_be_restored(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, "recall", "top_k", 3)
+    plan = _plan_set(tmp_path, "recall.top_k", 5)
+    receipt = ConfigTransaction(_env(tmp_path)).commit(
+        render_draft(plan, _env(tmp_path)), plan.snapshot
+    )
+    assert receipt.manifest is not None
+
+    restored = restore_transaction_backup(receipt.manifest)
+
+    assert restored.state == "restored"
     assert "top_k = 3" in path.read_text(encoding="utf-8")

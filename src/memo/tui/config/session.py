@@ -157,7 +157,11 @@ class ConfigSession:
         self.overlay = dict(overlay)
         self.snapshot = snapshot
         self._source_issues = tuple(
-            ValidationIssue(problem.key or problem.file, problem.error) for problem in source_problems
+            ValidationIssue(
+                problem.key or problem.file,
+                f"{problem.file}: {problem.error}",
+            )
+            for problem in source_problems
         )
         self.draft = ConfigDraft()
         self._catalog = build_catalog()
@@ -340,6 +344,10 @@ class ConfigSession:
         base = tuple(issue for state in self._base_states.values() for issue in state.issues)
         candidates = self._source_issues + base + tuple(self._draft_issues())
         return tuple(dict.fromkeys(candidates))
+
+    @property
+    def source_issues(self) -> tuple[ValidationIssue, ...]:
+        return self._source_issues
 
     def review(self) -> ApplyPlan:
         changes: list[PlannedChange] = []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
@@ -11,13 +12,29 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.widgets import Button, Input, Label, Select, Static, Switch
 
+from memo.errors import ConfigConflictError, ConfigTransactionError
 from memo.tui.common import CONFIG_DOMAINS, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH
+from memo.tui.config.apply import (
+    ApplyPlan,
+    ConfigTransaction,
+    recover_interrupted_transaction,
+    render_draft,
+    restore_transaction_backup,
+)
 from memo.tui.config.catalog import Visibility
 from memo.tui.config.controls import (
     SettingChanged,
     SettingInput,
     SettingSelect,
     SettingSwitch,
+)
+from memo.tui.config.impact import ImpactController, ImpactResult
+from memo.tui.config.screens import (
+    ApplyResultScreen,
+    ConflictScreen,
+    FirstRunWizard,
+    RecoveryScreen,
+    ReviewScreen,
 )
 from memo.tui.config.session import ConfigSession, SettingState
 from memo.tui.config.widgets import (
@@ -37,9 +54,16 @@ class ConfigApp(App[int]):
         ("q", "quit", "Quit"),
     ]
 
-    def __init__(self, session: ConfigSession) -> None:
+    def __init__(
+        self,
+        session: ConfigSession,
+        *,
+        impact_controller: ImpactController | None = None,
+    ) -> None:
         super().__init__()
         self.session = session
+        self.impact_controller = impact_controller or ImpactController()
+        self.read_only = False
         self.active_domain = "Recall"
         self.search_query = ""
         self.show_advanced = False
@@ -111,6 +135,17 @@ class ConfigApp(App[int]):
     def on_mount(self) -> None:
         self._update_responsive(self.screen.size.width, self.screen.size.height)
         self._update_summary()
+
+    def on_ready(self) -> None:
+        self._open_initial_screen()
+
+    def _open_initial_screen(self) -> None:
+        recovery = RecoveryScreen(self.session, self.session.source_issues)
+        if self.session.source_issues or recovery.pending_manifest:
+            self.push_screen(recovery)
+            return
+        if not any(fingerprint.exists for fingerprint in self.session.snapshot.files.values()):
+            self.push_screen(FirstRunWizard(self.session))
 
     def on_resize(self, event: Resize) -> None:
         self._update_responsive(event.size.width, event.size.height)
@@ -218,6 +253,86 @@ class ConfigApp(App[int]):
         self._update_summary()
 
     def action_review(self) -> None:
+        self._update_summary()
+        if self.read_only:
+            return
+        plan = self.session.review()
+        if plan.blocked or not plan.changes:
+            return
+        self.push_screen(ReviewScreen(self.session, plan))
+
+    async def apply_review(self, plan: ApplyPlan, *, activate: bool) -> None:
+        try:
+            rendered = render_draft(plan, self.session.env)
+            receipt = ConfigTransaction(self.session.env).commit(rendered, plan.snapshot)
+        except ConfigConflictError as exc:
+            current = ConfigSession.open(self.session.env)
+            disk_values = {key: current.state(key).configured_value for key in exc.keys}
+            self.push_screen(ConflictScreen(plan, exc.keys, disk_values))
+            return
+        except ConfigTransactionError as exc:
+            issue = (self._transaction_issue(str(exc)),)
+            self.push_screen(RecoveryScreen(self.session, issue))
+            return
+
+        results: tuple[ImpactResult, ...] = ()
+        if activate:
+            from memo.tui.config.impact import plan_impacts
+
+            actions = plan_impacts(plan.changes)
+            results = await self.run_worker(
+                lambda: self.impact_controller.execute(actions),
+                thread=True,
+                exclusive=True,
+            ).wait()
+        self.session = ConfigSession.open(self.session.env)
+        self.pop_screen()
+        self.push_screen(ApplyResultScreen(receipt, results))
+
+    @staticmethod
+    def _transaction_issue(message: str):
+        from memo.tui.config.session import ValidationIssue
+
+        return ValidationIssue("transaction", message)
+
+    async def resolve_conflict(self, plan: ApplyPlan, *, keep_draft: bool) -> None:
+        self.pop_screen()
+        self.pop_screen()
+        self.session = ConfigSession.open(self.session.env)
+        if keep_draft:
+            for change in plan.changes:
+                if change.unset:
+                    self.session.unset_value(change.key)
+                else:
+                    self.session.set_value(change.key, change.after)
+        await self.refresh_center()
+        if keep_draft:
+            self.action_review()
+
+    async def enter_read_only(self) -> None:
+        self.pop_screen()
+        self.read_only = True
+        for control in self.query(".setting-control"):
+            control.disabled = True
+        self.query_one("#review-draft", Button).disabled = True
+        self.query_one("#discard-draft", Button).disabled = True
+
+    async def restore_backup(self, manifest: Path) -> None:
+        from memo.config_md import config_home
+
+        pending = recover_interrupted_transaction(config_home(self.session.env))
+        if pending is None:
+            restore_transaction_backup(manifest)
+        await self.reload_session(close_screens=True)
+
+    async def reload_session(self, *, close_screens: bool = False) -> None:
+        if close_screens and len(self.screen_stack) > 1:
+            self.pop_screen()
+        self.session = ConfigSession.open(self.session.env)
+        await self.refresh_center()
+
+    async def refresh_center(self) -> None:
+        await self._refresh_settings()
         self._update_summary()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:

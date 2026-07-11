@@ -481,6 +481,45 @@ def recover_interrupted_transaction(home: Path) -> TransactionReceipt | None:
     return None
 
 
+def restore_transaction_backup(manifest_path: Path) -> TransactionReceipt:
+    """Restore every original recorded by a selected transaction manifest."""
+    manifest_path = manifest_path.expanduser().resolve()
+    transaction_dir = manifest_path.parent
+    home = transaction_dir.parent.parent.resolve()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigTransactionError(f"failed to read backup manifest {manifest_path}: {exc}") from exc
+
+    restored: list[Path] = []
+    try:
+        for entry in manifest.get("files", []):
+            target = (home / str(entry["target"])).resolve()
+            if not target.is_relative_to(home):
+                raise ConfigTransactionError(f"unsafe backup target: {target}")
+            backup = transaction_dir / str(entry["backup"])
+            if bool(entry["existed"]):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(backup, target)
+            else:
+                target.unlink(missing_ok=True)
+            restored.append(target)
+        manifest["restored_from_state"] = manifest.get("state")
+        _write_manifest(manifest_path, manifest, "restored")
+    except (OSError, KeyError, TypeError) as exc:
+        raise ConfigTransactionError(f"failed to restore {manifest_path}: {exc}") from exc
+
+    from memo.config_md import invalidate_cache
+
+    invalidate_cache()
+    return TransactionReceipt(
+        str(manifest.get("id", transaction_dir.name)),
+        "restored",
+        tuple(restored),
+        manifest_path,
+    )
+
+
 __all__ = [
     "ApplyPlan",
     "ConfigTransaction",
@@ -490,5 +529,6 @@ __all__ = [
     "TransactionReceipt",
     "recover_interrupted_transaction",
     "render_draft",
+    "restore_transaction_backup",
     "snapshot_sources",
 ]
