@@ -180,6 +180,25 @@ memo ask 'what changed in the embedder this month?'   # RAG — cites memories b
 
 ## Key capabilities
 
+### 🔀 Resume any session — from any agent
+
+`memo resume` opens one arrow-key picker over **every** recent coding session on the machine — Claude Code, Codex, Devin, Gemini, and OpenCode — merged with memo's own recall-grounded snapshots. Crashed, closed the terminal, or switched agents mid-task? Reopen the project, run one command, and continue exactly where any of them left off.
+
+<div align="center">
+
+<img src="docs/resume-screenshot.png" alt="memo resume: one arrow-key picker listing recent sessions across Claude, Codex, Devin, Gemini, and OpenCode — each tagged by agent, each resumable natively." width="820" />
+
+</div>
+
+```bash
+memo resume                               # picker across all agents (↑/↓ browse, type to search, Enter resumes)
+memo resume --all-cwd                      # widen beyond the current project
+memo resume 019f51e9                       # jump straight to one session by id / prefix
+memo episodes search "vec0 timeout bug"    # find a past session by meaning, not recency
+```
+
+Each row resumes **natively** in its own agent — `claude --resume`, `codex resume`, `devin -r`, `gemini --session-file`, `opencode --session` — so control returns to that agent's real session, not a copy. Type-to-search re-ranks by *meaning* over the full session history (episodic memory); `Tab` toggles the cwd/all filter and the updated/created sort. Any agent that writes a transcript is discovered automatically — nothing to configure.
+
 ### 🕰️ Time-machine
 
 Rewind the corpus to any past date and query it as it was then:
