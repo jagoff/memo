@@ -29,20 +29,30 @@ PRESETS: dict[str, GatePolicy] = {
 _DEFAULT = PRESETS["balanced"]
 
 
-def _preset_map() -> dict[str, str]:
-    raw = flag_str("MEMO_SAVE_GATE_PRESETS") or ""
-    if not raw.strip():
-        return {}
+def _preset_map() -> tuple[str | None, dict[str, str]]:
+    """Parse MEMO_SAVE_GATE_PRESETS → (global_default, per_type_map).
+
+    Accepts two forms: a bare preset name (e.g. ``strict``) applies to ALL types,
+    or a JSON object (``{"note": "strict"}``) sets per-type presets. A bare name
+    is the natural/documented usage — parsing it as the global default avoids the
+    silent no-op where ``json.loads("strict")`` failed and everything defaulted.
+    """
+    raw = (flag_str("MEMO_SAVE_GATE_PRESETS") or "").strip()
+    if not raw:
+        return None, {}
+    if raw in PRESETS:  # bare preset name → global default for every type
+        return raw, {}
     try:
         data = json.loads(raw)
     except (ValueError, TypeError):
-        return {}
+        return None, {}
     if not isinstance(data, dict):
-        return {}
-    return {str(k): str(v) for k, v in data.items()}
+        return None, {}
+    return None, {str(k): str(v) for k, v in data.items()}
 
 
 def resolve_gate(type_: str) -> GatePolicy:
     """GatePolicy for a memory type. Unset/unlisted/unknown ⇒ `balanced` (no-op)."""
-    name = _preset_map().get(type_, "balanced")
+    global_default, per_type = _preset_map()
+    name = per_type.get(type_, global_default or "balanced")
     return PRESETS.get(name, _DEFAULT)

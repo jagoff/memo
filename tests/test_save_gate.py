@@ -16,6 +16,16 @@ def test_strict_preset_refuses(monkeypatch):
     assert save_gate.resolve_gate("bug").dedup_mode == "refuse"
 
 
+def test_bare_preset_name_applies_to_all_types(monkeypatch):
+    # A bare preset name (not JSON) is the natural usage — it must apply globally
+    # instead of silently no-op'ing (json.loads("strict") used to fail → default).
+    monkeypatch.setenv("MEMO_SAVE_GATE_PRESETS", "strict")
+    assert save_gate.resolve_gate("decision").dedup_mode == "refuse"
+    assert save_gate.resolve_gate("note").dedup_mode == "refuse"
+    monkeypatch.setenv("MEMO_SAVE_GATE_PRESETS", "balanced")
+    assert save_gate.resolve_gate("anything").dedup_mode == "warn"
+
+
 def test_unlisted_type_falls_back_to_balanced(monkeypatch):
     monkeypatch.setenv("MEMO_SAVE_GATE_PRESETS", '{"decision": "strict"}')
     assert save_gate.resolve_gate("note").dedup_mode == "warn"
