@@ -79,6 +79,22 @@ def test_init_prompts_to_overwrite_existing_legacy_config(tmp_path: Path, runner
     assert "/tmp/old" in cfg_file.read_text(encoding="utf-8")
 
 
+def test_init_prompts_to_overwrite_existing_markdown_config(tmp_path: Path, runner_env):
+    """Without --force, init preserves an existing Markdown config."""
+    cfg_file = Path(runner_env["MEMO_CONFIG_DIR"]) / "config" / "storage-config.md"
+    cfg_file.parent.mkdir(parents=True, exist_ok=True)
+    cfg_file.write_text(
+        '# Storage config\n\n```toml\n[storage]\ndata_dir = "/tmp/old-md"\n```\n',
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    fake = PickerResult(data_dir=tmp_path / "new", vault_path=None)
+    with patch("memo.cli.run_picker", return_value=fake):
+        result = runner.invoke(cli, ["init"], input="n\n", env=runner_env)
+    assert result.exit_code == 0
+    assert "/tmp/old-md" in cfg_file.read_text(encoding="utf-8")
+
+
 def test_init_refuses_non_interactive(tmp_path: Path, runner_env):
     """`memo init` on a non-TTY exits cleanly with guidance, not a traceback."""
     runner = CliRunner()

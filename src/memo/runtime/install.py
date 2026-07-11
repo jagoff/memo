@@ -100,14 +100,25 @@ def _init_is_interactive() -> bool:
 @click.option("--force", is_flag=True, help="Overwrite existing config without confirmation.")
 def init_cmd(force: bool) -> None:
     """(Re)configure where memo stores memories."""
+    from memo.config_md import config_dir, index_path
     from memo.setup.config_io import _resolve_config_path
 
+    markdown_index = index_path()
+    markdown_dir = config_dir()
     cfg_path = _resolve_config_path()
+    existing_config = next(
+        (
+            path
+            for path in (markdown_index, markdown_dir, cfg_path)
+            if path.is_file() or path.is_dir()
+        ),
+        None,
+    )
     if (
-        cfg_path.is_file()
+        existing_config is not None
         and not force
         and not click.confirm(
-            f"Config file exists at {cfg_path}. Overwrite?",
+            f"Config exists at {existing_config}. Overwrite?",
             default=False,
         )
     ):
