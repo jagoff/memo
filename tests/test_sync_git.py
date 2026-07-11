@@ -1006,3 +1006,41 @@ def test_sync_init_home_byo_pushes_existing_memories(tmp_path: Path, monkeypatch
         capture_output=True, text=True,
     )
     assert ls.returncode == 0 and ls.stdout.strip()
+
+
+def test_sync_init_home_byo_empty_dir_initializes(tmp_path: Path, monkeypatch):
+    """When the memories dir is truly empty (no .md files), sync_init_home_byo
+    should still create an initial commit so HEAD is born. Without this, the push
+    fails because _current_branch() raises SyncGitError on an unborn HEAD."""
+    import subprocess
+
+    from memo.sync_git import sync_init_home_byo
+
+    # user-created empty bare remote (the "paste this URL" repo)
+    remote = tmp_path / "byo.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(remote)],
+        check=True, capture_output=True,
+    )
+    # a memories dir that is EMPTY (no .md files, brand-new user)
+    memories = tmp_path / "repo" / "memorias"
+    memories.mkdir(parents=True)
+
+    cfg = Config(data_dir=memories, state_dir=tmp_path / "state", embedder_dims=4)
+    # git identity for the ad-hoc repo
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "t")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "t@t.t")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "t")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@t.t")
+
+    # This should NOT raise, even though the directory has no memories yet.
+    out = sync_init_home_byo(cfg, str(remote))
+
+    assert out["repo_url"] == str(remote)
+    assert out["branch"] in ("main", "master")
+    # the remote now has an initial (possibly empty) commit
+    ls = subprocess.run(
+        ["git", "-C", str(remote), "log", "--oneline"],
+        capture_output=True, text=True,
+    )
+    assert ls.returncode == 0 and ls.stdout.strip()

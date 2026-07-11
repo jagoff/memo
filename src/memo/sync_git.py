@@ -718,9 +718,10 @@ def sync_init_home_byo(cfg: Config, url: str) -> dict:
         _git(root, "remote", "add", "origin", url)
 
     _git(root, "add", "-A")
-    status = _git(root, "status", "--porcelain", check=False).stdout.strip()
-    if status:
-        _git(root, "commit", "-m", "memo: initial memory corpus")
+    # Even with no memories yet, make a real (possibly empty) initial commit so
+    # HEAD is born — otherwise a brand-new user running the create path before
+    # saving anything lands on an unborn branch and _current_branch()/push fail.
+    _git(root, "commit", "--allow-empty", "-m", "memo: initial memory corpus")
     branch = _current_branch(root)
     _git(root, "push", "-u", "origin", branch)
     return {"repo_url": url, "branch": branch, "local_dir": str(root)}
