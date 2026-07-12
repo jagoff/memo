@@ -83,6 +83,10 @@ docs/superpowers/
 docs/distribution.md
 docs/registry-submission.md
 
+# Superpowers brainstorm server runtime (pids, ports, generated HTML) — transient.
+# The tracked .superpowers/sdd/ task reports stay in git.
+.superpowers/brainstorm/
+
 # Obsolete IDE client rules (product renamed: Windsurf retired → Devin Desktop)
 .windsurfrules
 
