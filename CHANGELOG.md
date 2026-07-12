@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-07-12
+
 ### Added
 
 - **`memo config` terminal configuration center.** Bare `memo config` now opens
