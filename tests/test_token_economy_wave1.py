@@ -607,3 +607,58 @@ def test_wave1_flags_integration(monkeypatch):
 
         steered3 = maybe_inject_verbosity_steering(prompt, level=0)
         assert steered3 == prompt  # Verbosity still off
+
+
+# --- Task 2.2: real relevance scorer (replaces the 0.5 placeholder) ---
+
+
+def test_score_rows_ranks_distinctive_row_highest():
+    """IDF distinctiveness scorer ranks the odd-one-out row above templated noise."""
+    from memo.capture_core import _score_rows_by_relevance
+
+    rows = [{"file": f"src/a{i:02d}.py", "line": i, "match": "pass"} for i in range(11)]
+    answer = {"file": "src/target.py", "line": 42, "match": "def maybe_crush_json_capture(): ..."}
+    rows.append(answer)
+
+    scores = _score_rows_by_relevance(rows, context="")
+
+    # the distinctive final row scores strictly highest — position-blind
+    assert max(range(len(scores)), key=lambda i: scores[i]) == len(rows) - 1
+
+
+def test_crush_keeps_distinctive_row_when_last(monkeypatch):
+    """A real relevance scorer keeps the signal row even when it is placed last.
+
+    The 0.5 placeholder kept the first-K by position and dropped a trailing
+    answer; the IDF scorer must survive it (this is exactly the token_corpus
+    `grep_hits_answer_last` shape the gate exercises).
+    """
+    from memo.capture_core import maybe_crush_json_capture
+    from memo.config import Config
+
+    monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_dir = Path(tmpdir)
+        config = Config(
+            data_dir=state_dir / "data",
+            vault_path=state_dir / "vault",
+            state_dir=state_dir / "state",
+        )
+        for sub in ("data", "vault", "state"):
+            (state_dir / sub).mkdir(parents=True, exist_ok=True)
+
+        rows = [{"file": f"src/a{i:02d}.py", "line": i, "match": "pass"} for i in range(29)]
+        answer = {
+            "file": "src/target.py",
+            "line": 42,
+            "match": "def maybe_crush_json_capture(content, context, config):",
+        }
+        rows.append(answer)
+
+        crushed, hash_val = maybe_crush_json_capture(json.dumps(rows), context="", config=config)
+
+        assert hash_val is not None  # array was crushed
+        kept = json.loads(crushed)
+        assert answer in kept  # signal row survived despite being last
+        assert len(kept) < len(rows)  # and the array actually shrank

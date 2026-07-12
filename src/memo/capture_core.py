@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re as _re
 from pathlib import Path
 from typing import Any
@@ -1233,6 +1234,45 @@ def extract_and_save_text(
     return {"status": "extracted", **result}
 
 
+_CRUSH_TOKEN_RE = _re.compile(r"\w+", _re.UNICODE)
+
+
+def _row_tokens(row: Any) -> set[str]:
+    """Lowercased word-token set of a JSON row (keys + values flattened)."""
+    text = row if isinstance(row, str) else json.dumps(row, ensure_ascii=False, sort_keys=True)
+    return {t.lower() for t in _CRUSH_TOKEN_RE.findall(text)}
+
+
+def _score_rows_by_relevance(rows: list[Any], context: str) -> list[float]:
+    """Relevance score per row for the SmartCrusher: IDF-weighted distinctiveness.
+
+    Each row is scored by the summed inverse document frequency of its tokens
+    across the whole array — rows built from tokens shared by many sibling rows
+    (repetitive tool-output boilerplate) score low, rows carrying rare/unique
+    tokens (the actual signal) score high, regardless of their position. When
+    ``context`` is non-empty, tokens a row shares with it add an IDF-weighted
+    bonus, so capture-time context steers which rows survive. Pure, deterministic
+    and embedder-free — safe inside the capture path's latency budget.
+    """
+    n = len(rows)
+    token_sets = [_row_tokens(r) for r in rows]
+    df: dict[str, int] = {}
+    for tokens in token_sets:
+        for tok in tokens:
+            df[tok] = df.get(tok, 0) + 1
+
+    def _idf(tok: str) -> float:
+        return math.log((n + 1) / (df.get(tok, 0) + 1)) + 1.0
+
+    ctx_tokens = {t.lower() for t in _CRUSH_TOKEN_RE.findall(context)} if context else set()
+    scores: list[float] = []
+    for tokens in token_sets:
+        base = sum(_idf(tok) for tok in tokens)
+        bonus = sum(_idf(tok) for tok in tokens & ctx_tokens) if ctx_tokens else 0.0
+        scores.append(base + bonus)
+    return scores
+
+
 def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, str | None]:
     """Apply SmartCrusher to JSON arrays in capture content.
 
@@ -1249,9 +1289,9 @@ def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, s
     Returns:
         Tuple of (crushed_content_or_original, crush_hash_if_crushed_else_None)
 
-    **Scorer integration (TBD):** Currently uses placeholder 0.5 score for all
-    rows. Should integrate with memo.memory.search_logic.hybrid_score() or
-    equivalent once available. See plan line 389.
+    Rows are scored by :func:`_score_rows_by_relevance` (IDF-weighted
+    distinctiveness, optionally steered by ``context``); the top-K survive and
+    the rest are offloaded to the crush cache behind the marker row.
     """
     import hashlib
 
@@ -1279,24 +1319,18 @@ def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, s
         # Don't crush small arrays
         return content, None
 
-    # Score rows (placeholder: use 0.5 for all rows)
-    # TODO: Replace with real hybrid_score from memo.memory.search_logic
     keep_ratio = flag_crusher_keep_ratio()
     keep_count = max(10, int(len(json_array) * keep_ratio))
 
-    # Simple scoring: for now, use placeholder (all rows equally scored)
-    # Each row gets a synthetic score based on its position/content
-    # (keeping order deterministic for testing)
-    scores = []
-    for _i, _row in enumerate(json_array):
-        # Placeholder scoring: all rows get 0.5
-        # In production, this should call hybrid_score with the context
-        score = 0.5
-        scores.append(score)
+    # Score rows by IDF-weighted distinctiveness (+ optional context overlap):
+    # repetitive boilerplate rows score low, the informationally-distinctive rows
+    # survive — position-blind, so a trailing "answer" row is kept.
+    scores = _score_rows_by_relevance(json_array, context)
 
-    # Keep top-K
+    # Keep the top-K highest-scoring rows, restored to original order. sorted() is
+    # stable, so ties fall back to original position (deterministic).
     top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:keep_count]
-    top_indices.sort()  # Preserve original order
+    top_indices.sort()
 
     crushed_array = [json_array[i] for i in top_indices]
     dropped_count = len(json_array) - len(crushed_array)
