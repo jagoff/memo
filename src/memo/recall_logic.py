@@ -1192,17 +1192,25 @@ def _recall_logic(
 
     _guard_banner: str | None = None
     _guard_ids: list[str] = []
+    _guard_sim_threshold = _flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
     if flag_bool("MEMO_GUARD_ENABLED") and qualifying:
         from memo.guard import guard_banner as _gb
         from memo.guard import guard_candidates as _gc
 
-        _guard_sim_threshold = _flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
         _guard_banner = _gb(prompt, qualifying, sim_threshold=_guard_sim_threshold)
         if _guard_banner:
             _guard_ids = [
                 getattr(h, "id", "")
                 for h in _gc(prompt, qualifying, sim_threshold=_guard_sim_threshold)[:1]
             ]
+
+    _interject_banner: str | None = None
+    if qualifying:
+        from memo import interject as _ij
+
+        _interject_banner = _ij.evaluate_and_render(
+            cfg, mem, prompt=prompt, hits=qualifying, sim_threshold=_guard_sim_threshold,
+        )
 
     # Pre-top-K paraphrase collapse: drop lexical near-dups from the over-fetched
     # pool BEFORE truncation, so they don't crowd out distinct results. Default OFF
@@ -1344,6 +1352,8 @@ def _recall_logic(
         except Exception as exc:
             _logger.debug("recall log append failed: %s", exc)
 
+    if _interject_banner:
+        context = f"{_interject_banner}\n\n{context}"
     if _guard_banner:
         from memo.guard import log_guard_fire
 

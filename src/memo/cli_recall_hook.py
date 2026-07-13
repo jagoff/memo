@@ -407,17 +407,25 @@ def recall_hook() -> None:
 
     _guard_banner: str | None = None
     _guard_ids: list[str] = []
+    _guard_sim_threshold = flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
     if flag_bool("MEMO_GUARD_ENABLED") and qualifying:
         from memo.guard import guard_banner as _gb
         from memo.guard import guard_candidates as _gc
 
-        _guard_sim_threshold = flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
         _guard_banner = _gb(prompt, qualifying, sim_threshold=_guard_sim_threshold)
         if _guard_banner:
             _guard_ids = [
                 getattr(h, "id", "")
                 for h in _gc(prompt, qualifying, sim_threshold=_guard_sim_threshold)[:1]
             ]
+
+    _interject_banner: str | None = None
+    if qualifying:
+        from memo import interject as _ij
+
+        _interject_banner = _ij.evaluate_and_render(
+            cfg, mem, prompt=prompt, hits=qualifying, sim_threshold=_guard_sim_threshold,
+        )
 
     def _stamp_metrics(n_hits: int) -> None:
         # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
@@ -595,6 +603,8 @@ def recall_hook() -> None:
     except Exception as exc:
         _log.debug("context-cost log write failed: %s", exc)
 
+    if _interject_banner:
+        context = f"{_interject_banner}\n\n{context}"
     if _guard_banner:
         from memo.guard import log_guard_fire
 

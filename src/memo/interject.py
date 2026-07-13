@@ -164,3 +164,67 @@ def read_shadow(state_dir: Path, *, limit: int = 1000) -> list[dict[str, Any]]:
     from memo.dashboard_logs import _read_jsonl
 
     return _read_jsonl(_shadow_path(state_dir), limit=limit, newest_first=True)
+
+
+def evaluate_and_render(
+    cfg: Any,
+    mem: Any,
+    *,
+    prompt: str,
+    hits: list[Any],
+    sim_threshold: float,
+) -> str | None:
+    """The single orchestration entry both recall paths call. Never raises.
+
+    Builds the calibrated-band + persisted-contradiction gates from real signals
+    already on the recall path (no embed, no MLX, no scan), always shadow-logs
+    what it WOULD interject, and returns the banner only when the flag is on,
+    the session is under budget, and not silenced."""
+    try:
+        from memo.confidence_calibration import recalibrated_band
+        from memo.flags import flag_bool, flag_int
+        from memo.identity import current
+        from memo.recall_logic import _conf_band
+
+        # (1) persisted-contradiction gate — the cheap sqlite lookup the recall
+        # path already runs; empty on any failure (contradict.py is experimental).
+        disputed_ids: set[str] = set()
+        try:
+            ids = [getattr(h, "id", "") for h in hits if getattr(h, "id", "")]
+            store = mem.contradict_store
+            pairs = store.pairs_for_ids(ids, status="open")
+            pairs += store.pairs_for_ids(ids, status="competing")
+            for p in pairs:
+                disputed_ids.add(p.memory_id_a)
+                disputed_ids.add(p.memory_id_b)
+        except Exception:
+            disputed_ids = set()
+
+        # (2) calibrated-confidence gate — reuse the Phase-1 primitives; one
+        # mtime-cached read shared with the confidence gate.
+        def _band_of(h: Any) -> str:
+            return recalibrated_band(cfg.state_dir, _conf_band(getattr(h, "score", None)))
+
+        cands = interject_candidates(
+            prompt, hits, sim_threshold=sim_threshold, band_of=_band_of, disputed_ids=disputed_ids
+        )
+        if not cands:
+            return None
+
+        session_id = current(cfg).session_id or "_no_session"
+        max_per = flag_int("MEMO_INTERJECT_MAX_PER_SESSION")
+        max_per = 1 if max_per is None else max_per
+        render = flag_bool("MEMO_INTERJECT_ENABLED") and should_render(
+            cfg.state_dir, session_id, max_per_session=max_per
+        )
+
+        log_shadow(cfg.state_dir, shadow_record(prompt, [c.id for c in cands[:1]], rendered=render))
+
+        if render:
+            note_rendered(cfg.state_dir, session_id)
+            return interject_banner(
+                prompt, hits, sim_threshold=sim_threshold, band_of=_band_of, disputed_ids=disputed_ids
+            )
+        return None
+    except Exception:
+        return None
