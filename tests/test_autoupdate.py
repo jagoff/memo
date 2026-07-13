@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from memo.runtime import autoupdate as au
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize(
@@ -70,12 +73,54 @@ def test_throttle_first_check_then_blocked(tmp_cfg):
     assert au._should_check(tmp_cfg, 3600, now=1000.0 + 4000) is True  # past window
 
 
-def test_maybe_auto_update_enabled_by_default(tmp_cfg, monkeypatch):
+def test_runtime_network_and_selfheal_flags_are_disabled_by_default(monkeypatch):
+    from memo.flags import flag_bool
+
+    names = (
+        "MEMO_UPDATE_CHECK_ENABLED",
+        "MEMO_AUTO_UPDATE",
+        "MEMO_STATUSLINE_SELFHEAL",
+        "MEMO_HOOK_SELFHEAL",
+    )
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+    assert {name: flag_bool(name) for name in names} == {name: False for name in names}
+
+
+def test_maybe_auto_update_disabled_by_default(tmp_cfg, monkeypatch):
     monkeypatch.delenv("MEMO_AUTO_UPDATE", raising=False)
-    monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: None)
-    spawned = au.maybe_auto_update(tmp_cfg)
-    # default is now True; returns False only because no newer tag was found
-    assert spawned is False
+    monkeypatch.setattr(
+        au,
+        "latest_remote_tag",
+        lambda *a, **k: pytest.fail("disabled auto-update must not access the network"),
+    )
+
+    assert au.maybe_auto_update(tmp_cfg) is False
+
+
+def test_generated_mcp_environment_does_not_force_background_work(monkeypatch):
+    from memo.runtime import mcp
+
+    for name in (
+        "MEMO_UPDATE_CHECK_ENABLED",
+        "MEMO_AUTO_UPDATE",
+        "MEMO_STATUSLINE_SELFHEAL",
+        "MEMO_HOOK_SELFHEAL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(mcp, "_actual_embedder_config", lambda: {})
+
+    env = mcp._mcp_server_env()
+
+    assert env.get("MEMO_AUTO_UPDATE") != "1"
+    assert env.get("MEMO_UPDATE_CHECK_ENABLED") != "1"
+
+
+def test_bundled_plugin_does_not_force_auto_update() -> None:
+    plugin_mcp = (ROOT / "plugins" / "memo" / ".mcp.json").read_text(encoding="utf-8")
+
+    assert '"MEMO_AUTO_UPDATE": "1"' not in plugin_mcp
 
 
 def test_maybe_auto_update_spawns_when_newer_tag(tmp_cfg, monkeypatch):

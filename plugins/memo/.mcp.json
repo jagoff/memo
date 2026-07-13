@@ -5,8 +5,7 @@
       "command": "memo-mcp",
       "args": [],
       "env": {
-        "MEMO_NONINTERACTIVE": "1",
-        "MEMO_AUTO_UPDATE": "1"
+        "MEMO_NONINTERACTIVE": "1"
       }
     }
   }

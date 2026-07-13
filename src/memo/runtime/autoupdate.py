@@ -6,12 +6,10 @@ newer **tagged** release exists in the git repo and, if so, spawns a detached
 the old code (you can't hot-swap a live interpreter) — the new version takes
 effect on the NEXT memo-mcp start.
 
-Design choices (2026-06-22):
+Design choices (updated 2026-07-12):
 - Trigger is a git **tag** (``vX.Y.Z``), not any commit, so an un-tagged push
   (work in progress / a broken commit) never propagates to the fleet.
-- Default ON: ``maybe_auto_update`` treats an unset ``MEMO_AUTO_UPDATE`` as
-  enabled (pipx/uv installs self-update so the fleet follows tagged releases);
-  set ``MEMO_AUTO_UPDATE=0`` to opt out.
+- Default OFF: remote checks and installation require explicit opt-in.
 - Network + git failures are swallowed: auto-update must never break or delay a
   memo-mcp startup.
 """
@@ -20,7 +18,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
 import subprocess
 import sys
 
@@ -200,8 +197,7 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
     against re-spawning the same tag via a per-tag stamp so repeated startups
     during an in-progress install don't pile up subprocess.Popen calls.
 
-    Auto-update is ON by default when installed via pipx or uv. Can be disabled
-    by setting MEMO_AUTO_UPDATE=0.
+    Auto-update is off by default and requires ``MEMO_AUTO_UPDATE=1``.
 
     Returns True iff a background update was spawned (mainly for tests). Never
     raises — any failure is logged at debug and swallowed so a startup is never
@@ -210,12 +206,7 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
     try:
         cfg = cfg or Config.from_env()
 
-        # Default to ON if not explicitly disabled. Check MEMO_AUTO_UPDATE env
-        # first; if not set, default to True (pipx/uv installs auto-update).
-        auto_update_enabled = (
-            True if os.environ.get("MEMO_AUTO_UPDATE") is None else flag_bool("MEMO_AUTO_UPDATE")
-        )
-        if not auto_update_enabled:
+        if not flag_bool("MEMO_AUTO_UPDATE"):
             return False
 
         # Ensure state_dir exists for stamps

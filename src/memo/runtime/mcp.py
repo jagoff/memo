@@ -34,9 +34,12 @@ _MCP_ENV_FORWARD_KEYS = (
     "MEMO_RERANK_FUSION_ALPHA",
     # auto-update: forwarded only when set at install time, so a machine opts in
     # with `MEMO_AUTO_UPDATE=1 memo install-mcp --write` (off by default).
+    "MEMO_UPDATE_CHECK_ENABLED",
     "MEMO_AUTO_UPDATE",
     "MEMO_AUTO_UPDATE_INTERVAL_S",
     "MEMO_AUTO_UPDATE_REPO",
+    "MEMO_STATUSLINE_SELFHEAL",
+    "MEMO_HOOK_SELFHEAL",
 )
 
 _MISSING_MCP_OK_ERRORS = (
@@ -98,17 +101,11 @@ def _mcp_server_env() -> dict[str, str]:
         # inside this checkout). Clear it so the isolated memo-mcp shim imports
         # its installed runtime, not whichever repo happens to be the cwd.
         "PYTHONPATH": "",
-        # Keep installs current: memo-mcp checks for a newer git TAG on start and
-        # self-upgrades (tag-gated + throttled). This is what makes the [MEMO <ver>]
-        # statusline badge follow releases automatically. Set MEMO_AUTO_UPDATE=0 in
-        # the client env to opt out.
-        "MEMO_AUTO_UPDATE": "1",
     }
     for key in _MCP_ENV_FORWARD_KEYS:
         val = os.environ.get(key)
-        # `is not None` (not truthiness): an explicit empty value — e.g.
-        # `MEMO_AUTO_UPDATE=` to opt out — must be forwarded so it overrides the
-        # hardcoded default above instead of being silently dropped.
+        # `is not None` (not truthiness): explicit empty values are intentional
+        # and must survive generated agent configuration.
         if val is not None:
             env[key] = val
     # Derive embedder model/dims from the live index so the installed config

@@ -36,14 +36,22 @@ SPECS: tuple[FlagSpec, ...] = (
         "Maximum cumulative feedback boost.",
         min_val=0.0,
     ),
-    # auto-update (memo-mcp update on start, gated + throttled)
+    # update checks / auto-update (memo-mcp start, opt-in + throttled)
+    _spec(
+        "MEMO_UPDATE_CHECK_ENABLED",
+        "bool",
+        False,
+        "update",
+        "On memo-mcp start, check for a newer tagged release and record a "
+        "notification. Default off; set =1 to opt in to remote checks.",
+    ),
     _spec(
         "MEMO_AUTO_UPDATE",
         "bool",
-        True,
+        False,
         "update",
         "On memo-mcp start, check for a newer git TAG and update in the "
-        "background (takes effect next start). Default on; set =0 to opt out.",
+        "background (takes effect next start). Default off; set =1 to opt in.",
     ),
     _spec(
         "MEMO_AUTO_UPDATE_INTERVAL_S",
@@ -63,21 +71,21 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_STATUSLINE_SELFHEAL",
         "bool",
-        True,
+        False,
         "update",
         "On memo-mcp start, idempotently re-assert the [MEMO <ver>] statusLine "
         "wiring in ~/.claude/settings.json (wrapping any foreign statusline). "
-        "No-op when already correct. Default on; set =0 to opt out.",
+        "No-op when already correct. Default off; set =1 to opt in.",
     ),
     _spec(
         "MEMO_HOOK_SELFHEAL",
         "bool",
-        True,
+        False,
         "update",
         "On memo-mcp start, idempotently re-assert the recall hook "
         "(UserPromptSubmit → memo recall-hook, absolute path) in "
         "~/.claude/settings.json, coexisting with foreign hooks. Makes recall "
-        "survive a de-registered/clobbered plugin. Default on; set =0 to opt out.",
+        "survive a de-registered/clobbered plugin. Default off; set =1 to opt in.",
     ),
     _spec(
         "MEMO_STATUSLINE_ACTIVITY",

@@ -39,7 +39,6 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
     ("mlx_gpu.py", "MEMO_GPU_XPROC_LOCK"),
     ("setup/config_io.py", "MEMO_CONFIG_FILE"),
     ("embed_protocol.py", "MEMO_STATE_DIR"),
-    ("runtime/autoupdate.py", "MEMO_AUTO_UPDATE"),
     ("embedder.py", "MEMO_QUERY_CACHE_SIZE"),
     ("cli.py", "MEMO_DATA_DIR"),
     ("cli.py", "MEMO_VAULT_PATH"),
