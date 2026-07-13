@@ -1,3 +1,6 @@
+/* Console-style: one flat surface, no background bands, thin rules,
+   text-like actions. Single accent (#61c7d7), semantic colours only. */
+
 Screen {
     background: #101418;
     color: #e8edf2;
@@ -9,10 +12,8 @@ Screen {
 }
 
 #config-header {
-    height: 3;
-    padding: 0 2;
-    background: #182026;
-    border-bottom: solid #33404a;
+    height: 1;
+    padding: 0 1;
     align: left middle;
 }
 
@@ -25,13 +26,13 @@ Screen {
 #config-context {
     width: 1fr;
     padding-left: 2;
-    color: #9eabb5;
+    color: #697781;
 }
 
 #config-toolbar {
-    height: 3;
+    height: 1;
+    margin-top: 1;
     padding: 0 1;
-    background: #141a1f;
     align: left middle;
 }
 
@@ -43,11 +44,14 @@ Screen {
 #advanced-label {
     width: auto;
     padding: 0 1 0 2;
-    color: #b9c3ca;
+    color: #9eabb5;
 }
 
 #show-advanced {
     width: 8;
+    height: 1;
+    border: none;
+    background: transparent;
 }
 
 #domain-select {
@@ -58,31 +62,37 @@ Screen {
 
 #workspace {
     height: 1fr;
+    margin-top: 1;
 }
 
 #domain-nav {
-    width: 22;
+    width: 18;
     height: 100%;
-    padding: 1;
-    background: #141a1f;
-    border-right: solid #33404a;
+    padding: 0 1;
+    border-right: solid #2a343c;
 }
 
 .domain-button {
     width: 100%;
     min-width: 0;
-    height: 3;
+    height: 1;
     margin: 0;
     border: none;
     background: transparent;
-    color: #b9c3ca;
+    color: #9eabb5;
     text-align: left;
+    content-align: left middle;
 }
 
-.domain-button:hover,
-.domain-active {
-    background: #24313a;
+.domain-button:hover {
+    background: transparent;
     color: #e8edf2;
+}
+
+.domain-active,
+.domain-active:hover {
+    background: transparent;
+    color: #61c7d7;
     text-style: bold;
 }
 
@@ -94,21 +104,20 @@ Screen {
 
 .setting-row {
     width: 100%;
-    height: 7;
+    height: auto;
     padding: 0 1;
-    border-bottom: solid #2a343c;
+    margin-bottom: 1;
 }
 
 .setting-line {
     width: 100%;
-    height: 5;
-    align: left middle;
+    height: auto;
+    align: left top;
 }
 
 .setting-copy {
     width: 1fr;
-    height: 5;
-    padding-top: 1;
+    height: auto;
 }
 
 .setting-label {
@@ -130,8 +139,8 @@ Screen {
 
 .setting-meta {
     width: 34;
-    height: 3;
-    align: right middle;
+    height: auto;
+    align: right top;
 }
 
 .source-badge {
@@ -160,8 +169,15 @@ Screen {
     width: 22;
 }
 
-.setting-issue {
+Switch.setting-control {
+    width: auto;
     height: 1;
+    border: none;
+    background: transparent;
+}
+
+.setting-issue {
+    height: auto;
     color: #ef6f72;
     text-overflow: ellipsis;
 }
@@ -171,10 +187,9 @@ Screen {
 }
 
 #config-footer {
-    height: 3;
+    height: 2;
     padding: 0 1;
-    background: #182026;
-    border-top: solid #33404a;
+    border-top: solid #2a343c;
     align: left middle;
 }
 
@@ -195,10 +210,24 @@ Screen {
 
 #discard-draft,
 #review-draft {
-    width: 12;
-    min-width: 0;
-    height: 3;
-    margin-left: 1;
+    width: auto;
+    min-width: 10;
+    height: 1;
+    margin-left: 2;
+    border: none;
+    background: transparent;
+    color: #9eabb5;
+}
+
+#discard-draft:hover,
+#review-draft:hover {
+    background: transparent;
+    color: #e8edf2;
+}
+
+#review-draft {
+    color: #61c7d7;
+    text-style: bold;
 }
 
 #empty-settings {
@@ -224,24 +253,23 @@ Screen.narrow #domain-select {
 }
 
 Screen.narrow .setting-row {
-    height: 9;
+    height: auto;
 }
 
 Screen.narrow .setting-line {
-    height: 7;
+    height: auto;
     layout: vertical;
 }
 
 Screen.narrow .setting-copy {
     width: 100%;
-    height: 4;
-    padding-top: 0;
+    height: auto;
 }
 
 Screen.narrow .setting-meta {
     width: 100%;
-    height: 3;
-    align: right middle;
+    height: auto;
+    align: right top;
 }
 
 FirstRunWizard,
@@ -259,8 +287,8 @@ ApplyResultScreen {
     height: auto;
     max-height: 90%;
     padding: 1 2;
-    background: #182026;
-    border: solid #50606b;
+    background: #101418;
+    border: solid #33404a;
 }
 
 .wizard-panel {
@@ -306,22 +334,35 @@ ApplyResultScreen {
 }
 
 .screen-actions {
-    height: 3;
+    height: 1;
     align: right middle;
 }
 
 .screen-actions Button {
     width: auto;
     min-width: 12;
-    height: 3;
-    margin-left: 1;
+    height: 1;
+    margin-left: 2;
+    border: none;
+    background: transparent;
+    color: #9eabb5;
+}
+
+.screen-actions Button:hover {
+    background: transparent;
+    color: #e8edf2;
+}
+
+.screen-actions Button.-primary {
+    color: #61c7d7;
+    text-style: bold;
 }
 
 #review-changes,
 #recovery-issues {
     height: 1fr;
-    border-top: solid #33404a;
-    border-bottom: solid #33404a;
+    border-top: solid #2a343c;
+    border-bottom: solid #2a343c;
     padding: 1;
 }
 

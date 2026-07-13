@@ -105,7 +105,7 @@ class ConfigApp(App[int]):
         with Vertical(id="config-center"):
             with Horizontal(id="config-header"):
                 yield Label("memo config", id="config-title")
-                yield Static("Terminal configuration center", id="config-context")
+                yield Static("q quit · ctrl+r review · ctrl+d discard", id="config-context")
             with Horizontal(id="config-toolbar"):
                 yield Input(placeholder="Search every setting", id="setting-search", compact=True)
                 yield Label("Advanced", id="advanced-label")
