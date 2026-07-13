@@ -1111,6 +1111,7 @@ def _recall_logic(
                         vec_cosine=_vec_cosine,
                         preferences=_prefs,
                         graph_boost=_graph_boost,
+                        query=prompt,
                     )
                 else:
                     qualifying = rank_hits(
@@ -1126,6 +1127,7 @@ def _recall_logic(
                         vec_cosine=_vec_cosine,
                         preferences=_prefs,
                         graph_boost=_graph_boost,
+                        query=prompt,
                     )
         else:
             hits = mem.search(
@@ -1141,7 +1143,12 @@ def _recall_logic(
                     ),
                 )
             qualifying = rank_hits(
-                hits, knobs, vec_cosine=_vec_cosine, preferences=_prefs, graph_boost=_graph_boost
+                hits,
+                knobs,
+                vec_cosine=_vec_cosine,
+                preferences=_prefs,
+                graph_boost=_graph_boost,
+                query=prompt,
             )
     except Exception as exc:
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -1165,6 +1172,7 @@ def _recall_logic(
                     vec_cosine=_vec_cosine,
                     preferences=_prefs,
                     graph_boost=_graph_boost,
+                    query=prompt,
                 )
                 if debug and qualifying:
                     print(
