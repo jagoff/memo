@@ -34,8 +34,8 @@ from memo.cli_backup import backup_group
 from memo.cli_banner import codex_badge_cmd, startup_banner_cmd
 from memo.cli_briefing import briefing
 from memo.cli_capture import capture_stop, capture_tick, episodes_group, resume
-from memo.cli_chronicle import chronicle_cmd
 from memo.cli_chat import chat_group
+from memo.cli_chronicle import chronicle_cmd
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
 from memo.cli_compress_context import compress_context_cmd
