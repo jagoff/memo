@@ -37,6 +37,15 @@
 
 No Ollama, no Qdrant, no cloud APIs, no keys.
 
+### Offline by default
+
+Normal `memo-mcp` startup makes no outbound network request and does not rewrite
+Claude or Codex configuration. Release checks, automatic updates, statusline
+self-healing, and hook self-healing are all explicit opt-ins. Commands such as
+update and cross-machine sync, plus requested model or benchmark downloads, may
+use the network. See the [privacy and network policy](docs/privacy.md) for the
+exact flags and boundaries.
+
 <!-- mcp-name: io.github.jagoff/memo -->
 
 `memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your own machine** — **macOS on Apple Silicon** via [Apple MLX](https://github.com/ml-explore/mlx), or **Linux / Ubuntu on a CPU `sentence-transformers` backend** (`pipx install "mlx-memo[cpu]"`, see [docs/ubuntu.md](docs/ubuntu.md)). Each memory is a plain Markdown file; embeddings live in a single sqlite file; the embedder, reranker, and LLM run in-process — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
