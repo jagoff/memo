@@ -20,6 +20,7 @@ _BULLET_RE = re.compile(r"^\s*[-*]\s+")
 _ID_RE = re.compile(r"\[([0-9a-f]{8})\]")
 _FM_ID_RE = re.compile(r"^id:\s*([0-9a-f]{8,})", re.MULTILINE)
 _FM_TYPE_RE = re.compile(r"^type:\s*(\S+)", re.MULTILINE)
+_FM_TITLE_RE = re.compile(r"^title:\s*(.+)$", re.MULTILINE)
 _DATE_KEYS = ("created:", "created_at:", "updated:", "date:")
 _RECEIPT_KEYS = ("superseded", "merged", "archived_stale", "synthesized")
 
@@ -82,16 +83,37 @@ def _memories_created_on(cfg: Any, day: str, cap: int = 50) -> list[dict[str, st
         m_id = _FM_ID_RE.search(head)
         if m_id is None:
             continue  # no id: -> not a memory record
+
+        # Extract the full frontmatter block (between --- delimiters)
+        lines = head.splitlines()
+        fm_end = None
+        for i, line in enumerate(lines[1:], start=1):
+            if line.startswith("---"):
+                fm_end = i + 1
+                break
+        fm_lines = lines[:60] if fm_end is None else lines[:fm_end]
+
+        fm_text = "\n".join(fm_lines)
         date_lines = [
-            ln.strip() for ln in head.splitlines()[:15] if ln.strip().startswith(_DATE_KEYS)
+            ln.strip() for ln in fm_text.splitlines() if ln.strip().startswith(_DATE_KEYS)
         ]
         if not any(day in ln for ln in date_lines):
             continue
+
         m_type = _FM_TYPE_RE.search(head)
-        title = next(
-            (ln.lstrip("# ").strip() for ln in head.splitlines() if ln.startswith("# ")),
-            p.stem,
-        )
+
+        # Extract title: (a) frontmatter title:, (b) first # heading, (c) file stem
+        title = p.stem
+        m_title = _FM_TITLE_RE.search(head)
+        if m_title:
+            title = m_title.group(1).strip('\'"')
+        else:
+            # Fallback to first # heading
+            title = next(
+                (ln.lstrip("# ").strip() for ln in head.splitlines() if ln.startswith("# ")),
+                p.stem,
+            )
+
         out.append({"id": m_id.group(1), "type": m_type.group(1) if m_type else "note", "title": title})
         if len(out) >= cap:
             break

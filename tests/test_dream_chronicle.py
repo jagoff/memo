@@ -134,3 +134,27 @@ def test_collect_facts_and_fact_lines(tmp_path, monkeypatch):
     assert allowed == {"dddddddd", "aaaaaaaa"}
     assert any("[dddddddd]" in ln for ln in lines)
     assert any("[aaaaaaaa]" in ln for ln in lines)
+
+
+def test_memories_created_on_rich_frontmatter_and_yaml_title(tmp_path):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    extra_lines = "\n".join(f"  k{i}: v{i}" for i in range(18))
+    p = cfg.memory_dir / "rich.md"
+    p.write_text(
+        "---\n"
+        f"id: {'f' * 32}\n"
+        "type: decision\n"
+        "title: 'titulo desde yaml'\n"
+        "extra:\n"
+        f"{extra_lines}\n"
+        "created: '2026-07-13T10:00:00-03:00'\n"
+        "---\n"
+        "body sin heading\n",
+        encoding="utf-8",
+    )
+    out = dc._memories_created_on(cfg, "2026-07-13")
+    assert [m["id"][:8] for m in out] == ["ffffffff"]
+    assert out[0]["title"] == "titulo desde yaml"
