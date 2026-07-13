@@ -56,6 +56,7 @@ from memo.cli_entities import entities, entity, extract_entities
 from memo.cli_eval import eval_group
 from memo.cli_export import export_group
 from memo.cli_feedback import feedback_group
+from memo.cli_graduation import graduation_group
 from memo.cli_graph import graph_group
 from memo.cli_guard import guard_group
 from memo.cli_health import health as health_cmd
@@ -343,6 +344,7 @@ def cli(ctx: click.Context) -> None:
 
 
 # Command groups extracted from this module live in cli_*.py and register here.
+cli.add_command(graduation_group)
 cli.add_command(graph_group)
 cli.add_command(guard_group)
 cli.add_command(related)
