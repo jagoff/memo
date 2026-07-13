@@ -63,6 +63,23 @@ from memo.memory.record import derived_save_scope
 _log = _logging.getLogger(__name__)
 
 
+def _run_graduation_pass(
+    cfg: Config, mem: Any, *, dry_run: bool, receipt: dict[str, Any]
+) -> dict[str, Any]:
+    """Nightly graduation controller. Gated + best-effort: never raises out."""
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_GRADUATION_CONTROLLER_ENABLED"):
+        return receipt
+    try:
+        from memo.graduation.controller import run_graduation_controller
+
+        receipt["graduation"] = run_graduation_controller(cfg, mem, dry_run=dry_run)
+    except Exception as exc:  # best-effort pass, mirror the other tuners
+        receipt["errors"].append(f"graduation: {type(exc).__name__}: {exc}")
+    return receipt
+
+
 @click.group(name="dream")
 def dream_cmd() -> None:
     """Autonomous nightly maintenance — synthesise, heal, decay."""
@@ -375,6 +392,17 @@ def dream_run(
                 progress.update(
                     step, description="[tune] graph-injection tuner [yellow]warn[/yellow]"
                 )
+
+        # Phase 0 — graduation controller: prove + flip dark flags, reversible.
+        if flag_bool("MEMO_GRADUATION_CONTROLLER_ENABLED"):
+            progress.update(step, description="[graduation] controller...")
+            _run_graduation_pass(cfg, mem, dry_run=dry_run, receipt=receipt)
+            _g = receipt.get("graduation", {})
+            _flipped = sum(1 for c in _g.get("candidates", []) if c.get("status") == "graduated")
+            progress.update(
+                step,
+                description=f"[graduation] controller [green]✓[/green]  {_flipped} graduated",
+            )
 
         # Phase 2c — HyDE A/B (separate opt-in; +1 MLX chat call per prompt,
         # prompt count capped inside the pass).
