@@ -234,3 +234,23 @@ def test_run_chronicle_pass_never_raises(tmp_path, monkeypatch):
     res = dc.run_chronicle_pass(cfg, _Mem(cfg), day="2026-07-13")
     assert res["status"] == "error"
     assert "boom" in res["error"]
+
+
+def test_write_weekly_concatenates_days_of_iso_week(tmp_path):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    # 2026-07-13 es lunes; 2026-07-14 martes -> misma ISO week 29
+    for d, body in (("2026-07-13", "lunes body"), ("2026-07-14", "martes body")):
+        dc._atomic_write(dc.chronicle_path(cfg, d), f"# Crónica — {d}\n{body}\n")
+    wk = dc.write_weekly(cfg, "2026-07-14")
+    assert wk is not None and wk.name == "week-2026-W29.md"
+    text = wk.read_text(encoding="utf-8")
+    assert "lunes body" in text and "martes body" in text
+    assert text.index("lunes body") < text.index("martes body")  # orden cronológico
+
+
+def test_write_weekly_none_when_empty(tmp_path):
+    from memo import dream_chronicle as dc
+
+    assert dc.write_weekly(_mk_cfg(tmp_path), "2026-07-14") is None

@@ -236,8 +236,27 @@ def render_chronicle(day: str, narrative: str, facts: dict[str, Any]) -> str:
 
 
 def write_weekly(cfg: Any, day: str) -> Path | None:
-    """Temporary stub. Task 6 implements the full weekly summary."""
-    return None
+    """Deterministic ISO-week rollup — concatenation, no LLM."""
+    from datetime import date
+
+    y, w, _ = date.fromisoformat(day).isocalendar()
+    root = chronicle_dir(cfg)
+    if not root.exists():
+        return None
+    days: list[Path] = []
+    for p in sorted(root.glob("*.md")):
+        try:
+            py, pw, _ = date.fromisoformat(p.stem).isocalendar()
+        except ValueError:
+            continue  # week-*.md and anything not a day file
+        if (py, pw) == (y, w):
+            days.append(p)
+    if not days:
+        return None
+    parts = [p.read_text(encoding="utf-8") for p in days]
+    out = root / f"week-{y}-W{w:02d}.md"
+    _atomic_write(out, f"# Semana {y}-W{w:02d}\n\n" + "\n\n---\n\n".join(parts))
+    return out
 
 
 def run_chronicle_pass(
