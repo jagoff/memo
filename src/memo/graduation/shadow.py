@@ -3,6 +3,7 @@ attributing the precision/noise delta to the candidate alone. No behavior
 change — this only reads the index through eval_recall."""
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from memo.eval_recall import Cfg, LabelSet, Row, default_configs, run_config
@@ -59,13 +60,4 @@ def _with_flags(base: Cfg, name: str, flag_overrides: dict[str, str]) -> Cfg:
     Returns:
         New Cfg instance
     """
-    return Cfg(
-        name=name,
-        mode=base.mode,
-        floor=base.floor,
-        exclude_archived=base.exclude_archived,
-        context=base.context,
-        knob_overrides=base.knob_overrides,
-        injection_fidelity=base.injection_fidelity,
-        flag_overrides=flag_overrides,
-    )
+    return dataclasses.replace(base, name=name, flag_overrides=flag_overrides)

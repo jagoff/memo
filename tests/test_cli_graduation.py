@@ -24,3 +24,18 @@ def test_graduation_revert_reports_when_nothing_to_revert(tmp_path):
         cli, ["graduation", "revert", "MEMO_GRAPH_SIGNAL_ENABLED"], env=_env(tmp_path))
     assert res.exit_code == 0
     assert "MEMO_GRAPH_SIGNAL_ENABLED" in res.output
+
+
+def test_graduation_explain_renders_receipt(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "state").mkdir()
+
+    def fake_ctrl(cfg, mem, *, dry_run=False):
+        return {"candidates": [{"flag": "MEMO_GRAPH_SIGNAL_ENABLED", "status": "accumulating",
+                                "delta_prec": 0.01, "streak": 1, "k": 5}]}
+
+    monkeypatch.setattr("memo.graduation.controller.run_graduation_controller", fake_ctrl)
+    monkeypatch.setattr("memo.memory.Memory", lambda cfg: object())
+    res = CliRunner().invoke(cli, ["graduation", "explain"], env=_env(tmp_path))
+    assert res.exit_code == 0, res.output
+    assert "MEMO_GRAPH_SIGNAL_ENABLED" in res.output

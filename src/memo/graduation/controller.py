@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from memo.graduation import ledger, overlay_ops
 from memo.graduation.registry import Candidate, default_candidates
 from memo.graduation.shadow import shadow_eval
+
+if TYPE_CHECKING:
+    from memo.eval_recall import LabelSet
 
 
 def run_graduation_controller(
@@ -19,7 +22,7 @@ def run_graduation_controller(
     evaluator: Callable[..., dict[str, Any]] | None = None,
     candidates: list[Candidate] | None = None,
     k: int = 5,
-    labels: Any = None,
+    labels: LabelSet | None = None,
     dry_run: bool = False,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -28,6 +31,11 @@ def run_graduation_controller(
     env = os.environ if env is None else env
     state_dir = cfg.state_dir
     out: list[dict[str, Any]] = []
+
+    if labels is None:
+        from memo.dream_tune import build_labels
+
+        labels, _ = build_labels(cfg)
 
     for cand in cands:
         if env.get(cand.flag) is not None:

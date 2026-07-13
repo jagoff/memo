@@ -71,3 +71,19 @@ def test_dry_run_writes_nothing(tmp_path: Path):
             cfg, object(), evaluator=_stub(True), candidates=[CAND], env={}, dry_run=True)
     assert not overlay_ops.is_flipped_on(tmp_path, CAND.flag)
     assert not (tmp_path / "graduation" / f"{CAND.flag}.jsonl").exists()
+
+
+def test_controller_populates_real_labels_when_none(tmp_path):
+    # C1 regression: with the default labels=None, the controller must load a
+    # real LabelSet before calling the evaluator — never pass None down to run_config.
+    from memo.eval_recall import LabelSet
+
+    cfg = _Cfg(tmp_path)
+    seen = {}
+
+    def spy(mem, cand, *, k, labels):
+        seen["labels"] = labels
+        return {"win": False, "delta_prec": 0.0, "delta_noise": 0.0}
+
+    controller.run_graduation_controller(cfg, object(), evaluator=spy, candidates=[CAND], env={})
+    assert isinstance(seen["labels"], LabelSet)  # not None
