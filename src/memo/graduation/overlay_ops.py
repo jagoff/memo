@@ -28,3 +28,17 @@ def revert(state_dir: Path, flag: str) -> None:
     params = _scalars(state_dir)
     params.pop(flag, None)
     write_overlay(state_dir, params, {"set_by": "graduation-revert", "flag": flag})
+
+
+def overlay_value(state_dir: Path, flag: str) -> Any | None:
+    """The current overlay scalar for ``flag`` (numeric or bool), or None."""
+    return _scalars(state_dir).get(flag)
+
+
+def flip_numeric(state_dir: Path, flag: str, value: float, *, evidence: dict[str, Any]) -> None:
+    """Flip a numeric knob ON by merging its proven value into the overlay
+    (preserving other tuned knobs). Revert = drop the key via ``revert`` →
+    the built-in default returns."""
+    params = _scalars(state_dir)
+    params[flag] = value
+    write_overlay(state_dir, params, {"set_by": "graduation-controller", "evidence": evidence})
