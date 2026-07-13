@@ -89,3 +89,28 @@ def numeric_candidates() -> list[NumericCandidate]:
             auto_flip=False,  # not offline-measurable w/o project-tagged labels
         ),
     ]
+
+
+def report_only_candidates() -> list[Candidate]:
+    """Dark flags whose effect the SHARED offline eval cannot attribute, so they
+    are shadow-counted only (auto_flip=False), never flipped. rerank-pool: the
+    eval harness disables the reranker. Quarantine promotion: needs a grounding-
+    replay evaluator (deferred). ``on_flags`` is inert here (never evaluated for
+    a flip); it documents the ON intent."""
+    return [
+        Candidate(
+            flag="MEMO_RECALL_RERANK_INPUT_K",
+            on_flags={"MEMO_RECALL_RERANK_INPUT_K": "20"},
+            auto_flip=False,
+        ),
+        Candidate(
+            flag="MEMO_DREAM_GRADUATION_ENABLED",
+            on_flags={"MEMO_DREAM_GRADUATION_ENABLED": "1"},
+            auto_flip=False,
+        ),
+    ]
+
+
+def all_candidates() -> list[Candidate | NumericCandidate]:
+    """The full graduation set: boolean seed + numeric knobs + report-only."""
+    return [*default_candidates(), *numeric_candidates(), *report_only_candidates()]

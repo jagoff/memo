@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from memo.graduation import ledger, overlay_ops
-from memo.graduation.registry import Candidate, NumericCandidate, default_candidates
+from memo.graduation.registry import Candidate, NumericCandidate, all_candidates
 from memo.graduation.shadow import shadow_eval
 from memo.graduation.shadow_numeric import shadow_eval_numeric
 
@@ -27,7 +27,7 @@ def run_graduation_controller(
     dry_run: bool = False,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    cands = candidates if candidates is not None else default_candidates()
+    cands = candidates if candidates is not None else all_candidates()
     env = os.environ if env is None else env
     state_dir = cfg.state_dir
     out: list[dict[str, Any]] = []
