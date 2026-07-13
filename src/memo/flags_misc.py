@@ -1295,6 +1295,23 @@ SPECS: tuple[FlagSpec, ...] = (
         "crossref backlinks table at save/update/delete/reindex, enabling "
         "cascade-aware supersede/delete warnings. Default off.",
     ),
+    # chronicle dream pass (nightly human-engineering diary write)
+    _spec(
+        "MEMO_DREAM_CHRONICLE_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Nightly chronicle dream pass: write a human engineering diary for the "
+        "day under <memory_dir>/_chronicle/, with per-id provenance. Default off.",
+    ),
+    _spec(
+        "MEMO_CHRONICLE_WEEKLY",
+        "bool",
+        False,
+        "misc",
+        "Also regenerate the ISO-week rollup file (week-YYYY-Www.md) after each "
+        "nightly chronicle write. Default off.",
+    ),
     # public benchmark harness (`memo eval bench`) — offline batch, never the hook
     _spec(
         "MEMO_BENCH_JUDGE",
