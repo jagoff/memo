@@ -26,8 +26,11 @@ MEMO_INTERJECT_ENABLED after reviewing ``memo interject shadow``.
 
 from __future__ import annotations
 
+import json as _json
+import os as _os
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 INTERJECT_HEADER = "⚠ INTERJECT — a prior decision at high confidence conflicts"
@@ -91,3 +94,73 @@ def shadow_record(prompt: str, ids: list[str], *, rendered: bool) -> dict[str, A
         "ids": ids,
         "rendered": bool(rendered),
     }
+
+
+SHADOW_LOG = "interject_shadow.log"
+_SHADOW_CAP = 1000
+_SHADOW_SIZE_LIMIT = 1_000_000
+
+
+def _marker_file(state_dir: Path, session_id: str) -> Path:
+    return Path(state_dir) / ".interject_seen" / f"{session_id}.json"
+
+
+def _load_marker(state_dir: Path, session_id: str) -> dict[str, Any]:
+    f = _marker_file(state_dir, session_id)
+    if not f.is_file():
+        return {}
+    try:
+        data = _json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_marker(state_dir: Path, session_id: str, marker: dict[str, Any]) -> None:
+    f = _marker_file(state_dir, session_id)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".json.tmp")
+    tmp.write_text(_json.dumps(marker), encoding="utf-8")
+    _os.replace(tmp, f)
+
+
+def should_render(state_dir: Path, session_id: str, *, max_per_session: int) -> bool:
+    """True when interject may render THIS turn: not silenced and under budget.
+    Side-effect free (does not increment — call note_rendered on an actual fire)."""
+    if max_per_session <= 0:
+        return False
+    m = _load_marker(state_dir, session_id)
+    if m.get("silenced"):
+        return False
+    return int(m.get("count", 0)) < max_per_session
+
+
+def note_rendered(state_dir: Path, session_id: str) -> None:
+    m = _load_marker(state_dir, session_id)
+    m["count"] = int(m.get("count", 0)) + 1
+    _save_marker(state_dir, session_id, m)
+
+
+def silence(state_dir: Path, session_id: str) -> None:
+    """One-key silence: suppress all further interject fires for this session."""
+    m = _load_marker(state_dir, session_id)
+    m["silenced"] = True
+    _save_marker(state_dir, session_id, m)
+
+
+def _shadow_path(state_dir: Path) -> Path:
+    return Path(state_dir) / SHADOW_LOG
+
+
+def log_shadow(state_dir: Path, entry: dict[str, Any]) -> None:
+    from memo.dashboard_logs import _write_jsonl_entry
+
+    _write_jsonl_entry(
+        _shadow_path(state_dir), entry, cap=_SHADOW_CAP, size_limit=_SHADOW_SIZE_LIMIT
+    )
+
+
+def read_shadow(state_dir: Path, *, limit: int = 1000) -> list[dict[str, Any]]:
+    from memo.dashboard_logs import _read_jsonl
+
+    return _read_jsonl(_shadow_path(state_dir), limit=limit, newest_first=True)
