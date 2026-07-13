@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -50,11 +52,49 @@ def _fake_repo(root: Path, version: str) -> Path:
         f"    }}\n  }}\n}}\n",
         encoding="utf-8",
     )
+    (root / "packaging" / "mcpb" / "icon.png").write_bytes(b"fake-icon")
+    (root / "packaging" / "mcpb" / "server").mkdir()
+    (root / "packaging" / "mcpb" / "server" / "main.py").write_text(
+        "from memo.server import main\nmain()\n",
+        encoding="utf-8",
+    )
+    with zipfile.ZipFile(root / "packaging" / "memo.mcpb", "w") as archive:
+        for member in ("icon.png", "manifest.json", "server/main.py"):
+            archive.write(root / "packaging" / "mcpb" / member, arcname=member)
     (root / "CHANGELOG.md").write_text(
         f"# Changelog\n\n## [Unreleased]\n\n## [{version}] - 2026-01-01\n\n- prior\n",
         encoding="utf-8",
     )
     return root
+
+
+def test_release_mcpb_build_is_reproducible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    monkeypatch.setenv("MEMO_DEV_REPO", str(repo))
+
+    first = CliRunner().invoke(release_group, ["mcpb"])
+    first_hash = hashlib.sha256((repo / "packaging" / "memo.mcpb").read_bytes()).hexdigest()
+    second = CliRunner().invoke(release_group, ["mcpb"])
+    second_hash = hashlib.sha256((repo / "packaging" / "memo.mcpb").read_bytes()).hexdigest()
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert first_hash == second_hash
+
+
+def test_release_check_report_rejects_archived_member_drift(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "packaging" / "mcpb" / "server" / "main.py").write_text(
+        "raise SystemExit(9)\n",
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any("server/main.py" in issue for issue in report.issues)
 
 
 def test_plan_release_edits_bumps_mcpb_manifest(tmp_path: Path) -> None:

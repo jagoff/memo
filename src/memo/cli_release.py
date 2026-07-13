@@ -11,6 +11,7 @@ import datetime
 import json
 import os
 import re
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import click
 
 from memo.cli_common import console
 from memo.flags import flag_str
+from memo.release_mcpb import MCPB_MEMBERS, build_mcpb
 
 # src/memo/cli_release.py -> repo root when running from a source checkout.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -237,6 +239,66 @@ def _check_mcpb_manifest(
             issues.append(f"{package_key} version {package_version!r} != pyproject {expected!r}")
 
 
+def _check_mcpb_archive(
+    repo: Path, *, expected: str, versions: dict[str, str], issues: list[str]
+) -> None:
+    archive_path = repo / "packaging" / "memo.mcpb"
+    key = archive_path.relative_to(repo).as_posix()
+    if not archive_path.is_file():
+        issues.append(f"{key} is missing; run `memo release mcpb`")
+        return
+
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            names = tuple(sorted(archive.namelist()))
+            expected_names = tuple(sorted(MCPB_MEMBERS))
+            if names != expected_names:
+                missing = sorted(set(expected_names) - set(names))
+                unexpected = sorted(set(names) - set(expected_names))
+                if missing:
+                    issues.append(f"{key} missing member(s): {', '.join(missing)}")
+                if unexpected:
+                    issues.append(f"{key} has unexpected member(s): {', '.join(unexpected)}")
+
+            archived: dict[str, bytes] = {}
+            for member in MCPB_MEMBERS:
+                try:
+                    archived[member] = archive.read(member)
+                except KeyError:
+                    continue
+    except (OSError, zipfile.BadZipFile) as exc:
+        issues.append(f"could not read {key}: {exc}")
+        return
+
+    manifest_bytes = archived.get("manifest.json")
+    if manifest_bytes is not None:
+        try:
+            archived_manifest = json.loads(manifest_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            issues.append(f"{key} manifest.json is invalid JSON: {exc}")
+        else:
+            if not isinstance(archived_manifest, dict):
+                issues.append(f"{key} manifest.json must contain a JSON object")
+            else:
+                found = str(archived_manifest.get("version") or "")
+                versions[f"{key} manifest.json"] = found
+                if found != expected:
+                    issues.append(
+                        f"{key} manifest.json version {found!r} != pyproject {expected!r}"
+                    )
+
+    source_dir = repo / "packaging" / "mcpb"
+    for member, archived_bytes in archived.items():
+        source_path = source_dir / member
+        try:
+            source_bytes = source_path.read_bytes()
+        except OSError as exc:
+            issues.append(f"could not read {source_path.relative_to(repo)}: {exc}")
+            continue
+        if archived_bytes != source_bytes:
+            issues.append(f"{key} member {member} differs from packaging/mcpb/{member}")
+
+
 def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseCheckReport:
     """Validate that the checkout is release-ready.
 
@@ -279,6 +341,7 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
                     issues.append(f"{key} version {found!r} != pyproject {version!r}")
 
     _check_mcpb_manifest(repo, expected=version, versions=versions, issues=issues)
+    _check_mcpb_archive(repo, expected=version, versions=versions, issues=issues)
 
     changelog = repo / "CHANGELOG.md"
     try:
@@ -450,6 +513,23 @@ def release_sync(dry_run: bool) -> None:
     for path in edits:
         console.print(f"  updated: {path.relative_to(repo)}")
     console.print(f"[green]✓[/green] versions synced to {version}")
+
+
+@release_group.command(name="mcpb")
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Archive destination; defaults to packaging/memo.mcpb.",
+)
+def release_mcpb(output: Path | None) -> None:
+    """Build the deterministic MCPB archive from its source directory."""
+    repo = _resolve_repo()
+    try:
+        destination = build_mcpb(repo, output)
+    except OSError as exc:
+        raise click.ClickException(f"could not build MCPB: {exc}") from exc
+    console.print(f"[green]✓[/green] built {destination}")
 
 
 @release_group.command(name="check")
