@@ -875,11 +875,16 @@ def _extract_and_save(
         "capture_extract", _EXTRACT_SYSTEM_PROMPT, cfg.state_dir
     )
     _helper_chat = mem._ensure_chat()
+    assistant_for_extraction, _crush_hash = maybe_crush_json_capture(
+        assistant_text,
+        user_text,
+        cfg,
+    )
     insights = extract_insights(
         _helper_chat,
         cfg.helper_model,
         user_text,
-        assistant_text,
+        assistant_for_extraction,
         state_dir=cfg.state_dir,
     )
     _ground_on = _capture_flag_bool("MEMO_GROUNDING_JUDGE")

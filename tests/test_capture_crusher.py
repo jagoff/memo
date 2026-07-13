@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -112,3 +114,57 @@ def test_score_ties_are_deterministic() -> None:
 
     assert first == second
     assert len(set(first)) == 1
+
+
+def test_shared_extract_path_crushes_for_extraction_but_grounds_on_original(
+    tmp_cfg, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo import capture_core
+
+    user_text = "find the deployment answer"
+    assistant_text = json.dumps(_large_rows())
+    seen: dict[str, object] = {}
+
+    def fake_crush(content: str, context: str, config) -> tuple[str, str | None]:
+        seen["crusher"] = (content, context, config)
+        return "CRUSHED FOR EXTRACTION", "abc123"
+
+    def fake_extract(helper, model, user, assistant, *, state_dir):
+        del helper, model, user, state_dir
+        seen["extract_assistant"] = assistant
+        return [
+            {
+                "title": "Deployment answer",
+                "type": "note",
+                "body": "The deployment answer remains grounded in the complete original transcript.",
+                "tags": [],
+            }
+        ]
+
+    def fake_grounding(helper, model, *, source: str, claim: str) -> float:
+        del helper, model, claim
+        seen["ground_source"] = source
+        return 1.0
+
+    monkeypatch.setenv("MEMO_GROUNDING_JUDGE", "1")
+    monkeypatch.setattr(capture_core, "maybe_crush_json_capture", fake_crush)
+    monkeypatch.setattr(capture_core, "extract_insights", fake_extract)
+    monkeypatch.setattr(capture_core, "score_grounding", fake_grounding)
+    monkeypatch.setattr(capture_core, "find_near_duplicate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(capture_core, "_passes_quality", lambda content: True)
+
+    mem = MagicMock()
+    mem._ensure_chat.return_value = object()
+    mem.save.return_value = SimpleNamespace(
+        id="saved-id",
+        title="Deployment answer",
+        type="note",
+    )
+    mem.fact_edges.query.return_value = []
+
+    result = capture_core._extract_and_save(mem, tmp_cfg, user_text, assistant_text)
+
+    assert result["saved"] == ["saved-id"]
+    assert seen["crusher"] == (assistant_text, user_text, tmp_cfg)
+    assert seen["extract_assistant"] == "CRUSHED FOR EXTRACTION"
+    assert seen["ground_source"] == f"{user_text}\n{assistant_text}"
