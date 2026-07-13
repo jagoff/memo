@@ -51,6 +51,18 @@ def test_is_mature_false_when_under_supported():
     assert dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14) is False
 
 
+def test_is_mature_false_when_cluster_too_small():
+    members = [_member("2026-06-01", 0.9, 4)]  # size 1 < 2
+    stats = dd.cluster_maturity(members, now=_now())
+    assert dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14) is False
+
+
+def test_is_mature_false_when_not_confident_enough():
+    members = [_member("2026-06-01", 0.4, 4), _member("2026-06-01", 0.4, 4)]  # mean confidence 0.4 < 0.5
+    stats = dd.cluster_maturity(members, now=_now())
+    assert dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14) is False
+
+
 def test_missing_created_is_treated_as_fresh():
     members = [_member("", 0.9, 4), _member("not-a-date", 0.9, 4)]
     stats = dd.cluster_maturity(members, now=_now())
