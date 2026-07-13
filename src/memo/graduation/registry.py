@@ -115,6 +115,16 @@ def report_only_candidates() -> list[Candidate]:
             on_flags={"MEMO_DREAM_GRADUATION_ENABLED": "1"},
             auto_flip=False,
         ),
+        Candidate(
+            flag="MEMO_INTERJECT_ENABLED",
+            on_flags={"MEMO_INTERJECT_ENABLED": "1"},
+            auto_flip=False,  # interrupting a human is not offline-measurable
+        ),
+        Candidate(
+            flag="MEMO_ASK_GAPS_ENABLED",
+            on_flags={"MEMO_ASK_GAPS_ENABLED": "1"},
+            auto_flip=False,  # asking a human is not offline-measurable
+        ),
     ]
 
 
