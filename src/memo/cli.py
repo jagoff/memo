@@ -92,6 +92,7 @@ from memo.cli_memory import (
     undo,
     update,
 )
+from memo.cli_onboard import onboard
 from memo.cli_outcome import gaps as gaps_cmd
 from memo.cli_outcome import outcome as outcome_cmd
 from memo.cli_profile import profile_group
@@ -486,6 +487,7 @@ cli.add_command(http_api)
 cli.add_command(startup_banner_cmd)
 cli.add_command(codex_badge_cmd)
 cli.add_command(install_shims_cmd)
+cli.add_command(onboard)
 
 
 # Subcommands that must NEVER trigger the first-run picker — either
