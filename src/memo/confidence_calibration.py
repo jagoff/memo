@@ -8,11 +8,19 @@ confidence is consulted."""
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 _FILENAME = "confidence_calibration.json"
 _BANDS = ("low", "med", "high")
+# Canonical iteration order for the monotone projection — low -> med -> high.
+# Correctness of _monotonic_map depends on this order, not on dict insertion
+# order (dicts happen to preserve insertion order in Python, but that is not
+# the contract this module relies on).
+_BAND_ORDER: tuple[str, ...] = ("low", "med", "high")
+
+_log = logging.getLogger(__name__)
 
 # path -> (mtime, doc) — keeps the recall path off disk after the first read.
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -42,7 +50,10 @@ def build_calibration(state_dir: Path, mem: Any, *, min_bin: int = 5) -> dict[st
     # recall_id is stored as an 8-char prefix; map it back to a full id.
     try:
         all_ids = mem.store.all_ids()
-    except Exception:
+    except (AttributeError, OSError) as exc:
+        # A broken join must be observable, not silently degraded to a
+        # plausible-looking identity map — log so this shows up, don't guess.
+        _log.warning("confidence_calibration: mem.store.all_ids() failed: %s", exc)
         all_ids = []
     by_prefix = {i[:8]: i for i in all_ids}
 
@@ -76,22 +87,70 @@ def build_calibration(state_dir: Path, mem: Any, *, min_bin: int = 5) -> dict[st
 
 
 def _monotonic_map(bins: dict[str, dict[str, Any]], *, min_bin: int) -> dict[str, str]:
-    """Isotonic-style remap: a band whose observed usefulness is out of order
-    (e.g. 'high' grounds LESS than 'med') is demoted so observed rates rise
-    monotonically low<=med<=high. Under-observed bands (n < min_bin) stay
-    identity — insufficient evidence to correct."""
-    remap: dict[str, str] = {b: b for b in _BANDS}
-    observed = {b: bins[b]["observed"] for b in _BANDS}
-    n = {b: bins[b]["n"] for b in _BANDS}
-    # demote 'high' to 'med' when it grounds no better than 'med' (both observed).
-    if n["high"] >= min_bin and n["med"] >= min_bin and observed["high"] < observed["med"]:
-        remap["high"] = "med"
-    # demote 'med' to 'low' when it grounds no better than 'low'.
-    if n["med"] >= min_bin and n["low"] >= min_bin and observed["med"] < observed["low"]:
-        remap["med"] = "low"
-    # a 'high' that even falls below 'low' collapses to 'low'.
-    if n["high"] >= min_bin and n["low"] >= min_bin and observed["high"] < observed["low"]:
-        remap["high"] = "low"
+    """Pool-Adjacent-Violators (isotonic regression) over the bands in their
+    canonical low -> med -> high order, producing a map whose *effective*
+    observed rate (``bins[remap[b]]["observed"]``) is provably non-decreasing
+    for ANY input — including an adversarial middle spike
+    (e.g. low=0.3, med=0.9, high=0.2) or a fully decreasing sequence.
+
+    Under-observed bands (n < min_bin) are substituted with their nearest
+    already-decided neighbor's value *before* the PAVA pass runs (not
+    corrected after the fact per-pair), so a sparse band can never introduce
+    a violation of its own. With no neighbor yet decided, a sparse band
+    falls back to its own predicted (identity) rate.
+
+    PAVA works by pooling adjacent bands whose raw values would otherwise
+    decrease into a single block, averaging within the block, and repeating
+    until the whole sequence is non-decreasing block-by-block. Each band is
+    then mapped to the *lowest-order* band name within its own block — since
+    blocks are non-decreasing and same-block bands share one pooled value,
+    this keeps ``remap`` monotone by construction.
+    """
+    n = {b: bins[b]["n"] for b in _BAND_ORDER}
+
+    # Sparse-band fallback: substitute values for under-observed bands with
+    # the nearest preceding well-observed band's value (falling back to that
+    # band's own predicted/identity rate when no preceding value exists yet).
+    # This runs BEFORE PAVA so a sparse band cannot be the source of a
+    # violation the pooling pass would otherwise have to "fix".
+    values: list[float] = []
+    last_good: float | None = None
+    for b in _BAND_ORDER:
+        if n[b] >= min_bin:
+            v = bins[b]["observed"]
+            last_good = v
+        else:
+            v = last_good if last_good is not None else bins[b]["predicted"]
+        values.append(v)
+
+    # Pool-Adjacent-Violators: iterative merge of adjacent blocks whose
+    # averages violate non-decreasing order. Each block is (sum, count,
+    # start_index); the pooled value of a block is sum/count.
+    blocks: list[list[float | int]] = [[v, 1, i] for i, v in enumerate(values)]
+    i = 0
+    while i < len(blocks) - 1:
+        avg_cur = blocks[i][0] / blocks[i][1]
+        avg_next = blocks[i + 1][0] / blocks[i + 1][1]
+        if avg_cur > avg_next:
+            merged_sum = blocks[i][0] + blocks[i + 1][0]
+            merged_count = blocks[i][1] + blocks[i + 1][1]
+            blocks[i] = [merged_sum, merged_count, blocks[i][2]]
+            del blocks[i + 1]
+            if i > 0:
+                i -= 1
+        else:
+            i += 1
+
+    # Expand blocks back to per-band pooled values, then map every band to
+    # the name of the FIRST (lowest-order) band in its block.
+    band_of_block_start: list[str] = []
+    for block in blocks:
+        _, block_count, start_idx = block
+        band_of_block_start.extend([_BAND_ORDER[int(start_idx)]] * int(block_count))
+
+    remap: dict[str, str] = {
+        band: band_of_block_start[idx] for idx, band in enumerate(_BAND_ORDER)
+    }
     return remap
 
 
