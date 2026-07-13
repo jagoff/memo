@@ -26,12 +26,14 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/opt/hf-cache \
     HF_MODEL_REVISION=97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
 
-COPY --from=builder /dist/*.whl /tmp/memo.whl
-RUN test -n "$EXPECTED_VERSION" \
+COPY --from=builder /dist/ /tmp/dist/
+RUN wheel=$(find /tmp/dist -name '*.whl' -print -quit) \
+    && test -n "$wheel" \
+    && test -n "$EXPECTED_VERSION" \
     && python -m pip install --index-url https://download.pytorch.org/whl/cpu torch \
-    && python -m pip install "/tmp/memo.whl[cpu]" \
+    && python -m pip install "${wheel}[cpu]" \
     && EXPECTED_VERSION="$EXPECTED_VERSION" python -c "import os; import memo; expected = os.environ['EXPECTED_VERSION']; installed = memo.__version__; assert installed == expected, f'{installed} != {expected}'" \
-    && rm /tmp/memo.whl
+    && rm -rf /tmp/dist
 
 RUN python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['MEMO_ST_EMBEDDER_MODEL'], revision=os.environ[\"HF_MODEL_REVISION\"])"
 

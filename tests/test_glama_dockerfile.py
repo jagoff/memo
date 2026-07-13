@@ -9,7 +9,11 @@ def test_glama_dockerfile_builds_and_installs_checkout_wheel() -> None:
     assert "FROM python:3.13-slim@sha256:" in dockerfile
     assert "AS builder" in dockerfile
     assert "python -m build --wheel" in dockerfile
-    assert "/dist/*.whl" in dockerfile
+    assert "--outdir /dist" in dockerfile
+    assert "COPY --from=builder /dist/ /tmp/dist/" in dockerfile
+    assert "wheel=$(find /tmp/dist -name '*.whl' -print -quit)" in dockerfile
+    assert 'pip install "${wheel}[cpu]"' in dockerfile
+    assert "/tmp/memo.whl" not in dockerfile
     assert 'pip install "mlx-memo[cpu]"' not in dockerfile
     assert "ARG EXPECTED_VERSION" in dockerfile
     assert "assert installed == expected" in dockerfile
