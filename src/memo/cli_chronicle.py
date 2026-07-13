@@ -1,6 +1,8 @@
 """`memo chronicle` — read the nightly engineering diary (see dream_chronicle)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 from rich.console import Console
 from rich.markdown import Markdown
@@ -18,6 +20,7 @@ def chronicle_cmd(date: str | None, week: bool) -> None:
     """Show the engineering diary memo wrote for a day (or week)."""
     cfg = Config.from_env()
     root = chronicle_dir(cfg)
+    target: Path | None
     if date is not None:
         target = chronicle_path(cfg, date)
     else:
