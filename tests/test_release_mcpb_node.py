@@ -5,9 +5,12 @@ import re
 import shutil
 import subprocess
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
+
+from memo.release_mcpb import build_mcpb, build_mcpb_node
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BOOTSTRAP = _REPO_ROOT / "packaging" / "mcpb-node" / "bootstrap.js"
@@ -49,6 +52,8 @@ def test_node_manifest_required_fields() -> None:
     assert manifest["server"]["type"] == "node"
     assert manifest["server"]["entry_point"] == "bootstrap.js"
     assert manifest["server"]["mcp_config"]["command"] == "node"
+    # ${__dirname} is official MCPB substitution syntax (anthropics/mcpb MANIFEST.md:
+    # "replaced with the absolute path to the extension's directory").
     assert manifest["server"]["mcp_config"]["args"] == ["${__dirname}/bootstrap.js"]
 
 
@@ -63,6 +68,60 @@ def test_manifest_versions_in_sync() -> None:
     assert node_manifest["version"] == project_version, (
         "packaging/mcpb-node/manifest.json version out of sync with pyproject.toml"
     )
+
+
+def _scaffold_repo(root: Path) -> Path:
+    (root / "packaging" / "mcpb" / "server").mkdir(parents=True)
+    (root / "packaging" / "mcpb" / "manifest.json").write_text('{"version": "1.2.3"}\n')
+    (root / "packaging" / "mcpb" / "icon.png").write_bytes(b"fake-icon")
+    (root / "packaging" / "mcpb" / "server" / "main.py").write_text('print("stub")\n')
+    (root / "packaging" / "mcpb-node").mkdir()
+    (root / "packaging" / "mcpb-node" / "manifest.json").write_text('{"version": "1.2.3"}\n')
+    (root / "packaging" / "mcpb-node" / "bootstrap.js").write_text("// stub\n")
+    return root
+
+
+def test_build_mcpb_node_members_and_determinism(tmp_path: Path) -> None:
+    repo = _scaffold_repo(tmp_path)
+    built = build_mcpb_node(repo)
+    assert built == repo / "packaging" / "memo-node.mcpb"
+    with zipfile.ZipFile(built) as archive:
+        assert tuple(archive.namelist()) == ("icon.png", "manifest.json", "bootstrap.js")
+    first_bytes = built.read_bytes()
+    second_bytes = build_mcpb_node(repo).read_bytes()
+    assert first_bytes == second_bytes
+
+
+def test_build_mcpb_node_icon_falls_back_to_python_bundle(tmp_path: Path) -> None:
+    repo = _scaffold_repo(tmp_path)  # no icon.png under mcpb-node/
+    built = build_mcpb_node(repo)
+    with zipfile.ZipFile(built) as archive:
+        assert archive.read("icon.png") == b"fake-icon"
+
+
+def test_build_mcpb_node_prefers_local_member_over_fallback(tmp_path: Path) -> None:
+    repo = _scaffold_repo(tmp_path)
+    (repo / "packaging" / "mcpb-node" / "icon.png").write_bytes(b"node-icon")
+    built = build_mcpb_node(repo)
+    with zipfile.ZipFile(built) as archive:
+        assert archive.read("icon.png") == b"node-icon"
+
+
+def test_build_mcpb_python_bundle_unchanged(tmp_path: Path) -> None:
+    """Guard the DRY refactor: build_mcpb keeps members, metadata and determinism."""
+    repo = _scaffold_repo(tmp_path)
+    out = tmp_path / "memo.mcpb"
+    build_mcpb(repo, output=out)
+    with zipfile.ZipFile(out) as archive:
+        assert tuple(archive.namelist()) == ("icon.png", "manifest.json", "server/main.py")
+        for info in archive.infolist():
+            assert info.date_time == (1980, 1, 1, 0, 0, 0)
+            assert info.compress_type == zipfile.ZIP_DEFLATED
+            assert info.create_system == 3
+            assert info.external_attr == 0o100644 << 16
+    first_bytes = out.read_bytes()
+    build_mcpb(repo, output=out)
+    assert out.read_bytes() == first_bytes
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
