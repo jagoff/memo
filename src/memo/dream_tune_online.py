@@ -154,9 +154,11 @@ def append_ledger(state_dir: Path, entry: dict[str, Any]) -> None:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def read_ledger(state_dir: Path, *, limit: int = 50) -> list[dict[str, Any]]:
+def _read_jsonl_tail(path: Path, *, limit: int) -> list[dict[str, Any]]:
+    """Read the last ``limit`` lines of a JSONL file, skipping corrupt/blank
+    lines. Missing file → ``[]``."""
     try:
-        lines = ledger_path(state_dir).read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
     out: list[dict[str, Any]] = []
@@ -169,6 +171,10 @@ def read_ledger(state_dir: Path, *, limit: int = 50) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return out
+
+
+def read_ledger(state_dir: Path, *, limit: int = 50) -> list[dict[str, Any]]:
+    return _read_jsonl_tail(ledger_path(state_dir), limit=limit)
 
 
 def resolve_pending(

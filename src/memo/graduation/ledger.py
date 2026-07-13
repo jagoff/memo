@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from memo.dream_tune_online import graduation_streak
+from memo.dream_tune_online import _read_jsonl_tail, graduation_streak
 
 
 def _flag_path(state_dir: Path, flag: str) -> Path:
@@ -22,20 +22,7 @@ def record(state_dir: Path, flag: str, entry: dict[str, Any]) -> None:
 
 
 def history(state_dir: Path, flag: str, *, limit: int = 50) -> list[dict[str, Any]]:
-    try:
-        lines = _flag_path(state_dir, flag).read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    out: list[dict[str, Any]] = []
-    for line in lines[-limit:]:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            out.append(json.loads(stripped))
-        except json.JSONDecodeError:
-            continue
-    return out
+    return _read_jsonl_tail(_flag_path(state_dir, flag), limit=limit)
 
 
 def streak(state_dir: Path, flag: str, *, limit: int = 50) -> int:

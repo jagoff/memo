@@ -80,6 +80,14 @@ def _run_graduation_pass(
     return receipt
 
 
+def _count_graduated(receipt: dict[str, Any]) -> int:
+    """Count candidates with status "graduated" in a dream receipt. Defensive
+    against a malformed/non-dict "graduation" or "candidates" value."""
+    graduation = receipt.get("graduation", {})
+    candidates = graduation.get("candidates", []) if isinstance(graduation, dict) else []
+    return sum(1 for c in candidates if isinstance(c, dict) and c.get("status") == "graduated")
+
+
 def _run_calibration_pass(
     cfg: Config, mem: Any, *, dry_run: bool, receipt: dict[str, Any]
 ) -> dict[str, Any]:
@@ -419,8 +427,7 @@ def dream_run(
         if flag_bool("MEMO_GRADUATION_CONTROLLER_ENABLED"):
             progress.update(step, description="[graduation] controller...")
             _run_graduation_pass(cfg, mem, dry_run=dry_run, receipt=receipt)
-            _g = receipt.get("graduation", {})
-            _flipped = sum(1 for c in _g.get("candidates", []) if c.get("status") == "graduated")
+            _flipped = _count_graduated(receipt)
             progress.update(
                 step,
                 description=f"[graduation] controller [green]✓[/green]  {_flipped} graduated",

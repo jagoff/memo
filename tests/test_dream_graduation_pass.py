@@ -1,6 +1,35 @@
 import memo.cli_dream as cli_dream
 
 
+def test_count_graduated_counts_graduated_candidates():
+    receipt = {
+        "graduation": {
+            "candidates": [
+                {"flag": "A", "status": "graduated"},
+                {"flag": "B", "status": "accumulating"},
+                {"flag": "C", "status": "graduated"},
+            ]
+        }
+    }
+    assert cli_dream._count_graduated(receipt) == 2
+
+
+def test_count_graduated_handles_missing_graduation_key():
+    assert cli_dream._count_graduated({}) == 0
+
+
+def test_count_graduated_handles_non_dict_graduation():
+    assert cli_dream._count_graduated({"graduation": "oops"}) == 0
+
+
+def test_count_graduated_handles_non_list_candidates():
+    assert cli_dream._count_graduated({"graduation": {"candidates": "oops"}}) == 0
+
+
+def test_count_graduated_handles_non_dict_candidate_entries():
+    assert cli_dream._count_graduated({"graduation": {"candidates": ["oops", 1, None]}}) == 0
+
+
 def test_dream_runs_graduation_when_enabled(monkeypatch, tmp_cfg):
     seen = {}
 

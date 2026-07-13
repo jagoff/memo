@@ -22,7 +22,6 @@ def run_graduation_controller(
     *,
     evaluator: Callable[..., dict[str, Any]] | None = None,
     candidates: list[Candidate | NumericCandidate] | None = None,
-    k: int = 5,
     labels: LabelSet | None = None,
     dry_run: bool = False,
     env: Mapping[str, str] | None = None,
