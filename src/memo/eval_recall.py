@@ -286,10 +286,17 @@ def extra_configs() -> list[Cfg]:
             exclude_archived=True,
             flag_overrides={"MEMO_HYDE_ENABLED": "1"},
         ),
+        Cfg(
+            "K vec/0.60/hype",
+            "vec",
+            0.60,
+            exclude_archived=False,
+            flag_overrides={"MEMO_HYPE_ENABLED": "1"},
+        ),
     ]
 
 
-EvalProfile = Literal["quick", "default", "pre-push", "matrix", "expensive"]
+EvalProfile = Literal["quick", "default", "pre-push", "matrix", "expensive", "hype"]
 
 
 def profile_configs(profile: EvalProfile) -> list[Cfg]:
@@ -304,6 +311,8 @@ def profile_configs(profile: EvalProfile) -> list[Cfg]:
         return [*default_configs(), *tuning_configs()]
     if profile == "expensive":
         return select_configs(["J"])
+    if profile == "hype":
+        return select_configs(["A", "K"])
     raise ValueError(f"unknown recall eval profile: {profile}")
 
 

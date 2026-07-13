@@ -88,7 +88,7 @@ eval_group.add_command(bench_group)
 )
 @click.option(
     "--profile",
-    type=click.Choice(["quick", "default", "pre-push", "matrix", "expensive"]),
+    type=click.Choice(["quick", "default", "pre-push", "matrix", "expensive", "hype"]),
     default=None,
     help="Named config profile. Explicit --config values override this.",
 )

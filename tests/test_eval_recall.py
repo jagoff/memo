@@ -1238,6 +1238,65 @@ def test_hyde_config_is_named_only_not_default() -> None:
     assert [c.name for c in eval_recall.select_configs(None)] == names
 
 
+def test_hype_config_k_carries_overlay_and_shares_a_base() -> None:
+    """K = same base as A (vec/0.60/keep) + MEMO_HYPE_ENABLED=1 overlay —
+    cloned from how J overlays MEMO_HYDE_ENABLED=1 on its own base config."""
+    names = [c.name for c in eval_recall.default_configs()]
+    assert not any("hype" in n.lower() for n in names)  # default grid stays no-MLX/no-fold
+
+    a = eval_recall.select_configs(["A"])[0]
+    k = eval_recall.select_configs(["K"])[0]
+
+    assert k.mode == a.mode
+    assert k.floor == a.floor
+    assert k.exclude_archived == a.exclude_archived
+    assert k.flag_overrides == {"MEMO_HYPE_ENABLED": "1"}
+
+    # A itself must NOT carry the overlay — the base config stays untouched.
+    assert a.flag_overrides is None
+
+
+def test_hype_profile_includes_a_and_k() -> None:
+    """expensive is hardwired to J (select_configs(["J"])); K gets its own
+    profile so A/B gating doesn't change expensive's existing semantics."""
+    assert [c.name for c in eval_recall.profile_configs("hype")] == [
+        "A vec/0.60/keep",
+        "K vec/0.60/hype",
+    ]
+    # expensive stays untouched by the new config
+    assert [c.name for c in eval_recall.profile_configs("expensive")] == ["J hyb/0.40/hyde"]
+
+
+def test_run_config_pins_hype_flag_and_empty_index_is_a_noop(monkeypatch) -> None:
+    """run_config pins MEMO_HYPE_ENABLED=1 for K's search call (same mechanism
+    as the existing MEMO_HYDE_ENABLED pin test). With an empty HyPE index the
+    fold has no rows to add, so a search that ignores the flag (as a real
+    empty-index fold would) yields byte-identical rows for A and K — this is
+    the "no-op on empty index" sanity check at the config-resolution level."""
+    import os
+
+    seen: dict = {}
+
+    class _Mem:
+        def search(self, *a, **k):
+            seen["hype"] = os.environ.get("MEMO_HYPE_ENABLED")
+            return []
+
+    monkeypatch.delenv("MEMO_HYPE_ENABLED", raising=False)
+    labels = LabelSet(prompts=[Prompt("some query", relevant=True)])
+
+    a_row = eval_recall.run_config(_Mem(), eval_recall.select_configs(["A"])[0], 3, labels)
+    assert seen.get("hype") is None  # A never pins the hype overlay
+
+    k_row = eval_recall.run_config(_Mem(), eval_recall.select_configs(["K"])[0], 3, labels)
+    assert seen["hype"] == "1"  # pinned during K's run
+    assert "MEMO_HYPE_ENABLED" not in os.environ  # restored after
+
+    # Empty-index fold is a no-op: same search results in, same row shape out.
+    assert k_row.precision_at_k == a_row.precision_at_k
+    assert k_row.noise_at_k == a_row.noise_at_k
+
+
 def test_run_config_pins_and_restores_flag_overrides(monkeypatch) -> None:
     import os
 
