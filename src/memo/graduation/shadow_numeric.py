@@ -61,6 +61,11 @@ def best_on_value(
         if not win:
             continue
         key = (deltas["delta_prec"], -deltas["delta_noise"])
+        # The running best floor is the zero-delta baseline (0.0, 0.0). A candidate
+        # value only reaches this comparison if decide_win returned True. Ties,
+        # including a zero-delta "win" when epsilon==0, are rejected by strict >
+        # (since (0.0, -0.0) > (0.0, 0.0) is False), so a no-op knob correctly
+        # never graduates and best_value stays off_value.
         if key > best_key:
             best_key, best_value, best_deltas = key, value, deltas
     return best_value, best_deltas

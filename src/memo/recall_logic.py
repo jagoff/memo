@@ -329,6 +329,10 @@ def render_recall_balanced(relevant: list[Any], *, token_budget: int, turn: int 
           • bullet 2
         </memo-recall>
 
+    This minimal format intentionally carries NO per-hit epistemic annotations:
+    no epistemic_label, no trust_dossier, and no MEMO_RECALL_CONFIDENCE_GATE
+    '⚠ unverified' marker. The gate and dossier apply only to compact and full
+    formats by design — the balanced format prioritizes brevity over trust signals.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     lines = [f"- [{hit.id[:8]}] {hit.title}" for hit in relevant]

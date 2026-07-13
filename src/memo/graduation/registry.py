@@ -102,6 +102,13 @@ def report_only_candidates() -> list[Candidate]:
             flag="MEMO_RECALL_RERANK_INPUT_K",
             on_flags={"MEMO_RECALL_RERANK_INPUT_K": "20"},
             auto_flip=False,
+            # The recall HOOK honors this flag via an env-bridge: cli_recall_hook
+            # reads MEMO_RECALL_RERANK_INPUT_K and exports MEMO_RERANK_INPUT_K,
+            # which is what search actually reads via Config.rerank_input_k. The
+            # shared eval_recall harness NEVER crosses that bridge and disables the
+            # reranker, so this candidate is unmeasurable in eval — intentionally
+            # report-only. Do NOT set auto_flip=True without wiring a rerank-faithful
+            # evaluator first, or it would graduate a knob the eval never measured.
         ),
         Candidate(
             flag="MEMO_DREAM_GRADUATION_ENABLED",
