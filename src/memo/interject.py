@@ -12,8 +12,11 @@ Surface constraints (honest):
   memo has NO PostToolUse hook, so a true mid-turn interrupt is impossible; this
   is the closest faithful realization (a sharper pre-turn banner).
 - Uses ONLY cheap, already-on-the-path signals: recalibrated_band (one
-  mtime-cached read) + contradict_store.pairs_for_ids (one sqlite SELECT the
-  recall path already runs). NO new embed, NO MLX, NO scan_corpus on the 5s hook.
+  mtime-cached read) + contradict_store.pairs_for_ids (one sqlite SELECT).
+  The contradiction-store lookup is gated behind the guard's own reversal-signal
+  + type/score filter (guard_candidates), so it only runs on a turn that already
+  has a qualifying guard candidate — not on every recall turn. NO new embed, NO
+  MLX, NO scan_corpus on the 5s hook.
 - "Repeats a fixed bug" is NOT realized — memo has no bug-fixed status; interject
   covers the contradiction-of-decision case only.
 
@@ -176,21 +179,32 @@ def evaluate_and_render(
 ) -> str | None:
     """The single orchestration entry both recall paths call. Never raises.
 
-    Builds the calibrated-band + persisted-contradiction gates from real signals
-    already on the recall path (no embed, no MLX, no scan), always shadow-logs
-    what it WOULD interject, and returns the banner only when the flag is on,
-    the session is under budget, and not silenced."""
+    Short-circuits on the guard's own reversal-signal + type/score pre-check
+    before touching the contradiction store, so the sqlite lookup only runs on
+    a turn that already has a qualifying guard candidate. Then builds the
+    calibrated-band + persisted-contradiction gates (no embed, no MLX, no
+    scan), always shadow-logs what it WOULD interject, and returns the banner
+    only when the flag is on, the session is under budget, and not silenced."""
     try:
         from memo.confidence_calibration import recalibrated_band
         from memo.flags import flag_bool, flag_int
+        from memo.guard import guard_candidates
         from memo.identity import current
         from memo.recall_logic import _conf_band
 
-        # (1) persisted-contradiction gate — the cheap sqlite lookup the recall
-        # path already runs; empty on any failure (contradict.py is experimental).
+        # (0) cheap pre-check — the SAME reversal-signal + type/score filter the
+        # guard already runs, with NO store read. Short-circuits before the
+        # contradiction-store lookup on the common turn (no reversal intent).
+        guard_cands = guard_candidates(prompt, hits, sim_threshold=sim_threshold)
+        if not guard_cands:
+            return None
+
+        # (1) persisted-contradiction gate — only reached once there is at least
+        # one qualifying guard candidate; empty on any failure (contradict.py is
+        # experimental).
         disputed_ids: set[str] = set()
         try:
-            ids = [getattr(h, "id", "") for h in hits if getattr(h, "id", "")]
+            ids = [getattr(h, "id", "") for h in guard_cands if getattr(h, "id", "")]
             store = mem.contradict_store
             pairs = store.pairs_for_ids(ids, status="open")
             pairs += store.pairs_for_ids(ids, status="competing")

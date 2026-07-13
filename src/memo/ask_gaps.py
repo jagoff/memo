@@ -9,8 +9,8 @@ QUESTION in the briefing. It NEVER fabricates — a gap is only ever a prompt me
 already failed to answer from real usage; asking it back is honest.
 
 Report-only: shadow-logs what it WOULD ask regardless of the enable flag; a
-human flips MEMO_ASK_GAPS_ENABLED after reviewing ``memo ask shadow``. Deduped
-per session (a session asks at most one NEW gap and never repeats one).
+human flips MEMO_ASK_GAPS_ENABLED after reviewing ``memo ask-gaps shadow``.
+Deduped per session (a session asks at most one NEW gap and never repeats one).
 """
 
 from __future__ import annotations

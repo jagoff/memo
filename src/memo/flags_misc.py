@@ -1032,7 +1032,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "anticipate receipt's detect_gaps output) as an explicit question in the "
         "SessionStart briefing. Never fabricates — only re-asks what memo already "
         "failed to answer from real usage. Deduped per session. Shadow-counts "
-        "what it WOULD ask even when OFF (memo ask shadow). Default OFF; not "
+        "what it WOULD ask even when OFF (memo ask-gaps shadow). Default OFF; not "
         "auto-graduatable.",
     ),
     # dream v2 — graph-community synthesis (spec 3): abstract knowledge clusters

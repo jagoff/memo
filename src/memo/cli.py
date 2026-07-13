@@ -69,6 +69,7 @@ from memo.cli_import import import_group
 from memo.cli_ingest import ingest
 from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_install_mcp import install_mcp
+from memo.cli_interject import ask_group, interject_group
 from memo.cli_invalidate import invalidate_cmd
 from memo.cli_links import links_group
 from memo.cli_maint_daemon import maint_daemon_group
@@ -349,6 +350,8 @@ cli.add_command(graduation_group)
 cli.add_command(confidence_group)
 cli.add_command(graph_group)
 cli.add_command(guard_group)
+cli.add_command(interject_group)
+cli.add_command(ask_group)
 cli.add_command(related)
 cli.add_command(eval_group)
 cli.add_command(debug_recall_cmd)

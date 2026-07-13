@@ -77,3 +77,30 @@ def test_evaluate_never_raises_on_broken_store(monkeypatch, tmp_cfg):
     assert ij.evaluate_and_render(
         tmp_cfg, _Broken(), prompt="switch instead", hits=hits, sim_threshold=0.6
     ) is None
+
+
+def test_evaluate_never_touches_store_without_reversal_signal(monkeypatch, tmp_cfg):
+    """Regression: with no reversal signal in the prompt, guard_candidates is
+    empty, so evaluate_and_render must short-circuit BEFORE reading
+    contradict_store — no new hot-path store read on an ordinary turn."""
+    monkeypatch.setenv("MEMO_INTERJECT_ENABLED", "1")
+
+    class _StoreAccessed(RuntimeError):
+        pass
+
+    class _TripwireStore:
+        def pairs_for_ids(self, ids, *, status="open"):
+            raise _StoreAccessed("contradict_store touched with no guard candidate")
+
+    class _Mem:
+        contradict_store = _TripwireStore()
+
+    hits = [_hit("a" * 32, "Use vec mode", "decision", 0.9)]
+    # plain question, no reversal wording -> guard_candidates() == [] -> must
+    # never reach the store.
+    banner = ij.evaluate_and_render(
+        tmp_cfg, _Mem(), prompt="what did we decide about vec mode?", hits=hits, sim_threshold=0.6
+    )
+    assert banner is None
+    rows = ij.read_shadow(tmp_cfg.state_dir)
+    assert rows == []  # nothing shadow-logged either -- no candidate at all
