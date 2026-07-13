@@ -80,6 +80,15 @@ _VERSION_TARGETS = (
         2,
         optional=True,
     ),
+    VersionTarget(
+        # Node bundle manifest: its version IS the bootstrap install pin
+        # (bootstrap.js readPin), no mlx-memo arg to rewrite. Sync is gated by
+        # tests/test_release_mcpb_node.py::test_pin_chain_in_sync.
+        Path("packaging/mcpb-node/manifest.json"),
+        r'("version"\s*:\s*")([^"]+)(")',
+        1,
+        optional=True,
+    ),
 )
 
 
