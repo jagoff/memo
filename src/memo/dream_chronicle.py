@@ -177,3 +177,104 @@ def fact_lines(facts: dict[str, Any]) -> tuple[list[str], set[str]]:
         allowed.add(mid)
         lines.append(f"- new {m['type']} memory: {str(m['title'])[:120]} [{mid}]")
     return lines, allowed
+
+
+_SYS = (
+    "You write ONE short engineering-diary entry in Spanish (150-400 words, "
+    "markdown bullets under short headings like '## Trabajo' / '## Decisiones') "
+    "from the day's facts below. State ONLY what the facts state — never invent. "
+    "EVERY bullet MUST end with the bracketed 8-char id(s) of the fact(s) it "
+    "came from, e.g. [a1b2c3d4]. If the facts are too thin for a diary, reply "
+    "exactly: QUIET_DAY"
+)
+
+
+def _llm_narrate(mem: Any, day: str, lines: list[str]) -> str | None:
+    from memo.memory.record import chat_with_timeout
+
+    out = chat_with_timeout(
+        mem._ensure_chat(),
+        timeout=60,
+        model=mem.cfg.helper_model,
+        messages=[
+            {"role": "system", "content": _SYS},
+            {"role": "user", "content": f"Facts for {day}:\n" + "\n".join(lines)},
+        ],
+        options={"temperature": 0.0, "max_tokens": 700, "thinking": False},
+    )
+    if out is None:
+        return None
+    text = ((out.get("message") or {}).get("content") or "").strip()
+    if not text or text == "QUIET_DAY":
+        return None
+    return text
+
+
+def render_chronicle(day: str, narrative: str, facts: dict[str, Any]) -> str:
+    """Full document. Frontmatter has NO ``id:`` key -> reindex ignores it."""
+    consults = facts.get("consults") or {}
+    events = facts.get("receipt_events") or {}
+    nums = [
+        f"- episodios: {len(facts.get('episodes') or [])}",
+        f"- memorias nuevas: {len(facts.get('new_memories') or [])}",
+        f"- recalls grounded: {facts.get('grounded', 0)}",
+    ]
+    if consults:
+        nums.append("- consults: " + ", ".join(f"{k} {v}" for k, v in sorted(consults.items())))
+    if events:
+        nums.append("- mantenimiento: " + ", ".join(f"{k} {v}" for k, v in sorted(events.items())))
+    return (
+        "---\n"
+        "kind: chronicle\n"
+        f"day: {day}\n"
+        "generated_by: memo dream chronicle\n"
+        "---\n"
+        f"# Crónica — {day}\n\n"
+        f"{narrative}\n\n"
+        "## Números del día\n" + "\n".join(nums) + "\n"
+    )
+
+
+def write_weekly(cfg: Any, day: str) -> Path | None:
+    """Temporary stub. Task 6 implements the full weekly summary."""
+    return None
+
+
+def run_chronicle_pass(
+    cfg: Any,
+    mem: Any,
+    *,
+    day: str | None = None,
+    weekly: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """One nightly chronicle pass. Never raises — the cli_dream caller records
+    a returned ``status="error"`` in ``receipt["errors"]``."""
+    res: dict[str, Any] = {"status": "noop", "day": ""}
+    try:
+        d = day or default_day()
+        res["day"] = d
+        facts = collect_facts(cfg, d)
+        lines, allowed = fact_lines(facts)
+        if not lines:
+            res["status"] = "skipped"
+            return res
+        narrative = _llm_narrate(mem, d, lines)
+        if narrative is None:
+            res["status"] = "llm_unavailable"
+            return res
+        filtered, ratio = filter_cited(narrative, allowed)
+        res["cited_ratio"] = round(ratio, 3)
+        if not dry_run:
+            path = chronicle_path(cfg, d)
+            _atomic_write(path, render_chronicle(d, filtered, facts))
+            res["path"] = str(path)
+            if weekly:
+                wk = write_weekly(cfg, d)
+                if wk is not None:
+                    res["weekly_path"] = str(wk)
+        res["status"] = "done"
+    except Exception as exc:  # surfaced into the receipt, never silent
+        res["status"] = "error"
+        res["error"] = f"{type(exc).__name__}: {exc}"
+    return res

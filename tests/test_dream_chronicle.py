@@ -158,3 +158,79 @@ def test_memories_created_on_rich_frontmatter_and_yaml_title(tmp_path):
     out = dc._memories_created_on(cfg, "2026-07-13")
     assert [m["id"][:8] for m in out] == ["ffffffff"]
     assert out[0]["title"] == "titulo desde yaml"
+
+
+class _Mem:
+    """Minimal Memory fake — _llm_narrate is monkeypatched so it's never used."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+
+def test_run_chronicle_pass_writes_file_with_provenance(tmp_path, monkeypatch):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    day = "2026-07-13"
+    _write_memory_md(cfg.memory_dir, "a" * 32, day, "decided X")
+
+    monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: None)
+    monkeypatch.setattr(
+        dc, "_llm_narrate",
+        lambda mem, d, lines: "- decided X hoy [aaaaaaaa]\n- invented stuff\n",
+    )
+    res = dc.run_chronicle_pass(cfg, _Mem(cfg), day=day)
+    assert res["status"] == "done"
+    assert res["cited_ratio"] == 0.5
+    doc = dc.chronicle_path(cfg, day).read_text(encoding="utf-8")
+    assert "[aaaaaaaa]" in doc
+    assert "invented stuff" not in doc  # provenance filter aplicado
+    assert "id:" not in doc.split("---")[1]  # frontmatter sin id: -> reindex lo ignora
+
+
+def test_run_chronicle_pass_skips_on_no_signal(tmp_path, monkeypatch):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: None)
+    res = dc.run_chronicle_pass(cfg, _Mem(cfg), day="2026-07-13")
+    assert res["status"] == "skipped"
+    assert not dc.chronicle_path(cfg, "2026-07-13").exists()
+
+
+def test_run_chronicle_pass_llm_unavailable(tmp_path, monkeypatch):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    _write_memory_md(cfg.memory_dir, "a" * 32, "2026-07-13", "decided X")
+    monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: None)
+    monkeypatch.setattr(dc, "_llm_narrate", lambda *a, **k: None)
+    res = dc.run_chronicle_pass(cfg, _Mem(cfg), day="2026-07-13")
+    assert res["status"] == "llm_unavailable"
+    assert not dc.chronicle_path(cfg, "2026-07-13").exists()
+
+
+def test_run_chronicle_pass_dry_run_writes_nothing(tmp_path, monkeypatch):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    _write_memory_md(cfg.memory_dir, "a" * 32, "2026-07-13", "decided X")
+    monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: None)
+    monkeypatch.setattr(dc, "_llm_narrate", lambda *a, **k: "- decided X [aaaaaaaa]")
+    res = dc.run_chronicle_pass(cfg, _Mem(cfg), day="2026-07-13", dry_run=True)
+    assert res["status"] == "done"
+    assert "path" not in res
+    assert not dc.chronicle_path(cfg, "2026-07-13").exists()
+
+
+def test_run_chronicle_pass_never_raises(tmp_path, monkeypatch):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr(dc, "collect_facts", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    res = dc.run_chronicle_pass(cfg, _Mem(cfg), day="2026-07-13")
+    assert res["status"] == "error"
+    assert "boom" in res["error"]
