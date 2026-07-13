@@ -552,7 +552,8 @@ def recall_hook() -> None:
 
     if _recall_format == "compact":
         context = render_recall_compact(
-            relevant, token_budget=token_budget, disputed_by=_disputed_by
+            relevant, token_budget=token_budget, disputed_by=_disputed_by,
+            state_dir=mem.cfg.state_dir,
         )
     elif _recall_format == "balanced":
         context = render_recall_balanced(relevant, token_budget=token_budget, turn=_turn)
@@ -564,6 +565,7 @@ def recall_hook() -> None:
             body_chars=body_chars,
             token_budget=token_budget,
             disputed_by=_disputed_by,
+            state_dir=mem.cfg.state_dir,
         )
     context = render_associative_line(context, _nudge, token_budget=token_budget)
     if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):

@@ -110,7 +110,7 @@ class _StubMemory:
     )
 
     def __init__(self, cfg: object) -> None:
-        pass
+        self.cfg = cfg
 
     def search(
         self,

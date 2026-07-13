@@ -23,6 +23,7 @@ RECALL_DIRECTIVE = (
 )
 RECALL_FOOTER_FULL = "_Full: `/memo get <id>`._"
 RECALL_FOOTER_SHORT = "_: `/memo get <id>`._"
+CONFIDENCE_GATE_MARKER = "⚠ unverified — consider checking"
 # Short/no footer saves ~15 tokens
 CITE_INSTRUCTION = (
     "_If any of these memories informs your answer, cite it inline by short "
@@ -70,6 +71,21 @@ def _conf_band(score: float | None) -> str:
     if s >= 0.5:
         return "med"
     return "low"
+
+
+def confidence_gate_prefix(hit: Any, state_dir: Any | None) -> str:
+    """The gate marker for a low-CALIBRATED-confidence hit, or "" — reuses the
+    epistemic '?unverified' framing. Pure: score-band -> calibration map lookup
+    (one mtime-cached file read), no store read, no MLX. Off unless
+    MEMO_RECALL_CONFIDENCE_GATE is set and state_dir is provided."""
+    if state_dir is None or not flag_bool("MEMO_RECALL_CONFIDENCE_GATE"):
+        return ""
+    if "_uncertain" in {str(t) for t in (getattr(hit, "tags", None) or [])}:
+        return ""  # already carries ?unverified via epistemic_label
+    from memo.confidence_calibration import recalibrated_band
+
+    band = recalibrated_band(state_dir, _conf_band(getattr(hit, "score", None)))
+    return CONFIDENCE_GATE_MARKER if band == "low" else ""
 
 
 def trust_dossier(hit: Any, disputed_ids: list[str] | None) -> str:
@@ -130,6 +146,7 @@ def render_recall_context(
     token_budget: int,
     omitted: list[Any] | None = None,
     disputed_by: dict[str, list[str]] | None = None,
+    state_dir: Any | None = None,
 ) -> str:
     """Render recall context within a strict chars/4 token budget."""
     include_directive = turn is None or turn <= 1 or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
@@ -173,7 +190,9 @@ def render_recall_context(
     for i, hit in enumerate(relevant):
         score_tag = f" (score {hit.score:.2f})" if hit.score is not None else ""
         label = f" ⟨{epistemic_label(hit)}⟩" if use_labels else ""
-        title_line = f"**[{hit.id[:8]}] {hit.title}**{label}{score_tag}"
+        gate = confidence_gate_prefix(hit, state_dir)
+        gate_tag = f" ⟨{gate}⟩" if gate else ""
+        title_line = f"**[{hit.id[:8]}] {hit.title}**{label}{gate_tag}{score_tag}"
         tags_line = f"_tags_: {', '.join(hit.tags)}" if hit.tags else ""
         dossier_line = (
             f"_trust_: {trust_dossier(hit, (disputed_by or {}).get(hit.id))}"
@@ -248,6 +267,7 @@ def render_recall_compact(
     *,
     token_budget: int,
     disputed_by: dict[str, list[str]] | None = None,
+    state_dir: Any | None = None,
 ) -> str:
     """Compact recall format: one line per hit, no headers/tags/scores/body prose.
 
@@ -269,7 +289,11 @@ def render_recall_compact(
         body = (hit.body or "").strip().replace("\n", " ")
         short_body = body[:60].rstrip() if body else ""
         label = f" ⟨{epistemic_label(hit)}⟩" if use_labels else ""
-        line = f"[{hit.id[:8]}]{label} {hit.title}" + (f" · {short_body}" if short_body else "")
+        gate = confidence_gate_prefix(hit, state_dir)
+        gate_tag = f" ⟨{gate}⟩" if gate else ""
+        line = f"[{hit.id[:8]}]{label}{gate_tag} {hit.title}" + (
+            f" · {short_body}" if short_body else ""
+        )
         new_lines = [line]
         if use_dossier:
             new_lines.append(f"_trust_: {trust_dossier(hit, (disputed_by or {}).get(hit.id))}")
@@ -1210,6 +1234,7 @@ def _recall_logic(
         token_budget=token_budget,
         omitted=omitted,
         disputed_by=disputed_by,
+        state_dir=cfg.state_dir,
     )
 
     # Graph-associative nudge (MEMO_RECALL_ASSOCIATIVE) — render it on the daemon
