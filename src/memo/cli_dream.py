@@ -80,6 +80,28 @@ def _run_graduation_pass(
     return receipt
 
 
+def _run_calibration_pass(
+    cfg: Config, mem: Any, *, dry_run: bool, receipt: dict[str, Any]
+) -> dict[str, Any]:
+    """Nightly confidence calibration. Gated on MEMO_RECALL_CONFIDENCE_GATE +
+    best-effort: never raises out. Builds the predicted-vs-grounded map the
+    recall gate reads."""
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_RECALL_CONFIDENCE_GATE"):
+        return receipt
+    try:
+        from memo.confidence_calibration import build_calibration, save_calibration
+
+        doc = build_calibration(cfg.state_dir, mem)
+        if not dry_run:
+            save_calibration(cfg.state_dir, doc)
+        receipt["calibration"] = doc
+    except Exception as exc:  # best-effort pass, mirror the tuners
+        receipt["errors"].append(f"calibration: {type(exc).__name__}: {exc}")
+    return receipt
+
+
 @click.group(name="dream")
 def dream_cmd() -> None:
     """Autonomous nightly maintenance — synthesise, heal, decay."""
@@ -402,6 +424,17 @@ def dream_run(
             progress.update(
                 step,
                 description=f"[graduation] controller [green]✓[/green]  {_flipped} graduated",
+            )
+
+        # Phase 1 — confidence calibration: refresh the predicted-vs-grounded map.
+        if flag_bool("MEMO_RECALL_CONFIDENCE_GATE"):
+            progress.update(step, description="[calibration] confidence map...")
+            _run_calibration_pass(cfg, mem, dry_run=dry_run, receipt=receipt)
+            _cal = receipt.get("calibration", {})
+            _remapped = sum(1 for b, m in (_cal.get("map") or {}).items() if b != m)
+            progress.update(
+                step,
+                description=f"[calibration] confidence map [green]✓[/green]  {_remapped} remapped",
             )
 
         # Phase 2c — HyDE A/B (separate opt-in; +1 MLX chat call per prompt,
