@@ -78,3 +78,32 @@
 - [x] Task 5: Sprint Verification - COMPLETE
       Status: CI-order verification passed: ruff clean, mypy clean, focused sprint tests 74 passed, targeted ResourceWarning-as-error checks passed, quick recall eval smoke passed, full non-slow suite 3542 passed / 29 skipped / 6 baseline sqlite ResourceWarnings with 73.43% coverage
       Notes: strict runtime doctor passed except for the expected local SDD working-tree warning before this bookkeeping commit; serial ResourceWarning attribution run was interrupted as too slow after 303 passing tests with no warning failure
+
+---
+
+# Fase A — Chronicle + memo onboard
+
+**Plans:** docs/superpowers/plans/2026-07-13-chronicle-dream-pass.md (C1-C9) + 2026-07-13-memo-onboard.md (O1-O4)
+**Start:** 2026-07-13
+**Branch:** master (shared tree — explicit-path staging only)
+**Base:** f6ba622
+
+## Tasks
+
+- [x] C1: Chronicle flags — COMPLETE (f6ba622..d8416c4, review clean; Minor: test podría chequear flag_bool accessor)
+- [x] C2: Module base — COMPLETE (d8416c4..31adc08, review clean)
+- [x] C3: Provenance filter — COMPLETE (31adc08..d93c88d, review clean; Minor: sin caso test bullet `*`, trailing-newline note)
+- [x] C4: Day-facts collection — COMPLETE (d93c88d..86f8422, 1 fix round: frontmatter window + YAML title; re-review clean; Minor pendiente: cap 2000 chars head)
+- [x] C5: LLM narrate + run_chronicle_pass — COMPLETE (86f8422..1cda6e3, review clean; Minors: noop init muerto, QUIET_DAY exact-match)
+- [x] C6: Weekly rollup — COMPLETE (1cda6e3..0020be4, review clean; Minor: falta test mixed-week selectivity)
+- [x] C7: Pipeline wiring + subcommand — COMPLETE (0020be4..709ec9e, review clean; brief tenía import faltante, fixer lo agregó disclosed)
+- [x] C8: memo chronicle reader — COMPLETE (709ec9e..fbb1799, 1 fix round: isort I001; Minors: sin validación formato --date, mensaje sugiere flag aunque falte fecha puntual)
+- [x] C9: Final gate — COMPLETE (0ccd43e mypy fix; full suite 4066 pass, 6 fails PRE-EXISTENTES no-Chronicle: config real leak en test_autoupdate/test_config/test_server_startup_policy; config validate ok). CHRONICLE PLAN DONE f6ba622..0ccd43e
+- [x] O1: flag — COMPLETE (0ccd43e..3874c16, review clean)
+- [x] O2: _recent_memories — COMPLETE (3874c16..b88d625, 1 fix round: frontmatter-first title, patrón C4; Minor cerrado: removeprefix)
+- [x] O3: onboard command — COMPLETE (b88d625..90dd5f2, review clean; Minors: const 90 duplicada vs registry, parse JSON test frágil)
+- [x] O4: Final gate — COMPLETE (sin commits; full suite 4075 pass, 7 fails pre-existentes conocidos, 0 de onboard). ONBOARD PLAN DONE 0ccd43e..90dd5f2
+
+## Final
+- [x] Whole-branch review (fable): 1 Critical (_global bucket excluido en scanners — mataba Day-0 de onboard y subcontaba chronicle) + 2 Important (dry-run mutaba settings.json; whitelist/regex citas + piso provenance) → fix 7d276aa (32/32, full suite 4083 pass/6 pre-existentes) → re-review: Ready to merge YES.
+- FASE A DONE: f6ba622..7d276aa (16 commits). Push/tag/release: decisión de Fer, no implícito.
