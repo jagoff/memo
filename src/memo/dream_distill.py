@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -96,3 +97,81 @@ def corroboration_weighted_confidence(stats: MaturityStats) -> str:
     if stats.mean_confidence >= 0.5:
         return "medium"
     return "low"
+
+
+def assemble_clusters(
+    items: list[dict[str, Any]],
+    cluster_index_lists: list[list[int]],
+    *,
+    health: dict[str, dict[str, float]],
+    support: dict[str, int],
+    created_by_id: dict[str, str],
+    min_cluster: int,
+    now: _dt.datetime,
+) -> list[dict[str, Any]]:
+    """Turn (_pull_embeddings items, _greedy_cluster index lists) into candidate
+    clusters carrying maturity. Drops clusters below ``min_cluster``. Missing
+    per-id health/support default to confidence=1.0 / support=0 (the store's own
+    missing-row convention). Largest cluster first."""
+    out: list[dict[str, Any]] = []
+    for idxs in cluster_index_lists:
+        if len(idxs) < min_cluster:
+            continue
+        ids = [items[i]["id"] for i in idxs]
+        titles = [str(items[i].get("title") or "") for i in idxs]
+        members = [
+            {
+                "id": mid,
+                "created": created_by_id.get(mid, ""),
+                "confidence": float((health.get(mid) or {}).get("confidence", 1.0)),
+                "support_count": int(support.get(mid, 0)),
+            }
+            for mid in ids
+        ]
+        out.append({"ids": ids, "titles": titles, "stats": cluster_maturity(members, now=now)})
+    out.sort(key=lambda c: -c["stats"].size)
+    return out
+
+
+def decide_distillations(
+    clusters: list[dict[str, Any]],
+    *,
+    synthesize_fn: Callable[[dict[str, Any]], dict[str, str] | None],
+    exists_fn: Callable[[str], bool],
+    is_mature_fn: Callable[[MaturityStats], bool],
+    dry_run: bool,
+    max_clusters: int,
+) -> list[dict[str, Any]]:
+    """Turn candidate clusters into save-decisions. Mirrors
+    dream_communities.decide_syntheses, plus the maturity gate. Deduped by
+    provenance hash. ``synthesize_fn(cluster) -> {title, body} | None`` is the
+    LLM; ``exists_fn(phash) -> bool`` the dedup; saving is the caller's job."""
+    decisions: list[dict[str, Any]] = []
+    for cl in clusters[:max_clusters]:
+        phash = provenance_hash(cl["ids"])
+        if not is_mature_fn(cl["stats"]):
+            decisions.append({"status": "immature", "provenance_hash": phash})
+            continue
+        if exists_fn(phash):
+            decisions.append({"status": "skip_exists", "provenance_hash": phash})
+            continue
+        if dry_run:
+            decisions.append(
+                {"status": "would_save", "provenance_hash": phash, "size": cl["stats"].size}
+            )
+            continue
+        synth = synthesize_fn(cl)
+        if not synth or not synth.get("title") or not synth.get("body"):
+            decisions.append({"status": "synth_failed", "provenance_hash": phash})
+            continue
+        decisions.append(
+            {
+                "status": "save",
+                "provenance_hash": phash,
+                "title": synth["title"],
+                "body": synth["body"],
+                "provenance": cl["ids"],
+                "confidence": corroboration_weighted_confidence(cl["stats"]),
+            }
+        )
+    return decisions
