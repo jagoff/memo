@@ -9,6 +9,30 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-07-13
+
+### Added
+
+- **Chronicle** — nightly engineering diary (default off): a new dream pass
+  (`MEMO_DREAM_CHRONICLE_ENABLED`) writes a human markdown diary per day under
+  `<memory_dir>/_chronicle/` from memo's own logs (episodes, new memories,
+  grounding, maintenance receipt), narrated by the local LLM with mandatory
+  per-id provenance — bullets without a valid citation are dropped, and a
+  fully-uncited narrative is not written at all (`low_provenance`).
+  `MEMO_CHRONICLE_WEEKLY` adds a deterministic ISO-week rollup. New commands:
+  `memo chronicle [--date|--week]` (reader) and `memo dream chronicle` (one-off).
+- **`memo onboard`** — Day-0 wizard: wires the recall hook + shims, backfills
+  memories from transcripts already on disk (`MEMO_ONBOARD_BACKFILL_DAYS`,
+  default 90, resumable, secret-redacted), points at importers, and shows the
+  first "3 things memo already knows about you" — all without loading MLX in
+  the wizard itself. `--yes` for headless, `--dry-run` never touches settings.
+
+### Fixed
+
+- Disk scanners (chronicle day-facts, onboard recent-memories) now include the
+  `_global/` bucket, where all untagged/backfilled memories live under the
+  default per-project layout.
+
 ## [3.3.0] - 2026-07-13
 
 ### Added
