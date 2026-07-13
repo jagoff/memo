@@ -9,6 +9,31 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-07-13
+
+### Added
+
+- **Cognition-layer program (Phases 0-3), all default-OFF.** A staged path from
+  experimental to trusted behavior, gated end-to-end by dark flags with a
+  reversible flip:
+  - **Graduation controller (Phase 0):** shadow-proves dark flags against real
+    traffic before they can affect behavior, then flips them on via the tuned
+    overlay once proof holds — never a direct env-var mutation, so any
+    graduation is reversible by deleting the overlay entry.
+  - **Phase 1 — activation:** numeric self-tuning candidates move from
+    proposal to applied value through the same graduation gate; PAVA
+    (pool-adjacent-violators) confidence calibration turns raw scores into
+    calibrated confidence; `MEMO_RECALL_CONFIDENCE_GATE` withholds low-confidence
+    recall results instead of surfacing them as if authoritative.
+  - **Phase 2 — distillation:** `dream_distill` performs upward re-abstraction
+    of accumulated memories into higher-altitude summaries during the nightly
+    dream pass, feeding recall altitude selection; fully reversible (distilled
+    output is additive, not destructive of source memories).
+  - **Phase 3 — proactive:** a contradiction-gated interject sits alongside the
+    existing accountable-guard, and an ask-one-gap briefing surfaces the single
+    highest-value unknown; both start in shadow mode and only reach the user
+    after a human flips them on.
+
 ## [3.2.0] - 2026-07-12
 
 ### Added
