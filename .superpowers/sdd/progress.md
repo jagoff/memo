@@ -107,3 +107,21 @@
 ## Final
 - [x] Whole-branch review (fable): 1 Critical (_global bucket excluido en scanners — mataba Day-0 de onboard y subcontaba chronicle) + 2 Important (dry-run mutaba settings.json; whitelist/regex citas + piso provenance) → fix 7d276aa (32/32, full suite 4083 pass/6 pre-existentes) → re-review: Ready to merge YES.
 - FASE A DONE: f6ba622..7d276aa (16 commits). Push/tag/release: decisión de Fer, no implícito.
+
+---
+
+# Fase B — HyPE (question-space index)
+
+**Plan:** docs/superpowers/plans/2026-07-13-hype-question-index.md (H1-H8)
+**Start:** 2026-07-13 · **Branch:** master (shared tree) · **Base:** db196ee (v3.4.0)
+
+## Tasks
+
+- [ ] H1: flags (5 specs, flags_ingest.py)
+- [ ] H2: HypeStore (store/hype_store.py, vec0 sidecar)
+- [ ] H3: dream_hype (backlog ROI + watermark + _llm_questions + run_hype_pass)
+- [ ] H4: wiring cli_dream + subcomando dream hype
+- [ ] H5: hype_fold + wire en punto único de candidatos (verificar 3 paths + eval)
+- [ ] H6: eval config K (A/B instrument)
+- [ ] H7: memo hype status
+- [ ] H8: gate final + build dark + medición A vs K (SIN flip — decisión Fer)
