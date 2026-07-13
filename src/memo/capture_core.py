@@ -20,7 +20,10 @@ import logging
 import math
 import re as _re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from memo.config import Config
 
 from memo.claim_support import check_claim_support
 from memo.fact_extraction import FACT_EDGES_KEY, candidate_fact_edges
@@ -1246,13 +1249,14 @@ def _row_tokens(row: Any) -> set[str]:
 def _score_rows_by_relevance(rows: list[Any], context: str) -> list[float]:
     """Relevance score per row for the SmartCrusher: IDF-weighted distinctiveness.
 
-    Each row is scored by the summed inverse document frequency of its tokens
+    Each row is scored by the mean inverse document frequency of its tokens
     across the whole array — rows built from tokens shared by many sibling rows
     (repetitive tool-output boilerplate) score low, rows carrying rare/unique
     tokens (the actual signal) score high, regardless of their position. When
     ``context`` is non-empty, tokens a row shares with it add an IDF-weighted
-    bonus, so capture-time context steers which rows survive. Pure, deterministic
-    and embedder-free — safe inside the capture path's latency budget.
+    bonus capped at 25% of the base score, so context breaks close scores without
+    overwhelming distinctiveness. Pure, deterministic and embedder-free — safe
+    inside the capture path's latency budget.
     """
     n = len(rows)
     token_sets = [_row_tokens(r) for r in rows]
@@ -1267,13 +1271,19 @@ def _score_rows_by_relevance(rows: list[Any], context: str) -> list[float]:
     ctx_tokens = {t.lower() for t in _CRUSH_TOKEN_RE.findall(context)} if context else set()
     scores: list[float] = []
     for tokens in token_sets:
-        base = sum(_idf(tok) for tok in tokens)
-        bonus = sum(_idf(tok) for tok in tokens & ctx_tokens) if ctx_tokens else 0.0
+        token_count = max(len(tokens), 1)
+        base = sum(_idf(tok) for tok in tokens) / token_count
+        overlap = (
+            sum(_idf(tok) for tok in tokens & ctx_tokens) / token_count if ctx_tokens else 0.0
+        )
+        bonus = min(overlap, base * 0.25)
         scores.append(base + bonus)
     return scores
 
 
-def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, str | None]:
+def maybe_crush_json_capture(
+    content: str, context: str, config: Config
+) -> tuple[str, str | None]:
     """Apply SmartCrusher to JSON arrays in capture content.
 
     Detects JSON arrays, scores rows by relevance, keeps top-K, and offloads
@@ -1282,8 +1292,7 @@ def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, s
 
     Args:
         content: Captured text (may contain JSON array)
-        context: Query/context for relevance scoring (currently unused,
-                 TBD for real scorer integration)
+        context: Query/context for bounded relevance scoring.
         config: Config instance (for state_dir access)
 
     Returns:
@@ -1297,6 +1306,7 @@ def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, s
 
     from memo.config import Config
     from memo.flags_capture import (
+        flag_crusher_cache_ttl_days,
         flag_crusher_enabled,
         flag_crusher_keep_ratio,
     )
@@ -1320,6 +1330,8 @@ def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, s
         return content, None
 
     keep_ratio = flag_crusher_keep_ratio()
+    if keep_ratio >= 1.0:
+        return content, None
     keep_count = max(10, int(len(json_array) * keep_ratio))
 
     # Score rows by IDF-weighted distinctiveness (+ optional context overlap):
@@ -1334,15 +1346,26 @@ def maybe_crush_json_capture(content: str, context: str, config) -> tuple[str, s
 
     crushed_array = [json_array[i] for i in top_indices]
     dropped_count = len(json_array) - len(crushed_array)
+    if dropped_count < 1:
+        return content, None
 
-    # Add marker
-    hash_val = hashlib.sha256(content_stripped.encode()).hexdigest()[:16]
-    crushed_array.append(crush_marker(dropped_count, hash_val))
+    hash_val = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+    candidate = json.dumps(
+        [*crushed_array, crush_marker(dropped_count, hash_val)],
+        ensure_ascii=False,
+    )
+    if len(candidate.encode("utf-8")) * 100 > len(content.encode("utf-8")) * 95:
+        return content, None
 
-    # Cache original
-    if isinstance(config, Config):
+    if not isinstance(config, Config):
+        return content, None
+    try:
         cache = CrushCache(config.state_dir)
-        cache.cache(hash_val, content_stripped)
+        cache.cache(hash_val, content)
+        recovered = cache.retrieve(hash_val, ttl_days=flag_crusher_cache_ttl_days())
+    except (OSError, TypeError, ValueError):
+        return content, None
+    if recovered != content:
+        return content, None
 
-    crushed_content = json.dumps(crushed_array, ensure_ascii=False)
-    return crushed_content, hash_val
+    return candidate, hash_val

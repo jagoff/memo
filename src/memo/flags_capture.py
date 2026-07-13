@@ -17,8 +17,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "Enable JSON array crushing on ingest (L1 SmartCrusher). When on, large JSON "
         "arrays are pruned before indexing, keeping only high-relevance rows and "
         "caching originals for later retrieval. Default: OFF (opt-in) until the "
-        "relevance scorer is real and the token-savings gate has passed — the current "
-        "scorer is a placeholder that would drop rows arbitrarily. Set to 1 to enable.",
+        "committed token-quality gate is intentionally promoted. Set to 1 to enable.",
     ),
     _spec(
         "MEMO_CRUSHER_ROWS_KEEP_RATIO",
