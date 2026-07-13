@@ -171,6 +171,22 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    _spec(
+        "MEMO_RECALL_ALTITUDE",
+        "float",
+        0.0,
+        "recall",
+        "Recall altitude: additive score boost for distilled hits "
+        "(type=synthesis + extra.synthesis_kind=distillation) on a BROAD query, so "
+        "a high-altitude summary surfaces first; suppressed on a SPECIFIC query so "
+        "the raw source evidence surfaces instead. Composes with "
+        "MEMO_RECALL_SYNTHESIS_BOOST. Pure render-time list boost keyed on data "
+        "already on the hit (no store read, no MLX on the hook path). Default 0.0 = "
+        "OFF. NOTE: like every rank_hits knob it is live only on the warm-daemon "
+        "path, inert on the cli_recall_hook subprocess fallback.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
     _spec("MEMO_RECALL_RERANK_INPUT_K", "int", 10, "recall", "Candidates fed to the reranker."),
     _spec(
         "MEMO_RECALL_STALENESS_DAYS",

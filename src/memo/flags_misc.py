@@ -1088,6 +1088,54 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=1,
         max_val=100,
     ),
+    # dream v2 — Phase 2 distillation (upward re-abstraction of mature clusters)
+    _spec(
+        "MEMO_DREAM_DISTILL_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the `memo dream distill` pass: group MATURE, high-confidence, "
+        "corroborated durable clusters and abstract each into one higher-altitude "
+        "synthesis memory (synthesis_kind=distillation, provenance=source ids, "
+        "confidence=corroboration-weighted). Additive + linking — never supersedes "
+        "or deletes sources (fully reversible). OFF by default; deduped by provenance.",
+    ),
+    _spec(
+        "MEMO_DREAM_DISTILL_MIN_CLUSTER",
+        "int",
+        3,
+        "misc",
+        "Minimum durable memories in a cluster before it is distilled.",
+        min_val=2,
+    ),
+    _spec(
+        "MEMO_DREAM_DISTILL_MIN_SUPPORT",
+        "int",
+        2,
+        "misc",
+        "Minimum MEAN corroboration (memory_health.support_count) across a "
+        "cluster's members before it is distilled (maturity gate).",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_DREAM_DISTILL_MIN_AGE_DAYS",
+        "int",
+        14,
+        "misc",
+        "A cluster's members must be at least this many days old (by meta.created) "
+        "before the cluster is distilled — distillation is upward re-abstraction of "
+        "SETTLED knowledge, not fresh captures.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_DREAM_DISTILL_MAX",
+        "int",
+        5,
+        "misc",
+        "Max clusters distilled per nightly run (bounds MLX cost).",
+        min_val=1,
+        max_val=100,
+    ),
     # dream v2 — bridge / multi-hop link synthesis (spec 3, phase 3)
     _spec(
         "MEMO_DREAM_BRIDGES_ENABLED",
