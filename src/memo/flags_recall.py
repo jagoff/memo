@@ -567,6 +567,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "[id]) under each recalled memory. Pure render + one cheap contradict-pairs "
         "lookup; respects MEMO_RECALL_TOKEN_BUDGET. Default off.",
     ),
+    _spec(
+        "MEMO_RECALL_CONFIDENCE_GATE",
+        "bool",
+        False,
+        "recall",
+        "Recall-time uncertainty gating: a hit whose CALIBRATED confidence band "
+        "(confidence_calibration map over its score-band) is 'low' renders with a "
+        "'⚠ unverified — consider checking' marker instead of authoritative, "
+        "reusing the epistemic '?unverified' framing. Pure render-layer (no store "
+        "read, no MLX on the hook path); ranking untouched. Default OFF.",
+    ),
 )
 
 
