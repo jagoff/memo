@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +34,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    print(f"Wave 2 Token Baseline Measurement")
-    print(f"================================")
+    print("Wave 2 Token Baseline Measurement")
+    print("================================")
     print(f"Prompts to measure: {args.prompts}")
     print(f"Output file: {args.output}")
     print()
@@ -82,7 +81,7 @@ def main() -> None:
 
     print(f"✓ Baseline measurements written to {output_path}")
     print()
-    print("Gate Requirement: Wave 2 < 0.90 × Wave 1 baseline")
+    print("Gate Requirement: Wave 2 < 0.90 x Wave 1 baseline")
     print("(≥10% additional token savings beyond Wave 1)")
 
 

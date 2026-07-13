@@ -186,15 +186,32 @@ module = ["memo.recall_server", "memo.memory.search_ops", "memo.memory.write_ops
 disallow_untyped_defs = true
 warn_return_any = true
 
+[[tool.mypy.overrides]]
+# Production-hardening ratchet: release, runtime startup, MCP surface, and
+# capture modules touched by the 2026-07-12 audit follow-up.
+module = ["memo.cli_release", "memo.runtime.autoupdate", "memo.server",
+          "memo.surface", "memo.capture_core"]
+disallow_any_generics = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_return_any = true
+warn_unused_ignores = true
+implicit_reexport = false
+strict_equality = true
+extra_checks = true
+
 [tool.coverage.run]
 source = ["memo"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-# Floor is current measured coverage (~67%) minus a small buffer so a
-# one-line dip doesn't redden CI. Ratchet upward as untested modules
-# (embedder, llm, recall_server, graph, …) get backfilled.
-fail_under = 68
+# Current measured coverage is above 74%; retain limited platform variance
+# while preventing a return to the previous 68% floor.
+fail_under = 72
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
 from typing import Any, cast
 
 from fastmcp import FastMCP
@@ -89,7 +90,7 @@ def _make_trace_middleware() -> Any:
     except ImportError:
         return None
 
-    class _TraceMiddleware(Middleware):  # type: ignore[misc]
+    class _TraceMiddleware(Middleware):
         async def on_call_tool(self, context: Any, call_next: Any) -> Any:
             trace_id = ""
             try:
@@ -248,7 +249,7 @@ def build_server(memory: Memory | None = None) -> FastMCP:
         history = body.get("history") or None
         context = body.get("context") or None
 
-        def _gen():
+        def _gen() -> Iterator[str]:
             try:
                 for ev in memory.chat_ask_stream(
                     question,

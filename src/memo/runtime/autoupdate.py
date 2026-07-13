@@ -99,7 +99,8 @@ def latest_pypi_version(*, timeout: int = 10) -> str | None:
     try:
         with urllib.request.urlopen("https://pypi.org/pypi/mlx-memo/json", timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        return data["info"]["version"]
+        version = data["info"]["version"]
+        return version if isinstance(version, str) else None
     except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError) as exc:
         _log.debug("auto-update: PyPI fetch failed: %s", exc)
         return None

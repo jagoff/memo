@@ -596,8 +596,8 @@ def reweight_ambiguous_type(type_: str, text: str, weights: dict[str, float]) ->
 def _cosine(a: list[float], b: list[float]) -> float:
     """Cosine similarity between two vectors."""
     num = sum(x * y for x, y in zip(a, b, strict=False))
-    da = sum(x * x for x in a) ** 0.5
-    db = sum(x * x for x in b) ** 0.5
+    da = math.sqrt(sum(x * x for x in a))
+    db = math.sqrt(sum(x * x for x in b))
     if da == 0.0 or db == 0.0:
         return 0.0
     return num / (da * db)

@@ -33,9 +33,11 @@ jobs:
         run: |
           uv sync --frozen --extra dev --extra cpu --python ${{ matrix.python-version }}
       - name: Lint (ruff)
-        run: .venv/bin/ruff check src/ tests/
+        run: .venv/bin/ruff check src/ tests/ scripts/
       - name: Type check (mypy)
         run: .venv/bin/mypy src/memo
+      - name: Progressive quality budget
+        run: .venv/bin/python scripts/quality_gate.py
       - name: Tests (excluding slow real-MLX smoke)
         # -n auto: parallelize across cores. --timeout: kill hung MLX/socket
         # tests. --cov + fail_under (pyproject) gates coverage regressions.

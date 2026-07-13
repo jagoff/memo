@@ -122,7 +122,9 @@ def ollama_start() -> None:
     # wait until /api/version responds
     for _ in range(60):
         try:
-            with urllib.request.urlopen(f"{OLLAMA_HOST}/api/version", timeout=2) as r:
+            with urllib.request.urlopen(  # noqa: S310 - fixed local Ollama endpoint
+                f"{OLLAMA_HOST}/api/version", timeout=2
+            ) as r:
                 if r.status == 200:
                     return
         except Exception:
@@ -140,9 +142,10 @@ def ollama_stop() -> None:
 def ollama_generate(prompt: str, model: str = QUESTION_MODEL, temperature: float = 0.3) -> str:
     body = json.dumps({"model": model, "prompt": prompt, "stream": False,
                        "options": {"temperature": temperature, "num_predict": 80}})
-    req = urllib.request.Request(f"{OLLAMA_HOST}/api/generate", data=body.encode("utf-8"),
-                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as r:
+    req = urllib.request.Request(  # noqa: S310 - fixed local Ollama endpoint
+        f"{OLLAMA_HOST}/api/generate", data=body.encode("utf-8"),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 - local endpoint
         payload = json.loads(r.read().decode("utf-8"))
     return str(payload.get("response", "")).strip()
 
