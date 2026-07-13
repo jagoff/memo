@@ -33,3 +33,59 @@ def default_candidates() -> list[Candidate]:
             auto_flip=True,
         ),
     ]
+
+
+@dataclass(frozen=True)
+class NumericCandidate:
+    """A numeric ranking knob the controller can tune + graduate. Distinct from
+    the boolean ``Candidate``: OFF is the flag's CURRENT DEFAULT (``off_value``),
+    never a blind "0" — so the ON/OFF precision delta is attributable to the knob
+    alone. Expressed through ``eval_recall.Cfg.knob_overrides`` (the
+    recall-faithful seam ``dream_tune.measure_rank_knob`` uses), pinning
+    ``field`` on ``RankKnobs``."""
+
+    flag: str                 # MEMO_* flag to graduate
+    field: str                # RankKnobs field it pins (e.g. "mmr_lambda")
+    off_value: float          # current default = the ON/OFF baseline
+    on_value: float           # best-of-grid value to prove (the graduation target)
+    grid: tuple[float, ...] = ()   # optional line-search grid; () = single A/B
+    epsilon: float = 0.0
+    k: int = 5
+    auto_flip: bool = True     # False => report-only, never writes overlay
+
+
+def numeric_candidates() -> list[NumericCandidate]:
+    """Offline-measurable numeric ranking knobs (RankKnobs fields reachable via
+    Cfg.knob_overrides). project_boost is report-only: its delta is vacuous on a
+    corpus whose labels carry no project context (see plan Task 2 note)."""
+    return [
+        NumericCandidate(
+            flag="MEMO_RECALL_MMR_LAMBDA",
+            field="mmr_lambda",
+            off_value=0.0,
+            on_value=0.3,
+            grid=(0.0, 0.3, 0.5, 0.7),
+        ),
+        NumericCandidate(
+            flag="MEMO_RECALL_SYNTHESIS_BOOST",
+            field="synthesis_boost",
+            off_value=0.0,
+            on_value=0.05,
+            grid=(0.0, 0.05, 0.10),
+        ),
+        NumericCandidate(
+            flag="MEMO_RECALL_GLOBAL_BOOST",
+            field="global_boost",
+            off_value=0.10,
+            on_value=0.20,
+            grid=(0.10, 0.20, 0.30),
+        ),
+        NumericCandidate(
+            flag="MEMO_RECALL_PROJECT_BOOST",
+            field="project_boost",
+            off_value=0.25,
+            on_value=0.35,
+            grid=(0.25, 0.35, 0.50),
+            auto_flip=False,  # not offline-measurable w/o project-tagged labels
+        ),
+    ]
