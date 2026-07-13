@@ -583,6 +583,31 @@ def dream_run(
                 receipt["errors"].append(f"chronicle: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[chronicle] [yellow]warn[/yellow]")
 
+        # HyPE — nightly hypothetical-question generation (builds the index dark;
+        # the read-path fold is gated separately by MEMO_HYPE_ENABLED) ---------
+        if flag_bool("MEMO_DREAM_HYPE_ENABLED"):
+            progress.update(step, description="[hype] generating questions...")
+            try:
+                from memo import dream_hype
+
+                receipt["hype"] = dream_hype.run_hype_pass(
+                    cfg,
+                    mem,
+                    questions_per_memory=3 if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None else _qpm,
+                    night_cap=400 if (_nc := flag_int("MEMO_HYPE_NIGHT_CAP")) is None else _nc,
+                    dry_run=dry_run,
+                )
+                if receipt["hype"].get("status") == "error":
+                    receipt["errors"].append(f"hype: {receipt['hype'].get('error')}")
+                _hy = receipt["hype"]
+                progress.update(
+                    step,
+                    description=f"[hype] [green]✓[/green]  {_hy.get('status')}",
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"hype: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[hype] [yellow]warn[/yellow]")
+
         if flag_bool("MEMO_DREAM_GRADUATION_ENABLED"):
             progress.update(step, description="[graduate] quarantined captures...")
             try:
@@ -1340,6 +1365,30 @@ def dream_chronicle_cmd(day: str | None, dry_run: bool, as_json: bool) -> None:
         click.echo(json.dumps(res, indent=2, ensure_ascii=False))
         return
     console.print(f"[bold]chronicle:[/bold] {res.get('status')} {res.get('path', '')}")
+
+
+@dream_cmd.command(name="hype")
+@click.option("--dry-run", is_flag=True, help="Compute the backlog, generate nothing.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the pass receipt as JSON.")
+def dream_hype_cmd(dry_run: bool, as_json: bool) -> None:
+    """Nightly HyPE pass — generate + index hypothetical questions per memory (see MEMO_DREAM_HYPE_ENABLED)."""
+    from memo import dream_hype
+    from memo.flags import flag_int
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    res = dream_hype.run_hype_pass(
+        cfg,
+        mem,
+        questions_per_memory=3 if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None else _qpm,
+        night_cap=400 if (_nc := flag_int("MEMO_HYPE_NIGHT_CAP")) is None else _nc,
+        dry_run=dry_run,
+    )
+    if as_json:
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]hype:[/bold] {res.get('status')}")
+    console.print(f"  generated: {res.get('generated', 0)} · memories: {res.get('memories', 0)}")
 
 
 @dream_cmd.command(name="communities")

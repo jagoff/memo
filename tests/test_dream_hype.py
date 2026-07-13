@@ -303,6 +303,29 @@ def test_run_hype_pass_prunes_orphans(tmp_path, monkeypatch):
         verify_store.close()
 
 
+def test_dream_hype_subcommand_json(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from memo import dream_hype as dh_mod
+    from memo.cli import cli
+
+    monkeypatch.setattr(
+        dh_mod, "run_hype_pass",
+        lambda cfg, mem, **kw: {"status": "done", "generated": 5, "memories": 2},
+    )
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+    result = CliRunner().invoke(cli, ["dream", "hype", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    assert '"status": "done"' in result.output
+
+
 def test_run_hype_pass_embed_failure_isolates_one_memory(tmp_path, monkeypatch):
     """Failure to embed questions for ONE memory does not abort the pass.
 
