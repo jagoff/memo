@@ -893,6 +893,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "regression set, reverted when a later night regresses.",
     ),
     _spec(
+        "MEMO_GRADUATION_CONTROLLER_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly graduation controller inside `memo dream run`. OFF by "
+        "default. Shadow-evaluates the registry of dark flags against the eval corpus, "
+        "and flips a candidate ON (via the tuned overlay) only after MEMO_* env vars "
+        "leave it unset AND it wins K consecutive nights; auto-reverts on regression.",
+    ),
+    _spec(
         "MEMO_DREAM_TUNE_MIN_COHORT",
         "int",
         20,
