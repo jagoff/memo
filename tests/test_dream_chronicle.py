@@ -69,3 +69,68 @@ def test_filter_cited_no_bullets_is_ratio_one():
     out, ratio = dc.filter_cited("just prose\n", {"aaaaaaaa"})
     assert out == "just prose\n" or out == "just prose"
     assert ratio == 1.0
+
+
+def _write_memory_md(root: Path, mid: str, day: str, title: str, mtype: str = "decision"):
+    p = root / f"{title.replace(' ', '-')}.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        f"---\nid: {mid}\ntype: {mtype}\ncreated: {day}T10:00:00\n---\n# {title}\nbody\n",
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_memories_created_on_filters_by_day_and_skips_buckets(tmp_path):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    _write_memory_md(cfg.memory_dir, "a" * 32, "2026-07-13", "hit today")
+    _write_memory_md(cfg.memory_dir, "b" * 32, "2026-07-12", "old one")
+    # bucket files (_profile/_chronicle) are never memories
+    _write_memory_md(cfg.memory_dir / "_profile", "c" * 32, "2026-07-13", "profile doc")
+
+    out = dc._memories_created_on(cfg, "2026-07-13")
+    assert [m["id"][:8] for m in out] == ["aaaaaaaa"]
+    assert out[0]["title"] == "hit today"
+    assert out[0]["type"] == "decision"
+
+
+def test_collect_facts_and_fact_lines(tmp_path, monkeypatch):
+    import json as _json
+
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    day = "2026-07-13"
+    _write_memory_md(cfg.memory_dir, "a" * 32, day, "decided X")
+
+    class _FakeStore:
+        def recent(self, limit=200):
+            return [
+                {"agent": "claude-code", "session_id": "d" * 32, "cwd": "/x",
+                 "updated_at": f"{day}T20:00:00", "summary": "fixed sync race", "turn_count": 12},
+                {"agent": "claude-code", "session_id": "e" * 32, "cwd": "/x",
+                 "updated_at": "2026-07-11T20:00:00", "summary": "other day", "turn_count": 3},
+            ]
+
+    monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: _FakeStore())
+
+    # receipt previo con actividad
+    d = cfg.state_dir / "dream"
+    d.mkdir(parents=True)
+    (d / "last.json").write_text(_json.dumps({"superseded": ["x"], "merged": [], "errors": []}))
+
+    facts = dc.collect_facts(cfg, day)
+    assert len(facts["episodes"]) == 1
+    assert facts["episodes"][0]["summary"] == "fixed sync race"
+    assert [m["id"][:8] for m in facts["new_memories"]] == ["aaaaaaaa"]
+    assert facts["receipt_events"] == {"superseded": 1}
+    assert facts["grounded"] == 0  # no grounding.log en tmp
+
+    lines, allowed = dc.fact_lines(facts)
+    assert allowed == {"dddddddd", "aaaaaaaa"}
+    assert any("[dddddddd]" in ln for ln in lines)
+    assert any("[aaaaaaaa]" in ln for ln in lines)
