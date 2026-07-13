@@ -117,11 +117,25 @@
 
 ## Tasks
 
-- [ ] H1: flags (5 specs, flags_ingest.py)
-- [ ] H2: HypeStore (store/hype_store.py, vec0 sidecar)
-- [ ] H3: dream_hype (backlog ROI + watermark + _llm_questions + run_hype_pass)
-- [ ] H4: wiring cli_dream + subcomando dream hype
-- [ ] H5: hype_fold + wire en punto único de candidatos (verificar 3 paths + eval)
-- [ ] H6: eval config K (A/B instrument)
-- [ ] H7: memo hype status
+- [x] H1: flags — COMPLETE (f08b545..ac5f291, review clean)
+- [x] H2: HypeStore — COMPLETE (ac5f291..feec06c, review clean; nota H5: knn k capea post-colapso)
+- [x] H3: dream_hype — COMPLETE (feec06c..1b4f994, 1 fix round: per-item isolation embed/persist; review approved)
+- [x] H4: wiring dream — COMPLETE (1b4f994..032739d, review clean, clone fiel del template chronicle)
+- [x] H5: fold — COMPLETE (032739d..4e07691, review clean; punto único=search_ops vec branch verificado 3 paths; PRE-FLIP: type-filter en candidatos fold + Memory.close de _hype_store)
+- [x] H6: eval config K — COMPLETE (4e07691..1520898, review clean; perfil hype=[A,K], expensive lockeado a J)
+- [x] H7: memo hype status — COMPLETE (1520898..effab4a, review clean)
 - [ ] H8: gate final + build dark + medición A vs K (SIN flip — decisión Fer)
+
+---
+
+# Fase B2 — MCPB Node bootstrap
+
+**Plan:** docs/superpowers/plans/2026-07-13-mcpb-node-bootstrap.md (N1-N6)
+**Start:** 2026-07-13 · **Branch:** master · **Estado:** plan commiteado; SDD arranca cuando cierre HyPE (no implementers paralelos)
+
+- [ ] N1: bootstrap.js (zero-dep, node --check gate)
+- [ ] N2: manifest node 0.3
+- [ ] N3: build_mcpb_node determinístico
+- [ ] N4: pin-chain sync test
+- [ ] N5: release bump integra manifest node
+- [ ] N6: gate final + smoke manual Desktop (Fer)
