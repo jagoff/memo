@@ -60,7 +60,7 @@ def test_run_distill_saves_mature_cluster(monkeypatch, tmp_cfg):
     mem = _FakeMem()
     res = dd.run_distill(tmp_cfg, mem, min_cluster=2, min_support=2, min_age_days=14)
     assert res["status"] == "done"
-    assert any(d["status"] == "save" for d in res["distilled"])
+    assert any(d["status"] == "saved" for d in res["distilled"])
     # saved as type=synthesis synthesis_kind=distillation with source provenance
     assert len(mem.saved) == 1
     saved = mem.saved[0]
@@ -69,6 +69,28 @@ def test_run_distill_saves_mature_cluster(monkeypatch, tmp_cfg):
     assert set(saved["extra"]["synthesis_sources"]) == set(mem._ids)
     assert "[distill " in saved["content"]  # dedup marker present
     assert saved["extra"]["synthesis_confidence"] == "high"
+
+
+def test_run_distill_success_status_is_saved_not_save(monkeypatch, tmp_cfg):
+    """Regression for the dream-status/progress-line undercount bug: a real
+    successful save must be countable by the "saved" counters used in
+    cli_dream.py (`dream status` + the nightly progress line). This goes
+    through the REAL decide_distillations (no hard-coded fake decision) so it
+    proves the producer — not just a test double — emits "saved"."""
+    monkeypatch.setenv("MEMO_DREAM_DISTILL_ENABLED", "1")
+    monkeypatch.setattr(dd, "_llm_distill", lambda mem, cl: {"title": "Principle", "body": "the distilled insight"})
+    mem = _FakeMem()
+    res = dd.run_distill(tmp_cfg, mem, min_cluster=2, min_support=2, min_age_days=14)
+    assert res["status"] == "done"
+    assert mem.saved  # a real save happened
+    saved_decisions = [d for d in res["distilled"] if d.get("status") == "saved"]
+    assert len(saved_decisions) == 1
+    # the "save" status (pre-fix vocabulary) must never leak into the receipt
+    assert all(d.get("status") != "save" for d in res["distilled"])
+    # the counters in cli_dream.py (`dream status` + nightly progress line) key
+    # on "saved" — this is what makes a real successful distillation countable.
+    countable = sum(1 for d in res["distilled"] if d.get("status") == "saved")
+    assert countable == 1
 
 
 def test_run_distill_reversible_never_mutates_sources(monkeypatch, tmp_cfg):

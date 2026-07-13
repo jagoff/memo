@@ -304,6 +304,7 @@ def run_distill(
                             "synthesis_confidence": d["confidence"],
                         },
                     )
+                    d["status"] = "saved"
                 except Exception as exc:
                     d["status"] = "save_failed"
                     d["error"] = f"{type(exc).__name__}: {exc}"

@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging as _logging
 import time
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -630,10 +630,10 @@ def dream_run(
                 receipt["distilled"] = dream_distill.run_distill(
                     cfg,
                     mem,
-                    min_cluster=3 if (_dc := flag_int("MEMO_DREAM_DISTILL_MIN_CLUSTER")) is None else _dc,
-                    min_support=2 if (_ds := flag_int("MEMO_DREAM_DISTILL_MIN_SUPPORT")) is None else _ds,
-                    min_age_days=14 if (_da := flag_int("MEMO_DREAM_DISTILL_MIN_AGE_DAYS")) is None else _da,
-                    max_clusters=5 if (_dm := flag_int("MEMO_DREAM_DISTILL_MAX")) is None else _dm,
+                    min_cluster=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_CLUSTER")),
+                    min_support=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_SUPPORT")),
+                    min_age_days=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_AGE_DAYS")),
+                    max_clusters=cast(int, flag_int("MEMO_DREAM_DISTILL_MAX")),
                     dry_run=dry_run,
                 )
                 _di = receipt["distilled"]
@@ -1327,10 +1327,10 @@ def dream_distill_cmd(dry_run: bool, as_json: bool) -> None:
     res = dream_distill.run_distill(
         cfg,
         mem,
-        min_cluster=3 if (_dc := flag_int("MEMO_DREAM_DISTILL_MIN_CLUSTER")) is None else _dc,
-        min_support=2 if (_ds := flag_int("MEMO_DREAM_DISTILL_MIN_SUPPORT")) is None else _ds,
-        min_age_days=14 if (_da := flag_int("MEMO_DREAM_DISTILL_MIN_AGE_DAYS")) is None else _da,
-        max_clusters=5 if (_dm := flag_int("MEMO_DREAM_DISTILL_MAX")) is None else _dm,
+        min_cluster=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_CLUSTER")),
+        min_support=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_SUPPORT")),
+        min_age_days=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_AGE_DAYS")),
+        max_clusters=cast(int, flag_int("MEMO_DREAM_DISTILL_MAX")),
         dry_run=dry_run,
     )
     if as_json:
