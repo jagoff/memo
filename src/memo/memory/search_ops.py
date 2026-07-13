@@ -11,7 +11,7 @@ import contextlib
 import dataclasses
 import math
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from memo.flags import active_flags, flag_bool, flag_float, flag_int
 from memo.lifecycle import IS_FORGOTTEN_KEY
@@ -29,6 +29,9 @@ from memo.memory.record import (
 )
 from memo.perf import timer
 from memo.tiers import REFERENCE_TYPES
+
+if TYPE_CHECKING:
+    from memo.store.hype_store import HypeStore
 
 
 def _record_touches_file(record: MemoryRecord, frag: str) -> bool:
@@ -71,6 +74,10 @@ def _compact_fact_edge(fact: dict[str, Any]) -> dict[str, Any]:
 
 
 class _SearchOpsMixin(_MemoryBase):
+    # Lazily-built HyPE question index (MEMO_HYPE_ENABLED read path). Created
+    # on first folded search, reused afterwards; never constructed flag-off.
+    _hype_store: HypeStore | None = None
+
     # -- search -------------------------------------------------------------
 
     @timer(log_threshold_ms=50.0)
@@ -189,6 +196,15 @@ class _SearchOpsMixin(_MemoryBase):
             _add_trace(
                 "candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows)
             )
+            # HyPE fold: match the query against the nightly question-space
+            # index and max-fold the results into the doc candidates (raises
+            # scores AND appends memories the doc vector alone missed).
+            # Default OFF — with the flag unset this branch is a single
+            # flag_bool check, no HypeStore construction, no extra reads.
+            if flag_bool("MEMO_HYPE_ENABLED"):
+                before_hype = len(rows)
+                rows = self._hype_fold_candidates(rows, emb, limit)
+                _add_trace("hype_fold", input_count=before_hype, output_count=len(rows))
         else:
             emb = None  # set below in hybrid's vec branch; used by feedback boost
             # hybrid — fetch a wider candidate set from each side and
@@ -697,6 +713,30 @@ class _SearchOpsMixin(_MemoryBase):
             out = resolved
         _add_trace("final", output_count=len(out), limit=limit)
         return out
+
+    def _hype_fold_candidates(
+        self, rows: list[dict[str, Any]], emb: list[float], limit: int
+    ) -> list[dict[str, Any]]:
+        """Max-fold HyPE question-space candidates into the vec doc hits.
+
+        Lazily constructs the `HypeStore` once per `Memory` instance (imports
+        deferred so the flag-off hot path pays nothing beyond the flag check).
+        Best-effort: any failure degrades to the unfolded doc hits — the
+        question index is derived data and must never break search.
+        """
+        try:
+            from memo.hype_fold import hype_fold
+            from memo.store.hype_store import HypeStore
+
+            store = self._hype_store
+            if store is None:
+                store = HypeStore(self.cfg.db_path, self.cfg.embedder_dims)
+                self._hype_store = store
+            pool = flag_int("MEMO_HYPE_FOLD_POOL") or 30
+            return hype_fold(rows, emb, store, self.store.get, pool=pool, limit=limit)
+        except Exception as exc:
+            _log.warning("hype_fold failed, using doc hits: %s", exc, exc_info=True)
+            return rows
 
     def _fetch_fact_candidates(
         self,
