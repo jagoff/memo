@@ -57,17 +57,42 @@ def test_node_manifest_required_fields() -> None:
     assert manifest["server"]["mcp_config"]["args"] == ["${__dirname}/bootstrap.js"]
 
 
-def test_manifest_versions_in_sync() -> None:
+def test_pin_chain_in_sync() -> None:
+    """The whole pin chain moves together: pyproject == both manifests == uvx pin.
+
+    The node bundle's install pin IS its manifest version (bootstrap.js readPin),
+    so a bump that misses either manifest ships a stale pin. Each assert names
+    the exact file to update.
+    """
     pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf8"))
     project_version = pyproject["project"]["version"]
     python_manifest = json.loads(_PYTHON_MANIFEST.read_text(encoding="utf8"))
     node_manifest = json.loads(_NODE_MANIFEST.read_text(encoding="utf8"))
+
     assert python_manifest["version"] == project_version, (
-        "packaging/mcpb/manifest.json version out of sync with pyproject.toml"
+        f"packaging/mcpb/manifest.json version {python_manifest['version']!r} != "
+        f"pyproject.toml {project_version!r} — update packaging/mcpb/manifest.json"
     )
     assert node_manifest["version"] == project_version, (
-        "packaging/mcpb-node/manifest.json version out of sync with pyproject.toml"
+        f"packaging/mcpb-node/manifest.json version {node_manifest['version']!r} != "
+        f"pyproject.toml {project_version!r} — update packaging/mcpb-node/manifest.json"
     )
+
+    pins = [
+        match.group(1)
+        for arg in python_manifest["server"]["mcp_config"]["args"]
+        if isinstance(arg, str) and (match := re.fullmatch(r"mlx-memo(?:==|>=)([^,\s]+)", arg))
+    ]
+    assert pins, (
+        "packaging/mcpb/manifest.json server.mcp_config.args has no mlx-memo pin — "
+        "expected an 'mlx-memo>=X' arg"
+    )
+    for pin in pins:
+        assert pin == project_version, (
+            f"packaging/mcpb/manifest.json mlx-memo pin {pin!r} != pyproject.toml "
+            f"{project_version!r} — update the mlx-memo>=X arg in "
+            "packaging/mcpb/manifest.json server.mcp_config.args"
+        )
 
 
 def _scaffold_repo(root: Path) -> Path:
@@ -105,6 +130,13 @@ def test_build_mcpb_node_prefers_local_member_over_fallback(tmp_path: Path) -> N
     built = build_mcpb_node(repo)
     with zipfile.ZipFile(built) as archive:
         assert archive.read("icon.png") == b"node-icon"
+
+
+def test_build_mcpb_node_missing_member_in_both_dirs_raises(tmp_path: Path) -> None:
+    repo = _scaffold_repo(tmp_path)
+    (repo / "packaging" / "mcpb-node" / "bootstrap.js").unlink()  # absent in mcpb/ too
+    with pytest.raises(FileNotFoundError):
+        build_mcpb_node(repo)
 
 
 def test_build_mcpb_python_bundle_unchanged(tmp_path: Path) -> None:
