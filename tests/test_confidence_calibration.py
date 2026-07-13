@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from pathlib import Path
 
 from memo import confidence_calibration as cc
@@ -130,6 +131,29 @@ def test_join_failure_is_not_silently_identity(caplog, tmp_path: Path):
 
     with caplog.at_level(logging.WARNING, logger="memo.confidence_calibration"):
         doc = cc.build_calibration(tmp_path, _BrokenMem(), min_bin=1)
+
+    assert any("all_ids" in r.getMessage() for r in caplog.records)
+    # still returns a safe identity map (no rows resolve), but the failure
+    # itself is now visible in the logs rather than silently masked.
+    assert doc["map"] == {"low": "low", "med": "med", "high": "high"}
+
+
+def test_join_failure_sqlite_error_is_logged_not_raised(caplog, tmp_path: Path):
+    # A genuine store.all_ids() sqlite3.OperationalError (e.g. "db locked") must
+    # be caught and logged, not propagated unhandled.
+    class _SqliteFailStore:
+        def all_ids(self):
+            raise sqlite3.OperationalError("db locked")
+
+        def get_health_batch(self, ids):
+            return {}
+
+    class _SqliteFailMem:
+        def __init__(self):
+            self.store = _SqliteFailStore()
+
+    with caplog.at_level(logging.WARNING, logger="memo.confidence_calibration"):
+        doc = cc.build_calibration(tmp_path, _SqliteFailMem(), min_bin=1)
 
     assert any("all_ids" in r.getMessage() for r in caplog.records)
     # still returns a safe identity map (no rows resolve), but the failure

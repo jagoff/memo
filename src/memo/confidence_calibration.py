@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,7 @@ def build_calibration(state_dir: Path, mem: Any, *, min_bin: int = 5) -> dict[st
     # recall_id is stored as an 8-char prefix; map it back to a full id.
     try:
         all_ids = mem.store.all_ids()
-    except (AttributeError, OSError) as exc:
+    except (AttributeError, OSError, sqlite3.Error) as exc:
         # A broken join must be observable, not silently degraded to a
         # plausible-looking identity map — log so this shows up, don't guess.
         _log.warning("confidence_calibration: mem.store.all_ids() failed: %s", exc)
