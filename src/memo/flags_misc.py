@@ -1020,6 +1020,21 @@ SPECS: tuple[FlagSpec, ...] = (
         "misc",
         "Max recurring gaps surfaced per anticipatory pass.",
     ),
+    # Phase 3 — ASK: promote AT MOST ONE recurring unmet gap per session into an
+    # explicit question in the SessionStart briefing. Reads the anticipate
+    # receipt (never fabricates). Deduped per session; report-only.
+    _spec(
+        "MEMO_ASK_GAPS_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Surface AT MOST ONE high-value recurring gap (from the nightly "
+        "anticipate receipt's detect_gaps output) as an explicit question in the "
+        "SessionStart briefing. Never fabricates — only re-asks what memo already "
+        "failed to answer from real usage. Deduped per session. Shadow-counts "
+        "what it WOULD ask even when OFF (memo ask shadow). Default OFF; not "
+        "auto-graduatable.",
+    ),
     # dream v2 — graph-community synthesis (spec 3): abstract knowledge clusters
     _spec(
         "MEMO_DREAM_COMMUNITIES_ENABLED",

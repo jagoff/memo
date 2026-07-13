@@ -574,6 +574,34 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    # Phase 3 — INTERJECT: sharpen the guard banner. Fires ONLY when a guard
+    # candidate is at HIGH calibrated confidence AND already flagged in the
+    # persisted contradiction store. Deduped + budgeted per session, one-key
+    # silence. Report-only (never auto-graduatable); shadow-logs regardless of
+    # this flag so a human can review before flipping it.
+    _spec(
+        "MEMO_INTERJECT_ENABLED",
+        "bool",
+        False,
+        "recall",
+        "Render the ⚠ INTERJECT banner atop the recall block when a guard "
+        "candidate (prior decision/preference the prompt looks to reverse) is at "
+        "HIGH calibrated confidence AND already in the contradiction store "
+        "(persisted open/competing pair). Advisory, never blocks; deduped + "
+        "budget-capped per session (MEMO_INTERJECT_MAX_PER_SESSION), silenceable. "
+        "Shadow-counts what it WOULD interject even when OFF (memo interject "
+        "shadow). Default OFF; not auto-graduatable.",
+    ),
+    _spec(
+        "MEMO_INTERJECT_MAX_PER_SESSION",
+        "int",
+        1,
+        "recall",
+        "Budget: max interject banners rendered per session before the "
+        "per-session marker silences further fires. 0 = never render (still "
+        "shadow-logs).",
+        min_val=0,
+    ),
     _spec(
         "MEMO_HIT_DOSSIER",
         "bool",
