@@ -175,3 +175,141 @@ def decide_distillations(
             }
         )
     return decisions
+
+
+# --- orchestrator (guarded; wires real store/LLM/save) -----------------------
+
+_SYS = (
+    "You distill a cluster of a user's SETTLED memories into ONE higher-altitude "
+    "principle — the durable rule/decision/fact they collectively establish that "
+    "no single one states alone. Abstract ONLY what the members state; never "
+    'invent. Reply ONLY with JSON {"title": str, "insight": str}: a short title '
+    "and a 2-4 sentence principle. No preamble, no markdown."
+)
+
+
+def _llm_distill(mem: Any, cluster: dict[str, Any]) -> dict[str, str] | None:
+    import json as _json
+
+    from memo.memory.record import chat_with_timeout
+
+    titles = "\n".join(f"- {t[:140]}" for t in cluster["titles"][:15] if t)
+    prompt = (
+        f"A mature cluster of {cluster['stats'].size} corroborated memories "
+        f"(mean support {cluster['stats'].mean_support:.1f}):\n{titles}\n\n"
+        "What higher-altitude principle do they collectively establish?"
+    )
+    out = chat_with_timeout(
+        mem._ensure_chat(),
+        timeout=30,
+        model=mem.cfg.helper_model,
+        messages=[{"role": "system", "content": _SYS}, {"role": "user", "content": prompt}],
+        options={"temperature": 0.0, "max_tokens": 256, "thinking": False},
+    )
+    if out is None:
+        return None
+    text = ((out.get("message") or {}).get("content") or "").strip()
+    try:
+        obj = _json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    title, insight = obj.get("title"), obj.get("insight")
+    if not title or not insight:
+        return None
+    return {"title": str(title)[:120], "body": str(insight)}
+
+
+def run_distill(
+    cfg: Any,
+    mem: Any,
+    *,
+    min_cluster: int = 3,
+    min_support: float = 2.0,
+    min_age_days: float = 14.0,
+    max_clusters: int = 5,
+    threshold: float = 0.78,
+    min_confidence: float = 0.5,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """One nightly distillation pass. Never raises. OFF unless the flag is set.
+    ADDITIVE + LINKING only — never supersedes/archives/deletes a source."""
+    from memo.flags import flag_bool
+
+    res: dict[str, Any] = {"status": "noop", "distilled": []}
+    if not flag_bool("MEMO_DREAM_DISTILL_ENABLED"):
+        res["status"] = "disabled"
+        return res
+    try:
+        items = mem._pull_embeddings(exclude_types={"reference", "synthesis"})
+        if not items:
+            res["status"] = "skipped"
+            return res
+        clusters_idx = mem._greedy_cluster(items, threshold)
+        ids = [it["id"] for it in items]
+        health = mem.store.get_health_batch(ids)
+        support = mem.store.get_support_batch(ids)
+        # get_batch returns a list[dict] (NOT keyed by id) — re-key on "id".
+        created_by_id = {r["id"]: str(r.get("created") or "") for r in mem.store.get_batch(ids)}
+        now = _dt.datetime.now(_dt.UTC)
+
+        candidates = assemble_clusters(
+            items,
+            clusters_idx,
+            health=health,
+            support=support,
+            created_by_id=created_by_id,
+            min_cluster=min_cluster,
+            now=now,
+        )
+        if not candidates:
+            res["status"] = "skipped"
+            return res
+
+        def _exists(phash: str) -> bool:
+            try:
+                hits = mem.search(f"distill {phash}", limit=5, disable_reranker=True)
+                return any(phash in (getattr(h, "body", "") or "") for h in hits)
+            except Exception:
+                return False
+
+        def _mature(stats: MaturityStats) -> bool:
+            return is_mature(
+                stats,
+                min_cluster=min_cluster,
+                min_support=min_support,
+                min_confidence=min_confidence,
+                min_age_days=min_age_days,
+            )
+
+        decisions = decide_distillations(
+            candidates,
+            synthesize_fn=lambda cl: _llm_distill(mem, cl),
+            exists_fn=_exists,
+            is_mature_fn=_mature,
+            dry_run=dry_run,
+            max_clusters=max_clusters,
+        )
+        for d in decisions:
+            if d.get("status") == "save":
+                try:
+                    mem.save(
+                        content=f"{d['body']}\n\n[distill {d['provenance_hash']}]",
+                        type_="synthesis",
+                        title=d["title"],
+                        extra={
+                            "synthesis_kind": "distillation",
+                            "synthesis_sources": d["provenance"],
+                            "synthesis_confidence": d["confidence"],
+                        },
+                    )
+                except Exception as exc:
+                    d["status"] = "save_failed"
+                    d["error"] = f"{type(exc).__name__}: {exc}"
+        res["distilled"] = decisions
+        res["status"] = "done"
+    except Exception as exc:  # surfaced, never silent
+        res["status"] = "error"
+        res["error"] = f"{type(exc).__name__}: {exc}"
+    return res
