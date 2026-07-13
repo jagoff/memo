@@ -38,6 +38,7 @@ from memo.cli_chat import chat_group
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
 from memo.cli_compress_context import compress_context_cmd
+from memo.cli_confidence import confidence_group
 from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
 from memo.cli_contextual import contextual_group
@@ -345,6 +346,7 @@ def cli(ctx: click.Context) -> None:
 
 # Command groups extracted from this module live in cli_*.py and register here.
 cli.add_command(graduation_group)
+cli.add_command(confidence_group)
 cli.add_command(graph_group)
 cli.add_command(guard_group)
 cli.add_command(related)
