@@ -14,11 +14,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from memo.project import GLOBAL_BUCKET
+
 CHRONICLE_BUCKET = "_chronicle"
 
 _BULLET_RE = re.compile(r"^\s*[-*]\s+")
 _ID_RE = re.compile(r"\[([0-9a-f]{8})\]")
 _FM_ID_RE = re.compile(r"^id:\s*([0-9a-f]{8,})", re.MULTILINE)
+_KEY_RE = re.compile(r"^[0-9a-f]{8}$")
 _FM_TYPE_RE = re.compile(r"^type:\s*(\S+)", re.MULTILINE)
 _FM_TITLE_RE = re.compile(r"^title:\s*(.+)$", re.MULTILINE)
 _DATE_KEYS = ("created:", "created_at:", "updated:", "date:")
@@ -77,7 +80,10 @@ def _memories_created_on(cfg: Any, day: str, cap: int = 50) -> list[dict[str, st
         return []
     out: list[dict[str, str]] = []
     for p in sorted(root.rglob("*.md")):
-        if any(part.startswith("_") for part in p.relative_to(root).parts):
+        if any(
+            part.startswith("_") and part != GLOBAL_BUCKET
+            for part in p.relative_to(root).parts
+        ):
             continue
         head = p.read_text(encoding="utf-8", errors="ignore")[:2000]
         m_id = _FM_ID_RE.search(head)
@@ -165,8 +171,8 @@ def fact_lines(facts: dict[str, Any]) -> tuple[list[str], set[str]]:
     allowed: set[str] = set()
     for e in facts["episodes"]:
         sid = str(e.get("session_id") or "")[:8]
-        if not sid:
-            continue
+        if not _KEY_RE.match(sid):
+            continue  # non-hex id would be unciteable (filter_cited only matches hex)
         allowed.add(sid)
         lines.append(
             f"- session {sid} ({e.get('agent', '?')}, {e.get('turn_count', 0)} turns): "
@@ -174,6 +180,8 @@ def fact_lines(facts: dict[str, Any]) -> tuple[list[str], set[str]]:
         )
     for m in facts["new_memories"]:
         mid = str(m["id"])[:8]
+        if not _KEY_RE.match(mid):
+            continue
         allowed.add(mid)
         lines.append(f"- new {m['type']} memory: {str(m['title'])[:120]} [{mid}]")
     return lines, allowed
@@ -284,6 +292,10 @@ def run_chronicle_pass(
             return res
         filtered, ratio = filter_cited(narrative, allowed)
         res["cited_ratio"] = round(ratio, 3)
+        had_bullets = any(_BULLET_RE.match(line) for line in narrative.splitlines())
+        if had_bullets and ratio == 0.0:
+            res["status"] = "low_provenance"
+            return res
         if not dry_run:
             path = chronicle_path(cfg, d)
             _atomic_write(path, render_chronicle(d, filtered, facts))

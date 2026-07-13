@@ -97,6 +97,29 @@ def test_memories_created_on_filters_by_day_and_skips_buckets(tmp_path):
     assert out[0]["type"] == "decision"
 
 
+def test_memories_created_on_includes_global_bucket(tmp_path):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    _write_memory_md(cfg.memory_dir / "_global", "a" * 32, "2026-07-13", "global hit")
+
+    out = dc._memories_created_on(cfg, "2026-07-13")
+    assert [m["id"][:8] for m in out] == ["aaaaaaaa"]
+    assert out[0]["title"] == "global hit"
+
+
+def test_memories_created_on_still_skips_profile_bucket(tmp_path):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    _write_memory_md(cfg.memory_dir / "_profile", "c" * 32, "2026-07-13", "profile doc")
+
+    out = dc._memories_created_on(cfg, "2026-07-13")
+    assert out == []
+
+
 def test_collect_facts_and_fact_lines(tmp_path, monkeypatch):
     import json as _json
 
@@ -134,6 +157,33 @@ def test_collect_facts_and_fact_lines(tmp_path, monkeypatch):
     assert allowed == {"dddddddd", "aaaaaaaa"}
     assert any("[dddddddd]" in ln for ln in lines)
     assert any("[aaaaaaaa]" in ln for ln in lines)
+
+
+def test_fact_lines_skips_non_hex_session_id():
+    from memo import dream_chronicle as dc
+
+    facts = {
+        "episodes": [
+            {"session_id": "ZZZZZZZZ-not-hex", "agent": "claude-code",
+             "turn_count": 3, "summary": "bogus id episode"},
+        ],
+        "new_memories": [],
+    }
+    lines, allowed = dc.fact_lines(facts)
+    assert lines == []
+    assert allowed == set()
+
+
+def test_fact_lines_skips_non_hex_memory_id():
+    from memo import dream_chronicle as dc
+
+    facts = {
+        "episodes": [],
+        "new_memories": [{"id": "ZZZZZZZZ" + "a" * 24, "type": "note", "title": "bad id memory"}],
+    }
+    lines, allowed = dc.fact_lines(facts)
+    assert lines == []
+    assert allowed == set()
 
 
 def test_memories_created_on_rich_frontmatter_and_yaml_title(tmp_path):
@@ -187,6 +237,25 @@ def test_run_chronicle_pass_writes_file_with_provenance(tmp_path, monkeypatch):
     assert "[aaaaaaaa]" in doc
     assert "invented stuff" not in doc  # provenance filter aplicado
     assert "id:" not in doc.split("---")[1]  # frontmatter sin id: -> reindex lo ignora
+
+
+def test_run_chronicle_pass_low_provenance_not_written(tmp_path, monkeypatch):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    cfg.memory_dir.mkdir(parents=True)
+    day = "2026-07-13"
+    _write_memory_md(cfg.memory_dir, "a" * 32, day, "decided X")
+
+    monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: None)
+    monkeypatch.setattr(
+        dc, "_llm_narrate",
+        lambda mem, d, lines: "- invented stuff with no valid citation\n- more invented\n",
+    )
+    res = dc.run_chronicle_pass(cfg, _Mem(cfg), day=day)
+    assert res["status"] == "low_provenance"
+    assert res["cited_ratio"] == 0.0
+    assert not dc.chronicle_path(cfg, day).exists()
 
 
 def test_run_chronicle_pass_skips_on_no_signal(tmp_path, monkeypatch):

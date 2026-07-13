@@ -48,6 +48,30 @@ def test_recent_memories_empty_dir(tmp_path):
     assert _recent_memories(tmp_path / "nope") == []
 
 
+def test_recent_memories_includes_global_bucket(tmp_path):
+    from memo.cli_onboard import _recent_memories
+
+    root = tmp_path / "mem"
+    bucket = root / "_global"
+    bucket.mkdir(parents=True)
+    (bucket / "x.md").write_text(
+        f"---\nid: {'a' * 32}\ntitle: global memory\n---\nbody\n", encoding="utf-8"
+    )
+
+    out = _recent_memories(root, n=3)
+    assert [m["title"] for m in out] == ["global memory"]
+
+
+def test_recent_memories_skips_files_without_id_frontmatter(tmp_path):
+    from memo.cli_onboard import _recent_memories
+
+    root = tmp_path / "mem"
+    root.mkdir()
+    (root / "stray.md").write_text("# just a stray file\nno frontmatter here\n", encoding="utf-8")
+
+    assert _recent_memories(root, n=3) == []
+
+
 def test_recent_memories_prefers_yaml_frontmatter_title(tmp_path):
     from memo.cli_onboard import _recent_memories
 
@@ -119,6 +143,34 @@ def test_onboard_yes_runs_all_steps(tmp_path, monkeypatch):
     assert "7 memorias" in result.output
     assert "aprendizaje 2" in result.output  # las 3 cosas que ya sé de vos
     assert "memo import whatsapp" in result.output
+
+
+def test_onboard_dry_run_does_not_wire_hook_or_shims(tmp_path, monkeypatch):
+    from memo.cli import cli
+
+    hook_calls = []
+    shim_calls = []
+    monkeypatch.setattr(
+        "memo.cli_hooks.wire_recall_hook", lambda *a, **k: hook_calls.append(1) or {}
+    )
+
+    import click as _click
+
+    @_click.command(name="install-shims-stub")
+    def _spy() -> None:
+        shim_calls.append(1)
+
+    monkeypatch.setattr("memo.cli_onboard.install_shims_cmd", _spy)
+    monkeypatch.setattr(
+        "memo.transcript_miner.mine_transcripts",
+        lambda root=None, **kw: {"status": "ok", "files_total": 0, "candidates": 0},
+    )
+
+    result = CliRunner().invoke(cli, ["onboard", "--yes", "--dry-run"], env=_env(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert hook_calls == []
+    assert shim_calls == []
+    assert "dry-run, salteado" in result.output
 
 
 def test_onboard_days_override_and_dry_run(tmp_path, monkeypatch):

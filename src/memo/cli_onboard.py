@@ -16,9 +16,11 @@ import click
 from memo.cli_common import console
 from memo.config import Config
 from memo.flags import flag_bool, flag_int
+from memo.project import GLOBAL_BUCKET
 from memo.runtime.shims import install_shims_cmd
 
 _FM_TITLE_RE = re.compile(r"^title:\s*(.+)$", re.MULTILINE)
+_FM_ID_RE = re.compile(r"^id:\s*(\S+)", re.MULTILINE)
 
 DEFAULT_BACKFILL_DAYS = 90
 
@@ -36,12 +38,19 @@ def _recent_memories(memory_dir: Path, n: int = 3) -> list[dict[str, str]]:
     files = [
         p
         for p in memory_dir.rglob("*.md")
-        if not any(part.startswith("_") for part in p.relative_to(memory_dir).parts)
+        if not any(
+            part.startswith("_") and part != GLOBAL_BUCKET
+            for part in p.relative_to(memory_dir).parts
+        )
     ]
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     out: list[dict[str, str]] = []
-    for p in files[:n]:
+    for p in files:
+        if len(out) >= n:
+            break
         head = p.read_text(encoding="utf-8", errors="ignore")[:1000]
+        if _FM_ID_RE.search(head) is None:
+            continue  # no id: -> not a memory record
 
         # Priority 1: YAML frontmatter title:
         fm_match = _FM_TITLE_RE.search(head)
@@ -101,7 +110,10 @@ def onboard(ctx: click.Context, yes: bool, days: int | None, dry_run: bool, as_j
     summary: dict[str, Any] = {}
 
     # 1/4 — recall hook + shims (both idempotent)
-    if yes or click.confirm("1/4 · ¿Instalar el recall hook de Claude Code?", default=True):
+    if dry_run:
+        summary["hook"] = {"action": "skipped_dry_run"}
+        console.print("1/4 · hook: (dry-run, salteado)")
+    elif yes or click.confirm("1/4 · ¿Instalar el recall hook de Claude Code?", default=True):
         summary["hook"] = _step_hook()
         console.print(f"[green]✓[/green] hook: {summary['hook'].get('action')}")
         ctx.invoke(install_shims_cmd)
