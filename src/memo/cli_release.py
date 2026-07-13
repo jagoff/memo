@@ -248,6 +248,28 @@ def _check_mcpb_manifest(
             issues.append(f"{package_key} version {package_version!r} != pyproject {expected!r}")
 
 
+def _check_mcpb_node_manifest(
+    repo: Path, *, expected: str, versions: dict[str, str], issues: list[str]
+) -> None:
+    """Mirror of _check_mcpb_manifest for the Node bundle. Its version IS the
+    bootstrap install pin (bootstrap.js readPin), so there is no mlx-memo arg
+    to parse. Tolerant when missing (same optional criterion as the bump)."""
+    manifest = repo / "packaging" / "mcpb-node" / "manifest.json"
+    if not manifest.exists():
+        return
+    key = manifest.relative_to(repo).as_posix()
+    try:
+        raw = _json_file(manifest)
+    except ValueError as exc:
+        issues.append(f"{key}: {exc}")
+        return
+
+    found = str(raw.get("version") or "")
+    versions[key] = found
+    if found != expected:
+        issues.append(f"{key} version {found!r} != pyproject {expected!r}")
+
+
 def _check_mcpb_archive(
     repo: Path, *, expected: str, versions: dict[str, str], issues: list[str]
 ) -> None:
@@ -350,6 +372,7 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
                     issues.append(f"{key} version {found!r} != pyproject {version!r}")
 
     _check_mcpb_manifest(repo, expected=version, versions=versions, issues=issues)
+    _check_mcpb_node_manifest(repo, expected=version, versions=versions, issues=issues)
     _check_mcpb_archive(repo, expected=version, versions=versions, issues=issues)
 
     changelog = repo / "CHANGELOG.md"

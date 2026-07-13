@@ -114,6 +114,28 @@ def test_plan_release_edits_bumps_mcpb_manifest(tmp_path: Path) -> None:
     assert '"manifest_version": "0.3"' in manifest
 
 
+def test_release_check_report_rejects_node_manifest_drift(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "packaging" / "mcpb-node" / "manifest.json").write_text(
+        '{\n  "manifest_version": "0.3",\n  "version": "1.0.0"\n}\n',
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any("packaging/mcpb-node/manifest.json" in issue for issue in report.issues)
+
+
+def test_release_check_report_tolerates_missing_node_manifest(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "packaging" / "mcpb-node" / "manifest.json").unlink()
+
+    report = release_check_report(repo)
+
+    assert not any("mcpb-node" in issue for issue in report.issues)
+
+
 def test_plan_release_edits_bumps_mcpb_node_manifest(tmp_path: Path) -> None:
     repo = _fake_repo(tmp_path, "1.2.3")
     edits = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")
