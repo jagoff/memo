@@ -17,22 +17,21 @@ jobs:
       matrix:
         python-version: ["3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Cache uv
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6
         with:
           path: ~/.cache/uv
           key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
       - name: Install uv
-        run: pip install uv
+        run: pip install uv==0.11.21
       - name: Install package + dev deps
         run: |
-          uv venv .venv
-          uv pip install -e '.[dev,cpu]'
+          uv sync --frozen --extra dev --extra cpu --python ${{ matrix.python-version }}
       - name: Lint (ruff)
         run: .venv/bin/ruff check src/ tests/
       - name: Type check (mypy)
@@ -56,13 +55,13 @@ jobs:
     # contract and runs the suite WITH the integration path live.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Set up Python 3.13
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.13"
       - name: Install uv
-        run: pip install uv
+        run: pip install uv==0.11.21
       - name: Install package + dev deps + consciousness_contracts
         id: install
         env:
@@ -74,8 +73,7 @@ jobs:
             exit 0
           fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
-          uv venv .venv
-          uv pip install -e '.[dev,cpu]'
+          uv sync --frozen --extra dev --extra cpu --python 3.13
           uv pip install "consciousness-contracts @ git+https://x-access-token:${CONTRACTS_TOKEN}@github.com/jagoff/consciousness-contracts.git"
       - name: Verify contract API + run suite with integration path live
         if: steps.install.outputs.enabled == 'true'

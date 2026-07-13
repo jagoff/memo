@@ -103,11 +103,19 @@ multimodal = [
 contracts = [
     "consciousness-contracts>=0.2.0",
 ]
+
 # Optional REST API server (`memo http-api`).
 http = [
     "fastapi>=0.115",
     "uvicorn>=0.34",
 ]
+
+[tool.uv]
+# Private and intentionally absent from public indexes. The with-contracts CI
+# job installs it explicitly from the authenticated repository after `uv sync`.
+# Excluding it keeps the public universal lock reproducible without changing the
+# wheel's published optional-extra metadata.
+exclude-dependencies = ["consciousness-contracts"]
 
 [project.scripts]
 memo = "memo.cli:main"
