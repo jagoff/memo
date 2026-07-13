@@ -1182,6 +1182,10 @@ def dream_status() -> None:
         cw = data["capture_weights"]
         _cw_top = f" · top {cw.get('top')}" if cw.get("top") else ""
         console.print(f"  capture weights: {cw.get('types', 0)} type(s){_cw_top}")
+    if data.get("distilled"):
+        _di = data["distilled"]
+        _n = sum(1 for d in _di.get("distilled", []) if d.get("status") == "saved")
+        console.print(f"  distill: {_di.get('status')} ({_n} saved)")
     if data.get("errors"):
         for e in data["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")
