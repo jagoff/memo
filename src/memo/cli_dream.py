@@ -560,6 +560,29 @@ def dream_run(
                 receipt["errors"].append(f"profile: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[profile] [yellow]warn[/yellow]")
 
+        # Chronicle — nightly engineering diary ------------------------------
+        if flag_bool("MEMO_DREAM_CHRONICLE_ENABLED"):
+            progress.update(step, description="[chronicle] writing diary...")
+            try:
+                from memo import dream_chronicle
+
+                receipt["chronicle"] = dream_chronicle.run_chronicle_pass(
+                    cfg,
+                    mem,
+                    weekly=flag_bool("MEMO_CHRONICLE_WEEKLY"),
+                    dry_run=dry_run,
+                )
+                if receipt["chronicle"].get("status") == "error":
+                    receipt["errors"].append(f"chronicle: {receipt['chronicle'].get('error')}")
+                _ch = receipt["chronicle"]
+                progress.update(
+                    step,
+                    description=f"[chronicle] [green]✓[/green]  {_ch.get('status')}",
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"chronicle: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[chronicle] [yellow]warn[/yellow]")
+
         if flag_bool("MEMO_DREAM_GRADUATION_ENABLED"):
             progress.update(step, description="[graduate] quarantined captures...")
             try:
@@ -1297,6 +1320,26 @@ def dream_consolidate_cmd(dry_run: bool, as_json: bool) -> None:
     console.print(f"[bold]consolidate-episodes:[/bold] {res.get('status')}")
     for d in res.get("consolidated", []):
         console.print(f"  [{d['status']}] {d.get('project')}: {d.get('title', '')}", markup=False)
+
+
+@dream_cmd.command(name="chronicle")
+@click.option("--day", "day", default=None, help="Day to chronicle (YYYY-MM-DD, default: last finished day).")
+@click.option("--dry-run", is_flag=True, help="Compute + narrate, don't write.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def dream_chronicle_cmd(day: str | None, dry_run: bool, as_json: bool) -> None:
+    """Write the engineering diary for one day (see MEMO_DREAM_CHRONICLE_ENABLED)."""
+    from memo import dream_chronicle
+    from memo.flags import flag_bool
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    res = dream_chronicle.run_chronicle_pass(
+        cfg, mem, day=day, weekly=flag_bool("MEMO_CHRONICLE_WEEKLY"), dry_run=dry_run
+    )
+    if as_json:
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]chronicle:[/bold] {res.get('status')} {res.get('path', '')}")
 
 
 @dream_cmd.command(name="communities")

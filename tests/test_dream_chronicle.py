@@ -254,3 +254,26 @@ def test_write_weekly_none_when_empty(tmp_path):
     from memo import dream_chronicle as dc
 
     assert dc.write_weekly(_mk_cfg(tmp_path), "2026-07-14") is None
+
+
+def test_dream_chronicle_subcommand_json(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from memo import dream_chronicle as dc
+    from memo.cli import cli
+
+    monkeypatch.setattr(
+        dc, "run_chronicle_pass",
+        lambda cfg, mem, **kw: {"status": "done", "day": "2026-07-13", "path": "/x.md", "cited_ratio": 1.0},
+    )
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+    result = CliRunner().invoke(cli, ["dream", "chronicle", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    assert '"status": "done"' in result.output
