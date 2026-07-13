@@ -221,6 +221,17 @@ def briefing(*, compact: bool) -> None:
             if debug:
                 print(f"# memo briefing: dream digest failed: {exc}", file=_sys.stderr)
 
+    # ── 1d. Ask one recurring gap (Phase 3, default OFF) ──────────────────
+    try:
+        from memo.ask_gaps import briefing_lines as _ask_lines
+        from memo.identity import current as _identity
+
+        _sid = _identity(cfg).session_id or "_no_session"
+        lines.extend(_ask_lines(cfg, session_id=_sid))
+    except Exception as exc:
+        if debug:
+            print(f"# memo briefing: ask-gaps failed: {exc}", file=_sys.stderr)
+
     # ── 2+3. Open loops + memory of the day (memo's own corpus) ───────────
     # Shared with the memo_unified_briefing MCP tool so both surfaces compose
     # identical memo-native sections.
