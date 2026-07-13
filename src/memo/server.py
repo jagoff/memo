@@ -270,6 +270,40 @@ def build_server(memory: Memory | None = None) -> FastMCP:
     return server
 
 
+def _start_background_tasks(cfg: Config | None = None) -> tuple[str, ...]:
+    """Start only explicitly opted-in background work and return task names."""
+    import threading
+    from collections.abc import Callable
+
+    from memo.flags import flag_bool
+
+    started: list[str] = []
+
+    def start(name: str, target: Callable[[], object]) -> None:
+        threading.Thread(target=target, name=name, daemon=True).start()
+        started.append(name)
+
+    auto_update = flag_bool("MEMO_AUTO_UPDATE")
+    if flag_bool("MEMO_UPDATE_CHECK_ENABLED") or auto_update:
+        from memo.runtime.autoupdate import notify_if_newer
+
+        start("memo-update-check", lambda: notify_if_newer(cfg))
+    if auto_update:
+        from memo.runtime.autoupdate import maybe_auto_update
+
+        start("memo-auto-update", lambda: maybe_auto_update(cfg))
+    if flag_bool("MEMO_STATUSLINE_SELFHEAL"):
+        from memo.cli_statusline import selfheal_statusline
+
+        start("memo-statusline-selfheal", selfheal_statusline)
+    if flag_bool("MEMO_HOOK_SELFHEAL"):
+        from memo.cli_hooks import selfheal_recall_hook
+
+        start("memo-hook-selfheal", selfheal_recall_hook)
+
+    return tuple(started)
+
+
 def main() -> None:
     """Entry point for `memo-mcp` console script.
 
@@ -281,31 +315,9 @@ def main() -> None:
     127.0.0.1:18768). One ``Memory`` instance is built here and reused across
     every request, so the embedder / reranker / synthesis LLM stay resident.
     """
-    import threading
-
     from memo.flags import flag_int, flag_str
 
-    # Version check: always throttled-check for newer git tags (writes
-    # update_available file for banner). Auto-install only if MEMO_AUTO_UPDATE=1.
-    from memo.runtime.autoupdate import maybe_auto_update, notify_if_newer
-
-    threading.Thread(target=notify_if_newer, daemon=True).start()
-    threading.Thread(target=maybe_auto_update, daemon=True).start()
-
-    # Idempotently re-assert the [MEMO <ver>] statusLine wiring (wrapping any
-    # foreign statusline). No-op when already correct; self-repairs drift if
-    # another tool clobbered the key. Gated by MEMO_STATUSLINE_SELFHEAL.
-    from memo.cli_statusline import selfheal_statusline
-
-    threading.Thread(target=selfheal_statusline, daemon=True).start()
-
-    # Idempotently re-assert the recall hook (UserPromptSubmit → memo recall-hook,
-    # absolute path) in ~/.claude/settings.json so recall survives a
-    # de-registered/clobbered plugin. No-op when already correct. Gated by
-    # MEMO_HOOK_SELFHEAL.
-    from memo.cli_hooks import selfheal_recall_hook
-
-    threading.Thread(target=selfheal_recall_hook, daemon=True).start()
+    _start_background_tasks()
 
     transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
