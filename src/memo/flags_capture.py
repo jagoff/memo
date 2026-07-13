@@ -121,6 +121,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "disables recap regardless of MEMO_RECAP.",
         min_val=0,
     ),
+    _spec(
+        "MEMO_ONBOARD_BACKFILL_DAYS",
+        "int",
+        90,
+        "capture",
+        "Day-0 backfill window for `memo onboard`: how many days of transcript "
+        "history to mine on first run.",
+        min_val=1,
+        max_val=3650,
+    ),
 )
 
 
