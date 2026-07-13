@@ -175,4 +175,46 @@ SPECS: tuple[FlagSpec, ...] = (
         "user-global ~/.cache/memo/memo-mlx-gpu.lock; every memo process "
         "must agree on this path to coordinate. Mainly for test isolation.",
     ),
+    # HyPE (Hypothetical Questions for Expansion)
+    _spec(
+        "MEMO_HYPE_ENABLED",
+        "bool",
+        False,
+        "ingest",
+        "Read-path HyPE fold: merge question-space matches into vec retrieval (max-fold). "
+        "Requires the nightly index (MEMO_DREAM_HYPE_ENABLED). Default off.",
+    ),
+    _spec(
+        "MEMO_DREAM_HYPE_ENABLED",
+        "bool",
+        False,
+        "ingest",
+        "Nightly HyPE pass: generate hypothetical questions per durable memory with the local LLM "
+        "and index them. Builds dark; read fold is gated separately. Default off.",
+    ),
+    _spec(
+        "MEMO_HYPE_QUESTIONS_PER_MEMORY",
+        "int",
+        3,
+        "ingest",
+        "Questions generated per memory by the nightly HyPE pass.",
+        min_val=1,
+        max_val=5,
+    ),
+    _spec(
+        "MEMO_HYPE_NIGHT_CAP",
+        "int",
+        400,
+        "ingest",
+        "Max memories processed per HyPE nightly run (backlog is ROI-prioritized).",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_HYPE_FOLD_POOL",
+        "int",
+        30,
+        "ingest",
+        "kNN pool size over the question index during the read-path fold.",
+        min_val=5,
+    ),
 )
