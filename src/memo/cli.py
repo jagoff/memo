@@ -65,6 +65,7 @@ from memo.cli_health import health as health_cmd
 from memo.cli_history import diff_cmd, history_cmd
 from memo.cli_hooks import install_recall_hook
 from memo.cli_http import http_api
+from memo.cli_hype import hype_group
 from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
@@ -352,6 +353,7 @@ cli.add_command(graduation_group)
 cli.add_command(confidence_group)
 cli.add_command(graph_group)
 cli.add_command(guard_group)
+cli.add_command(hype_group)
 cli.add_command(interject_group)
 cli.add_command(ask_group)
 cli.add_command(related)
