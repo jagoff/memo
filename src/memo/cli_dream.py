@@ -621,6 +621,31 @@ def dream_run(
                 receipt["errors"].append(f"communities: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[communities] [yellow]warn[/yellow]")
 
+        # Phase 2 — distillation: upward re-abstraction of MATURE clusters -----
+        if flag_bool("MEMO_DREAM_DISTILL_ENABLED"):
+            progress.update(step, description="[distill] mature clusters...")
+            try:
+                from memo import dream_distill
+
+                receipt["distilled"] = dream_distill.run_distill(
+                    cfg,
+                    mem,
+                    min_cluster=3 if (_dc := flag_int("MEMO_DREAM_DISTILL_MIN_CLUSTER")) is None else _dc,
+                    min_support=2 if (_ds := flag_int("MEMO_DREAM_DISTILL_MIN_SUPPORT")) is None else _ds,
+                    min_age_days=14 if (_da := flag_int("MEMO_DREAM_DISTILL_MIN_AGE_DAYS")) is None else _da,
+                    max_clusters=5 if (_dm := flag_int("MEMO_DREAM_DISTILL_MAX")) is None else _dm,
+                    dry_run=dry_run,
+                )
+                _di = receipt["distilled"]
+                _saved = sum(1 for d in _di.get("distilled", []) if d.get("status") in ("saved", "would_save"))
+                progress.update(
+                    step,
+                    description=f"[distill] [green]✓[/green]  {_di.get('status')} ({_saved})",
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"distill: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[distill] [yellow]warn[/yellow]")
+
         # Phase 3 — graph→semantic: bridge / multi-hop link synthesis (spec 3) -
         if flag_bool("MEMO_DREAM_BRIDGES_ENABLED"):
             progress.update(step, description="[bridges] articulation links...")
@@ -1283,6 +1308,33 @@ def dream_communities_cmd(dry_run: bool, as_json: bool) -> None:
     for d in res.get("synthesized", []):
         rep = d.get("representative") or ""
         console.print(f"  [{d['status']}] {rep}: {d.get('title', '')}", markup=False)
+
+
+@dream_cmd.command(name="distill")
+@click.option("--dry-run", is_flag=True, help="Cluster + gate + preview, save nothing.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the distillation fragment as JSON.")
+def dream_distill_cmd(dry_run: bool, as_json: bool) -> None:
+    """Upward re-abstraction — distill each mature durable cluster into a principle."""
+    from memo import dream_distill
+    from memo.flags import flag_int
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    res = dream_distill.run_distill(
+        cfg,
+        mem,
+        min_cluster=3 if (_dc := flag_int("MEMO_DREAM_DISTILL_MIN_CLUSTER")) is None else _dc,
+        min_support=2 if (_ds := flag_int("MEMO_DREAM_DISTILL_MIN_SUPPORT")) is None else _ds,
+        min_age_days=14 if (_da := flag_int("MEMO_DREAM_DISTILL_MIN_AGE_DAYS")) is None else _da,
+        max_clusters=5 if (_dm := flag_int("MEMO_DREAM_DISTILL_MAX")) is None else _dm,
+        dry_run=dry_run,
+    )
+    if as_json:
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]distill:[/bold] {res.get('status')}")
+    for d in res.get("distilled", []):
+        console.print(f"  [{d['status']}] {d.get('title', '')}", markup=False)
 
 
 @dream_cmd.command(name="entity-canon")
