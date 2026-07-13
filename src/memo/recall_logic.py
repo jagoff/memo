@@ -466,6 +466,43 @@ def _apply_synthesis_boost(hits: list[Any], boost: float) -> list[Any]:
     return boosted
 
 
+_BROAD_MAX_TOKENS = 4
+_ID_TOKEN_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*\.[A-Za-z0-9_]+|[A-Za-z_]+[0-9]+[A-Za-z0-9_]*|[0-9a-f]{8,})")
+
+
+def _is_broad_query(query: str | None) -> bool:
+    """Cheap, hook-safe broadness heuristic: short AND no identifier-shaped
+    token. Broad = 'what about auth'; specific = 'MEMO_RECALL_MIN_SIM default'
+    or 'commit a1b2c3d4'. Pure string work — no embed, no store, hook-budget
+    safe. None/empty => specific (no altitude boost)."""
+    if not query:
+        return False
+    tokens = query.split()
+    if len(tokens) > _BROAD_MAX_TOKENS:
+        return False
+    return not _ID_TOKEN_RE.search(query)
+
+
+def _apply_altitude_boost(hits: list[Any], boost: float, *, broad: bool) -> list[Any]:
+    """Additive boost for DISTILLED hits (type=synthesis +
+    extra.synthesis_kind=distillation) on a BROAD query, so the high-altitude
+    summary surfaces first. On a SPECIFIC query it is a no-op — the summary is
+    NOT lifted, so the raw source evidence keeps its natural rank (the 'drill to
+    evidence' behavior). Pure + store-free: reads only fields already on the hit
+    (type, extra), mirrors _apply_synthesis_boost. No MLX, no graph traversal."""
+    if not broad or boost <= 0:
+        return list(hits)
+    boosted: list[Any] = []
+    for h in hits:
+        kind = (getattr(h, "extra", None) or {}).get("synthesis_kind")
+        if h.score is not None and getattr(h, "type", "") == "synthesis" and kind == "distillation":
+            boosted.append(replace(h, score=h.score + boost))
+        else:
+            boosted.append(h)
+    boosted.sort(key=lambda h: h.score or 0.0, reverse=True)
+    return boosted
+
+
 def _mmr_token_set(hit: Any) -> frozenset[str]:
     text = f"{getattr(hit, 'title', '') or ''} {getattr(hit, 'body', '') or ''}"
     return frozenset(text.lower().split())
@@ -584,6 +621,7 @@ class RankKnobs:
     # M3 diversity/quality knobs — both default 0.0 = OFF (ranking identical).
     mmr_lambda: float = 0.0
     synthesis_boost: float = 0.0
+    altitude: float = 0.0  # Phase 2: boost distilled hits on a BROAD query (0.0 = OFF)
 
 
 def knobs_from_flags(
@@ -647,6 +685,7 @@ def knobs_from_flags(
         contextual=flag_bool("MEMO_RECALL_CONTEXTUAL"),
         mmr_lambda=flag_float("MEMO_RECALL_MMR_LAMBDA") or 0.0,
         synthesis_boost=flag_float("MEMO_RECALL_SYNTHESIS_BOOST") or 0.0,
+        altitude=flag_float("MEMO_RECALL_ALTITUDE") or 0.0,
     )
     if overrides:
         knobs = replace(knobs, **overrides)
@@ -750,12 +789,13 @@ def rank_hits(
     preferences: Any | None = None,
     graph_boost: Callable[[list[Any]], list[Any]] | None = None,
     explain: dict[str, dict[str, Any]] | None = None,
+    query: str | None = None,
 ) -> list[Any]:
     """The daemon's post-search ranking core, pure + reusable.
 
-    project-tiers -> preference-boost -> synthesis-boost -> [graph_boost seam]
-    -> dedup_hits -> min_sim/cosine + min_body gate -> synthesis-dedup ->
-    [MMR diversity reorder]. Returns the gated,
+    project-tiers -> preference-boost -> synthesis-boost -> altitude-boost ->
+    [graph_boost seam] -> dedup_hits -> min_sim/cosine + min_body gate ->
+    synthesis-dedup -> [MMR diversity reorder]. Returns the gated,
     deduped, ordered candidate list (caller splits top_k vs nudge). Used by both
     ``_recall_logic`` and the eval harness so they cannot diverge; Phase 2's
     graph-proximity term plugs into ``graph_boost``.
@@ -763,7 +803,11 @@ def rank_hits(
     ``explain`` (debug only — ``memo debug-recall``): pass a dict and it is
     filled per hit id with the score breakdown (raw_score, per-stage boost
     deltas, final_score, gate_value, passed_min_sim/min_body, dropped reason,
-    final rank). Default ``None`` keeps behavior and cost identical."""
+    final rank). Default ``None`` keeps behavior and cost identical.
+
+    ``query`` (default ``None``): the raw prompt text, used only by the
+    altitude-boost stage's broadness gate (``_is_broad_query``). ``None``
+    keeps the gate specific (no boost) so every existing caller is unchanged."""
     raw = hits
     if explain is not None:
         for h in hits:
@@ -781,6 +825,10 @@ def rank_hits(
         raw = _apply_synthesis_boost(raw, knobs.synthesis_boost)
         if explain is not None:
             _explain_stage(explain, raw, "synthesis_boost")
+    if knobs.altitude > 0:
+        raw = _apply_altitude_boost(raw, knobs.altitude, broad=_is_broad_query(query))
+        if explain is not None:
+            _explain_stage(explain, raw, "altitude")
     if graph_boost is not None:
         with contextlib.suppress(Exception):
             raw = graph_boost(raw)
