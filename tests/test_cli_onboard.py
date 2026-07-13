@@ -44,3 +44,21 @@ def test_recent_memories_empty_dir(tmp_path):
     from memo.cli_onboard import _recent_memories
 
     assert _recent_memories(tmp_path / "nope") == []
+
+
+def test_recent_memories_prefers_yaml_frontmatter_title(tmp_path):
+    from memo.cli_onboard import _recent_memories
+
+    root = tmp_path / "mem"
+    root.mkdir()
+    p = root / "2026-07-13-kebab-stem.md"
+    p.write_text(
+        "---\n"
+        f"id: {'a' * 32}\n"
+        "title: 'Titulo legible desde yaml'\n"
+        "---\n"
+        "cuerpo sin heading\n",
+        encoding="utf-8",
+    )
+    out = _recent_memories(root, n=1)
+    assert out[0]["title"] == "Titulo legible desde yaml"
