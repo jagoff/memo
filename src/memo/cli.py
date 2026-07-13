@@ -34,6 +34,7 @@ from memo.cli_backup import backup_group
 from memo.cli_banner import codex_badge_cmd, startup_banner_cmd
 from memo.cli_briefing import briefing
 from memo.cli_capture import capture_stop, capture_tick, episodes_group, resume
+from memo.cli_chronicle import chronicle_cmd
 from memo.cli_chat import chat_group
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
@@ -356,6 +357,7 @@ cli.add_command(related)
 cli.add_command(eval_group)
 cli.add_command(debug_recall_cmd)
 cli.add_command(dream_cmd)
+cli.add_command(chronicle_cmd)
 cli.add_command(maintain_cmd)
 cli.add_command(invalidate_cmd)
 cli.add_command(synthesize_cmd)
