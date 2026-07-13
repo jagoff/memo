@@ -20,6 +20,20 @@ def test_distill_tuning_defaults(monkeypatch):
     assert flag_int("MEMO_DREAM_DISTILL_MAX") == 5
 
 
+def test_distill_threshold_and_min_confidence_defaults(monkeypatch):
+    monkeypatch.delenv("MEMO_DREAM_DISTILL_THRESHOLD", raising=False)
+    monkeypatch.delenv("MEMO_DREAM_DISTILL_MIN_CONFIDENCE", raising=False)
+    assert flag_float("MEMO_DREAM_DISTILL_THRESHOLD") == 0.78
+    assert flag_float("MEMO_DREAM_DISTILL_MIN_CONFIDENCE") == 0.5
+
+
+def test_distill_threshold_and_min_confidence_override(monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_DISTILL_THRESHOLD", "0.9")
+    monkeypatch.setenv("MEMO_DREAM_DISTILL_MIN_CONFIDENCE", "0.7")
+    assert flag_float("MEMO_DREAM_DISTILL_THRESHOLD") == 0.9
+    assert flag_float("MEMO_DREAM_DISTILL_MIN_CONFIDENCE") == 0.7
+
+
 def test_recall_altitude_defaults_off(monkeypatch):
     monkeypatch.delenv("MEMO_RECALL_ALTITUDE", raising=False)
     # float flag: 0.0 (falsy) = OFF. flag_float returns 0.0 or None -> normalize.
@@ -35,6 +49,8 @@ def test_distill_flags_are_registered():
         "MEMO_DREAM_DISTILL_MIN_SUPPORT",
         "MEMO_DREAM_DISTILL_MIN_AGE_DAYS",
         "MEMO_DREAM_DISTILL_MAX",
+        "MEMO_DREAM_DISTILL_THRESHOLD",
+        "MEMO_DREAM_DISTILL_MIN_CONFIDENCE",
         "MEMO_RECALL_ALTITUDE",
     ):
         assert expected in REGISTRY

@@ -1151,6 +1151,24 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=1,
         max_val=100,
     ),
+    _spec(
+        "MEMO_DREAM_DISTILL_THRESHOLD",
+        "float",
+        0.78,
+        "misc",
+        "Cosine similarity floor for grouping durable memories into a distillable cluster.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_DREAM_DISTILL_MIN_CONFIDENCE",
+        "float",
+        0.5,
+        "misc",
+        "Minimum mean memory_health.confidence across a cluster's members before it is distilled.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
     # dream v2 — bridge / multi-hop link synthesis (spec 3, phase 3)
     _spec(
         "MEMO_DREAM_BRIDGES_ENABLED",

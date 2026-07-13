@@ -633,6 +633,7 @@ def dream_run(
             progress.update(step, description="[distill] mature clusters...")
             try:
                 from memo import dream_distill
+                from memo.flags import flag_float as _distill_float
 
                 receipt["distilled"] = dream_distill.run_distill(
                     cfg,
@@ -641,6 +642,8 @@ def dream_run(
                     min_support=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_SUPPORT")),
                     min_age_days=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_AGE_DAYS")),
                     max_clusters=cast(int, flag_int("MEMO_DREAM_DISTILL_MAX")),
+                    threshold=cast(float, _distill_float("MEMO_DREAM_DISTILL_THRESHOLD")),
+                    min_confidence=cast(float, _distill_float("MEMO_DREAM_DISTILL_MIN_CONFIDENCE")),
                     dry_run=dry_run,
                 )
                 _di = receipt["distilled"]
@@ -1327,7 +1330,7 @@ def dream_communities_cmd(dry_run: bool, as_json: bool) -> None:
 def dream_distill_cmd(dry_run: bool, as_json: bool) -> None:
     """Upward re-abstraction — distill each mature durable cluster into a principle."""
     from memo import dream_distill
-    from memo.flags import flag_int
+    from memo.flags import flag_float, flag_int
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
@@ -1338,6 +1341,8 @@ def dream_distill_cmd(dry_run: bool, as_json: bool) -> None:
         min_support=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_SUPPORT")),
         min_age_days=cast(int, flag_int("MEMO_DREAM_DISTILL_MIN_AGE_DAYS")),
         max_clusters=cast(int, flag_int("MEMO_DREAM_DISTILL_MAX")),
+        threshold=cast(float, flag_float("MEMO_DREAM_DISTILL_THRESHOLD")),
+        min_confidence=cast(float, flag_float("MEMO_DREAM_DISTILL_MIN_CONFIDENCE")),
         dry_run=dry_run,
     )
     if as_json:
