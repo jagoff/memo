@@ -9,13 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from rich.align import Align
 from rich.console import Console, Group
-from rich.layout import Layout
 from rich.live import Live
 from rich.text import Text
 
 from memo.tui.dashboard.panels import (
+    _ACCENT,
     _panel_consumers,
     _panel_corpus,
     _panel_recall_trend,
@@ -24,30 +23,31 @@ from memo.tui.dashboard.panels import (
 )
 
 
-def render(memory: Any, state_dir: Path) -> Layout:
-    """Production TUI: utility focus, minimal panels, terminal fit."""
-    layout = Layout()
-    layout.split_column(
-        Layout(name="header", size=10),
-        Layout(name="mid", size=18),
-        Layout(name="footer", size=1),
-    )
-    layout["header"].split_row(Layout(name="utility"), Layout(name="verdict"))
-    layout["mid"].split_row(Layout(name="left"), Layout(name="consumers"))
-    layout["left"].split_column(Layout(name="stats", size=3), Layout(name="quality"))
+def render(memory: Any, state_dir: Path) -> Group:
+    """Production TUI — flat, console-style sections (no boxed panels).
 
-    layout["utility"].update(_panel_utility(state_dir))
-    layout["verdict"].update(_panel_verdict(state_dir))
-    layout["stats"].update(_panel_corpus(memory))
-    layout["quality"].update(_panel_recall_trend(state_dir))
-    layout["consumers"].update(_panel_consumers(state_dir))
+    Each section is a thin-rule header + aligned key/value rows in a single
+    accent colour, stacked top-to-bottom like plain command output.
+    """
     now = datetime.now().strftime("%H:%M:%S")
-    footer = Text.from_markup(
-        f"[dim]memo TUI  ·  {memory.cfg.memory_dir}  ·  [/dim][cyan]{now}[/cyan]"
-        f"  [dim]·  [/dim][bold]q[/bold][dim] / [/dim][bold]ESC[/bold][dim] / Ctrl+C to quit[/dim]"
+    top = Text.assemble(
+        ("memo", f"bold {_ACCENT}"),
+        ("  ", ""),
+        (str(memory.cfg.memory_dir), "dim"),
+        ("   ", ""),
+        (now, "default"),
     )
-    layout["footer"].update(Align.center(footer))
-    return layout
+    footer = Text("q / ESC / Ctrl+C to quit", style="dim")
+    return Group(
+        top,
+        Text(),
+        _panel_utility(state_dir),
+        _panel_verdict(state_dir),
+        _panel_corpus(memory),
+        _panel_recall_trend(state_dir),
+        _panel_consumers(state_dir),
+        footer,
+    )
 
 
 def _spawn_key_reader(stop_event: threading.Event) -> None:

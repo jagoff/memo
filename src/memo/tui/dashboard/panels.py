@@ -34,6 +34,29 @@ from memo.watcher import _PLIST_LABEL as _WATCH_LABEL
 _log = logging.getLogger(__name__)
 _SPARK = "▁▂▃▄▅▆▇█"
 
+# Console-style rendering: one accent colour, flat sections with a thin rule
+# header instead of boxed panels (see render() in app.py). Data functions are
+# shared with the legacy boxed panels; only the presentation differs.
+_ACCENT = "cyan"
+_HDR_WIDTH = 46
+
+
+def _hdr(title: str) -> Text:
+    """A flat section header: accented title + a dim rule filling the line."""
+    t = Text()
+    t.append(title, style=f"bold {_ACCENT}")
+    t.append("  ")
+    t.append("─" * max(2, _HDR_WIDTH - len(title)), style="bright_black")
+    return t
+
+
+def _kv(width: int = 14) -> Table:
+    """A two-column key/value grid (dim label, plain value) — no box."""
+    tbl = Table.grid(padding=(0, 2))
+    tbl.add_column(style="dim", width=width)
+    tbl.add_column(overflow="fold")
+    return tbl
+
 
 @dataclass
 class _TTLCache:
@@ -161,7 +184,7 @@ def _watcher_status() -> tuple[bool, str]:
     return True, state
 
 
-def _panel_corpus(memory: Any) -> Panel:
+def _panel_corpus(memory: Any) -> Group:
     types_counter: Counter[str] = Counter()
     projects: set[str] = set()
     rows = _get_corpus_rows(memory)
@@ -171,15 +194,16 @@ def _panel_corpus(memory: Any) -> Panel:
             if t.startswith("project:"):
                 projects.add(t)
     total = sum(types_counter.values())
-    top3 = types_counter.most_common(3)
-    types_line = "  ".join(f"[bold]{n}[/bold] {t}" for t, n in top3) or "—"
-    body = Text.from_markup(
-        f"[bold cyan]{total}[/bold cyan] memories  ·  "
-        f"[bold cyan]{len(projects)}[/bold cyan] proj  ·  {types_line}"
+    types_line = " · ".join(f"{n} {t}" for t, n in types_counter.most_common(4)) or "—"
+    body = Text.assemble(
+        (str(total), "bold"),
+        (" memories · ", "dim"),
+        (str(len(projects)), "bold"),
+        (" projects", "dim"),
+        ("    ", ""),
+        (types_line, "default"),
     )
-    return Panel(
-        body, title="[bold magenta]corpus[/bold magenta]", border_style="magenta", padding=(0, 1)
-    )
+    return Group(_hdr("corpus"), body, Text())
 
 
 def _panel_runtime(memory: Any) -> Panel:
@@ -400,7 +424,15 @@ _VERDICT_STYLE = {
 }
 
 
-def _panel_verdict(state_dir: Path) -> Panel:
+_VERDICT_LABEL = {
+    "ok": "USEFUL",
+    "weak": "WEAK",
+    "unmeasured": "UNMEASURED",
+    "unused": "NOT USED",
+}
+
+
+def _panel_verdict(state_dir: Path) -> Group:
     """Top-of-dashboard answer to 'does memo work and who reads it?'."""
     key = str(state_dir)
     data = _verdict_cache.get(key)
@@ -413,25 +445,22 @@ def _panel_verdict(state_dir: Path) -> Panel:
         _verdict_cache.set(data, key)
 
     status = str(data.get("status") or "unused")
-    border, label_style = _VERDICT_STYLE.get(status, ("red", "bold red"))
-    label = str(data.get("label") or "❌ NOT USED")
+    _, label_style = _VERDICT_STYLE.get(status, ("red", "bold red"))
+    label = _VERDICT_LABEL.get(status, "NOT USED")
     grounded = data.get("grounded_rate")
     gr = "—" if grounded is None else f"{grounded * 100:.0f}%"
     consults = data.get("consults") or 0
 
-    body = Text()
-    body.append(f"memo: {label}\n", style=label_style)
-    body.append(f"grounded {gr} · {consults} consults\n", style="dim")
-
     reads = [p["name"] for p in data.get("per_consumer", []) if p.get("reads")]
     silent = [p["name"] for p in data.get("per_consumer", []) if not p.get("reads")]
-    if reads:
-        body.append("reads:  ", style="dim")
-        body.append("  ".join(f"{n} ✅" for n in reads) + "\n", style="green")
+
+    kv = _kv()
+    kv.add_row("verdict", Text(label, style=label_style))
+    kv.add_row("grounded", f"{gr} · {consults} consults")
+    kv.add_row("reading", Text(", ".join(reads) or "—", style="green"))
     if silent:
-        body.append("NOT reading:  ", style="dim")
-        body.append("  ".join(f"{n} ❌" for n in silent), style="bold red")
-    return Panel(body, title="[bold]DOES memo WORK?[/bold]", border_style=border, padding=(0, 1))
+        kv.add_row("NOT reading", Text(", ".join(silent), style="bold red"))
+    return Group(_hdr("does it work?"), kv, Text())
 
 
 _recall_trend_cache: _TTLCache = _TTLCache(ttl_s=30.0)
@@ -484,7 +513,7 @@ def _grounding_citation_stats(state_dir: Path, limit: int = 2000) -> dict[str, A
     }
 
 
-def _panel_recall_trend(state_dir: Path) -> Panel:
+def _panel_recall_trend(state_dir: Path) -> Group:
     """'Recall Quality' — prec@5 eval trend + citation ground truth from grounding.log."""
     key = str(state_dir)
     data = _recall_trend_cache.get(key)
@@ -512,18 +541,11 @@ def _panel_recall_trend(state_dir: Path) -> Panel:
     seen = int(cites.get("seen") or 0)
     never_cited = int(cites.get("never_cited") or 0)
 
-    title = "[bold magenta]recall quality[/bold magenta]"
+    header = _hdr("recall quality")
     if not prec and not seen:
-        return Panel(
-            Text("sin datos aún", style="dim italic"),
-            title=title,
-            border_style="magenta",
-            padding=(0, 1),
-        )
+        return Group(header, Text("sin datos aún", style="dim italic"), Text())
 
-    tbl = Table.grid(padding=(0, 1))
-    tbl.add_column(style="dim", width=12)
-    tbl.add_column()
+    tbl = _kv()
 
     if prec:
         # Absolute 0..1 scale (precision metric) — no max-normalization,
@@ -532,9 +554,9 @@ def _panel_recall_trend(state_dir: Path) -> Panel:
         tbl.add_row(
             "prec@5",
             Text.assemble(
-                (spark, "magenta"),
-                ("  ", ""),
                 (f"{prec[-1]:.2f}", "bold"),
+                ("  ", ""),
+                (spark, _ACCENT),
                 (f"  ({len(prec)} runs)", "dim"),
             ),
         )
@@ -562,7 +584,7 @@ def _panel_recall_trend(state_dir: Path) -> Panel:
         )
     else:
         tbl.add_row("never cited", Text("sin datos aún", style="dim italic"))
-    return Panel(tbl, title=title, border_style="magenta", padding=(0, 1))
+    return Group(header, tbl, Text())
 
 
 def _memflow_bin() -> str | None:
@@ -638,7 +660,7 @@ def _panel_memflow(_state_dir: Path) -> Panel:
     return Panel(tbl, title="[bold]memflow utility[/bold]", border_style=border, padding=(0, 1))
 
 
-def _panel_consumers(state_dir: Path) -> Panel:
+def _panel_consumers(state_dir: Path) -> Group:
     key = str(state_dir)
     cached = _consumers_cache.get(key)
     if cached is None:
@@ -652,15 +674,22 @@ def _panel_consumers(state_dir: Path) -> Panel:
 
     consumers = cached.get("consumers") or []
     silent = cached.get("silent") or []
-    tbl = Table.grid(padding=(0, 1))
-    tbl.add_column(style="cyan", width=14)
-    tbl.add_column(justify="right", width=7)
-    tbl.add_column(justify="right", width=7)
-    tbl.add_column(justify="right", width=7)
-    tbl.add_column(style="dim", width=10)
+    tbl = Table.grid(padding=(0, 2))
+    tbl.add_column(style=_ACCENT, width=14)
+    tbl.add_column(justify="right", width=8)
+    tbl.add_column(justify="right", width=6)
+    tbl.add_column(justify="right", width=6)
+    tbl.add_column(style="dim", width=8)
+    tbl.add_row(
+        Text("consumer", style="dim"),
+        Text("consults", style="dim"),
+        Text("hit", style="dim"),
+        Text("grnd", style="dim"),
+        Text("last", style="dim"),
+    )
     if not consumers:
         tbl.add_row(Text("(no recall log data)", style="dim italic"), "", "", "", "")
-    for c in consumers[:6]:
+    for c in consumers[:8]:
         name = (c.get("consumer") or "?")[:13]
         consults = str(c.get("consults") or "—")
         hit = c.get("hit_rate")
@@ -669,18 +698,17 @@ def _panel_consumers(state_dir: Path) -> Panel:
         gr_s = f"{grounded * 100:.0f}%" if grounded is not None else "—"
         last = _human_age(c.get("last_seen"))
         tbl.add_row(name, consults, hit_s, gr_s, last)
-    body = (
-        Group(tbl, Text.assemble(("not reading memo: ", "dim"), (", ".join(silent), "bold red")))
-        if silent
-        else tbl
-    )
-    return Panel(body, title="[bold cyan]consumers[/bold cyan]", border_style="cyan")
+    parts: list[Any] = [_hdr("consumers"), tbl]
+    if silent:
+        parts.append(Text.assemble(("not reading memo: ", "dim"), (", ".join(silent), "bold red")))
+    parts.append(Text())
+    return Group(*parts)
 
 
 _utility_cache: _TTLCache = _TTLCache(ttl_s=30.0)
 
 
-def _panel_utility(state_dir: Path) -> Panel:
+def _panel_utility(state_dir: Path) -> Group:
     """Panel answering 'is memo worth it?' — tokens saved, hit rate, grounding."""
     key = str(state_dir)
     cached = _utility_cache.get(key)
@@ -747,9 +775,7 @@ def _panel_utility(state_dir: Path) -> Panel:
             ("grounding", f"{_pct(grounding_rate_pct)} answered"),
         ]
 
-        tbl = Table.grid(padding=(0, 2), expand=False)
-        tbl.add_column(width=16)
-        tbl.add_column()
+        tbl = _kv(16)
         for label, value in rows:
             # `value` carries Rich console markup (e.g. "[yellow]…[/yellow]");
             # Text(value) would render the tags literally, so parse the markup
@@ -758,6 +784,4 @@ def _panel_utility(state_dir: Path) -> Panel:
         cached = tbl
         _utility_cache.set(cached, key)
 
-    style = "green"
-    title = "[bold green]memo: worth it?[/bold green]"
-    return Panel(cached, title=title, border_style=style, padding=(0, 1))
+    return Group(_hdr("worth it?"), cached, Text())
