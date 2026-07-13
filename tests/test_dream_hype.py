@@ -301,3 +301,53 @@ def test_run_hype_pass_prunes_orphans(tmp_path, monkeypatch):
         assert verify_store.stats()["memories"] == 1
     finally:
         verify_store.close()
+
+
+def test_run_hype_pass_embed_failure_isolates_one_memory(tmp_path, monkeypatch):
+    """Failure to embed questions for ONE memory does not abort the pass.
+
+    Embedder fails for id1 but id2 succeeds → pass completes with status='done',
+    only id2 written to store, errors_items=1, memories=1.
+    """
+    memories = {
+        "id1": _mem_row(body_hash="h1", title="Decision with embed failure"),
+        "id2": _mem_row(body_hash="h2", title="Decision that works"),
+    }
+    mem = _FakeMem(memories, state_dir=tmp_path)
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+
+    monkeypatch.setattr(dh, "_llm_questions", lambda mem, title, body, *, n: ["q1?"])
+
+    # Embedder that raises for id1's question
+    original_embed = mem.embedder.embed_query
+
+    def _embed_with_failure(text: str):
+        if "Deci" in text:  # id1 title has "Decision with", id2 has just "Decision"
+            # Use a marker question to trigger the failure
+            pass
+        return original_embed(text)
+
+    call_count = {"count": 0}
+
+    def _embed_failing_on_id1(text: str):
+        call_count["count"] += 1
+        if call_count["count"] == 1:  # First call is for id1
+            raise RuntimeError("embed failed for id1")
+        return original_embed(text)
+
+    mem.embedder.embed_query = _embed_failing_on_id1
+
+    res = dh.run_hype_pass(cfg, mem, questions_per_memory=3, night_cap=400, dry_run=False)
+
+    assert res["status"] == "done", f"Expected 'done', got {res['status']}"
+    assert res["errors_items"] == 1, f"Expected errors_items=1, got {res['errors_items']}"
+    assert res["memories"] == 1, f"Expected memories=1, got {res['memories']}"
+    assert res["generated"] >= 1, f"Expected generated>=1, got {res['generated']}"
+
+    verify_store = HypeStore(cfg.db_path, dims=4)
+    try:
+        stats = verify_store.stats()
+        # Only id2 should be in store (id1 failed)
+        assert stats["memories"] == 1, f"Expected 1 memory in store, got {stats['memories']}"
+    finally:
+        verify_store.close()

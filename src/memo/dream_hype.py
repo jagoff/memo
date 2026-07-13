@@ -154,12 +154,16 @@ def run_hype_pass(
             if not questions:
                 res["errors_items"] += 1
                 continue
-            pairs = [(q, mem.embedder.embed_query(q)) for q in questions]
-            inserted = store.replace_for_memory(
-                item["id"], item["body_hash"], mem.cfg.helper_model, pairs
-            )
-            res["generated"] += inserted
-            res["memories"] += 1
+            try:
+                pairs = [(q, mem.embedder.embed_query(q)) for q in questions]
+                inserted = store.replace_for_memory(
+                    item["id"], item["body_hash"], mem.cfg.helper_model, pairs
+                )
+                res["generated"] += inserted
+                res["memories"] += 1
+            except Exception:  # one memory must never abort the pass
+                res["errors_items"] += 1
+                continue
 
         live_ids = {
             mid
