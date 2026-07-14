@@ -325,6 +325,20 @@ class TestExtractInsights:
         result = extract_insights(helper, "test-model", "user", "assistant")
         assert result == []
 
+    def test_extract_insights_skips_non_string_fields(self) -> None:
+        """LLM items with nested dict/list title/body/type are skipped, not crashed on."""
+        import json as _json
+
+        helper = MagicMock()
+        payload = [
+            {"title": "ok", "body": {"nested": "dict"}, "type": "note"},
+            {"title": ["list"], "body": "b", "type": "note"},
+            {"title": "kept", "body": "real body", "type": "note"},
+        ]
+        helper.chat.return_value = {"message": {"content": _json.dumps(payload)}}
+        result = extract_insights(helper, "test-model", "user", "assistant")
+        assert [i["title"] for i in result] == ["kept"]
+
     def test_extract_insights_valid_extraction(self) -> None:
         """Valid extraction returns parsed insights."""
         helper = MagicMock()

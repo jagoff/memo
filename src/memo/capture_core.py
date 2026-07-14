@@ -764,9 +764,16 @@ def extract_insights(
     for item in data:
         if not isinstance(item, dict):
             continue
-        title = (item.get("title") or "").strip()
-        body = (item.get("body") or "").strip()
-        type_ = (item.get("type") or "note").strip()
+        # Helper-LLM output is untrusted: any of these may come back as a
+        # nested dict/list instead of a string — skip rather than crash.
+        title = item.get("title") or ""
+        body = item.get("body") or ""
+        type_ = item.get("type") or "note"
+        if not all(isinstance(v, str) for v in (title, body, type_)):
+            continue
+        title = title.strip()
+        body = body.strip()
+        type_ = type_.strip()
         tags = item.get("tags") or []
         raw_fact_edges = item.get(FACT_EDGES_KEY)
         if not title or not body:
