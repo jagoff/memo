@@ -40,6 +40,18 @@ os.environ.setdefault(
     "MEMO_CONFIG_FILE",
     str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-config.toml"),
 )
+# `memo.config_md.config_dir()` defaults to `~/.config/memo/config` when
+# `MEMO_CONFIG_DIR` is unset, so tests that build a `Config` via `from_env()`
+# without pinning it read the developer's REAL markdown config (data_dir,
+# model_profile, dream flags, etc. — whatever is actually configured on this
+# machine) and silently override the test's own env/TOML-derived values.
+# Point it at a nonexistent dir by default so `field_values()` returns empty
+# unless a test opts in with its own `MEMO_CONFIG_DIR` (monkeypatch.setenv or
+# an explicit `env=`).
+os.environ.setdefault(
+    "MEMO_CONFIG_DIR",
+    str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-config-dir"),
+)
 # Most server tests exercise the complete administrative contract. Production
 # defaults to the 14-tool agent profile; the dedicated surface-profile tests
 # delete/override this value when asserting that default.
