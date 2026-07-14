@@ -653,6 +653,12 @@ memo reindex                      # absorb edits made directly in Obsidian
 memo stats
 memo ask 'what changed in the embedder this month?'
 
+# ── Optional exact transcript lookup (private FTS5, 90-day default) ─────────
+memo verbatim index --dry-run
+memo verbatim index
+memo verbatim search 'exact phrase' --session <session-id> --since 2026-07-01 --limit 10
+memo verbatim status
+
 # ── History & audit ────────────────────────────────────────────────────────
 memo record-history <id>                # chronological audit trail for one record with field diffs
 memo history                      # recent save/update/delete events across all records

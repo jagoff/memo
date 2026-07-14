@@ -111,6 +111,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Contradiction radar.** Change your mind on an old decision and memo flags the now-stale version — the agent won't reintroduce what you already discarded.
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
+- **Exact transcript lookup (opt-in).** `memo verbatim search` can find the precise wording of past local transcript turns through a private, lexical-only FTS5 index. It never enters ambient recall.
 - **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 14 tools, not 129.
 
 ## Requirements
@@ -179,6 +180,9 @@ memo save 'MLX prefill ~30% faster than Ollama on M3 Max' --title 'MLX bench' -t
 memo search 'how fast was the MLX benchmark'           # search by meaning, not just keywords
 memo list --limit 5                                    # most recent
 memo ask 'what changed in the embedder this month?'   # RAG — cites memories by id
+# Optional: build and query a private 90-day transcript index (no embeddings)
+memo verbatim index
+memo verbatim search 'exact deployment decision' --limit 10
 ```
 
 `memo config` is a native TUI for editing every persistent setting with search,

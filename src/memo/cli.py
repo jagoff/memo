@@ -142,6 +142,7 @@ from memo.cli_tokens import tokens_cmd
 from memo.cli_transcripts import mine_git, mine_history, reflect
 from memo.cli_tui import hook_log, logs, tui
 from memo.cli_usefulness import usefulness as usefulness_cmd
+from memo.cli_verbatim import verbatim_group
 from memo.cli_version import version_group
 from memo.cli_viz import map_cmd
 from memo.runtime.shims import install_shims_cmd
@@ -377,6 +378,7 @@ cli.add_command(invalidate_cmd)
 cli.add_command(synthesize_cmd)
 cli.add_command(retier_cmd)
 cli.add_command(usefulness_cmd)
+cli.add_command(verbatim_group)
 cli.add_command(roi_cmd)
 cli.add_command(gaps_cmd)
 cli.add_command(outcome_cmd)

@@ -218,4 +218,28 @@ SPECS: tuple[FlagSpec, ...] = (
         "kNN pool size over the question index during the read-path fold.",
         min_val=5,
     ),
+    # verbatim turn-level index (Total Recall F1)
+    _spec(
+        "MEMO_VERBATIM_INDEX",
+        "bool",
+        False,
+        "ingest",
+        "Nightly lexical turn-level index over transcript JSONL (Total Recall F1). Default off.",
+    ),
+    _spec(
+        "MEMO_VERBATIM_MAX_DAYS",
+        "int",
+        90,
+        "ingest",
+        "Retention/backfill window for the verbatim turn index.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_VERBATIM_MIN_CHARS",
+        "int",
+        20,
+        "ingest",
+        "Turns shorter than this are not indexed.",
+        min_val=0,
+    ),
 )

@@ -64,6 +64,7 @@ from memo import server_session_patterns as _srv_session_patterns
 from memo import server_sync as _srv_sync
 from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
+from memo import server_verbatim as _srv_verbatim
 from memo import server_version as _srv_version
 from memo._trace import TRACE_HEADER, trace_scope
 from memo.config import Config
@@ -158,6 +159,7 @@ def build_server(memory: Memory | None = None, *, auth: Any | None = None) -> Fa
         _srv_graph.register(server, memory)
         _srv_related.register(server, memory)
         _srv_around.register(server, memory)
+        _srv_verbatim.register(server, memory)
         _srv_health.register(server, memory)
         _srv_context_pack.register(server, memory)
         _srv_contextual.register(server, memory)
