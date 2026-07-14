@@ -115,7 +115,7 @@ _SERVER_INSTRUCTIONS = (
 )
 
 
-def build_server(memory: Memory | None = None) -> FastMCP:
+def build_server(memory: Memory | None = None, *, auth: Any | None = None) -> FastMCP:
     """Build the MCP server. Accepts an explicit `Memory` for tests.
 
     The default constructs from `Config.from_env()` — production runs
@@ -127,7 +127,12 @@ def build_server(memory: Memory | None = None) -> FastMCP:
 
     from memo import __version__ as _memo_version
 
-    server = FastMCP("memo", instructions=_SERVER_INSTRUCTIONS, version=_memo_version)
+    server = FastMCP(
+        "memo",
+        instructions=_SERVER_INSTRUCTIONS,
+        version=_memo_version,
+        auth=auth,
+    )
 
     # Stitch the synapse trace header into the shared trace contextvar so
     # warm-daemon writes carry the same trace id as the subprocess path.
@@ -316,25 +321,40 @@ def main() -> None:
     127.0.0.1:18768). One ``Memory`` instance is built here and reused across
     every request, so the embedder / reranker / synthesis LLM stay resident.
     """
-    from memo.flags import flag_int, flag_str
-
-    _start_background_tasks()
+    from memo.flags import flag_bool, flag_int, flag_str
 
     transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
+        from memo.http_auth import (
+            build_mcp_auth,
+            load_http_auth_config,
+            validate_http_bind,
+        )
+
+        host = flag_str("MEMO_MCP_HOST") or "127.0.0.1"
+        auth_cfg = load_http_auth_config(
+            host=host,
+            allow_no_auth=flag_bool("MEMO_MCP_ALLOW_NO_AUTH"),
+        )
+        validate_http_bind(
+            host,
+            auth_cfg,
+            allow_non_loopback=flag_bool("MEMO_MCP_ALLOW_NON_LOOPBACK"),
+        )
+        _start_background_tasks()
         # Long-lived daemon: enable the prompt cache + a larger query-embedding
         # cache BEFORE building Memory, so the embedder constructed inside
         # build_server() actually picks them up (it reads the cache size at
         # construction time).
         os.environ.setdefault("MEMO_PROMPT_CACHE", "1")
         os.environ.setdefault("MEMO_QUERY_CACHE_SIZE", "500")
-        server = build_server()
+        server = build_server(auth=build_mcp_auth(auth_cfg))
         _ensure_idle_daemon()
-        host = flag_str("MEMO_MCP_HOST") or "127.0.0.1"
         port = flag_int("MEMO_MCP_PORT")
         # transport is validated against the allowed set just above.
         server.run(transport=cast(Any, transport), host=host, port=port)
     else:
+        _start_background_tasks()
         server = build_server()
         _ensure_idle_daemon()
         server.run()

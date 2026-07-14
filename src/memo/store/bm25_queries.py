@@ -281,3 +281,13 @@ class _BM25QueriesMixin(_StoreBase):
                 "SELECT COUNT(*) FROM meta WHERE deleted_at IS NULL"
             ).fetchone()[0]
         return self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()[0]
+
+    def count_by_type(self) -> dict[str, int]:
+        """Return active record counts grouped by their public type."""
+
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
+        where = " WHERE deleted_at IS NULL" if "deleted_at" in cols else ""
+        rows = self._conn.execute(
+            f"SELECT type, COUNT(*) AS n FROM meta{where} GROUP BY type ORDER BY type"  # noqa: S608
+        ).fetchall()
+        return {str(row["type"]): int(row["n"]) for row in rows}

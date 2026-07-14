@@ -93,22 +93,29 @@ The `memo-mcp` server speaks stdio by default. Select the HTTP transport with
 docker run -d --name memo-server \
   -v memo-data:/data \
   -p 8765:8765 \
+  -e MEMO_HTTP_API_TOKEN="${MEMO_HTTP_API_TOKEN:?set a 32+ character token}" \
   -e MEMO_MCP_TRANSPORT=http \
   -e MEMO_MCP_HOST=0.0.0.0 \
   -e MEMO_MCP_PORT=8765 \
+  -e MEMO_MCP_ALLOW_NON_LOOPBACK=1 \
   ghcr.io/jagoff/memo:latest \
   memo-mcp
 ```
 
-Then connect clients to `http://localhost:8765`.
+Then connect clients to `http://localhost:8765` and configure the same value as
+their bearer token.
 
 ### HTTP auth
 
-Neither the HTTP MCP transport nor `memo http-api` has **built-in
-authentication** — both bind to `127.0.0.1` (loopback) by default. To expose
-either beyond localhost, set the host to `0.0.0.0` **and** put a reverse proxy
-(nginx, Caddy) with authentication in front. Do not expose an unauthenticated
-memo endpoint on an untrusted network.
+The HTTP MCP transport and `memo http-api` share bearer authentication. Set a
+32+ character `MEMO_HTTP_API_TOKEN`, or let memo create a private token at
+`$MEMO_STATE_DIR/http-api-token`. Both bind to `127.0.0.1` by default.
+
+Network exposure requires two independent settings: a non-loopback host and an
+explicit acknowledgement (`MEMO_MCP_ALLOW_NON_LOOPBACK=1` for MCP or
+`--allow-non-loopback` for REST). Memo refuses a non-loopback bind if auth is
+disabled. Use TLS or a trusted reverse proxy as well, because a bearer token is
+not encryption.
 
 ### Compose example
 
@@ -125,6 +132,8 @@ services:
       MEMO_MCP_TRANSPORT: http
       MEMO_MCP_HOST: 0.0.0.0
       MEMO_MCP_PORT: "8765"
+      MEMO_MCP_ALLOW_NON_LOOPBACK: "1"
+      MEMO_HTTP_API_TOKEN: ${MEMO_HTTP_API_TOKEN:?set a 32+ character token}
     command: memo-mcp
     ports:
       - "8765:8765"
