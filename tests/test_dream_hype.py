@@ -259,13 +259,15 @@ def test_run_hype_pass_llm_none_skips_item_without_aborting(tmp_path, monkeypatc
 
 
 def test_run_hype_pass_llm_empty_list_skips_item(tmp_path, monkeypatch):
+    # Single-item backlog where that one item fails is also the
+    # all-items-failed case (Fix 4) — status reflects the total wash.
     memories = {"id1": _mem_row(body_hash="h1")}
     mem = _FakeMem(memories, state_dir=tmp_path)
     cfg = _FakeCfg(tmp_path / "memvec.db")
     monkeypatch.setattr(dh, "_llm_questions", lambda mem, title, body, *, n: [])
 
     res = dh.run_hype_pass(cfg, mem, dry_run=False)
-    assert res["status"] == "done"
+    assert res["status"] == "all_items_failed"
     assert res["errors_items"] == 1
     assert res["generated"] == 0
 
@@ -304,6 +306,50 @@ def test_run_hype_pass_dry_run_computes_backlog_without_writing(tmp_path, monkey
         assert store.stats() == {"memories": 0, "questions": 0}
     finally:
         store.close()
+
+
+def test_run_hype_pass_real_run_backlog_remaining_reflects_failed_items(tmp_path, monkeypatch):
+    """A REAL (non-dry-run) run must populate backlog_remaining honestly:
+    items that failed (LLM returned None) were never written to the store, so
+    they legitimately remain pending — len(backlog) - memories_succeeded."""
+    memories = {
+        "id1": _mem_row(body_hash="h1", title="Decision about X"),
+        "id2": _mem_row(body_hash="h2", title="Decision about Y"),
+        "id3": _mem_row(body_hash="h3", title="Decision about Z"),
+    }
+    mem = _FakeMem(memories, state_dir=tmp_path)
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+
+    def _fake_llm(mem, title, body, *, n):
+        return None if title == "Decision about X" else ["q1?"]
+
+    monkeypatch.setattr(dh, "_llm_questions", _fake_llm)
+
+    res = dh.run_hype_pass(cfg, mem, questions_per_memory=1, night_cap=400, dry_run=False)
+
+    assert res["status"] == "done"
+    assert res["memories"] == 2
+    assert res["errors_items"] == 1
+    assert res["backlog_remaining"] == 1
+
+
+def test_run_hype_pass_all_items_failed_status(tmp_path, monkeypatch):
+    """When every backlog item fails (LLM returns None for all), the run must
+    still be a normal return (no raise) but with status='all_items_failed'
+    instead of 'done', so the nightly receipt is honest about a total wash."""
+    memories = {
+        "id1": _mem_row(body_hash="h1"),
+        "id2": _mem_row(body_hash="h2"),
+    }
+    mem = _FakeMem(memories, state_dir=tmp_path)
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+    monkeypatch.setattr(dh, "_llm_questions", lambda mem, title, body, *, n: None)
+
+    res = dh.run_hype_pass(cfg, mem, dry_run=False)
+
+    assert res["status"] == "all_items_failed"
+    assert res["errors_items"] == 2
+    assert res["memories"] == 0
 
 
 def test_run_hype_pass_prunes_orphans(tmp_path, monkeypatch):

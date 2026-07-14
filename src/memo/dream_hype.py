@@ -172,13 +172,20 @@ def run_hype_pass(
                 res["errors_items"] += 1
                 continue
 
+        # Honest remaining count: failed items (counted in errors_items) were
+        # never written to the store, so they're still pending — the cheap
+        # proxy is len(backlog) minus the ones that succeeded (res["memories"]).
+        res["backlog_remaining"] = max(0, len(backlog) - res["memories"])
+
         live_ids = {
             mid
             for mid in mem.store.all_ids()
             if (row := mem.store.get(mid)) is not None and row.get("type") in DURABLE_TYPES
         }
         res["pruned"] = store.prune_orphans(live_ids)
-        res["status"] = "done"
+        res["status"] = (
+            "all_items_failed" if res["errors_items"] == len(backlog) and backlog else "done"
+        )
     except Exception as exc:  # surfaced via receipt["errors"], never silent
         res["status"] = "error"
         res["error"] = f"{type(exc).__name__}: {exc}"
