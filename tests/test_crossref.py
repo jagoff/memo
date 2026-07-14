@@ -285,9 +285,7 @@ def test_referencing_sources_matches_id_prefix(tmp_path):
 def test_save_indexes_typed_links_when_flag_on(mock_memory, monkeypatch):
     monkeypatch.setenv("MEMO_CROSSREF_INDEX", "1")
     target = mock_memory.save(content="target body", title="Target")
-    src = mock_memory.save(
-        content=f"decision text\n- supersedes [[{target.id}]]", title="Source"
-    )
+    src = mock_memory.save(content=f"decision text\n- supersedes [[{target.id}]]", title="Source")
     refs = mock_memory.crossref.referencing_sources(target.id)
     assert [r.source_id for r in refs] == [src.id]
     assert refs[0].link_type == "supersedes"

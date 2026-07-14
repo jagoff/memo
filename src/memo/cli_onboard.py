@@ -3,6 +3,7 @@
 Orchestrates already-shipped pieces (wire_recall_hook, install_shims_cmd,
 mine_transcripts); owns no heavy logic of its own.
 """
+
 from __future__ import annotations
 
 import json
@@ -55,18 +56,14 @@ def _recent_memories(memory_dir: Path, n: int = 3) -> list[dict[str, str]]:
         # Priority 1: YAML frontmatter title:
         fm_match = _FM_TITLE_RE.search(head)
         if fm_match:
-            title = fm_match.group(1).strip().strip('\'"')
+            title = fm_match.group(1).strip().strip("'\"")
         else:
             # Priority 2: First H1 heading; Priority 3: filename stem
             h1_line = next(
                 (ln for ln in head.splitlines() if ln.startswith("# ")),
                 None,
             )
-            title = (
-                h1_line.removeprefix("# ").strip()
-                if h1_line
-                else p.stem
-            )
+            title = h1_line.removeprefix("# ").strip() if h1_line else p.stem
 
         out.append({"title": title, "file": p.name})
     return out
@@ -89,7 +86,9 @@ def _step_backfill(days: int, *, dry_run: bool) -> dict[str, Any]:
 @click.command(name="onboard")
 @click.option("--yes", is_flag=True, help="Correr todos los pasos sin preguntar.")
 @click.option(
-    "--days", type=int, default=None,
+    "--days",
+    type=int,
+    default=None,
     help="Ventana de backfill en días (default: MEMO_ONBOARD_BACKFILL_DAYS=90).",
 )
 @click.option("--dry-run", is_flag=True, help="Estimar el backfill sin guardar nada.")
@@ -119,7 +118,11 @@ def onboard(ctx: click.Context, yes: bool, days: int | None, dry_run: bool, as_j
         ctx.invoke(install_shims_cmd)
 
     # 2/4 — transcript backfill (Day-0 corpus from history already on disk)
-    window = days if days is not None else (flag_int("MEMO_ONBOARD_BACKFILL_DAYS") or DEFAULT_BACKFILL_DAYS)
+    window = (
+        days
+        if days is not None
+        else (flag_int("MEMO_ONBOARD_BACKFILL_DAYS") or DEFAULT_BACKFILL_DAYS)
+    )
     if dry_run:
         summary["backfill"] = _step_backfill(window, dry_run=True)
         console.print(

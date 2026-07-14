@@ -58,9 +58,9 @@ def test_init_writes_vault_path_when_obsidian_branch(tmp_path: Path, runner_env)
     ):
         result = runner.invoke(cli, ["init", "--force"], env=runner_env)
     assert result.exit_code == 0, result.output
-    body = (
-        Path(runner_env["MEMO_CONFIG_DIR"]) / "config" / "storage-config.md"
-    ).read_text(encoding="utf-8")
+    body = (Path(runner_env["MEMO_CONFIG_DIR"]) / "config" / "storage-config.md").read_text(
+        encoding="utf-8"
+    )
     assert f'data_dir = "{data_dir}"' in body
     assert f'vault_path = "{vault}"' in body
 

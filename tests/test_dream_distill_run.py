@@ -25,8 +25,15 @@ class _FakeMem:
 
     def _pull_embeddings(self, *, exclude_types=None):
         return [
-            {"id": i, "title": f"T{i[:1]}", "type": "decision", "tags": [], "path": "p",
-             "updated": "2026-06-01", "emb": [1.0, 0.0]}
+            {
+                "id": i,
+                "title": f"T{i[:1]}",
+                "type": "decision",
+                "tags": [],
+                "path": "p",
+                "updated": "2026-06-01",
+                "emb": [1.0, 0.0],
+            }
             for i in self._ids
         ]
 
@@ -56,7 +63,9 @@ def test_run_distill_disabled_by_default(monkeypatch, tmp_cfg):
 
 def test_run_distill_saves_mature_cluster(monkeypatch, tmp_cfg):
     monkeypatch.setenv("MEMO_DREAM_DISTILL_ENABLED", "1")
-    monkeypatch.setattr(dd, "_llm_distill", lambda mem, cl: {"title": "Principle", "body": "the distilled insight"})
+    monkeypatch.setattr(
+        dd, "_llm_distill", lambda mem, cl: {"title": "Principle", "body": "the distilled insight"}
+    )
     mem = _FakeMem()
     res = dd.run_distill(tmp_cfg, mem, min_cluster=2, min_support=2, min_age_days=14)
     assert res["status"] == "done"
@@ -78,7 +87,9 @@ def test_run_distill_success_status_is_saved_not_save(monkeypatch, tmp_cfg):
     through the REAL decide_distillations (no hard-coded fake decision) so it
     proves the producer — not just a test double — emits "saved"."""
     monkeypatch.setenv("MEMO_DREAM_DISTILL_ENABLED", "1")
-    monkeypatch.setattr(dd, "_llm_distill", lambda mem, cl: {"title": "Principle", "body": "the distilled insight"})
+    monkeypatch.setattr(
+        dd, "_llm_distill", lambda mem, cl: {"title": "Principle", "body": "the distilled insight"}
+    )
     mem = _FakeMem()
     res = dd.run_distill(tmp_cfg, mem, min_cluster=2, min_support=2, min_age_days=14)
     assert res["status"] == "done"

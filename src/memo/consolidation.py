@@ -166,7 +166,10 @@ class AdvancedConsolidator:
             prompt += f"{m.get('body_preview', '')}\n\n"
 
         messages = [
-            {"role": "system", "content": resolve_prompt("merge", _MERGE_SYSTEM_PROMPT, self.memory.cfg.state_dir)},
+            {
+                "role": "system",
+                "content": resolve_prompt("merge", _MERGE_SYSTEM_PROMPT, self.memory.cfg.state_dir),
+            },
             {"role": "user", "content": prompt},
         ]
 

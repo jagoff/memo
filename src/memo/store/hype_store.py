@@ -169,9 +169,7 @@ class HypeStore(_ConnectionMixin):
                 ]
                 for qid in qids:
                     cx.execute("DELETE FROM hype_vec WHERE question_id = ?", (qid,))
-                cur = cx.execute(
-                    "DELETE FROM hype_questions WHERE memory_id = ?", (memory_id,)
-                )
+                cur = cx.execute("DELETE FROM hype_questions WHERE memory_id = ?", (memory_id,))
                 removed += cur.rowcount
         return removed
 

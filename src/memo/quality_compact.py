@@ -111,9 +111,13 @@ def preview_quality_compaction(memory: Any, *, limit: int = 20) -> dict[str, Any
             continue
         if target_scope != scope:
             continue
-        canonical_title = str(getattr(target, "title", "") or f"Canonical memory {canonical_id[:8]}")
+        canonical_title = str(
+            getattr(target, "title", "") or f"Canonical memory {canonical_id[:8]}"
+        )
 
-        source_ids = sorted({str(getattr(source, "id", "")) for source in sources if getattr(source, "id", "")})
+        source_ids = sorted(
+            {str(getattr(source, "id", "")) for source in sources if getattr(source, "id", "")}
+        )
         if not source_ids:
             continue
 
@@ -147,7 +151,9 @@ def apply_quality_compaction(
     errors: list[str] = []
 
     for proposal in proposals:
-        source_ids = [str(source_id) for source_id in (proposal.get("source_ids") or []) if source_id]
+        source_ids = [
+            str(source_id) for source_id in (proposal.get("source_ids") or []) if source_id
+        ]
         archived: list[str] = []
         attempted: list[str] = []
 

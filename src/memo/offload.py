@@ -44,12 +44,9 @@ def synopsize(content: str, *, max_chars: int = _SYNOPSIS_MAX_CHARS) -> tuple[st
     if len(lines) >= 2:
         sep = "\t" if "\t" in lines[0] else "," if "," in lines[0] else None
         if sep is not None and all(
-            line.count(sep) == lines[0].count(sep)
-            for line in lines[1 : min(len(lines), 6)]
+            line.count(sep) == lines[0].count(sep) for line in lines[1 : min(len(lines), 6)]
         ):
-            return "csv", (
-                f"Table · {len(lines) - 1} rows · columns: {lines[0][:200]}"[:max_chars]
-            )
+            return "csv", (f"Table · {len(lines) - 1} rows · columns: {lines[0][:200]}"[:max_chars])
     if sum(1 for line in lines[:80] if _CODE_LINE.match(line)) >= 3:
         symbols = "; ".join(line.strip()[:80] for line in lines if _CODE_SYMBOL.match(line))
         return "code", f"Code · {len(lines)} lines · {symbols}"[:max_chars]

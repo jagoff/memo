@@ -60,7 +60,9 @@ def build_context_surface(
         read_through=False,
         quality_rerank=True,
     )
-    pack = build_context_pack(question, hits, snippet_chars=snippet_chars, budget_chars=budget_chars)
+    pack = build_context_pack(
+        question, hits, snippet_chars=snippet_chars, budget_chars=budget_chars
+    )
     pack_dict = asdict(pack)
     omissions = _omissions(pack.omissions, hits, pack_dict)
     sections = {
@@ -69,7 +71,9 @@ def build_context_surface(
         "query_hits": pack_dict,
         "omissions": omissions,
     }
-    prompt = _wrap_prompt(_render_prompt(static, dynamic, pack.to_prompt(), omissions), budget_chars)
+    prompt = _wrap_prompt(
+        _render_prompt(static, dynamic, pack.to_prompt(), omissions), budget_chars
+    )
     envelope = {
         "schema": SCHEMA,
         "question": question,
@@ -166,10 +170,7 @@ def _render_prompt(
     if static:
         sections.append("Static profile:\n" + "\n\n".join(str(r["text"]) for r in static))
     if dynamic:
-        lines = [
-            f"- [{r.get('id_short')}] {r.get('type')}: {r.get('title')}"
-            for r in dynamic
-        ]
+        lines = [f"- [{r.get('id_short')}] {r.get('type')}: {r.get('title')}" for r in dynamic]
         sections.append("Dynamic context:\n" + "\n".join(lines))
     if query_prompt:
         sections.append(query_prompt)

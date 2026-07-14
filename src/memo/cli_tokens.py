@@ -99,8 +99,8 @@ def _by_client_panel(s: dict) -> Panel | None:
     if not bc:
         return None
     tbl = Table.grid(padding=(0, 2))
-    tbl.add_column(style="bold")           # agent
-    tbl.add_column(justify="right")        # tokens
+    tbl.add_column(style="bold")  # agent
+    tbl.add_column(justify="right")  # tokens
     tbl.add_column(justify="left", style="dim")  # signal
     for client, rec in bc.items():
         signal = []
@@ -156,7 +156,7 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
     measured = token_meter.summarize(cfg.state_dir)
 
     if as_json:
-        s["measured"] = measured          # additive key; existing keys untouched
+        s["measured"] = measured  # additive key; existing keys untouched
         click.echo(_json.dumps(s, ensure_ascii=False, indent=2))
         return
 
@@ -169,19 +169,23 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
             f"tool-spend grounded {p['grounded_tool_tok_per_turn']} vs "
             f"ungrounded {p['ungrounded_tool_tok_per_turn']} tok/turn"
             + (f"  (Δ {delta:+.0f})" if delta is not None else "")
-            if p["grounded_tool_tok_per_turn"] is not None and p["ungrounded_tool_tok_per_turn"] is not None
+            if p["grounded_tool_tok_per_turn"] is not None
+            and p["ungrounded_tool_tok_per_turn"] is not None
             else "proxy: no grounded+ungrounded sessions to compare yet"
         )
-        console.print(Panel(
-            Text.from_markup(
-                f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok answer · "
-                f"[bold]{_fmt_tokens(measured['tool_tok'])}[/bold] tok tool-loops · "
-                f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok injected "
-                f"([dim]{measured['sessions']} measured sessions[/dim])\n[dim]{proxy_line}[/dim]"
-            ),
-            title="[bold]memo · measured (real transcript)[/bold]",
-            border_style="green", padding=(0, 2),
-        ))
+        console.print(
+            Panel(
+                Text.from_markup(
+                    f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok answer · "
+                    f"[bold]{_fmt_tokens(measured['tool_tok'])}[/bold] tok tool-loops · "
+                    f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok injected "
+                    f"([dim]{measured['sessions']} measured sessions[/dim])\n[dim]{proxy_line}[/dim]"
+                ),
+                title="[bold]memo · measured (real transcript)[/bold]",
+                border_style="green",
+                padding=(0, 2),
+            )
+        )
 
     if s["historic"]["tokens"] == 0:
         console.print(
@@ -199,7 +203,8 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
         console.print(agent_panel)
 
     daily_rows = [
-        (d["date"][5:], d["grounded"], d["tokens"]) for d in s["daily"]  # MM-DD
+        (d["date"][5:], d["grounded"], d["tokens"])
+        for d in s["daily"]  # MM-DD
     ]
     console.print(_chart(daily_rows, "cyan", f"last {days} days · tokens/day"))
 

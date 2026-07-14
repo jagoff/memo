@@ -1,4 +1,5 @@
 """`memo graduation` — inspect and control the graduation controller."""
+
 from __future__ import annotations
 
 import click

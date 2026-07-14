@@ -207,18 +207,20 @@ class TestToolActivityProjection:
         """Write tool calls are tracked."""
         transcript_file = tmp_path / "test.jsonl"
         transcript_file.write_text(
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Edit",
-                            "input": {"file_path": "/src/foo.py"},
-                        }
-                    ]
-                },
-            })
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Edit",
+                                "input": {"file_path": "/src/foo.py"},
+                            }
+                        ]
+                    },
+                }
+            )
             + "\n"
         )
         files = collect_tool_files(transcript_file)
@@ -228,18 +230,20 @@ class TestToolActivityProjection:
         """Read tool calls are tracked separately."""
         transcript_file = tmp_path / "test.jsonl"
         transcript_file.write_text(
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Read",
-                            "input": {"file_path": "/src/foo.py"},
-                        }
-                    ]
-                },
-            })
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Read",
+                                "input": {"file_path": "/src/foo.py"},
+                            }
+                        ]
+                    },
+                }
+            )
             + "\n"
         )
         files = collect_tool_files(transcript_file)
@@ -342,14 +346,16 @@ class TestExtractInsights:
     def test_extract_insights_valid_extraction(self) -> None:
         """Valid extraction returns parsed insights."""
         helper = MagicMock()
-        insights_json = json.dumps([
-            {
-                "title": "Use PostgreSQL",
-                "type": "decision",
-                "body": "Decided to use PostgreSQL for reliability.",
-                "tags": ["database", "decision"],
-            }
-        ])
+        insights_json = json.dumps(
+            [
+                {
+                    "title": "Use PostgreSQL",
+                    "type": "decision",
+                    "body": "Decided to use PostgreSQL for reliability.",
+                    "tags": ["database", "decision"],
+                }
+            ]
+        )
         helper.chat.return_value = {"message": {"content": insights_json}}
         result = extract_insights(helper, "test-model", "user text", "assistant text")
         assert len(result) == 1
@@ -358,9 +364,9 @@ class TestExtractInsights:
     def test_extract_insights_fenced_response(self) -> None:
         """Handles markdown-fenced JSON responses."""
         helper = MagicMock()
-        insights_json = json.dumps([
-            {"title": "test", "type": "note", "body": "content", "tags": []}
-        ])
+        insights_json = json.dumps(
+            [{"title": "test", "type": "note", "body": "content", "tags": []}]
+        )
         fenced = f"```json\n{insights_json}\n```"
         helper.chat.return_value = {"message": {"content": fenced}}
         result = extract_insights(helper, "test-model", "user", "assistant")
@@ -414,16 +420,12 @@ class TestHashAndExtractSave:
             "retyped": 0,
         }
 
-        result = extract_and_save_text(
-            mem, cfg, "explicit text to save", title="My Note"
-        )
+        result = extract_and_save_text(mem, cfg, "explicit text to save", title="My Note")
         assert result["status"] == "verbatim"
         assert result["saved"] == ["test-id"]
 
     @patch("memo.capture_core._extract_and_save")
-    def test_extract_and_save_text_extracted(
-        self, mock_extract: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_extract_and_save_text_extracted(self, mock_extract: MagicMock, tmp_path: Path) -> None:
         """When extractor yields candidates, return extracted status."""
         cfg = MagicMock()
         cfg.state_dir = tmp_path
@@ -462,22 +464,22 @@ class TestIntegrationExtractAndSave:
         helper = MagicMock()
         mem._ensure_chat.return_value = helper
 
-        insights_json = json.dumps([
-            {
-                "title": "session note",  # Generic session narrative
-                "type": "note",
-                "body": "A",  # Too short for quality gate
-                "tags": [],
-            }
-        ])
+        insights_json = json.dumps(
+            [
+                {
+                    "title": "session note",  # Generic session narrative
+                    "type": "note",
+                    "body": "A",  # Too short for quality gate
+                    "tags": [],
+                }
+            ]
+        )
         helper.chat.return_value = {"message": {"content": insights_json}}
 
         from memo.capture_core import _extract_and_save
 
         with patch("memo.capture_core._passes_quality", return_value=False):
-            result = _extract_and_save(
-                mem, cfg, "user text", "assistant text", debug=False
-            )
+            result = _extract_and_save(mem, cfg, "user text", "assistant text", debug=False)
         # Candidate extracted by LLM but filtered by quality gate
         assert result["candidates"] == 1
         assert result["skipped_quality"] == 1
@@ -510,9 +512,7 @@ class TestIntegrationExtractAndSave:
                 side_effect=capture_flag_enabled,
             ):
                 with patch("memo.capture_core.extract_insights", return_value=insights):
-                    result = _extract_and_save(
-                        mem, cfg, "user text", "assistant text", debug=False
-                    )
+                    result = _extract_and_save(mem, cfg, "user text", "assistant text", debug=False)
         # Meta-commentary candidate is dropped
         assert result["candidates"] == 1
         assert result["skipped_meta"] == 1

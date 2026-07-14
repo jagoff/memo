@@ -100,6 +100,7 @@ ProgressCallback = Callable[[str, dict[str, Any]], None]
 # Internal data class (not part of the public API)
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class RepoEmbedInput:
     chunk: dict[str, Any]
@@ -110,6 +111,7 @@ class RepoEmbedInput:
 # ---------------------------------------------------------------------------
 # Noise filter
 # ---------------------------------------------------------------------------
+
 
 def _is_noise_chunk(body: str) -> bool:
     """True for near-empty chunks with no heading and no link/URL."""
@@ -125,6 +127,7 @@ def _is_noise_chunk(body: str) -> bool:
 # ---------------------------------------------------------------------------
 # Git utilities
 # ---------------------------------------------------------------------------
+
 
 def _git_timeout(default: float) -> float:
     """Cap for `subprocess.run` of git commands.
@@ -199,6 +202,7 @@ def _tracked_files(clone_path: Path) -> list[str]:
 # Embed helpers
 # ---------------------------------------------------------------------------
 
+
 def _repo_embed_input(chunk: dict[str, Any]) -> RepoEmbedInput:
     text = (
         f"repo: {chunk['repo_name']}\npath: {chunk['path']}\n"
@@ -238,6 +242,7 @@ def _embed_cache_model(embedder: EmbedderBase, cfg: Config) -> str:
 # ---------------------------------------------------------------------------
 # File/metadata helpers
 # ---------------------------------------------------------------------------
+
 
 def _semantic_status(current: str | None, counts: dict[str, int]) -> str:
     if counts["chunks"] == counts["embedded_chunks"]:
@@ -286,6 +291,7 @@ def _is_excluded(rel: Path, rel_posix: str, include: list[str], exclude: list[st
 # ---------------------------------------------------------------------------
 # Chunking helpers
 # ---------------------------------------------------------------------------
+
 
 def _chunk_lines(
     lines: list[str],

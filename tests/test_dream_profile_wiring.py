@@ -11,8 +11,14 @@ from memo.cli_dream import dream_cmd
 from memo.contradict import ScanResult
 
 _SKIPS = [
-    "--skip-orientation", "--skip-signal-gather", "--skip-entities", "--skip-decay",
-    "--skip-prune-floor", "--skip-evict", "--skip-compress", "--skip-prewarm",
+    "--skip-orientation",
+    "--skip-signal-gather",
+    "--skip-entities",
+    "--skip-decay",
+    "--skip-prune-floor",
+    "--skip-evict",
+    "--skip-compress",
+    "--skip-prewarm",
     "--skip-presynthesis",
 ]
 
@@ -21,8 +27,13 @@ def _mock_mem():
     mem = MagicMock()
     mem.lifecycle.enforce_forget_ttl.return_value = []
     mem.contradict_scanner.scan_corpus.return_value = ScanResult(
-        scanned_memories=0, pairs_examined=0, pairs_inserted=0, pairs_refreshed=0,
-        pairs_skipped_resolved=0, contradictions_found=0, evolutions_found=0,
+        scanned_memories=0,
+        pairs_examined=0,
+        pairs_inserted=0,
+        pairs_refreshed=0,
+        pairs_skipped_resolved=0,
+        contradictions_found=0,
+        evolutions_found=0,
     )
     mem.contradict_store.list_open.return_value = []
     mem.consolidator.consolidate_all.return_value = {"results": []}
@@ -42,7 +53,7 @@ def _run(tmp_cfg, monkeypatch, *, env_extra=None):
     result = CliRunner().invoke(dream_cmd, ["run", "--dry-run", "--json", *_SKIPS], env=env)
     assert result.exit_code == 0, result.output
     out = result.output
-    return json.loads(out[out.index("{"):])
+    return json.loads(out[out.index("{") :])
 
 
 def test_profile_pass_runs_when_flag_on(tmp_cfg, monkeypatch):
@@ -50,8 +61,11 @@ def test_profile_pass_runs_when_flag_on(tmp_cfg, monkeypatch):
 
     def _fake(cfg, mem, **kwargs):
         calls.append(kwargs)
-        return {"status": "done", "written": [{"scope": "global", "status": "would_write"}],
-                "standing_rules": 0}
+        return {
+            "status": "done",
+            "written": [{"scope": "global", "status": "would_write"}],
+            "standing_rules": 0,
+        }
 
     monkeypatch.setattr("memo.dream_profile.run_profile_pass", _fake)
     receipt = _run(tmp_cfg, monkeypatch, env_extra={"MEMO_DREAM_PROFILE_ENABLED": "1"})
@@ -73,8 +87,12 @@ def test_profile_pass_off_by_default(tmp_cfg, monkeypatch):
 def test_profile_pass_error_lands_in_receipt_errors(tmp_cfg, monkeypatch):
     monkeypatch.setattr(
         "memo.dream_profile.run_profile_pass",
-        lambda *a, **k: {"status": "error", "written": [], "standing_rules": 0,
-                         "error": "RuntimeError: boom"},
+        lambda *a, **k: {
+            "status": "error",
+            "written": [],
+            "standing_rules": 0,
+            "error": "RuntimeError: boom",
+        },
     )
     receipt = _run(tmp_cfg, monkeypatch, env_extra={"MEMO_DREAM_PROFILE_ENABLED": "1"})
     assert any(e.startswith("profile:") and "boom" in e for e in receipt["errors"])

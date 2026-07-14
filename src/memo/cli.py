@@ -153,7 +153,18 @@ from memo.setup import run_picker
 _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     (
         "Core",
-        ["save", "search", "ask", "context", "context-pack", "get", "edit", "rename", "delete", "list"],
+        [
+            "save",
+            "search",
+            "ask",
+            "context",
+            "context-pack",
+            "get",
+            "edit",
+            "rename",
+            "delete",
+            "list",
+        ],
     ),
     (
         "Recall & Hooks",
@@ -601,9 +612,7 @@ def _run_picker_and_save() -> None:
             "[dim](used by `memo ingest`)[/dim]",
         )
     console.print(f"[dim]config saved: {written[0].parent}[/dim]")
-    console.print(
-        "💡 Tip: sincronizá memorias entre Macs → `memo sync setup` cuando quieras"
-    )
+    console.print("💡 Tip: sincronizá memorias entre Macs → `memo sync setup` cuando quieras")
 
 
 def main() -> None:

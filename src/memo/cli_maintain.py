@@ -95,7 +95,11 @@ def _synthesis_state_path(cfg: Config) -> Path:
     return cfg.state_dir / "synthesis_state.json"
 
 
-@safe_operation(fallback=None, log_level=logging.DEBUG, error_message="maintain: could not read synthesis_state.json")
+@safe_operation(
+    fallback=None,
+    log_level=logging.DEBUG,
+    error_message="maintain: could not read synthesis_state.json",
+)
 def _read_synthesis_last_run(cfg: Config) -> str | None:
     """Return the ISO timestamp of the last synthesis run, or None."""
     p = _synthesis_state_path(cfg)
@@ -242,7 +246,11 @@ def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[
 @click.option("--skip-contradict", is_flag=True, help="Skip the contradiction pass.")
 @click.option("--skip-consolidate", is_flag=True, help="Skip the duplicate-merge pass.")
 @click.option("--skip-stale", is_flag=True, help="Skip the staleness pass.")
-@click.option("--vacuum", is_flag=True, help="Permanently delete soft-deleted records older than --vacuum-days.")
+@click.option(
+    "--vacuum",
+    is_flag=True,
+    help="Permanently delete soft-deleted records older than --vacuum-days.",
+)
 @click.option("--vacuum-days", default=90, type=int, help="Age threshold for vacuum cleanup.")
 @click.option(
     "--skip-synthesize",
@@ -396,9 +404,7 @@ def maintain_cmd(
                 older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
                 if flag_bool("MEMO_CROSSREF_INDEX"):
                     try:
-                        _refs = [
-                            b.source_id for b in mem.crossref.referencing_sources(older)
-                        ]
+                        _refs = [b.source_id for b in mem.crossref.referencing_sources(older)]
                     except Exception:
                         _refs = []
                     if _refs:
@@ -429,11 +435,15 @@ def maintain_cmd(
                     ok = (
                         mem.delete(target)
                         if hard_delete
-                        else mem.lifecycle.archive_memory(target, superseded_by=decision.dominant_id)
+                        else mem.lifecycle.archive_memory(
+                            target, superseded_by=decision.dominant_id
+                        )
                     )
                     if ok:
                         mem.contradict_store.resolve(
-                            pair.pair_id, "kept_newer", note=f"auto: {action}d {target} — {decision.reason}"
+                            pair.pair_id,
+                            "kept_newer",
+                            note=f"auto: {action}d {target} — {decision.reason}",
                         )
                 receipt["superseded"].append(
                     {
@@ -550,16 +560,17 @@ def maintain_cmd(
             min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 0
             dead = dead_weight(mem, min_surfaced=min_surfaced)
             if dry_run:
-                receipt["outcome_reconciled"] = len(
-                    compute_utilities(cfg.state_dir)["by_prefix"]
-                )
+                receipt["outcome_reconciled"] = len(compute_utilities(cfg.state_dir)["by_prefix"])
                 receipt["dead_archived"] = [d["id"] for d in dead]
             else:
                 receipt["outcome_reconciled"] = reconcile_roi(mem).get("updated", 0)
                 for d in dead:
-                    if mem.forget(
-                        d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
-                    ) is not None:
+                    if (
+                        mem.forget(
+                            d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
+                        )
+                        is not None
+                    ):
                         receipt["dead_archived"].append(d["id"])
         except Exception as exc:
             receipt["errors"].append(f"outcome: {type(exc).__name__}: {exc}")

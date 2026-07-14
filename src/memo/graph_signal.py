@@ -93,7 +93,9 @@ def collect_graph_signal(
         query_entities = [str(e).strip().lower() for e in extract_query_entities(query, graph)]
         query_entities = list(dict.fromkeys(e for e in query_entities if e))
         if not query_entities:
-            return GraphSignal(True, [], {}, {}, skipped="no_query_entities", elapsed_ms=_elapsed_ms(started))
+            return GraphSignal(
+                True, [], {}, {}, skipped="no_query_entities", elapsed_ms=_elapsed_ms(started)
+            )
 
         n_docs = int(graph.total_indexed_memories())
         q_df = graph.entity_doc_freqs(query_entities) if n_docs > 0 else {}
@@ -132,7 +134,14 @@ def collect_graph_signal(
                     proximity[key] = {"from": ent, "to": key, "weight": float(weight)}
 
         if not proximity:
-            return GraphSignal(True, query_entities, {}, {}, skipped="no_neighbors", elapsed_ms=_elapsed_ms(started))
+            return GraphSignal(
+                True,
+                query_entities,
+                {},
+                {},
+                skipped="no_neighbors",
+                elapsed_ms=_elapsed_ms(started),
+            )
 
         neigh_df = graph.entity_doc_freqs(list(proximity)) if n_docs > 0 else {}
         boosts: dict[str, float] = {}
@@ -152,7 +161,11 @@ def collect_graph_signal(
                 if edge is None:
                     continue
                 df = float(neigh_df.get(ent, 0.0))
-                if cfg.hub_suppression and n_docs > 0 and (df / n_docs) > cfg.hub_max_doc_freq_ratio:
+                if (
+                    cfg.hub_suppression
+                    and n_docs > 0
+                    and (df / n_docs) > cfg.hub_max_doc_freq_ratio
+                ):
                     continue
                 idf = entity_idf(df, n_docs) if n_docs > 0 else 1.0
                 if idf <= 0:

@@ -1,4 +1,5 @@
 """memo_around MCP tool registration + pass-through."""
+
 from __future__ import annotations
 
 import re
@@ -13,6 +14,7 @@ def _make_server_and_tools():
         def wrapper(fn):
             tools[fn.__name__] = fn
             return fn
+
         return wrapper
 
     server.tool = tool_decorator
@@ -52,9 +54,9 @@ def test_build_server_wires_memo_around_registration():
     import memo.server as srv
 
     source = Path(srv.__file__).read_text(encoding="utf-8")
-    assert re.search(
-        r"^from memo import server_around as _srv_around$", source, re.M
-    ), "server.py must import server_around as _srv_around"
+    assert re.search(r"^from memo import server_around as _srv_around$", source, re.M), (
+        "server.py must import server_around as _srv_around"
+    )
     assert "_srv_around.register(server, memory)" in source, (
         "build_server must call _srv_around.register(server, memory)"
     )

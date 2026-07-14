@@ -38,7 +38,9 @@ def interject_shadow() -> None:
     for r in rows:
         for i in r.get("ids", []):
             ids[i] += 1
-    click.echo(f"{len(rows)} would-interject events ({rendered} rendered, {len(rows) - rendered} shadow-only)")
+    click.echo(
+        f"{len(rows)} would-interject events ({rendered} rendered, {len(rows) - rendered} shadow-only)"
+    )
     for i, c in ids.most_common(10):
         click.echo(f"  {c:>4}  {i}")
 
@@ -71,7 +73,9 @@ def ask_shadow() -> None:
         click.echo("no ask-gaps shadow activity logged")
         return
     rendered = sum(1 for r in rows if r.get("rendered"))
-    click.echo(f"{len(rows)} would-ask events ({rendered} rendered, {len(rows) - rendered} shadow-only)")
+    click.echo(
+        f"{len(rows)} would-ask events ({rendered} rendered, {len(rows) - rendered} shadow-only)"
+    )
     top: Counter = Counter()
     for r in rows:
         top[str(r.get("prompt") or "")[:60]] += 1

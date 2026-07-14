@@ -146,10 +146,31 @@ def _wrapper_paths(home: Path, shell_kind: str) -> tuple[Path, Path]:
 
 
 @click.command(name="install-shell-wrapper")
-@click.option("--print", "do_print", is_flag=True, help="Print the wrapper snippet to stdout. Default mode when neither --print nor --write is set.")
-@click.option("--write", "do_write", is_flag=True, help="Write the wrapper file (~/.zsh/memo-wrapper.zsh or ~/.bash/memo-wrapper.bash) and append the matching `source` line to the shell rc (idempotent).")
-@click.option("--shell", "shell_kind", type=click.Choice(["zsh", "bash"]), default="zsh", show_default=True, help="Target shell. zsh and bash are supported (they differ only in the single-key read builtin).")
-@click.option("--force", is_flag=True, help="Overwrite the wrapper file even if its content differs from what we would write.")
+@click.option(
+    "--print",
+    "do_print",
+    is_flag=True,
+    help="Print the wrapper snippet to stdout. Default mode when neither --print nor --write is set.",
+)
+@click.option(
+    "--write",
+    "do_write",
+    is_flag=True,
+    help="Write the wrapper file (~/.zsh/memo-wrapper.zsh or ~/.bash/memo-wrapper.bash) and append the matching `source` line to the shell rc (idempotent).",
+)
+@click.option(
+    "--shell",
+    "shell_kind",
+    type=click.Choice(["zsh", "bash"]),
+    default="zsh",
+    show_default=True,
+    help="Target shell. zsh and bash are supported (they differ only in the single-key read builtin).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite the wrapper file even if its content differs from what we would write.",
+)
 def install_shell_wrapper(do_print: bool, do_write: bool, shell_kind: str, force: bool) -> None:
     snippet = _wrapper_snippet(shell_kind)
     if not do_write:

@@ -26,9 +26,27 @@ _DATE_RE = re.compile(r"^\d{4}([-/]\d{1,2}){0,2}$")
 # Generic co-mention tokens that are not meaningful link anchors.
 _GENERIC_ANCHORS = frozenset(
     {
-        "files", "file", "archivos", "archivo", "print", "log", "logs", "note",
-        "notes", "data", "test", "tests", "todo", "string", "value", "none",
-        "true", "false", "null", "error", "errors",
+        "files",
+        "file",
+        "archivos",
+        "archivo",
+        "print",
+        "log",
+        "logs",
+        "note",
+        "notes",
+        "data",
+        "test",
+        "tests",
+        "todo",
+        "string",
+        "value",
+        "none",
+        "true",
+        "false",
+        "null",
+        "error",
+        "errors",
     }
 )
 
@@ -51,9 +69,7 @@ def _representative(side: list[str], adjacency: dict[str, dict[str, float]]) -> 
     )
 
 
-def bridge_insights(
-    mem: Any, *, min_side: int = 2, max_bridges: int = 5
-) -> list[dict[str, Any]]:
+def bridge_insights(mem: Any, *, min_side: int = 2, max_bridges: int = 5) -> list[dict[str, Any]]:
     """Articulation bridges -> [{bridge, left, right, left_rep, right_rep, memory_ids}].
 
     Builds the weighted adjacency from the materialized entity edges, finds
@@ -67,9 +83,7 @@ def bridge_insights(
 
     bridges = find_bridges(dict(adjacency), min_side=min_side)
     # Largest combined span first; deterministic tie-break on the bridge name.
-    bridges.sort(
-        key=lambda br: (-(len(br["left"]) + len(br["right"])), br["bridge"])
-    )
+    bridges.sort(key=lambda br: (-(len(br["left"]) + len(br["right"])), br["bridge"]))
 
     out: list[dict[str, Any]] = []
     for br in bridges:

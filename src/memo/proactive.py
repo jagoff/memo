@@ -143,7 +143,9 @@ class ProactiveSuggester:
                 messages=[
                     {
                         "role": "system",
-                        "content": resolve_prompt("suggestion", _SUGGESTION_SYSTEM_PROMPT, self.memory.cfg.state_dir),
+                        "content": resolve_prompt(
+                            "suggestion", _SUGGESTION_SYSTEM_PROMPT, self.memory.cfg.state_dir
+                        ),
                     },
                     {"role": "user", "content": context},
                 ],

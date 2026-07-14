@@ -25,15 +25,15 @@ _log = logging.getLogger(__name__)
 # tests/test_prompt_overrides.py / Task G-5 for the constant <-> name map).
 PROMPT_NAMES = frozenset(
     {
-        "ask",              # memory/prompts.py _ASK_SYSTEM_PROMPT
-        "consolidate",      # memory/prompts.py _CONSOLIDATE_SYSTEM_PROMPT
-        "synthesis",        # memory/prompts.py _SYNTHESIS_SYSTEM_PROMPT
-        "reflect",          # memory/prompts.py _REFLECT_SYSTEM_PROMPT
-        "derive",           # memory/prompts.py _DERIVE_SYSTEM_PROMPT
-        "extract_entities", # memory/prompts.py _EXTRACT_ENTITIES_SYSTEM_PROMPT
-        "contradiction",    # temporal.py _CONTRADICTION_SYSTEM_PROMPT
-        "suggestion",       # proactive.py _SUGGESTION_SYSTEM_PROMPT
-        "merge",            # consolidation.py _MERGE_SYSTEM_PROMPT
+        "ask",  # memory/prompts.py _ASK_SYSTEM_PROMPT
+        "consolidate",  # memory/prompts.py _CONSOLIDATE_SYSTEM_PROMPT
+        "synthesis",  # memory/prompts.py _SYNTHESIS_SYSTEM_PROMPT
+        "reflect",  # memory/prompts.py _REFLECT_SYSTEM_PROMPT
+        "derive",  # memory/prompts.py _DERIVE_SYSTEM_PROMPT
+        "extract_entities",  # memory/prompts.py _EXTRACT_ENTITIES_SYSTEM_PROMPT
+        "contradiction",  # temporal.py _CONTRADICTION_SYSTEM_PROMPT
+        "suggestion",  # proactive.py _SUGGESTION_SYSTEM_PROMPT
+        "merge",  # consolidation.py _MERGE_SYSTEM_PROMPT
         "capture_extract",  # capture.py _EXTRACT_SYSTEM_PROMPT
     }
 )

@@ -222,6 +222,7 @@ def _handle_version(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
     """Get memo version info — version string and backend protocol version."""
     from memo import __version__ as _memo_version
     from memo.memory import NATIVE_BACKEND_PROTOCOL_VERSION
+
     return {
         "version": _memo_version,
         "backend_protocol_version": NATIVE_BACKEND_PROTOCOL_VERSION,

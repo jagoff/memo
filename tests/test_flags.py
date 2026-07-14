@@ -107,11 +107,7 @@ def test_markdown_flag_value_is_used_when_env_unset(tmp_path: Path) -> None:
     cfg = home / "config"
     cfg.mkdir(parents=True)
     (cfg / "recall-config.md").write_text(
-        "```toml\n"
-        "[recall]\n"
-        "top_k = 8\n"
-        'debug = "on"\n'
-        "```\n",
+        '```toml\n[recall]\ntop_k = 8\ndebug = "on"\n```\n',
         encoding="utf-8",
     )
     env = {"MEMO_CONFIG_DIR": str(home)}
@@ -124,14 +120,15 @@ def test_env_flag_overrides_markdown_flag(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"
     cfg.mkdir(parents=True)
-    (cfg / "recall-config.md").write_text(
-        "```toml\n[recall]\ntop_k = 8\n```\n", encoding="utf-8"
-    )
+    (cfg / "recall-config.md").write_text("```toml\n[recall]\ntop_k = 8\n```\n", encoding="utf-8")
 
-    assert flags.flag_int(
-        "MEMO_RECALL_TOP_K",
-        env={"MEMO_CONFIG_DIR": str(home), "MEMO_RECALL_TOP_K": "2"},
-    ) == 2
+    assert (
+        flags.flag_int(
+            "MEMO_RECALL_TOP_K",
+            env={"MEMO_CONFIG_DIR": str(home), "MEMO_RECALL_TOP_K": "2"},
+        )
+        == 2
+    )
 
 
 def test_active_flags_remains_env_only_and_active_config_values_reads_markdown(
@@ -156,9 +153,7 @@ def test_validate_reports_markdown_problems(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"
     cfg.mkdir(parents=True)
-    (cfg / "recall-config.md").write_text(
-        "```toml\n[recall]\ntoppp_k = 8\n```\n", encoding="utf-8"
-    )
+    (cfg / "recall-config.md").write_text("```toml\n[recall]\ntoppp_k = 8\n```\n", encoding="utf-8")
 
     problems = flags.validate(env={"MEMO_CONFIG_DIR": str(home)})
 

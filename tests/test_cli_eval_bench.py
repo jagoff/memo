@@ -22,7 +22,12 @@ LOCOMO_TINY = [
             ],
         },
         "qa": [
-            {"question": "What is the dog's name?", "answer": "Rex", "evidence": ["D1:1"], "category": 4},
+            {
+                "question": "What is the dog's name?",
+                "answer": "Rex",
+                "evidence": ["D1:1"],
+                "category": 4,
+            },
         ],
     }
 ]
@@ -56,9 +61,17 @@ def test_bench_run_retrieval_only_isolated(tmp_path, monkeypatch):
     r = CliRunner().invoke(
         cli,
         [
-            "eval", "bench", "run",
-            "--dataset", "locomo", "--file", str(dataset_file),
-            "--retrieval-only", "--k", "3", "--json",
+            "eval",
+            "bench",
+            "run",
+            "--dataset",
+            "locomo",
+            "--file",
+            str(dataset_file),
+            "--retrieval-only",
+            "--k",
+            "3",
+            "--json",
         ],
         env=env,
     )
@@ -89,8 +102,11 @@ def test_bench_report_renders_markdown(tmp_path):
         "k": 5,
         "retrieval": {
             "single_hop": {
-                "recall_at_k": 0.8, "ndcg_at_k": 0.7, "mrr": 0.6,
-                "precision_at_k": 0.3, "n_questions": 10,
+                "recall_at_k": 0.8,
+                "ndcg_at_k": 0.7,
+                "mrr": 0.6,
+                "precision_at_k": 0.3,
+                "n_questions": 10,
             }
         },
         "qa": {"single_hop": {"accuracy": 0.5, "n_questions": 10}},

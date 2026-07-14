@@ -16,7 +16,7 @@ def test_flip_on_preserves_other_tuned_knobs(tmp_path: Path):
     write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.62}, {"set_by": "tuner"})
     overlay_ops.flip_on(tmp_path, "MEMO_GRAPH_SIGNAL_ENABLED", evidence={})
     doc = read_overlay(tmp_path)
-    assert doc["MEMO_RECALL_MIN_SIM"] == 0.62      # untouched
+    assert doc["MEMO_RECALL_MIN_SIM"] == 0.62  # untouched
     assert doc["MEMO_GRAPH_SIGNAL_ENABLED"] is True
 
 

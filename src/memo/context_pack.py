@@ -137,7 +137,12 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
     stale = list(pack.stale_or_conflicting)
     current = list(pack.current_facts)
     omitted = 0
-    while len(_pack_prompt(pack, current=current, supporting=supporting, stale=stale, trimmed=omitted)) > budget_chars:
+    while (
+        len(
+            _pack_prompt(pack, current=current, supporting=supporting, stale=stale, trimmed=omitted)
+        )
+        > budget_chars
+    ):
         if supporting:
             supporting.pop()
             omitted += 1
@@ -149,7 +154,13 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
             omitted += 1
         else:
             break
-    if current and len(_pack_prompt(pack, current=current, supporting=supporting, stale=stale, trimmed=omitted)) > budget_chars:
+    if (
+        current
+        and len(
+            _pack_prompt(pack, current=current, supporting=supporting, stale=stale, trimmed=omitted)
+        )
+        > budget_chars
+    ):
         row = dict(current[-1])
         snippet = str(row.get("snippet", "") or "")
         best_row: dict[str, Any] | None = None
@@ -160,7 +171,18 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
             candidate = dict(row)
             candidate["snippet"] = _truncate_snippet(snippet, mid)
             candidate_current = [*current[:-1], candidate]
-            if len(_pack_prompt(pack, current=candidate_current, supporting=supporting, stale=stale, trimmed=omitted)) <= budget_chars:
+            if (
+                len(
+                    _pack_prompt(
+                        pack,
+                        current=candidate_current,
+                        supporting=supporting,
+                        stale=stale,
+                        trimmed=omitted,
+                    )
+                )
+                <= budget_chars
+            ):
                 best_row = candidate
                 low = mid + 1
             else:
@@ -217,7 +239,9 @@ def build_context_pack(
         else:
             supporting.append(row)
     if current and stale:
-        summary = "Current context is available; stale/conflicting memories are included only as history."
+        summary = (
+            "Current context is available; stale/conflicting memories are included only as history."
+        )
     elif current:
         summary = "Current context is available from the retrieved memories."
     elif supporting and stale:

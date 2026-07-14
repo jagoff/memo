@@ -84,7 +84,9 @@ def _execute(argv: tuple[str, ...]) -> tuple[int, str]:
         text=True,
         shell=False,
     )
-    output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part.strip())
+    output = "\n".join(
+        part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
+    )
     return completed.returncode, output
 
 

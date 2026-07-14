@@ -6,9 +6,7 @@ from __future__ import annotations
 def _long_body(n_sections: int = 3, words_per_section: int = 300) -> str:
     sections = []
     for i in range(1, n_sections + 1):
-        sections.append(
-            f"## Section {i}\n\n" + (f"tokenword{i} " * words_per_section).strip()
-        )
+        sections.append(f"## Section {i}\n\n" + (f"tokenword{i} " * words_per_section).strip())
     return "\n\n".join(sections)
 
 

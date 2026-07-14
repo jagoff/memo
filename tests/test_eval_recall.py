@@ -486,9 +486,7 @@ def test_cli_eval_recall_fresh_human_run_prints_progress(tmp_path: Path, monkeyp
     assert "eval A vec/0.60/keep: prompt 1/1" in result.output
 
 
-def test_cli_eval_recall_profile_pre_push_selects_named_subset(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_cli_eval_recall_profile_pre_push_selects_named_subset(tmp_path: Path, monkeypatch) -> None:
     labels_path = tmp_path / "labels.json"
     labels_path.write_text(
         json.dumps({"prompts": [{"text": "where is memo", "relevant": True}]}),
@@ -1203,24 +1201,45 @@ def test_harvest_negative_labels_from_verdict_log(tmp_path) -> None:
     from memo.dashboard import append_verdict_log
     from memo.eval_recall import harvest_negative_labels
 
-    append_verdict_log(tmp_path, session_id="s1", turn=4, prior_turn=3,
-                       verdict="negative", prompt="cómo configuro el sync remoto?",
-                       reaction="no funciona", recall_ids=["aaaabbbb11112222"])
-    append_verdict_log(tmp_path, session_id="s1", turn=6, prior_turn=5,
-                       verdict="positive", prompt="otra", reaction="gracias",
-                       recall_ids=["ccccdddd11112222"])
+    append_verdict_log(
+        tmp_path,
+        session_id="s1",
+        turn=4,
+        prior_turn=3,
+        verdict="negative",
+        prompt="cómo configuro el sync remoto?",
+        reaction="no funciona",
+        recall_ids=["aaaabbbb11112222"],
+    )
+    append_verdict_log(
+        tmp_path,
+        session_id="s1",
+        turn=6,
+        prior_turn=5,
+        verdict="positive",
+        prompt="otra",
+        reaction="gracias",
+        recall_ids=["ccccdddd11112222"],
+    )
     out = harvest_negative_labels(tmp_path)
-    assert out == [{"text": "cómo configuro el sync remoto?",
-                    "relevant": False, "avoid_ids": ["aaaabbbb"]}]
+    assert out == [
+        {"text": "cómo configuro el sync remoto?", "relevant": False, "avoid_ids": ["aaaabbbb"]}
+    ]
 
 
 def test_merge_expect_ids_beat_avoid_ids() -> None:
     from memo.eval_recall import merge_label_prompts
 
-    existing = [{"text": "cómo configuro el sync remoto?", "relevant": True,
-                 "expect_ids": ["aaaabbbb"]}]
-    negatives = [{"text": "cómo configuro el sync remoto?", "relevant": False,
-                  "avoid_ids": ["aaaabbbb", "eeeeffff"]}]
+    existing = [
+        {"text": "cómo configuro el sync remoto?", "relevant": True, "expect_ids": ["aaaabbbb"]}
+    ]
+    negatives = [
+        {
+            "text": "cómo configuro el sync remoto?",
+            "relevant": False,
+            "avoid_ids": ["aaaabbbb", "eeeeffff"],
+        }
+    ]
     merged = merge_label_prompts(existing, negatives)
     assert len(merged) == 1
     assert merged[0]["expect_ids"] == ["aaaabbbb"]
@@ -1309,12 +1328,15 @@ def test_run_config_pins_and_restores_flag_overrides(monkeypatch) -> None:
 
     monkeypatch.delenv("MEMO_HYDE_ENABLED", raising=False)
     cfg = eval_recall.Cfg(
-        "X vec/0.4/pin", "vec", 0.4, exclude_archived=False,
+        "X vec/0.4/pin",
+        "vec",
+        0.4,
+        exclude_archived=False,
         flag_overrides={"MEMO_HYDE_ENABLED": "1"},
     )
     labels = LabelSet(prompts=[Prompt("some query", relevant=True)])
     eval_recall.run_config(_Mem(), cfg, 3, labels)
-    assert seen["hyde"] == "1"          # pinned during the run
+    assert seen["hyde"] == "1"  # pinned during the run
     assert "MEMO_HYDE_ENABLED" not in os.environ  # restored after
 
 
@@ -1322,8 +1344,12 @@ def test_expand_labels_copies_expect_ids_and_project() -> None:
     from memo.eval_recall import expand_labels
 
     prompts = [
-        {"text": "cómo configuro el sync remoto?", "relevant": True,
-         "expect_ids": ["aaaabbbb"], "project": "project:memo"},
+        {
+            "text": "cómo configuro el sync remoto?",
+            "relevant": True,
+            "expect_ids": ["aaaabbbb"],
+            "project": "project:memo",
+        },
         {"text": "prompt sin respuesta conocida", "relevant": False},
     ]
 
@@ -1341,8 +1367,9 @@ def test_expand_labels_copies_expect_ids_and_project() -> None:
 def test_expand_labels_drops_duplicates_and_short() -> None:
     from memo.eval_recall import expand_labels
 
-    prompts = [{"text": "cómo configuro el sync remoto?", "relevant": True,
-                "expect_ids": ["aaaabbbb"]}]
+    prompts = [
+        {"text": "cómo configuro el sync remoto?", "relevant": True, "expect_ids": ["aaaabbbb"]}
+    ]
     out = expand_labels(
         prompts,
         generate=lambda t, n: [t, "corto", "cómo seteo el sync remoto de memo?"],

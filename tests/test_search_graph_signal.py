@@ -26,7 +26,7 @@ def test_search_attaches_graph_reason_when_enabled(mem_with_stub, monkeypatch) -
             {"name": "daemon", "type": "technology"},
         ],
         extracted_at="2026-07-10T00:00:00Z",
-        )
+    )
     mem.graph.rebuild_edges()
     mem.graph.record_extraction(
         memory_id=rec_b.id,

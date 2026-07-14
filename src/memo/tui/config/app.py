@@ -168,10 +168,7 @@ class ConfigApp(App[int]):
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         if isinstance(event.input, SettingInput):
-            if (
-                event.input._ignore_initial_event
-                and event.value == event.input._memo_initial_value
-            ):
+            if event.input._ignore_initial_event and event.value == event.input._memo_initial_value:
                 event.input._ignore_initial_event = False
                 return
             if event.input._events_enabled:
@@ -217,9 +214,7 @@ class ConfigApp(App[int]):
                 event.switch._ignore_initial_event = False
                 return
             if event.switch._events_enabled:
-                event.switch.post_message(
-                    SettingChanged(event.switch.setting_key, event.value)
-                )
+                event.switch.post_message(SettingChanged(event.switch.setting_key, event.value))
             return
         if event.switch.id != "show-advanced":
             return

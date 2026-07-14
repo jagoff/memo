@@ -29,9 +29,7 @@ def rename_legacy_table(conn: sqlite3.Connection, old: str, new: str) -> None:
     isn't blocked by a freshly-created empty ``new`` table.
     """
     try:
-        tables = {
-            r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     except sqlite3.Error:
         return
     if old in tables and new not in tables:
@@ -119,6 +117,7 @@ def safe_operation(
             # May fail, but failure is non-critical
             return get_external_data()
     """
+
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -133,5 +132,7 @@ def safe_operation(
                 if reraise:
                     raise
                 return fallback
+
         return wrapper
+
     return decorator

@@ -95,8 +95,6 @@ def test_precompact_force_flushes_capture() -> None:
 def test_sessionstart_briefing_rebriefs_after_compact() -> None:
     groups = _load_plugin_hooks()["SessionStart"]
     briefing_matchers = [
-        g.get("matcher", "")
-        for g in groups
-        if any("briefing" in h["command"] for h in g["hooks"])
+        g.get("matcher", "") for g in groups if any("briefing" in h["command"] for h in g["hooks"])
     ]
     assert briefing_matchers and all("compact" in m for m in briefing_matchers)

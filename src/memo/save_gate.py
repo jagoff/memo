@@ -5,6 +5,7 @@ path is about near-duplicates. Seeded so an unset MEMO_SAVE_GATE_PRESETS ⇒ eve
 type resolves to `balanced` ⇒ today's behavior (dedup warns, never refuses).
 Pure config resolution; no I/O.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,9 +16,9 @@ from memo.flags import flag_str
 
 @dataclass(frozen=True)
 class GatePolicy:
-    dedup_mode: str   # "warn" (log, admit — current) | "refuse" (raise) | "off" (skip check)
+    dedup_mode: str  # "warn" (log, admit — current) | "refuse" (raise) | "off" (skip check)
     quality_mode: str  # "warn" | "strict"  (reserved; wired later if a quality-refuse is added)
-    ground: bool       # reserved: consult grounding at save (future)
+    ground: bool  # reserved: consult grounding at save (future)
 
 
 PRESETS: dict[str, GatePolicy] = {

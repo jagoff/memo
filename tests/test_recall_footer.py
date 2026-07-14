@@ -1,4 +1,5 @@
 """Tests for Task 5: scaffolding compression — footer collapses past turn 1."""
+
 from memo import recall_logic as rl
 
 

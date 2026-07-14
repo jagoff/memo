@@ -53,4 +53,3 @@ __all__ = [
     "_watcher_status",
     "sparkline",
 ]
-

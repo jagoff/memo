@@ -293,8 +293,13 @@ def dead_weight(
 
 
 _NOISE_MARKERS = (
-    "<task-notification", "<tool-use-id", "task-id>", "tool-use-id>",
-    "system-reminder", "<system", "hook additional context",
+    "<task-notification",
+    "<tool-use-id",
+    "task-id>",
+    "tool-use-id>",
+    "system-reminder",
+    "<system",
+    "hook additional context",
 )
 
 
@@ -396,15 +401,25 @@ def detect_gaps(
                     c["reason"] = g["reason"]
                 break
         else:
-            clusters.append({
-                "tokens": tok, "prompt": g["prompt"], "count": 1,
-                "reason": g["reason"], "last_seen": g["ts"],
-            })
+            clusters.append(
+                {
+                    "tokens": tok,
+                    "prompt": g["prompt"],
+                    "count": 1,
+                    "reason": g["reason"],
+                    "last_seen": g["ts"],
+                }
+            )
 
     out = [
-        {"prompt": c["prompt"], "count": c["count"],
-         "reasons": [c["reason"]], "last_seen": c["last_seen"]}
-        for c in clusters if c["count"] >= min_count
+        {
+            "prompt": c["prompt"],
+            "count": c["count"],
+            "reasons": [c["reason"]],
+            "last_seen": c["last_seen"],
+        }
+        for c in clusters
+        if c["count"] >= min_count
     ]
     out.sort(key=lambda c: (c["count"], c["last_seen"] or ""), reverse=True)
     return out

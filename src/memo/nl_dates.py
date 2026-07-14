@@ -12,9 +12,7 @@ import datetime as _dt
 import re as _re
 
 
-def parse_date_range(
-    text: str, ref_date: _dt.date | None = None
-) -> tuple[str | None, str | None]:
+def parse_date_range(text: str, ref_date: _dt.date | None = None) -> tuple[str | None, str | None]:
     """Inclusive [date_from, date_to] ISO pair, or (None, None). Never raises."""
     try:
         ref = ref_date or _dt.date.today()

@@ -180,6 +180,7 @@ def extract_and_save_text(*args, **kwargs):
     _sync_capture_core_patchables()
     return _capture_core.extract_and_save_text(*args, **kwargs)
 
+
 __all__ = [
     "_EXTRACT_SYSTEM_PROMPT",
     "_FILLER_OPENER_RE",

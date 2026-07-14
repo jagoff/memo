@@ -23,7 +23,9 @@ def _distilled(id_, score):
 
 def test_is_broad_query():
     assert rl._is_broad_query("what about auth") is True
-    assert rl._is_broad_query("MEMO_RECALL_MIN_SIM default value here today") is False  # long + identifier
+    assert (
+        rl._is_broad_query("MEMO_RECALL_MIN_SIM default value here today") is False
+    )  # long + identifier
     assert rl._is_broad_query("commit a1b2c3d4") is False  # id token
     assert rl._is_broad_query(None) is False
     assert rl._is_broad_query("") is False

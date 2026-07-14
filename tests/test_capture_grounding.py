@@ -1,11 +1,20 @@
 """grounding-judge wired into the capture path (default off)."""
+
 from __future__ import annotations
 
 from memo import capture_core
 
 
 def _one_candidate(*_a, **_k):
-    return [{"title": "Port is 8765", "type": "fact", "body": "The dashboard port is 8765.", "tags": [], "fact_edges": None}]
+    return [
+        {
+            "title": "Port is 8765",
+            "type": "fact",
+            "body": "The dashboard port is 8765.",
+            "tags": [],
+            "fact_edges": None,
+        }
+    ]
 
 
 def _run(mock_memory, monkeypatch, score):
@@ -15,12 +24,12 @@ def _run(mock_memory, monkeypatch, score):
     monkeypatch.setenv("MEMO_CAPTURE_MIN_WORDS", "0")
     monkeypatch.setattr(mock_memory, "_ensure_chat", lambda: object())
     monkeypatch.setattr(capture_core, "extract_insights", _one_candidate)
-    monkeypatch.setattr(
-        capture_core, "score_grounding", lambda *a, **k: score
-    )
+    monkeypatch.setattr(capture_core, "score_grounding", lambda *a, **k: score)
     return capture_core._extract_and_save(
-        mock_memory, mock_memory.cfg,
-        "user said the port changed", "assistant confirmed 8765",
+        mock_memory,
+        mock_memory.cfg,
+        "user said the port changed",
+        "assistant confirmed 8765",
     )
 
 
@@ -56,7 +65,10 @@ def test_flag_off_never_calls_judge(mock_memory, monkeypatch):
 
     monkeypatch.setattr(capture_core, "score_grounding", _boom)
     out = capture_core._extract_and_save(
-        mock_memory, mock_memory.cfg, "u", "a",
+        mock_memory,
+        mock_memory.cfg,
+        "u",
+        "a",
     )
     rec = mock_memory.get(out["saved"][0])
     assert "_uncertain" not in (rec.tags or [])

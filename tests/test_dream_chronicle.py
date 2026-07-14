@@ -1,4 +1,5 @@
 """Tests for the nightly chronicle dream pass."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -133,10 +134,22 @@ def test_collect_facts_and_fact_lines(tmp_path, monkeypatch):
     class _FakeStore:
         def recent(self, limit=200):
             return [
-                {"agent": "claude-code", "session_id": "d" * 32, "cwd": "/x",
-                 "updated_at": f"{day}T20:00:00", "summary": "fixed sync race", "turn_count": 12},
-                {"agent": "claude-code", "session_id": "e" * 32, "cwd": "/x",
-                 "updated_at": "2026-07-11T20:00:00", "summary": "other day", "turn_count": 3},
+                {
+                    "agent": "claude-code",
+                    "session_id": "d" * 32,
+                    "cwd": "/x",
+                    "updated_at": f"{day}T20:00:00",
+                    "summary": "fixed sync race",
+                    "turn_count": 12,
+                },
+                {
+                    "agent": "claude-code",
+                    "session_id": "e" * 32,
+                    "cwd": "/x",
+                    "updated_at": "2026-07-11T20:00:00",
+                    "summary": "other day",
+                    "turn_count": 3,
+                },
             ]
 
     monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: _FakeStore())
@@ -164,8 +177,12 @@ def test_fact_lines_skips_non_hex_session_id():
 
     facts = {
         "episodes": [
-            {"session_id": "ZZZZZZZZ-not-hex", "agent": "claude-code",
-             "turn_count": 3, "summary": "bogus id episode"},
+            {
+                "session_id": "ZZZZZZZZ-not-hex",
+                "agent": "claude-code",
+                "turn_count": 3,
+                "summary": "bogus id episode",
+            },
         ],
         "new_memories": [],
     }
@@ -227,7 +244,8 @@ def test_run_chronicle_pass_writes_file_with_provenance(tmp_path, monkeypatch):
 
     monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: None)
     monkeypatch.setattr(
-        dc, "_llm_narrate",
+        dc,
+        "_llm_narrate",
         lambda mem, d, lines: "- decided X hoy [aaaaaaaa]\n- invented stuff\n",
     )
     res = dc.run_chronicle_pass(cfg, _Mem(cfg), day=day)
@@ -249,7 +267,8 @@ def test_run_chronicle_pass_low_provenance_not_written(tmp_path, monkeypatch):
 
     monkeypatch.setattr("memo.resume._index.open_store", lambda cfg: None)
     monkeypatch.setattr(
-        dc, "_llm_narrate",
+        dc,
+        "_llm_narrate",
         lambda mem, d, lines: "- invented stuff with no valid citation\n- more invented\n",
     )
     res = dc.run_chronicle_pass(cfg, _Mem(cfg), day=day)
@@ -299,7 +318,9 @@ def test_run_chronicle_pass_never_raises(tmp_path, monkeypatch):
     from memo import dream_chronicle as dc
 
     cfg = _mk_cfg(tmp_path)
-    monkeypatch.setattr(dc, "collect_facts", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        dc, "collect_facts", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
     res = dc.run_chronicle_pass(cfg, _Mem(cfg), day="2026-07-13")
     assert res["status"] == "error"
     assert "boom" in res["error"]
@@ -332,8 +353,14 @@ def test_dream_chronicle_subcommand_json(tmp_path, monkeypatch):
     from memo.cli import cli
 
     monkeypatch.setattr(
-        dc, "run_chronicle_pass",
-        lambda cfg, mem, **kw: {"status": "done", "day": "2026-07-13", "path": "/x.md", "cited_ratio": 1.0},
+        dc,
+        "run_chronicle_pass",
+        lambda cfg, mem, **kw: {
+            "status": "done",
+            "day": "2026-07-13",
+            "path": "/x.md",
+            "cited_ratio": 1.0,
+        },
     )
     env = {
         "MEMO_NONINTERACTIVE": "1",

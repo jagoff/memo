@@ -85,6 +85,8 @@ def import_signal(store: VecStore, signal_dir: Path) -> dict[str, int]:
             continue
         doc = json.loads(path.read_text())
         if doc.get("schema") != SIGNAL_SCHEMA:
-            raise ValueError(f"{path}: unexpected schema {doc.get('schema')!r}, want {SIGNAL_SCHEMA!r}")
+            raise ValueError(
+                f"{path}: unexpected schema {doc.get('schema')!r}, want {SIGNAL_SCHEMA!r}"
+            )
         payload[table] = doc.get("rows") or []
     return store.merge_signal(payload)

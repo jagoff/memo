@@ -55,9 +55,7 @@ def interject_candidates(
 
     cands = guard_candidates(prompt, hits, sim_threshold=sim_threshold)
     return [
-        h
-        for h in cands
-        if band_of(h) == "high" and (getattr(h, "id", "") or "") in disputed_ids
+        h for h in cands if band_of(h) == "high" and (getattr(h, "id", "") or "") in disputed_ids
     ]
 
 
@@ -81,9 +79,7 @@ def interject_banner(
     for h in cand:
         title = (getattr(h, "title", "") or "").strip()
         lines.append(f'  You decided [{getattr(h, "id", "?")}]: "{title}"')
-    lines.append(
-        "  memo has this on record as contested — confirm before overriding it."
-    )
+    lines.append("  memo has this on record as contested — confirm before overriding it.")
     return "\n".join(lines)
 
 
@@ -237,7 +233,11 @@ def evaluate_and_render(
         if render:
             note_rendered(cfg.state_dir, session_id)
             return interject_banner(
-                prompt, hits, sim_threshold=sim_threshold, band_of=_band_of, disputed_ids=disputed_ids
+                prompt,
+                hits,
+                sim_threshold=sim_threshold,
+                band_of=_band_of,
+                disputed_ids=disputed_ids,
             )
         return None
     except Exception:

@@ -137,7 +137,9 @@ def mine_history(
 
 @click.command(name="mine-git")
 @click.option("--repo", "repo_path", default=None, help="Repo to mine (default: cwd).")
-@click.option("--since", "since_days", type=int, default=None, help="Only commits from the last N days.")
+@click.option(
+    "--since", "since_days", type=int, default=None, help="Only commits from the last N days."
+)
 @click.option("--limit", type=int, default=None, help="Cap on commits mined (newest first).")
 @click.option("--dry-run", is_flag=True, help="Match + report, don't save.")
 @click.option("--debug", is_flag=True, help="Print per-commit info to stderr.")

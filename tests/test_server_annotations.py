@@ -18,8 +18,11 @@ def mem(tmp_path, monkeypatch):
         p.mkdir()
     monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")  # pin dims to the stub's output
     cfg = Config(
-        data_dir=data, vault_path=vault, state_dir=state,
-        reranker_enabled=False, embedder_dims=4,
+        data_dir=data,
+        vault_path=vault,
+        state_dir=state,
+        reranker_enabled=False,
+        embedder_dims=4,
     )
     monkeypatch.setattr(
         "memo.embedder.MLXEmbedder.embed",

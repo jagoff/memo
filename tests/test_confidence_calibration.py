@@ -25,8 +25,7 @@ class _Store:
         return list(self._conf.keys())
 
     def get_health_batch(self, ids):
-        return {i: {"confidence": self._conf[i], "roi_score": 1.0}
-                for i in ids if i in self._conf}
+        return {i: {"confidence": self._conf[i], "roi_score": 1.0} for i in ids if i in self._conf}
 
 
 class _Mem:
@@ -36,20 +35,30 @@ class _Mem:
 
 def _write_grounding(sd: Path, rows):
     from memo.dashboard_logs import append_grounding_log
+
     for r in rows:
-        append_grounding_log(sd, session_id=r["sid"], turn=r["turn"],
-                             recall_id=r["rid"], used_score=r["used"], method="test")
+        append_grounding_log(
+            sd,
+            session_id=r["sid"],
+            turn=r["turn"],
+            recall_id=r["rid"],
+            used_score=r["used"],
+            method="test",
+        )
 
 
 def test_build_calibration_bins_by_confidence_and_use(tmp_path: Path):
     # two high-confidence memories grounded; two low-confidence never grounded.
     conf = {"aaaaaaaa11": 0.9, "bbbbbbbb22": 0.9, "cccccccc33": 0.2, "dddddddd44": 0.2}
-    _write_grounding(tmp_path, [
-        {"sid": "s", "turn": 1, "rid": "aaaaaaaa11", "used": 0.95},
-        {"sid": "s", "turn": 2, "rid": "bbbbbbbb22", "used": 0.90},
-        {"sid": "s", "turn": 3, "rid": "cccccccc33", "used": 0.05},
-        {"sid": "s", "turn": 4, "rid": "dddddddd44", "used": 0.02},
-    ])
+    _write_grounding(
+        tmp_path,
+        [
+            {"sid": "s", "turn": 1, "rid": "aaaaaaaa11", "used": 0.95},
+            {"sid": "s", "turn": 2, "rid": "bbbbbbbb22", "used": 0.90},
+            {"sid": "s", "turn": 3, "rid": "cccccccc33", "used": 0.05},
+            {"sid": "s", "turn": 4, "rid": "dddddddd44", "used": 0.02},
+        ],
+    )
     doc = cc.build_calibration(tmp_path, _Mem(conf), min_bin=1)
     assert doc["bins"]["high"]["observed"] == 1.0
     assert doc["bins"]["low"]["observed"] == 0.0

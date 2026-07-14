@@ -202,6 +202,7 @@ class BackupManager:
 
     def _read_archive_metadata(self, archive: Path) -> BackupMetadata:
         import tarfile
+
         try:
             with tarfile.open(archive, "r:gz") as tar:
                 for member in tar.getmembers():

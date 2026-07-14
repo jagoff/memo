@@ -71,9 +71,7 @@ def feedback_record_cmd(source_id: str, query_text: str, rating: str, as_json: b
     help="For --kind wrong: id (prefix ok) of the memory that replaces this one.",
 )
 @click.option("--as-json", is_flag=True)
-def feedback_flag_cmd(
-    source_id: str, kind: str, superseded_by: str | None, as_json: bool
-) -> None:
+def feedback_flag_cmd(source_id: str, kind: str, superseded_by: str | None, as_json: bool) -> None:
     """Flag SOURCE_ID as outdated/wrong → route to the lifecycle (reversible
     archive), not the retriever. Use `memo feedback record` for 👍/👎 ranking
     votes instead.

@@ -1,4 +1,5 @@
 """Recency band: newest durables union into the pool at the min_sim floor."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -6,9 +7,15 @@ from types import SimpleNamespace
 
 def _row(id_: str, title: str) -> dict:
     return {
-        "id": id_ * 4, "path": f"2026/07/{id_}.md", "title": title, "type": "note",
-        "tags": [], "created": "2026-07-02T10:00:00", "updated": "2026-07-02T10:00:00",
-        "body_hash": "", "extra": {},
+        "id": id_ * 4,
+        "path": f"2026/07/{id_}.md",
+        "title": title,
+        "type": "note",
+        "tags": [],
+        "created": "2026-07-02T10:00:00",
+        "updated": "2026-07-02T10:00:00",
+        "body_hash": "",
+        "extra": {},
     }
 
 

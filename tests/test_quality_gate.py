@@ -85,9 +85,7 @@ def test_parse_ruff_complexity_keys_by_path_and_function(tmp_path: Path) -> None
         }
     ]
 
-    assert gate.parse_ruff_complexity(payload, tmp_path) == {
-        "src/memo/sample.py::work": 17
-    }
+    assert gate.parse_ruff_complexity(payload, tmp_path) == {"src/memo/sample.py::work": 17}
 
 
 def test_collect_broad_exceptions_counts_per_file(tmp_path: Path) -> None:
@@ -114,6 +112,7 @@ def test_quality_baseline_schema_and_configuration() -> None:
     assert "fail_under = 72" in pyproject
     for module in gate.STRICT_MODULES:
         assert module in pyproject
+    assert workflow.index("ruff format --check") < workflow.index("ruff check")
     assert workflow.index("ruff check") < workflow.index("mypy src/memo")
     assert workflow.index("mypy src/memo") < workflow.index("quality_gate.py")
     assert workflow.index("quality_gate.py") < workflow.index("pytest")

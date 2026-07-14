@@ -29,10 +29,7 @@ def test_redacts_openai_and_anthropic_keys_distinctly():
 
 
 def test_redacts_private_key_block():
-    pem = (
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\ndef\n"
-        "-----END OPENSSH PRIVATE KEY-----"
-    )
+    pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\ndef\n-----END OPENSSH PRIVATE KEY-----"
     res = redact_secrets(f"key:\n{pem}\nend")
     assert "BEGIN OPENSSH" not in res.text
     assert "****[private-key]" in res.text
@@ -43,10 +40,7 @@ def test_pem_requires_joined_text_not_per_line():
     """Regression guard for the sync gate: _PEM_RE only matches when BEGIN
     and END are in the SAME string — a per-line scan finds nothing. Any
     caller feeding line-oriented input (staged diffs) must join first."""
-    pem = (
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\ndef\n"
-        "-----END OPENSSH PRIVATE KEY-----"
-    )
+    pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\ndef\n-----END OPENSSH PRIVATE KEY-----"
     per_line = [f for line in pem.splitlines() for f in scan_secrets(line)]
     assert per_line == []  # per-line: invisible
     assert ("private-key", "****[private-key]") in scan_secrets(pem)  # joined: caught

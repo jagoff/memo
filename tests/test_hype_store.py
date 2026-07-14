@@ -1,4 +1,5 @@
 """Tests for the HyPE question-space index (flags + HypeStore)."""
+
 from __future__ import annotations
 
 from pathlib import Path

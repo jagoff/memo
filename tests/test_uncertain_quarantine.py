@@ -1,4 +1,5 @@
 """_uncertain tag: recall-excluding via exclude_tags, still searchable on demand."""
+
 from __future__ import annotations
 
 
@@ -23,9 +24,12 @@ def test_search_without_exclude_tags_still_finds_uncertain(mock_memory):
 def test_bm25_leg_also_excluded(mock_memory):
     q = mock_memory.save(
         content="dato incierto sobre ornitorrincos australianos " * 3,
-        title="IncBM", tags=["_uncertain"],
+        title="IncBM",
+        tags=["_uncertain"],
     )
-    ids = {h.id for h in mock_memory.search("ornitorrincos", mode="bm25", exclude_tags={"_uncertain"})}
+    ids = {
+        h.id for h in mock_memory.search("ornitorrincos", mode="bm25", exclude_tags={"_uncertain"})
+    }
     assert q.id not in ids
 
 

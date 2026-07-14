@@ -1,4 +1,5 @@
 """Omissions tail: budget/filter-dropped qualifying hits leave a one-line trace."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -6,9 +7,15 @@ from types import SimpleNamespace
 
 def _hit(i: int, body_len: int = 600):
     return SimpleNamespace(
-        id=f"{i:08x}" + "0" * 24, title=f"Hit {i}", type="note", tags=[],
-        created="2026-07-01T00:00:00", updated="2026-07-01T00:00:00",
-        body="x" * body_len, score=0.8, extra={},
+        id=f"{i:08x}" + "0" * 24,
+        title=f"Hit {i}",
+        type="note",
+        tags=[],
+        created="2026-07-01T00:00:00",
+        updated="2026-07-01T00:00:00",
+        body="x" * body_len,
+        score=0.8,
+        extra={},
     )
 
 
@@ -35,7 +42,11 @@ def test_context_pre_dropped_omitted_param_counts(monkeypatch):
 
     monkeypatch.setenv("MEMO_RECALL_OMISSIONS_TAIL", "1")
     out = render_recall_context(
-        [_hit(1, body_len=80)], [], turn=1, body_chars=200, token_budget=0,
+        [_hit(1, body_len=80)],
+        [],
+        turn=1,
+        body_chars=200,
+        token_budget=0,
         omitted=[_hit(8), _hit(9)],
     )
     assert "+2 more relevant" in out
@@ -62,8 +73,7 @@ def test_single_hit_over_budget_flag_on_does_not_steal_body(monkeypatch):
 
     # Body preview must be identical — reserve must not steal chars when no tail appears.
     assert out_on == out_off, (
-        f"flag ON altered output despite no tail appearing.\n"
-        f"OFF: {out_off!r}\nON:  {out_on!r}"
+        f"flag ON altered output despite no tail appearing.\nOFF: {out_off!r}\nON:  {out_on!r}"
     )
     assert "more relevant" not in out_on
 

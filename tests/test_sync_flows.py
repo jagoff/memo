@@ -284,8 +284,15 @@ def test_run_sync_setup_join_calls_bootstrap(tmp_path, monkeypatch):
     monkeypatch.setattr(cs, "_get_memory", lambda cfg: _FakeMem())
     monkeypatch.setattr(cs, "import_signal", lambda *a, **k: 0)
     monkeypatch.setattr(cs, "signal_dir_for", lambda *a, **k: tmp_path)
-    monkeypatch.setattr(cs.Config, "from_env", staticmethod(lambda **kw: Config(
-        data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)))
+    monkeypatch.setattr(
+        cs.Config,
+        "from_env",
+        staticmethod(
+            lambda **kw: Config(
+                data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4
+            )
+        ),
+    )
 
     cfg = Config(data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)
     out = cs._run_sync_setup(cfg, "2", "https://example.com/memo-sync.git", gh_ok=False)

@@ -1,4 +1,5 @@
 """Dream graduation: grounded or corroborated _uncertain captures get untagged."""
+
 from __future__ import annotations
 
 
@@ -7,7 +8,8 @@ def test_grounded_candidate_is_promoted(mock_memory, tmp_cfg, monkeypatch):
 
     rec = mock_memory.save(
         content="insight auto-capturado sobre el pipeline de release " * 2,
-        title="Quarantined", tags=["_uncertain"],
+        title="Quarantined",
+        tags=["_uncertain"],
     )
     monkeypatch.setattr(dream_graduate, "_grounded_ids", lambda state_dir: {rec.id[:8]})
     out = dream_graduate.run_graduation(tmp_cfg, mock_memory)
@@ -20,7 +22,8 @@ def test_corroborated_candidate_is_promoted(mock_memory, tmp_cfg, monkeypatch):
 
     mock_memory.save(
         content="insight repetido en varias sesiones sobre mypy cache " * 2,
-        title="Corroborated", tags=["_uncertain"],
+        title="Corroborated",
+        tags=["_uncertain"],
     )
     monkeypatch.setattr(dream_graduate, "_grounded_ids", lambda state_dir: set())
     monkeypatch.setattr(dream_graduate, "_support_count", lambda mem, id_: 3)
@@ -35,7 +38,8 @@ def test_unproven_candidate_stays_quarantined_and_dry_run_writes_nothing(
 
     rec = mock_memory.save(
         content="insight sin evidencia de uso sobre nada en particular " * 2,
-        title="Unproven", tags=["_uncertain"],
+        title="Unproven",
+        tags=["_uncertain"],
     )
     monkeypatch.setattr(dream_graduate, "_grounded_ids", lambda state_dir: set())
     out = dream_graduate.run_graduation(tmp_cfg, mock_memory)

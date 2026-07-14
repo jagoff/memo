@@ -6,6 +6,7 @@ Shared by `memo maintain` (cli_maintain) and the nightly Dream contradict pass
 Pure and READ-ONLY over the store (no writes, no MLX). Runs only in the
 maintenance path, never the 5s recall hook.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,14 +15,14 @@ from typing import Any
 from memo.flags import flag_bool, flag_float, flag_int
 
 # actions
-ARCHIVE = "archive"       # supersede the dominated side
-COMPETING = "competing"   # keep both: neither side dominates
-HOLD_OPEN = "hold_open"   # keep both open: high-support loser held for triage (legacy C2)
+ARCHIVE = "archive"  # supersede the dominated side
+COMPETING = "competing"  # keep both: neither side dominates
+HOLD_OPEN = "hold_open"  # keep both open: high-support loser held for triage (legacy C2)
 
 
 @dataclass(frozen=True)
 class SupersedeDecision:
-    action: str          # ARCHIVE | COMPETING | HOLD_OPEN
+    action: str  # ARCHIVE | COMPETING | HOLD_OPEN
     dominant_id: str
     dominated_id: str
     reason: str
@@ -59,8 +60,11 @@ def supersede_decision(mem: Any, *, older_id: str, newer_id: str) -> SupersedeDe
         support_older = _support([older_id]).get(older_id, 0) if gate > 0 else 0
         if gate > 0 and support_older >= gate:
             return SupersedeDecision(
-                HOLD_OPEN, newer_id, older_id,
-                f"support {support_older} >= gate {gate}", support_older,
+                HOLD_OPEN,
+                newer_id,
+                older_id,
+                f"support {support_older} >= gate {gate}",
+                support_older,
             )
         return SupersedeDecision(ARCHIVE, newer_id, older_id, "recency: newer wins", support_older)
 
@@ -80,17 +84,26 @@ def supersede_decision(mem: Any, *, older_id: str, newer_id: str) -> SupersedeDe
     margin = 0.15 if margin is None else margin
     if abs(s_new - s_old) <= margin:
         return SupersedeDecision(
-            COMPETING, dominant, dominated,
-            f"within margin ({s_old:.3f} vs {s_new:.3f} <= {margin:g})", support_dominated,
+            COMPETING,
+            dominant,
+            dominated,
+            f"within margin ({s_old:.3f} vs {s_new:.3f} <= {margin:g})",
+            support_dominated,
         )
     if gate > 0 and support_dominated >= gate:
         return SupersedeDecision(
-            HOLD_OPEN, dominant, dominated,
-            f"dominated support {support_dominated} >= gate {gate}", support_dominated,
+            HOLD_OPEN,
+            dominant,
+            dominated,
+            f"dominated support {support_dominated} >= gate {gate}",
+            support_dominated,
         )
     return SupersedeDecision(
-        ARCHIVE, dominant, dominated,
-        f"trust dominance ({s_old:.3f} vs {s_new:.3f})", support_dominated,
+        ARCHIVE,
+        dominant,
+        dominated,
+        f"trust dominance ({s_old:.3f} vs {s_new:.3f})",
+        support_dominated,
     )
 
 

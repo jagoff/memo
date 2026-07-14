@@ -2,6 +2,7 @@
 flip. A candidate is measurable when its effect shows up in the offline recall
 eval (precision@K / noise@K); such candidates set ``auto_flip=True``. Flags whose
 effect is not offline-measurable stay ``auto_flip=False`` (report-only)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,11 +10,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Candidate:
-    flag: str                          # the MEMO_* flag to graduate
-    on_flags: dict[str, str]           # flag_overrides expressing the ON state
-    epsilon: float = 0.0               # min precision gain to count a winning night
-    k: int = 5                         # consecutive winning nights required to flip
-    auto_flip: bool = True             # False => report-only, never writes overlay
+    flag: str  # the MEMO_* flag to graduate
+    on_flags: dict[str, str]  # flag_overrides expressing the ON state
+    epsilon: float = 0.0  # min precision gain to count a winning night
+    k: int = 5  # consecutive winning nights required to flip
+    auto_flip: bool = True  # False => report-only, never writes overlay
 
 
 def default_candidates() -> list[Candidate]:
@@ -44,14 +45,14 @@ class NumericCandidate:
     recall-faithful seam ``dream_tune.measure_rank_knob`` uses), pinning
     ``field`` on ``RankKnobs``."""
 
-    flag: str                 # MEMO_* flag to graduate
-    field: str                # RankKnobs field it pins (e.g. "mmr_lambda")
-    off_value: float          # current default = the ON/OFF baseline
-    on_value: float           # best-of-grid value to prove (the graduation target)
-    grid: tuple[float, ...] = ()   # optional line-search grid; () = single A/B
+    flag: str  # MEMO_* flag to graduate
+    field: str  # RankKnobs field it pins (e.g. "mmr_lambda")
+    off_value: float  # current default = the ON/OFF baseline
+    on_value: float  # best-of-grid value to prove (the graduation target)
+    grid: tuple[float, ...] = ()  # optional line-search grid; () = single A/B
     epsilon: float = 0.0
     k: int = 5
-    auto_flip: bool = True     # False => report-only, never writes overlay
+    auto_flip: bool = True  # False => report-only, never writes overlay
 
 
 def numeric_candidates() -> list[NumericCandidate]:

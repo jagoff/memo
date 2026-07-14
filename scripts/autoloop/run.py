@@ -11,6 +11,7 @@ the synapse chat pipeline on those questions, scores via the label-free signal
 one env-var knob per round. State persists to ~/.synapse/state/eval/autoloop/.
 Resumable.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -108,9 +109,13 @@ def append_jsonl(path: Path, row: dict) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def run_cmd(cmd: list[str], env: dict[str, str] | None = None, timeout: float = 900.0) -> subprocess.CompletedProcess:
+def run_cmd(
+    cmd: list[str], env: dict[str, str] | None = None, timeout: float = 900.0
+) -> subprocess.CompletedProcess:
     full_env = {**os.environ, **(env or {})}
-    return subprocess.run(cmd, capture_output=True, text=True, env=full_env, timeout=timeout, check=False)
+    return subprocess.run(
+        cmd, capture_output=True, text=True, env=full_env, timeout=timeout, check=False
+    )
 
 
 # ----------------------------- ollama --------------------------------- #
@@ -140,11 +145,19 @@ def ollama_stop() -> None:
 
 
 def ollama_generate(prompt: str, model: str = QUESTION_MODEL, temperature: float = 0.3) -> str:
-    body = json.dumps({"model": model, "prompt": prompt, "stream": False,
-                       "options": {"temperature": temperature, "num_predict": 80}})
+    body = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": temperature, "num_predict": 80},
+        }
+    )
     req = urllib.request.Request(  # noqa: S310 - fixed local Ollama endpoint
-        f"{OLLAMA_HOST}/api/generate", data=body.encode("utf-8"),
-        headers={"Content-Type": "application/json"})
+        f"{OLLAMA_HOST}/api/generate",
+        data=body.encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
     with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 - local endpoint
         payload = json.loads(r.read().decode("utf-8"))
     return str(payload.get("response", "")).strip()
@@ -158,7 +171,9 @@ def memo_list_ids(seen: set[str]) -> list[str]:
     if res.returncode != 0:
         raise RuntimeError(f"memo list failed: {res.stderr[:500]}")
     rows = json.loads(res.stdout)
-    eligible = [r for r in rows if r.get("id") and r["id"] not in seen and len(r.get("body") or "") >= 200]
+    eligible = [
+        r for r in rows if r.get("id") and r["id"] not in seen and len(r.get("body") or "") >= 200
+    ]
     return [r["id"] for r in eligible]
 
 
@@ -170,16 +185,59 @@ def memo_get(nid: str) -> dict:
 
 
 _token_re = re.compile(r"\w+", re.UNICODE)
-_ES_STOP = frozenset({"a","al","de","del","el","en","es","la","las","lo","los","mi","mis","no","por","que","qué",
-                      "se","si","sí","su","sus","un","una","y","ya","tu","tus","con","sin","sobre","para",
-                      "cuando","cuándo","donde","dónde","como","cómo","cual","cuál"})
+_ES_STOP = frozenset(
+    {
+        "a",
+        "al",
+        "de",
+        "del",
+        "el",
+        "en",
+        "es",
+        "la",
+        "las",
+        "lo",
+        "los",
+        "mi",
+        "mis",
+        "no",
+        "por",
+        "que",
+        "qué",
+        "se",
+        "si",
+        "sí",
+        "su",
+        "sus",
+        "un",
+        "una",
+        "y",
+        "ya",
+        "tu",
+        "tus",
+        "con",
+        "sin",
+        "sobre",
+        "para",
+        "cuando",
+        "cuándo",
+        "donde",
+        "dónde",
+        "como",
+        "cómo",
+        "cual",
+        "cuál",
+    }
+)
 
 
 def content_tokens(text: str) -> set[str]:
     return {t.lower() for t in _token_re.findall(text) if t.lower() not in _ES_STOP and len(t) >= 3}
 
 
-_REFERS_TO_DOC = re.compile(r"\b(texto|documento|nota|snippet|fragmento|contenido)\b", re.IGNORECASE)
+_REFERS_TO_DOC = re.compile(
+    r"\b(texto|documento|nota|snippet|fragmento|contenido)\b", re.IGNORECASE
+)
 _NON_LATIN = re.compile(r"[　-鿿一-鿿]")  # CJK ideographs
 
 
@@ -207,7 +265,7 @@ def generate_question(note: dict) -> str | None:
             log(f"  qgen error: {exc!r}")
             return None
         # strip wrapping quotes / leading dashes the model sometimes adds
-        q = q.strip().strip('"\'').strip()
+        q = q.strip().strip("\"'").strip()
         if "\n" in q:
             q = q.split("\n", 1)[0].strip()
         if validate_question(q, body):
@@ -252,7 +310,9 @@ def backup_corpus_once(autoloop_dir: Path) -> None:
 
 def run_synapse_eval(env: dict[str, str]) -> Path:
     full = {**ALWAYS_ON_ENV, **env}
-    log(f"  synapse eval-chat run --no-judge (env diff: { {k:v for k,v in env.items() if k not in ALWAYS_ON_ENV} })")
+    log(
+        f"  synapse eval-chat run --no-judge (env diff: { {k: v for k, v in env.items() if k not in ALWAYS_ON_ENV} })"
+    )
     res = run_cmd(["synapse", "eval-chat", "run", "--no-judge", "--json"], env=full, timeout=1800.0)
     if res.returncode != 0:
         log(f"  eval-chat stderr: {res.stderr[-500:]}")
@@ -285,8 +345,7 @@ def ids_match(actual_id: str, expected_id: str) -> bool:
     if actual_memo and expected_memo:
         shorter = min(len(actual_memo), len(expected_memo))
         return shorter >= 8 and (
-            actual_memo.startswith(expected_memo)
-            or expected_memo.startswith(actual_memo)
+            actual_memo.startswith(expected_memo) or expected_memo.startswith(actual_memo)
         )
     return False
 
@@ -303,29 +362,29 @@ def score_run(run_path: Path, seed_pairs: list[tuple[str, str]]) -> list[dict]:
         actual = [str(x).lower() for x in (r.get("actual_top_10") or [])]
         target = f"memo:{nid}".lower()
         rank = next(
-            (
-                idx
-                for idx, actual_id in enumerate(actual, start=1)
-                if ids_match(actual_id, target)
-            ),
+            (idx for idx, actual_id in enumerate(actual, start=1) if ids_match(actual_id, target)),
             11,
         )
         retrieval_hit = rank <= 10
         top1_hit = rank == 1
         answer = r.get("answer", "")
         nid_short = nid[:8]
-        cited = nid_short in answer or any(nid_short in (s.get("id") or "") for s in (r.get("sources") or []))
-        out.append({
-            "nid": nid,
-            "question": q,
-            "rank": rank,
-            "retrieval_hit": retrieval_hit,
-            "top1_hit": top1_hit,
-            "cited": cited,
-            "answer_head": answer[:200],
-            "latency_ms": r.get("total_ms", 0),
-            "missing": False,
-        })
+        cited = nid_short in answer or any(
+            nid_short in (s.get("id") or "") for s in (r.get("sources") or [])
+        )
+        out.append(
+            {
+                "nid": nid,
+                "question": q,
+                "rank": rank,
+                "retrieval_hit": retrieval_hit,
+                "top1_hit": top1_hit,
+                "cited": cited,
+                "answer_head": answer[:200],
+                "latency_ms": r.get("total_ms", 0),
+                "missing": False,
+            }
+        )
     return out
 
 
@@ -446,8 +505,8 @@ def write_summary(s: LoopState, reason: str) -> None:
         kd = h.get("knob_diff", {}) or {}
         diff = ", ".join(f"{k}={v}" for k, v in kd.items()) or "—"
         lines.append(
-            f"| {h.get('round')} | {m.get('recall_at_10',0):.3f} | {m.get('mrr',0):.3f} | "
-            f"{m.get('cite_rate',0):.3f} | {m.get('mean_rank',0):.2f} | {diff} |"
+            f"| {h.get('round')} | {m.get('recall_at_10', 0):.3f} | {m.get('mrr', 0):.3f} | "
+            f"{m.get('cite_rate', 0):.3f} | {m.get('mean_rank', 0):.2f} | {diff} |"
         )
     (AUTOLOOP_DIR / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     log(f"summary written to {AUTOLOOP_DIR / 'summary.md'}")
@@ -486,7 +545,18 @@ def one_round(s: LoopState, n_per_round: int, no_tune: bool) -> dict:
 
     if not pairs:
         log("  no valid questions — skipping eval")
-        return {"round": s.round_no, "metrics": {"recall_at_10": s.prev_recall, "mrr": 0, "cite_rate": 0, "mean_rank": 0, "n": 0}, "buckets": {}, "knob_diff": {}}
+        return {
+            "round": s.round_no,
+            "metrics": {
+                "recall_at_10": s.prev_recall,
+                "mrr": 0,
+                "cite_rate": 0,
+                "mean_rank": 0,
+                "n": 0,
+            },
+            "buckets": {},
+            "knob_diff": {},
+        }
 
     s.seen_ids.update(nid for nid, _ in pairs)
 
@@ -536,8 +606,10 @@ def one_round(s: LoopState, n_per_round: int, no_tune: bool) -> dict:
     s.prev_recall = metrics["recall_at_10"]
 
     # 9. Persist
-    append_jsonl(AUTOLOOP_DIR / f"round-{s.round_no:03d}.jsonl",
-                 {"round": s.round_no, "metrics": metrics, "rows": rows})
+    append_jsonl(
+        AUTOLOOP_DIR / f"round-{s.round_no:03d}.jsonl",
+        {"round": s.round_no, "metrics": metrics, "rows": rows},
+    )
     meta = {
         "round": s.round_no,
         "knob_state": dict(s.knob_state),

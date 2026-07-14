@@ -5,6 +5,7 @@ Metric = cost_per_grounded (injected_tokens / grounded) and grounded_rate
 grounded recall nor drop the grounded rate vs the saved baseline. Machine-local
 (baseline under state_dir/eval/), analogous to `memo eval recall --gate`.
 """
+
 from __future__ import annotations
 
 import json
@@ -52,7 +53,9 @@ def check_gate(state_dir: Path, *, update_baseline: bool) -> tuple[bool, dict]:
 
 
 @click.command(name="token-gate")
-@click.option("--update-baseline", is_flag=True, help="Seed/refresh the baseline instead of gating.")
+@click.option(
+    "--update-baseline", is_flag=True, help="Seed/refresh the baseline instead of gating."
+)
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def token_gate_cmd(*, update_baseline: bool = False, as_json: bool = False) -> None:
     """Gate footprint changes against the measured cost-per-grounded baseline."""
@@ -61,6 +64,8 @@ def token_gate_cmd(*, update_baseline: bool = False, as_json: bool = False) -> N
     if as_json:
         click.echo(json.dumps({"ok": ok, **info}, ensure_ascii=False, indent=2))
     else:
-        click.echo(f"cost/grounded {info['cost_per_grounded']}  "
-                   f"grounded_rate {info['grounded_rate']}  → {'PASS' if ok else 'FAIL'}")
+        click.echo(
+            f"cost/grounded {info['cost_per_grounded']}  "
+            f"grounded_rate {info['grounded_rate']}  → {'PASS' if ok else 'FAIL'}"
+        )
     raise SystemExit(0 if ok else 1)

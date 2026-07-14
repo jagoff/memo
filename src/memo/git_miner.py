@@ -62,7 +62,11 @@ def _save_state(state_dir: Path, state: dict[str, Any]) -> None:
 
 
 def _matched_commits(repo: Path, since_days: int | None) -> list[dict[str, str]]:
-    args = ["log", "--no-merges", f"--pretty=format:%H{_FIELD_SEP}%aI{_FIELD_SEP}%s{_FIELD_SEP}%b{_RECORD_SEP}"]
+    args = [
+        "log",
+        "--no-merges",
+        f"--pretty=format:%H{_FIELD_SEP}%aI{_FIELD_SEP}%s{_FIELD_SEP}%b{_RECORD_SEP}",
+    ]
     if since_days:
         args.append(f"--since={since_days} days ago")
     raw = _git(repo, *args)
@@ -78,7 +82,12 @@ def _matched_commits(repo: Path, since_days: int | None) -> list[dict[str, str]]
         if not _FIX_SUBJECT_RE.match(subject):
             continue
         commits.append(
-            {"sha": sha, "iso": iso, "subject": subject, "body": parts[3].strip() if len(parts) > 3 else ""}
+            {
+                "sha": sha,
+                "iso": iso,
+                "subject": subject,
+                "body": parts[3].strip() if len(parts) > 3 else "",
+            }
         )
     return commits
 
@@ -130,7 +139,9 @@ def mine_git_history(
             try:
                 files = [
                     ln
-                    for ln in _git(toplevel, "show", "--name-only", "--pretty=format:", c["sha"]).splitlines()
+                    for ln in _git(
+                        toplevel, "show", "--name-only", "--pretty=format:", c["sha"]
+                    ).splitlines()
                     if ln.strip()
                 ]
             except subprocess.CalledProcessError:

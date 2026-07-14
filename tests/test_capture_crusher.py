@@ -17,8 +17,7 @@ def _enable_crusher(monkeypatch: pytest.MonkeyPatch, *, ratio: str = "0.2") -> N
 
 def _large_rows(count: int = 30) -> list[dict[str, object]]:
     return [
-        {"id": index, "kind": "result", "payload": "shared payload " * 20}
-        for index in range(count)
+        {"id": index, "kind": "result", "payload": "shared payload " * 20} for index in range(count)
     ]
 
 

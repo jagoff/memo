@@ -36,7 +36,9 @@ def format_graph_reason(reason: dict[str, Any]) -> str:
     query_entities = [str(e) for e in (reason.get("query_entities") or [])]
     hit_entities = [str(e) for e in (reason.get("hit_entities") or [])]
     if query_entities and hit_entities:
-        return f"related via graph ({mode}): {', '.join(query_entities)} -> {', '.join(hit_entities)}"
+        return (
+            f"related via graph ({mode}): {', '.join(query_entities)} -> {', '.join(hit_entities)}"
+        )
     if query_entities:
         return f"related via graph ({mode}): {', '.join(query_entities)}"
     return f"related via graph ({mode})"

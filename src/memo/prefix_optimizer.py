@@ -34,6 +34,7 @@ def flag_prefix_cache_align_enabled() -> bool:
         True if MEMO_PREFIX_CACHE_ALIGN=1/true, False otherwise.
     """
     from memo.flags import flag_bool
+
     return flag_bool("MEMO_PREFIX_CACHE_ALIGN")
 
 

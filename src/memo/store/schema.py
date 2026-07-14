@@ -392,8 +392,7 @@ class _SchemaMixin(_StoreBase):
         # need the column added here. Idempotent, no user_version dance
         # (the fresh-DB early-return in _run_migrations would skip a v4).
         hcols = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(memory_health)").fetchall()
+            row["name"] for row in self._conn.execute("PRAGMA table_info(memory_health)").fetchall()
         }
         if "support_count" not in hcols:
             try:
@@ -407,10 +406,7 @@ class _SchemaMixin(_StoreBase):
         # CREATE IF NOT EXISTS skips existing tables, so pre-existing DBs
         # need the columns added here. Idempotent, no user_version dance
         # (the fresh-DB early-return in _run_migrations would skip v4).
-        mcols = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(meta)").fetchall()
-        }
+        mcols = {row["name"] for row in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
         if "verification_state" not in mcols:
             try:
                 self._conn.execute(
@@ -420,9 +416,7 @@ class _SchemaMixin(_StoreBase):
                 _log.debug("schema migration meta.verification_state failed: %s", e)
         if "verified_at" not in mcols:
             try:
-                self._conn.execute(
-                    "ALTER TABLE meta ADD COLUMN verified_at INTEGER"
-                )
+                self._conn.execute("ALTER TABLE meta ADD COLUMN verified_at INTEGER")
             except Exception as e:
                 _log.debug("schema migration meta.verified_at failed: %s", e)
 

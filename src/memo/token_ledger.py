@@ -334,10 +334,7 @@ def summarize(
             for src, n in _consults(k).items():
                 e = agg.setdefault(src, {"grounded": 0, "consults": 0})
                 e["consults"] += int(n)
-        out = {
-            c: {**v, "tokens": _tokens(v["grounded"], v["consults"])}
-            for c, v in agg.items()
-        }
+        out = {c: {**v, "tokens": _tokens(v["grounded"], v["consults"])} for c, v in agg.items()}
         return dict(sorted(out.items(), key=lambda kv: kv[1]["tokens"], reverse=True))
 
     month_keys = [k for k in days if k.startswith(month_prefix)]

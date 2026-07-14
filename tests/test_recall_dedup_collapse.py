@@ -5,6 +5,7 @@ These tests cover the NEW wiring: MEMO_RECALL_DEDUP_COLLAPSE gates a
 pre-top-K collapse of `qualifying`, distinct from the existing post-top-K
 MEMO_RECALL_INTRA_DEDUP wire on `relevant`.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -58,11 +59,21 @@ def test_dedup_collapse_runs_pre_topk_when_flag_on(mem: Memory, monkeypatch):
     monkeypatch.delenv("MEMO_RECALL_INTRA_DEDUP", raising=False)
     monkeypatch.setenv("MEMO_RECALL_TOP_K", "5")
 
-    mem.save(content="el cutover memflow a mac-work fue ok", title="Deploy cutover mac-work", type_="fact")
-    mem.save(content="el cutover memflow a mac work fue ok", title="Deploy cutover en mac-work", type_="fact")
+    mem.save(
+        content="el cutover memflow a mac-work fue ok",
+        title="Deploy cutover mac-work",
+        type_="fact",
+    )
+    mem.save(
+        content="el cutover memflow a mac work fue ok",
+        title="Deploy cutover en mac-work",
+        type_="fact",
+    )
 
     calls: list[tuple] = []
-    original_collapse = __import__("memo.recall_logic", fromlist=["collapse_near_dups"]).collapse_near_dups
+    original_collapse = __import__(
+        "memo.recall_logic", fromlist=["collapse_near_dups"]
+    ).collapse_near_dups
 
     def _spy(relevant, *, threshold):
         result = original_collapse(relevant, threshold=threshold)
@@ -84,8 +95,16 @@ def test_dedup_collapse_skipped_when_flag_off(mem: Memory, monkeypatch):
     monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
     monkeypatch.delenv("MEMO_RECALL_INTRA_DEDUP", raising=False)
 
-    mem.save(content="el cutover memflow a mac-work fue ok", title="Deploy cutover mac-work", type_="fact")
-    mem.save(content="el cutover memflow a mac work fue ok", title="Deploy cutover en mac-work", type_="fact")
+    mem.save(
+        content="el cutover memflow a mac-work fue ok",
+        title="Deploy cutover mac-work",
+        type_="fact",
+    )
+    mem.save(
+        content="el cutover memflow a mac work fue ok",
+        title="Deploy cutover en mac-work",
+        type_="fact",
+    )
 
     calls: list = []
 
@@ -108,8 +127,14 @@ def test_collapse_near_dups_drops_lower_scored_paraphrase():
 
     def _hit(id_, title, body, score):
         return SimpleNamespace(
-            id=id_, title=title, body=body, tags=[], score=score,
-            type="note", updated="2026-07-10", extra={},
+            id=id_,
+            title=title,
+            body=body,
+            tags=[],
+            score=score,
+            type="note",
+            updated="2026-07-10",
+            extra={},
         )
 
     pool = [

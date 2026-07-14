@@ -103,9 +103,7 @@ def briefing(*, compact: bool) -> None:
         compact_lines = ["## Memo"]
         if same_proj:
             top = same_proj[0]
-            summary = (top.get("summary") or top.get("last_user_msg") or "—").replace(
-                "\n", " "
-            )
+            summary = (top.get("summary") or top.get("last_user_msg") or "—").replace("\n", " ")
             state = (top.get("running_summary") or "").replace("\n", " ")
             compact_lines.append(
                 f"Last session ({format_relative(top.get('updated'))}): "
@@ -238,9 +236,7 @@ def briefing(*, compact: bool) -> None:
     try:
         from memo.briefing import memo_native_briefing_lines
 
-        lines.extend(
-            memo_native_briefing_lines(mem, loops_n=loops_n, loops_days=loops_days)
-        )
+        lines.extend(memo_native_briefing_lines(mem, loops_n=loops_n, loops_days=loops_days))
     except Exception as exc:
         if debug:
             print(f"# memo briefing: memo-native sections failed: {exc}", file=_sys.stderr)

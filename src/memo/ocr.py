@@ -103,6 +103,7 @@ def _mean_conf(pairs: list[tuple[str, float]]) -> float:
         return 0.0
     return sum(c for _, c in pairs) / len(pairs)
 
+
 _VISION_CHECKED = False
 _VISION_OK = False
 
@@ -269,9 +270,7 @@ def extract_text_cached_with_confidence(
             _log.debug("ocr: cache read failed, re-extracting: %s", exc)
     text, conf = extract_text_with_confidence(p, languages=languages)
     with contextlib.suppress(Exception):
-        cache_path.write_text(
-            json.dumps({"t": text, "c": conf}), encoding="utf-8"
-        )
+        cache_path.write_text(json.dumps({"t": text, "c": conf}), encoding="utf-8")
     return text, conf
 
 

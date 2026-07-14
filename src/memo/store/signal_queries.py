@@ -68,7 +68,11 @@ class _SignalQueriesMixin(_StoreBase):
     def dump_signal(self) -> dict[str, list[dict[str, Any]]]:
         """Return every signal row, grouped by table, as plain dicts."""
         access = [
-            {"id": r["id"], "access_count": int(r["access_count"]), "last_accessed": r["last_accessed"]}
+            {
+                "id": r["id"],
+                "access_count": int(r["access_count"]),
+                "last_accessed": r["last_accessed"],
+            }
             for r in self._conn.execute(
                 "SELECT id, access_count, last_accessed FROM access"
             ).fetchall()
@@ -151,7 +155,10 @@ class _SignalQueriesMixin(_StoreBase):
                         incoming_created = r.get("created_at") or ""
                         if incoming_created <= existing_created:
                             continue
-                        cx.execute("DELETE FROM source_feedback_vec WHERE feedback_id = ?", (existing["id"],))
+                        cx.execute(
+                            "DELETE FROM source_feedback_vec WHERE feedback_id = ?",
+                            (existing["id"],),
+                        )
                         cx.execute("DELETE FROM source_feedback WHERE id = ?", (existing["id"],))
                     cx.execute(
                         "INSERT INTO source_feedback "
@@ -167,7 +174,11 @@ class _SignalQueriesMixin(_StoreBase):
                         ),
                     )
                     feedback_applied += 1
-        return {"access": len(access), "memory_health": len(health), "source_feedback": feedback_applied}
+        return {
+            "access": len(access),
+            "memory_health": len(health),
+            "source_feedback": feedback_applied,
+        }
 
     # -- memory health (confidence + roi_score) ----------------------------
 
@@ -395,7 +406,9 @@ class _SignalQueriesMixin(_StoreBase):
                 """,  # noqa: S608
                 (roi_floor, min_age_days, *excluded),
             ).fetchall()
-        return [{"id": r["id"], "roi_score": r["roi_score"], "days_old": r["days_old"]} for r in rows]
+        return [
+            {"id": r["id"], "roi_score": r["roi_score"], "days_old": r["days_old"]} for r in rows
+        ]
 
     def eviction_candidates(
         self,
@@ -420,9 +433,11 @@ class _SignalQueriesMixin(_StoreBase):
         """
         if policy not in {"lru", "lfu", "ttl"}:
             raise ValueError(f"unknown eviction policy: {policy!r}")
-        order = ("COALESCE(a.access_count, 0) ASC, COALESCE(a.last_accessed, m.updated) ASC"
-                 if policy == "lfu"
-                 else "COALESCE(a.last_accessed, m.updated) ASC")
+        order = (
+            "COALESCE(a.access_count, 0) ASC, COALESCE(a.last_accessed, m.updated) ASC"
+            if policy == "lfu"
+            else "COALESCE(a.last_accessed, m.updated) ASC"
+        )
         # Always filter soft-deleted rows; WHERE clause always has at least deleted_at guard.
         sql = (
             "SELECT m.id AS id, m.type AS type, "

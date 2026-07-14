@@ -189,8 +189,16 @@ class QueryComposer:
                     hit_date = datetime.fromisoformat(hit.updated.replace("Z", "+00:00"))
                     if hit_date.tzinfo is None:
                         hit_date = hit_date.replace(tzinfo=UTC)
-                    fdt = from_dt.replace(tzinfo=UTC) if from_dt is not None and from_dt.tzinfo is None else from_dt
-                    tdt = to_dt.replace(tzinfo=UTC) if to_dt is not None and to_dt.tzinfo is None else to_dt
+                    fdt = (
+                        from_dt.replace(tzinfo=UTC)
+                        if from_dt is not None and from_dt.tzinfo is None
+                        else from_dt
+                    )
+                    tdt = (
+                        to_dt.replace(tzinfo=UTC)
+                        if to_dt is not None and to_dt.tzinfo is None
+                        else to_dt
+                    )
                     if fdt is not None and hit_date < fdt:
                         continue
                     if tdt is not None and hit_date > tdt:

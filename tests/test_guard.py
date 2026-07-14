@@ -16,10 +16,10 @@ def test_reversal_signal_detects_english_and_spanish():
 
 def test_guard_candidates_filters_type_score_and_signal():
     hits = [
-        _hit("a", "decision", 0.9),   # decision + high score → candidate
-        _hit("b", "note", 0.95),      # wrong type → excluded
-        _hit("c", "preference", 0.4), # below threshold → excluded
-        _hit("d", "preference", 0.8), # preference + high score → candidate
+        _hit("a", "decision", 0.9),  # decision + high score → candidate
+        _hit("b", "note", 0.95),  # wrong type → excluded
+        _hit("c", "preference", 0.4),  # below threshold → excluded
+        _hit("d", "preference", 0.8),  # preference + high score → candidate
     ]
     out = guard_candidates("switch to X instead", hits, sim_threshold=0.6)
     assert [h.id for h in out] == ["a", "d"]  # score-desc, only decision/preference over threshold

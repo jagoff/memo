@@ -284,7 +284,9 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
     t0 = time.time()
     budget_s = _budget_ms() / 1000.0
 
-    def _bail(reason: str, *, session_id: str | None = None, turn: int | None = None) -> dict[str, Any]:
+    def _bail(
+        reason: str, *, session_id: str | None = None, turn: int | None = None
+    ) -> dict[str, Any]:
         try:
             from memo.dashboard import append_grounding_diag_log
 
@@ -296,6 +298,7 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
             )
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).debug("grounding: failed to write diag log: %s", exc)
         out: dict[str, Any] = {"scored": 0, "bailed": reason}
         if session_id:
@@ -375,7 +378,11 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                                     answer_len=len(_ans_early),
                                     project=project,
                                 )
-                            return {"session_id": session_id, "turn": turn, "scored": len(_cited_early)}
+                            return {
+                                "session_id": session_id,
+                                "turn": turn,
+                                "scored": len(_cited_early),
+                            }
             except Exception as _exc_early:
                 import logging
 
@@ -414,7 +421,9 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
         scored: list[dict[str, Any]] = []
         for m in recalled:
             lex = _lexical_containment(m.get("snippet") or "", answer_tokens)
-            scored.append({"m": m, "lexical": lex, "embed": None, "specific": None, "method": "lexical"})
+            scored.append(
+                {"m": m, "lexical": lex, "embed": None, "specific": None, "method": "lexical"}
+            )
 
         # Stage 2 — embedding, single batch: answer + question + ALL snippets.
         # `specific = cos(answer, mem) - cos(question, mem)` separates real use
@@ -439,7 +448,10 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
                         scored[i]["method"] = "both" if scored[i]["lexical"] > 0 else "embed"
             except Exception as exc:
                 import logging
-                logging.getLogger(__name__).debug("grounding: embed scoring failed, using lexical-only: %s", exc)
+
+                logging.getLogger(__name__).debug(
+                    "grounding: embed scoring failed, using lexical-only: %s", exc
+                )
 
         # Wall-clock guard: if we blew the budget, write nothing.
         if (time.time() - t0) >= budget_s:
@@ -498,5 +510,6 @@ def score_turn(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | Non
         return {"session_id": session_id, "turn": turn, "scored": written}
     except Exception as exc:
         import logging
+
         logging.getLogger(__name__).error("grounding: score_turn failed: %s", exc)
         return None

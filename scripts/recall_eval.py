@@ -28,7 +28,9 @@ def main() -> None:
     ap.add_argument("--detail", action="store_true", help="print per-prompt top-K")
     args = ap.parse_args()
 
-    labels = eval_recall.load_labels(Path(args.labels)) if args.labels else eval_recall.DEFAULT_LABELS
+    labels = (
+        eval_recall.load_labels(Path(args.labels)) if args.labels else eval_recall.DEFAULT_LABELS
+    )
     mem = Memory(Config.from_env())
     rows = eval_recall.evaluate(mem, k=args.k, labels=labels)
 

@@ -29,9 +29,7 @@ def _clear_policy_flags(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_background_tasks_are_silent_by_default(
-    tmp_cfg, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_background_tasks_are_silent_by_default(tmp_cfg, monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_policy_flags(monkeypatch)
     _RecordingThread.names = []
     monkeypatch.setattr(threading, "Thread", _RecordingThread)

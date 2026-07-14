@@ -1,4 +1,5 @@
 """claim-support wired into the capture path (default off)."""
+
 from __future__ import annotations
 
 from memo import capture_core, claim_support
@@ -7,6 +8,7 @@ from memo import capture_core, claim_support
 def _candidate(body):
     def _f(*_a, **_k):
         return [{"title": "outcome", "type": "note", "body": body, "tags": [], "fact_edges": None}]
+
     return _f
 
 

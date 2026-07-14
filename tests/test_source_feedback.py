@@ -133,7 +133,9 @@ def test_feedback_record_extra_passthrough(mem_with_stub: Memory):
 
     rec = mem_with_stub.save(content="sync remoto usa flock", title="Sync")
     mem_with_stub.feedback_record(
-        rec.id, query_text="cómo va el sync", rating="ignore",
+        rec.id,
+        query_text="cómo va el sync",
+        rating="ignore",
         extra={"origin": "next_turn_verdict", "verdict": "negative"},
     )
     rows = mem_with_stub.feedback_list(source_id=rec.id)
@@ -155,10 +157,22 @@ def test_record_verdicts_does_not_clobber_manual_vote(mem_with_stub: Memory):
     mem_with_stub.feedback_record(rec.id, query_text=query, rating="up")
 
     sd = mem_with_stub.cfg.state_dir
-    append_recall_log(sd, prompt=query, hits=[{"id": rec.id, "score": 0.9}],
-                      via="subprocess", session_id="s9", turn=1)
-    append_recall_log(sd, prompt="no funciona, tira el mismo error", hits=[],
-                      via="subprocess", session_id="s9", turn=2)
+    append_recall_log(
+        sd,
+        prompt=query,
+        hits=[{"id": rec.id, "score": 0.9}],
+        via="subprocess",
+        session_id="s9",
+        turn=1,
+    )
+    append_recall_log(
+        sd,
+        prompt="no funciona, tira el mismo error",
+        hits=[],
+        via="subprocess",
+        session_id="s9",
+        turn=2,
+    )
     # Implicit negative verdict would write rating="ignore" (-1) — but only if absent.
     out = record_verdicts(mem_with_stub.cfg, {"session_id": "s9"}, memory=mem_with_stub)
     assert out is not None and out["verdict"] == "negative"

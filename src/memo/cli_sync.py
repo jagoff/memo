@@ -86,7 +86,12 @@ def sync_import_signal(as_json: bool) -> None:
     rebuilt = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
 
     if as_json:
-        click.echo(json.dumps({"signal_dir": str(sig), "merged": counts, "feedback_vecs_rebuilt": rebuilt}, indent=2))
+        click.echo(
+            json.dumps(
+                {"signal_dir": str(sig), "merged": counts, "feedback_vecs_rebuilt": rebuilt},
+                indent=2,
+            )
+        )
         return
     console.print(f"[bold]Imported signal[/bold] ← {sig}")
     for table, n in counts.items():
@@ -147,7 +152,9 @@ def sync_push(as_json: bool, quiet: bool) -> None:
         click.echo(json.dumps(out, indent=2))
         return
     if out.get("pushed"):
-        console.print(f"[bold green]Pushed[/bold green] {out['committed_files']} files → {out['branch']}")
+        console.print(
+            f"[bold green]Pushed[/bold green] {out['committed_files']} files → {out['branch']}"
+        )
     else:
         console.print(f"[dim]Nothing to push ({out.get('reason')})[/dim]")
 
@@ -170,9 +177,7 @@ def sync_pull(remote: str | None, as_json: bool, quiet: bool) -> None:
     if remote:  # legacy audit-log replay
         remote_db = _resolve_remote_history_db(remote)
         if remote_db is None:
-            raise click.ClickException(
-                f"Remote history DB not found at: {remote}"
-            )
+            raise click.ClickException(f"Remote history DB not found at: {remote}")
         diff = mem.sync.sync_from_remote(remote_db)
         console.print("[bold]Pull Sync (replay)[/bold]")
         console.print(f"Applied: {diff.applied}")
@@ -231,7 +236,9 @@ def sync_clone(url: str, dest: str | None, as_json: bool) -> None:
         return
     console.print(f"[bold green]Cloned[/bold green] → {out['cloned']} ({out['memories']} memories)")
     console.print("\n[bold]Next steps on this machine:[/bold]")
-    console.print(f"  1. Set [cyan]MEMO_DATA_DIR={out['memories_dir']}[/cyan] in your config / MCP env")
+    console.print(
+        f"  1. Set [cyan]MEMO_DATA_DIR={out['memories_dir']}[/cyan] in your config / MCP env"
+    )
     console.print("  2. [cyan]memo reindex --rebuild[/cyan]   # build the index from the .md")
     console.print("  3. [cyan]memo sync import-signal[/cyan]  # restore access/health/feedback")
 
@@ -340,7 +347,9 @@ def sync_status(offline: bool, check_remote: bool, as_json: bool) -> None:
         console.print(f"  [red]blocked:[/red] {st['pending_reason']}")
     console.print(f"  repo:   {st['root']}  ({st['branch']})")
     console.print(f"  remote: {st['remote'] or '—'}")
-    console.print(f"  ahead {ahead} · behind {behind} · dirty {dirty} · last {st['last_commit'] or '—'}")
+    console.print(
+        f"  ahead {ahead} · behind {behind} · dirty {dirty} · last {st['last_commit'] or '—'}"
+    )
     if not offline:
         console.print(f"  remote reachable: {st['remote_reachable']}")
 
@@ -485,9 +494,7 @@ def _gh_available() -> bool:
     import subprocess
 
     try:
-        probe = subprocess.run(
-            ["gh", "auth", "status"], capture_output=True, text=True, timeout=15
-        )
+        probe = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         return False
     return probe.returncode == 0
@@ -513,7 +520,9 @@ def _run_sync_setup(cfg: Config, choice: str, url: str | None, *, gh_ok: bool) -
 
 
 @sync_group.command(name="setup")
-@click.option("--never", "never", is_flag=True, help="Silence the sync-onboarding nudge on this machine.")
+@click.option(
+    "--never", "never", is_flag=True, help="Silence the sync-onboarding nudge on this machine."
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def sync_setup(never: bool, as_json: bool) -> None:
     """Guided setup to share memories across machines (git-backed corpus).
@@ -532,7 +541,9 @@ def sync_setup(never: bool, as_json: bool) -> None:
 
     # Never prompt from hooks / pipes.
     if flag_bool("MEMO_NONINTERACTIVE") or not sys.stdin.isatty():
-        console.print("Compartí memorias entre Macs con [cyan]memo sync setup[/cyan] (modo interactivo).")
+        console.print(
+            "Compartí memorias entre Macs con [cyan]memo sync setup[/cyan] (modo interactivo)."
+        )
         return
 
     console.print("[bold]memo sync setup[/bold] — compartí memorias entre máquinas.\n")
@@ -563,7 +574,9 @@ def sync_setup(never: bool, as_json: bool) -> None:
         return
     if choice == "1":
         console.print(f"\n[green]✓[/green] corpus creado → [cyan]{out['repo_url']}[/cyan]")
-        console.print("En tus otras Macs: [cyan]memo sync setup[/cyan] → opción 2 (unirme), pegá esa URL.")
+        console.print(
+            "En tus otras Macs: [cyan]memo sync setup[/cyan] → opción 2 (unirme), pegá esa URL."
+        )
     else:
         console.print(f"\n[green]✓[/green] unido → data_dir = [cyan]{out['memories_dir']}[/cyan]")
         console.print("[bold green]Listo.[/bold green] memo ahora lee el corpus git-sincronizado.")

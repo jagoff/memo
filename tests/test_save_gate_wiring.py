@@ -1,4 +1,5 @@
 """gate-presets wired into save()'s near-duplicate gate (default off)."""
+
 from __future__ import annotations
 
 import pytest

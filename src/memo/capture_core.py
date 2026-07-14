@@ -324,7 +324,9 @@ def collect_tool_files(transcript_path: Path, max_files: int = 10) -> dict[str, 
             ).strip()
             if not path or "/" not in path:
                 continue
-            bucket = files_mod if name in _WRITE_TOOLS else files_read if name in _READ_TOOLS else None
+            bucket = (
+                files_mod if name in _WRITE_TOOLS else files_read if name in _READ_TOOLS else None
+            )
             if bucket is None:
                 continue
             bucket.pop(path, None)  # re-insert → most-recent-last ordering
@@ -335,9 +337,7 @@ def collect_tool_files(transcript_path: Path, max_files: int = 10) -> dict[str, 
     }
 
 
-def _capture_provenance(
-    session_id: str, transcript_path: Path, turn_hash: str
-) -> dict[str, Any]:
+def _capture_provenance(session_id: str, transcript_path: Path, turn_hash: str) -> dict[str, Any]:
     """Provenance bag merged under every captured memory's extra: the source
     session/turn (so a memory can escalate to its origin) plus, when
     MEMO_CAPTURE_TOOL_EVIDENCE is on, the tool-file arrays. Shared by the Stop
@@ -1050,8 +1050,10 @@ def _extract_and_save(
         grounding_score: float | None = None
         if _ground_on:
             grounding_score = score_grounding(
-                _helper_chat, cfg.helper_model,
-                source=_ground_source, claim=f"{cand['title']}\n{cand['body']}",
+                _helper_chat,
+                cfg.helper_model,
+                source=_ground_source,
+                claim=f"{cand['title']}\n{cand['body']}",
             )
             if grounding_score is not None and grounding_score < _ground_min:
                 uncertain += 1
@@ -1129,7 +1131,9 @@ def _extract_and_save(
                             )
                     except Exception as _exc:  # never let a downgrade break capture
                         if debug:
-                            print(f"# memo capture: claim downgrade skipped: {_exc}", file=sys.stderr)
+                            print(
+                                f"# memo capture: claim downgrade skipped: {_exc}", file=sys.stderr
+                            )
             facts += len(
                 mem.fact_edges.query(
                     source_record_id=rec.id,
@@ -1198,7 +1202,9 @@ def extract_and_save_text(
     Returns a summary dict: ``status`` ("extracted" | "verbatim") plus the
     `_extract_and_save` counts (candidates/saved/saved_titles/...).
     """
-    result = _extract_and_save(mem, cfg, "", text, debug=debug, merge_tags=merge_tags, auto_project=auto_project)
+    result = _extract_and_save(
+        mem, cfg, "", text, debug=debug, merge_tags=merge_tags, auto_project=auto_project
+    )
     if result["candidates"] == 0:
         from memo.flags import flag_bool
 
@@ -1285,17 +1291,13 @@ def _score_rows_by_relevance(rows: list[Any], context: str) -> list[float]:
     for tokens in token_sets:
         token_count = max(len(tokens), 1)
         base = sum(_idf(tok) for tok in tokens) / token_count
-        overlap = (
-            sum(_idf(tok) for tok in tokens & ctx_tokens) / token_count if ctx_tokens else 0.0
-        )
+        overlap = sum(_idf(tok) for tok in tokens & ctx_tokens) / token_count if ctx_tokens else 0.0
         bonus = min(overlap, base * 0.25)
         scores.append(base + bonus)
     return scores
 
 
-def maybe_crush_json_capture(
-    content: str, context: str, config: Config
-) -> tuple[str, str | None]:
+def maybe_crush_json_capture(content: str, context: str, config: Config) -> tuple[str, str | None]:
     """Apply SmartCrusher to JSON arrays in capture content.
 
     Detects JSON arrays, scores rows by relevance, keeps top-K, and offloads

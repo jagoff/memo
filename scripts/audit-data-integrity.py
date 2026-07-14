@@ -91,7 +91,9 @@ def main() -> int:
     print(f"  ✗ bad_path:          {len(bad_path)}   (file does not exist at vault/path)")
     print(f"  ✗ parse_error:       {len(parse_error)}")
     print(f"  ✗ body_empty:        {len(body_empty)}   (file exists but body is blank)")
-    print(f"  ✗ hash_mismatch:     {len(hash_mismatch)}   (on-disk body diverged from indexed hash)")
+    print(
+        f"  ✗ hash_mismatch:     {len(hash_mismatch)}   (on-disk body diverged from indexed hash)"
+    )
     print()
 
     print("Path-prefix distribution (top-10) — useful to spot the 'Notes/Notes/...' bug:")

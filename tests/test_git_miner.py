@@ -25,7 +25,10 @@ def _make_repo(tmp_path: Path) -> Path:
     (repo / "a.txt").write_text("two")
     _git(repo, "add", "a.txt")
     _git(
-        repo, "commit", "-q", "-m",
+        repo,
+        "commit",
+        "-q",
+        "-m",
         "fix(daemon): crash-loop on missing contracts\n\n"
         "launchd plist pointed at memo's venv which lacks consciousness_contracts.",
     )

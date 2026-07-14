@@ -342,9 +342,16 @@ def test_build_labels_merges_negative_verdicts(tmp_cfg) -> None:
     from memo.dashboard import append_verdict_log
     from memo.dream_tune import build_labels
 
-    append_verdict_log(tmp_cfg.state_dir, session_id="s1", turn=4, prior_turn=3,
-                       verdict="correction", prompt="dónde vive el registro de flags?",
-                       reaction="no, eso está mal", recall_ids=["aaaabbbb11112222"])
+    append_verdict_log(
+        tmp_cfg.state_dir,
+        session_id="s1",
+        turn=4,
+        prior_turn=3,
+        verdict="correction",
+        prompt="dónde vive el registro de flags?",
+        reaction="no, eso está mal",
+        recall_ids=["aaaabbbb11112222"],
+    )
     labels, _ = build_labels(SimpleNamespace(state_dir=tmp_cfg.state_dir))
     neg = [p for p in labels.prompts if p.avoid_ids]
     assert neg and neg[0].avoid_ids == ["aaaabbbb"]

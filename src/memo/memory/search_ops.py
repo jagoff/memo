@@ -392,10 +392,7 @@ class _SearchOpsMixin(_MemoryBase):
 
             rows = [r for r in rows if _date_ok(r)]
         if exclude_tags:
-            rows = [
-                r for r in rows
-                if not (exclude_tags & {str(t) for t in (r.get("tags") or [])})
-            ]
+            rows = [r for r in rows if not (exclude_tags & {str(t) for t in (r.get("tags") or [])})]
         out: list[MemoryRecord] = []
         # In hybrid mode the candidate pool can grow large (up to _POOL_CAP) and
         # the reranker trims it to `limit`. Loading every candidate body from
@@ -435,8 +432,7 @@ class _SearchOpsMixin(_MemoryBase):
                 if flag_bool("MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED"):
                     health = self.store.get_health_batch([r.id for r in out])
                     outcome_scores = {
-                        mid: float(values.get("roi_score", 1.0))
-                        for mid, values in health.items()
+                        mid: float(values.get("roi_score", 1.0)) for mid, values in health.items()
                     }
                 graph_signal = collect_graph_signal(
                     self.graph,
@@ -997,7 +993,9 @@ class _SearchOpsMixin(_MemoryBase):
             mode = "chunk_seq"
         else:
             rows = self.store.records_around_created(
-                str(row["created"]), before=before, after=after,
+                str(row["created"]),
+                before=before,
+                after=after,
                 exclude_types=set(REFERENCE_TYPES),
             )
             mode = "created"

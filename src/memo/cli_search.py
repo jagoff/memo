@@ -201,7 +201,9 @@ def search(
             reason_tbl.add_row(str(hit.get("id") or "")[:8], "; ".join(str(w) for w in why[:3]))
         if reason_tbl.row_count:
             console.print(reason_tbl)
-        console.print(f"[dim]search trace stages: {', '.join(str(t.get('stage')) for t in trace)}[/dim]")
+        console.print(
+            f"[dim]search trace stages: {', '.join(str(t.get('stage')) for t in trace)}[/dim]"
+        )
 
 
 @click.command(name="context")
@@ -344,7 +346,11 @@ def ask(
 @click.command(name="context-pack")
 @click.argument("question")
 @click.option(
-    "--k", default=5, type=int, show_default=True, help="Top-K memories to interpret as a context pack."
+    "--k",
+    default=5,
+    type=int,
+    show_default=True,
+    help="Top-K memories to interpret as a context pack.",
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option(

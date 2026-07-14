@@ -146,9 +146,7 @@ def _run_eviction(mem: Memory, max_count: int, dry_run: bool) -> list[dict]:
     # No defensive except here: a DB error must propagate to the cli_dream
     # caller (which records it in receipt["errors"]), not read as "evicted: 0".
     conn = mem.store._conn
-    total_row = conn.execute(
-        "SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'"
-    ).fetchone()
+    total_row = conn.execute("SELECT COUNT(*) AS n FROM meta WHERE type != 'reference'").fetchone()
     total = int(total_row["n"]) if total_row else 0
 
     excess = total - max_count
@@ -504,8 +502,6 @@ def _run_capture_weights(cfg: Config, mem: Memory) -> dict:
     return {"types": len(weights), "top": top}
 
 
-
-
 def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     """Scan for contradictions and evolutions, resolve pairs, archive older entries.
 
@@ -528,6 +524,7 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
         "confidence_penalized": 0,
     }
     try:
+
         def _contradict_progress(current: int, total: int, _title: str) -> None:
             pass  # Silent progress callback
 
@@ -577,7 +574,9 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
             if pair.pair_id in _nway_ids:
                 if not dry_run:
                     mem.contradict_store.resolve(
-                        pair.pair_id, "competing", note="dream: N-way conflict (3+ mutually contradicting)"
+                        pair.pair_id,
+                        "competing",
+                        note="dream: N-way conflict (3+ mutually contradicting)",
                     )
                 result.setdefault("competing", []).append(pair.pair_id)
                 continue
@@ -661,9 +660,7 @@ def _run_stale(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                 continue
             if not dry_run:
                 mem.lifecycle.archive_memory(mid)
-            result["archived"].append(
-                {"id": mid, "days": item.get("days_since_update")}
-            )
+            result["archived"].append({"id": mid, "days": item.get("days_since_update")})
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
         _log.warning("stale pass failed: %s", exc)
@@ -679,9 +676,7 @@ def _run_synthesis(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     """
     result: dict[str, Any] = {"synthesized": []}
     try:
-        results = mem.synthesize_cross_cluster(
-            dry_run=dry_run, min_cluster_size=5, max_clusters=8
-        )
+        results = mem.synthesize_cross_cluster(dry_run=dry_run, min_cluster_size=5, max_clusters=8)
         for r in results:
             result["synthesized"].append(
                 {

@@ -48,7 +48,9 @@ class ConfigProblem:
     error: str
 
 
-_cache: dict[str, tuple[tuple[tuple[str, float], ...], dict[str, ConfigValue], list[ConfigProblem]]] = {}
+_cache: dict[
+    str, tuple[tuple[tuple[str, float], ...], dict[str, ConfigValue], list[ConfigProblem]]
+] = {}
 
 
 def invalidate_cache() -> None:
@@ -219,7 +221,9 @@ def _read_uncached(
         if path.name != "memo-config.md" and path.name not in _CONFIG_FILENAMES:
             if path.name.endswith("-config.md"):
                 problems.append(
-                    ConfigProblem(str(path), "", "", "unknown config file; register its domain first")
+                    ConfigProblem(
+                        str(path), "", "", "unknown config file; register its domain first"
+                    )
                 )
             continue
         try:
@@ -231,7 +235,9 @@ def _read_uncached(
             try:
                 parsed = tomllib.loads(block)
             except tomllib.TOMLDecodeError as exc:
-                problems.append(ConfigProblem(str(path), f"block:{idx}", "", f"TOML parse error: {exc}"))
+                problems.append(
+                    ConfigProblem(str(path), f"block:{idx}", "", f"TOML parse error: {exc}")
+                )
                 continue
             for key, raw in _flatten("", parsed).items():
                 env_name = flag_paths.get(key)
@@ -345,7 +351,11 @@ def _read_domain_table(path: Path, table: str) -> dict[str, Any]:
         return {}
     values = load_values({"MEMO_CONFIG_DIR": str(path.parent.parent)})
     prefix = f"{table}."
-    return {key.removeprefix(prefix): value.value for key, value in values.items() if key.startswith(prefix)}
+    return {
+        key.removeprefix(prefix): value.value
+        for key, value in values.items()
+        if key.startswith(prefix)
+    }
 
 
 def _write_domain_file(path: Path, table: str, values: dict[str, Any], heading: str) -> None:

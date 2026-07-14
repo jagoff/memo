@@ -303,9 +303,7 @@ def test_extract_auto_project_false_skips_project_tag(mem_with_stub, monkeypatch
     monkeypatch.setattr(capture_mod, "_passes_quality", lambda *a, **kw: True)
     monkeypatch.setattr(capture_mod, "find_near_duplicate", lambda *a, **kw: None)
 
-    out = extract_and_save_text(
-        mem_with_stub, mem_with_stub.cfg, "blob", auto_project=False
-    )
+    out = extract_and_save_text(mem_with_stub, mem_with_stub.cfg, "blob", auto_project=False)
 
     rec = mem_with_stub.get(out["saved"][0])
     assert not any(t.startswith("project:") for t in rec.tags)

@@ -36,7 +36,9 @@ def provenance_hash(session_ids: list[str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def cluster_by_project(episodes: list[dict[str, Any]], *, min_sessions: int) -> list[dict[str, Any]]:
+def cluster_by_project(
+    episodes: list[dict[str, Any]], *, min_sessions: int
+) -> list[dict[str, Any]]:
     """Group episodes by project; keep clusters spanning ≥ min_sessions sessions."""
     groups: dict[str, list[dict[str, Any]]] = {}
     for ep in episodes:

@@ -1,4 +1,5 @@
 """MEMO_RECALL_EPISTEMIC_LABELS: render-layer type/date/trust prefix per hit."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -6,9 +7,15 @@ from types import SimpleNamespace
 
 def _hit(**kw):
     base = dict(
-        id="a1b2c3d4" * 4, title="Título", type="decision", tags=[],
-        created="2026-03-05T10:00:00", updated="2026-03-07T10:00:00",
-        body="cuerpo suficientemente largo para renderizar " * 3, score=0.8, extra={},
+        id="a1b2c3d4" * 4,
+        title="Título",
+        type="decision",
+        tags=[],
+        created="2026-03-05T10:00:00",
+        updated="2026-03-07T10:00:00",
+        body="cuerpo suficientemente largo para renderizar " * 3,
+        score=0.8,
+        extra={},
     )
     base.update(kw)
     return SimpleNamespace(**base)

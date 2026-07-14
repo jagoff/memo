@@ -5,6 +5,7 @@ in ``memory_dir`` (vault when memories_in_vault is on, data_dir otherwise).
 Files carry no ``id:`` frontmatter key, so reindex never ingests them.
 Gated by ``MEMO_DREAM_CHRONICLE_ENABLED`` (default off).
 """
+
 from __future__ import annotations
 
 import json
@@ -81,8 +82,7 @@ def _memories_created_on(cfg: Any, day: str, cap: int = 50) -> list[dict[str, st
     out: list[dict[str, str]] = []
     for p in sorted(root.rglob("*.md")):
         if any(
-            part.startswith("_") and part != GLOBAL_BUCKET
-            for part in p.relative_to(root).parts
+            part.startswith("_") and part != GLOBAL_BUCKET for part in p.relative_to(root).parts
         ):
             continue
         head = p.read_text(encoding="utf-8", errors="ignore")[:2000]
@@ -112,7 +112,7 @@ def _memories_created_on(cfg: Any, day: str, cap: int = 50) -> list[dict[str, st
         title = p.stem
         m_title = _FM_TITLE_RE.search(head)
         if m_title:
-            title = m_title.group(1).strip('\'"')
+            title = m_title.group(1).strip("'\"")
         else:
             # Fallback to first # heading
             title = next(
@@ -120,7 +120,9 @@ def _memories_created_on(cfg: Any, day: str, cap: int = 50) -> list[dict[str, st
                 p.stem,
             )
 
-        out.append({"id": m_id.group(1), "type": m_type.group(1) if m_type else "note", "title": title})
+        out.append(
+            {"id": m_id.group(1), "type": m_type.group(1) if m_type else "note", "title": title}
+        )
         if len(out) >= cap:
             break
     return out
@@ -136,8 +138,7 @@ def collect_facts(cfg: Any, day: str) -> dict[str, Any]:
     store = open_store(cfg)
     if store is not None:
         episodes = [
-            e for e in store.recent(limit=200)
-            if str(e.get("updated_at") or "").startswith(day)
+            e for e in store.recent(limit=200) if str(e.get("updated_at") or "").startswith(day)
         ]
 
     grounded = grounded_by_day(read_grounding_log(cfg.state_dir)).get(day, 0)

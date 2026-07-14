@@ -14,8 +14,9 @@ def test_ablation_stats_counts_and_grounding(tmp_path) -> None:
     _row(tmp_path, sid="on1", turn=1, via="subprocess", prompt="cómo va el sync remoto?")
     _row(tmp_path, sid="on1", turn=2, via="daemon", prompt="qué decidimos del overlay?")
     _row(tmp_path, sid="off1", turn=1, via="disabled", prompt="cómo va el sync remoto?")
-    append_grounding_log(tmp_path, session_id="on1", turn=1,
-                         recall_id="aaaabbbb", used_score=0.9, method="lexical")
+    append_grounding_log(
+        tmp_path, session_id="on1", turn=1, recall_id="aaaabbbb", used_score=0.9, method="lexical"
+    )
     s = ablation_stats(tmp_path)
     assert s["turns_on"] == 2 and s["turns_off"] == 1
     assert s["grounded_turns_on"] == 1
@@ -25,7 +26,13 @@ def test_ablation_stats_counts_and_grounding(tmp_path) -> None:
 def test_ablation_reask_rate_per_cohort(tmp_path) -> None:
     # off cohort re-asks the same question 2 turns later; on cohort doesn't.
     _row(tmp_path, sid="off1", turn=1, via="disabled", prompt="dónde vive el registro de flags?")
-    _row(tmp_path, sid="off1", turn=3, via="disabled", prompt="dónde vive el registro de flags de memo?")
+    _row(
+        tmp_path,
+        sid="off1",
+        turn=3,
+        via="disabled",
+        prompt="dónde vive el registro de flags de memo?",
+    )
     _row(tmp_path, sid="on1", turn=1, via="subprocess", prompt="dónde vive el registro de flags?")
     _row(tmp_path, sid="on1", turn=3, via="subprocess", prompt="agregá un test para el ledger")
     s = ablation_stats(tmp_path)

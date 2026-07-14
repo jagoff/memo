@@ -40,6 +40,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         sha = __import__("hashlib").sha256(path.read_bytes()).hexdigest()
         text = extract_text_cached(path, cache_dir=cache_dir)
         from memo.ocr import ocr_min_confidence
+
         conf_tag = f"c{round(ocr_min_confidence() * 100):02d}"
         cached = (cache_dir / f"{sha[:32]}.{conf_tag}.json").exists()
         return {"text": text, "cached": cached}

@@ -472,7 +472,9 @@ def _doctor_report(
                 "emb FLOAT[2] distance_metric=cosine, kind TEXT)"
             )
             blob = serialize_float32([1.0, 0.0])
-            conn.execute("INSERT INTO probe(id, part, emb, kind) VALUES (?,?,?,?)", ("a", "p", blob, "n"))
+            conn.execute(
+                "INSERT INTO probe(id, part, emb, kind) VALUES (?,?,?,?)", ("a", "p", blob, "n")
+            )
             conn.execute(
                 "SELECT id FROM probe WHERE emb MATCH ? AND k=1 AND part=? AND kind!=?",
                 (blob, "p", "x"),

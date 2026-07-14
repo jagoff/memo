@@ -42,7 +42,7 @@ def _write_capture_notification(state_dir: Path, saved: list[dict], *, idle: boo
             lines = [f"☾ memo saved {len(saved)} this session:"]
             for s in saved:
                 lines.append(
-                    f"  • \"{s.get('title', '?')}\" ({s.get('type', 'note')}) [{s.get('id', '?')}]"
+                    f'  • "{s.get("title", "?")}" ({s.get("type", "note")}) [{s.get("id", "?")}]'
                 )
             lines.append("  fix: memo fix <id> · undo: memo undo <id>")
             body = "\n".join(lines) + "\n"
@@ -432,9 +432,7 @@ def _resume_federated(
     from memo.resume._utils import _same_cwd
 
     cwd = cwd_filter or os.getcwd()
-    interactive = (
-        not session_id and not as_json and sys.stdin.isatty() and sys.stdout.isatty()
-    )
+    interactive = not session_id and not as_json and sys.stdin.isatty() and sys.stdout.isatty()
     if interactive:
         # Load everything so the picker can page/filter across all sessions; the
         # cwd filter is applied live inside the TUI (Tab → Filter: Cwd/All).
@@ -525,8 +523,7 @@ def _resume_federated(
     # Non-TTY (piped / captured): prioritize continuity over a cramped table.
     _print_candidate_resume_list(candidates)
     console.print(
-        "[dim]Resume: `memo resume <session> --agent all` "
-        "(or copy a `resume` command above).[/dim]"
+        "[dim]Resume: `memo resume <session> --agent all` (or copy a `resume` command above).[/dim]"
     )
     if notice:
         console.print(f"[dim]{notice}[/dim]")

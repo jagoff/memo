@@ -1,6 +1,7 @@
 """Per-candidate graduation ledger: one JSONL file per flag under
 ``state_dir/graduation/``. Entry shape matches what ``graduation_streak``
 consumes: winning nights are ``{"verdict": "confirmed", "realized_delta": >=0}``."""
+
 from __future__ import annotations
 
 import json

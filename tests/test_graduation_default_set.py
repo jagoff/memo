@@ -1,4 +1,5 @@
 """Test that the default candidate set spans boolean, numeric, and report-only candidates."""
+
 from memo.graduation.registry import (
     Candidate,
     NumericCandidate,

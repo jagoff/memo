@@ -1,6 +1,7 @@
 """Offline shadow evaluator: measure a candidate ON vs OFF on the eval corpus,
 attributing the precision/noise delta to the candidate alone. No behavior
 change — this only reads the index through eval_recall."""
+
 from __future__ import annotations
 
 import dataclasses

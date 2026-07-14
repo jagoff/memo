@@ -122,9 +122,7 @@ def emit_receipt(
                 continue
             full_meta[key] = value
 
-    receipt_meta = " ".join(
-        f"{key}={_coerce(value)}" for key, value in sorted(full_meta.items())
-    )
+    receipt_meta = " ".join(f"{key}={_coerce(value)}" for key, value in sorted(full_meta.items()))
     receipt_text = f"{text} [{receipt_meta}]" if receipt_meta else text
     command: list[str] = [
         memflow_bin,

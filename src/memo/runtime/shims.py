@@ -130,7 +130,10 @@ def install_path_snippet(
     path_needs_upgrade = (
         (not path_present)
         or path_line not in existing
-        or (".memflow/bin" in existing and existing.rfind(path_line) < existing.rfind(".memflow/bin"))
+        or (
+            ".memflow/bin" in existing
+            and existing.rfind(path_line) < existing.rfind(".memflow/bin")
+        )
     )
     tty_present = _TTY_MARKER in existing
     # Detect v1 snippet (no file write) and upgrade it in-place.

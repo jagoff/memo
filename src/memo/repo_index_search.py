@@ -18,6 +18,7 @@ from memo.retrieval_boost import boost_for as _retrieval_boost_for
 # Public data class (re-exported from repo_index for backward compat)
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class RepoSearchHit:
     id: str
@@ -64,6 +65,7 @@ class RepoSearchHit:
 # Hit construction
 # ---------------------------------------------------------------------------
 
+
 def _hits_from_rows(rows: list[dict[str, Any]]) -> list[RepoSearchHit]:
     return [
         RepoSearchHit(
@@ -89,6 +91,7 @@ def _hits_from_rows(rows: list[dict[str, Any]]) -> list[RepoSearchHit]:
 # ---------------------------------------------------------------------------
 # Boost and re-sort
 # ---------------------------------------------------------------------------
+
 
 def _boost_and_resort(
     hits: list[RepoSearchHit],
@@ -208,6 +211,7 @@ def _path_name_boost(path: str, terms: list[str]) -> float:
 # ---------------------------------------------------------------------------
 # RRF fusion
 # ---------------------------------------------------------------------------
+
 
 def _rrf_fuse_repo(
     hit_lists: list[list[dict[str, Any]]],

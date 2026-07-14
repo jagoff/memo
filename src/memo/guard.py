@@ -35,14 +35,13 @@ def guard_candidates(prompt: str, hits: list[Any], *, sim_threshold: float) -> l
     cand = [
         h
         for h in hits
-        if getattr(h, "type", None) in _GUARD_TYPES and (getattr(h, "score", None) or 0.0) >= sim_threshold
+        if getattr(h, "type", None) in _GUARD_TYPES
+        and (getattr(h, "score", None) or 0.0) >= sim_threshold
     ]
     return sorted(cand, key=lambda h: getattr(h, "score", None) or 0.0, reverse=True)
 
 
-def guard_banner(
-    prompt: str, hits: list[Any], *, sim_threshold: float, top: int = 1
-) -> str | None:
+def guard_banner(prompt: str, hits: list[Any], *, sim_threshold: float, top: int = 1) -> str | None:
     """⚠ banner naming the prior decision(s) the prompt looks to reverse."""
     cand = guard_candidates(prompt, hits, sim_threshold=sim_threshold)[:top]
     if not cand:

@@ -14,9 +14,7 @@ def test_session_distinguishes_markdown_and_effective_env(tmp_path: Path) -> Non
     home = tmp_path / "memo-home"
     cfg = home / "config"
     cfg.mkdir(parents=True)
-    (cfg / "recall-config.md").write_text(
-        "```toml\n[recall]\ntop_k = 7\n```\n", encoding="utf-8"
-    )
+    (cfg / "recall-config.md").write_text("```toml\n[recall]\ntop_k = 7\n```\n", encoding="utf-8")
     env = {
         "MEMO_CONFIG_DIR": str(home),
         "MEMO_RECALL_TOP_K": "2",
@@ -162,9 +160,7 @@ def test_session_surfaces_malformed_markdown(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"
     cfg.mkdir(parents=True)
-    (cfg / "recall-config.md").write_text(
-        "```toml\n[recall\ntop_k = 5\n```\n", encoding="utf-8"
-    )
+    (cfg / "recall-config.md").write_text("```toml\n[recall\ntop_k = 5\n```\n", encoding="utf-8")
 
     session = ConfigSession.open({"MEMO_CONFIG_DIR": str(home)})
 

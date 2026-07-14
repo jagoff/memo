@@ -32,6 +32,8 @@ jobs:
       - name: Install package + dev deps
         run: |
           uv sync --frozen --extra dev --extra cpu --python ${{ matrix.python-version }}
+      - name: Format check (ruff)
+        run: .venv/bin/ruff format --check src/ tests/ scripts/
       - name: Lint (ruff)
         run: .venv/bin/ruff check src/ tests/ scripts/
       - name: Type check (mypy)

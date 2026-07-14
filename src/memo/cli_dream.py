@@ -352,7 +352,9 @@ def dream_run(
                     mem,
                     k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
                     max_evals=20 if (_me := flag_int("MEMO_DREAM_TUNE_MAX_EVALS")) is None else _me,
-                    min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
+                    min_used_score=0.5
+                    if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
+                    else _mus,
                     dry_run=dry_run,
                 )
                 progress.update(
@@ -379,7 +381,9 @@ def dream_run(
                     mem,
                     k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
                     max_evals=20 if (_me := flag_int("MEMO_DREAM_TUNE_MAX_EVALS")) is None else _me,
-                    min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
+                    min_used_score=0.5
+                    if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
+                    else _mus,
                     dry_run=dry_run,
                 )
                 progress.update(
@@ -405,7 +409,9 @@ def dream_run(
                     cfg,
                     mem,
                     k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
-                    min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
+                    min_used_score=0.5
+                    if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
+                    else _mus,
                     dry_run=dry_run,
                     latency_budget_ms=flag_float("MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS")
                     or 2500.0,
@@ -456,14 +462,15 @@ def dream_run(
                     cfg,
                     mem,
                     k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
-                    min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
+                    min_used_score=0.5
+                    if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
+                    else _mus,
                     dry_run=dry_run,
                 )
                 progress.update(
                     step,
                     description=(
-                        f"[tune] hyde A/B [green]✓[/green]  "
-                        f"{receipt['hyde_tuner'].get('status')}"
+                        f"[tune] hyde A/B [green]✓[/green]  {receipt['hyde_tuner'].get('status')}"
                     ),
                 )
             except Exception as exc:
@@ -477,7 +484,12 @@ def dream_run(
                 from memo.flags import flag_float
 
                 receipt["boost_tuner"] = dream_tune.run_boost_pass(
-                    cfg, mem, step=0.05 if (_step := flag_float("MEMO_DREAM_TUNE_BOOST_STEP")) is None else _step, dry_run=dry_run
+                    cfg,
+                    mem,
+                    step=0.05
+                    if (_step := flag_float("MEMO_DREAM_TUNE_BOOST_STEP")) is None
+                    else _step,
+                    dry_run=dry_run,
                 )
             except Exception as exc:
                 receipt["errors"].append(f"boost_tuner: {type(exc).__name__}: {exc}")
@@ -489,7 +501,11 @@ def dream_run(
                 from memo import dream_anticipate
 
                 receipt["anticipated"] = dream_anticipate.anticipate(
-                    cfg, mem, top_gaps=5 if (_tg := flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS")) is None else _tg
+                    cfg,
+                    mem,
+                    top_gaps=5
+                    if (_tg := flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS")) is None
+                    else _tg,
                 )
                 progress.update(
                     step,
@@ -511,7 +527,9 @@ def dream_run(
                 receipt["consolidated_episodes"] = dream_consolidate.run_consolidate_episodes(
                     cfg,
                     mem,
-                    min_sessions=2 if (_ms := flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS")) is None else _ms,
+                    min_sessions=2
+                    if (_ms := flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS")) is None
+                    else _ms,
                     dry_run=dry_run,
                 )
                 _ce = receipt["consolidated_episodes"]
@@ -536,12 +554,16 @@ def dream_run(
                 receipt["profile"] = dream_profile.run_profile_pass(
                     cfg,
                     mem,
-                    char_budget=4000 if (_cb := flag_int("MEMO_DREAM_PROFILE_CHAR_BUDGET")) is None else _cb,
-                    max_projects=5 if (_mp := flag_int("MEMO_DREAM_PROFILE_MAX_PROJECTS")) is None else _mp,
-                    directive_k=3 if (_dk := flag_int("MEMO_DREAM_PROFILE_DIRECTIVE_K")) is None else _dk,
-                    directive_min_used=(
-                        _pf_float("MEMO_DREAM_PROFILE_DIRECTIVE_MIN_USED") or 0.5
-                    ),
+                    char_budget=4000
+                    if (_cb := flag_int("MEMO_DREAM_PROFILE_CHAR_BUDGET")) is None
+                    else _cb,
+                    max_projects=5
+                    if (_mp := flag_int("MEMO_DREAM_PROFILE_MAX_PROJECTS")) is None
+                    else _mp,
+                    directive_k=3
+                    if (_dk := flag_int("MEMO_DREAM_PROFILE_DIRECTIVE_K")) is None
+                    else _dk,
+                    directive_min_used=(_pf_float("MEMO_DREAM_PROFILE_DIRECTIVE_MIN_USED") or 0.5),
                     dry_run=dry_run,
                 )
                 if receipt["profile"].get("status") == "error":
@@ -593,7 +615,9 @@ def dream_run(
                 receipt["hype"] = dream_hype.run_hype_pass(
                     cfg,
                     mem,
-                    questions_per_memory=3 if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None else _qpm,
+                    questions_per_memory=3
+                    if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None
+                    else _qpm,
                     night_cap=400 if (_nc := flag_int("MEMO_HYPE_NIGHT_CAP")) is None else _nc,
                     dry_run=dry_run,
                 )
@@ -616,7 +640,9 @@ def dream_run(
                 receipt["graduated"] = dream_graduate.run_graduation(
                     cfg,
                     mem,
-                    min_support=2 if (_ms := flag_int("MEMO_DREAM_GRADUATION_MIN_SUPPORT")) is None else _ms,
+                    min_support=2
+                    if (_ms := flag_int("MEMO_DREAM_GRADUATION_MIN_SUPPORT")) is None
+                    else _ms,
                     dry_run=dry_run,
                 )
                 _gr = receipt["graduated"]
@@ -637,7 +663,9 @@ def dream_run(
                 receipt["retagged_global"] = dream_retag.run_retag_global(
                     cfg,
                     mem,
-                    min_other_projects=2 if (_mop := flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS")) is None else _mop,
+                    min_other_projects=2
+                    if (_mop := flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS")) is None
+                    else _mop,
                     dry_run=dry_run,
                 )
                 _rg = receipt["retagged_global"]
@@ -661,7 +689,9 @@ def dream_run(
                 receipt["communities"] = dream_communities.run_synthesize_communities(
                     cfg,
                     mem,
-                    min_size=4 if (_msz := flag_int("MEMO_DREAM_COMMUNITIES_MIN_SIZE")) is None else _msz,
+                    min_size=4
+                    if (_msz := flag_int("MEMO_DREAM_COMMUNITIES_MIN_SIZE")) is None
+                    else _msz,
                     dry_run=dry_run,
                 )
                 _cm = receipt["communities"]
@@ -695,7 +725,11 @@ def dream_run(
                     dry_run=dry_run,
                 )
                 _di = receipt["distilled"]
-                _saved = sum(1 for d in _di.get("distilled", []) if d.get("status") in ("saved", "would_save"))
+                _saved = sum(
+                    1
+                    for d in _di.get("distilled", [])
+                    if d.get("status") in ("saved", "would_save")
+                )
                 progress.update(
                     step,
                     description=f"[distill] [green]✓[/green]  {_di.get('status')} ({_saved})",
@@ -736,7 +770,9 @@ def dream_run(
                 receipt["entity_canon"] = dream_entity_canon.run_entity_canon(
                     cfg,
                     mem,
-                    max_pairs=30 if (_mp := flag_int("MEMO_DREAM_ENTITY_CANON_MAX_PAIRS")) is None else _mp,
+                    max_pairs=30
+                    if (_mp := flag_int("MEMO_DREAM_ENTITY_CANON_MAX_PAIRS")) is None
+                    else _mp,
                     dry_run=dry_run,
                 )
                 _ec = receipt["entity_canon"]
@@ -760,8 +796,12 @@ def dream_run(
                 receipt["folder_abstracts"] = dream_folder_abstracts.run_folder_abstracts(
                     cfg,
                     mem,
-                    min_members=5 if (_mm := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS")) is None else _mm,
-                    max_folders=5 if (_mf := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX")) is None else _mf,
+                    min_members=5
+                    if (_mm := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS")) is None
+                    else _mm,
+                    max_folders=5
+                    if (_mf := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX")) is None
+                    else _mf,
                     dry_run=dry_run,
                 )
                 _fa = receipt["folder_abstracts"]
@@ -947,7 +987,10 @@ def dream_run(
                     receipt["errors"].append(f"roi_decay: {res['error']}")
                 receipt["roi_decayed"] = res.get("decayed", 0)
                 progress.update(
-                    step, description=(f"[7/7] ROI decay [green]✓[/green]  {receipt['roi_decayed']} rows")
+                    step,
+                    description=(
+                        f"[7/7] ROI decay [green]✓[/green]  {receipt['roi_decayed']} rows"
+                    ),
                 )
             except Exception as exc:
                 progress.update(step, description="[7/7] ROI decay [yellow]warn[/yellow]")
@@ -1092,7 +1135,11 @@ def dream_run(
             progress.update(step, description="[13] eval recall — retrieval-only eval...")
             try:
                 receipt["eval_recall"] = _run_eval_recall(
-                    cfg, mem, max_labels=200 if (_ml := flag_int("MEMO_DREAM_EVAL_MAX_LABELS")) is None else _ml
+                    cfg,
+                    mem,
+                    max_labels=200
+                    if (_ml := flag_int("MEMO_DREAM_EVAL_MAX_LABELS")) is None
+                    else _ml,
                 )
                 _ev = receipt["eval_recall"]
                 progress.update(
@@ -1337,7 +1384,10 @@ def dream_consolidate_cmd(dry_run: bool, as_json: bool) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
     res = dream_consolidate.run_consolidate_episodes(
-        cfg, mem, min_sessions=2 if (_ms := flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS")) is None else _ms, dry_run=dry_run
+        cfg,
+        mem,
+        min_sessions=2 if (_ms := flag_int("MEMO_DREAM_CONSOLIDATE_MIN_SESSIONS")) is None else _ms,
+        dry_run=dry_run,
     )
     if as_json:
         click.echo(json.dumps(res, indent=2, ensure_ascii=False))
@@ -1348,7 +1398,9 @@ def dream_consolidate_cmd(dry_run: bool, as_json: bool) -> None:
 
 
 @dream_cmd.command(name="chronicle")
-@click.option("--day", "day", default=None, help="Day to chronicle (YYYY-MM-DD, default: last finished day).")
+@click.option(
+    "--day", "day", default=None, help="Day to chronicle (YYYY-MM-DD, default: last finished day)."
+)
 @click.option("--dry-run", is_flag=True, help="Compute + narrate, don't write.")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def dream_chronicle_cmd(day: str | None, dry_run: bool, as_json: bool) -> None:
@@ -1380,7 +1432,9 @@ def dream_hype_cmd(dry_run: bool, as_json: bool) -> None:
     res = dream_hype.run_hype_pass(
         cfg,
         mem,
-        questions_per_memory=3 if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None else _qpm,
+        questions_per_memory=3
+        if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None
+        else _qpm,
         night_cap=400 if (_nc := flag_int("MEMO_HYPE_NIGHT_CAP")) is None else _nc,
         dry_run=dry_run,
     )
@@ -1486,7 +1540,9 @@ def dream_folder_abstracts_cmd(dry_run: bool, as_json: bool) -> None:
     res = dream_folder_abstracts.run_folder_abstracts(
         cfg,
         mem,
-        min_members=5 if (_mm := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS")) is None else _mm,
+        min_members=5
+        if (_mm := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MIN_MEMBERS")) is None
+        else _mm,
         max_folders=5 if (_mf := flag_int("MEMO_DREAM_FOLDER_ABSTRACTS_MAX")) is None else _mf,
         dry_run=dry_run,
     )
@@ -1511,7 +1567,9 @@ def dream_retag_cmd(dry_run: bool, as_json: bool) -> None:
     res = dream_retag.run_retag_global(
         cfg,
         mem,
-        min_other_projects=2 if (_mop := flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS")) is None else _mop,
+        min_other_projects=2
+        if (_mop := flag_int("MEMO_DREAM_RETAG_MIN_PROJECTS")) is None
+        else _mop,
         dry_run=dry_run,
     )
     if as_json:
@@ -1561,7 +1619,9 @@ def dream_tune_cmd(dry_run: bool, do_rollback: bool, show_status: bool) -> None:
         mem,
         k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
         max_evals=20 if (_me := flag_int("MEMO_DREAM_TUNE_MAX_EVALS")) is None else _me,
-        min_used_score=0.5 if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None else _mus,
+        min_used_score=0.5
+        if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
+        else _mus,
         dry_run=dry_run,
     )
     click.echo(json.dumps(res, indent=2, ensure_ascii=False))

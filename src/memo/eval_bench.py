@@ -45,7 +45,9 @@ class BenchQA:
     qa_id: str
     question: str
     answer: str
-    category: str  # normalized: single_hop / multi_hop / temporal_reasoning / knowledge_update / ...
+    category: (
+        str  # normalized: single_hop / multi_hop / temporal_reasoning / knowledge_update / ...
+    )
     abstention: bool  # correct behavior is to decline (adversarial / _abs)
     evidence_session_ids: tuple[str, ...]
     evidence_turn_ids: tuple[str, ...]
@@ -789,7 +791,9 @@ def render_report(receipts: list[dict[str, Any]]) -> str:
         return "# memo eval bench\n\n_No runs found._\n"
     cols = list(reversed(receipts))  # oldest → newest, newest last column
     lines = ["# memo eval bench — run comparison", ""]
-    lines.append("| metric | " + " | ".join(str(c.get("_file", c.get("ts", "?"))) for c in cols) + " |")
+    lines.append(
+        "| metric | " + " | ".join(str(c.get("_file", c.get("ts", "?"))) for c in cols) + " |"
+    )
     lines.append("|" + "---|" * (len(cols) + 1))
 
     def row(label: str, values: list[str]) -> str:
@@ -804,10 +808,7 @@ def render_report(receipts: list[dict[str, Any]]) -> str:
             lines.append(
                 row(
                     f"retrieval/{cat}/{metric}",
-                    [
-                        str((c.get("retrieval") or {}).get(cat, {}).get(metric, "—"))
-                        for c in cols
-                    ],
+                    [str((c.get("retrieval") or {}).get(cat, {}).get(metric, "—")) for c in cols],
                 )
             )
     qa_cats = sorted({cat for c in cols for cat in (c.get("qa") or {})})
@@ -837,7 +838,10 @@ def render_report(receipts: list[dict[str, Any]]) -> str:
         lines.append(
             row(
                 f"capability_qa/{bucket}/accuracy",
-                [str((c.get("capability_qa") or {}).get(bucket, {}).get("accuracy", "—")) for c in cols],
+                [
+                    str((c.get("capability_qa") or {}).get(bucket, {}).get("accuracy", "—"))
+                    for c in cols
+                ],
             )
         )
 

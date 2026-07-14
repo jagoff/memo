@@ -102,9 +102,7 @@ def _response_text(kind: str, resp: Any) -> str:
         if kind == "openai":
             return str(resp.choices[0].message.content or "")
         parts = getattr(resp, "content", None) or []
-        return "\n".join(
-            getattr(b, "text", "") for b in parts if getattr(b, "type", "") == "text"
-        )
+        return "\n".join(getattr(b, "text", "") for b in parts if getattr(b, "type", "") == "text")
     except Exception:
         return ""
 
@@ -153,7 +151,9 @@ def wrap(
 
     def _post(kwargs: dict[str, Any], resp: Any) -> None:
         if capture and not kwargs.get("stream"):
-            _capture_async(kind, _last_user_text(kwargs.get("messages")), _response_text(kind, resp))
+            _capture_async(
+                kind, _last_user_text(kwargs.get("messages")), _response_text(kind, resp)
+            )
 
     if inspect.iscoroutinefunction(original):
 

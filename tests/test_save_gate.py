@@ -1,4 +1,5 @@
 """save_gate: per-type preset -> GatePolicy."""
+
 from __future__ import annotations
 
 from memo import save_gate

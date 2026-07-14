@@ -1,4 +1,5 @@
 """MEMO_ASK_MULTI_ROUND: one sufficiency-checked extra retrieval round in ask."""
+
 from __future__ import annotations
 
 from memo.memory.record import MemoryRecord
@@ -6,8 +7,14 @@ from memo.memory.record import MemoryRecord
 
 def _rec(id_: str, title: str, body: str) -> MemoryRecord:
     return MemoryRecord(
-        id=id_ * 4, path=f"2026/07/{id_}.md", title=title, type="note", tags=[],
-        created="2026-07-01T00:00:00", updated="2026-07-01T00:00:00", body=body,
+        id=id_ * 4,
+        path=f"2026/07/{id_}.md",
+        title=title,
+        type="note",
+        tags=[],
+        created="2026-07-01T00:00:00",
+        updated="2026-07-01T00:00:00",
+        body=body,
     )
 
 

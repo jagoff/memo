@@ -1,4 +1,5 @@
 """ask-strict-threshold: abstain when sources don't entail the answer (default off)."""
+
 from __future__ import annotations
 
 from memo.memory import ask_ops
@@ -7,8 +8,22 @@ from memo.memory import ask_ops
 def _prep(mock_memory, monkeypatch, *, answer, entail):
     # Force a non-empty sources set + a drafted answer without a real LLM.
     monkeypatch.setattr(
-        ask_ops._AskOpsMixin, "_build_ask_context",
-        lambda self, q, **k: (q, [{"id": "a1b2c3d4", "title": "t", "type": "note", "score": 0.9, "snippet": "port 8765"}], "ctx", []),
+        ask_ops._AskOpsMixin,
+        "_build_ask_context",
+        lambda self, q, **k: (
+            q,
+            [
+                {
+                    "id": "a1b2c3d4",
+                    "title": "t",
+                    "type": "note",
+                    "score": 0.9,
+                    "snippet": "port 8765",
+                }
+            ],
+            "ctx",
+            [],
+        ),
     )
     monkeypatch.setattr(ask_ops._AskOpsMixin, "_verbatim_short_circuit", lambda self, q, h: None)
     monkeypatch.setattr(mock_memory, "_ensure_chat", lambda: _Chat(answer))
@@ -48,7 +63,9 @@ def test_ask_off_skips_judge(mock_memory, monkeypatch):
     monkeypatch.setenv("MEMO_GROUNDING_ASK_MIN", "0")
     called = {"n": 0}
     _prep(mock_memory, monkeypatch, answer="whatever", entail=0.0)
-    monkeypatch.setattr(ask_ops, "score_grounding", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or 0.0)
+    monkeypatch.setattr(
+        ask_ops, "score_grounding", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or 0.0
+    )
     out = mock_memory.ask("q?")
     assert out["answer"] == "whatever"
     assert called["n"] == 0

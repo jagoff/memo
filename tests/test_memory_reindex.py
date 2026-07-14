@@ -272,10 +272,13 @@ def test_reindex_rebuild_drops_fact_edges_for_deleted_markdown(mem_with_stub: Me
     counts = mem_with_stub.reindex(rebuild=True)
 
     assert counts["facts"] == 0
-    assert mem_with_stub.fact_edges.query(
-        subject="memo",
-        as_of="2026-02-01T00:00:00+00:00",
-    ) == []
+    assert (
+        mem_with_stub.fact_edges.query(
+            subject="memo",
+            as_of="2026-02-01T00:00:00+00:00",
+        )
+        == []
+    )
 
 
 def test_reindex_reclaims_path_held_by_soft_deleted_tombstone(mem_with_stub: Memory, monkeypatch):

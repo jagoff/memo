@@ -15,4 +15,5 @@ def __getattr__(name: str) -> Any:
         return {"ConfigApp": ConfigApp, "run_config_tui": run_config_tui}[name]
     raise AttributeError(name)
 
+
 __all__ = ["ConfigApp", "run_config_tui"]

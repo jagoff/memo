@@ -1,4 +1,5 @@
 """MEMO_SEARCH_ADAPTIVE_LEXICAL_WEIGHT: short queries tilt RRF fusion lexical."""
+
 from __future__ import annotations
 
 

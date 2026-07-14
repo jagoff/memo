@@ -22,8 +22,8 @@ def test_provenance_hash_is_stable_and_order_independent():
 
 def test_cluster_maturity_aggregates():
     members = [
-        _member("2026-06-01", 0.9, 4),   # ~42 days old
-        _member("2026-06-20", 0.7, 2),   # ~23 days old (youngest)
+        _member("2026-06-01", 0.9, 4),  # ~42 days old
+        _member("2026-06-20", 0.7, 2),  # ~23 days old (youngest)
     ]
     stats = dd.cluster_maturity(members, now=_now())
     assert stats.size == 2
@@ -36,31 +36,49 @@ def test_cluster_maturity_aggregates():
 def test_is_mature_true_when_all_floors_clear():
     members = [_member("2026-06-01", 0.9, 4), _member("2026-06-01", 0.8, 3)]
     stats = dd.cluster_maturity(members, now=_now())
-    assert dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14) is True
+    assert (
+        dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14)
+        is True
+    )
 
 
 def test_is_mature_false_when_too_young():
     members = [_member("2026-07-10", 0.9, 4), _member("2026-07-11", 0.9, 4)]  # ~2-3 days old
     stats = dd.cluster_maturity(members, now=_now())
-    assert dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14) is False
+    assert (
+        dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14)
+        is False
+    )
 
 
 def test_is_mature_false_when_under_supported():
     members = [_member("2026-06-01", 0.9, 1), _member("2026-06-01", 0.9, 1)]  # mean support 1 < 2
     stats = dd.cluster_maturity(members, now=_now())
-    assert dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14) is False
+    assert (
+        dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14)
+        is False
+    )
 
 
 def test_is_mature_false_when_cluster_too_small():
     members = [_member("2026-06-01", 0.9, 4)]  # size 1 < 2
     stats = dd.cluster_maturity(members, now=_now())
-    assert dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14) is False
+    assert (
+        dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14)
+        is False
+    )
 
 
 def test_is_mature_false_when_not_confident_enough():
-    members = [_member("2026-06-01", 0.4, 4), _member("2026-06-01", 0.4, 4)]  # mean confidence 0.4 < 0.5
+    members = [
+        _member("2026-06-01", 0.4, 4),
+        _member("2026-06-01", 0.4, 4),
+    ]  # mean confidence 0.4 < 0.5
     stats = dd.cluster_maturity(members, now=_now())
-    assert dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14) is False
+    assert (
+        dd.is_mature(stats, min_cluster=2, min_support=2, min_confidence=0.5, min_age_days=14)
+        is False
+    )
 
 
 def test_missing_created_is_treated_as_fresh():

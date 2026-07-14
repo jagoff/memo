@@ -2,6 +2,7 @@
 the tuned overlay. flags.flag() precedence is env > markdown > overlay > default,
 so a flip is picked up unless a human pinned the flag by env/markdown, and a
 revert is one key deleted."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -13,8 +13,11 @@ class _Row:  # stand-in for eval_recall.Row
 
 
 CAND = NumericCandidate(
-    flag="MEMO_RECALL_MMR_LAMBDA", field="mmr_lambda",
-    off_value=0.0, on_value=0.3, grid=(0.0, 0.3, 0.5),
+    flag="MEMO_RECALL_MMR_LAMBDA",
+    field="mmr_lambda",
+    off_value=0.0,
+    on_value=0.3,
+    grid=(0.0, 0.3, 0.5),
 )
 
 

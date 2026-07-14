@@ -5,6 +5,7 @@ Pure: delegates the LLM call to a chat object PASSED IN by the caller (which
 already owns the deferred MLX import). This module never imports mlx. Runs only
 off the 5s recall hook (capture / ask), never on it.
 """
+
 from __future__ import annotations
 
 import re

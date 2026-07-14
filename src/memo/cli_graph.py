@@ -36,7 +36,9 @@ def graph_group() -> None:
     default=None,
     help="Force codegraph code graph fallback (auto-enabled if memo graph empty)",
 )
-def graph_path(source: str, target: str, max_length: int, as_json: bool, codegraph: bool | None) -> None:
+def graph_path(
+    source: str, target: str, max_length: int, as_json: bool, codegraph: bool | None
+) -> None:
     """Find shortest path between two entities.
 
     Falls back to the codegraph code graph if no path in memo memories.
@@ -318,7 +320,9 @@ def graph_relations_rebuild(limit: int, as_json: bool) -> None:
     cfg = Config.from_env()
     mem = _get_memory(cfg)
     memories = mem.list(limit=limit, include_forgotten=False)
-    pairs = [(source, target) for source in memories for target in memories if source.id != target.id]
+    pairs = [
+        (source, target) for source in memories for target in memories if source.id != target.id
+    ]
     relations = extract_relations_batch(pairs)
     deleted = mem.graph.delete_semantic_relations_by_derived_from(DETERMINISTIC_DERIVED_FROM)
     written = store_relations(mem.graph, relations)

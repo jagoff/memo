@@ -59,11 +59,22 @@ def _hit(hid: str, title: str = "arch note") -> dict:
 
 
 def test_score_next_turn_attributes_prior_recall(tmp_path) -> None:
-    append_recall_log(tmp_path, prompt="cómo configuro el sync remoto?",
-                      hits=[_hit("aaaabbbb11112222")], via="subprocess",
-                      session_id="s1", turn=3)
-    append_recall_log(tmp_path, prompt="no funciona, tira el mismo error",
-                      hits=[], via="subprocess", session_id="s1", turn=4)
+    append_recall_log(
+        tmp_path,
+        prompt="cómo configuro el sync remoto?",
+        hits=[_hit("aaaabbbb11112222")],
+        via="subprocess",
+        session_id="s1",
+        turn=3,
+    )
+    append_recall_log(
+        tmp_path,
+        prompt="no funciona, tira el mismo error",
+        hits=[],
+        via="subprocess",
+        session_id="s1",
+        turn=4,
+    )
     rec = score_next_turn(tmp_path, {"session_id": "s1"})
     assert rec is not None
     assert rec["verdict"] == "negative"
@@ -73,34 +84,72 @@ def test_score_next_turn_attributes_prior_recall(tmp_path) -> None:
 
 
 def test_score_next_turn_none_without_verdict(tmp_path) -> None:
-    append_recall_log(tmp_path, prompt="cómo configuro el sync remoto?",
-                      hits=[_hit("aaaabbbb11112222")], via="subprocess",
-                      session_id="s1", turn=3)
-    append_recall_log(tmp_path, prompt="ahora agregá tests para el módulo",
-                      hits=[], via="subprocess", session_id="s1", turn=4)
+    append_recall_log(
+        tmp_path,
+        prompt="cómo configuro el sync remoto?",
+        hits=[_hit("aaaabbbb11112222")],
+        via="subprocess",
+        session_id="s1",
+        turn=3,
+    )
+    append_recall_log(
+        tmp_path,
+        prompt="ahora agregá tests para el módulo",
+        hits=[],
+        via="subprocess",
+        session_id="s1",
+        turn=4,
+    )
     assert score_next_turn(tmp_path, {"session_id": "s1"}) is None
 
 
 def test_score_next_turn_respects_turn_gap(tmp_path) -> None:
-    append_recall_log(tmp_path, prompt="cómo configuro el sync remoto?",
-                      hits=[_hit("aaaabbbb11112222")], via="subprocess",
-                      session_id="s1", turn=1)
-    append_recall_log(tmp_path, prompt="dale", hits=[], via="subprocess",
-                      session_id="s1", turn=2)
-    append_recall_log(tmp_path, prompt="otra cosa distinta acá", hits=[],
-                      via="subprocess", session_id="s1", turn=3)
-    append_recall_log(tmp_path, prompt="sigue fallando con el mismo error",
-                      hits=[], via="subprocess", session_id="s1", turn=4)
+    append_recall_log(
+        tmp_path,
+        prompt="cómo configuro el sync remoto?",
+        hits=[_hit("aaaabbbb11112222")],
+        via="subprocess",
+        session_id="s1",
+        turn=1,
+    )
+    append_recall_log(tmp_path, prompt="dale", hits=[], via="subprocess", session_id="s1", turn=2)
+    append_recall_log(
+        tmp_path,
+        prompt="otra cosa distinta acá",
+        hits=[],
+        via="subprocess",
+        session_id="s1",
+        turn=3,
+    )
+    append_recall_log(
+        tmp_path,
+        prompt="sigue fallando con el mismo error",
+        hits=[],
+        via="subprocess",
+        session_id="s1",
+        turn=4,
+    )
     # prior recall is 3 turns back (> _MAX_TURN_GAP=2) — no attribution
     assert score_next_turn(tmp_path, {"session_id": "s1"}) is None
 
 
 def test_score_next_turn_dedups_repeat_stop_events(tmp_path) -> None:
-    append_recall_log(tmp_path, prompt="cómo configuro el sync remoto?",
-                      hits=[_hit("aaaabbbb11112222")], via="subprocess",
-                      session_id="s1", turn=3)
-    append_recall_log(tmp_path, prompt="no funciona, tira el mismo error",
-                      hits=[], via="subprocess", session_id="s1", turn=4)
+    append_recall_log(
+        tmp_path,
+        prompt="cómo configuro el sync remoto?",
+        hits=[_hit("aaaabbbb11112222")],
+        via="subprocess",
+        session_id="s1",
+        turn=3,
+    )
+    append_recall_log(
+        tmp_path,
+        prompt="no funciona, tira el mismo error",
+        hits=[],
+        via="subprocess",
+        session_id="s1",
+        turn=4,
+    )
     assert score_next_turn(tmp_path, {"session_id": "s1"}) is not None
     assert score_next_turn(tmp_path, {"session_id": "s1"}) is None  # already written
 
@@ -109,10 +158,10 @@ class _StubMem:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    def feedback_record(self, source_id, *, query_text, rating,
-                        only_if_absent=False, extra=None):
-        self.calls.append((source_id, query_text, rating, only_if_absent,
-                           (extra or {}).get("origin")))
+    def feedback_record(self, source_id, *, query_text, rating, only_if_absent=False, extra=None):
+        self.calls.append(
+            (source_id, query_text, rating, only_if_absent, (extra or {}).get("origin"))
+        )
         return {"feedback_id": "f1"}
 
 
@@ -120,11 +169,22 @@ def test_record_verdicts_writes_implicit_feedback(tmp_cfg) -> None:
     from memo.verdict import record_verdicts
 
     sd = tmp_cfg.state_dir
-    append_recall_log(sd, prompt="cómo configuro el sync remoto?",
-                      hits=[_hit("aaaabbbb11112222")], via="subprocess",
-                      session_id="s1", turn=3)
-    append_recall_log(sd, prompt="no funciona, tira el mismo error",
-                      hits=[], via="subprocess", session_id="s1", turn=4)
+    append_recall_log(
+        sd,
+        prompt="cómo configuro el sync remoto?",
+        hits=[_hit("aaaabbbb11112222")],
+        via="subprocess",
+        session_id="s1",
+        turn=3,
+    )
+    append_recall_log(
+        sd,
+        prompt="no funciona, tira el mismo error",
+        hits=[],
+        via="subprocess",
+        session_id="s1",
+        turn=4,
+    )
     mem = _StubMem()
     rec = record_verdicts(tmp_cfg, {"session_id": "s1"}, memory=mem)
     assert rec is not None and rec["verdict"] == "negative"
@@ -137,11 +197,22 @@ def test_record_verdicts_positive_maps_to_click(tmp_cfg) -> None:
     from memo.verdict import record_verdicts
 
     sd = tmp_cfg.state_dir
-    append_recall_log(sd, prompt="cómo configuro el sync remoto?",
-                      hits=[_hit("ccccdddd11112222")], via="subprocess",
-                      session_id="s2", turn=1)
-    append_recall_log(sd, prompt="perfecto, gracias — quedó andando",
-                      hits=[], via="subprocess", session_id="s2", turn=2)
+    append_recall_log(
+        sd,
+        prompt="cómo configuro el sync remoto?",
+        hits=[_hit("ccccdddd11112222")],
+        via="subprocess",
+        session_id="s2",
+        turn=1,
+    )
+    append_recall_log(
+        sd,
+        prompt="perfecto, gracias — quedó andando",
+        hits=[],
+        via="subprocess",
+        session_id="s2",
+        turn=2,
+    )
     mem = _StubMem()
     rec = record_verdicts(tmp_cfg, {"session_id": "s2"}, memory=mem)
     assert rec["verdict"] == "positive"
@@ -159,17 +230,23 @@ def test_capture_stop_calls_verdicts_when_enabled(tmp_cfg, monkeypatch) -> None:
     monkeypatch.setattr("memo.capture.run_capture", lambda *a, **k: {"saved_titles": []})
     monkeypatch.setattr("memo.grounding.score_turn", lambda *a, **k: None)
     monkeypatch.setattr("memo.token_ledger.roll_up", lambda *a, **k: {})
-    monkeypatch.setattr("memo.verdict.record_verdicts",
-                        lambda cfg, payload, **k: called.setdefault("payload", payload))
+    monkeypatch.setattr(
+        "memo.verdict.record_verdicts",
+        lambda cfg, payload, **k: called.setdefault("payload", payload),
+    )
     transcript = tmp_cfg.state_dir / "t.jsonl"
     transcript.write_text("", encoding="utf-8")
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["capture-stop"],
+        cli,
+        ["capture-stop"],
         input=_json.dumps({"transcript_path": str(transcript), "session_id": "s1"}),
-        env={"MEMO_NONINTERACTIVE": "1", "MEMO_VERDICT_ENABLED": "1",
-             "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
-             "MEMO_STATE_DIR": str(tmp_cfg.state_dir)},
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_VERDICT_ENABLED": "1",
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        },
         catch_exceptions=False,
     )
     assert result.exit_code == 0
@@ -187,17 +264,22 @@ def test_capture_stop_skips_verdicts_when_flag_off(tmp_cfg, monkeypatch) -> None
     monkeypatch.setattr("memo.capture.run_capture", lambda *a, **k: {"saved_titles": []})
     monkeypatch.setattr("memo.grounding.score_turn", lambda *a, **k: None)
     monkeypatch.setattr("memo.token_ledger.roll_up", lambda *a, **k: {})
-    monkeypatch.setattr("memo.verdict.record_verdicts",
-                        lambda cfg, payload, **k: called.setdefault("payload", payload))
+    monkeypatch.setattr(
+        "memo.verdict.record_verdicts",
+        lambda cfg, payload, **k: called.setdefault("payload", payload),
+    )
     transcript = tmp_cfg.state_dir / "t.jsonl"
     transcript.write_text("", encoding="utf-8")
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["capture-stop"],
+        cli,
+        ["capture-stop"],
         input=_json.dumps({"transcript_path": str(transcript), "session_id": "s1"}),
-        env={"MEMO_NONINTERACTIVE": "1",  # MEMO_VERDICT_ENABLED intentionally unset
-             "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
-             "MEMO_STATE_DIR": str(tmp_cfg.state_dir)},
+        env={
+            "MEMO_NONINTERACTIVE": "1",  # MEMO_VERDICT_ENABLED intentionally unset
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        },
         catch_exceptions=False,
     )
     assert result.exit_code == 0
@@ -205,9 +287,16 @@ def test_capture_stop_skips_verdicts_when_flag_off(tmp_cfg, monkeypatch) -> None
 
 
 def test_verdict_log_roundtrip(tmp_path) -> None:
-    append_verdict_log(tmp_path, session_id="s1", turn=4, prior_turn=3,
-                       verdict="negative", prompt="q", reaction="no funciona",
-                       recall_ids=["aaaabbbb11112222"])
+    append_verdict_log(
+        tmp_path,
+        session_id="s1",
+        turn=4,
+        prior_turn=3,
+        verdict="negative",
+        prompt="q",
+        reaction="no funciona",
+        recall_ids=["aaaabbbb11112222"],
+    )
     rows = read_verdict_log(tmp_path)
     assert len(rows) == 1
     assert rows[0]["verdict"] == "negative"

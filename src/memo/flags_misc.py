@@ -1070,8 +1070,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         30,
         "misc",
-        "Cap on LLM-confirmed candidate pairs per entity-canon run (bounds "
-        "nightly MLX cost).",
+        "Cap on LLM-confirmed candidate pairs per entity-canon run (bounds nightly MLX cost).",
         min_val=1,
         max_val=500,
     ),

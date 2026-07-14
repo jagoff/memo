@@ -364,8 +364,18 @@ def diff(memory: Any, *, from_ts: str | datetime, to_ts: str | datetime) -> Corp
                     "id": i,
                     "title": tr.title,
                     "changed_fields": diffs,
-                    "before": {"title": fr.title, "type": fr.type, "tags": fr.tags, "updated": fr.updated},
-                    "after": {"title": tr.title, "type": tr.type, "tags": tr.tags, "updated": tr.updated},
+                    "before": {
+                        "title": fr.title,
+                        "type": fr.type,
+                        "tags": fr.tags,
+                        "updated": fr.updated,
+                    },
+                    "after": {
+                        "title": tr.title,
+                        "type": tr.type,
+                        "tags": tr.tags,
+                        "updated": tr.updated,
+                    },
                 }
             )
 

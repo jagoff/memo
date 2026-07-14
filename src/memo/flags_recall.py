@@ -95,14 +95,39 @@ SPECS: tuple[FlagSpec, ...] = (
         "attribution; cited ids also feed grounding. Default on.",
         opt_out=True,
     ),
-    _spec("MEMO_ASSOCIATIVE_HOPS", "int", 2, "recall",
-          "Graph hops to expand from recall seeds.", min_val=1, max_val=3),
-    _spec("MEMO_ASSOCIATIVE_LIMIT", "int", 2, "recall",
-          "Max associative memories in the recall nudge.", min_val=1),
-    _spec("MEMO_ASSOCIATIVE_MIN_ACTIVATION", "float", 0.5, "recall",
-          "Activation floor below which an associative hit is dropped.", min_val=0.0),
-    _spec("MEMO_ASSOCIATIVE_BUDGET_MS", "int", 300, "recall",
-          "Time guard for associative expansion; skip the nudge if exceeded.", min_val=0),
+    _spec(
+        "MEMO_ASSOCIATIVE_HOPS",
+        "int",
+        2,
+        "recall",
+        "Graph hops to expand from recall seeds.",
+        min_val=1,
+        max_val=3,
+    ),
+    _spec(
+        "MEMO_ASSOCIATIVE_LIMIT",
+        "int",
+        2,
+        "recall",
+        "Max associative memories in the recall nudge.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_ASSOCIATIVE_MIN_ACTIVATION",
+        "float",
+        0.5,
+        "recall",
+        "Activation floor below which an associative hit is dropped.",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_ASSOCIATIVE_BUDGET_MS",
+        "int",
+        300,
+        "recall",
+        "Time guard for associative expansion; skip the nudge if exceeded.",
+        min_val=0,
+    ),
     _spec(
         "MEMO_RECALL_PROJECT_BOOST",
         "float",
@@ -512,9 +537,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "Default ON (v3.0.0): net-positive in paraphrase-crowding (fixture recall "
         "+0.333, 0 noise), provably never-negative on the regression corpus (Δ0.0).",
     ),
-    _spec("MEMO_RECALL_SESSION_TOKEN_BUDGET", "int", 0, "recall",
-          "Cumulative recall-token budget per session; past it, per-turn budget decays "
-          "(0 = off). Conservative: only scales down, never hard-bails.", min_val=0),
+    _spec(
+        "MEMO_RECALL_SESSION_TOKEN_BUDGET",
+        "int",
+        0,
+        "recall",
+        "Cumulative recall-token budget per session; past it, per-turn budget decays "
+        "(0 = off). Conservative: only scales down, never hard-bails.",
+        min_val=0,
+    ),
     _spec(
         "MEMO_RECALL_PRECISION_GATE",
         "bool",
@@ -628,6 +659,7 @@ SPECS: tuple[FlagSpec, ...] = (
 def flag_recall_verbosity_level() -> int:
     """Verbosity level for recall hook output steering (0–3, default: 0 = no steering)."""
     from memo.flags import flag_int
+
     val = flag_int("MEMO_RECALL_VERBOSITY_LEVEL")
     if val is None:
         return 0
@@ -637,10 +669,12 @@ def flag_recall_verbosity_level() -> int:
 def flag_stream_compress_enabled() -> bool:
     """L2 streaming compression flag (default: OFF)."""
     from memo.flags import flag_bool
+
     return flag_bool("MEMO_STREAM_COMPRESS")
 
 
 def flag_prefix_cache_align_enabled() -> bool:
     """L3 prefix cache alignment flag (default: OFF)."""
     from memo.flags import flag_bool
+
     return flag_bool("MEMO_PREFIX_CACHE_ALIGN")

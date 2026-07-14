@@ -1,4 +1,5 @@
 """MEMO_SAVE_NORMALIZE_DATES: relative dates annotated with ISO dates at save."""
+
 from __future__ import annotations
 
 import datetime as dt

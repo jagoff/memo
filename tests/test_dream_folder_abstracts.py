@@ -28,7 +28,12 @@ def test_collect_folders_groups_reference_only():
             return [
                 {"id": "r1", "type": "reference", "path": "V/Recetas/a.md", "title": "A"},
                 {"id": "r2", "type": "reference", "path": "V/Recetas/b.md", "title": "B"},
-                {"id": "r3", "type": "reference", "path": "V/Recetas/b.md#chunk-1", "title": "B §1"},
+                {
+                    "id": "r3",
+                    "type": "reference",
+                    "path": "V/Recetas/b.md#chunk-1",
+                    "title": "B §1",
+                },
                 {"id": "d1", "type": "decision", "path": "x.md", "title": "D"},
             ]
 

@@ -8,14 +8,17 @@ def _write_receipt(state_dir: Path, gaps):
     d = state_dir / "dream"
     d.mkdir(parents=True, exist_ok=True)
     import time
+
     (d / "last.json").write_text(
         json.dumps({"ts": time.time(), "anticipated": {"gaps": gaps}}), encoding="utf-8"
     )
 
 
 def test_pick_gap_takes_top():
-    gaps = [{"prompt": "how does sync lock work", "count": 5},
-            {"prompt": "what is mmr", "count": 2}]
+    gaps = [
+        {"prompt": "how does sync lock work", "count": 5},
+        {"prompt": "what is mmr", "count": 2},
+    ]
     assert ag.pick_gap(gaps)["prompt"] == "how does sync lock work"
     assert ag.pick_gap([]) is None
 
