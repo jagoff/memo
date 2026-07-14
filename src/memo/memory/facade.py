@@ -477,6 +477,9 @@ class Memory(
         if self._contradict_store is not None:
             with contextlib.suppress(Exception):
                 self._contradict_store.close()
+        if self._hype_store is not None:
+            with contextlib.suppress(Exception):
+                self._hype_store.close()
         for capability in list(self._capabilities.values()):
             with contextlib.suppress(Exception):
                 close = getattr(capability, "close", None)
