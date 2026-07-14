@@ -51,6 +51,7 @@ from memo.dashboard_panels import _fetch_memflow_utility  # noqa: E402
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
+
 def _sha256_short(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
@@ -104,15 +105,17 @@ def _read_vectors(db_path: Path, limit: int) -> list[dict[str, Any]]:
             tags = json.loads(row["tags"] or "[]")
         except json.JSONDecodeError:
             tags = []
-        out.append({
-            "id": row["id"],
-            "vec": vec,
-            "title": row["title"] or "—",
-            "type": row["type"] or "note",
-            "tags": [str(t) for t in tags][:6],
-            "created": (row["created"] or "")[:10],
-            "updated": (row["updated"] or "")[:10],
-        })
+        out.append(
+            {
+                "id": row["id"],
+                "vec": vec,
+                "title": row["title"] or "—",
+                "type": row["type"] or "note",
+                "tags": [str(t) for t in tags][:6],
+                "created": (row["created"] or "")[:10],
+                "updated": (row["updated"] or "")[:10],
+            }
+        )
     return out
 
 
@@ -121,17 +124,18 @@ def _project_3d(vecs: list[list[float]]) -> tuple[list[float], list[float], list
     try:
         import numpy as np
     except ImportError as exc:
-        raise SystemExit(
-            "numpy required for build (pip install numpy)"
-        ) from exc
+        raise SystemExit("numpy required for build (pip install numpy)") from exc
     mat = np.array(vecs, dtype=np.float32)
     try:
         import umap  # type: ignore[import-not-found]
 
         n_neighbors = min(15, len(vecs) - 1)
         reducer = umap.UMAP(
-            n_components=3, n_neighbors=n_neighbors,
-            min_dist=0.12, metric="cosine", random_state=42,
+            n_components=3,
+            n_neighbors=n_neighbors,
+            min_dist=0.12,
+            metric="cosine",
+            random_state=42,
         )
         coords = reducer.fit_transform(mat)
         method = "UMAP"
@@ -196,17 +200,13 @@ def _history_recent(cfg: Config, limit: int = 30) -> list[dict[str, Any]]:
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         rows = conn.execute(
-            "SELECT ts, op, record_id, title, type FROM events "
-            "ORDER BY ts DESC LIMIT ?",
+            "SELECT ts, op, record_id, title, type FROM events ORDER BY ts DESC LIMIT ?",
             (limit,),
         ).fetchall()
         conn.close()
     except Exception:
         return []
-    return [
-        {"ts": r[0], "op": r[1], "id": r[2][:8], "title": r[3], "type": r[4]}
-        for r in rows
-    ]
+    return [{"ts": r[0], "op": r[1], "id": r[2][:8], "title": r[3], "type": r[4]} for r in rows]
 
 
 def _growth_by_day(rows: list[dict[str, Any]], days: int = 30) -> list[dict[str, Any]]:
@@ -233,9 +233,7 @@ def _contradictions_stats(cfg: Config) -> dict[str, int] | None:
         return None
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        rows = conn.execute(
-            "SELECT status, count(*) FROM pairs GROUP BY status"
-        ).fetchall()
+        rows = conn.execute("SELECT status, count(*) FROM pairs GROUP BY status").fetchall()
         conn.close()
     except Exception:
         return None
@@ -247,6 +245,7 @@ def _contradictions_stats(cfg: Config) -> dict[str, int] | None:
 # Each pillar reports {label, status, summary, detail}. Status is one of
 # "green" / "yellow" / "red" / "blue". Blue = informational (no health
 # signal); the others are the traffic-light contract from the spec.
+
 
 def _pillar_vector_db(doctor: dict[str, Any], drift: dict[str, int]) -> dict[str, Any]:
     memvec = next((d for d in doctor["db"] if d.get("label") == "memvec"), None)
@@ -295,9 +294,7 @@ def _pillar_vector_db(doctor: dict[str, Any], drift: dict[str, int]) -> dict[str
         return {
             "label": "Vector DB",
             "status": "yellow",
-            "summary": (
-                f"{drift['drifted']} drifted · {drift['untracked_md']} untracked"
-            ),
+            "summary": (f"{drift['drifted']} drifted · {drift['untracked_md']} untracked"),
             "detail": [
                 f"records:        {memvec.get('records')}",
                 f"checked:        {drift['checked']}",
@@ -322,9 +319,7 @@ def _pillar_vector_db(doctor: dict[str, Any], drift: dict[str, int]) -> dict[str
 
 def _pillar_embedder(doctor: dict[str, Any]) -> dict[str, Any]:
     profile = doctor["profile"]
-    mlx_ok = next(
-        (i for i in doctor["imports"] if i["label"] == "mlx"), {"ok": False}
-    )["ok"]
+    mlx_ok = next((i for i in doctor["imports"] if i["label"] == "mlx"), {"ok": False})["ok"]
     if not mlx_ok:
         return {
             "label": "Embedder (MLX)",
@@ -333,9 +328,7 @@ def _pillar_embedder(doctor: dict[str, Any]) -> dict[str, Any]:
             "detail": ["Install with `pip install mlx mlx-lm` on Apple Silicon."],
         }
     embedder_model = profile["active"].get("embedder_model", "?")
-    cached = any(
-        m["cached"] and m["role"] == "embedder" for m in profile["models"]
-    )
+    cached = any(m["cached"] and m["role"] == "embedder" for m in profile["models"])
     if not cached:
         return {
             "label": "Embedder (MLX)",
@@ -571,8 +564,12 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
         score = g.get("used_score")
         day = (g.get("ts") or "")[:10]
         if not (
-            sid and isinstance(turn, int) and rid and day
-            and isinstance(score, (int, float)) and float(score) >= GROUNDED_SCORE
+            sid
+            and isinstance(turn, int)
+            and rid
+            and day
+            and isinstance(score, (int, float))
+            and float(score) >= GROUNDED_SCORE
         ):
             continue
         key = (sid, turn, rid)
@@ -637,9 +634,7 @@ def _token_savings(state_dir: Path, *, days: int = 14) -> dict[str, Any]:
     context_tokens = sum(context_costs.values())
     today_key = today.isoformat()
     today_tokens = next((d["tokens"] for d in daily if d["date"] == today_key), 0)
-    today_context_tokens = next(
-        (d["context_tokens"] for d in daily if d["date"] == today_key), 0
-    )
+    today_context_tokens = next((d["context_tokens"] for d in daily if d["date"] == today_key), 0)
     total = grounded_tokens + reask_tokens
     return {
         "daily": daily,
@@ -674,8 +669,11 @@ def _sync_health(cfg: Config) -> dict[str, Any]:
         if st.get("pending"):
             return {"state": "bad", "label": "Commits varados — push falló", **st}
         if st.get("ahead") or st.get("dirty_files"):
-            return {"state": "warn",
-                    "label": f"{st['ahead']} sin pushear · {st['dirty_files']} sin commitear", **st}
+            return {
+                "state": "warn",
+                "label": f"{st['ahead']} sin pushear · {st['dirty_files']} sin commitear",
+                **st,
+            }
         return {"state": "ok", "label": "Al día con GitHub", **st}
     except Exception:
         return {"state": "off", "label": "Sync no disponible"}
@@ -761,7 +759,9 @@ def _gerencial(cfg: Config) -> dict[str, Any]:
         "activations_total": activated_total,
         "activations_sampled": fired,
         "coverage_rate": round(activated_total / consults_total, 3) if consults_total else None,
-        "activation_rate_total": round(activated_total / consults_total, 3) if consults_total else None,
+        "activation_rate_total": round(activated_total / consults_total, 3)
+        if consults_total
+        else None,
         "activation_rate_sampled": round(fired / sampled, 3) if sampled else None,
         "hit_rate": health.get("hit_rate"),
         "grounded_rate": health.get("grounded_rate"),
@@ -790,7 +790,9 @@ def _gerencial(cfg: Config) -> dict[str, Any]:
     }
 
 
-def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1500) -> dict[str, Any]:
+def collect_data(
+    cfg: Config, *, include_projection: bool = True, limit: int = 1500
+) -> dict[str, Any]:
     """Gather every metric the dashboard renders, as a JSON-serializable dict.
 
     ``include_projection`` gates the only expensive step (reading all vectors +
@@ -832,7 +834,9 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
             xs, ys, zs, method = [], [], [], "n/a (need ≥ 3 memories with vectors)"
         projection = {
             "method": method,
-            "xs": xs, "ys": ys, "zs": zs,
+            "xs": xs,
+            "ys": ys,
+            "zs": zs,
             "ids": [r["id"][:8] for r in rows],
             "titles": [r["title"] for r in rows],
             "types": [r["type"] for r in rows],
@@ -868,8 +872,9 @@ def collect_data(cfg: Config, *, include_projection: bool = True, limit: int = 1
         _pillar_vector_db(doctor, drift),
         _pillar_embedder(doctor),
         _pillar_recall(recall_log),
-        _pillar_corpus(doctor, rows, history, contradictions,
-                       vec_count=len(rows) if rows else _vec_count),
+        _pillar_corpus(
+            doctor, rows, history, contradictions, vec_count=len(rows) if rows else _vec_count
+        ),
     ]
 
     growth = _growth_by_day(history, days=30)
@@ -1448,13 +1453,18 @@ _HTML_TEMPLATE = r"""<!doctype html>
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--output", type=Path, default=None,
-                    help="Output HTML path (default: web/health.html)")
-    ap.add_argument("--limit", type=int, default=1500,
-                    help="Max memories to project (default: 1500)")
-    ap.add_argument("--open", action="store_true",
-                    help="Open the generated HTML in the default browser")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--output", type=Path, default=None, help="Output HTML path (default: web/health.html)"
+    )
+    ap.add_argument(
+        "--limit", type=int, default=1500, help="Max memories to project (default: 1500)"
+    )
+    ap.add_argument(
+        "--open", action="store_true", help="Open the generated HTML in the default browser"
+    )
     args = ap.parse_args()
     out = build(output=args.output, limit=args.limit, open_browser=args.open)
     print(f"✓ Wrote {out}")
