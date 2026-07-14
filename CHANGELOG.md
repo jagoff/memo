@@ -9,6 +9,28 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-07-13
+
+### Added
+
+- **HyPE question-space index** (dark, read fold default off): nightly dream
+  pass (`MEMO_DREAM_HYPE_ENABLED`) generates 2-3 "questions this memory
+  answers" per durable memory with the local LLM (ROI-prioritized backlog,
+  `body_hash` watermark, per-item failure isolation) into a rebuildable
+  vec0 sidecar. Read-path max-fold behind `MEMO_HYPE_ENABLED` (off — measured
+  no-flip at 10.6% index coverage; re-evaluated once coverage grows). New:
+  `memo dream hype`, `memo hype status`, eval config K + profile `hype`.
+- **MCPB Node bundle**: `build_mcpb_node()` produces `memo-node.mcpb` with a
+  zero-dependency `bootstrap.js` that installs `uv` and the pinned `mlx-memo`
+  on first launch and then execs `memo-mcp` (stdout reserved for MCP) — no
+  preinstalled Python runtime required. Version pin-chain enforced by test,
+  `memo release bump`, and `memo release check`.
+
+### Fixed
+
+- `bootstrap.js` pin check matches the real `uv tool list` output format
+  (`mlx-memo vX.Y.Z`), keeping the no-network fast path and offline starts.
+
 ## [3.4.0] - 2026-07-13
 
 ### Added
