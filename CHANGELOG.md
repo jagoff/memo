@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-07-13
+
+### Fixed
+
+- **embedder_client per-op socket timeouts** (query 30s, batch 120s,
+  ping/stats 5s): the flat 8s default was calibrated for the 0.6B profile;
+  on the 4B `quality` profile `embed_batch` routinely exceeds it, so clients
+  timed out, retried (abandoned requests kept computing daemon-side), then
+  fell back in-process — loading a second model copy that fought the daemon
+  for the cross-process GPU lock and drove warm `embed_query` past 10s.
+  `MEMO_EMBEDDER_CLIENT_TIMEOUT` still overrides every op when set.
+- HyPE dark-index hardening: type filters respected on fold-appended
+  candidates, `_hype_store` closed in `Memory.close()`, markdown fences
+  stripped before parsing LLM questions, honest `backlog_remaining` +
+  `all_items_failed` status on real runs.
+- Capture: skip LLM insight items with non-string title/body/type.
+
 ## [3.5.0] - 2026-07-13
 
 ### Added
