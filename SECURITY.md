@@ -24,7 +24,14 @@ Markdown on disk plus local sqlite files. Concretely:
   and optional local Unix sockets for the recall/embedder daemons. `memo http-api`
   and HTTP MCP transport are opt-in localhost surfaces, not hosted services.
 - **No telemetry.** memo emits no usage data.
-- **No credentials.** memo does not request, store, or transmit API keys.
+- **Credentials are isolated and opt-in.** Secret storage is disabled unless
+  `MEMO_SECRET_STORAGE_ENABLED=1`. When enabled, values are AES-256-GCM sealed
+  under a random private master key and excluded from Markdown, indexing,
+  recall, generated context, backup, and git sync. Explicit `secret get` and
+  `secret export` commands disclose plaintext to the invoking user.
+- **Network APIs authenticate by default.** Every `/api/*` route requires
+  `Authorization: Bearer <token>`; non-loopback REST and MCP HTTP binds require
+  an explicit acknowledgement and cannot disable authentication.
 
 Reasonable threats memo aims to mitigate:
 
@@ -46,5 +53,5 @@ Out of scope:
 
 ## Supported versions
 
-Only the latest minor release (currently the `2.12.x` line) receives security
+Only the latest minor release (currently the `3.5.x` line) receives security
 fixes. Older releases will not be backported.

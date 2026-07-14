@@ -182,7 +182,7 @@ Tools surface inside the agent as `mcp__memo__memo_*`. Agent installs default to
 a 14-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
 `search`, `unified_briefing`, `version`, and session/capture notification
 helpers) so administrative schemas don't consume model context — set
-`MEMO_MCP_PROFILE=core`/`slim` (34 tools) or `full`/`default` (129 tools) only
+`MEMO_MCP_PROFILE=core`/`slim` (34 tools) or `full`/`default` (131 tools) only
 for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
@@ -320,7 +320,7 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 |---|---:|---|
 | `agent` (default) | 14 | Minimal always-on agent surface; optimized for schema-token cost. |
 | `core` / `slim` | 34 | CRUD, search, embeddings, history, sessions, lint, and lightweight graph/offload. |
-| `full` / `default` | 129 | Every advanced domain module and compatibility tool. |
+| `full` / `default` | 131 | Every advanced domain module and compatibility tool. |
 
 The default `agent` profile exposes exactly:
 

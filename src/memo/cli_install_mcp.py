@@ -279,7 +279,7 @@ def _report(result: dict[str, Any]) -> None:
     default="",
     type=click.Choice(["", "core", "slim", "default"], case_sensitive=False),
     help="MCP surface profile. 'core'/'slim' expose 34 tools (~3.0k tokens); "
-    "'default' exposes all 129 tools (~15k tokens). "
+    "'default' exposes all 131 tools (~15k tokens). "
     "Constrained clients (codex, opencode) default to 'core' automatically.",
 )
 def install_mcp(
