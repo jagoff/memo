@@ -415,12 +415,6 @@ def test_run_hype_pass_embed_failure_isolates_one_memory(tmp_path, monkeypatch):
     # Embedder that raises for id1's question
     original_embed = mem.embedder.embed_query
 
-    def _embed_with_failure(text: str):
-        if "Deci" in text:  # id1 title has "Decision with", id2 has just "Decision"
-            # Use a marker question to trigger the failure
-            pass
-        return original_embed(text)
-
     call_count = {"count": 0}
 
     def _embed_failing_on_id1(text: str):
