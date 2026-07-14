@@ -326,6 +326,7 @@ def main() -> None:
     transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
     if transport in ("http", "streamable-http", "sse"):
         from memo.http_auth import (
+            build_http_middleware,
             build_mcp_auth,
             load_http_auth_config,
             validate_http_bind,
@@ -352,7 +353,12 @@ def main() -> None:
         _ensure_idle_daemon()
         port = flag_int("MEMO_MCP_PORT")
         # transport is validated against the allowed set just above.
-        server.run(transport=cast(Any, transport), host=host, port=port)
+        server.run(
+            transport=cast(Any, transport),
+            host=host,
+            port=port,
+            middleware=build_http_middleware(),
+        )
     else:
         _start_background_tasks()
         server = build_server()

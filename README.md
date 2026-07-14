@@ -405,7 +405,7 @@ memo runs four background daemons:
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
-Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON). Every `/api/*` route requires `Authorization: Bearer <token>`; only `/health` is public. The first run creates a private token at `$MEMO_STATE_DIR/http-api-token` (normally `~/.local/share/memo/http-api-token`), or you can provide a 32+ character `MEMO_HTTP_API_TOKEN`. Both REST and MCP HTTP reject non-loopback binds unless explicitly acknowledged, and they never allow unauthenticated non-loopback exposure.
+Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON). Every `/api/*` route requires `Authorization: Bearer <token>`; only `/health` is public. The first run creates a private token at `$MEMO_STATE_DIR/http-api-token` (normally `~/.local/share/memo/http-api-token`), or you can provide a 32+ character `MEMO_HTTP_API_TOKEN`. Both REST and MCP HTTP reject non-loopback binds unless explicitly acknowledged, never allow unauthenticated non-loopback exposure, add defensive response headers, and limit each source to 300 requests per minute per process.
 
 ```bash
 memo http-api

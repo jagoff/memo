@@ -6,6 +6,9 @@ import stat
 
 import pytest
 from fastmcp import FastMCP
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 from starlette.testclient import TestClient
 
 _TOKEN = "test-token-" + ("x" * 32)
@@ -127,6 +130,29 @@ def test_mcp_http_auth_protects_protocol_endpoint(
         )
 
 
+def test_shared_http_middleware_rate_limits_and_hardens_responses() -> None:
+    from memo.http_auth import RateLimitMiddleware, SecurityHeadersMiddleware
+
+    async def ok(_request) -> PlainTextResponse:
+        return PlainTextResponse("ok")
+
+    app = Starlette(routes=[Route("/", ok)])
+    app.add_middleware(RateLimitMiddleware, max_requests=2, window_seconds=60)
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    with TestClient(app) as client:
+        first = client.get("/")
+        assert client.get("/").status_code == 200
+        limited = client.get("/")
+
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "60"
+    assert first.headers["cache-control"] == "no-store"
+    assert first.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    assert first.headers["x-content-type-options"] == "nosniff"
+    assert first.headers["x-frame-options"] == "DENY"
+
+
 def test_memo_mcp_server_attaches_shared_auth_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -209,8 +235,11 @@ def test_mcp_main_runs_http_with_shared_auth(
     server_module.main()
 
     assert captured["auth"] is not None
-    assert captured["run"] == {
+    run_kwargs = dict(captured["run"])
+    middleware = run_kwargs.pop("middleware")
+    assert run_kwargs == {
         "transport": "http",
         "host": "127.0.0.1",
         "port": 18768,
     }
+    assert len(middleware) == 2

@@ -24,6 +24,8 @@ from memo.config import Config
 from memo.http_auth import (
     HttpAuthConfig,
     HttpAuthRejected,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
     load_http_auth_config,
     validate_http_bind,
     verify_http_auth,
@@ -148,6 +150,8 @@ app = FastAPI(
     version=__version__,
 )
 app.add_middleware(RequestSizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 _AUTH = [Depends(_auth_dependency)]
 
