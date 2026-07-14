@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,3 +50,28 @@ def test_python_ci_uses_committed_frozen_uv_lock() -> None:
     ):
         text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
         assert "uv sync --frozen" in text, workflow
+
+
+def test_publish_workflow_builds_from_project_metadata_with_uv() -> None:
+    publish = (WORKFLOWS / "publish.yml").read_text(encoding="utf-8")
+
+    assert "uv build --out-dir dist" in publish
+    assert "python -m build" not in publish
+    assert "uv sync" not in publish
+
+
+def test_release_metadata_and_lock_versions_match() -> None:
+    project_version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["version"]
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    local_package = next(
+        package
+        for package in lock["package"]
+        if package["name"] == "mlx-memo" and package.get("source") == {"editable": "."}
+    )
+    server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+
+    assert local_package["version"] == project_version, "run `uv lock` after a version bump"
+    assert server["version"] == project_version, "update server.json version"
+    assert server["packages"][0]["version"] == project_version, "update server.json package version"
