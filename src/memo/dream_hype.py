@@ -84,6 +84,13 @@ def _llm_questions(mem: Any, title: str, body: str, *, n: int) -> list[str] | No
     if out is None:
         return None
     text = ((out.get("message") or {}).get("content") or "").strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
     try:
         parsed = _json.loads(text)
     except (ValueError, TypeError):

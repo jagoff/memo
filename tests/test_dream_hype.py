@@ -166,6 +166,31 @@ def test_llm_questions_returns_none_on_bad_json(monkeypatch):
     assert dh._llm_questions(mem, "Title", "Body", n=3) is None
 
 
+def test_llm_questions_strips_json_markdown_fence(monkeypatch):
+    """LLMs sometimes wrap the JSON array in a ```json ... ``` fence — strip
+    it before json.loads instead of failing to parse."""
+    fenced = '```json\n["¿Qué decidimos sobre X?", "¿Por qué se eligió Y?"]\n```'
+    monkeypatch.setattr(
+        "memo.memory.record.chat_with_timeout",
+        lambda chat, *, timeout, **kwargs: {"message": {"content": fenced}},
+    )
+    mem = _FakeMem({})
+    questions = dh._llm_questions(mem, "Title", "Body", n=3)
+    assert questions == ["¿Qué decidimos sobre X?", "¿Por qué se eligió Y?"]
+
+
+def test_llm_questions_strips_plain_markdown_fence(monkeypatch):
+    """Same as above but with a plain ``` fence (no language tag)."""
+    fenced = '```\n["question one here", "question two here"]\n```'
+    monkeypatch.setattr(
+        "memo.memory.record.chat_with_timeout",
+        lambda chat, *, timeout, **kwargs: {"message": {"content": fenced}},
+    )
+    mem = _FakeMem({})
+    questions = dh._llm_questions(mem, "Title", "Body", n=3)
+    assert questions == ["question one here", "question two here"]
+
+
 # --- run_hype_pass ---------------------------------------------------------------
 
 
