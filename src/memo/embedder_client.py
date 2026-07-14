@@ -29,7 +29,9 @@ memo daemon still get correct embeddings — just slower on the first
 call. Set `MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1` to raise instead.
 
 Environment knobs:
-    MEMO_EMBEDDER_CLIENT_TIMEOUT          seconds, default "8.0"
+    MEMO_EMBEDDER_CLIENT_TIMEOUT          seconds; overrides the per-op
+                                          defaults (query 30, batch 120,
+                                          ping/stats 5)
     MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON   "1" disables fallback
 """
 
@@ -45,7 +47,14 @@ from typing import Any
 from memo.recall_server import connect_and_send
 
 _log = logging.getLogger(__name__)
-_DEFAULT_TIMEOUT_S = 8.0
+# Per-op defaults. A single flat timeout can't serve both: control ops must
+# stay snappy, while document batches on the 4B "quality" profile routinely
+# exceed 60s under GPU contention — timing out then makes the client fall
+# back in-process, load a SECOND model copy, and fight the daemon for the
+# cross-process GPU lock, which is what it was trying to avoid.
+_QUERY_TIMEOUT_S = 30.0
+_BATCH_TIMEOUT_S = 120.0
+_CONTROL_TIMEOUT_S = 5.0
 _state_dir_lock = threading.Lock()
 _cached_state_dir: Path | None = None
 _inproc_lock = threading.Lock()
@@ -66,13 +75,13 @@ def _resolve_state_dir(state_dir: Path | None) -> Path:
         return _cached_state_dir
 
 
-def _timeout() -> float:
+def _timeout(default: float) -> float:
     from memo.flags import flag_float
 
     value = flag_float("MEMO_EMBEDDER_CLIENT_TIMEOUT")
     if value is None:
-        return _DEFAULT_TIMEOUT_S
-    return value if value > 0 else _DEFAULT_TIMEOUT_S
+        return default
+    return value if value > 0 else default
 
 
 def _require_daemon() -> bool:
@@ -81,8 +90,10 @@ def _require_daemon() -> bool:
     return flag_bool("MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON")
 
 
-def _try_socket(state_dir: Path, payload: dict[str, Any]) -> dict[str, Any] | None:
-    raw = connect_and_send(state_dir, payload, timeout=_timeout())
+def _try_socket(
+    state_dir: Path, payload: dict[str, Any], *, timeout: float
+) -> dict[str, Any] | None:
+    raw = connect_and_send(state_dir, payload, timeout=timeout)
     if not raw:
         return None
     try:
@@ -129,7 +140,9 @@ def embed_query(text: str, *, state_dir: Path | None = None) -> list[float]:
     if not isinstance(text, str) or not text.strip():
         raise ValueError("embed_query: empty text")
     resolved = _resolve_state_dir(state_dir)
-    decoded = _try_socket(resolved, {"op": "embed_query", "text": text})
+    decoded = _try_socket(
+        resolved, {"op": "embed_query", "text": text}, timeout=_timeout(_QUERY_TIMEOUT_S)
+    )
     if decoded is not None:
         vec = decoded.get("vector")
         if isinstance(vec, list):
@@ -179,7 +192,9 @@ def embed(
     if not all(isinstance(t, str) for t in items):
         raise TypeError("embed: every element of `texts` must be a string")
     resolved = _resolve_state_dir(state_dir)
-    decoded = _try_socket(resolved, {"op": "embed_batch", "texts": items})
+    decoded = _try_socket(
+        resolved, {"op": "embed_batch", "texts": items}, timeout=_timeout(_BATCH_TIMEOUT_S)
+    )
     if decoded is not None:
         vectors = decoded.get("vectors")
         if isinstance(vectors, list):
@@ -245,7 +260,7 @@ class SocketEmbedder:  # duck-type implements EmbedderBase (see memo.embed_base)
 def ping(*, state_dir: Path | None = None) -> dict[str, Any] | None:
     """Cheap warm-state probe. Returns `None` if the daemon is unreachable."""
     resolved = _resolve_state_dir(state_dir)
-    return _try_socket(resolved, {"op": "ping"})
+    return _try_socket(resolved, {"op": "ping"}, timeout=_timeout(_CONTROL_TIMEOUT_S))
 
 
 def status(*, state_dir: Path | None = None) -> dict[str, Any] | None:
@@ -267,7 +282,7 @@ def stats(*, state_dir: Path | None = None) -> dict[str, Any] | None:
          "ops": {op: {count, errors, samples, p50_ms, p95_ms, p99_ms}}}
     """
     resolved = _resolve_state_dir(state_dir)
-    return _try_socket(resolved, {"op": "stats"})
+    return _try_socket(resolved, {"op": "stats"}, timeout=_timeout(_CONTROL_TIMEOUT_S))
 
 
 __all__ = ["embed", "embed_query", "ping", "stats", "status"]

@@ -148,7 +148,8 @@ SPECS: tuple[FlagSpec, ...] = (
         "float",
         None,
         "embedder",
-        "Embed-daemon client socket timeout (s).",
+        "Embed-daemon client socket timeout (s). Overrides the per-op "
+        "defaults: query 30, batch 120, ping/stats 5.",
     ),
     _spec(
         "MEMO_EMBEDDER_STATS_INTERVAL_S",

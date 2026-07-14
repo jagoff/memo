@@ -328,3 +328,58 @@ def test_percentile_known_distribution():
     xs = sorted(float(i) for i in range(1, 101))
     assert _percentile(xs, 50) == pytest.approx(50.5)
     assert _percentile(xs, 99) == pytest.approx(99.01, abs=0.05)
+
+
+# -- per-op socket timeouts -------------------------------------------------
+
+
+def _capture_send_timeouts(monkeypatch) -> list[float]:
+    """Patch `connect_and_send` to record the timeout of each call and
+    simulate an unreachable daemon (returns None → fallback path)."""
+    captured: list[float] = []
+
+    def fake(_state_dir, _payload, timeout):
+        captured.append(timeout)
+        return None
+
+    monkeypatch.setattr(embedder_client, "connect_and_send", fake)
+    return captured
+
+
+def test_embed_query_uses_query_timeout_default(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MEMO_EMBEDDER_CLIENT_TIMEOUT", raising=False)
+    captured = _capture_send_timeouts(monkeypatch)
+    monkeypatch.setattr(embedder_client, "_inproc", lambda: _StubEmbedder())
+    embedder_client.embed_query("q", state_dir=tmp_path)
+    assert captured == [embedder_client._QUERY_TIMEOUT_S]
+
+
+def test_embed_batch_uses_batch_timeout_default(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MEMO_EMBEDDER_CLIENT_TIMEOUT", raising=False)
+    captured = _capture_send_timeouts(monkeypatch)
+    monkeypatch.setattr(embedder_client, "_inproc", lambda: _StubEmbedder())
+    embedder_client.embed(["a", "b"], state_dir=tmp_path)
+    assert captured == [embedder_client._BATCH_TIMEOUT_S]
+    assert embedder_client._BATCH_TIMEOUT_S > embedder_client._QUERY_TIMEOUT_S
+
+
+def test_ping_and_stats_use_control_timeout_default(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MEMO_EMBEDDER_CLIENT_TIMEOUT", raising=False)
+    captured = _capture_send_timeouts(monkeypatch)
+    embedder_client.ping(state_dir=tmp_path)
+    embedder_client.stats(state_dir=tmp_path)
+    assert captured == [
+        embedder_client._CONTROL_TIMEOUT_S,
+        embedder_client._CONTROL_TIMEOUT_S,
+    ]
+    assert embedder_client._CONTROL_TIMEOUT_S < embedder_client._QUERY_TIMEOUT_S
+
+
+def test_timeout_flag_overrides_all_ops(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MEMO_EMBEDDER_CLIENT_TIMEOUT", "42.5")
+    captured = _capture_send_timeouts(monkeypatch)
+    monkeypatch.setattr(embedder_client, "_inproc", lambda: _StubEmbedder())
+    embedder_client.embed_query("q", state_dir=tmp_path)
+    embedder_client.embed(["a"], state_dir=tmp_path)
+    embedder_client.ping(state_dir=tmp_path)
+    assert captured == [42.5, 42.5, 42.5]
