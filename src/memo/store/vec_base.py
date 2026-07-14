@@ -91,6 +91,10 @@ class VecStoreBase:
         """Total documents in the store."""
         raise NotImplementedError
 
+    def count_by_type(self) -> dict[str, int]:
+        """Active document counts grouped by type."""
+        raise NotImplementedError
+
     # -- optional (override when supported) --------------------------------
 
     def get(self, id_: str) -> dict[str, Any] | None:

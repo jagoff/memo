@@ -405,7 +405,15 @@ memo runs four background daemons:
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
-Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON). It has **no built-in authentication** and binds to `127.0.0.1` (loopback) by default — put a reverse proxy (nginx/Caddy) with auth in front before exposing it beyond localhost.
+Non-MCP clients: `memo http-api` serves the same operations as a localhost REST API (plain JSON). Every `/api/*` route requires `Authorization: Bearer <token>`; only `/health` is public. The first run creates a private token at `$MEMO_STATE_DIR/http-api-token` (normally `~/.local/share/memo/http-api-token`), or you can provide a 32+ character `MEMO_HTTP_API_TOKEN`. Both REST and MCP HTTP reject non-loopback binds unless explicitly acknowledged, never allow unauthenticated non-loopback exposure, add defensive response headers, and limit each source to 300 requests per minute per process.
+
+```bash
+memo http-api
+curl -H "Authorization: Bearer $(tr -d '\n' < ~/.local/share/memo/http-api-token)" \
+  http://127.0.0.1:8080/api/stats
+```
+
+For an authenticated network bind, use `memo http-api --host 0.0.0.0 --allow-non-loopback`; for MCP set `MEMO_MCP_TRANSPORT=http`, `MEMO_MCP_HOST=0.0.0.0`, and `MEMO_MCP_ALLOW_NON_LOOPBACK=1`. Use TLS or a trusted reverse proxy whenever traffic leaves the machine. `--allow-no-auth` / `MEMO_MCP_ALLOW_NO_AUTH=1` exist only for explicit loopback development.
 
 ## Retrieval architecture
 

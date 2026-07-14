@@ -95,6 +95,23 @@ def test_upsert_replaces_on_same_id(store: VecStore):
     assert store.count() == 1
 
 
+def test_count_by_type_groups_active_records(store: VecStore):
+    for id_, type_ in (("n1", "note"), ("n2", "note"), ("d1", "decision")):
+        store.upsert(
+            id_=id_,
+            path=f"memory/{id_}.md",
+            title=id_,
+            type_=type_,
+            tags=[],
+            created="t",
+            updated="t",
+            body_hash=f"hash-{id_}",
+            embedding=_emb(1, 0, 0, 0),
+        )
+
+    assert store.count_by_type() == {"decision": 1, "note": 2}
+
+
 def test_search_orders_by_cosine(store: VecStore):
     store.upsert(
         id_="x",
