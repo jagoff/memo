@@ -104,6 +104,15 @@ async def test_too_small_terminal_shows_requirement(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("terminal_size", [(80, 24), (100, 30), (140, 45)])
 def test_config_center_snapshots(
-    snap_compare, tmp_path: Path, terminal_size: tuple[int, int]
+    snap_compare,
+    tmp_path: Path,
+    terminal_size: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Rich otherwise quantizes the SVG palette according to the invoking
+    # terminal (for example NO_COLOR/TERM=dumb in headless local runs).
+    # Pin truecolor so the tracked snapshots are portable across environments.
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    monkeypatch.setenv("TERM", "xterm-256color")
     assert snap_compare(ConfigApp(_session(tmp_path)), terminal_size=terminal_size)
