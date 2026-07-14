@@ -124,7 +124,7 @@
 - [x] H5: fold — COMPLETE (032739d..4e07691, review clean; punto único=search_ops vec branch verificado 3 paths; PRE-FLIP: type-filter en candidatos fold + Memory.close de _hype_store)
 - [x] H6: eval config K — COMPLETE (4e07691..1520898, review clean; perfil hype=[A,K], expensive lockeado a J)
 - [x] H7: memo hype status — COMPLETE (1520898..effab4a, review clean)
-- [ ] H8: gate final + build dark + medición A vs K (SIN flip — decisión Fer)
+- [x] H8: COMPLETE — NO FLIP: curated A 0.812 vs K 0.829 / harvested A 0.133 vs K 0.087 (cobertura 10.6%, 474/4466, dilución parcial); gate PASS 0.835; MEMO_HYPE_ENABLED queda OFF; recomendación: encender MEMO_DREAM_HYPE_ENABLED nightly y re-medir a cobertura mayoritaria. HYPE PLAN DONE db196ee..effab4a
 
 ---
 
@@ -133,9 +133,15 @@
 **Plan:** docs/superpowers/plans/2026-07-13-mcpb-node-bootstrap.md (N1-N6)
 **Start:** 2026-07-13 · **Branch:** master · **Estado:** plan commiteado; SDD arranca cuando cierre HyPE (no implementers paralelos)
 
-- [ ] N1: bootstrap.js (zero-dep, node --check gate)
-- [ ] N2: manifest node 0.3
-- [ ] N3: build_mcpb_node determinístico
-- [ ] N4: pin-chain sync test
-- [ ] N5: release bump integra manifest node
+- [x] N1: bootstrap.js — COMPLETE (aae2ae4 en worktree-agent-a3c18c4c3a92408b1, review clean; cherry-pick pendiente)
+- [x] N2: manifest node — COMPLETE (d1a3efc en worktree, review clean; __dirname verificado vs spec oficial)
+- [x] N3: build_mcpb_node — COMPLETE (bb0dfeb en worktree, review clean; _build_zip DRY con byte-identity probada)
+- [x] N4: pin-chain sync — COMPLETE (2ce25d3 en worktree, review clean)
+- [x] N5: release bump — COMPLETE (d7d01af en worktree, review clean; follow-up a N6: release check no valida manifest node)
 - [ ] N6: gate final + smoke manual Desktop (Fer)
+
+## Fase B — Final
+- [x] N6 + fix release-check: COMPLETE (871b897→cherry-picked 8b8fc05; bundle memo-node.mcpb determinístico, NO trackeado — .gitignore packaging/*.mcpb, decisión humana con add -f)
+- [x] Review final whole-branch (fable, 17 commits db196ee..8b8fc05): 1 Important pre-push (isPinInstalled matcheaba `==` pero uv tool list imprime `v` → reinstall por arranque + rotura offline) → fix 576a892. PRE-FLIP confirmados sin empeorar: type-filter en candidatos fold + Memory.close _hype_store.
+- ANÁLISIS ESTRUCTURAL (pre-flip, no re-litigar sin leerlo): el fold compara escalas incomparables — preguntas embebidas CON prefijo (query↔query) vs docs sin prefijo → question-scores sistemáticamente más altos; a cobertura parcial desplaza hits correctos no cubiertos (harvested −0.046 @ 10.6%), a cobertura total converge a ranking pregunta-only. Opciones pre-flip: (a) embeber preguntas RAW, (b) fold en rank-space (RRF). Re-medir tras elegir.
+- FASE B DONE: db196ee..576a892 (18 commits). HyPE dark (MEMO_HYPE_ENABLED OFF, NO FLIP por gate b); MCPB Node listo para smoke manual de Fer.
