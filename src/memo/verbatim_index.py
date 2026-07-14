@@ -83,6 +83,7 @@ def parse_turns(transcript_path: Path) -> list[dict[str, Any]]:
 def run_verbatim_index_pass(
     cfg: Config,
     *,
+    root: Path | None = None,
     max_days: float | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -108,7 +109,7 @@ def run_verbatim_index_pass(
         if effective_max_days is None:
             effective_max_days = 90
 
-        root = Path.home() / ".claude" / "projects"
+        root = root or Path.home() / ".claude" / "projects"
         files = find_transcripts(root, since_days=effective_max_days)
 
         state = _load_state(cfg.state_dir, name=_WATERMARK_FILE)

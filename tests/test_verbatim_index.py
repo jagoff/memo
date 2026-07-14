@@ -186,13 +186,16 @@ def test_grown_file_reingests_whole_session(cfg: Config, claude_projects_root: P
         store.close()
 
 
-def test_dry_run_writes_nothing(cfg: Config, claude_projects_root: Path):
-    f = claude_projects_root / "sess-1.jsonl"
+def test_dry_run_writes_nothing(cfg: Config, tmp_path: Path):
+    """Test dry run using injectable root param directly (no monkeypatch needed)."""
+    root = tmp_path / "projects"
+    root.mkdir(parents=True, exist_ok=True)
+    f = root / "sess-1.jsonl"
     _write_transcript(
         f,
         [_line("user", _long("hello there, a long enough turn"), "2026-07-13T10:00:00.000Z")],
     )
-    result = run_verbatim_index_pass(cfg, dry_run=True)
+    result = run_verbatim_index_pass(cfg, root=root, dry_run=True)
     assert result["status"] == "ok"
     assert result["sessions_indexed"] == 1
     assert result["turns_indexed"] == 1
