@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from memo.config import Config
+from memo.store.turn_store import TurnStore
 
 
 def test_verbatim_flags_registered_defaults():
@@ -39,3 +42,150 @@ def test_verbatim_db_from_env(monkeypatch, tmp_path: Path):
     cfg = Config.from_env()
     assert cfg.single_db is True
     assert cfg.verbatim_db == cfg.db_path
+
+
+# ── TurnStore (Task V2) ──────────────────────────────────────────────────
+
+
+@pytest.fixture
+def store(tmp_path: Path):
+    ts = TurnStore(tmp_path / "verbatim.db")
+    yield ts
+    ts.close()
+
+
+def test_replace_session_returns_count(store: TurnStore):
+    turns = [
+        {"idx": 0, "role": "user", "ts": "2026-07-01T10:00:00", "text": "hola"},
+        {"idx": 1, "role": "assistant", "ts": "2026-07-01T10:00:05", "text": "que tal"},
+    ]
+    n = store.replace_session("sess-1", "claude-code", turns)
+    assert n == 2
+    assert store.stats() == {"sessions": 1, "turns": 2}
+
+
+def test_replace_session_idempotent_swaps_rows(store: TurnStore):
+    """Re-replacing a session swaps its rows; count stays stable, no dupes/orphans."""
+    first = [
+        {"idx": 0, "role": "user", "ts": "2026-07-01T10:00:00", "text": "primero"},
+        {"idx": 1, "role": "assistant", "ts": "2026-07-01T10:00:05", "text": "segundo"},
+    ]
+    store.replace_session("sess-1", "claude-code", first)
+
+    grown = [
+        {"idx": 0, "role": "user", "ts": "2026-07-01T10:00:00", "text": "primero editado"},
+        {"idx": 1, "role": "assistant", "ts": "2026-07-01T10:00:05", "text": "segundo"},
+        {"idx": 2, "role": "user", "ts": "2026-07-01T10:00:10", "text": "tercero nuevo"},
+    ]
+    n = store.replace_session("sess-1", "claude-code", grown)
+
+    assert n == 3
+    assert store.stats() == {"sessions": 1, "turns": 3}
+    assert store.sessions_watermark() == {"sess-1": 2}
+    # search must reflect the new content, not the stale first-pass row.
+    hits = store.search("editado")
+    assert len(hits) == 1
+    assert hits[0]["turn_idx"] == 0
+
+
+def test_search_and_multitoken_diacritics_fold(store: TurnStore):
+    """AND multi-token match, and 'decision' (no accent) matches 'decisión'."""
+    turns = [
+        {
+            "idx": 0,
+            "role": "assistant",
+            "ts": "2026-07-01T10:00:00",
+            "text": "la decisión que tomamos fue clara",
+        },
+        {"idx": 1, "role": "user", "ts": "2026-07-01T10:00:05", "text": "otro turno sin relación"},
+    ]
+    store.replace_session("sess-1", "claude-code", turns)
+
+    hits = store.search("decision")
+    assert len(hits) == 1
+    assert hits[0]["turn_idx"] == 0
+
+    hits_multi = store.search("decision tomamos")
+    assert len(hits_multi) == 1
+    assert hits_multi[0]["turn_idx"] == 0
+
+
+def test_search_or_fallback_on_zero_and_results(store: TurnStore):
+    """Two turns each with one distinct token → AND finds nothing, OR fallback returns both."""
+    turns = [
+        {"idx": 0, "role": "user", "ts": "2026-07-01T10:00:00", "text": "queso banana"},
+        {"idx": 1, "role": "assistant", "ts": "2026-07-01T10:00:05", "text": "manzana durazno"},
+    ]
+    store.replace_session("sess-1", "claude-code", turns)
+
+    hits = store.search("queso durazno")
+    assert {h["turn_idx"] for h in hits} == {0, 1}
+
+
+def test_search_session_id_filter(store: TurnStore):
+    store.replace_session(
+        "sess-a",
+        "claude-code",
+        [{"idx": 0, "role": "user", "ts": "2026-07-01T10:00:00", "text": "palabra clave"}],
+    )
+    store.replace_session(
+        "sess-b",
+        "claude-code",
+        [{"idx": 0, "role": "user", "ts": "2026-07-01T10:00:00", "text": "palabra clave"}],
+    )
+
+    hits = store.search("palabra clave", session_id="sess-a")
+    assert len(hits) == 1
+    assert hits[0]["session_id"] == "sess-a"
+
+
+def test_search_since_filter(store: TurnStore):
+    turns = [
+        {"idx": 0, "role": "user", "ts": "2026-01-01T00:00:00", "text": "palabra vieja"},
+        {"idx": 1, "role": "user", "ts": "2026-07-10T00:00:00", "text": "palabra nueva"},
+    ]
+    store.replace_session("sess-1", "claude-code", turns)
+
+    hits = store.search("palabra", since="2026-06-01T00:00:00")
+    assert len(hits) == 1
+    assert hits[0]["turn_idx"] == 1
+
+
+def test_prune_older_than_removes_old_rows_from_both_tables(store: TurnStore):
+    from datetime import UTC, datetime, timedelta
+
+    old_ts = (datetime.now(UTC) - timedelta(days=200)).isoformat()
+    recent_ts = datetime.now(UTC).isoformat()
+    turns = [
+        {"idx": 0, "role": "user", "ts": old_ts, "text": "contenido antiguo unico"},
+        {"idx": 1, "role": "user", "ts": recent_ts, "text": "contenido reciente unico"},
+    ]
+    store.replace_session("sess-1", "claude-code", turns)
+
+    removed = store.prune_older_than(90)
+    assert removed == 1
+    assert store.stats() == {"sessions": 1, "turns": 1}
+    # FTS side-table must be pruned too — search for the old text finds nothing.
+    assert store.search("antiguo") == []
+    assert len(store.search("reciente")) == 1
+
+
+def test_sessions_watermark(store: TurnStore):
+    store.replace_session(
+        "sess-a",
+        "claude-code",
+        [
+            {"idx": 0, "role": "user", "ts": "2026-07-01T10:00:00", "text": "a"},
+            {"idx": 3, "role": "user", "ts": "2026-07-01T10:00:05", "text": "b"},
+        ],
+    )
+    store.replace_session(
+        "sess-b",
+        "claude-code",
+        [{"idx": 1, "role": "user", "ts": "2026-07-01T10:00:00", "text": "c"}],
+    )
+    assert store.sessions_watermark() == {"sess-a": 3, "sess-b": 1}
+
+
+def test_stats_empty_store(store: TurnStore):
+    assert store.stats() == {"sessions": 0, "turns": 0}
