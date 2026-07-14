@@ -146,7 +146,11 @@ class BackupManager:
 
         memory_backup = backup_path / "memories"
         memory_backup.mkdir()
-        memory_files = list(self.memory_dir.rglob("*.md"))
+        memory_files = [
+            path
+            for path in self.memory_dir.rglob("*.md")
+            if path.relative_to(self.memory_dir).parts[:1] != ("secrets",)
+        ]
         for f in memory_files:
             # Preserve the per-project bucket layout (memory_dir/<project>/...)
             # so restore recreates it and same-named files in different buckets

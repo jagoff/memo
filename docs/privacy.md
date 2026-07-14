@@ -33,3 +33,10 @@ is expected when the user explicitly requests:
 Local search, recall, save, history, briefing, and normal MCP startup do not send
 prompts or memories to a hosted memo service. A separately configured model,
 sync remote, HTTP integration, or external helper has its own privacy boundary.
+
+Encrypted credential storage is a separate, explicit opt-in
+(`MEMO_SECRET_STORAGE_ENABLED=1`). Secret values never become searchable memory
+or markdown and memo's git sync excludes legacy `secrets/` markers. The local
+master key and ciphertext database are permission-restricted, but a process
+running as your OS user can still request plaintext; protect access to your
+account and use `memo secret get/export` only when disclosure is intended.

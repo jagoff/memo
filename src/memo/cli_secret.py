@@ -26,12 +26,17 @@ def secret() -> None:
     ),
     help="Secret kind (auto-detected if not provided)",
 )
-@click.option("--value", required=False, help="Secret value (if not provided, read from stdin)")
 @click.option("--no-confirm", is_flag=True, help="Skip confirmation prompt")
-def save(name: str, kind: str | None, value: str | None, no_confirm: bool) -> None:
+def save(name: str, kind: str | None, no_confirm: bool) -> None:
     """Save a secret (encrypted)."""
-    if not value:
-        value = click.get_text_stream("stdin").read().strip()
+    stdin = click.get_text_stream("stdin")
+    if stdin.isatty():
+        value = click.prompt("Secret value", hide_input=True, show_default=False)
+    else:
+        value = stdin.read()
+        # Piping `printf 'value\n'` should not silently persist the line ending,
+        # while all other leading/trailing characters remain part of the secret.
+        value = value.removesuffix("\n").removesuffix("\r")
 
     if not value:
         raise click.ClickException("No value provided")

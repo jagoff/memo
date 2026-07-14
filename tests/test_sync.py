@@ -139,6 +139,18 @@ def test_backup_manager_create_compressed_backup(backup_manager, mock_memory):
     assert metadata.compressed_size < metadata.original_size
 
 
+def test_backup_excludes_legacy_secret_markdown(backup_manager, mock_memory):
+    mock_memory.save(content="safe memory", title="Safe")
+    marker = mock_memory.cfg.memory_dir / "secrets" / "2026" / "07" / "key.md"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("---\nid: sec_old\ntype: secret\n---\n[ENCRYPTED]\n", encoding="utf-8")
+
+    metadata = backup_manager.create_backup(compress=False, name="without-secrets")
+
+    assert metadata.memory_count == 1
+    assert not (backup_manager.backup_dir / "without-secrets" / "memories" / "secrets").exists()
+
+
 @pytest.mark.parametrize(
     "name",
     ["../escaped", "nested/backup", r"nested\backup", ".", "..", ""],

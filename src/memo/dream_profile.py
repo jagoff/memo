@@ -324,7 +324,10 @@ def run_profile_pass(
     try:
         from datetime import UTC, datetime
 
-        rows = mem.store.list_recent(limit=scan_limit, exclude_types={"reference"})
+        rows = mem.store.list_recent(
+            limit=scan_limit,
+            exclude_types={"reference", "secret"},
+        )
         rules = _gather_rules(mem, cfg, k=directive_k, min_used=directive_min_used)
         res["standing_rules"] = len(rules)
         now = datetime.now(tz=UTC).isoformat(timespec="seconds")

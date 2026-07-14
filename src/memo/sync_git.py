@@ -476,6 +476,10 @@ def _commit_local(cfg: Config, store: VecStore) -> tuple[Path, str, int]:
         )
     export_signal(store, signal_dir_for(cfg))
     _git(root, "add", "-A")
+    # Pre-isolation releases wrote metadata-only credential markers below a
+    # reserved secrets/ directory. They contain no ciphertext, but even names
+    # are sensitive metadata and must never enter cross-machine git sync.
+    _git(root, "reset", "-q", "--", ":(glob)**/secrets/**", check=False)
     staged = _git(root, "diff", "--cached", "--name-only").stdout.strip()
     n_files = len(staged.splitlines()) if staged else 0
     if staged:

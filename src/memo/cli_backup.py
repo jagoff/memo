@@ -43,6 +43,8 @@ def _portable_backup(out_path: str | None) -> None:
         if cfg.memory_dir.is_dir():
             for md in sorted(cfg.memory_dir.rglob("*.md")):
                 rel = md.relative_to(cfg.memory_dir)
+                if rel.parts[:1] == ("secrets",):
+                    continue
                 zf.write(md, arcname=f"memory/{rel}")
                 n_md += 1
         # 2) State DBs (vec + history). Stored at the root. Dedup by resolved

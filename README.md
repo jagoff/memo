@@ -346,12 +346,13 @@ the normal text index.
 ### 🔐 Secret storage
 
 ```bash
+export MEMO_SECRET_STORAGE_ENABLED=1                     # explicit opt-in
 memo secret save --name openai-api-key --kind api_token   # value read from stdin
 memo secret get --name openai-api-key                       # decrypt one secret
 memo secret list                                            # names only, never values
 ```
 
-Keep credentials (API tokens, passwords, SSH keys, DB creds) in an **encrypted** local store — separate from your searchable memories, never indexed or embedded. Values are sealed with **AES-256-GCM** under a device-bound key (PBKDF2 over hostname + device id + a machine salt — same machine derives the same key, no passphrase to manage). Default-on (`MEMO_SECRET_STORAGE_ENABLED`); `memo secret list` shows names only. Optionally, `MEMO_CAPTURE_DETECT_SECRETS=1` auto-detects and quarantines secrets that show up in captured transcripts (opt-in) so they never land in a plain memory.
+Secret storage is **off by default** and requires `MEMO_SECRET_STORAGE_ENABLED=1`. Values are sealed with AES-256-GCM plus authenticated name/kind metadata under a random 256-bit master key at `$MEMO_STATE_DIR/secret-master.key`; memo enforces a private state directory (`0700`) and key/database permissions (`0600`). Credentials live only in the isolated `secret_store` table: no markdown marker is created, and they are never indexed, embedded, recalled, added to generated context, backed up as memory markdown, or committed by memo's git sync. `memo secret list` exposes metadata only. Treat `memo secret get` and `memo secret export` as explicit plaintext disclosure operations and redirect their output carefully.
 
 ### Daemons
 

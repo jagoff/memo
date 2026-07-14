@@ -101,6 +101,38 @@ def test_push_clean_repo_is_noop(remote: Path, tmp_path: Path, monkeypatch):
         mem.close()
 
 
+def test_push_never_commits_legacy_secret_markers(remote: Path, tmp_path: Path, monkeypatch):
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        marker = clone / "memorias" / "secrets" / "2026" / "07" / "key.md"
+        marker.parent.mkdir(parents=True)
+        marker.write_text(
+            "---\nid: sec_old\ntype: secret\nname: production-key\n---\n[ENCRYPTED]\n",
+            encoding="utf-8",
+        )
+
+        assert sync_push(mem.cfg, mem.store)["pushed"] is True
+
+        tracked = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(clone),
+                "ls-files",
+                "--error-unmatch",
+                str(marker.relative_to(clone)),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert tracked.returncode != 0
+        assert marker.exists()
+    finally:
+        mem.close()
+
+
 def test_push_then_pull_propagates_memoria_and_signal(remote: Path, tmp_path: Path, monkeypatch):
     # --- Mac A: save a memoria, build signal, push ---
     clone_a = _make_clone(remote, tmp_path / "A")

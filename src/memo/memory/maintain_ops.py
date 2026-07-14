@@ -11,6 +11,7 @@ from __future__ import annotations
 import builtins
 import json
 import time
+from pathlib import Path
 from typing import Any
 
 import frontmatter
@@ -38,6 +39,22 @@ from memo.prompt_overrides import resolve_prompt
 from memo.tiers import VerificationState
 from memo.util import sha256_full as _sha256_full
 from memo.util import sha256_short as _sha256_short
+
+
+def _purge_legacy_secret_index(
+    store: Any,
+    md_path: Path,
+    memory_root: Path,
+    md_id: str,
+    meta: dict[str, Any],
+) -> bool:
+    """Drop a legacy credential marker from the derived search index."""
+    rel = md_path.relative_to(memory_root)
+    if meta.get("type") != "secret" and rel.parts[:1] != ("secrets",):
+        return False
+    if store.get(md_id) is not None:
+        store.hard_delete(md_id)
+    return True
 
 
 class _MaintainOpsMixin(_MemoryBase):
@@ -256,7 +273,17 @@ class _MaintainOpsMixin(_MemoryBase):
                 continue
             meta: dict[str, Any] = post.metadata
             md_id = meta.get("id")
-            if not md_id or not isinstance(md_id, str):
+            if (
+                not md_id
+                or not isinstance(md_id, str)
+                or _purge_legacy_secret_index(
+                    self.store,
+                    md_path,
+                    self.cfg.memory_dir,
+                    md_id,
+                    meta,
+                )
+            ):
                 skipped += 1
                 continue
             body = post.content or ""

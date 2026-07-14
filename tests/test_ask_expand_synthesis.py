@@ -19,6 +19,12 @@ def _stub_search_to(mem, rec):
     mem.search = lambda *a, **k: [mem.get(rec.id)]  # type: ignore[assignment]
 
 
+def _legacy_secret(mem, *, content: str, title: str):
+    record = mem.save(content=content, title=title)
+    mem.store.bulk_update_type([record.id], "secret")
+    return mem.get(record.id)
+
+
 def test_flag_off_no_expansion(mock_memory, monkeypatch):
     monkeypatch.delenv("MEMO_ASK_EXPAND_SYNTHESIS", raising=False)
     s1, _s2, synth = _seed(mock_memory)
@@ -78,10 +84,10 @@ def test_flag_on_prefers_source_memories_key(mock_memory, monkeypatch):
 
 def test_flag_on_skips_sensitive_sources_without_context_pack(mock_memory, monkeypatch):
     monkeypatch.setenv("MEMO_ASK_EXPAND_SYNTHESIS", "1")
-    secret = mock_memory.save(
+    secret = _legacy_secret(
+        mock_memory,
         content="SECRET-LEAK-REVIEW",
         title="Secret source",
-        type_="secret",
     )
     synth = mock_memory.save(
         content="tema",

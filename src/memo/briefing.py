@@ -370,7 +370,10 @@ def memo_native_briefing_lines(
     # ── Open loops: recently updated memories ────────────────────────────
     try:
         cutoff = (datetime.now(tz=UTC) - timedelta(days=loops_days)).isoformat()
-        all_recent = mem.store.list_recent(limit=loops_n * 4, exclude_types={"reference"})
+        all_recent = mem.store.list_recent(
+            limit=loops_n * 4,
+            exclude_types={"reference", "secret"},
+        )
         open_loops = [r for r in all_recent if (r.get("updated") or "") >= cutoff][:loops_n]
         if open_loops:
             lines.append(f"### Open loops (last {loops_days} days)")
@@ -408,7 +411,10 @@ def memo_native_briefing_lines(
     if memory_of_day:
         try:
             today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
-            all_ids_rows = mem.store.list_recent(limit=500, exclude_types={"reference"})
+            all_ids_rows = mem.store.list_recent(
+                limit=500,
+                exclude_types={"reference", "secret"},
+            )
             pick_id = ""
             if all_ids_rows:
                 sorted_rows = sorted(all_ids_rows, key=lambda r: r.get("updated") or "")

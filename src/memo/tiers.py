@@ -44,12 +44,18 @@ SECRET_KINDS: frozenset[str] = frozenset(
     }
 )
 
+# Historical releases allowed `type: secret` rows into the general index.
+# Keep a single defensive exclusion set for consumers while reindex purges
+# those legacy rows. New credential writes never create memory rows at all.
+SENSITIVE_TYPES: frozenset[str] = frozenset({"secret"})
+
 # Durable tiers: the source-of-truth surfaced automatically. Mirrors
 # `memory._VALID_TYPES` minus the reference tier. `procedure` (how-to
 # workflows: "to do X, run Y") and `failure_pattern` (structured mistake
 # notes: Pattern/Context/Wrong/Right) are the procedural-knowledge kinds
-# mined from execution (2026-07-03 ecosystem survey, Tier2 #7). `secret`
-# is for encrypted credentials (passwords, tokens, SSH keys, DB credentials).
+# mined from execution (2026-07-03 ecosystem survey, Tier2 #7). Credentials
+# deliberately are not a memory tier: the isolated secret store must never
+# enter recall, embeddings, briefing, consolidation, or git sync.
 DURABLE_TYPES: frozenset[str] = frozenset(
     {
         "decision",
@@ -62,7 +68,6 @@ DURABLE_TYPES: frozenset[str] = frozenset(
         "synthesis",
         "procedure",
         "failure_pattern",
-        "secret",
     }
 )
 
@@ -107,6 +112,7 @@ __all__ = [
     "EVICTION_PROTECTED_TYPES",
     "REFERENCE_TYPES",
     "SECRET_KINDS",
+    "SENSITIVE_TYPES",
     "VerificationState",
     "is_reference_candidate",
 ]

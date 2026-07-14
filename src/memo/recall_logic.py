@@ -1066,9 +1066,9 @@ def _recall_logic(
 
     search_k = top_k * 3 if (project_tag or contextual) else top_k
 
-    from memo.tiers import REFERENCE_TYPES
-
-    exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
+    # Credentials are never recallable, regardless of feature flags.
+    # Bulk reference exclusion remains an operator-controlled setting.
+    exclude_types = _recall_excluded_types()
     exclude_tags = uncertain_exclusion()
 
     use_fallback = False
@@ -1468,3 +1468,13 @@ def _recall_logic(
     except Exception as exc:
         _logger.debug("presence bump failed: %s", exc)
     return json.dumps(output, ensure_ascii=False), _log
+
+
+def _recall_excluded_types() -> set[str]:
+    """Sensitive credentials are unconditional; bulk reference is configurable."""
+    from memo.tiers import REFERENCE_TYPES
+
+    excluded = {"secret"}
+    if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE"):
+        excluded.update(REFERENCE_TYPES)
+    return excluded

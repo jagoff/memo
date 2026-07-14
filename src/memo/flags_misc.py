@@ -1384,9 +1384,9 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_SECRET_STORAGE_ENABLED",
         "bool",
-        True,
+        False,
         "secret",
-        "Enable encrypted secret storage (passwords, tokens, SSH keys).",
+        "Explicitly opt in to encrypted local secret storage (passwords, tokens, SSH keys).",
     ),
     _spec(
         "MEMO_CAPTURE_DETECT_SECRETS",
