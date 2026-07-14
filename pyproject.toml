@@ -60,7 +60,7 @@ Changelog = "https://github.com/jagoff/memo/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
+    "pytest>=8.0",  # <9 pinned transitively by pytest-textual-snapshot→syrupy; dependabot #10 dismissed (dev-only)
     "pytest-cov>=5.0",
     "pytest-xdist>=3.6",
     "pytest-timeout>=2.3",
