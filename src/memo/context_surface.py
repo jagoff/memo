@@ -105,7 +105,10 @@ def _static_profile(memory: Any, *, cwd: str | None) -> list[dict[str, Any]]:
 def _dynamic_rows(memory: Any, *, limit: int = 5, days: int = 7) -> list[dict[str, Any]]:
     try:
         cutoff = (datetime.now(tz=UTC) - timedelta(days=days)).isoformat()
-        rows = memory.store.list_recent(limit=limit * 3, exclude_types={"reference"})
+        rows = memory.store.list_recent(
+            limit=limit * 3,
+            exclude_types={"reference", "secret"},
+        )
     except Exception:
         return []
     out: list[dict[str, Any]] = []

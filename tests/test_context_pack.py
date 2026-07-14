@@ -40,6 +40,12 @@ def _repo_hit(*, text: str) -> RepoSearchHit:
     )
 
 
+def _legacy_secret(mem: Memory, *, content: str, title: str):
+    record = mem.save(content=content, title=title)
+    mem.store.bulk_update_type([record.id], "secret")
+    return mem.get(record.id)
+
+
 def _capturing_stream(
     prompts: list[str],
     deltas: list[str],
@@ -296,10 +302,10 @@ def test_context_pack_fitter_handles_budget_smaller_than_row_overhead() -> None:
 
 
 def test_context_pack_omits_sensitive_expanded_memory(mem_with_stub, monkeypatch) -> None:
-    sensitive = mem_with_stub.save(
+    sensitive = _legacy_secret(
+        mem_with_stub,
         content="top secret",
         title="Sensitive source",
-        type_="secret",
     )
     synth = mem_with_stub.save(
         content="synthesis body",
@@ -359,7 +365,7 @@ def test_context_pack_expanded_memory_gets_quality_metadata(mem_with_stub, monke
 def test_context_pack_prevents_sensitive_top_hit_verbatim_bypass(
     mem_with_stub, monkeypatch
 ) -> None:
-    sensitive = mem_with_stub.save(content="secret literal leak", title="Secret", type_="secret")
+    sensitive = _legacy_secret(mem_with_stub, content="secret literal leak", title="Secret")
     safe = mem_with_stub.save(content="safe fallback context", title="Safe")
     captured: dict[str, str] = {}
 
@@ -384,13 +390,17 @@ def test_context_pack_prevents_sensitive_top_hit_verbatim_bypass(
     assert safe.id in {source["id"] for source in out["sources"]}
 
 
-def test_sensitive_top_hit_verbatim_short_circuit_is_preserved_without_context_pack(
-    mem_with_stub, monkeypatch
-) -> None:
-    sensitive = mem_with_stub.save(content="secret literal leak", title="Secret", type_="secret")
+def test_sensitive_top_hit_is_filtered_without_context_pack(mem_with_stub, monkeypatch) -> None:
+    sensitive = _legacy_secret(mem_with_stub, content="secret literal leak", title="Secret")
     safe = mem_with_stub.save(content="safe fallback context", title="Safe")
+    captured: dict[str, str] = {}
+
+    def _stub_chat(self, model, messages, options=None):
+        captured["user"] = messages[-1]["content"]
+        return {"message": {"content": "Filtered answer."}}
 
     monkeypatch.setenv("MEMO_CONTEXT_PACK", "0")
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
     monkeypatch.setattr(
         mem_with_stub,
         "search",
@@ -399,7 +409,10 @@ def test_sensitive_top_hit_verbatim_short_circuit_is_preserved_without_context_p
 
     out = mem_with_stub.ask("literal leak", k=2, include_repos=False)
 
-    assert out["answer"] == f"secret literal leak\n\n[{sensitive.id[:8]}]"
+    assert out["answer"] == "Filtered answer."
+    assert sensitive.id not in {source["id"] for source in out["sources"]}
+    assert "secret literal leak" not in captured["user"]
+    assert safe.id in {source["id"] for source in out["sources"]}
 
 
 def test_chat_ask_keeps_standard_prompt_when_context_pack_flag_is_on(

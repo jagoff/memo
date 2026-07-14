@@ -1,5 +1,13 @@
 # Memo Secret Storage System — Design Spec
 
+> Security amendment (2026-07-14): the implementation intentionally does not
+> create the metadata markdown proposed below. Storage is explicit opt-in,
+> ciphertext lives only in `secret_store`, and a random 256-bit local master key
+> replaces hostname/device-derived key material. Legacy markdown is excluded
+> from reindex, backup, recall context, and git sync, and is removed on delete.
+> The historical sections remain as design context; this amendment and the
+> current code are authoritative where they differ.
+
 **Date:** 2026-07-07  
 **Status:** Design (pending implementation)  
 **Scope:** Local-first encrypted credential storage (passwords, API keys, SSH keys, DB credentials)
@@ -121,7 +129,7 @@ SECRET_KINDS: frozenset[str] = frozenset({
 })
 ```
 
-#### Markdown Format (`secrets/2026/07/openai-api-key.md`)
+#### Historical Markdown Format (not created by current releases)
 
 ```markdown
 ---
@@ -138,7 +146,8 @@ confidence: 0.95
 [ENCRYPTED: AES-256-GCM]
 ```
 
-The encrypted blob is stored literally as `[ENCRYPTED: AES-256-GCM]` in markdown; the actual ciphertext + nonce live in `secret_store` table.
+Current releases create no markdown record. Old `[ENCRYPTED: AES-256-GCM]`
+markers contain metadata only and are treated as migration artifacts.
 
 #### SQLite Schema (`src/memo/store/schema.py`)
 
@@ -166,7 +175,7 @@ Migration adds this table in `src/memo/store/migrations.py`.
 
 ### 2.3 Encryption & Key Derivation
 
-#### Key Derivation (Device-Bound, No User Input)
+#### Historical Key Derivation (read-only migration compatibility)
 
 **File:** `src/memo/secret_store.py`
 
@@ -397,7 +406,7 @@ Warm socket daemon (like memo-recall-daemon):
 ## 9. Flags
 
 ```python
-flag_bool("MEMO_SECRET_STORAGE_ENABLED", default=True)
+flag_bool("MEMO_SECRET_STORAGE_ENABLED", default=False)
 flag_bool("MEMO_CAPTURE_DETECT_SECRETS", default=False)
 flag_bool("MEMO_DETECT_SECRETS_LLM", default=True)
 flag_int("MEMO_SECRET_DAEMON_CACHE_MAX", default=100)
@@ -409,7 +418,7 @@ flag_int("MEMO_SECRET_DAEMON_CACHE_TTL_SECONDS", default=3600)
 ## 10. Success Criteria
 
 1. ✅ Secrets encrypted at rest (AES-256-GCM)
-2. ✅ Device-bound key derivation
+2. ✅ Random local 256-bit master key with strict filesystem permissions
 3. ✅ Auto-detection (regex + LLM)
 4. ✅ User confirmation before save
 5. ✅ Daemon warm socket

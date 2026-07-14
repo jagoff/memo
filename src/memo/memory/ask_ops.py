@@ -475,6 +475,13 @@ class _AskOpsMixin(_MemoryBase):
 
             hits = sorted(hits, key=_recency_sort_key, reverse=True)[:k]
 
+        # Defense in depth for legacy/corrupt index rows and test doubles that
+        # bypass Memory.search(): credentials never enter prompts or verbatim
+        # short-circuits, independent of the optional context-pack feature.
+        from memo.context_pack import is_sensitive_memory
+
+        hits = [hit for hit in hits if not is_sensitive_memory(hit)]
+
         snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
         primary_memory_sources: dict[str, dict[str, Any]] = {}

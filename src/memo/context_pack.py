@@ -46,7 +46,8 @@ def consult_hits_from_pack(pack: ContextPack) -> list[dict[str, Any]]:
     return hits
 
 
-def _is_sensitive(hit: Any) -> bool:
+def is_sensitive_memory(hit: Any) -> bool:
+    """Return whether a memory must never enter generated context."""
     tags = {str(tag) for tag in (getattr(hit, "tags", None) or [])}
     extra = getattr(hit, "extra", None)
     extra_dict = extra if isinstance(extra, dict) else {}
@@ -60,7 +61,7 @@ def _is_sensitive(hit: Any) -> bool:
 def build_context_row(hit: Any, *, snippet_chars: int) -> dict[str, Any] | None:
     """Build one prompt-ready memory row, omitting sensitive hits."""
 
-    if _is_sensitive(hit):
+    if is_sensitive_memory(hit):
         return None
     return _snippet(hit, snippet_chars, classify_quality(hit))
 

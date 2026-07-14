@@ -392,7 +392,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
         if type_ is not None:
             items = self._pull_embeddings(type_filter=type_)
         else:
-            items = self._pull_embeddings(exclude_types={"reference"})
+            items = self._pull_embeddings(exclude_types={"reference", "secret"})
         if not items:
             return []
         clusters = self._greedy_cluster(items, threshold)

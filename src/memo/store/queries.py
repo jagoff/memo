@@ -1007,6 +1007,21 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             cursor = cx.execute("DELETE FROM secret_store WHERE name = ?", (name,))
             return cursor.rowcount > 0
 
+    def secret_store_update_encrypted(
+        self,
+        name: str,
+        encrypted_blob: bytes,
+        nonce: bytes,
+    ) -> None:
+        """Atomically rotate one secret's ciphertext and nonce."""
+        with self._tx() as cx:
+            cursor = cx.execute(
+                "UPDATE secret_store SET encrypted_blob = ?, nonce = ? WHERE name = ?",
+                (encrypted_blob, nonce, name),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Secret not found during key rotation: {name}")
+
     def secret_store_increment_access(self, name: str) -> None:
         """Increment access count and update accessed_at timestamp."""
         now = datetime.now(UTC).isoformat(timespec="seconds")

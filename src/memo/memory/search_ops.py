@@ -28,7 +28,7 @@ from memo.memory.record import (
     record_from_row,
 )
 from memo.perf import timer
-from memo.tiers import REFERENCE_TYPES
+from memo.tiers import REFERENCE_TYPES, SENSITIVE_TYPES
 
 if TYPE_CHECKING:
     from memo.store.hype_store import HypeStore
@@ -145,6 +145,10 @@ class _SearchOpsMixin(_MemoryBase):
             _add_trace("candidate_generation", mode=mode, output_count=0)
             _add_trace("final", output_count=0)
             return []
+        # Credentials are managed only through the explicit secret API. Legacy
+        # `type: secret` rows must never be returned by any search mode, even if
+        # a caller asks for that type or forgets to pass an exclusion set.
+        exclude_types = set(exclude_types or ()) | set(SENSITIVE_TYPES)
         limit = limit or self.cfg.search_default_limit
         if date_to and len(date_to) == 10:
             date_to = date_to + "T23:59:59"  # bare date = whole day inclusive

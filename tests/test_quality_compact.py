@@ -29,6 +29,12 @@ def _env(tmp_path: Path) -> dict[str, str]:
     }
 
 
+def _legacy_secret(mem: Memory, *, content: str, title: str, tags: list[str], extra: dict):
+    record = mem.save(content=content, title=title, tags=tags, extra=extra)
+    mem.store.bulk_update_type([record.id], "secret")
+    return mem.get(record.id)
+
+
 def _seed_quality_compact_records(tmp_path: Path) -> tuple[dict[str, str], str]:
     env = _env(tmp_path)
     cfg = Config(
@@ -89,10 +95,10 @@ def test_quality_compact_preview_skips_cross_scope_and_sensitive_records(mock_me
         tags=["project:other"],
         extra={"canonical_id": canonical.id},
     )
-    mock_memory.save(
+    _legacy_secret(
+        mock_memory,
         content="Top secret duplicate.",
         title="Secret duplicate",
-        type_="secret",
         tags=["project:memo"],
         extra={"canonical_id": canonical.id},
     )
