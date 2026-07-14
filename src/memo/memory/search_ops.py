@@ -203,7 +203,9 @@ class _SearchOpsMixin(_MemoryBase):
             # flag_bool check, no HypeStore construction, no extra reads.
             if flag_bool("MEMO_HYPE_ENABLED"):
                 before_hype = len(rows)
-                rows = self._hype_fold_candidates(rows, emb, limit)
+                rows = self._hype_fold_candidates(
+                    rows, emb, limit, type_=type_, exclude_types=exclude_types
+                )
                 _add_trace("hype_fold", input_count=before_hype, output_count=len(rows))
         else:
             emb = None  # set below in hybrid's vec branch; used by feedback boost
@@ -715,7 +717,13 @@ class _SearchOpsMixin(_MemoryBase):
         return out
 
     def _hype_fold_candidates(
-        self, rows: list[dict[str, Any]], emb: list[float], limit: int
+        self,
+        rows: list[dict[str, Any]],
+        emb: list[float],
+        limit: int,
+        *,
+        type_: str | None = None,
+        exclude_types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Max-fold HyPE question-space candidates into the vec doc hits.
 
@@ -723,6 +731,13 @@ class _SearchOpsMixin(_MemoryBase):
         deferred so the flag-off hot path pays nothing beyond the flag check).
         Best-effort: any failure degrades to the unfolded doc hits — the
         question index is derived data and must never break search.
+
+        `type_`/`exclude_types` are the same filters `search()` applied at the
+        SQL level for the doc hits — `fetch_meta` must re-apply them for
+        fold-appended candidates (question-space matches not already in
+        `rows`), since those are materialized straight from `self.store.get`
+        with no filter awareness of its own. Existing doc hits are untouched:
+        `hype_fold` only calls `fetch_meta` for candidates NOT already present.
         """
         try:
             from memo.hype_fold import hype_fold
@@ -733,7 +748,18 @@ class _SearchOpsMixin(_MemoryBase):
                 store = HypeStore(self.cfg.db_path, self.cfg.embedder_dims)
                 self._hype_store = store
             pool = flag_int("MEMO_HYPE_FOLD_POOL") or 30
-            return hype_fold(rows, emb, store, self.store.get, pool=pool, limit=limit)
+
+            def _fetch_meta_filtered(memory_id: str) -> dict[str, Any] | None:
+                row: dict[str, Any] | None = self.store.get(memory_id)
+                if row is None:
+                    return None
+                if type_ and row.get("type") != type_:
+                    return None
+                if exclude_types and row.get("type") in exclude_types:
+                    return None
+                return row
+
+            return hype_fold(rows, emb, store, _fetch_meta_filtered, pool=pool, limit=limit)
         except Exception as exc:
             _log.warning("hype_fold failed, using doc hits: %s", exc, exc_info=True)
             return rows

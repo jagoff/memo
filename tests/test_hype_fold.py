@@ -231,3 +231,47 @@ def test_flag_on_question_space_candidate_surfaces(
     both = hype_mem.search("zzquery topic", mode="vec", limit=5)
     assert [r.id for r in both][:2] == [rec_b.id, rec_a.id]
     assert both[1].score == pytest.approx(0.8, abs=1e-3)
+
+
+def test_flag_on_fold_appended_candidate_respects_type_filter(
+    hype_mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fold-appended candidate (question-space only, not a doc hit) must
+    still honor the `type_` filter passed into `search()`. Without a filter
+    closure around `fetch_meta`, `_hype_fold_candidates` bypasses the SQL-level
+    type filtering entirely for these appended rows."""
+    rec_a = hype_mem.save(content="zzalpha note body", title="Alpha zzalpha", type_="decision")
+    rec_b = hype_mem.save(content="zzbeta note body", title="Beta zzbeta", type_="note")
+    # B is only reachable via the question-space fold (doc vector orthogonal).
+    _populate_hype(hype_mem.cfg, rec_b.id, list(_QUERY_VEC))
+    monkeypatch.setenv("MEMO_HYPE_ENABLED", "1")
+
+    # B is type="note"; filtering to type_="decision" must exclude it even
+    # though the question-space match would otherwise surface it first.
+    out = hype_mem.search("zzquery topic", mode="vec", type_="decision", limit=5)
+    assert rec_b.id not in [r.id for r in out]
+    assert [r.id for r in out] == [rec_a.id]
+
+
+def test_close_closes_hype_store(hype_mem, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once a folded vec search materializes `_hype_store`, `Memory.close()`
+    must close its underlying sqlite connection too — otherwise it leaks a
+    file descriptor for the lifetime of the process. `HypeStore._conn` lazily
+    reopens on next access (see `_ConnectionMixin`), so we can't assert a
+    raise on subsequent use; instead assert the specific connection object
+    held at fold-time was actually closed (`sqlite3.Connection.close()` sets
+    a queryable closed state via a follow-up `execute` raising ProgrammingError
+    directly on THAT connection object, bypassing the lazy-reopen property)."""
+    import sqlite3
+
+    monkeypatch.setenv("MEMO_HYPE_ENABLED", "1")
+    hype_mem.save(content="zzalpha note body", title="Alpha zzalpha")
+    hype_mem.search("zzquery topic", mode="vec", limit=5)  # materializes _hype_store
+    assert hype_mem._hype_store is not None
+
+    store = hype_mem._hype_store
+    conn = store._conn  # the live thread-local sqlite3.Connection
+    hype_mem.close()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
