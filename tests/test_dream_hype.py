@@ -40,9 +40,16 @@ class _FakeStore:
 class _FakeEmbedder:
     def __init__(self, dims: int = 4):
         self._fn = _fake_embed_query(dims)
+        self.query_calls: list[str] = []
+        self.embed_calls: list[list[str]] = []
 
     def embed_query(self, text: str) -> list[float]:
+        self.query_calls.append(text)
         return self._fn(text)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.embed_calls.append(list(texts))
+        return [self._fn(t) for t in texts]
 
 
 class _FakeCfg:
@@ -191,6 +198,38 @@ def test_llm_questions_strips_plain_markdown_fence(monkeypatch):
     assert questions == ["question one here", "question two here"]
 
 
+# --- _embed_question ---------------------------------------------------------
+
+
+def test_embed_question_uses_embed_query_by_default(monkeypatch):
+    """MEMO_HYPE_EMBED_RAW off (default) -> the query-prefixed embed_query
+    path is used, not the raw embed() list path."""
+    monkeypatch.delenv("MEMO_HYPE_EMBED_RAW", raising=False)
+    mem = _FakeMem({})
+    vec = dh._embed_question(mem, "What is X?")
+    assert mem.embedder.query_calls == ["What is X?"]
+    assert mem.embedder.embed_calls == []
+    assert vec == mem.embedder._fn("What is X?")
+
+
+def test_embed_question_uses_raw_embed_when_flag_on(monkeypatch):
+    """MEMO_HYPE_EMBED_RAW=1 -> the document-side embed([text]) path is used
+    (list form, per the MLX invariant: embed() never takes a bare str)."""
+    monkeypatch.setenv("MEMO_HYPE_EMBED_RAW", "1")
+    mem = _FakeMem({})
+    vec = dh._embed_question(mem, "What is X?")
+    assert mem.embedder.embed_calls == [["What is X?"]]
+    assert mem.embedder.query_calls == []
+    assert vec == mem.embedder._fn("What is X?")
+
+
+def test_active_variant_reflects_flag(monkeypatch):
+    monkeypatch.delenv("MEMO_HYPE_EMBED_RAW", raising=False)
+    assert dh._active_variant() == "query"
+    monkeypatch.setenv("MEMO_HYPE_EMBED_RAW", "1")
+    assert dh._active_variant() == "raw"
+
+
 # --- run_hype_pass ---------------------------------------------------------------
 
 
@@ -211,7 +250,7 @@ def test_run_hype_pass_generates_and_persists(tmp_path, monkeypatch):
     store = HypeStore(cfg.db_path, dims=4)
     try:
         stats = store.stats()
-        assert stats == {"memories": 1, "questions": 2}
+        assert stats == {"memories": 1, "questions": 2, "by_variant": {"query": 2}}
     finally:
         store.close()
 
@@ -303,7 +342,7 @@ def test_run_hype_pass_dry_run_computes_backlog_without_writing(tmp_path, monkey
 
     store = HypeStore(cfg.db_path, dims=4)
     try:
-        assert store.stats() == {"memories": 0, "questions": 0}
+        assert store.stats() == {"memories": 0, "questions": 0, "by_variant": {}}
     finally:
         store.close()
 
@@ -374,6 +413,84 @@ def test_run_hype_pass_prunes_orphans(tmp_path, monkeypatch):
         verify_store.close()
 
 
+# --- run_hype_reembed ---------------------------------------------------------
+
+
+def test_run_hype_reembed_converts_query_rows_to_raw(tmp_path, monkeypatch):
+    """Seed rows at variant='query', flip MEMO_HYPE_EMBED_RAW on, reembed ->
+    rows become variant='raw' and the embedder is called via the list-form
+    embed() (not embed_query), per the active (raw) variant."""
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+    store = HypeStore(cfg.db_path, dims=4)
+    store.replace_for_memory(
+        "id1", "h1", "m", [("question one?", [0.0, 0.0, 0.0, 0.0])], variant="query"
+    )
+    store.close()
+
+    monkeypatch.setenv("MEMO_HYPE_EMBED_RAW", "1")
+    mem = _FakeMem({}, state_dir=tmp_path)
+
+    res = dh.run_hype_reembed(cfg, mem)
+
+    assert res["status"] == "done"
+    assert res["reembedded"] == 1
+    assert res["skipped"] == 0
+    assert mem.embedder.embed_calls, "raw variant must call embed() list-form, not embed_query"
+    assert mem.embedder.query_calls == []
+
+    verify_store = HypeStore(cfg.db_path, dims=4)
+    try:
+        stats = verify_store.stats()
+        assert stats["by_variant"] == {"raw": 1}
+        row = verify_store._conn.execute(
+            "SELECT question, body_hash FROM hype_questions WHERE memory_id = ?", ("id1",)
+        ).fetchone()
+        assert row["question"] == "question one?"
+        assert row["body_hash"] == "h1"
+    finally:
+        verify_store.close()
+
+
+def test_run_hype_reembed_second_run_skips_already_converted_rows(tmp_path, monkeypatch):
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+    store = HypeStore(cfg.db_path, dims=4)
+    store.replace_for_memory("id1", "h1", "m", [("q?", [0.0, 0.0, 0.0, 0.0])], variant="query")
+    store.close()
+
+    monkeypatch.setenv("MEMO_HYPE_EMBED_RAW", "1")
+    mem = _FakeMem({}, state_dir=tmp_path)
+
+    first = dh.run_hype_reembed(cfg, mem)
+    assert first["status"] == "done"
+    assert first["reembedded"] == 1
+
+    second = dh.run_hype_reembed(cfg, mem)
+    assert second["status"] == "skipped"
+    assert second["reembedded"] == 0
+
+
+def test_run_hype_reembed_noop_when_nothing_stale(tmp_path):
+    """No rows at all -> nothing to convert, status='skipped'."""
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+    mem = _FakeMem({}, state_dir=tmp_path)
+    res = dh.run_hype_reembed(cfg, mem)
+    assert res["status"] == "skipped"
+    assert res["reembedded"] == 0
+
+
+def test_run_hype_reembed_never_raises_on_store_failure(tmp_path, monkeypatch):
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+    mem = _FakeMem({}, state_dir=tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("memo.store.hype_store.HypeStore", _boom)
+    res = dh.run_hype_reembed(cfg, mem)
+    assert res["status"] == "error"
+    assert "boom" in res.get("error", "")
+
+
 def test_dream_hype_subcommand_json(tmp_path, monkeypatch):
     from click.testing import CliRunner
 
@@ -396,6 +513,36 @@ def test_dream_hype_subcommand_json(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli, ["dream", "hype", "--json"], env=env)
     assert result.exit_code == 0, result.output
     assert '"status": "done"' in result.output
+
+
+def test_dream_hype_subcommand_reembed_json(tmp_path, monkeypatch):
+    """`memo dream hype --reembed` routes to run_hype_reembed, not run_hype_pass."""
+    from click.testing import CliRunner
+
+    from memo import dream_hype as dh_mod
+    from memo.cli import cli
+
+    pass_called = []
+    monkeypatch.setattr(
+        dh_mod, "run_hype_pass", lambda cfg, mem, **kw: pass_called.append(1) or {}
+    )
+    monkeypatch.setattr(
+        dh_mod,
+        "run_hype_reembed",
+        lambda cfg, mem: {"status": "done", "reembedded": 3, "skipped": 0},
+    )
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+    result = CliRunner().invoke(cli, ["dream", "hype", "--reembed", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    assert '"reembedded": 3' in result.output
+    assert not pass_called, "run_hype_pass must not run when --reembed is passed"
 
 
 def test_run_hype_pass_embed_failure_isolates_one_memory(tmp_path, monkeypatch):

@@ -253,6 +253,58 @@ def test_flag_on_fold_appended_candidate_respects_type_filter(
     assert [r.id for r in out] == [rec_a.id]
 
 
+def test_fold_variant_mismatch_warns_in_trace_but_still_folds(
+    hype_mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The HyPE store's stored questions were embedded 'raw' (document-side),
+    but MEMO_HYPE_EMBED_RAW is OFF (active variant='query') — a scale
+    mismatch. Search must still fold (never hard-fail) and record a warning
+    trace note so the mismatch is diagnosable via `memo dream hype --reembed`."""
+    from memo.store.hype_store import HypeStore
+
+    monkeypatch.delenv("MEMO_HYPE_EMBED_RAW", raising=False)  # active variant = "query"
+    rec_a = hype_mem.save(content="zzalpha note body", title="Alpha zzalpha")
+    rec_b = hype_mem.save(content="zzbeta note body", title="Beta zzbeta")
+
+    hs = HypeStore(hype_mem.cfg.db_path, 4)
+    try:
+        hs.replace_for_memory(
+            rec_b.id, "bodyhash", "test-model",
+            [("what is zzbeta about?", list(_QUERY_VEC))], variant="raw",
+        )
+    finally:
+        hs.close()
+
+    monkeypatch.setenv("MEMO_HYPE_ENABLED", "1")
+
+    trace: list[dict] = []
+    out = hype_mem.search("zzquery topic", mode="vec", limit=5, _trace=trace)
+
+    # Fold still ran and still surfaced results — a mismatch never hard-fails.
+    assert rec_a.id in [r.id for r in out]
+    assert rec_b.id in [r.id for r in out]
+
+    hype_stage = next(entry for entry in trace if entry["stage"] == "hype_fold")
+    assert "warning" in hype_stage
+    assert "raw" in hype_stage["warning"] and "query" in hype_stage["warning"]
+
+
+def test_fold_variant_match_has_no_warning_in_trace(
+    hype_mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the store's variant matches the active flag, no warning is added."""
+    rec_b = hype_mem.save(content="zzbeta note body", title="Beta zzbeta")
+    _populate_hype(hype_mem.cfg, rec_b.id, list(_QUERY_VEC))  # default variant="query"
+    monkeypatch.delenv("MEMO_HYPE_EMBED_RAW", raising=False)  # active variant = "query"
+    monkeypatch.setenv("MEMO_HYPE_ENABLED", "1")
+
+    trace: list[dict] = []
+    hype_mem.search("zzquery topic", mode="vec", limit=5, _trace=trace)
+
+    hype_stage = next(entry for entry in trace if entry["stage"] == "hype_fold")
+    assert "warning" not in hype_stage
+
+
 def test_close_closes_hype_store(hype_mem, monkeypatch: pytest.MonkeyPatch) -> None:
     """Once a folded vec search materializes `_hype_store`, `Memory.close()`
     must close its underlying sqlite connection too — otherwise it leaks a

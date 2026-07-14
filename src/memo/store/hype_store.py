@@ -69,9 +69,20 @@ class HypeStore(_ConnectionMixin):
             "CREATE TABLE IF NOT EXISTS hype_questions ("
             "question_id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, "
             "question TEXT NOT NULL, body_hash TEXT NOT NULL, model TEXT NOT NULL, "
-            "created_at TEXT NOT NULL)"
+            "created_at TEXT NOT NULL, variant TEXT NOT NULL DEFAULT 'query')"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hype_mem ON hype_questions(memory_id)")
+        # Inline ALTER-guard migration: a DB created before `variant` existed
+        # needs the column backfilled — its rows were all embedded with the
+        # query prefix (the only variant that ever existed then), so 'query'
+        # is the honest default for pre-existing rows.
+        cols = {
+            row["name"] for row in conn.execute("PRAGMA table_info(hype_questions)").fetchall()
+        }
+        if "variant" not in cols:
+            conn.execute(
+                "ALTER TABLE hype_questions ADD COLUMN variant TEXT NOT NULL DEFAULT 'query'"
+            )
         conn.commit()
 
     def replace_for_memory(
@@ -80,10 +91,13 @@ class HypeStore(_ConnectionMixin):
         body_hash: str,
         model: str,
         questions: list[tuple[str, list[float]]],
+        variant: str = "query",
     ) -> int:
         """Delete old rows for `memory_id`, insert `(question_text, embedding)` rows.
 
         `question_id = sha256(f"{memory_id}:{text}").hexdigest()[:32]`.
+        `variant` records which embedding scale the vectors were built in
+        ("query" = `embed_query` prefix, "raw" = document-side, no prefix).
         Returns the inserted count.
         """
         created_at = _now_iso()
@@ -112,9 +126,9 @@ class HypeStore(_ConnectionMixin):
                 )
                 cx.execute(
                     "INSERT INTO hype_questions "
-                    "(question_id, memory_id, question, body_hash, model, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (qid, memory_id, text, body_hash, model, created_at),
+                    "(question_id, memory_id, question, body_hash, model, created_at, variant) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (qid, memory_id, text, body_hash, model, created_at, variant),
                 )
         return len(questions)
 
@@ -173,15 +187,46 @@ class HypeStore(_ConnectionMixin):
                 removed += cur.rowcount
         return removed
 
-    def stats(self) -> dict[str, int]:
+    def stats(self) -> dict[str, Any]:
         memories = self._conn.execute(
             "SELECT COUNT(DISTINCT memory_id) AS n FROM hype_questions"
         ).fetchone()
         questions = self._conn.execute("SELECT COUNT(*) AS n FROM hype_questions").fetchone()
+        variant_rows = self._conn.execute(
+            "SELECT variant, COUNT(*) AS n FROM hype_questions GROUP BY variant"
+        ).fetchall()
         return {
             "memories": int(memories["n"]) if memories else 0,
             "questions": int(questions["n"]) if questions else 0,
+            "by_variant": {str(r["variant"]): int(r["n"]) for r in variant_rows},
         }
+
+    def memories_with_variant_other_than(self, variant: str) -> list[str]:
+        """Distinct `memory_id`s that have at least one question row whose
+        `variant` differs from `variant` — the reembed backlog."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT memory_id FROM hype_questions WHERE variant != ?",
+            (variant,),
+        ).fetchall()
+        return [str(r["memory_id"]) for r in rows]
+
+    def questions_for_memory(self, memory_id: str) -> list[dict[str, Any]]:
+        """All question rows for `memory_id` (text + body_hash + model),
+        in insertion order — used by the reembed pass to recover the stored
+        question text without needing the LLM again."""
+        rows = self._conn.execute(
+            "SELECT question, body_hash, model FROM hype_questions "
+            "WHERE memory_id = ? ORDER BY rowid",
+            (memory_id,),
+        ).fetchall()
+        return [
+            {
+                "question": str(r["question"]),
+                "body_hash": str(r["body_hash"]),
+                "model": str(r["model"]),
+            }
+            for r in rows
+        ]
 
 
 __all__ = ["HypeStore"]

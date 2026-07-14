@@ -218,6 +218,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "kNN pool size over the question index during the read-path fold.",
         min_val=5,
     ),
+    _spec(
+        "MEMO_HYPE_EMBED_RAW",
+        "bool",
+        False,
+        "ingest",
+        "Embed stored HyPE questions WITHOUT the query prefix (document-side), "
+        "so fold scores share the doc-cosine scale. Changing this requires "
+        "`memo dream hype --reembed`.",
+    ),
     # verbatim turn-level index (Total Recall F1)
     _spec(
         "MEMO_VERBATIM_INDEX",
