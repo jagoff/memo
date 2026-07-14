@@ -222,6 +222,14 @@ def test_quality_compact_apply_receipt_publish_is_atomic(tmp_path: Path, monkeyp
 
     monkeypatch.setattr(cli_maintain.os, "replace", boom)
 
+    def fail_if_embedded(*_args, **_kwargs):
+        raise AssertionError("rollback restoration must not require an embedding model")
+
+    monkeypatch.setattr(
+        "memo.memory.maintain_ops._MaintainOpsMixin._embed_cached",
+        fail_if_embedded,
+    )
+
     result = CliRunner().invoke(
         cli,
         ["maintain", "quality-compact", "--apply", "--json"],
@@ -240,7 +248,11 @@ def test_quality_compact_apply_receipt_publish_is_atomic(tmp_path: Path, monkeyp
     )
     mem = Memory(cfg)
     try:
-        assert mem.get(source_id) is not None
+        restored = mem.get(source_id)
+        assert restored is not None
+        assert restored.extra.get("_memo_embed_pending") is True
+        assert "superseded_by" not in restored.extra
+        assert "superseded_at" not in restored.extra
     finally:
         mem.close()
 

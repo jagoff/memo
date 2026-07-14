@@ -37,12 +37,19 @@ def test_undo_removes_a_saved_memory(tmp_path: Path) -> None:
     assert "not found" in get.output.lower()
 
 
-def test_fix_updates_title(tmp_path: Path) -> None:
+def test_fix_updates_title_without_loading_embedder(tmp_path: Path, monkeypatch) -> None:
     r = CliRunner()
     env = _env(tmp_path)
     save = r.invoke(cli, ["save", "--type", "note", "--defer-embed", "--json", "old body"], env=env)
     assert save.exit_code == 0, save.output
     mid = json.loads(save.output)["id"]
+
+    def fail_if_embedded(*_args, **_kwargs):
+        raise AssertionError("a metadata-only fix of a deferred record must not load a model")
+
+    monkeypatch.setattr(
+        "memo.memory.maintain_ops._MaintainOpsMixin._embed_cached", fail_if_embedded
+    )
 
     out = r.invoke(cli, ["fix", mid, "--title", "corrected title"], env=env)
     assert out.exit_code == 0, out.output

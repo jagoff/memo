@@ -97,6 +97,13 @@ class _UpdateOpsMixin(_MemoryBase):
         new_body_hash = _sha256_short(new_body)
         body_changed = new_body_hash != r["body_hash"]
         title_changed = new_title != r["title"]
+        embed_pending = bool(new_extra.get("_memo_embed_pending"))
+        # A record saved with ``defer_embed`` has no vector yet.  Metadata-only
+        # corrections must remain available in no-model environments instead
+        # of trying to load an embedder merely to update the title.  The
+        # pending marker keeps the eventual reindex responsible for composing
+        # the vector from the corrected title and body.
+        embedding_required = body_changed or (title_changed and not embed_pending)
 
         # Snapshot the prior record BEFORE mutating so `memo version
         # history/diff/rollback` have data. Gated on a real edit so pure
@@ -122,7 +129,7 @@ class _UpdateOpsMixin(_MemoryBase):
         # embed input now (see `_compose_for_embed`). Pure retag/type
         # changes still skip the embedder. Embed BEFORE touching the file
         # so a failure doesn't leave file and store diverged.
-        if body_changed or title_changed:
+        if embedding_required:
             embedding = self._embed_cached(
                 self._compose_for_embed(new_title, new_body),
                 ctx=f"update id={id_[:8]}",
@@ -143,7 +150,7 @@ class _UpdateOpsMixin(_MemoryBase):
             post["extra"] = new_extra or {}
             abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
-            if body_changed or title_changed:
+            if embedding_required:
                 self.store.upsert(
                     id_=id_,
                     path=r["path"],

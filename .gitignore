@@ -97,6 +97,7 @@ docs/registry-submission.md
 # scratch/debug output
 *.log
 err_synth*.txt
+snapshot_report.html
 
 # dogfood/audit harness scratch (never committed)
 audit/

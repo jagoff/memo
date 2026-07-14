@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
+from rich.console import Console
 
 from memo.cli import cli
 
@@ -32,14 +33,16 @@ def test_config_init_creates_markdown_files(tmp_path: Path) -> None:
     assert "created" in result.output.lower()
 
 
-def test_config_path_prints_markdown_and_legacy_paths(tmp_path: Path) -> None:
+def test_config_path_prints_markdown_and_legacy_paths_without_wrapping(tmp_path: Path) -> None:
     runner = CliRunner()
 
-    result = runner.invoke(cli, ["config", "path"], env=_env(tmp_path))
+    with patch("memo.cli_config.console", Console(width=20, force_terminal=False)):
+        result = runner.invoke(cli, ["config", "path"], env=_env(tmp_path))
 
     assert result.exit_code == 0, result.output
     assert "memo-config.md" in result.output
     assert "legacy.toml" in result.output
+    assert "legacy.\ntoml" not in result.output
 
 
 def test_config_set_show_and_unset(tmp_path: Path) -> None:
