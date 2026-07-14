@@ -40,3 +40,25 @@ or markdown and memo's git sync excludes legacy `secrets/` markers. The local
 master key and ciphertext database are permission-restricted, but a process
 running as your OS user can still request plaintext; protect access to your
 account and use `memo secret get/export` only when disclosure is intended.
+
+## Optional verbatim transcript index
+
+Total Recall is off by default. `MEMO_VERBATIM_INDEX=1` enables its nightly
+index pass; `memo verbatim index` is the explicit one-shot equivalent. It reads
+local Claude transcript JSONL, keeps only timestamped user/assistant turns,
+applies memo's known-secret redactor, and writes a lexical FTS5 sidecar under
+`MEMO_STATE_DIR`. It uses no embeddings, never becomes Markdown, never enters
+ambient recall, and is not part of git sync.
+
+The default retention/backfill window is 90 days
+(`MEMO_VERBATIM_MAX_DAYS=90`). Rows without a valid timestamp are rejected so
+they cannot bypass pruning. The state directory is restricted to mode `0700`
+and the database, SQLite sidecars, and watermark to `0600`; CLI and MCP searches
+are explicitly invoked and capped at 100 results.
+
+Known-secret redaction is defense in depth, not a guarantee that arbitrary
+sensitive prose can be recognized. Enabling this feature creates a second local
+copy of transcript text that any process running as your OS user can query.
+Leave it disabled if that duplication is not acceptable, and delete
+`MEMO_STATE_DIR/verbatim.db` plus `verbatim-index.json` to remove the derived
+index.

@@ -21,6 +21,7 @@ from .connection import _ConnectionMixin
 from .schema import _BM25_ES_STOPWORDS
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+MAX_VERBATIM_RESULTS = 100
 
 
 class TurnStore(_ConnectionMixin):
@@ -31,8 +32,20 @@ class TurnStore(_ConnectionMixin):
         self._local = threading.local()
         self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
         self._conn_holders_lock = threading.Lock()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.db_path.parent.chmod(0o700)
         self._ensure_schema()
+        self._secure_storage()
+
+    def _secure_storage(self) -> None:
+        """Transcript text and SQLite sidecars are private to the current user."""
+        for path in (
+            self.db_path,
+            Path(f"{self.db_path}-wal"),
+            Path(f"{self.db_path}-shm"),
+        ):
+            if path.exists():
+                path.chmod(0o600)
 
     def _load_vec0(self, conn: sqlite3.Connection) -> None:
         # Turns are scalar rows indexed by FTS5; no vector extension needed.
@@ -122,7 +135,7 @@ class TurnStore(_ConnectionMixin):
             sql += "AND turns.ts >= ? "
             params.append(since)
         sql += "ORDER BY bm25_score ASC LIMIT ?"
-        params.append(max(1, int(limit)))
+        params.append(max(1, min(int(limit), MAX_VERBATIM_RESULTS)))
         try:
             return list(self._conn.execute(sql, params).fetchall())
         except sqlite3.OperationalError:
@@ -170,19 +183,21 @@ class TurnStore(_ConnectionMixin):
     def prune_older_than(self, days: int) -> int:
         """Delete turns whose `ts` is older than `days` ago. Returns rows removed.
 
-        Comparison is lexicographic over ISO8601 `ts` strings (same as
-        `since` in `search`). Turns with a null/missing `ts` are never
-        pruned (nothing to compare against).
+        Timestamps are canonical UTC ISO8601 strings. Legacy null or malformed
+        rows are removed conservatively so they cannot bypass retention.
         """
         from datetime import UTC, datetime, timedelta
 
-        cutoff = (datetime.now(UTC) - timedelta(days=int(days))).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=max(1, int(days)))).isoformat(
+            timespec="seconds"
+        )
+        stale = "ts IS NULL OR datetime(ts) IS NULL OR datetime(ts) < datetime(?)"
         with self._tx() as cx:
             rows = cx.execute(
-                "SELECT session_id, turn_idx FROM turns WHERE ts IS NOT NULL AND ts < ?",
+                f"SELECT session_id, turn_idx FROM turns WHERE {stale}",  # noqa: S608
                 (cutoff,),
             ).fetchall()
-            cur = cx.execute("DELETE FROM turns WHERE ts IS NOT NULL AND ts < ?", (cutoff,))
+            cur = cx.execute(f"DELETE FROM turns WHERE {stale}", (cutoff,))  # noqa: S608
             for row in rows:
                 cx.execute(
                     "DELETE FROM turns_fts WHERE session_id = ? AND turn_idx = ?",
@@ -205,4 +220,4 @@ class TurnStore(_ConnectionMixin):
         return {"sessions": int(sessions), "turns": int(turns)}
 
 
-__all__ = ["TurnStore"]
+__all__ = ["MAX_VERBATIM_RESULTS", "TurnStore"]

@@ -1,6 +1,8 @@
 """Tests for the verbatim turn-level FTS5 index (flags + TurnStore config property)."""
+
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
@@ -159,14 +161,16 @@ def test_prune_older_than_removes_old_rows_from_both_tables(store: TurnStore):
     turns = [
         {"idx": 0, "role": "user", "ts": old_ts, "text": "contenido antiguo unico"},
         {"idx": 1, "role": "user", "ts": recent_ts, "text": "contenido reciente unico"},
+        {"idx": 2, "role": "user", "ts": None, "text": "contenido sin fecha legado"},
     ]
     store.replace_session("sess-1", "claude-code", turns)
 
     removed = store.prune_older_than(90)
-    assert removed == 1
+    assert removed == 2
     assert store.stats() == {"sessions": 1, "turns": 1}
     # FTS side-table must be pruned too — search for the old text finds nothing.
     assert store.search("antiguo") == []
+    assert store.search("legado") == []
     assert len(store.search("reciente")) == 1
 
 
@@ -189,3 +193,39 @@ def test_sessions_watermark(store: TurnStore):
 
 def test_stats_empty_store(store: TurnStore):
     assert store.stats() == {"sessions": 0, "turns": 0}
+
+
+def test_store_enforces_private_directory_and_database_modes(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(mode=0o777)
+    state_dir.chmod(0o777)
+
+    private_store = TurnStore(state_dir / "verbatim.db")
+    try:
+        assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(private_store.db_path.stat().st_mode) == 0o600
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{private_store.db_path}{suffix}")
+            if sidecar.exists():
+                assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+    finally:
+        private_store.close()
+
+
+def test_search_result_limit_is_bounded(store: TurnStore):
+    store.replace_session(
+        "many-turns",
+        "claude-code",
+        [
+            {
+                "idx": idx,
+                "role": "assistant",
+                "ts": "2026-07-01T10:00:00+00:00",
+                "text": f"bounded common result number {idx}",
+            }
+            for idx in range(125)
+        ],
+    )
+
+    assert len(store.search("common", limit=10_000)) == 100
+    assert len(store.search("common", limit=0)) == 1

@@ -63,6 +63,31 @@ from memo.memory.record import derived_save_scope
 _log = _logging.getLogger(__name__)
 
 
+def _run_verbatim_pass(
+    cfg: Config,
+    *,
+    dry_run: bool,
+    receipt: dict[str, Any],
+    progress: Any,
+    step: Any,
+) -> None:
+    """Run the optional private transcript index outside dream_run's budget."""
+    from memo import verbatim_index
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_VERBATIM_INDEX"):
+        return
+    progress.update(step, description="[verbatim] indexing transcript turns...")
+    receipt["verbatim"] = verbatim_index.run_verbatim_index_pass(cfg, dry_run=dry_run)
+    verbatim = receipt["verbatim"]
+    if verbatim.get("status") == "error":
+        receipt["errors"].append(f"verbatim: {verbatim.get('error')}")
+    progress.update(
+        step,
+        description=f"[verbatim] [green]✓[/green]  {verbatim.get('status')}",
+    )
+
+
 def _run_graduation_pass(
     cfg: Config, mem: Any, *, dry_run: bool, receipt: dict[str, Any]
 ) -> dict[str, Any]:
@@ -632,27 +657,13 @@ def dream_run(
                 receipt["errors"].append(f"hype: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[hype] [yellow]warn[/yellow]")
 
-        # Verbatim — nightly lexical turn-level transcript index (Total Recall F1,
-        # never enters the recall hook) -----------------------------------------
-        if flag_bool("MEMO_VERBATIM_INDEX"):
-            progress.update(step, description="[verbatim] indexing transcript turns...")
-            try:
-                from memo import verbatim_index
-
-                receipt["verbatim"] = verbatim_index.run_verbatim_index_pass(
-                    cfg,
-                    dry_run=dry_run,
-                )
-                if receipt["verbatim"].get("status") == "error":
-                    receipt["errors"].append(f"verbatim: {receipt['verbatim'].get('error')}")
-                _vb = receipt["verbatim"]
-                progress.update(
-                    step,
-                    description=f"[verbatim] [green]✓[/green]  {_vb.get('status')}",
-                )
-            except Exception as exc:
-                receipt["errors"].append(f"verbatim: {type(exc).__name__}: {exc}")
-                progress.update(step, description="[verbatim] [yellow]warn[/yellow]")
+        _run_verbatim_pass(
+            cfg,
+            dry_run=dry_run,
+            receipt=receipt,
+            progress=progress,
+            step=step,
+        )
 
         if flag_bool("MEMO_DREAM_GRADUATION_ENABLED"):
             progress.update(step, description="[graduate] quarantined captures...")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -52,7 +53,7 @@ def test_parse_turns_preserves_timestamp(tmp_path: Path):
     )
     turns = parse_turns(f)
     assert len(turns) == 2
-    assert turns[0]["ts"] == "2026-07-13T10:00:00.000Z"
+    assert turns[0]["ts"] == "2026-07-13T10:00:00+00:00"
     assert turns[0]["role"] == "user"
     assert turns[0]["idx"] == 0
     assert turns[1]["idx"] == 1
@@ -97,6 +98,24 @@ def test_parse_turns_redacts_secrets(tmp_path: Path):
 
 def test_parse_turns_missing_file_returns_empty(tmp_path: Path):
     assert parse_turns(tmp_path / "nope.jsonl") == []
+
+
+def test_parse_turns_skips_missing_or_invalid_timestamps(tmp_path: Path):
+    f = tmp_path / "sess.jsonl"
+    _write_transcript(
+        f,
+        [
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": _long("missing timestamp should not persist")},
+                }
+            ),
+            _line("assistant", _long("invalid timestamp should not persist"), "not-a-date"),
+        ],
+    )
+
+    assert parse_turns(f) == []
 
 
 # ── run_verbatim_index_pass ──────────────────────────────────────────────
@@ -200,11 +219,37 @@ def test_dry_run_writes_nothing(cfg: Config, tmp_path: Path):
     assert result["sessions_indexed"] == 1
     assert result["turns_indexed"] == 1
 
-    assert not cfg.verbatim_db.exists() or TurnStore(cfg.verbatim_db).stats() == {
-        "sessions": 0,
-        "turns": 0,
-    }
+    assert not cfg.verbatim_db.exists()
     assert not (cfg.state_dir / "verbatim-index.json").exists()
+
+
+def test_pass_clamps_retention_to_at_least_one_day(cfg: Config, tmp_path: Path, monkeypatch):
+    observed: dict[str, float] = {}
+
+    def _find(root: Path, *, since_days: float):
+        observed["since_days"] = since_days
+        return []
+
+    monkeypatch.setattr("memo.verbatim_index.find_transcripts", _find)
+    result = run_verbatim_index_pass(cfg, root=tmp_path, max_days=-30, dry_run=True)
+
+    assert result["status"] == "ok"
+    assert observed["since_days"] == 1
+
+
+def test_index_files_are_private(cfg: Config, claude_projects_root: Path):
+    f = claude_projects_root / "sess-private.jsonl"
+    _write_transcript(
+        f,
+        [_line("user", _long("private indexed transcript turn"), "2026-07-13T10:00:00Z")],
+    )
+
+    result = run_verbatim_index_pass(cfg)
+    assert result["status"] == "ok"
+    assert stat.S_IMODE(cfg.state_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(cfg.verbatim_db.stat().st_mode) == 0o600
+    watermark = cfg.state_dir / "verbatim-index.json"
+    assert stat.S_IMODE(watermark.stat().st_mode) == 0o600
 
 
 def test_never_raises_on_store_failure(cfg: Config, claude_projects_root: Path, monkeypatch):
