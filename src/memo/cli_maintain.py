@@ -36,7 +36,7 @@ from memo.belief import ARCHIVE, COMPETING, HOLD_OPEN, supersede_decision
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
-from memo.errors import ValidationError
+from memo.errors import StorageError, ValidationError
 from memo.flags import flag_bool, flag_int
 from memo.util import safe_operation
 
@@ -170,9 +170,85 @@ def _quality_compact_rollback_ids(receipt: dict[str, Any]) -> list[str]:
 def _rollback_quality_compaction(mem: Any, receipt: dict[str, Any]) -> tuple[list[str], list[str]]:
     rollback_ids = _quality_compact_rollback_ids(receipt)
     restored, missing = _restore_archived(mem, rollback_ids, dry_run=False)
-    if rollback_ids:
-        mem.reindex()
-    return restored, missing
+    indexed, index_failed = _restore_quality_compact_indexes(mem, restored)
+    missing_all = sorted(set(missing) | set(index_failed))
+    return indexed, missing_all
+
+
+def _restore_quality_compact_indexes(
+    mem: Any,
+    restored_ids: list[str],
+) -> tuple[list[str], list[str]]:
+    """Restore rollback records to the text index without loading a model.
+
+    Receipt persistence is the last step of quality compaction.  If it fails,
+    rollback must remain possible on a host that has no ML dependency or model
+    cache.  Reindexing here used to make the rollback itself depend on an
+    embedder and could leave the Markdown restored but the memory invisible.
+    Text-only upserts make the record immediately available to CRUD/BM25 and
+    mark it for a later semantic reindex.
+    """
+
+    import frontmatter
+
+    from memo.util import sha256_short
+
+    indexed: list[str] = []
+    failed: list[str] = []
+    for memory_id in restored_ids:
+        path = mem.cfg.memory_dir / f"{memory_id}.md"
+        try:
+            post = frontmatter.loads(path.read_text(encoding="utf-8"))
+            meta = post.metadata
+            body = post.content or ""
+            raw_extra = meta.get("extra")
+            extra = dict(raw_extra) if isinstance(raw_extra, dict) else {}
+            # archive_memory stamps these fields after moving the file.  A
+            # rollback means that archival never committed, so the stamps must
+            # not survive.
+            extra.pop("superseded_by", None)
+            extra.pop("superseded_at", None)
+            extra["_memo_embed_pending"] = True
+            post.metadata["extra"] = extra
+            path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+            raw_tags = meta.get("tags") or []
+            if isinstance(raw_tags, str):
+                tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+            elif isinstance(raw_tags, (list, tuple, set)):
+                tags = [str(tag) for tag in raw_tags]
+            else:
+                tags = []
+
+            now = datetime.now(UTC).isoformat()
+
+            def _iso(value: Any, fallback: str) -> str:
+                if value is None:
+                    return fallback
+                isoformat = getattr(value, "isoformat", None)
+                return str(isoformat() if callable(isoformat) else value)
+
+            rel = path.relative_to(mem.cfg.memory_dir).as_posix()
+            mem.store.upsert_text_only(
+                id_=memory_id,
+                path=rel,
+                title=str(meta.get("title") or memory_id[:8]),
+                type_=str(meta.get("type") or "note"),
+                tags=tags,
+                created=_iso(meta.get("created"), now),
+                updated=_iso(meta.get("updated"), now),
+                body_hash=sha256_short(body),
+                extra=extra,
+                body_text=body,
+            )
+        except (OSError, StorageError, TypeError, ValueError) as exc:
+            _log.warning(
+                "quality compact rollback: could not restore index for %s: %s", memory_id, exc
+            )
+            failed.append(memory_id)
+            continue
+        indexed.append(memory_id)
+    return indexed, failed
 
 
 def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[str], list[str]]:

@@ -140,10 +140,13 @@ def config_path() -> None:
     from memo.config_md import config_dir, config_home, index_path
     from memo.setup.config_io import _resolve_config_path
 
-    console.print(f"config_home: {config_home()}")
-    console.print(f"index: {index_path()}")
-    console.print(f"domains: {config_dir()}")
-    console.print(f"legacy_toml: {_resolve_config_path()}")
+    # Paths are CLI data, not prose: Rich's terminal-width wrapping can split
+    # filenames (``legacy.\ntoml``) and make the output impossible to pipe or
+    # parse.  click.echo preserves one path per line on every platform.
+    click.echo(f"config_home: {config_home()}")
+    click.echo(f"index: {index_path()}")
+    click.echo(f"domains: {config_dir()}")
+    click.echo(f"legacy_toml: {_resolve_config_path()}")
 
 
 @config_group.command(name="set")
