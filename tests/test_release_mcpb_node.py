@@ -170,3 +170,32 @@ def test_bootstrap_pin_matches_manifest() -> None:
     assert result.returncode == 0, result.stderr
     manifest = json.loads(_NODE_MANIFEST.read_text(encoding="utf8"))
     assert result.stdout == manifest["version"]
+
+
+def test_bootstrap_pin_check_uses_uv_tool_list_v_format() -> None:
+    """Ensure isPinInstalled matches 'uv tool list' output format 'mlx-memo vX.Y.Z'.
+
+    The bug: isPinInstalled was checking for `mlx-memo==X.Y.Z`, but `uv tool list`
+    actually prints `mlx-memo v3.4.0` (with 'v' prefix). This meant the fast path
+    never matched, causing unnecessary network reinstalls on every launch.
+    """
+    source = _BOOTSTRAP.read_text(encoding="utf-8")
+    # Verify the fix: source contains the correct format check
+    assert "mlx-memo v${pin}" in source, (
+        "isPinInstalled must match `uv tool list` output format 'mlx-memo vX.Y.Z', "
+        "never 'mlx-memo==X.Y.Z' (which uv tool list does not print)"
+    )
+    # Verify no accidental check for the wrong format in the isPinInstalled logic
+    # (the install arg legitimately uses mlx-memo==X.Y.Z, so we exclude that)
+    lines = source.split("\n")
+    in_is_pin_installed = False
+    for line in lines:
+        if "function isPinInstalled" in line:
+            in_is_pin_installed = True
+        elif in_is_pin_installed and line.strip().startswith("function "):
+            in_is_pin_installed = False
+        elif in_is_pin_installed and "includes" in line and "mlx-memo==" in line:
+            pytest.fail(
+                "isPinInstalled still checks for 'mlx-memo==X.Y.Z' format — "
+                "must check for 'mlx-memo vX.Y.Z' instead"
+            )

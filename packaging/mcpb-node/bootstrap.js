@@ -70,9 +70,15 @@ function memoMcpBin() {
 }
 
 function isPinInstalled(uv, pin) {
-  const list = spawnSync(uv, ["tool", "list"], { encoding: "utf8" });
+  const list = spawnSync(uv, ["tool", "list"], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
   if (list.status !== 0 || !list.stdout) return false;
-  return list.stdout.includes(`mlx-memo==${pin}`);
+  // Remove ANSI escape sequences to handle colored output
+  const clean = list.stdout.replace(/\x1b\[[0-9;]*m/g, "");
+  // Match per line against 'mlx-memo vX.Y.Z' format (uv tool list output)
+  return clean.split("\n").some((line) => {
+    const t = line.trim();
+    return t === `mlx-memo v${pin}` || t.startsWith(`mlx-memo v${pin} `);
+  });
 }
 
 function ensureMemo(uv, pin) {
