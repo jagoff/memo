@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -59,6 +60,31 @@ class BackupManager:
     def _release_lock(self, fh):
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
+    @staticmethod
+    def _validate_backup_name(name: str) -> str:
+        """Return a safe single-component backup name or reject it."""
+        if (
+            not name
+            or len(name) > 128
+            or name in {".", ".."}
+            or name != name.strip()
+            or "/" in name
+            or "\\" in name
+            or "\x00" in name
+            or Path(name).is_absolute()
+        ):
+            raise ValueError("Invalid backup name: use one filename component")
+        return name
+
+    def _backup_path(self, name: str) -> Path:
+        """Resolve a validated name and prove it remains below backup_dir."""
+        safe_name = self._validate_backup_name(name)
+        root = self.backup_dir.resolve()
+        path = (root / safe_name).resolve()
+        if path.parent != root:
+            raise ValueError("Invalid backup name: path escapes backup directory")
+        return path
+
     def create_backup(
         self,
         compress: bool = True,
@@ -82,12 +108,44 @@ class BackupManager:
         name: str | None = None,
     ) -> BackupMetadata:
         timestamp = datetime.now(UTC).isoformat()
-        backup_name = name or f"backup_{timestamp.replace(':', '-')}"
-        backup_path = self.backup_dir / backup_name
-        backup_path.mkdir(exist_ok=True)
+        backup_name = (
+            self._validate_backup_name(name)
+            if name is not None
+            else f"backup_{timestamp.replace(':', '-')}"
+        )
+        backup_path = self._backup_path(backup_name)
+        archive_path = self._backup_path(f"{backup_name}.tar.gz")
+        for destination in (backup_path, archive_path):
+            if destination.exists() or destination.is_symlink():
+                raise FileExistsError(f"Backup already exists: {destination.name}")
+
+        scratch = Path(tempfile.mkdtemp(prefix=".backup-", dir=self.backup_dir))
+        try:
+            metadata = self._populate_backup(scratch, timestamp, backup_name)
+
+            if compress:
+                import tarfile
+
+                with tarfile.open(archive_path, "x:gz") as tar:
+                    tar.add(scratch, arcname=backup_name)
+                metadata.compressed_size = archive_path.stat().st_size
+            else:
+                scratch.rename(backup_path)
+            return metadata
+        finally:
+            if scratch.exists():
+                shutil.rmtree(scratch)
+
+    def _populate_backup(
+        self,
+        backup_path: Path,
+        timestamp: str,
+        backup_name: str,
+    ) -> BackupMetadata:
+        """Populate a private scratch directory and return its metadata."""
 
         memory_backup = backup_path / "memories"
-        memory_backup.mkdir(exist_ok=True)
+        memory_backup.mkdir()
         memory_files = list(self.memory_dir.rglob("*.md"))
         for f in memory_files:
             # Preserve the per-project bucket layout (memory_dir/<project>/...)
@@ -111,23 +169,13 @@ class BackupManager:
             checksum=checksum,
             compressed_size=original_size,
             original_size=original_size,
+            name=backup_name,
         )
         (backup_path / "metadata.json").write_text(
             json.dumps(metadata.__dict__, indent=2),
             encoding="utf-8",
         )
 
-        if compress:
-            import tarfile
-            archive_path = self.backup_dir / f"{backup_name}.tar.gz"
-            with tarfile.open(archive_path, "w:gz") as tar:
-                tar.add(backup_path, arcname=backup_name)
-            shutil.rmtree(backup_path)
-            compressed_size = archive_path.stat().st_size
-        else:
-            compressed_size = original_size
-
-        metadata.compressed_size = compressed_size
         return metadata
 
     def _compute_checksum(self, path: Path) -> str:
@@ -178,10 +226,15 @@ class BackupManager:
         restore_dbs: bool = True,
     ) -> bool:
         """Restore memory files and/or databases from a backup."""
-        archive_path = self.backup_dir / (
-            backup_name if backup_name.endswith(".tar.gz") else f"{backup_name}.tar.gz"
-        )
-        directory_path = self.backup_dir / backup_name
+        archive_name = backup_name
+        if backup_name.endswith(".tar.gz"):
+            base_name = backup_name.removesuffix(".tar.gz")
+        else:
+            base_name = backup_name
+            archive_name = f"{backup_name}.tar.gz"
+        self._validate_backup_name(base_name)
+        archive_path = self._backup_path(archive_name)
+        directory_path = self._backup_path(base_name)
         if not archive_path.is_file() and not directory_path.is_dir():
             return False
 
@@ -203,9 +256,9 @@ class BackupManager:
             with tarfile.open(archive_path, "r:gz") as tar:
                 for member in tar.getmembers():
                     target = (tmp_root / member.name).resolve()
-                    if not str(target).startswith(str(tmp_root)):
+                    if not target.is_relative_to(tmp_root):
                         raise ValueError(f"Unsafe path in backup archive: {member.name}")
-                tar.extractall(tmp_root)  # noqa: S202 — member paths validated in the loop above
+                tar.extractall(tmp_root, filter="data")
 
             extracted_path = tmp_root / archive_path.name.removesuffix(".tar.gz")
             if not extracted_path.is_dir():

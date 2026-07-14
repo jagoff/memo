@@ -2,6 +2,7 @@
 
 import hashlib
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -136,6 +137,57 @@ def test_backup_manager_create_compressed_backup(backup_manager, mock_memory):
 
     assert metadata.compressed_size > 0
     assert metadata.compressed_size < metadata.original_size
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["../escaped", "nested/backup", r"nested\backup", ".", "..", ""],
+)
+def test_backup_manager_rejects_unsafe_backup_names(backup_manager, name):
+    """User-controlled backup names must remain a single safe path component."""
+    with pytest.raises(ValueError, match="backup name"):
+        backup_manager.create_backup(compress=False, name=name)
+
+
+def test_backup_manager_rejects_absolute_backup_name_without_deleting_it(
+    backup_manager, tmp_path: Path
+):
+    """An absolute existing directory must never become the backup scratch directory."""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    marker = victim / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="backup name"):
+        backup_manager.create_backup(compress=True, name=str(victim))
+
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_backup_manager_refuses_to_overwrite_existing_backup_directory(backup_manager):
+    """A safe-name collision must leave the existing directory untouched."""
+    existing = backup_manager.backup_dir / "existing"
+    existing.mkdir()
+    marker = existing / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        backup_manager.create_backup(compress=True, name="existing")
+
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_backup_manager_restore_rejects_paths_outside_backup_dir(backup_manager, tmp_path: Path):
+    """Restore names must not address an arbitrary directory outside backup_dir."""
+    external = tmp_path / "external"
+    memories = external / "memories"
+    memories.mkdir(parents=True)
+    (memories / "injected.md").write_text("injected", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="backup name"):
+        backup_manager.restore_backup(str(external))
+
+    assert not (backup_manager.memory_dir / "injected.md").exists()
 
 
 def test_backup_manager_list_backups(backup_manager):
