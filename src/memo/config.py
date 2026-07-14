@@ -490,6 +490,11 @@ class Config(BaseModel):
         Rebuildable from markdown-derived extraction; collapses onto `db_path`."""
         return self.db_path if self.single_db else self.state_dir / "fact_edges.db"
 
+    @property
+    def verbatim_db(self) -> Path:
+        """Lexical turn-level FTS5 sidecar. Rebuildable from transcripts; collapses onto db_path under single_db."""
+        return self.db_path if self.single_db else self.state_dir / "verbatim.db"
+
     # ── Construction ─────────────────────────────────────────────────────
 
     @classmethod
