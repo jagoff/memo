@@ -74,7 +74,11 @@ def test_vec_store_closes_worker_thread_connections(tmp_path: Path) -> None:
             thread.start()
         for thread in threads:
             thread.join()
+        # The store must retain every worker connection until explicit close;
+        # relying on thread-local finalizers is platform dependent.
+        assert len(store._conn_holders) == 5  # main thread + four workers
+        store.close()
         gc.collect()
 
-    store.close()
+    assert len(store._conn_holders) == 0
     assert not any(issubclass(w.category, ResourceWarning) for w in captured)

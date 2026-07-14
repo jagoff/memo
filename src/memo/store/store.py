@@ -48,10 +48,9 @@ import contextlib
 import logging
 import sqlite3
 import threading
-import weakref
 from pathlib import Path
 
-from .connection import _ConnectionMixin
+from .connection import _ConnectionHolder, _ConnectionMixin
 from .feedback_store import _FeedbackMixin
 from .migrations import _MigrationsMixin
 from .queries import _QueriesMixin
@@ -106,7 +105,12 @@ class VecStore(
         # The CLI and recall daemon are single-threaded / lock-serialised,
         # so they simply reuse their one thread-local connection.
         self._local = threading.local()
-        self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
+        # Strong references are intentional: CPython does not guarantee the
+        # order in which a terminating thread clears its ``threading.local``
+        # values and finalizes sqlite connections.  Retain every holder so
+        # ``close()`` is the single deterministic lifecycle boundary on all
+        # supported platforms.
+        self._conn_holders: set[_ConnectionHolder] = set()
         self._conn_holders_lock = threading.Lock()
         try:
             self._connect()
